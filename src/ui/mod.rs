@@ -487,10 +487,6 @@ pub fn view_sel_selector(
                 ViewSelLevel::Bond => {}
             }
         }
-
-        if state.peptide.is_some() {
-            state.volatile.flags.update_sas_coloring = true;
-        }
     }
 
     // Buttons to alter the color profile, e.g. for res position, or partial charge.
@@ -563,8 +559,8 @@ fn selection_section(
         section_box().show(ui, |ui| {
             view_sel_selector(state, redraw, ui, true, meshes, engine_updates);
 
-            let help = "Hide all atoms not near the selection";
-            ui.label("Nearby sel only:").on_hover_text(help);
+            let help = "Hide all protein atoms not near the selected atom or bond";
+            ui.label("Near sel:").on_hover_text(help);
             if ui
                 .checkbox(&mut state.ui.show_near_sel_only, "")
                 .on_hover_text(help)
@@ -579,8 +575,8 @@ fn selection_section(
             }
 
             if state.active_mol().is_some() {
-                let help = "Hide all atoms not near the ligand";
-                ui.label("Nearby lig only:").on_hover_text(help);
+                let help = "Hide all protein atoms not near the ligand (Active small molecule)";
+                ui.label("Near lig:").on_hover_text(help);
                 if ui
                     .checkbox(&mut state.ui.show_near_lig_only, "")
                     .on_hover_text(help)
@@ -593,6 +589,18 @@ fn selection_section(
                         state.ui.show_near_sel_only = false
                     }
                 }
+            }
+
+            // todo: Slider for how near the sfc?
+            let help = "Hide all protein atoms not near the surface of the protein. May assist \
+            in visualizing interaction sites in some visualization modes, e.g. sticks or ball and stick.";
+            ui.label("Near sfc:").on_hover_text(help);
+            if ui
+                .checkbox(&mut state.ui.show_near_sfc_only, "")
+                .on_hover_text(help)
+                .changed()
+            {
+                *redraw = true;
             }
 
             ui.label("pH:");
@@ -621,7 +629,7 @@ fn selection_section(
                 }
             }
 
-            if state.ui.show_near_sel_only || state.ui.show_near_lig_only {
+            if state.ui.show_near_sel_only || state.ui.show_near_lig_only || state.ui.show_near_sfc_only {
                 ui.label("Dist:");
                 let dist_prev = state.ui.nearby_dist_thresh;
                 ui.spacing_mut().slider_width = 160.;

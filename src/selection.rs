@@ -592,7 +592,7 @@ pub(crate) fn handle_selection_attempt(
     redraw_na: &mut bool,
     redraw_lipid: &mut bool,
 ) {
-    let Some(mut cursor) = state.ui.cursor_pos else {
+    let Some(cursor) = state.ui.cursor_pos else {
         return;
     };
 
@@ -606,6 +606,8 @@ pub(crate) fn handle_selection_attempt(
 
     // todo: Lots of DRY here!
 
+    // We're updating the position to use `atom_posits` instead of the internal `Atom` posit field,
+    // but this involves re-building.
     // todo: I don't like this rebuilding.
     fn get_atoms(mol: &MoleculeCommon) -> Vec<Atom> {
         // todo: I don't like this clone!
@@ -615,6 +617,7 @@ pub(crate) fn handle_selection_attempt(
             .map(|(i, a)| Atom {
                 posit: mol.atom_posits[i],
                 element: a.element,
+                residue: a.residue,
                 ..Default::default()
             })
             .collect()
@@ -635,7 +638,8 @@ pub(crate) fn handle_selection_attempt(
     }
 
     let (pep_atoms, pep_res) = match &state.peptide {
-        Some(p) => (&p.common.atoms, &p.residues),
+        // Some(p) => (&p.common.atoms, &p.residues),
+        Some(mol) => (&get_atoms(&mol.common), &mol.residues),
         None => (&Vec::new(), &Vec::new()),
     };
 

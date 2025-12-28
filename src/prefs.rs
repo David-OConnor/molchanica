@@ -180,6 +180,7 @@ impl Default for ToSave {
             movement_speed: MOVEMENT_SENS as u8,
             rotation_sens: (ROTATE_SENS * 100.) as u8,
             mol_move_sens: (SENS_MOL_MOVE_SCROLL * 1_000.) as u8,
+            // We override this based on protein atom count.
             sa_surface_precision: 0.55,
             md_config: Default::default(),
             num_md_steps: 100,

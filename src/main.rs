@@ -298,6 +298,9 @@ struct StateVolatile {
     // /// If present, there must be one per vertex. Rebuild this whenever we
     // /// rebuild this mesh.
     // sa_surface_mesh_colors: Option<Vec<(u8, u8, u8)>>,
+    /// Outer the protein index. Inner: A collection of points on the surface, sufficient to
+    /// determine if a given atom is near the surface.
+    protein_sfc_mesh_coarse: Vec<Vec<f32>>,
 }
 
 impl Default for StateVolatile {
@@ -325,6 +328,7 @@ impl Default for StateVolatile {
             md_local: Default::default(),
             orbit_center: None,
             orca_avail: Default::default(),
+            protein_sfc_mesh_coarse: Default::default(),
             // hydropathy_data: Default::default(),
             // sa_surface_mesh_colors: Default::default(),
         }
@@ -507,6 +511,8 @@ struct StateUi {
     /// To selection.
     show_near_sel_only: bool,
     show_near_lig_only: bool,
+    /// Protein atoms near its surface; hide internal ones.
+    show_near_sfc_only: bool,
     /// Angstrom. For selections, or ligand.
     nearby_dist_thresh: u16,
     view_depth: (u16, u16), // angstrom. min, max.
