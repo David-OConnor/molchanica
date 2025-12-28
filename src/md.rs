@@ -288,11 +288,10 @@ pub fn build_dynamics(
             bonded_disabled: false,
             coulomb_disabled: false,
             lj_disabled: false,
-            // todo: Still struggling with energy injected from this.
-            long_range_recip_disabled: true,
+            long_range_recip_disabled: false,
             thermo_disabled: false,
             baro_disabled: false,
-            snapshots_during_equilibration: true,
+            // snapshots_during_equilibration: true,
             ..Default::default()
         },
         max_init_relaxation_iters: None,

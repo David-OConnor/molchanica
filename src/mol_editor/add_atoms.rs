@@ -436,7 +436,8 @@ fn bonds_avail(i_atom: usize, mol: &MoleculeCommon, el: Element) -> usize {
         Carbon => 4,
         Oxygen => 2,
         Nitrogen => 3, // todo?
-        _ => 4,        // todo?
+        Element::Chlorine => 0,
+        _ => 0, // todo?
     };
 
     let mut ar_count = 0;

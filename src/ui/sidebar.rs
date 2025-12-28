@@ -1,10 +1,16 @@
 use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
+use lin_alg::f64::Vec3;
 
 use crate::{
     State,
-    molecule::{MolType, MoleculeCommon},
-    ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE},
+    cam_misc::move_mol_to_cam,
+    mol_manip::{ManipMode, set_manip},
+    molecule::{MolType, MoleculeCommon, MoleculePeptide},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
+        COLOR_INACTIVE, ROW_SPACING, cam::move_cam_to_mol,
+    },
     util::{close_mol, handle_err, orbit_center},
 };
 
@@ -16,11 +22,14 @@ fn mol_picker_one(
     i_mol: usize,
     mol: &mut MoleculeCommon,
     mol_type: MolType,
+    scene: &mut Scene,
     ui: &mut Ui,
     engine_updates: &mut EngineUpdates,
     redraw: &mut bool,
     recenter_orbit: &mut bool,
     close: &mut Option<(MolType, usize)>,
+    cam_snapshot: &mut Option<usize>,
+    pep_center: Vec3,
 ) {
     let help_text = "Make this molecule the active / selected one. Middle click to close it.";
 
@@ -36,74 +45,82 @@ fn mol_picker_one(
     };
 
     ui.horizontal(|ui| {
-        let sel_btn = ui
-            .button(RichText::new(&mol.ident).color(color))
-            .on_hover_text(help_text);
-
-        if sel_btn.clicked() {
-            if active && active_mol.is_some() {
-                *active_mol = None;
-            } else {
-                *active_mol = Some((mol_type, i_mol));
-                *orbit_center = *active_mol;
-
-                *recenter_orbit = true;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(COL_SPACING / 2.);
+            if ui
+                .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                .on_hover_text("(Hotkey: Delete) Close this molecule.")
+                .clicked()
+            {
+                *close = Some((mol_type, i_mol));
             }
 
-            *redraw = true; // To reflect the change in thickness, color etc.
-        }
+            let color_md = if mol.selected_for_md {
+                COLOR_ACTIVE
+            } else {
+                COLOR_INACTIVE
+            };
 
-        if sel_btn.middle_clicked() {
-            *close = Some((mol_type, i_mol));
-        }
+            if ui
+                .button(RichText::new("MD").color(color_md))
+                .on_hover_text(
+                    "Select or deselect this molecule for molecular dynamics simulation.",
+                )
+                .clicked()
+            {
+                mol.selected_for_md = !mol.selected_for_md;
+            }
 
-        // Allocate the rest of the row and place buttons at the far right.
-        let remaining_w = ui.available_width();
-        let row_h = ui.spacing().interact_size.y;
+            let color_vis = if mol.visible {
+                COLOR_ACTIVE
+            } else {
+                COLOR_INACTIVE
+            };
 
-        let color_vis = if mol.visible {
-            COLOR_ACTIVE
-        } else {
-            COLOR_INACTIVE
-        };
+            if ui.button(RichText::new("👁").color(color_vis)).clicked() {
+                mol.visible = !mol.visible;
 
-        // ui.allocate_ui_with_layout(
-        //     egui::vec2(remaining_w, row_h),
-        //     egui::Layout::right_to_left(egui::Align::Center),
-        //     |ui| {
-        if ui.button(RichText::new("👁").color(color_vis)).clicked() {
-            mol.visible = !mol.visible;
+                *redraw = true; // todo Overkill; only need to redraw (or even just clear) one.
+                // todo: Generalize.
+                engine_updates.entities = EntityUpdate::All;
+                // engine_updates.entities.push_class(mol_type.entity_class() as u32);
+            }
 
-            *redraw = true; // todo Overkill; only need to redraw (or even just clear) one.
-            // todo: Generalize.
-            engine_updates.entities = EntityUpdate::All;
-            // engine_updates.entities.push_class(mol_type.entity_class() as u32);
-        }
+            if ui
+                .button(RichText::new("Cam"))
+                .on_hover_text("Move camera near active molecule, looking at it.")
+                .clicked()
+            {
+                // Setting mol center to 0 if no mol.
+                move_cam_to_mol(mol, cam_snapshot, scene, pep_center, engine_updates)
+            }
 
-        let color_md = if mol.selected_for_md {
-            COLOR_ACTIVE
-        } else {
-            COLOR_INACTIVE
-        };
+            let row_h = ui.spacing().interact_size.y;
+            let sel_btn = ui
+                .add_sized(
+                    egui::vec2(ui.available_width(), row_h),
+                    egui::Button::new(egui::RichText::new(&mol.ident).color(color)),
+                )
+                .on_hover_text(help_text);
 
+            if sel_btn.clicked() {
+                if active && active_mol.is_some() {
+                    *active_mol = None;
+                } else {
+                    *active_mol = Some((mol_type, i_mol));
+                    *orbit_center = *active_mol;
 
-        if ui
-            .button(RichText::new("MD").color(color_md))
-            .on_hover_text("Select or deselect this molecule for molecular dynamics simulation.")
-            .clicked()
-        {
-            mol.selected_for_md = !mol.selected_for_md;
-        }
+                    *recenter_orbit = true;
+                }
 
-        if ui
-            .button(RichText::new("❌").color(Color32::LIGHT_RED))
-            .on_hover_text("(Hotkey: Delete) Close this molecule.")
-            .clicked()
-        {
-            *close = Some((mol_type, i_mol));
-        }
+                *redraw = true; // To reflect the change in thickness, color etc.
+            }
+
+            if sel_btn.middle_clicked() {
+                *close = Some((mol_type, i_mol));
+            }
+        });
     });
-    // });
 }
 
 /// Select, close, hide etc molecules from ones opened.
@@ -120,6 +137,12 @@ fn mol_picker(
     let mut recenter_orbit = false;
     let mut close = None; // Avoids borrow error.
 
+    // Avoids a double borrow.
+    let pep_center = match &state.peptide {
+        Some(mol) => mol.center,
+        None => Vec3::new_zero(),
+    };
+
     if let Some(mol) = &mut state.peptide {
         mol_picker_one(
             &mut state.volatile.active_mol,
@@ -127,11 +150,14 @@ fn mol_picker(
             0,
             &mut mol.common,
             MolType::Peptide,
+            scene,
             ui,
             engine_updates,
             redraw_pep,
             &mut recenter_orbit,
             &mut close,
+            &mut state.ui.cam_snapshot,
+            pep_center,
         );
     }
 
@@ -142,11 +168,14 @@ fn mol_picker(
             i_mol,
             &mut mol.common,
             MolType::Ligand,
+            scene,
             ui,
             engine_updates,
             redraw_lig,
             &mut recenter_orbit,
             &mut close,
+            &mut state.ui.cam_snapshot,
+            pep_center,
         );
     }
 
@@ -157,11 +186,14 @@ fn mol_picker(
             i_mol,
             &mut mol.common,
             MolType::Lipid,
+            scene,
             ui,
             engine_updates,
             redraw_lipid,
             &mut recenter_orbit,
             &mut close,
+            &mut state.ui.cam_snapshot,
+            pep_center,
         );
     }
 
@@ -172,11 +204,14 @@ fn mol_picker(
             i_mol,
             &mut mol.common,
             MolType::NucleicAcid,
+            scene,
             ui,
             engine_updates,
             redraw_na,
             &mut recenter_orbit,
             &mut close,
+            &mut state.ui.cam_snapshot,
+            pep_center,
         );
     }
 
@@ -217,6 +252,95 @@ fn open_tools(state: &mut State, ui: &mut Ui) {
     }
 }
 
+fn manip_toolbar(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw_pep: &mut bool,
+    redraw_lig: &mut bool,
+    redraw_lipid: &mut bool,
+    redraw_na: &mut bool,
+    ui: &mut Ui,
+) {
+    ui.horizontal(|ui| {
+        let Some((active_mol_type, active_mol_i)) = state.volatile.active_mol else {
+            return;
+        };
+
+        {
+            let mut color_move = COLOR_INACTIVE;
+            let mut color_rotate = COLOR_INACTIVE;
+
+            match state.volatile.mol_manip.mode {
+                ManipMode::Move((mol_type, mol_i)) => {
+                    if mol_type == active_mol_type && mol_i == active_mol_i {
+                        color_move = COLOR_ACTIVE;
+                    }
+                }
+                ManipMode::Rotate((mol_type, mol_i)) => {
+                    if mol_type == active_mol_type && mol_i == active_mol_i {
+                        color_rotate = COLOR_ACTIVE;
+                    }
+                }
+                ManipMode::None => (),
+            }
+
+            // ✥ doesn't work in EGUI.
+            if ui.button(RichText::new("↔").color(color_move))
+                .on_hover_text("(Hotkey: M. M or Esc to stop)) Move the active molecule by clicking and dragging with \
+                the mouse. Scroll to move it forward and back.")
+                .clicked() {
+
+                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw_pep, redraw_lig, redraw_na, redraw_lipid,&mut false,
+                          ManipMode::Move((active_mol_type, active_mol_i)), &state.ui.selection,);
+            }
+
+            if ui.button(RichText::new("⟳").color(color_rotate))
+                .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll.")
+                .clicked() {
+
+                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw_pep, redraw_lig,redraw_na, redraw_lipid,&mut false,
+                          ManipMode::Rotate((active_mol_type, active_mol_i)), &state.ui.selection,);
+            }
+        }
+
+        if let Some(mol) = &mut state.active_mol_mut() {
+            if ui
+                .button(RichText::new("Move to cam").color(COLOR_HIGHLIGHT))
+                .on_hover_text("Move the molecule to be a short distance in front of the camera.")
+                .clicked()
+            {
+                move_mol_to_cam(mol.common_mut(), &scene.camera);
+
+                match active_mol_type {
+                    MolType::Ligand => *redraw_lig = true,
+                    MolType::NucleicAcid => *redraw_na = true,
+                    MolType::Lipid => *redraw_lipid = true,
+                    _ => unimplemented!(),
+                }
+            }
+
+            if ui
+                .button(RichText::new("Reset pos").color(COLOR_HIGHLIGHT))
+                .on_hover_text(
+                    "Move the molecule to its absolute coordinates, e.g. as defined in \
+                        its source mmCIF, Mol2 or SDF file.",
+                )
+                .clicked()
+            {
+                mol.common_mut().reset_posits();
+
+                // todo: Use the inplace move.
+                match active_mol_type {
+                    MolType::Ligand => *redraw_lig = true,
+                    MolType::NucleicAcid => *redraw_na = true,
+                    MolType::Lipid => *redraw_lipid = true,
+                    _ => unimplemented!(),
+                }
+            }
+        }
+    });
+}
+
 pub(in crate::ui) fn sidebar(
     state: &mut State,
     scene: &mut Scene,
@@ -225,15 +349,16 @@ pub(in crate::ui) fn sidebar(
     redraw_lipid: &mut bool,
     redraw_na: &mut bool,
     engine_updates: &mut EngineUpdates,
-    ctx: &Context, 
+    ctx: &Context,
 ) {
     let out = egui::SidePanel::left("sidebar")
         .resizable(true) // let user drag the width
+        .default_width(140.0)
         .width_range(60.0..=420.0)
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Mols");
+            ui.label("Molecules opened");
 
+            ui.horizontal(|ui| {
                 let color_open_tools = if state.peptide.is_none() && state.ligands.is_empty() {
                     COLOR_ACTION
                 } else {
@@ -257,50 +382,13 @@ pub(in crate::ui) fn sidebar(
                     open_tools(state, ui);
                 }
 
-                // todo: Put back if your "Save" button below isn't easy to get working for peptides.
-
-                // if let Some(mol) = &state.peptide {
-                //     // let color = if state.to_save.last_peptide_opened.is_none() {
-                //     //     COLOR_ATTENTION
-                //     // } else {
-                //     //     Color32::GRAY
-                //     // };
-                //     // todo: Put a form of this back.
-                //     let color = Color32::GRAY;
-                //     if ui.button(RichText::new("Save").color(color)).clicked() {
-                //         let filename = {
-                //             let extension = "cif";
-                //
-                //             let name = if mol.common.ident.is_empty() {
-                //                 "molecule".to_string()
-                //             } else {
-                //                 mol.common.ident.clone()
-                //             };
-                //             format!("{name}.{extension}")
-                //         };
-                //
-                //         state.volatile.dialogs.save.config_mut().default_file_name =
-                //             filename.to_string();
-                //         state.volatile.dialogs.save.save_file();
-                //     }
-                // }
-
                 let mut mol_to_save = None; // avoids dbl-borrow.
                 if let Some(mol) = state.active_mol() {
-                    // Highlight the button if we haven't saved this to file, e.g. if opened from online.
-                    // let color = if state.to_save.last_ligand_opened.is_none() {
-                    //     COLOR_ATTENTION
-                    // } else {
-                    //     Color32::GRAY
-                    // };
-
                     let color = Color32::GRAY;
 
                     if ui
                         .button(RichText::new("Save").color(color))
-                        .on_hover_text(
-                            "Save the active molecule to a file.",
-                        )
+                        .on_hover_text("Save the active molecule to a file.")
                         .clicked()
                     {
                         mol_to_save = Some(mol.common().clone());
@@ -313,7 +401,21 @@ pub(in crate::ui) fn sidebar(
                 }
             });
 
+            ui.add_space(ROW_SPACING / 2.);
+
+            manip_toolbar(
+                state,
+                scene,
+                redraw_pep,
+                redraw_lig,
+                redraw_lipid,
+                redraw_na,
+                ui,
+            );
+
+            ui.add_space(ROW_SPACING / 2.);
             ui.separator();
+            ui.add_space(ROW_SPACING / 2.);
 
             // todo: Function or macro to reduce this DRY.
             mol_picker(

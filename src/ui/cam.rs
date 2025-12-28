@@ -5,6 +5,7 @@ use lin_alg::f32::Vec3;
 use crate::{
     Selection, State, cam_misc,
     cam_misc::{cam_look_at_outside, move_cam_to_sel, reset_camera},
+    molecule::MoleculeCommon,
     render::set_flashlight,
     ui::{
         COL_SPACING, COLOR_HIGHLIGHT, get_snap_name,
@@ -170,20 +171,20 @@ pub(in crate::ui) fn cam_controls(
                     }
                 }
 
-                if state.volatile.active_mol.is_some() {
-                    if ui
-                        .button(RichText::new("Cam to mol").color(COLOR_HIGHLIGHT))
-                        .on_hover_text("Move camera near active molecule, looking at it.")
-                        .clicked()
-                    {
-                        let pep_center = match &state.peptide {
-                            Some(mol) => mol.center,
-                            None => lin_alg::f64::Vec3::new_zero(),
-                        };
-                        // Setting mol center to 0 if no mol.
-                        move_cam_to_active_mol(state, scene, pep_center, engine_updates)
-                    }
-                }
+                // if state.volatile.active_mol.is_some() {
+                //     if ui
+                //         .button(RichText::new("Cam to mol").color(COLOR_HIGHLIGHT))
+                //         .on_hover_text("Move camera near active molecule, looking at it.")
+                //         .clicked()
+                //     {
+                //         let pep_center = match &state.peptide {
+                //             Some(mol) => mol.center,
+                //             None => lin_alg::f64::Vec3::new_zero(),
+                //         };
+                //         // Setting mol center to 0 if no mol.
+                //         move_cam_to_active_mol(state, scene, pep_center, engine_updates)
+                //     }
+                // }
 
                 ui.add_space(COL_SPACING);
 
@@ -301,18 +302,15 @@ pub(in crate::ui) fn cam_snapshots(
     });
 }
 
-pub fn move_cam_to_active_mol(
-    state: &mut State,
+pub fn move_cam_to_mol(
+    mol: &MoleculeCommon,
+    cam_snapshot: &mut Option<usize>,
     scene: &mut Scene,
     look_to_beyond: lin_alg::f64::Vec3,
     engine_updates: &mut EngineUpdates,
 ) {
-    let Some(mol) = &mut state.active_mol_mut() else {
-        return;
-    };
-
     // todo: Cache centroid.
-    let mol_pos: Vec3 = mol.common().centroid().into();
+    let mol_pos: Vec3 = mol.centroid().into();
     let ctr: Vec3 = look_to_beyond.into();
 
     cam_look_at_outside(
@@ -327,33 +325,31 @@ pub fn move_cam_to_active_mol(
     set_flashlight(scene);
     engine_updates.lighting = true;
 
-    state.ui.cam_snapshot = None;
+    // todo: Address this.
+    // state.ui.cam_snapshot = None;
+    *cam_snapshot = None;
 }
 
-// /// DRY with above. Can be more amenable to the borrow checker in some cases.
-// pub fn move_cam_to_lig2(
-//     // mol: &MoleculeGenericRef,
-//     // cam_snapshot: &mut Option<usize>,
-//     state: &mut State,
-//     scene: &mut Scene,
-//     mol_center: lin_alg::f64::Vec3,
-//     engine_updates: &mut EngineUpdates,
-// ) {
-//     let mol = &state.active_mol().unwrap();
-//     let Some(mol) = &mut state.active_mol_mut() else {
-//         return;
-//     };
-//
-//     // todo: Cache centroid.
-//     let lig_pos: Vec3 = mol.common().centroid().into();
-//     let ctr: Vec3 = mol_center.into();
-//
-//     cam_look_at_outside(&mut scene.camera, lig_pos, ctr);
-//
-//     engine_updates.camera = true;
-//
-//     set_flashlight(scene);
-//     engine_updates.lighting = true;
-//
-//     state.ui.cam_snapshot = None;
-// }
+// There are borrow-error reasons we have this separate wrapper, to prevent a double-borrow on state.
+pub fn move_cam_to_active_mol(
+    state: &mut State,
+    scene: &mut Scene,
+    look_to_beyond: lin_alg::f64::Vec3,
+    engine_updates: &mut EngineUpdates,
+) {
+    // This avoids a double borrow.
+    let mut cam_ss = state.ui.cam_snapshot;
+    let Some(mol) = &mut state.active_mol() else {
+        return;
+    };
+
+    move_cam_to_mol(
+        mol.common(),
+        &mut cam_ss,
+        scene,
+        look_to_beyond,
+        engine_updates,
+    );
+
+    state.ui.cam_snapshot = cam_ss;
+}

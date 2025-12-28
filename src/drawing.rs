@@ -1616,12 +1616,13 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
 
             // We assume only one of near sel, near lig is selectable at a time.
             if ui.show_near_sel_only {
-                let atom_sel = mol.get_sel_atom(&state.ui.selection);
-                if let Some(a) = atom_sel {
+                if let Selection::AtomPeptide(i_sel) = &state.ui.selection {
                     // todo: This will fail after moves and dynamics. You mmust pick the selected atom
                     // todo posit correctly!
 
-                    if (atom_posit - a.posit).magnitude() as f32 > ui.nearby_dist_thresh as f32 {
+                    if (atom_posit - mol.common.atom_posits[*i_sel]).magnitude() as f32
+                        > ui.nearby_dist_thresh as f32
+                    {
                         continue;
                     }
                 }
@@ -1737,10 +1738,13 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         }
 
         if ui.show_near_sel_only {
-            let atom_sel = mol.get_sel_atom(&state.ui.selection);
-            if let Some(a) = atom_sel {
+            // let atom_sel = mol.get_sel_atom(&state.ui.selection);
+            // if let Some(a) = atom_sel {
+            if let Selection::AtomPeptide(i_sel) = &state.ui.selection {
                 // todo: See note above: You must get teh selected atom posit correctly.
-                if (atom_0_posit - a.posit).magnitude() as f32 > ui.nearby_dist_thresh as f32 {
+                if (atom_0_posit - mol.common.atom_posits[*i_sel]).magnitude() as f32
+                    > ui.nearby_dist_thresh as f32
+                {
                     continue;
                 }
             }
@@ -1799,8 +1803,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             &hydrogen_is,
         );
         let neighbor_posit = match neighbor_i {
-            Some((i, p1)) => (mol.common.atoms[i].posit.into(), p1),
-            None => (mol.common.atoms[0].posit.into(), false),
+            // Some((i, p1)) => (mol.common.atoms[i].posit.into(), p1),
+            // None => (mol.common.atoms[0].posit.into(), false),
+            Some((i, p1)) => (mol.common.atom_posits[i].into(), p1),
+            None => (mol.common.atom_posits[0].into(), false),
         };
 
         let dim_peptide_0 =
@@ -1931,7 +1937,8 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             if ui.show_near_sel_only {
                 let atom_sel = mol.get_sel_atom(&state.ui.selection);
                 if let Some(a) = atom_sel
-                    && (atom_donor.posit - a.posit).magnitude() as f32
+                    // && (atom_donor.posit - a.posit).magnitude() as f32
+                    && (mol.common.atom_posits[bond.donor] - a.posit).magnitude() as f32
                         > ui.nearby_dist_thresh as f32
                 {
                     continue;
@@ -1940,7 +1947,8 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             if let Some(mol_) = state.active_mol() {
                 if ui.show_near_lig_only {
                     let atom_sel = mol_.common().atom_posits[0];
-                    if (atom_donor.posit - atom_sel).magnitude() as f32
+                    // if (atom_donor.posit - atom_sel).magnitude() as f32
+                    if (mol.common.atom_posits[bond.donor] - atom_sel).magnitude() as f32
                         > ui.nearby_dist_thresh as f32
                     {
                         continue;
@@ -1973,8 +1981,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             }
 
             entities.extend(bond_entities(
-                atom_donor.posit.into(),
-                atom_acceptor.posit.into(),
+                // atom_donor.posit.into(),
+                mol.common.atom_posits[bond.donor].into(),
+                mol.common.atom_posits[bond.acceptor].into(),
+                // atom_acceptor.posit.into(),
                 COLOR_H_BOND,
                 COLOR_H_BOND,
                 BondType::Dummy,

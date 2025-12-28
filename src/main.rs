@@ -762,7 +762,7 @@ impl State {
                     } else {
                         None
                     }
-                },
+                }
                 MolType::Ligand => {
                     if i < self.ligands.len() {
                         Some(MolGenericRef::Ligand(&self.ligands[i]))
