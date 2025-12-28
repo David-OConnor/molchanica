@@ -37,7 +37,7 @@ use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use rayon::prelude::*;
 
 use crate::{
-    Selection,
+    Selection, StateUi,
     bond_inference::create_hydrogen_bonds,
     drawing::EntityClass,
     lipid::MoleculeLipid,
@@ -509,6 +509,8 @@ pub struct MoleculePeptide {
     pub experimental_method: Option<ExperimentalMethod>,
     /// E.g: ["A", "B"]. Inferred from atoms.
     pub alternate_conformations: Option<Vec<String>>,
+    /// Index. Ones present are displayed. Used for various UI filers like "near lig only", or "nearby sel only"
+    pub atoms_filtered_to_disp: Option<Vec<usize>>,
     // pub ff_params: Option<ForceFieldParamsIndexed>,
 }
 

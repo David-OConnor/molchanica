@@ -16,7 +16,10 @@ use na_seq::Element;
 use crate::{
     OperatingMode, ResColoring, Selection, State, StateUi, ViewSelLevel,
     mol_manip::ManipMode,
-    molecule::{Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, Residue, aa_color},
+    molecule::{
+        Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculeCommon,
+        MoleculePeptide, Residue, aa_color,
+    },
     reflection::DensityPt,
     render::{
         ATOM_SHININESS, BACKGROUND_COLOR, BALL_RADIUS_WATER_H, BALL_RADIUS_WATER_O,
@@ -24,6 +27,7 @@ use crate::{
         MESH_DENSITY_SURFACE, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, MESH_SPHERE_HIGHRES,
         MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES, WATER_BOND_THICKNESS, WATER_OPACITY,
     },
+    sa_surface::make_sas_mesh,
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center, res_color},
     viridis_lut::VIRIDIS,
 };
@@ -1405,21 +1409,137 @@ pub fn draw_secondary_structure(update_mesh: &mut bool, mesh_created: bool, scen
     scene.entities.push(ent);
 }
 
-// /// Helper
-// fn get_atom_posit<'a>(
-//     mode: PeptideAtomPosits,
-//     posits: Option<&'a Vec<Vec3F64>>,
-//     i: usize,
-//     atom: &'a Atom,
-// ) -> &'a Vec3F64 {
-//     match mode {
-//         PeptideAtomPosits::Original => &atom.posit,
-//         PeptideAtomPosits::Dynamics => match posits {
-//             Some(p) => &p[i],
-//             None => &atom.posit,
-//         },
-//     }
-// }
+// todo: Move this A/R. Util? Molecule? Method on peptide?
+/// Filter by distance to various items. Has some computational complexity.
+/// Indexes in the result are filtered out. So, an empty Vec means no restrictions.
+// pub fn filter_pep_atoms_by_dist(mol: &MoleculeCommon, ui: &StateUi, lig: Option<&MoleculeCommon>) -> Vec<usize> {
+// pub fn filter_pep_atoms_by_dist<'a>(mol: &MoleculeCommon, ui: &StateUi, active_mol: Option<MolGenericRef<'a>>) -> Vec<usize> {
+pub fn filter_pep_atoms_by_dist<'a>(
+    pep: &MoleculePeptide,
+    ui: &StateUi,
+    active_mol: Option<MolGenericRef<'a>>,
+) -> Vec<usize> {
+    let mut result = Vec::new();
+
+    let mol = &pep.common;
+
+    // Speed up computations by using magnitude squared.
+    let nearby_dist_thresh_sq = ui.nearby_dist_thresh.pow(2) as f32;
+
+    // todo: Experimenting. I'm not sure why we need this, but the results don't filter enough otherwise.
+    let nearby_dist_thresh_sfc_sq = (ui.nearby_dist_thresh / 2).pow(2) as f32;
+
+    if !ui.show_near_lig_only && !ui.show_near_sel_only && !ui.show_near_sfc_only {
+        return Vec::new();
+    }
+
+    let sfc_pts = if ui.show_near_sfc_only {
+        // Higher means faster, but cruder.
+        const NEAR_SFC_MESH_PRECISION: f32 = 5.;
+
+        let atoms: Vec<(Vec3, _)> = mol
+            .atoms
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| !a.hetero)
+            .map(|(i, a)| (mol.atom_posits[i].into(), a.element.vdw_radius()))
+            .collect();
+
+        // todo: DOn't create this each drawing! Cache the atoms near the sfc pre-computed.
+        let mesh = make_sas_mesh(&atoms, NEAR_SFC_MESH_PRECISION);
+        mesh.vertices
+            .iter()
+            .map(|v| Vec3::from_slice(&v.position).unwrap())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // An optimization: Measure dist^2 once per residue, instead of per atom. This, for better or worse,
+    // shows complete residues only.
+    if ui.show_near_sfc_only {
+        for res in &pep.residues {
+            if res.atoms.is_empty() {
+                break;
+            }
+
+            // Arbitrary; pick two atoms on either SN end for variety. If either is close to the surface,
+            // pass all atoms in the residue.
+            let res_atom_0 = &res.atoms[0];
+            let res_atom_1 = res.atoms.last().unwrap_or(&res.atoms[0]);
+
+            let p_atom_0: Vec3 = mol.atom_posits[*res_atom_0].into();
+            let p_atom_1: Vec3 = mol.atom_posits[*res_atom_1].into();
+
+            // Check if near any surface point.
+            let mut passed = false;
+            for pt in &sfc_pts {
+                for posit in [p_atom_0, p_atom_1] {
+                    if (*pt - posit).magnitude_squared() < nearby_dist_thresh_sfc_sq {
+                        passed = true;
+                        break;
+                    }
+                }
+            }
+
+            if !passed {
+                for i_atom in &res.atoms {
+                    result.push(*i_atom);
+                }
+                continue;
+            }
+        }
+    }
+
+    for (i_atom, atom) in mol.atoms.iter().enumerate() {
+        let posit = mol.atom_posits[i_atom];
+
+        if ui.show_near_sel_only {
+            if let Selection::AtomPeptide(i_sel) = &ui.selection {
+                // todo: This will fail after moves and dynamics. You must pick the selected atom
+                // todo posit correctly!
+
+                if (posit - mol.atom_posits[*i_sel]).magnitude_squared() as f32
+                    > nearby_dist_thresh_sq
+                {
+                    result.push(i_atom);
+                    continue;
+                }
+            }
+        }
+
+        if ui.show_near_lig_only
+            && let Some(ref lig) = active_mol
+        {
+            let atom_sel = lig.common().atom_posits[0]; // todo: Centroid?
+
+            if (posit - atom_sel).magnitude_squared() as f32 > nearby_dist_thresh_sq {
+                result.push(i_atom);
+                continue;
+            }
+        }
+
+        // Per-atom path on this; we instead use the above res-based algo to improve speed.
+        // if ui.show_near_sfc_only {
+        //     let p_atom: Vec3 = posit.into();
+        //
+        //     // Check if near any surface point.
+        //     let mut passed = false;
+        //     for pt in &sfc_pts {
+        //         if (*pt - p_atom).magnitude_squared() < nearby_dist_thresh_sfc_sq {
+        //             passed = true;
+        //             break;
+        //         }
+        //     }
+        //     if !passed {
+        //         result.push(i_atom);
+        //         continue;
+        //     }
+        // }
+    }
+
+    result
+}
 
 /// Refreshes entities with the model passed.
 /// Sensitive to various view configuration parameters.
@@ -1453,6 +1573,8 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
     if !mol.common.visible {
         return;
     }
+
+    let filtered_out_by_dist = filter_pep_atoms_by_dist(&mol, &state.ui, state.active_mol());
 
     let start_i = scene.entities.len();
     let mut entities = Vec::new();
@@ -1558,13 +1680,6 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         MoleculeView::BallAndStick | MoleculeView::SpaceFill
     ) {
         for (i_atom, atom) in mol.common.atoms.iter().enumerate() {
-            // let atom_posit = get_atom_posit(
-            //     state.ui.peptide_atom_posits,
-            //     Some(&mol.common.atom_posits),
-            //     i,
-            //     atom,
-            // );
-
             if atom.hetero {
                 let mut water = false;
                 if let Some(role) = atom.role {
@@ -1591,6 +1706,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 continue;
             }
 
+            if filtered_out_by_dist.contains(&i_atom) {
+                continue;
+            }
+
             if let Some(role) = atom.role {
                 if state.ui.visibility.hide_sidechains
                     || state.ui.mol_view == MoleculeView::Backbone
@@ -1614,27 +1733,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
 
             let atom_posit = mol.common.atom_posits[i_atom];
 
-            // We assume only one of near sel, near lig is selectable at a time.
-            if ui.show_near_sel_only {
-                if let Selection::AtomPeptide(i_sel) = &state.ui.selection {
-                    // todo: This will fail after moves and dynamics. You mmust pick the selected atom
-                    // todo posit correctly!
-
-                    if (atom_posit - mol.common.atom_posits[*i_sel]).magnitude() as f32
-                        > ui.nearby_dist_thresh as f32
-                    {
-                        continue;
-                    }
-                }
-            }
-            if let Some(mol_) = state.active_mol() {
-                if ui.show_near_lig_only {
-                    let atom_sel = mol_.common().atom_posits[0];
-                    if (atom_posit - atom_sel).magnitude() as f32 > ui.nearby_dist_thresh as f32 {
-                        continue;
-                    }
-                }
-            }
+            // todo: Use your new peptide field for filtered, instead of computing these each time.
 
             let (mut radius, mesh) = match ui.mol_view {
                 MoleculeView::SpaceFill => (atom.element.vdw_radius(), MESH_SPACEFILL_SPHERE),
@@ -1652,19 +1751,40 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
 
             let dim_peptide = state.ui.visibility.dim_peptide && !atom.hetero;
 
-            let mut color_atom = atom_color(
-                atom,
-                0,
-                i_atom,
-                &mol.residues,
-                aa_count,
-                sel,
-                state.ui.view_sel_level,
-                dim_peptide,
-                state.ui.res_coloring,
-                state.ui.atom_color_by_charge,
-                MolType::Peptide,
-            );
+            let mut color_atom = (0., 0., 0.);
+            let mut manip_active = false;
+
+            match state.volatile.mol_manip.mode {
+                ManipMode::Move((mol_type, i)) => {
+                    if mol_type == MolType::Peptide && i == mol_i {
+                        color_atom = COLOR_MOL_MOVING;
+                        manip_active = true;
+                    }
+                }
+                ManipMode::Rotate((mol_type, i)) => {
+                    if mol_type == MolType::Peptide && i == mol_i {
+                        color_atom = COLOR_MOL_ROTATE;
+                        manip_active = true;
+                    }
+                }
+                ManipMode::None => (),
+            }
+
+            if !manip_active {
+                color_atom = atom_color(
+                    atom,
+                    0,
+                    i_atom,
+                    &mol.residues,
+                    aa_count,
+                    sel,
+                    state.ui.view_sel_level,
+                    dim_peptide,
+                    state.ui.res_coloring,
+                    state.ui.atom_color_by_charge,
+                    MolType::Peptide,
+                );
+            }
 
             if atom.hetero && color_atom != COLOR_SELECTED {
                 color_atom = blend_color(color_atom, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
@@ -1737,25 +1857,8 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             continue;
         }
 
-        if ui.show_near_sel_only {
-            // let atom_sel = mol.get_sel_atom(&state.ui.selection);
-            // if let Some(a) = atom_sel {
-            if let Selection::AtomPeptide(i_sel) = &state.ui.selection {
-                // todo: See note above: You must get teh selected atom posit correctly.
-                if (atom_0_posit - mol.common.atom_posits[*i_sel]).magnitude() as f32
-                    > ui.nearby_dist_thresh as f32
-                {
-                    continue;
-                }
-            }
-        }
-        if let Some(mol_) = state.active_mol() {
-            if ui.show_near_lig_only {
-                let atom_sel = mol_.common().atom_posits[0];
-                if (atom_0_posit - atom_sel).magnitude() as f32 > ui.nearby_dist_thresh as f32 {
-                    continue;
-                }
-            }
+        if filtered_out_by_dist.contains(&bond.atom_0) {
+            continue;
         }
 
         let mut chain_not_sel = false;
@@ -1814,32 +1917,57 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         let dim_peptide_1 =
             state.ui.visibility.dim_peptide && !mol.common.atoms[bond.atom_1].hetero;
 
-        let mut color_0 = atom_color(
-            atom_0,
-            0,
-            bond.atom_0,
-            &mol.residues,
-            aa_count,
-            sel,
-            state.ui.view_sel_level,
-            dim_peptide_0,
-            state.ui.res_coloring,
-            state.ui.atom_color_by_charge,
-            MolType::Peptide,
-        );
-        let mut color_1 = atom_color(
-            atom_1,
-            0,
-            bond.atom_1,
-            &mol.residues,
-            aa_count,
-            sel,
-            state.ui.view_sel_level,
-            dim_peptide_1,
-            state.ui.res_coloring,
-            state.ui.atom_color_by_charge,
-            MolType::Peptide,
-        );
+        let mut color_0 = (0., 0., 0.);
+        let mut color_1 = (0., 0., 0.);
+
+        let mut manip_active = false;
+
+        match state.volatile.mol_manip.mode {
+            ManipMode::Move((mol_type, i)) => {
+                if mol_type == MolType::Peptide && i == mol_i {
+                    color_0 = COLOR_MOL_MOVING;
+                    color_1 = COLOR_MOL_MOVING;
+                    manip_active = true;
+                }
+            }
+            ManipMode::Rotate((mol_type, i)) => {
+                if mol_type == MolType::Peptide && i == mol_i {
+                    color_0 = COLOR_MOL_ROTATE;
+                    color_1 = COLOR_MOL_ROTATE;
+                    manip_active = true;
+                }
+            }
+            ManipMode::None => (),
+        }
+
+        if !manip_active {
+            color_0 = atom_color(
+                atom_0,
+                0,
+                bond.atom_0,
+                &mol.residues,
+                aa_count,
+                sel,
+                state.ui.view_sel_level,
+                dim_peptide_0,
+                state.ui.res_coloring,
+                state.ui.atom_color_by_charge,
+                MolType::Peptide,
+            );
+            color_1 = atom_color(
+                atom_1,
+                0,
+                bond.atom_1,
+                &mol.residues,
+                aa_count,
+                sel,
+                state.ui.view_sel_level,
+                dim_peptide_1,
+                state.ui.res_coloring,
+                state.ui.atom_color_by_charge,
+                MolType::Peptide,
+            );
+        }
 
         if let Selection::BondPeptide(bond_i) = ui.selection {
             if bond_i == i_bond {
@@ -1933,27 +2061,11 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 }
             }
 
-            // todo: More DRY with cov bonds
-            if ui.show_near_sel_only {
-                let atom_sel = mol.get_sel_atom(&state.ui.selection);
-                if let Some(a) = atom_sel
-                    // && (atom_donor.posit - a.posit).magnitude() as f32
-                    && (mol.common.atom_posits[bond.donor] - a.posit).magnitude() as f32
-                        > ui.nearby_dist_thresh as f32
-                {
-                    continue;
-                }
-            }
-            if let Some(mol_) = state.active_mol() {
-                if ui.show_near_lig_only {
-                    let atom_sel = mol_.common().atom_posits[0];
-                    // if (atom_donor.posit - atom_sel).magnitude() as f32
-                    if (mol.common.atom_posits[bond.donor] - atom_sel).magnitude() as f32
-                        > ui.nearby_dist_thresh as f32
-                    {
-                        continue;
-                    }
-                }
+            // todo: Should we pre-filter these atoms-to-disp by index? Would be faster, but
+            // todo I don't wish to expend the effort on that here.
+
+            if filtered_out_by_dist.contains(&bond.donor) {
+                continue;
             }
 
             let mut chain_not_sel = false;

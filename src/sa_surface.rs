@@ -21,40 +21,32 @@ const SOLVENT_RAD: f32 = 1.4; // water probe
 /// Create a mesh of the solvent-accessible surface. We do this using the ball-rolling method
 /// based on Van-der-Waals radius, then use the Marching Cubes algorithm to generate an iso mesh with
 /// iso value = 0.
-pub fn make_sas_mesh(atoms: &[&Atom], mut precision: f32) -> Mesh {
+///
+/// Atoms is (posit, vdw radius).
+pub fn make_sas_mesh(atoms: &[(Vec3, f32)], precision: f32) -> Mesh {
     if atoms.is_empty() {
         return Mesh::default();
-    }
-
-    // todo: Experimenting avoiding problems on large mols. We have problems with both surface
-    // todo: And dots; this mitigates surface. The dots one is re Instance Buffer max size;
-    // todo: This one addresses Vertex buffer being maximum size.
-    if atoms.len() > 10_000 {
-        precision = 0.6;
-    } else if atoms.len() > 20_000 {
-        precision = 0.7;
-    } else if atoms.len() > 40_000 {
-        precision = 0.75;
     }
 
     // Bounding box and grid
     let mut bb_min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
     let mut bb_max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
     let mut r_max: f32 = 0.0;
-    for a in atoms {
-        let r = a.element.vdw_radius() + SOLVENT_RAD;
+
+    for (posit, vdw_radius) in atoms {
+        let r = vdw_radius + SOLVENT_RAD;
         r_max = r_max.max(r);
 
         bb_min = Vec3::new(
-            bb_min.x.min(a.posit.x as f32),
-            bb_min.y.min(a.posit.y as f32),
-            bb_min.z.min(a.posit.z as f32),
+            bb_min.x.min(posit.x),
+            bb_min.y.min(posit.y),
+            bb_min.z.min(posit.z),
         );
 
         bb_max = Vec3::new(
-            bb_max.x.max(a.posit.x as f32),
-            bb_max.y.max(a.posit.y as f32),
-            bb_max.z.max(a.posit.z as f32),
+            bb_max.x.max(posit.x),
+            bb_max.y.max(posit.y),
+            bb_max.z.max(posit.z),
         );
     }
     bb_min -= Vec3::splat(r_max + precision);
@@ -78,13 +70,12 @@ pub fn make_sas_mesh(atoms: &[&Atom], mut precision: f32) -> Mesh {
     let idx = |x: usize, y: usize, z: usize| -> usize { (z * grid_dim.1 + y) * grid_dim.0 + x };
 
     // Fill signed-squared-distance field
-    for a in atoms {
-        let center: Vec3 = a.posit.into();
-        let rad = a.element.vdw_radius() + SOLVENT_RAD;
+    for (center, vdw_radius) in atoms {
+        let rad = *vdw_radius + SOLVENT_RAD;
         let rad2 = rad * rad;
 
-        let lo = ((center - Vec3::splat(rad)) - bb_min) / precision;
-        let hi = ((center + Vec3::splat(rad)) - bb_min) / precision;
+        let lo = ((*center - Vec3::splat(rad)) - bb_min) / precision;
+        let hi = ((*center + Vec3::splat(rad)) - bb_min) / precision;
 
         let (xi0, yi0, zi0) = (
             lo.x.floor().max(0.0) as usize,
@@ -101,7 +92,7 @@ pub fn make_sas_mesh(atoms: &[&Atom], mut precision: f32) -> Mesh {
             for y in yi0..=yi1 {
                 for x in xi0..=xi1 {
                     let p = bb_min + Vec3::new(x as f32, y as f32, z as f32) * precision;
-                    let d2 = (p - center).magnitude_squared();
+                    let d2 = (p - *center).magnitude_squared();
                     let v = d2 - rad2;
                     let f = &mut field[idx(x, y, z)];
                     if v < *f {

@@ -795,10 +795,32 @@ pub fn handle_scene_flags(
         state.volatile.flags.sas_mesh_created = true;
 
         if let Some(mol) = &state.peptide {
-            let atoms: Vec<&_> = mol.common.atoms.iter().filter(|a| !a.hetero).collect();
+            let atoms: Vec<(Vec3F32, _)> = mol
+                .common
+                .atoms
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| !a.hetero)
+                .map(|(i, a)| (mol.common.atom_posits[i].into(), a.element.vdw_radius()))
+                .collect();
 
-            scene.meshes[MESH_SOLVENT_SURFACE] =
-                make_sas_mesh(&atoms, state.to_save.sa_surface_precision);
+            scene.meshes[MESH_SOLVENT_SURFACE] = {
+                let mut precision = state.to_save.sa_surface_precision;
+
+                // todo: Experimenting avoiding problems on large mols. We have problems with both surface
+                // todo: And dots; this mitigates surface. The dots one is re Instance Buffer max size;
+                // todo: This one addresses Vertex buffer being maximum size.
+                if atoms.len() > 10_000 {
+                    precision = 0.6;
+                } else if atoms.len() > 20_000 {
+                    precision = 0.7;
+                } else if atoms.len() > 40_000 {
+                    precision = 0.75;
+                }
+
+                make_sas_mesh(&atoms, precision)
+            };
+
             sa_surface::update_sas_mesh_coloring(mol, &state.ui, &mut scene.meshes, engine_updates);
 
             // We draw the molecule here
@@ -1007,7 +1029,7 @@ pub fn find_neighbor_posit(
 // todo: Maybe only invalidate indices that come before?
 /// We use this to invalidate indices when removing entities. Only run this when entities are removed.
 pub fn clear_mol_entity_indices(state: &mut State, exempt: Option<MolType>) {
-    println!("Clearing indices");
+    // println!("Clearing indices");
     if let Some(pep) = &mut state.peptide {
         let mut skip = false;
         if let Some(e) = exempt {
