@@ -923,14 +923,13 @@ pub fn make_egui_color(color: Color) -> Color32 {
 /// use a flexible conformation, or match partly.
 ///
 /// Return a center suitable for docking.
-// pub fn move_mol_to_res(lig: &mut MoleculeSmall, mol: &MoleculePeptide, res: &Residue) -> Vec3 {
 pub fn move_mol_to_res(
     mol: &mut MoGenericRefMut,
     peptide: &MoleculePeptide,
     res: &Residue,
 ) -> Vec3 {
     // todo: Pick center-of-mass atom, or better yet, match it to the anchor atom.
-    let posit = peptide.common.atoms[res.atoms[0]].posit;
+    let posit = peptide.common.atom_posits[res.atoms[0]];
 
     // todo: YOu need to add hydrogens to hetero atoms.
 
@@ -948,7 +947,7 @@ pub fn move_mol_to_res(
             }
 
             if atom_res.type_in_res == *lig_type_in_res {
-                mol.common_mut().atom_posits[lig_i] = atom_res.posit;
+                mol.common_mut().atom_posits[lig_i] = peptide.common.atom_posits[*i];
                 found = true;
                 break;
             }

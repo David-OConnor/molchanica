@@ -53,7 +53,7 @@ pub fn handle_mol_manip_in_plane(
                             println!("Error: No peptide in state for mol manip");
                             return;
                         }
-                    },
+                    }
                     MolType::Ligand => &mut state.ligands[mol_i].common,
                     MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
                     MolType::Lipid => &mut state.lipids[mol_i].common,
@@ -143,7 +143,7 @@ pub fn handle_mol_manip_in_plane(
                             println!("Error: No peptide in state for mol manip");
                             return;
                         }
-                    },
+                    }
                     MolType::Ligand => &mut state.ligands[mol_i].common,
                     MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
                     MolType::Lipid => &mut state.lipids[mol_i].common,
@@ -222,7 +222,7 @@ pub fn handle_mol_manip_in_out(
                             println!("Error: No peptide in state for mol manip");
                             return;
                         }
-                    },
+                    }
                     MolType::Ligand => {
                         if mol_i >= state.ligands.len() {
                             println!("Error: Index out of bounds on ligand for mol manip");
@@ -345,7 +345,7 @@ pub fn handle_mol_manip_in_out(
                         println!("Error: No peptide in state for mol manip");
                         return;
                     }
-                },
+                }
                 MolType::Ligand => {
                     if mol_i >= state.ligands.len() {
                         println!("Error: Index out of bounds on ligand for mol manip");

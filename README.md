@@ -204,7 +204,11 @@ See below for a reference.
 
 - **Ctrl + scroll**: Change the fog distance. (hide distant atoms)
 
-- **Delete**: Close the active molecule
+- **Delete**: In the primary mode, close the active molecule. In the molecule editor, this deletes the selected atom or bond.
+
+- **Enter**: Move the camera to the selected atom, bond, or residue.
+
+- **Tab**: In the molecule editor, adds an atom.
 
 Note: The molecule editor has a different set of hot keys; see its tooltips for details.
 
