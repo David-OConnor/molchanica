@@ -104,6 +104,7 @@ fn nts_from_aa(aa: AminoAcid) -> [Nucleotide; 3] {
 /// Represents a nucleic acid as a collection of atoms and bonds. Omits mol-generic fields.
 #[derive(Debug, Default, Clone)]
 pub struct MoleculeNucleicAcid {
+    pub na_type: NucleicAcidType,
     pub common: MoleculeCommon,
     pub residues: Vec<Residue>,
     pub seq: Vec<Nucleotide>,
@@ -528,6 +529,7 @@ impl MoleculeNucleicAcid {
         };
 
         Ok(Self {
+            na_type,
             common,
             residues,
             seq: seq.to_vec(),

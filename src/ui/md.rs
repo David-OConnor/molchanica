@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use dynamics::{
     ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig,
     SimBoxInit, TAU_TEMP_DEFAULT, snapshot::Snapshot,
@@ -10,12 +12,12 @@ use crate::{
     State,
     drawing::EntityClass,
     label,
-    md::{launch_md, post_run_cleanup},
+    md::{launch_md, launch_md_energy_computation, post_run_cleanup},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE,
         cam::move_cam_to_active_mol, flag_btn, misc, num_field,
     },
-    util::{clear_cli_out, handle_success},
+    util::{clear_cli_out, handle_err, handle_success},
 };
 
 pub fn md_setup(
@@ -95,6 +97,7 @@ pub fn md_setup(
                 .button(RichText::new("Run MD").color(COLOR_ACTION))
                 .on_hover_text("Run a molecular dynamics simulation on all molecules selected.")
                 .clicked() {
+
                 clear_cli_out(&mut state.ui); // todo: Not working; not loaded until next frame.
                 let mut ready_to_run = true;
 
@@ -124,6 +127,36 @@ pub fn md_setup(
                 }
             }
 
+            // todo: WIP
+            if ui
+                .button(RichText::new("Compute E").color(COLOR_ACTION))
+                .on_hover_text("Compute and display instantaneous energy of selected molecules.")
+                .clicked() {
+
+                // todo: DRY with teh run_md button above. C+P
+                
+                clear_cli_out(&mut state.ui); // todo: Not working; not loaded until next frame.
+                let mut ready_to_run = true;
+
+                // Check that we have FF params and mol-specific parameters.
+                for lig in &state.ligands {
+                    if !lig.common.selected_for_md {
+                        continue;
+                    }
+
+                    if !lig.ff_params_loaded || !lig.frcmod_loaded {
+                        state.ui.popup.show_get_geostd = true;
+                        ready_to_run = false;
+                    }
+                }
+
+                if ready_to_run {
+                    let result = launch_md_energy_computation(state);
+                    
+                    println!("E result: {:?}", result);
+                }
+            }
+
             if state.volatile.md_local.running {
                 if ui
                     .button(RichText::new("Abort").color(Color32::LIGHT_RED))
@@ -143,6 +176,22 @@ pub fn md_setup(
                         ))
                             .color(COLOR_HIGHLIGHT),
                     );
+                }
+            }
+
+            if let Some(md) = &state.mol_dynamics && !md.snapshots.is_empty() {
+                if ui
+                    .button(RichText::new("Save traj").color(COLOR_ACTION))
+                    .on_hover_text("Save the computed MD trajectory to a DCD file.")
+                    .clicked() {
+
+                    let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
+                    // todo: Use the file picker!
+                    let path = Path::new("traj.dcd");
+
+                    if md.save_snapshots_to_file(path, ratio).is_err() {
+                        handle_err(&mut state.ui, format!("Error saving the trajectory: {:?}", path));
+                    }
                 }
             }
 
@@ -344,6 +393,13 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
 
     ui.label("PE: ");
     label!(ui, format!("{:.2}", snap.energy_potential), Color32::GOLD);
+
+    ui.label("PE NB: ");
+    label!(
+        ui,
+        format!("{:.2}", snap.energy_potential_nonbonded),
+        Color32::GOLD
+    );
 
     ui.label("PE/atom: ");
     // todo: Don't continuously run this!

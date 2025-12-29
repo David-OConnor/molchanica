@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    io,
     path::Path,
     time::Instant,
 };
@@ -11,7 +12,7 @@ use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use cudarc::driver::HostSlice;
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
-    WaterInitTemplate, params::FfParamSet, snapshot::Snapshot,
+    WaterInitTemplate, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
@@ -22,7 +23,7 @@ use crate::{
     lipid::MoleculeLipid,
     mol_lig::MoleculeSmall,
     molecule::{MoleculeCommon, MoleculePeptide},
-    nucleic_acid::MoleculeNucleicAcid,
+    nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
     util::{handle_err, handle_success},
 };
 
@@ -194,7 +195,6 @@ pub fn build_dynamics(
 ) -> Result<MdState, ParamError> {
     println!("Setting up dynamics...");
 
-    // if ligs.is_empty() && lipids.is_empty() {
     if mols_in.is_empty() {
         static_peptide = false;
         peptide_only_near_lig = None;
@@ -206,6 +206,7 @@ pub fn build_dynamics(
         if !mol.selected_for_md {
             continue;
         }
+
         let atoms_gen: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
         let bonds_gen: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
 
@@ -259,26 +260,6 @@ pub fn build_dynamics(
             mol_specific_params: None,
         });
     }
-
-    // findings: (2025-12-04)
-    // Temp with only this force enabled, no water, 6k steps at dt = 0.001,
-    // flex Hydrogens
-    // - Bonded: 2-3 thousand K
-    // - LJ only; no bonded: Temp stays under control, but not useful; whole thing expands
-    // - LJ + bonded: 600k. (Adding LJ brings down the KE?
-    // - Coulomb + bonded: Explodes (Probably due to coulomb attraction singularity)
-    // - Coulomb + bonded + LJ: 880.
-    // What this is telling me: Coulomb is potentially causing trouble?
-
-    // - Getting interesting: Wth Coulomb + LJ + Bond stretching only: Stable!
-    // - Adding Valence angle causes an energy increase.
-    // Bond + Dihedral without Angle causes blow up.
-    // - Constrained H with the otherwise stable Coulomb + bond + LJ = increasing E.
-    // todo: Action items: Fix Valence Angle. Fix Constrained H. Fix LR Recip.
-
-    // Adding LR recip to bond + LJ + Coulomb involves a steady E increase.
-
-    // Update: Bonded is good for VV. Need to fix Langevin md, and long range spme
 
     // Uncomment as required for validating individual processes.
     let cfg = MdConfig {
@@ -506,11 +487,13 @@ pub fn launch_md(state: &mut State) {
         .iter()
         .filter(|l| l.common.selected_for_md)
         .collect();
+
     let lipids: Vec<_> = state
         .lipids
         .iter()
         .filter(|l| l.common.selected_for_md)
         .collect();
+
     let nucleic_acids: Vec<_> = state
         .nucleic_acids
         .iter()
@@ -524,12 +507,15 @@ pub fn launch_md(state: &mut State) {
     for m in &lipids {
         mols.push((FfMolType::Lipid, &m.common));
     }
-    // todo: You must specify DNA or RNA here!
     for m in &nucleic_acids {
-        mols.push((FfMolType::Dna, &m.common));
+        let mol_type = match m.na_type {
+            NucleicAcidType::Dna => FfMolType::Dna,
+            NucleicAcidType::Rna => FfMolType::Rna,
+        };
+        mols.push((mol_type, &m.common));
     }
 
-    let mol = match &state.peptide {
+    let peptide = match &state.peptide {
         Some(m) => {
             if m.common.selected_for_md {
                 Some(m)
@@ -549,7 +535,7 @@ pub fn launch_md(state: &mut State) {
     match build_and_run_dynamics(
         &state.dev,
         &mols,
-        mol,
+        peptide,
         &state.ff_param_set,
         &state.mol_specific_params,
         &state.to_save.md_config,
@@ -563,4 +549,126 @@ pub fn launch_md(state: &mut State) {
         }
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }
+}
+
+/// Called directly from the UI;
+pub fn launch_md_energy_computation(state: &mut State) -> Result<Snapshot, ParamError> {
+    // todo: DRY with the primary MD run.
+    let ligs: Vec<_> = state
+        .ligands
+        .iter()
+        .filter(|l| l.common.selected_for_md)
+        .collect();
+
+    let lipids: Vec<_> = state
+        .lipids
+        .iter()
+        .filter(|l| l.common.selected_for_md)
+        .collect();
+
+    let nucleic_acids: Vec<_> = state
+        .nucleic_acids
+        .iter()
+        .filter(|l| l.common.selected_for_md)
+        .collect();
+
+    let mut mols_in = Vec::new();
+    for m in &ligs {
+        mols_in.push((FfMolType::SmallOrganic, &m.common));
+    }
+    for m in &lipids {
+        mols_in.push((FfMolType::Lipid, &m.common));
+    }
+    for m in &nucleic_acids {
+        let mol_type = match m.na_type {
+            NucleicAcidType::Dna => FfMolType::Dna,
+            NucleicAcidType::Rna => FfMolType::Rna,
+        };
+        mols_in.push((mol_type, &m.common));
+    }
+
+    let peptide = match &state.peptide {
+        Some(m) => {
+            if m.common.selected_for_md {
+                Some(m)
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
+        Some(STATIC_ATOM_DIST_THRESH)
+    } else {
+        None
+    };
+
+    // todo: DRY with `build_dynamics`
+
+    let mut mols = Vec::new();
+
+    for (ff_mol_type, mol) in &mols_in {
+        let atoms_gen: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
+        let bonds_gen: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
+
+        let msp = match state.mol_specific_params.get(&mol.ident) {
+            Some(v) => Some(v.clone()),
+            None => {
+                if *ff_mol_type == FfMolType::SmallOrganic {
+                    return Err(ParamError::new(&format!(
+                        "Missing molecule-specific parameters for  {}",
+                        mol.ident
+                    )));
+                }
+                None
+            }
+        };
+
+        mols.push(MolDynamics {
+            ff_mol_type: *ff_mol_type,
+            atoms: atoms_gen,
+            atom_posits: Some(mol.atom_posits.clone()),
+            atom_init_velocities: None,
+            bonds: bonds_gen,
+            adjacency_list: Some(mol.adjacency_list.clone()),
+            static_: false,
+            bonded_only: false,
+            mol_specific_params: msp,
+        });
+    }
+
+    let pep_atom_set = &mut state.volatile.md_peptide_selected;
+    let peptide_only_near_lig = if state.ui.md.peptide_only_near_ligs {
+        Some(STATIC_ATOM_DIST_THRESH)
+    } else {
+        None
+    };
+
+    if let Some(p) = peptide {
+        // We assume hetero atoms are ligands, water etc, and are not part of the protein.
+        // let atoms = filter_peptide_atoms(pep_atom_set, p, ligs, peptide_only_near_lig);
+        let atoms = filter_peptide_atoms(pep_atom_set, p, &mols_in, peptide_only_near_lig);
+        println!(
+            "Peptide atom count: {}. Set count: {}",
+            atoms.len(),
+            pep_atom_set.len()
+        );
+
+        let bonds = create_bonds(&atoms);
+
+        mols.push(MolDynamics {
+            ff_mol_type: FfMolType::Peptide,
+            atoms,
+            atom_posits: None,
+            atom_init_velocities: None,
+            bonds,
+            adjacency_list: None,
+            static_: state.ui.md.peptide_static,
+            bonded_only: false,
+            mol_specific_params: None,
+        });
+    }
+
+    compute_energy_snapshot(&state.dev, &mols, &state.ff_param_set)
 }

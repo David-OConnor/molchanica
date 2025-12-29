@@ -87,6 +87,7 @@ pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
                     energy_kinetic: 0.,
                     energy_potential: 0.,
                     energy_potential_between_mols: Vec::new(),
+                    energy_potential_nonbonded: 0.,
                     hydrogen_bonds: Vec::new(),
                     temperature: 0.,
                     pressure: 0.,
