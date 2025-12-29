@@ -47,6 +47,8 @@ pub fn handle_mol_manip_in_plane(
             let mol = match state.volatile.operating_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
+                        return; // todo temp
+
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
@@ -137,6 +139,8 @@ pub fn handle_mol_manip_in_plane(
             let mol = match state.volatile.operating_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
+                        return; // todo temp
+
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
@@ -216,6 +220,8 @@ pub fn handle_mol_manip_in_out(
             let mol = match state.volatile.operating_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
+                        return; // todo temp
+
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
@@ -339,6 +345,8 @@ pub fn handle_mol_manip_in_out(
             // todo: C+P with slight changes from the mouse-move variant.
             let mol = match mol_type {
                 MolType::Peptide => {
+                    return; // todo temp
+
                     if let Some(p) = &mut state.peptide {
                         &mut p.common
                     } else {

@@ -6,6 +6,7 @@ use bio_files::{
     md_params::ForceFieldParams, sdf::Sdf,
 };
 use chrono::Utc;
+use dynamics::snapshot::Snapshot;
 use egui_file_dialog::FileDialog;
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
@@ -440,6 +441,15 @@ impl State {
                     ));
                 }
             },
+            "dcd" => if let Some(md) = &self.mol_dynamics {
+                let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
+                if md.save_snapshots_to_file(path, ratio).is_err() {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "Probably saving the MD trajectory to a DCD file.",
+                    ));
+                }
+            }
             _ => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
@@ -807,4 +817,22 @@ impl MoleculeCommon {
 
         Ok(())
     }
+}
+
+
+/// Save Snapshots (a MD trajectory) to disk.
+pub fn save_trajectory(dialog: &mut FileDialog) -> io::Result<()> {
+    let fname_default = {
+        let ext_default = "dcd";
+
+        let name = "molchanica_traj".to_string();
+        format!("{name}.{ext_default}")
+    };
+
+    dialog.config_mut().default_file_name = fname_default.to_string();
+    dialog.config_mut().default_file_filter = Some("DCD (trajectory)".to_owned());
+
+    dialog.save_file();
+
+    Ok(())
 }

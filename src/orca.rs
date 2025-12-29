@@ -68,6 +68,7 @@ pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
     match &mut state.mol_dynamics {
         Some(md) => {
             md.snapshots = Vec::new();
+
             for (i, step) in out.trajectory.iter().enumerate() {
                 let time = i as f32 * state.to_save.md_dt * 1_000.;
 
@@ -88,6 +89,7 @@ pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
                     energy_potential: 0.,
                     energy_potential_between_mols: Vec::new(),
                     energy_potential_nonbonded: 0.,
+                    energy_potential_bonded: 0.,
                     hydrogen_bonds: Vec::new(),
                     temperature: 0.,
                     pressure: 0.,

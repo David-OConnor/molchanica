@@ -39,6 +39,7 @@ mod drawing_wrappers;
 mod drug_design;
 mod lipid;
 mod md;
+mod mol_alignment;
 mod mol_characterization;
 mod mol_editor;
 mod mol_lig;
@@ -194,6 +195,7 @@ impl Default for FileDialogs {
                 "Molecule (small)",
                 vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
             )
+            .add_file_filter_extensions("DCD (trajectory)", vec!["dcd"])
             .add_save_extension("Protein (CIF)", "cif")
             .add_save_extension("Mol2", "mol2")
             .add_save_extension("SDF", "sdf")
@@ -201,7 +203,8 @@ impl Default for FileDialogs {
             .add_save_extension("Pdbqt", "pdbqt")
             .add_save_extension("Map", "map")
             .add_save_extension("MTZ", "mtz")
-            .add_save_extension("Prmtop", "prmtop");
+            .add_save_extension("Prmtop", "prmtop")
+            .add_save_extension("DCD", "dcd");
 
         let load = FileDialog::with_config(cfg_all.clone()).default_file_filter("All");
         let save = FileDialog::with_config(cfg_all).default_save_extension("Protein");

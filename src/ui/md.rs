@@ -19,6 +19,7 @@ use crate::{
     },
     util::{clear_cli_out, handle_err, handle_success},
 };
+use crate::file_io::save_trajectory;
 
 pub fn md_setup(
     state: &mut State,
@@ -134,7 +135,6 @@ pub fn md_setup(
                 .clicked() {
 
                 // todo: DRY with teh run_md button above. C+P
-                
                 clear_cli_out(&mut state.ui); // todo: Not working; not loaded until next frame.
                 let mut ready_to_run = true;
 
@@ -151,9 +151,17 @@ pub fn md_setup(
                 }
 
                 if ready_to_run {
-                    let result = launch_md_energy_computation(state);
-                    
-                    println!("E result: {:?}", result);
+                    match launch_md_energy_computation(state) {
+                        Ok(en) => {
+                            let data = format!("E result. PE: {:.2}, PE NB: {:.3} PE Bonded: {:.2}",
+                                               en.energy_potential, en.energy_potential_nonbonded, en.energy_potential_bonded);
+                            println!("{data}");
+                            handle_success(&mut state.ui, data);
+
+                        }
+                        Err(e) => handle_err(&mut state.ui, format!("Error computing energy: {:?}", e))
+                    }
+
                 }
             }
 
@@ -185,12 +193,8 @@ pub fn md_setup(
                     .on_hover_text("Save the computed MD trajectory to a DCD file.")
                     .clicked() {
 
-                    let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
-                    // todo: Use the file picker!
-                    let path = Path::new("traj.dcd");
-
-                    if md.save_snapshots_to_file(path, ratio).is_err() {
-                        handle_err(&mut state.ui, format!("Error saving the trajectory: {:?}", path));
+                    if save_trajectory(&mut state.volatile.dialogs.save).is_err() {
+                        handle_err(&mut state.ui, "Problem saving this file".to_owned());
                     }
                 }
             }
