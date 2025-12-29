@@ -317,7 +317,7 @@ pub fn run_dynamics(md_state: &mut MdState, dev: &ComputationDevice, dt: f32, n_
 }
 
 /// We filter peptide hetero atoms out of the MD workflow. Adjust snapshot indices and atom positions so they
-/// are properly synchronized. This also handles the case of resassigning due to peptide atoms near the ligand.
+/// are properly synchronized. This also handles the case of reassigning due to peptide atoms near the ligand.
 pub fn reassign_snapshot_indices(
     pep: &MoleculePeptide,
     ligs: &[&mut MoleculeSmall],
@@ -326,6 +326,10 @@ pub fn reassign_snapshot_indices(
     snapshots: &mut [Snapshot],
     pep_atom_set: &HashSet<(usize, usize)>,
 ) {
+    if !pep.common.selected_for_md {
+        return;
+    }
+
     println!("Re-assigning snapshot indices to match atoms excluded for MD...");
 
     let pep_count = pep_atom_set.len();
@@ -400,10 +404,17 @@ pub fn reassign_snapshot_indices(
             }
         }
 
+        // todo: This is screwing things up for purposes of saving DCD files without water, as it's combining
+        // todo multiple mols into the posits.
+
         // Replace the snapshot's positions with the reindexed set
         snap.atom_posits = new_posits;
         snap.atom_velocities = new_vels;
+
+        return;
     }
+
+
     println!("Done.");
 }
 
