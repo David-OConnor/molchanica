@@ -1,8 +1,7 @@
 use std::sync::atomic::Ordering;
 
-use bio_files::{BondType, orca::OrcaOutput::Geometry};
+use bio_files::BondType;
 use dynamics::{find_planar_posit, find_tetra_posit_final, find_tetra_posits};
-use egui::Ui;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate};
 use lin_alg::f64::{Quaternion, Vec3};
 use na_seq::{
@@ -15,7 +14,7 @@ use crate::{
     mol_editor::{MolEditorState, NEXT_ATOM_SN, redraw, templates::Template},
     mol_lig::MoleculeSmall,
     mol_manip::ManipMode,
-    molecule::{Atom, Bond, MoleculeCommon},
+    molecules::{Atom, Bond, common::MoleculeCommon},
 };
 
 #[derive(Clone, Copy, PartialEq)]

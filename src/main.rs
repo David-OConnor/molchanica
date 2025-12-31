@@ -23,7 +23,6 @@ mod drawing;
 mod file_io;
 mod forces;
 mod inputs;
-mod molecule;
 mod prefs;
 mod render;
 mod ribbon_mesh;
@@ -37,14 +36,13 @@ mod reflection;
 mod cam_misc;
 mod drawing_wrappers;
 mod drug_design;
-mod lipid;
 mod md;
 mod mol_alignment;
 mod mol_characterization;
 mod mol_editor;
 mod mol_lig;
 mod mol_manip;
-mod nucleic_acid;
+mod molecules;
 mod orca;
 mod pharmacophore;
 mod selection;
@@ -89,13 +87,14 @@ use lin_alg::{
 };
 use mol_lig::MoleculeSmall;
 use mol_manip::MolManip;
-use molecule::MoleculePeptide;
+use molecules::{
+    MoGenericRefMut, MolGenericRef, MolIdent, MolType, MoleculePeptide,
+    lipid::{LipidShape, MoleculeLipid, load_lipid_templates},
+    nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands, load_na_templates},
+};
 
 use crate::{
-    lipid::{LipidShape, MoleculeLipid, load_lipid_templates},
     mol_editor::MolEditorState,
-    molecule::{MoGenericRefMut, MolGenericRef, MolIdent, MolType},
-    nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands, load_na_templates},
     orca::StateOrca,
     prefs::ToSave,
     render::render,

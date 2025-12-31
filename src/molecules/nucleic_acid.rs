@@ -4,7 +4,7 @@
 
 // todo: Load Amber FF params for nucleic acids.
 
-use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io, time::Instant};
+use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io};
 
 use bincode::{Decode, Encode};
 use bio_files::{
@@ -12,26 +12,20 @@ use bio_files::{
     mol_templates::{TemplateData, load_templates},
 };
 use dynamics::{
-    Dihedral, find_tetra_posit_final,
+    find_tetra_posit_final,
     params::{OL24_LIB, RNA_LIB},
 };
 use lin_alg::f64::{Quaternion, Vec3, Z_VEC};
 use na_seq::{
     AminoAcid,
-    Element::{self, *},
+    Element::*,
     Nucleotide::{self, *},
     seq_complement,
 };
 
-use crate::{
-    State, Templates,
-    lipid::MoleculeLipid,
-    mol_lig::MoleculeSmall,
-    molecule::{
-        Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculeCommon, MoleculePeptide,
-        Residue, build_adjacency_list,
-    },
-    util::handle_err,
+use crate::molecules::{
+    Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
+    build_adjacency_list, common::MoleculeCommon,
 };
 
 const HELIX_TWIST: f64 = TAU / 10.0; // 36°

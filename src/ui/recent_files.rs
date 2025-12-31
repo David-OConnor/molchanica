@@ -6,7 +6,7 @@ use graphics::{EngineUpdates, Scene};
 
 use crate::{
     State,
-    molecule::MolType,
+    molecules::MolType,
     prefs::OpenType,
     ui::{COL_SPACING, ROW_SPACING},
     util::handle_err,

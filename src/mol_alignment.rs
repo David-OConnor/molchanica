@@ -6,52 +6,42 @@
 //! [Brown, 2020](https://pmc.ncbi.nlm.nih.gov/articles/PMC6598199/)
 //! [BCL on Github](https://github.com/BCLCommons/bcl)
 //!
-//!
 //! [Web based BCL::MolAlign](http://servers.meilerlab.org/index.php/servers/molalign)
-//! This one may be useful for validating your results.
-//!
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    f64::consts::TAU,
+};
 
 use bio_files::BondType;
-use lin_alg::f64::Vec3;
+use lin_alg::f64::{Quaternion, Vec3, X_VEC, Y_VEC};
 use na_seq::Element::*;
-use nalgebra as na;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 
-use crate::molecule::MoleculeCommon;
+use crate::molecules::{common::MoleculeCommon, rotatable_bonds::RotatableBond};
 
 /// For scores, a higher negative value indicates more similarity.
 pub struct MolAlignment {
     pub posits: Vec<Vec3>,
-    pub avg_strain_energy: f32,
+    pub avg_strain_energy: f64,
 
-    pub similarity_measure: f32,
+    pub similarity_measure: f64,
     /// Sum of avg_strain_energy and similarity_measure.
-    pub alignment_score: f32,
+    pub alignment_score: f64,
     /// Grades chemical and/or shape similarity. Insufficient when the molecules are of sufficiently
     /// different sizes.
-    pub tanimoto_coefficient: f32,
+    pub tanimoto_coefficient: f64,
 }
 
 impl MolAlignment {
-    /// Align two molecules. This is generally for small molecules. Scores by steric hindrance, and
-    /// minimizing electrostatic interactions. The molecules being aligned should generally have some
-    /// shared structure but will not be the same molecule.
-    pub fn create(mol_0: &MoleculeCommon, mol_1: &MoleculeCommon) -> Vec<Self> {
-        // Self {
-        //     posits: Vec::new(),
-        //     score_steric: 0.,
-        //     score_electrostatic: 0.,
-        // }
-
+    pub fn create(_mol_0: &MoleculeCommon, _mol_1: &MoleculeCommon) -> Vec<Self> {
         Vec::new()
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct AlignmentResult {
-    pub score: f32,
+    pub score: f64,
     pub transform: RigidTransform,
     pub matched_pairs: Vec<(usize, usize)>, // (atom_i in A, atom_j in B)
     pub aligned_a_posits: Vec<Vec3>,        // atom_posits for A after transform
@@ -59,20 +49,20 @@ pub struct AlignmentResult {
 
 #[derive(Copy, Clone, Debug)]
 pub struct RigidTransform {
-    pub rot: na::Matrix3<f32>,
-    pub trans: na::Vector3<f32>,
+    pub rot: Quaternion,
+    pub trans: Vec3,
 }
 
 impl RigidTransform {
     pub fn identity() -> Self {
         Self {
-            rot: na::Matrix3::identity(),
-            trans: na::Vector3::zeros(),
+            rot: Quaternion::new_identity(),
+            trans: Vec3::new_zero(),
         }
     }
 
-    pub fn apply(&self, p: na::Vector3<f32>) -> na::Vector3<f32> {
-        self.rot * p + self.trans
+    pub fn apply(&self, p: Vec3) -> Vec3 {
+        self.rot.rotate_vec(p) + self.trans
     }
 }
 
@@ -88,26 +78,26 @@ pub struct MolAlignConfig {
     pub filter_iterations: usize,
     pub refinement_iterations: usize,
 
-    pub fraction_filtered_initially: f32,
-    pub fraction_filtered_iteratively: f32,
+    pub fraction_filtered_initially: f64,
+    pub fraction_filtered_iteratively: f64,
 
     pub conformer_pairs: usize,
 
-    pub mc_temperature: f32,
-    pub mc_temperature_refine: f32,
+    pub mc_temperature: f64,
+    pub mc_temperature_refine: f64,
 
-    pub step_rot_radians: f32,
-    pub step_trans: f32,
+    pub step_rot_radians: f64,
+    pub step_trans: f64,
 
-    pub torsion_step_radians: f32,
+    pub torsion_step_radians: f64,
     pub torsion_moves_per_iter: usize,
 
-    pub clash_scale: f32,
+    pub clash_scale: f64,
     pub clash_hard_fail: bool,
 
-    pub max_pair_dist: f32,
-    pub w_spatial: f32,
-    pub w_prop: f32,
+    pub max_pair_dist: f64,
+    pub w_spatial: f64,
+    pub w_prop: f64,
 }
 
 impl Default for MolAlignConfig {
@@ -131,10 +121,10 @@ impl Default for MolAlignConfig {
             mc_temperature: 1.0,
             mc_temperature_refine: 0.25,
 
-            step_rot_radians: 10_f32.to_radians(),
+            step_rot_radians: 10_f64.to_radians(),
             step_trans: 0.35,
 
-            torsion_step_radians: 15_f32.to_radians(),
+            torsion_step_radians: 15_f64.to_radians(),
             torsion_moves_per_iter: 1,
 
             clash_scale: 0.80,
@@ -150,7 +140,7 @@ impl Default for MolAlignConfig {
 #[derive(Clone, Debug)]
 pub struct Conformer {
     pub posits: Vec<Vec3>,
-    pub plausibility: f32, // higher = better; can just be 0.0 if unknown
+    pub plausibility: f64,
 }
 
 pub trait ConformerGenerator {
@@ -165,8 +155,8 @@ pub struct MolAlign<'a> {
     props_a: Vec<AtomProps>,
     props_b: Vec<AtomProps>,
 
-    rot_bonds_a: Vec<RotBond>,
-    rot_bonds_b: Vec<RotBond>,
+    rot_bonds_a: Vec<RotatableBond>,
+    rot_bonds_b: Vec<RotatableBond>,
 }
 
 impl<'a> MolAlign<'a> {
@@ -192,8 +182,8 @@ impl<'a> MolAlign<'a> {
         self.props_a = compute_atom_props(mol_a);
         self.props_b = compute_atom_props(mol_b);
 
-        self.rot_bonds_a = find_rotatable_bonds(mol_a);
-        self.rot_bonds_b = find_rotatable_bonds(mol_b);
+        self.rot_bonds_a = mol_a.find_rotatable_bonds();
+        self.rot_bonds_b = mol_b.find_rotatable_bonds();
 
         let confs_a = self.make_confs(mol_a, self.gen_a, &mut rng);
         let confs_b = if self.cfg.rigid_mol_b {
@@ -218,6 +208,10 @@ impl<'a> MolAlign<'a> {
                 conf_b: confs_b[ib].clone(),
                 t_ab: random_transform(&mut rng),
                 best: None,
+
+                best_eval: None,
+                best_conf_a: None,
+                best_conf_b: None,
             };
 
             let best0 = self.run_tier(&mut rng, &mut state, mol_a, mol_b, Tier::Initial);
@@ -298,13 +292,16 @@ impl<'a> MolAlign<'a> {
             ),
         };
 
-        let mut cur = self.evaluate_pose(state);
+        let mut cur = self.evaluate_pose_eval(state);
         let mut best = cur.clone();
+
+        state.best_eval = Some(best.clone());
+        state.best_conf_a = Some(state.conf_a.clone());
+        state.best_conf_b = Some(state.conf_b.clone());
 
         for _ in 0..iters {
             let proposal = self.propose_move(rng, state, mol_a, mol_b, &cur, step_rot, step_trans);
-
-            let next = self.evaluate_pose_from(state, &proposal);
+            let next = self.evaluate_pose_eval_from(state, &proposal);
 
             let accept = metropolis_accept(rng, cur.score, next.score, temp);
             if accept {
@@ -315,11 +312,93 @@ impl<'a> MolAlign<'a> {
 
                 if cur.score < best.score {
                     best = cur.clone();
+                    state.best_eval = Some(best.clone());
+                    state.best_conf_a = Some(state.conf_a.clone());
+                    state.best_conf_b = Some(state.conf_b.clone());
                 }
             }
         }
 
-        best
+        let best_eval = state.best_eval.as_ref().unwrap();
+        let best_a = state.best_conf_a.as_ref().unwrap();
+        let best_b = state.best_conf_b.as_ref().unwrap();
+
+        self.finalize_alignment(best_a, best_b, best_eval)
+    }
+
+    fn evaluate_pose_eval(&self, state: &TrajState) -> PoseEval {
+        self.evaluate_pose_eval_from(
+            state,
+            &Proposed {
+                conf_a: state.conf_a.clone(),
+                conf_b: state.conf_b.clone(),
+                t_ab: state.t_ab,
+            },
+        )
+    }
+
+    fn evaluate_pose_eval_from(&self, _state: &TrajState, proposal: &Proposed) -> PoseEval {
+        let aligned_a_posits: Vec<Vec3> = proposal
+            .conf_a
+            .posits
+            .iter()
+            .copied()
+            .map(|p| proposal.t_ab.apply(p))
+            .collect();
+
+        let (pairs, score) = dynamic_pair_and_score(
+            &aligned_a_posits,
+            &proposal.conf_b.posits,
+            &self.props_a,
+            &self.props_b,
+            &self.cfg,
+        );
+
+        PoseEval {
+            score,
+            matched_pairs: pairs,
+            t_ab: proposal.t_ab,
+        }
+    }
+
+    fn evaluate_pose_from(&self, state: &TrajState, proposal: &Proposed) -> AlignmentResult {
+        let eval = self.evaluate_pose_eval_from(state, proposal);
+
+        let aligned_a_posits: Vec<Vec3> = proposal
+            .conf_a
+            .posits
+            .iter()
+            .copied()
+            .map(|p| eval.t_ab.apply(p))
+            .collect();
+
+        AlignmentResult {
+            score: eval.score,
+            transform: eval.t_ab,
+            matched_pairs: eval.matched_pairs,
+            aligned_a_posits,
+        }
+    }
+
+    fn finalize_alignment(
+        &self,
+        conf_a: &Conformer,
+        _conf_b: &Conformer,
+        eval: &PoseEval,
+    ) -> AlignmentResult {
+        let aligned_a_posits: Vec<Vec3> = conf_a
+            .posits
+            .iter()
+            .copied()
+            .map(|p| eval.t_ab.apply(p))
+            .collect();
+
+        AlignmentResult {
+            score: eval.score,
+            transform: eval.t_ab,
+            matched_pairs: eval.matched_pairs.clone(),
+            aligned_a_posits,
+        }
     }
 
     fn propose_move(
@@ -329,8 +408,8 @@ impl<'a> MolAlign<'a> {
         mol_a: &MoleculeCommon,
         mol_b: &MoleculeCommon,
         cur: &PoseEval,
-        step_rot: f32,
-        step_trans: f32,
+        step_rot: f64,
+        step_trans: f64,
     ) -> Proposed {
         let mut p = Proposed {
             conf_a: state.conf_a.clone(),
@@ -338,7 +417,8 @@ impl<'a> MolAlign<'a> {
             t_ab: state.t_ab,
         };
 
-        let r: f32 = rng.random();
+        let r: f64 = rng.random();
+
         if r < 0.50 && !cur.matched_pairs.is_empty() {
             let (ia, ib) = cur.matched_pairs[rng.random_range(0..cur.matched_pairs.len())];
             if let Some(t) = anchor_transform_from_atom_pair(
@@ -362,7 +442,7 @@ impl<'a> MolAlign<'a> {
         if !self.rot_bonds_a.is_empty() {
             for _ in 0..self.cfg.torsion_moves_per_iter {
                 let rb = &self.rot_bonds_a[rng.random_range(0..self.rot_bonds_a.len())];
-                let angle = (rng.random::<f32>() * 2.0 - 1.0) * self.cfg.torsion_step_radians;
+                let angle = (rng.random::<f64>() * 2.0 - 1.0) * self.cfg.torsion_step_radians;
                 let ok = apply_torsion_move(mol_a, &mut p.conf_a.posits, rb, angle);
 
                 if ok {
@@ -376,45 +456,13 @@ impl<'a> MolAlign<'a> {
 
         p
     }
-
-    fn evaluate_pose(&self, state: &TrajState) -> AlignmentResult {
-        self.evaluate_pose_from(state, state)
-    }
-
-    fn evaluate_pose_from(&self, state: &TrajState, proposal: &Proposed) -> AlignmentResult {
-        let a_na: Vec<na::Vector3<f32>> = proposal
-            .conf_a
-            .posits
-            .iter()
-            .map(|&v| v3_to_na(v))
-            .collect();
-        let b_na: Vec<na::Vector3<f32>> = proposal
-            .conf_b
-            .posits
-            .iter()
-            .map(|&v| v3_to_na(v))
-            .collect();
-
-        let a_xf: Vec<na::Vector3<f32>> = a_na.iter().map(|&p| proposal.t_ab.apply(p)).collect();
-
-        let (pairs, score) =
-            dynamic_pair_and_score(&a_xf, &b_na, &self.props_a, &self.props_b, &self.cfg);
-
-        let aligned_a_posits: Vec<Vec3> = a_xf.into_iter().map(na_to_v3).collect();
-
-        AlignmentResult {
-            score,
-            transform: proposal.t_ab,
-            matched_pairs: pairs,
-            aligned_a_posits,
-        }
-    }
 }
 
 #[derive(Clone)]
 struct PoseEval {
-    score: f32,
+    score: f64,
     matched_pairs: Vec<(usize, usize)>,
+    t_ab: RigidTransform,
 }
 
 #[derive(Clone)]
@@ -423,6 +471,10 @@ struct TrajState {
     conf_b: Conformer,
     t_ab: RigidTransform,
     best: Option<AlignmentResult>,
+
+    best_eval: Option<PoseEval>,
+    best_conf_a: Option<Conformer>,
+    best_conf_b: Option<Conformer>,
 }
 
 #[derive(Clone)]
@@ -439,10 +491,26 @@ impl Proposed {
         props_b: &[AtomProps],
         cfg: &MolAlignConfig,
     ) -> PoseEval {
-        let _ = (props_a, props_b, cfg);
+        let aligned_a_posits: Vec<Vec3> = self
+            .conf_a
+            .posits
+            .iter()
+            .copied()
+            .map(|p| self.t_ab.apply(p))
+            .collect();
+
+        let (pairs, score) = dynamic_pair_and_score(
+            &aligned_a_posits,
+            &self.conf_b.posits,
+            props_a,
+            props_b,
+            cfg,
+        );
+
         PoseEval {
-            score: f32::INFINITY,
-            matched_pairs: Vec::new(),
+            score,
+            matched_pairs: pairs,
+            t_ab: self.t_ab,
         }
     }
 }
@@ -456,29 +524,29 @@ enum Tier {
 
 fn fallback_identity(mol_a: &MoleculeCommon) -> AlignmentResult {
     AlignmentResult {
-        score: f32::INFINITY,
+        score: f64::INFINITY,
         transform: RigidTransform::identity(),
         matched_pairs: Vec::new(),
         aligned_a_posits: mol_a.atom_posits.clone(),
     }
 }
 
-fn filter_trajectories(ts: &mut Vec<TrajState>, frac_drop: f32) {
+fn filter_trajectories(ts: &mut Vec<TrajState>, frac_drop: f64) {
     if ts.is_empty() {
         return;
     }
     ts.sort_by(|a, b| {
-        let sa = a.best.as_ref().map(|x| x.score).unwrap_or(f32::INFINITY);
-        let sb = b.best.as_ref().map(|x| x.score).unwrap_or(f32::INFINITY);
+        let sa = a.best.as_ref().map(|x| x.score).unwrap_or(f64::INFINITY);
+        let sb = b.best.as_ref().map(|x| x.score).unwrap_or(f64::INFINITY);
         sa.total_cmp(&sb)
     });
 
-    let keep = ((ts.len() as f32) * (1.0 - frac_drop)).ceil() as usize;
+    let keep = ((ts.len() as f64) * (1.0 - frac_drop)).ceil() as usize;
     let keep = keep.clamp(1, ts.len());
     ts.truncate(keep);
 }
 
-fn metropolis_accept(rng: &mut SmallRng, cur: f32, next: f32, temp: f32) -> bool {
+fn metropolis_accept(rng: &mut SmallRng, cur: f64, next: f64, temp: f64) -> bool {
     if next < cur {
         return true;
     }
@@ -487,7 +555,7 @@ fn metropolis_accept(rng: &mut SmallRng, cur: f32, next: f32, temp: f32) -> bool
     }
     let d = next - cur;
     let p = (-d / temp).exp();
-    rng.random::<f32>() < p
+    rng.random::<f64>() < p
 }
 
 /* ------------------------- Properties + scoring ------------------------- */
@@ -505,7 +573,7 @@ struct AtomProps {
 fn compute_atom_props(m: &MoleculeCommon) -> Vec<AtomProps> {
     let mut out = Vec::with_capacity(m.atoms.len());
     for (i, a) in m.atoms.iter().enumerate() {
-        let deg = m.adjacency_list[i].len();
+        let _deg = m.adjacency_list[i].len();
 
         let elem_group = match a.element {
             Hydrogen => 0,
@@ -551,7 +619,7 @@ fn approx_hbond(m: &MoleculeCommon, i: usize) -> (bool, bool) {
     let a = &m.atoms[i];
     let has_h_neighbor = m.adjacency_list[i]
         .iter()
-        .any(|&j| matches!(m.atoms[j].element, Element::H));
+        .any(|&j| matches!(m.atoms[j].element, Hydrogen));
 
     match a.element {
         Nitrogen => (has_h_neighbor, true),
@@ -561,7 +629,7 @@ fn approx_hbond(m: &MoleculeCommon, i: usize) -> (bool, bool) {
     }
 }
 
-fn prop_distance(pa: &AtomProps, pb: &AtomProps) -> f32 {
+fn prop_distance(pa: &AtomProps, pb: &AtomProps) -> f64 {
     let mut d = 0.0;
 
     if pa.elem_group != pb.elem_group {
@@ -587,19 +655,19 @@ fn prop_distance(pa: &AtomProps, pb: &AtomProps) -> f32 {
 }
 
 fn dynamic_pair_and_score(
-    a_pos: &[na::Vector3<f32>],
-    b_pos: &[na::Vector3<f32>],
+    a_pos: &[Vec3],
+    b_pos: &[Vec3],
     props_a: &[AtomProps],
     props_b: &[AtomProps],
     cfg: &MolAlignConfig,
-) -> (Vec<(usize, usize)>, f32) {
+) -> (Vec<(usize, usize)>, f64) {
     let mut best_j_for_i = vec![None; a_pos.len()];
     let mut best_i_for_j = vec![None; b_pos.len()];
 
     for i in 0..a_pos.len() {
-        let mut best = (f32::INFINITY, usize::MAX);
+        let mut best = (f64::INFINITY, usize::MAX);
         for j in 0..b_pos.len() {
-            let spatial = (a_pos[i] - b_pos[j]).norm();
+            let spatial = (a_pos[i] - b_pos[j]).magnitude();
             if spatial > cfg.max_pair_dist {
                 continue;
             }
@@ -615,9 +683,9 @@ fn dynamic_pair_and_score(
     }
 
     for j in 0..b_pos.len() {
-        let mut best = (f32::INFINITY, usize::MAX);
+        let mut best = (f64::INFINITY, usize::MAX);
         for i in 0..a_pos.len() {
-            let spatial = (a_pos[i] - b_pos[j]).norm();
+            let spatial = (a_pos[i] - b_pos[j]).magnitude();
             if spatial > cfg.max_pair_dist {
                 continue;
             }
@@ -637,7 +705,7 @@ fn dynamic_pair_and_score(
     let mut used_b = vec![false; b_pos.len()];
 
     for i in 0..a_pos.len() {
-        let Some((j, cost_ij)) = best_j_for_i[i] else {
+        let Some((j, _cost_ij)) = best_j_for_i[i] else {
             continue;
         };
         let Some((i2, _cost_ji)) = best_i_for_j[j] else {
@@ -653,19 +721,17 @@ fn dynamic_pair_and_score(
         used_a[i] = true;
         used_b[j] = true;
         pairs.push((i, j));
-
-        let _ = cost_ij;
     }
 
     let mut score = 0.0;
     for (i, j) in &pairs {
-        let spatial = (a_pos[*i] - b_pos[*j]).norm();
+        let spatial = (a_pos[*i] - b_pos[*j]).magnitude();
         let pd = prop_distance(&props_a[*i], &props_b[*j]);
         score += cfg.w_spatial * spatial + cfg.w_prop * pd;
     }
 
     if pairs.is_empty() {
-        score = f32::INFINITY;
+        score = f64::INFINITY;
     }
 
     (pairs, score)
@@ -675,34 +741,34 @@ fn dynamic_pair_and_score(
 
 fn random_transform(rng: &mut SmallRng) -> RigidTransform {
     let axis = random_unit_vec(rng);
-    let angle = rng.random::<f32>() * std::f32::consts::TAU;
-    let rot = na::Rotation3::from_axis_angle(&na::Unit::new_normalize(axis), angle)
-        .matrix()
-        .clone();
-    let trans = na::Vector3::new(
-        (rng.random::<f32>() * 2.0 - 1.0) * 2.0,
-        (rng.random::<f32>() * 2.0 - 1.0) * 2.0,
-        (rng.random::<f32>() * 2.0 - 1.0) * 2.0,
+    let angle = rng.random::<f64>() * TAU;
+
+    let rot = Quaternion::from_axis_angle(axis.to_normalized(), angle);
+
+    let trans = Vec3::new(
+        (rng.random::<f64>() * 2.0 - 1.0) * 2.0,
+        (rng.random::<f64>() * 2.0 - 1.0) * 2.0,
+        (rng.random::<f64>() * 2.0 - 1.0) * 2.0,
     );
+
     RigidTransform { rot, trans }
 }
 
 fn perturb_transform(
     rng: &mut SmallRng,
     t: RigidTransform,
-    step_rot: f32,
-    step_trans: f32,
+    step_rot: f64,
+    step_trans: f64,
 ) -> RigidTransform {
     let axis = random_unit_vec(rng);
-    let angle = (rng.random::<f32>() * 2.0 - 1.0) * step_rot;
-    let d_rot = na::Rotation3::from_axis_angle(&na::Unit::new_normalize(axis), angle)
-        .matrix()
-        .clone();
+    let angle = (rng.random::<f64>() * 2.0 - 1.0) * step_rot;
 
-    let d_trans = na::Vector3::new(
-        (rng.random::<f32>() * 2.0 - 1.0) * step_trans,
-        (rng.random::<f32>() * 2.0 - 1.0) * step_trans,
-        (rng.random::<f32>() * 2.0 - 1.0) * step_trans,
+    let d_rot = Quaternion::from_axis_angle(axis.to_normalized(), angle);
+
+    let d_trans = Vec3::new(
+        (rng.random::<f64>() * 2.0 - 1.0) * step_trans,
+        (rng.random::<f64>() * 2.0 - 1.0) * step_trans,
+        (rng.random::<f64>() * 2.0 - 1.0) * step_trans,
     );
 
     RigidTransform {
@@ -711,18 +777,20 @@ fn perturb_transform(
     }
 }
 
-fn random_unit_vec(rng: &mut SmallRng) -> na::Vector3<f32> {
-    let mut v = na::Vector3::new(
-        rng.random::<f32>() * 2.0 - 1.0,
-        rng.random::<f32>() * 2.0 - 1.0,
-        rng.random::<f32>() * 2.0 - 1.0,
+fn random_unit_vec(rng: &mut SmallRng) -> Vec3 {
+    let mut v = Vec3::new(
+        rng.random::<f64>() * 2.0 - 1.0,
+        rng.random::<f64>() * 2.0 - 1.0,
+        rng.random::<f64>() * 2.0 - 1.0,
     );
-    let n = v.norm();
+
+    let n = v.magnitude();
     if n < 1e-6 {
-        v = na::Vector3::x();
+        v = X_VEC;
     } else {
         v /= n;
     }
+
     v
 }
 
@@ -734,17 +802,14 @@ fn anchor_transform_from_atom_pair(
     ia: usize,
     ib: usize,
 ) -> Option<RigidTransform> {
-    let pa = v3_to_na(pos_a[ia]);
-    let pb = v3_to_na(pos_b[ib]);
-
     let na_a = pick_frame_neighbor(mol_a, ia)?;
     let na_b = pick_frame_neighbor(mol_b, ib)?;
 
-    let va = (v3_to_na(pos_a[na_a]) - pa).normalize();
-    let vb = (v3_to_na(pos_b[na_b]) - pb).normalize();
+    let va = (pos_a[na_a] - pos_a[ia]).to_normalized();
+    let vb = (pos_b[na_b] - pos_b[ib]).to_normalized();
 
-    let rot = rotation_between(va, vb)?;
-    let trans = pb - rot * pa;
+    let rot = Quaternion::from_unit_vecs(va, vb);
+    let trans = pos_b[ib] - rot.rotate_vec(pos_a[ia]);
 
     Some(RigidTransform { rot, trans })
 }
@@ -758,161 +823,71 @@ fn pick_frame_neighbor(m: &MoleculeCommon, i: usize) -> Option<usize> {
         .or_else(|| m.adjacency_list.get(i)?.first().copied())
 }
 
-fn rotation_between(a: na::Vector3<f32>, b: na::Vector3<f32>) -> Option<na::Matrix3<f32>> {
-    let a = a.normalize();
-    let b = b.normalize();
-
-    let v = a.cross(&b);
-    let c = a.dot(&b);
-
-    if c > 0.999999 {
-        return Some(na::Matrix3::identity());
+fn rotation_between(a: Vec3, b: Vec3) -> Option<Quaternion> {
+    let a_len = a.magnitude();
+    let b_len = b.magnitude();
+    if a_len < 1e-12 || b_len < 1e-12 {
+        return None;
     }
 
-    if c < -0.999999 {
+    let a = a / a_len;
+    let b = b / b_len;
+
+    let c = a.dot(b);
+
+    if c > 1.0 - 1e-12 {
+        return Some(Quaternion::new_identity());
+    }
+
+    if c < -1.0 + 1e-12 {
         let axis = orthogonal_unit(a);
-        let r =
-            na::Rotation3::from_axis_angle(&na::Unit::new_normalize(axis), std::f32::consts::PI);
-        return Some(r.matrix().clone());
+        return Some(Quaternion::from_axis_angle(axis, std::f64::consts::PI));
     }
 
-    let vx = na::Matrix3::new(0.0, -v.z, v.y, v.z, 0.0, -v.x, -v.y, v.x, 0.0);
-    let rot = na::Matrix3::identity() + vx + (vx * vx) * (1.0 / (1.0 + c));
-    Some(rot)
+    let v = a.cross(b);
+    let s = 1.0 + c;
+
+    let q = Quaternion::new(s, v.x, v.y, v.z).to_normalized();
+    Some(q)
 }
 
-fn orthogonal_unit(a: na::Vector3<f32>) -> na::Vector3<f32> {
-    let v = if a.x.abs() < 0.9 {
-        na::Vector3::x()
-    } else {
-        na::Vector3::y()
-    };
-    a.cross(&v).normalize()
+fn orthogonal_unit(a: Vec3) -> Vec3 {
+    let v = if a.x.abs() < 0.9 { X_VEC } else { Y_VEC };
+    a.cross(v).to_normalized()
 }
 
 /* ------------------------- Torsions + clashes ------------------------- */
 
-#[derive(Clone, Debug)]
-struct RotBond {
-    bond_i: usize,
-    a0: usize,
-    a1: usize,
-    downstream_from_a1: Vec<usize>, // rotate this side when rotating around (a0-a1)
-}
+fn apply_torsion_move(
+    mol: &MoleculeCommon,
+    pos: &mut [Vec3],
+    rb: &RotatableBond,
+    angle: f64,
+) -> bool {
+    let bond = &mol.bonds[rb.bond_i];
+    let p0 = pos[bond.atom_0];
+    let p1 = pos[bond.atom_1];
 
-fn find_rotatable_bonds(m: &MoleculeCommon) -> Vec<RotBond> {
-    let mut out = Vec::new();
-
-    for (i, b) in m.bonds.iter().enumerate() {
-        if !matches!(b.bond_type, BondType::Single) {
-            continue;
-        }
-
-        let a0 = b.atom_0;
-        let a1 = b.atom_1;
-
-        if m.adjacency_list[a0].len() <= 1 || m.adjacency_list[a1].len() <= 1 {
-            continue;
-        }
-
-        if edge_in_ring(&m.adjacency_list, a0, a1) {
-            continue;
-        }
-
-        let downstream = downstream_atoms(&m.adjacency_list, a0, a1);
-        if downstream.is_empty() || downstream.len() == m.atoms.len() {
-            continue;
-        }
-
-        out.push(RotBond {
-            bond_i: i,
-            a0,
-            a1,
-            downstream_from_a1: downstream,
-        });
-    }
-
-    out
-}
-
-fn edge_in_ring(adj: &[Vec<usize>], a: usize, b: usize) -> bool {
-    fn edge_key(a: usize, b: usize) -> (usize, usize) {
-        if a < b { (a, b) } else { (b, a) }
-    }
-
-    let ignore = edge_key(a, b);
-    let mut q = VecDeque::new();
-    let mut seen = vec![false; adj.len()];
-    q.push_back(a);
-    seen[a] = true;
-
-    while let Some(u) = q.pop_front() {
-        for &v in &adj[u] {
-            if edge_key(u, v) == ignore {
-                continue;
-            }
-            if !seen[v] {
-                if v == b {
-                    return true;
-                }
-                seen[v] = true;
-                q.push_back(v);
-            }
-        }
-    }
-
-    false
-}
-
-fn downstream_atoms(adj: &[Vec<usize>], fixed: usize, start: usize) -> Vec<usize> {
-    let mut out = Vec::new();
-    let mut q = VecDeque::new();
-    let mut seen = vec![false; adj.len()];
-
-    seen[fixed] = true;
-    seen[start] = true;
-    q.push_back(start);
-
-    while let Some(u) = q.pop_front() {
-        out.push(u);
-        for &v in &adj[u] {
-            if !seen[v] {
-                seen[v] = true;
-                q.push_back(v);
-            }
-        }
-    }
-
-    out
-}
-
-fn apply_torsion_move(m: &MoleculeCommon, pos: &mut [Vec3], rb: &RotBond, angle: f32) -> bool {
-    let p0 = v3_to_na(pos[rb.a0]);
-    let p1 = v3_to_na(pos[rb.a1]);
     let axis = p1 - p0;
-    let n = axis.norm();
+    let n = axis.magnitude();
     if n < 1e-6 {
         return false;
     }
-    let axis_u = na::Unit::new_normalize(axis);
+    let axis_u = axis.to_normalized();
 
-    let rot = na::Rotation3::from_axis_angle(&axis_u, angle)
-        .matrix()
-        .clone();
+    let rot = Quaternion::from_axis_angle(axis_u, angle);
 
     for &i in &rb.downstream_from_a1 {
-        let pi = v3_to_na(pos[i]);
-        let rel = pi - p0;
-        let pi2 = rot * rel + p0;
-        pos[i] = na_to_v3(pi2);
+        let rel = pos[i] - p0;
+        pos[i] = rot.rotate_vec(rel) + p0;
     }
 
-    let _ = m;
     true
 }
 
-fn clash_score(m: &MoleculeCommon, pos: &[Vec3], scale: f32) -> f32 {
+fn clash_score(m: &MoleculeCommon, pos: &[Vec3], scale: f64) -> f64 {
     let n = m.atoms.len();
+
     let mut bonded: HashSet<(usize, usize)> = HashSet::new();
     for b in &m.bonds {
         let (a, c) = if b.atom_0 < b.atom_1 {
@@ -923,25 +898,25 @@ fn clash_score(m: &MoleculeCommon, pos: &[Vec3], scale: f32) -> f32 {
         bonded.insert((a, c));
     }
 
-    let mut worst = 0.0f32;
+    let mut worst = 0.0f64;
 
     for i in 0..n {
-        let ri = v3_to_na(pos[i]);
-        let rvi = m.atoms[i].element.vdw_radius() * scale;
+        let ri = pos[i];
+        let rvi = m.atoms[i].element.vdw_radius() as f64 * scale;
 
         for j in (i + 1)..n {
-            let (a, b) = (i, j);
-            if bonded.contains(&(a, b)) {
+            if bonded.contains(&(i, j)) {
                 continue;
             }
 
-            let rj = v3_to_na(pos[j]);
-            let rvj = m.atoms[j].element.vdw_radius() * scale;
+            let rj = pos[j];
+            let rvj = m.atoms[j].element.vdw_radius() as f64 * scale;
 
-            let d = (ri - rj).norm();
+            let d = (ri - rj).magnitude();
             let cutoff = rvi + rvj;
+
             if d < 1e-6 {
-                return f32::INFINITY;
+                return f64::INFINITY;
             }
             if d < cutoff {
                 worst = worst.max((cutoff - d) / cutoff);
@@ -950,18 +925,4 @@ fn clash_score(m: &MoleculeCommon, pos: &[Vec3], scale: f32) -> f32 {
     }
 
     worst
-}
-
-/* ------------------------- Vec3 <-> nalgebra ------------------------- */
-
-fn v3_to_na(v: Vec3) -> na::Vector3<f64> {
-    na::Vector3::new(v.x, v.y, v.z)
-}
-
-fn na_to_v3(v: na::Vector3<f64>) -> Vec3 {
-    Vec3 {
-        x: v.x,
-        y: v.y,
-        z: v.z,
-    }
 }

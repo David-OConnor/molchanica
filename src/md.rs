@@ -2,8 +2,6 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    io,
-    path::Path,
     time::Instant,
 };
 
@@ -12,18 +10,21 @@ use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use cudarc::driver::HostSlice;
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
-    WaterInitTemplate, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
+    compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
     MdStateLocal, State,
-    drawing::{draw_mol, draw_peptide, draw_water},
-    lipid::MoleculeLipid,
+    drawing::{draw_peptide, draw_water},
     mol_lig::MoleculeSmall,
-    molecule::{MoleculeCommon, MoleculePeptide},
-    nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
+    molecules::{
+        MoleculePeptide,
+        common::MoleculeCommon,
+        lipid::MoleculeLipid,
+        nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
+    },
     util::{handle_err, handle_success},
 };
 

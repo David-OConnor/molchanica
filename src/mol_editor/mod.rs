@@ -27,17 +27,18 @@ use na_seq::{
 
 use crate::{
     OperatingMode, Selection, State, StateUi, ViewSelLevel,
-    docking::Pose,
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView, atom_color,
         bond_entities, draw_mol, draw_peptide,
     },
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     md::change_snapshot_helper,
-    mol_editor,
     mol_lig::MoleculeSmall,
-    mol_manip::{ManipMode, MolManip},
-    molecule::{Atom, Bond, MolGenericRef, MolType, MoleculeCommon},
+    mol_manip::ManipMode,
+    molecules::{
+        Atom, Bond, MolGenericRef, MolType, common::MoleculeCommon,
+        rotatable_bonds::find_downstream_atoms,
+    },
     render::{
         ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, set_flashlight, set_static_light,
     },
@@ -831,8 +832,8 @@ pub fn rotate_around_bond(mol: &mut MoleculeCommon, bond_pivot: usize, rot_amt: 
     }
 
     // Measure how many atoms would be "downstream" from each side
-    let side0_downstream = find_downstream_atoms(mol, pivot.atom_1, pivot.atom_0); // atoms on atom_0 side
-    let side1_downstream = find_downstream_atoms(mol, pivot.atom_0, pivot.atom_1); // atoms on atom_1 side
+    let side0_downstream = find_downstream_atoms(&mol.adjacency_list, pivot.atom_1, pivot.atom_0); // atoms on atom_0 side
+    let side1_downstream = find_downstream_atoms(&mol.adjacency_list, pivot.atom_0, pivot.atom_1); // atoms on atom_1 side
 
     // Rotate the smaller side; keep pivot_idx on the larger side
     let (pivot_idx, side_idx, downstream_atom_indices) =
@@ -923,29 +924,4 @@ fn bond_in_cycle(mol: &MoleculeCommon, a0: usize, a1: usize) -> bool {
     }
 
     false
-}
-
-/// We use this to rotate molecules around a bond pivot..
-/// `pivot` and `side` are atom indices in the molecule.
-fn find_downstream_atoms(mol: &MoleculeCommon, pivot: usize, side: usize) -> Vec<usize> {
-    // We want all atoms reachable from `side` when we remove the edge (side->pivot).
-    let mut visited = vec![false; mol.atoms.len()];
-    let mut stack = vec![side];
-    let mut result = vec![];
-
-    visited[pivot] = true; // never cross or include pivot (important for safety)
-    visited[side] = true;
-
-    while let Some(current) = stack.pop() {
-        result.push(current);
-
-        for &nbr in &mol.adjacency_list[current] {
-            if !visited[nbr] {
-                visited[nbr] = true;
-                stack.push(nbr);
-            }
-        }
-    }
-
-    result
 }

@@ -5,7 +5,7 @@ use std::f64::consts::PI;
 use egui::{Align, Color32, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText, Ui, Vec2};
 use egui_plot::{GridMark, Plot, PlotPoints, Points, uniform_grid_spacer};
 
-use crate::molecule::Residue;
+use crate::molecules::Residue;
 
 const POINT_RADIUS: f32 = 2.5;
 

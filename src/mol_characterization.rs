@@ -8,7 +8,7 @@ use std::{
 use bio_files::BondType;
 use na_seq::Element::*;
 
-use crate::molecule::MoleculeCommon;
+use crate::molecules::common::MoleculeCommon;
 
 /// Describes a small molecule by features practical for description and characterization.
 /// todo: Indices are relevant features (e.g. which atoms and bonds constitute which ring, which atoms and

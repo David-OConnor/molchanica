@@ -7,11 +7,10 @@ use std::{
 use bio_apis::{pubchem::find_cids_from_search, rcsb};
 use bio_files::{DensityMap, ResidueType, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
-    Align, CentralPanel, Color32, ComboBox, Context, Key, Layout, Popup, PopupAnchor, Pos2,
-    RectAlign, RichText, Slider, TextEdit, TextFormat, TextStyle, TopBottomPanel, Ui,
-    text::LayoutJob,
+    Align, Color32, ComboBox, Context, Key, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText,
+    Slider, TextEdit, TextFormat, TextStyle, TopBottomPanel, Ui, text::LayoutJob,
 };
-use graphics::{ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Mesh, Scene};
+use graphics::{ControlScheme, EngineUpdates, Mesh, Scene};
 use md::md_setup;
 use mol_data::display_mol_data;
 use na_seq::{AaIdent, Element};
@@ -21,14 +20,11 @@ use crate::{
     cli::autocomplete_cli,
     download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
     drawing::color_viridis,
-    drawing_wrappers::draw_all_lipids,
     file_io::gemmi_path,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    label,
     mol_editor::enter_edit_mode,
-    molecule::MolGenericRef,
+    molecules::MolGenericRef,
     render::set_flashlight,
-    sa_surface,
     ui::{
         cam::{cam_controls, cam_snapshots},
         misc::section_box,
@@ -44,9 +40,8 @@ use crate::{
         view::{ui_section_vis, view_settings},
     },
     util::{
-        check_prefs_save, clear_mol_entity_indices, close_mol, close_peptide, cycle_selected,
-        handle_err, handle_scene_flags, handle_success, handle_thread_rx, orbit_center,
-        select_from_search,
+        check_prefs_save, close_mol, close_peptide, cycle_selected, handle_err, handle_scene_flags,
+        handle_success, handle_thread_rx, orbit_center, select_from_search,
     },
 };
 

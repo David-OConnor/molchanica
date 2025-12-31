@@ -4,31 +4,23 @@ use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
 use bio_files::{ResidueType, md_params::ForceFieldParams};
 use dynamics::params::FfParamSet;
 use egui::{Align, Color32, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText, ScrollArea, Ui};
-use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
+use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    Selection, State,
-    cam_misc::move_mol_to_cam,
-    download_mols, drawing,
+    Selection, State, download_mols, drawing,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI},
     label,
-    lipid::MoleculeLipid,
     mol_lig::MoleculeSmall,
-    mol_manip::{ManipMode, set_manip},
-    molecule::{
-        Atom, Bond, MoGenericRefMut, MolGenericRef, MolIdent, MolType, MoleculeCommon, Residue,
-        aa_color,
+    molecules::{
+        Atom, Bond, MoGenericRefMut, MolGenericRef, MolIdent, MolType, Residue, aa_color,
+        lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
     },
-    nucleic_acid::MoleculeNucleicAcid,
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, cam::move_cam_to_active_mol, mol_descrip,
+        COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, cam::move_cam_to_active_mol,
+        mol_descrip,
     },
-    util::{
-        close_mol, handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res,
-        orbit_center,
-    },
+    util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
 
 /// `posit_override` is for example, relative atom positions, such as a positioned ligand.

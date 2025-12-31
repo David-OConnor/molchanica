@@ -5,7 +5,7 @@ use std::f64::consts::TAU;
 use na_seq::Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur};
 
 use crate::{
-    molecule::{Atom, Bond, HydrogenBond},
+    molecules::{Atom, Bond, HydrogenBond},
     util::find_atom,
 };
 

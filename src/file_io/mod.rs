@@ -2,11 +2,9 @@ use std::{fs, io, io::ErrorKind, path::Path, sync::mpsc, thread, time::Instant};
 
 use bio_apis::pubchem;
 use bio_files::{
-    DensityMap, MmCif, Mol2, Pdbqt, Xyz, cif_sf::CifStructureFactors, gemmi_sf_to_map,
-    md_params::ForceFieldParams, sdf::Sdf,
+    DensityMap, MmCif, Mol2, Pdbqt, Xyz, gemmi_sf_to_map, md_params::ForceFieldParams, sdf::Sdf,
 };
 use chrono::Utc;
-use dynamics::snapshot::Snapshot;
 use egui_file_dialog::FileDialog;
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
@@ -20,10 +18,10 @@ use crate::{
     drawing::draw_peptide,
     drawing_wrappers,
     md::launch_md,
-    mol_editor::build_dynamics,
     mol_lig::MoleculeSmall,
-    molecule::{
-        MolGenericTrait, MolIdent, MolType, MoleculeCommon, MoleculeGeneric, MoleculePeptide,
+    molecules::{
+        MolGenericTrait, MolIdent, MolType, MoleculeGeneric, MoleculePeptide,
+        common::MoleculeCommon,
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},

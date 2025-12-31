@@ -28,7 +28,6 @@ use std::{
     f64::consts::TAU,
     fmt::{Display, Formatter},
     io,
-    time::Instant,
 };
 
 use bincode::{Decode, Encode};
@@ -42,10 +41,8 @@ use lin_alg::f64::{Quaternion, Vec3, Y_VEC, Z_VEC};
 use na_seq::Element::{self, *};
 use rand::{Rng, distr::Uniform, rngs::ThreadRng};
 
-use crate::{
-    State,
-    molecule::{Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculeCommon, Residue},
-    util::handle_err,
+use crate::molecules::{
+    Atom, Bond, MolGenericRef, MolGenericTrait, MolType, Residue, common::MoleculeCommon,
 };
 
 // From Amber Lipid21.lib. This joins the phospholipid head to the tail.

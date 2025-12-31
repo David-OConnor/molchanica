@@ -16,9 +16,9 @@ use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
 
 use crate::{
     State,
-    md::{filter_peptide_atoms, post_run_cleanup, reassign_snapshot_indices, run_dynamics},
+    md::{filter_peptide_atoms, post_run_cleanup, run_dynamics},
     mol_lig::MoleculeSmall,
-    molecule::MoleculePeptide,
+    molecules::MoleculePeptide,
 };
 
 #[derive(Clone, Debug, Default)]
