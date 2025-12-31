@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use bio_files::BondType;
 
-use crate::molecules::common::MoleculeCommon;
+use crate::molecules::{Bond, common::MoleculeCommon};
 
 #[derive(Clone, Debug)]
 pub struct RotatableBond {
@@ -17,23 +17,23 @@ impl MoleculeCommon {
     pub fn find_rotatable_bonds(&self) -> Vec<RotatableBond> {
         let mut out = Vec::new();
 
-        for (i, b) in self.bonds.iter().enumerate() {
-            if !matches!(b.bond_type, BondType::Single) {
+        for (i, bond) in self.bonds.iter().enumerate() {
+            if !matches!(bond.bond_type, BondType::Single) {
                 continue;
             }
 
-            let a0 = b.atom_0;
-            let a1 = b.atom_1;
+            let atom_0 = bond.atom_0;
+            let atom_1 = bond.atom_1;
 
-            if self.adjacency_list[a0].len() <= 1 || self.adjacency_list[a1].len() <= 1 {
+            if self.adjacency_list[atom_0].len() <= 1 || self.adjacency_list[atom_1].len() <= 1 {
                 continue;
             }
 
-            if edge_in_ring(&self.adjacency_list, a0, a1) {
+            if bond.in_a_cycle(&self.adjacency_list) {
                 continue;
             }
 
-            let downstream = find_downstream_atoms(&self.adjacency_list, a0, a1);
+            let downstream = find_downstream_atoms(&self.adjacency_list, atom_0, atom_1);
             if downstream.is_empty() || downstream.len() == self.atoms.len() {
                 continue;
             }
@@ -46,35 +46,6 @@ impl MoleculeCommon {
 
         out
     }
-}
-
-fn edge_in_ring(adj: &[Vec<usize>], a: usize, b: usize) -> bool {
-    fn edge_key(a: usize, b: usize) -> (usize, usize) {
-        if a < b { (a, b) } else { (b, a) }
-    }
-
-    let ignore = edge_key(a, b);
-    let mut q = VecDeque::new();
-    let mut seen = vec![false; adj.len()];
-    q.push_back(a);
-    seen[a] = true;
-
-    while let Some(u) = q.pop_front() {
-        for &v in &adj[u] {
-            if edge_key(u, v) == ignore {
-                continue;
-            }
-            if !seen[v] {
-                if v == b {
-                    return true;
-                }
-                seen[v] = true;
-                q.push_back(v);
-            }
-        }
-    }
-
-    false
 }
 
 /// We use this to rotate molecules around a bond pivot. For example, by the user directly, or
@@ -108,4 +79,41 @@ pub fn find_downstream_atoms(adj_list: &[Vec<usize>], pivot: usize, side: usize)
     }
 
     result
+}
+
+/// Determines if a bond is part of a cycle (ring). This has implications, for example, in determining
+/// if it can be used as a rotation pivot.
+impl Bond {
+    pub fn in_a_cycle(&self, adj_list: &[Vec<usize>]) -> bool {
+        let a0 = self.atom_0;
+        let a1 = self.atom_1;
+
+        if a0 == a1 {
+            return false;
+        }
+
+        let mut visited = vec![false; adj_list.len()];
+        let mut stack = Vec::with_capacity(16);
+
+        visited[a0] = true;
+        stack.push(a0);
+
+        while let Some(cur) = stack.pop() {
+            if cur == a1 {
+                return true;
+            }
+
+            for &nbr in &adj_list[cur] {
+                if (cur == a0 && nbr == a1) || (cur == a1 && nbr == a0) {
+                    continue;
+                }
+                if !visited[nbr] {
+                    visited[nbr] = true;
+                    stack.push(nbr);
+                }
+            }
+        }
+
+        false
+    }
 }

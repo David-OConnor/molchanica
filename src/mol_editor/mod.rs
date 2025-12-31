@@ -826,7 +826,7 @@ pub fn rotate_around_bond(mol: &mut MoleculeCommon, bond_pivot: usize, rot_amt: 
     let pivot = &mol.bonds[bond_pivot];
 
     // Don't rotate around bonds that are part of a cycle (rings).
-    if bond_in_cycle(mol, pivot.atom_0, pivot.atom_1) {
+    if pivot.in_a_cycle(&mol.adjacency_list) {
         // eprintln!("Error: bond is in a ring/cycle; refusing to rotate around it.");
         return;
     }
@@ -871,57 +871,4 @@ pub fn rotate_around_bond(mol: &mut MoleculeCommon, bond_pivot: usize, rot_amt: 
     for (i, a) in mol.atoms.iter_mut().enumerate() {
         a.posit = mol.atom_posits[i];
     }
-}
-
-// /// We use this to rotate molecules around a bond pivot..
-// /// `pivot` and `side` are atom indices in the molecule.
-// pub fn find_downstream_atoms(mol: &MoleculeCommon, pivot: usize, side: usize) -> Vec<usize> {
-//     // We want all atoms reachable from `side` when we remove the edge (side->pivot).
-//     let mut visited = vec![false; mol.atoms.len()];
-//     let mut stack = vec![side];
-//     let mut result = vec![];
-//
-//     visited[side] = true;
-//
-//     while let Some(current) = stack.pop() {
-//         result.push(current);
-//
-//         for &nbr in &mol.adjacency_list[current] {
-//             // skip the pivot to avoid going back across the chosen bond
-//             if nbr == pivot {
-//                 continue;
-//             }
-//             if !visited[nbr] {
-//                 visited[nbr] = true;
-//                 stack.push(nbr);
-//             }
-//         }
-//     }
-//
-//     result
-// }
-
-fn bond_in_cycle(mol: &MoleculeCommon, a0: usize, a1: usize) -> bool {
-    // Is there an alternate path from a0 to a1 if we ignore the direct edge a0<->a1?
-    let mut visited = vec![false; mol.atoms.len()];
-    let mut stack = vec![a0];
-    visited[a0] = true;
-
-    while let Some(cur) = stack.pop() {
-        for &nbr in &mol.adjacency_list[cur] {
-            // Ignore ONLY the bond edge in either direction.
-            if (cur == a0 && nbr == a1) || (cur == a1 && nbr == a0) {
-                continue;
-            }
-            if nbr == a1 {
-                return true;
-            }
-            if !visited[nbr] {
-                visited[nbr] = true;
-                stack.push(nbr);
-            }
-        }
-    }
-
-    false
 }
