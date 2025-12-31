@@ -132,6 +132,7 @@ pub fn build_and_run_dynamics(
         static_peptide,
         peptide_only_near_lig,
         pep_atom_set,
+        false,
     )?;
 
     md_local.start = Some(Instant::now());
@@ -192,6 +193,7 @@ pub fn build_dynamics(
     mut static_peptide: bool,
     mut peptide_only_near_lig: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
+    fast_init: bool,
 ) -> Result<MdState, ParamError> {
     println!("Setting up dynamics...");
 
@@ -262,22 +264,27 @@ pub fn build_dynamics(
     }
 
     // Uncomment as required for validating individual processes.
-    let cfg = MdConfig {
+    let mut cfg = MdConfig {
         overrides: MdOverrides {
-            skip_water: false,
-            skip_water_relaxation: false,
-            bonded_disabled: false,
-            coulomb_disabled: false,
-            lj_disabled: false,
-            long_range_recip_disabled: false,
-            thermo_disabled: false,
-            baro_disabled: false,
+            // skip_water: false,
+            // skip_water_relaxation: false,
+            // bonded_disabled: false,
+            // coulomb_disabled: false,
+            // lj_disabled: false,
+            // long_range_recip_disabled: false,
+            // thermo_disabled: false,
+            // baro_disabled: false,
             // snapshots_during_equilibration: true,
             ..Default::default()
         },
-        max_init_relaxation_iters: None,
+        // max_init_relaxation_iters: None,
         ..cfg.clone()
     };
+
+    if fast_init {
+        cfg.overrides.skip_water = true;
+        cfg.max_init_relaxation_iters = None;
+    }
 
     println!("Initializing MD state...");
     let md_state = MdState::new(dev, &cfg, &mols, param_set)?;
@@ -414,7 +421,6 @@ pub fn reassign_snapshot_indices(
         return;
     }
 
-
     println!("Done.");
 }
 
@@ -490,7 +496,7 @@ impl State {
 }
 
 /// Called directly from the UI;
-pub fn launch_md(state: &mut State) {
+pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
     // Filter molecules for docking by if they're selected.
     // mut so we can move their posits in the initial snapshot change.
     let ligs: Vec<_> = state
@@ -543,22 +549,42 @@ pub fn launch_md(state: &mut State) {
         None
     };
 
-    match build_and_run_dynamics(
-        &state.dev,
-        &mols,
-        peptide,
-        &state.ff_param_set,
-        &state.mol_specific_params,
-        &state.to_save.md_config,
-        state.ui.md.peptide_static,
-        near_lig_thresh,
-        &mut state.volatile.md_peptide_selected,
-        &mut state.volatile.md_local,
-    ) {
-        Ok(md) => {
-            state.mol_dynamics = Some(md);
+    if run {
+        match build_and_run_dynamics(
+            &state.dev,
+            &mols,
+            peptide,
+            &state.ff_param_set,
+            &state.mol_specific_params,
+            &state.to_save.md_config,
+            state.ui.md.peptide_static,
+            near_lig_thresh,
+            &mut state.volatile.md_peptide_selected,
+            &mut state.volatile.md_local,
+        ) {
+            Ok(md) => {
+                state.mol_dynamics = Some(md);
+            }
+            Err(e) => handle_err(&mut state.ui, e.descrip),
         }
-        Err(e) => handle_err(&mut state.ui, e.descrip),
+    } else {
+        match build_dynamics(
+            &state.dev,
+            &mols,
+            peptide,
+            &state.ff_param_set,
+            &state.mol_specific_params,
+            &state.to_save.md_config,
+            state.ui.md.peptide_static,
+            near_lig_thresh,
+            &mut state.volatile.md_peptide_selected,
+            fast_init,
+        ) {
+            Ok(md) => {
+                state.mol_dynamics = Some(md);
+            }
+            Err(e) => handle_err(&mut state.ui, e.descrip),
+        }
     }
 }
 

@@ -5,6 +5,8 @@ use lin_alg::f64::Vec3;
 use crate::{
     State,
     cam_misc::move_mol_to_cam,
+    label,
+    mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecule::{MolType, MoleculeCommon, MoleculePeptide},
     ui::{
@@ -21,6 +23,7 @@ fn mol_picker_one(
     orbit_center: &mut Option<(MolType, usize)>,
     i_mol: usize,
     mol: &mut MoleculeCommon,
+    mol_char: Option<&MolCharacterization>,
     mol_type: MolType,
     scene: &mut Scene,
     ui: &mut Ui,
@@ -121,6 +124,15 @@ fn mol_picker_one(
             }
         });
     });
+
+    if let Some(char) = mol_char {
+        let color = if active {
+            Color32::WHITE
+        } else {
+            Color32::GRAY
+        };
+        label!(ui, char.to_string(), color);
+    }
 }
 
 /// Select, close, hide etc molecules from ones opened.
@@ -149,6 +161,7 @@ fn mol_picker(
             &mut state.volatile.orbit_center,
             0,
             &mut mol.common,
+            None,
             MolType::Peptide,
             scene,
             ui,
@@ -167,6 +180,7 @@ fn mol_picker(
             &mut state.volatile.orbit_center,
             i_mol,
             &mut mol.common,
+            Some(&mol.characterization),
             MolType::Ligand,
             scene,
             ui,
@@ -185,6 +199,7 @@ fn mol_picker(
             &mut state.volatile.orbit_center,
             i_mol,
             &mut mol.common,
+            None,
             MolType::Lipid,
             scene,
             ui,
@@ -198,11 +213,13 @@ fn mol_picker(
     }
 
     for (i_mol, mol) in state.nucleic_acids.iter_mut().enumerate() {
+        // todo: Characterization, e.g. by dna seq?
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
             i_mol,
             &mut mol.common,
+            None,
             MolType::NucleicAcid,
             scene,
             ui,

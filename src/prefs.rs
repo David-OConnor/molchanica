@@ -40,6 +40,7 @@ pub enum OpenType {
     Lipid,
     Map,
     Frcmod,
+    Trajectory,
 }
 
 impl Display for OpenType {
@@ -51,6 +52,7 @@ impl Display for OpenType {
             Self::Lipid => "Lipid",
             Self::Map => "Density map",
             Self::Frcmod => "Frcmod",
+            Self::Trajectory => "MD Trajectory",
         };
         write!(f, "{v}")
     }

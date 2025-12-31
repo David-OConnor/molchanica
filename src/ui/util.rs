@@ -34,14 +34,6 @@ pub fn update_file_dialogs(
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {
-            // OperatingMode::Primary => load_file(
-            //     path,
-            //     state,
-            //     redraw_peptide,
-            //     reset_cam,
-            //     engine_updates,
-            //     scene,
-            // ),
             OperatingMode::Primary => state.open_file(path, Some(scene), engine_updates),
             OperatingMode::MolEditor => state.mol_editor.open_molecule(
                 &state.dev,
@@ -54,6 +46,7 @@ pub fn update_file_dialogs(
                 &mut state.ui,
                 state.volatile.mol_manip.mode,
             ),
+            OperatingMode::ProteinEditor => unimplemented!(),
         } {
             handle_err(&mut state.ui, e.to_string());
         }
@@ -66,6 +59,7 @@ pub fn update_file_dialogs(
         match state.volatile.operating_mode {
             OperatingMode::Primary => state.save(path)?,
             OperatingMode::MolEditor => mol_editor::save(state, path)?,
+            OperatingMode::ProteinEditor => (),
         }
     }
 

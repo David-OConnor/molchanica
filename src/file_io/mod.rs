@@ -19,6 +19,8 @@ use crate::{
     download_mols,
     drawing::draw_peptide,
     drawing_wrappers,
+    md::launch_md,
+    mol_editor::build_dynamics,
     mol_lig::MoleculeSmall,
     molecule::{
         MolGenericTrait, MolIdent, MolType, MoleculeCommon, MoleculeGeneric, MoleculePeptide,
@@ -59,6 +61,7 @@ impl State {
             // todo: lib, .dat etc as required. Using Amber force fields and its format
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
+            "dcd" => self.open_trajectory(path)?,
             _ => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
@@ -341,6 +344,30 @@ impl State {
         Ok(())
     }
 
+    /// Open a DTD (or perhaps more later) file. This is a trajectory of a MD run.
+    /// todo: We have our own native format as well; support that too.
+    pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
+        let snapshots = dynamics::load_dcd(path)?;
+
+        if self.mol_dynamics.is_none() {
+            launch_md(self, false, true);
+        }
+
+        // todo: Also handle the case of the correct molecule not being loaded.
+        match &mut self.mol_dynamics {
+            Some(md) => md.snapshots = snapshots,
+            None => handle_err(
+                &mut self.ui,
+                "Error loading trajectory: Unable to build MD ".to_owned(),
+            ),
+        }
+
+        self.update_history(path, OpenType::Trajectory);
+        self.update_save_prefs(false);
+
+        Ok(())
+    }
+
     /// A single endpoint to save a number of file types
     pub fn save(&mut self, path: &Path) -> io::Result<()> {
         let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
@@ -441,13 +468,15 @@ impl State {
                     ));
                 }
             },
-            "dcd" => if let Some(md) = &self.mol_dynamics {
-                let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
-                if md.save_snapshots_to_file(path, ratio).is_err() {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "Probably saving the MD trajectory to a DCD file.",
-                    ));
+            "dcd" => {
+                if let Some(md) = &self.mol_dynamics {
+                    let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
+                    if md.save_snapshots_to_file(path, ratio).is_err() {
+                        return Err(io::Error::new(
+                            ErrorKind::InvalidData,
+                            "Probably saving the MD trajectory to a DCD file.",
+                        ));
+                    }
                 }
             }
             _ => {
@@ -527,6 +556,7 @@ impl State {
                         handle_err(&mut self.ui, e.to_string());
                     }
                 }
+                OpenType::Trajectory => (), // A/R.
             }
         }
     }
@@ -818,7 +848,6 @@ impl MoleculeCommon {
         Ok(())
     }
 }
-
 
 /// Save Snapshots (a MD trajectory) to disk.
 pub fn save_trajectory(dialog: &mut FileDialog) -> io::Result<()> {

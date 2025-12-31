@@ -11,6 +11,7 @@ use lin_alg::f64::Vec3;
 use crate::{
     State,
     drawing::EntityClass,
+    file_io::save_trajectory,
     label,
     md::{launch_md, launch_md_energy_computation, post_run_cleanup},
     ui::{
@@ -19,7 +20,6 @@ use crate::{
     },
     util::{clear_cli_out, handle_err, handle_success},
 };
-use crate::file_io::save_trajectory;
 
 pub fn md_setup(
     state: &mut State,
@@ -30,7 +30,7 @@ pub fn md_setup(
     // This sequencing code is above the UI code below, so it's deferred a frame after any actions.
     if state.volatile.md_local.launching {
         state.volatile.md_local.launching = false;
-        launch_md(state);
+        launch_md(state, true, false);
     } else if state.volatile.md_local.running {
         // This is spammed each frame, so don't print, which handle_success does.
         state.ui.cmd_line_output = "MD Running...".to_string();

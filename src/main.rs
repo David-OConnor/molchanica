@@ -236,6 +236,8 @@ pub enum OperatingMode {
     Primary,
     /// For editing small molecules
     MolEditor,
+    /// For editing proteins
+    ProteinEditor,
 }
 
 // todo: Remove or augment A/R
