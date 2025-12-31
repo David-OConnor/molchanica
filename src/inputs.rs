@@ -150,6 +150,7 @@ pub fn event_dev_handler(
                                 &mut redraw_mol_editor,
                             );
                         }
+                        OperatingMode::ProteinEditor => (),
                     },
                     ElementState::Released => (),
                 }
@@ -183,6 +184,7 @@ pub fn event_dev_handler(
                                 _ => (),
                             },
                             OperatingMode::MolEditor => redraw_mol_editor = true,
+                            OperatingMode::ProteinEditor => (),
                         }
                     }
                     Code(KeyCode::ArrowRight) => {
@@ -203,6 +205,7 @@ pub fn event_dev_handler(
                                 _ => (),
                             },
                             OperatingMode::MolEditor => redraw_mol_editor = true,
+                            OperatingMode::ProteinEditor => (),
                         }
                     }
                     Code(KeyCode::Escape) => {
@@ -255,6 +258,7 @@ pub fn event_dev_handler(
                             state_.ui.mol_view = state_.ui.mol_view.prev_editor();
                             redraw_mol_editor = true;
                         }
+                        OperatingMode::ProteinEditor => (),
                     },
                     Code(KeyCode::BracketRight) => match state_.volatile.operating_mode {
                         OperatingMode::Primary => {
@@ -269,6 +273,7 @@ pub fn event_dev_handler(
                             state_.ui.mol_view = state_.ui.mol_view.next_editor();
                             redraw_mol_editor = true;
                         }
+                        OperatingMode::ProteinEditor => (),
                     },
                     Code(KeyCode::Semicolon) => match state_.volatile.operating_mode {
                         OperatingMode::Primary => {
@@ -283,6 +288,7 @@ pub fn event_dev_handler(
                             state_.ui.view_sel_level = state_.ui.view_sel_level.prev();
                             redraw_mol_editor = true;
                         }
+                        OperatingMode::ProteinEditor => (),
                     },
                     Code(KeyCode::Quote) => match state_.volatile.operating_mode {
                         OperatingMode::Primary => {
@@ -297,6 +303,7 @@ pub fn event_dev_handler(
                             state_.ui.view_sel_level = state_.ui.view_sel_level.next();
                             redraw_mol_editor = true;
                         }
+                        OperatingMode::ProteinEditor => (),
                     },
                     Code(KeyCode::KeyM) => {
                         let mut rebuild_md_editor = false;
@@ -356,9 +363,10 @@ pub fn event_dev_handler(
                                     state_.mol_editor.remove_atom(i);
                                     redraw_mol_editor = true;
 
-                                    mol_editor::sync_md(state_);
+                                    sync_md(state_);
                                 }
                             }
+                            OperatingMode::ProteinEditor => (),
                         }
                     }
                     Code(KeyCode::ShiftLeft | KeyCode::ShiftRight) => {
@@ -541,6 +549,7 @@ pub fn event_dev_handler(
                 &state_.ui,
                 state_.volatile.mol_manip.mode,
             ),
+            OperatingMode::ProteinEditor => (),
         }
         updates.entities = EntityUpdate::All;
     }
@@ -569,6 +578,7 @@ pub fn event_dev_handler(
                 );
                 updates.entities = EntityUpdate::Classes(vec![EntityClass::Ligand as u32]);
             }
+            OperatingMode::ProteinEditor => (),
         }
     }
 

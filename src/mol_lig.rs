@@ -22,6 +22,7 @@ use na_seq::Element;
 
 use crate::{
     docking::{DockingSite, Pose},
+    mol_characterization::MolCharacterization,
     molecule::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, MoleculeCommon,
         Residue,
@@ -46,6 +47,7 @@ pub struct MoleculeSmall {
     /// Simplified Molecular Input Line Entry System
     /// A cache for display as required. This is a text representation of a molecular formula.
     pub smiles: Option<String>,
+    pub characterization: MolCharacterization,
 }
 
 impl MoleculeSmall {
@@ -83,9 +85,15 @@ impl MoleculeSmall {
             idents.push(MolIdent::PdbeAmber(ident.clone()));
         }
 
+        let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
+        let characterization = MolCharacterization::new(&common);
+
+        println!("Char: {:?}", characterization);
+
         Self {
-            common: MoleculeCommon::new(ident, atoms, bonds, metadata, path),
+            common,
             idents,
+            characterization,
             ..Default::default()
         }
     }

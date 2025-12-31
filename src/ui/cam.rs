@@ -5,7 +5,7 @@ use lin_alg::f32::Vec3;
 use crate::{
     Selection, State, cam_misc,
     cam_misc::{cam_look_at_outside, move_cam_to_sel, reset_camera},
-    molecule::MoleculeCommon,
+    molecule::{MolType, MoleculeCommon},
     render::set_flashlight,
     ui::{
         COL_SPACING, COLOR_HIGHLIGHT, get_snap_name,
@@ -324,6 +324,12 @@ pub fn move_cam_to_mol(
 
     set_flashlight(scene);
     engine_updates.lighting = true;
+
+    // todo: We likely need to set this too?
+    // state.volatile.orbit_center = Some((MolType::Peptide, 0));
+    if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
+        *center = mol.centroid().into();
+    }
 
     // todo: Address this.
     // state.ui.cam_snapshot = None;

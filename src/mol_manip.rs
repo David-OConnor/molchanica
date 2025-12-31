@@ -62,6 +62,7 @@ pub fn handle_mol_manip_in_plane(
                     _ => unimplemented!(),
                 },
                 OperatingMode::MolEditor => &mut state.mol_editor.mol.common,
+                OperatingMode::ProteinEditor => unimplemented!(),
             };
 
             // Ray from screen
@@ -113,6 +114,7 @@ pub fn handle_mol_manip_in_plane(
                             }
                         }
                     }
+                    OperatingMode::ProteinEditor => (),
                 }
 
                 state.volatile.mol_manip.offset = offset;
@@ -154,6 +156,7 @@ pub fn handle_mol_manip_in_plane(
                     _ => unimplemented!(),
                 },
                 OperatingMode::MolEditor => &mut state.mol_editor.mol.common,
+                OperatingMode::ProteinEditor => unimplemented!(),
             };
 
             match state.volatile.operating_mode {
@@ -182,6 +185,7 @@ pub fn handle_mol_manip_in_plane(
                     const ROT_FACTOR: f64 = 0.008;
                     rotate_around_bond(mol, mol_i, ROT_FACTOR * delta.0);
                 }
+                OperatingMode::ProteinEditor => (),
             }
 
             let ratio = 8;
@@ -241,6 +245,7 @@ pub fn handle_mol_manip_in_out(
                     MolType::Water => return,
                 },
                 OperatingMode::MolEditor => &mut state.mol_editor.mol.common,
+                OperatingMode::ProteinEditor => unimplemented!(),
             };
 
             let scroll: f32 = match delta {
@@ -259,6 +264,7 @@ pub fn handle_mol_manip_in_out(
                 let pivot: Vec3 = match state.volatile.operating_mode {
                     OperatingMode::Primary => mol.centroid().into(),
                     OperatingMode::MolEditor => mol.atom_posits[mol_i].into(), // actually atom i.
+                    OperatingMode::ProteinEditor => unimplemented!(),
                 };
 
                 let cam_pos32: Vec3 = scene.camera.position.into();
@@ -303,6 +309,7 @@ pub fn handle_mol_manip_in_out(
                             }
                         }
                     }
+                    OperatingMode::ProteinEditor => (),
                 }
 
                 let new_pivot = pivot + dv;
@@ -414,6 +421,7 @@ pub fn set_manip(
             Selection::BondLig((_, i)) => (MolType::Ligand, *i),
             _ => return,
         },
+        OperatingMode::ProteinEditor => unimplemented!(),
     };
 
     let (move_active, rotate_active) = {
@@ -562,6 +570,7 @@ impl MolManip {
             let pivot: Vec3 = match mode {
                 OperatingMode::Primary => pick_movement_pivot(mol, ray_origin, ray_dir),
                 OperatingMode::MolEditor => mol.atom_posits[atom_i].into(),
+                OperatingMode::ProteinEditor => unimplemented!(),
             };
 
             let n = cam.orientation.rotate_vec(FWD_VEC).to_normalized();

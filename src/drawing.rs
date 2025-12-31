@@ -961,6 +961,7 @@ pub fn draw_mol(
                             manip_active = true;
                         }
                     }
+                    OperatingMode::ProteinEditor => (),
                 },
                 ManipMode::Rotate((mol_type, i)) => match mode {
                     OperatingMode::Primary => {
@@ -976,6 +977,7 @@ pub fn draw_mol(
                             manip_active = true;
                         }
                     }
+                    OperatingMode::ProteinEditor => (),
                 },
                 ManipMode::None => (),
             }
@@ -1114,6 +1116,7 @@ pub fn draw_mol(
                         manip_active = true;
                     }
                 }
+                OperatingMode::ProteinEditor => (),
             },
             ManipMode::Rotate((mol_type, i)) => match mode {
                 OperatingMode::Primary => {
@@ -1132,6 +1135,7 @@ pub fn draw_mol(
                         manip_active = true;
                     }
                 }
+                OperatingMode::ProteinEditor => (),
             },
             ManipMode::None => (),
         }
