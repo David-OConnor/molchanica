@@ -1,0 +1,44 @@
+//! Used to characterize binding pockets of proteins with specific features,
+//! then using these features to query databases for ligands that may fit.
+
+use lin_alg::f64::Vec3;
+
+use crate::{
+    mol_lig::MoleculeSmall,
+    molecule::{HydrogenBond, MoleculeCommon},
+};
+
+// #[derive(Debug)]
+// pub enum PharmacophoreFeature {
+//     Hydrophobic(<(i8)>),
+//     Hydrophilic(i8),
+//     Aromatic(i8),
+// }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PharmacophoreFeatureType {
+    Hydrophobic,
+    Hydrophilic,
+    Aromatic,
+}
+
+#[derive(Debug)]
+pub struct PharmacophoreFeature {
+    feature_type: PharmacophoreFeatureType,
+    posit: Vec3,
+    strength: f32,
+}
+
+#[derive(Debug)]
+pub struct Pharmacophore {
+    pub pocket_vol: f32,
+    pub features: Vec<PharmacophoreFeature>,
+    hydrogen_bonds: Vec<HydrogenBond>,
+}
+
+impl Pharmacophore {
+    /// Return (indices passed, atom posits, score).
+    pub fn filter_ligs(mols: &[MoleculeSmall]) -> Vec<(usize, Vec<Vec3>, f32)> {
+        Vec::new()
+    }
+}
