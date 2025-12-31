@@ -331,18 +331,30 @@ pub fn event_dev_handler(
                         };
 
                         let mut rebuild_md_editor = false;
-                        mol_manip::set_manip(
-                            &mut state_.volatile,
-                            &mut state_.to_save.save_flag,
-                            scene,
-                            &mut redraw_protein,
-                            &mut redraw_ligs_inplace,
-                            &mut redraw_na_inplace,
-                            &mut redraw_lipid_inplace,
-                            &mut rebuild_md_editor,
-                            ManipMode::Rotate((mol_type, 0)),
-                            &state_.ui.selection,
-                        );
+
+                        let mut skip = false;
+                        if state_.volatile.operating_mode == OperatingMode::MolEditor {
+                            if let Selection::BondLig((_, i)) = state_.ui.selection {
+                                let bond = &state_.mol_editor.mol.common.bonds[i];
+                                if bond.in_a_cycle(&state_.mol_editor.mol.common.adjacency_list) {
+                                    skip = true;
+                                }
+                            }
+                        }
+                        if !skip {
+                            mol_manip::set_manip(
+                                &mut state_.volatile,
+                                &mut state_.to_save.save_flag,
+                                scene,
+                                &mut redraw_protein,
+                                &mut redraw_ligs_inplace,
+                                &mut redraw_na_inplace,
+                                &mut redraw_lipid_inplace,
+                                &mut rebuild_md_editor,
+                                ManipMode::Rotate((mol_type, 0)),
+                                &state_.ui.selection,
+                            );
+                        }
 
                         if rebuild_md_editor {
                             sync_md(state_);

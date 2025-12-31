@@ -681,19 +681,27 @@ fn edit_tools(
                 if ui.button(RichText::new("⟳ Rot around bond").color(color_rotate))
                     .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the molecule around this bond")
                     .clicked() {
-                    mol_manip::set_manip(
-                        &mut state.volatile,
-                        &mut state.to_save.save_flag,
-                        scene,
-                        &mut false,
-                        redraw,
-                        &mut false,
-                        &mut false,
-                        &mut rebuild_md,
-                        // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
-                        ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
-                        &state.ui.selection,
-                    );
+
+                    // Note: We allow rotating around double-bonds for the purpose of building molecules, even though they're
+                    // considered to be not-rotatable in other contexts.
+                    // Don't rotate around bonds that are part of a cycle (rings).
+                    // todo: Cache this in `MoleculeSmall`?
+                    let bond = &state.mol_editor.mol.common.bonds[selected_idxs[0]];
+                    if !bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
+                        mol_manip::set_manip(
+                            &mut state.volatile,
+                            &mut state.to_save.save_flag,
+                            scene,
+                            &mut false,
+                            redraw,
+                            &mut false,
+                            &mut false,
+                            &mut rebuild_md,
+                            // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
+                            ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
+                            &state.ui.selection,
+                        );
+                    }
                 }
             }
 

@@ -12,7 +12,6 @@ use na_seq::Element;
 use crate::{
     OperatingMode, Selection, State, StateVolatile,
     inputs::{SENS_MOL_ROT_MOUSE, SENS_MOL_ROT_SCROLL},
-    mol_editor::rotate_around_bond,
     molecules::{MolType, common::MoleculeCommon},
 };
 
@@ -68,7 +67,7 @@ pub fn handle_mol_manip_in_plane(
             let (ray_origin, ray_point) = scene.screen_to_render(cursor);
             let ray_dir = (ray_point - ray_origin).to_normalized();
 
-            state.volatile.mol_manip.enter_movement(
+            state.volatile.mol_manip.enter_manip(
                 &scene.camera,
                 mol,
                 ray_origin,
@@ -182,7 +181,7 @@ pub fn handle_mol_manip_in_plane(
                     // todo: X vs Y?
 
                     const ROT_FACTOR: f64 = 0.008;
-                    rotate_around_bond(mol, mol_i, ROT_FACTOR * delta.0);
+                    mol.rotate_around_bond(mol_i, ROT_FACTOR * delta.0);
                 }
                 OperatingMode::ProteinEditor => (),
             }
@@ -553,7 +552,7 @@ pub struct MolManip {
 }
 
 impl MolManip {
-    pub fn enter_movement(
+    pub fn enter_manip(
         &mut self,
         cam: &Camera,
         mol: &MoleculeCommon,

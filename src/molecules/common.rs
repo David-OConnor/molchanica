@@ -15,6 +15,7 @@ use crate::{
     mol_editor::NEXT_ATOM_SN,
     molecules::{Atom, Bond, build_adjacency_list},
 };
+use crate::molecules::rotatable_bonds::find_downstream_atoms;
 
 /// Contains fields shared by all molecule types.
 #[derive(Debug, Clone)]
@@ -227,6 +228,68 @@ impl MoleculeCommon {
 
         result
     }
+
+    /// Rotate part of the molecule around a bond. Rotates the *smaller* part of the molecule as divided
+    /// by this bond: Each pivot rotation rotates the side of the flexible bond that
+    /// has fewer atoms; the intent is to minimize the overall position changes for these flexible bond angle
+    /// changes.
+    ///
+    /// For each rotatable bond, divide all atoms into two groups:
+    /// those upstream of this bond, and those downstream. Note that not all bonds make sense as
+    /// rotation centers. For example, bonds in rings.
+    ///
+    /// We assume this bond as been determined to be rotatable ahead of time.
+    pub fn rotate_around_bond(&mut self, bond_pivot: usize, rot_amt: f64) {
+        if bond_pivot >= self.bonds.len() {
+            eprintln!("Error: Bond pivot out of bounds.");
+            return;
+        }
+
+        let pivot = &self.bonds[bond_pivot];
+
+        // Measure how many atoms would be "downstream" from each side
+        let side0_downstream = find_downstream_atoms(&self.adjacency_list, pivot.atom_1, pivot.atom_0); // atoms on atom_0 side
+        let side1_downstream = find_downstream_atoms(&self.adjacency_list, pivot.atom_0, pivot.atom_1); // atoms on atom_1 side
+
+        // Rotate the smaller side; keep pivot_idx on the larger side
+        let (pivot_idx, side_idx, downstream_atom_indices) =
+            if side0_downstream.len() > side1_downstream.len() {
+                (pivot.atom_0, pivot.atom_1, side1_downstream)
+            } else {
+                (pivot.atom_1, pivot.atom_0, side0_downstream)
+            };
+
+        // Pivot and side positions
+        let pivot_pos = self.atom_posits[pivot_idx];
+        let side_pos = self.atom_posits[side_idx];
+
+        let axis_raw = side_pos - pivot_pos;
+        let axis_len2 = axis_raw.dot(axis_raw);
+
+        if axis_len2 <= 1.0e-24 {
+            eprintln!("Error: bond axis is degenerate (zero length).");
+            return;
+        }
+
+        let axis_vec = axis_raw.to_normalized();
+
+        // Build the Quaternion for this rotation (assumes rot_amt is radians)
+        let rotator = Quaternion::from_axis_angle(axis_vec, rot_amt);
+
+        // Now apply the rotation to each downstream atom:
+        for &atom_idx in &downstream_atom_indices {
+            let old_pos = self.atom_posits[atom_idx];
+            let relative = old_pos - pivot_pos;
+            let new_pos = pivot_pos + rotator.rotate_vec(relative);
+            self.atom_posits[atom_idx] = new_pos;
+        }
+
+        // We've updated atom positions in place; update internal coords.
+        for (i, a) in self.atoms.iter_mut().enumerate() {
+            a.posit = self.atom_posits[i];
+        }
+    }
+
 
     /// A helper used to ensure that there is a valid atom for each bond. (Checks both SN and index),
     /// and that checks if the adjacency list is up to date. This is used for debugging only.
