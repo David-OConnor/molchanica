@@ -46,6 +46,7 @@ mod mol_lig;
 mod mol_manip;
 mod nucleic_acid;
 mod orca;
+mod pharmacophore;
 mod selection;
 mod smiles;
 #[cfg(test)]
