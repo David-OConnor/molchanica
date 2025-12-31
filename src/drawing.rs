@@ -16,9 +16,8 @@ use na_seq::Element;
 use crate::{
     OperatingMode, ResColoring, Selection, State, StateUi, ViewSelLevel,
     mol_manip::ManipMode,
-    molecule::{
-        Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculeCommon,
-        MoleculePeptide, Residue, aa_color,
+    molecules::{
+        Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
     },
     reflection::DensityPt,
     render::{

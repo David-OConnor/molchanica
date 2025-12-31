@@ -11,7 +11,7 @@ use mcubes::{MarchingCubes, MeshSide};
 use crate::{
     StateUi, ViewSelLevel,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, SAS_ISO_OPACITY, color_viridis_float},
-    molecule::{Atom, MoleculePeptide},
+    molecules::MoleculePeptide,
     render::MESH_SOLVENT_SURFACE,
     util::res_color,
 };

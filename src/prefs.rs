@@ -26,7 +26,7 @@ use crate::{
     docking::DockingSite,
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    molecule::MolIdent,
+    molecules::MolIdent,
 };
 
 pub const DEFAULT_PREFS_FILE: &str = "molchanica_prefs.mca";

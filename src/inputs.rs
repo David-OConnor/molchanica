@@ -19,7 +19,7 @@ use crate::{
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
     mol_manip::ManipMode,
-    molecule::MolType,
+    molecules::MolType,
     render::set_flashlight,
     selection,
     ui::cam::{FOG_DIST_MIN, set_fog_dist},

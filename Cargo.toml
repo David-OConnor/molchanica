@@ -45,7 +45,7 @@ cudarc = { version = "0.18.1", default-features = false, features = ["std", "dri
 
 
 # todo: Experimenting for alignmetn
-nalgebra = "0.34.1"
+#nalgebra = "0.34.1"
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]

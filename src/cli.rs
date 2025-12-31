@@ -21,7 +21,7 @@ use crate::{
     Selection, State,
     cam_misc::{cam_look_at, reset_camera},
     download_mols,
-    molecule::AtomRole,
+    molecules::AtomRole,
     render::set_flashlight,
     util,
 };

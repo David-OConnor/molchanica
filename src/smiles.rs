@@ -8,7 +8,7 @@ use bio_files::BondType;
 use lin_alg::f64::Vec3;
 use na_seq::Element;
 
-use crate::molecule::{Atom, Bond, MoleculeCommon};
+use crate::molecules::{Atom, Bond, common::MoleculeCommon};
 
 impl MoleculeCommon {
     pub fn to_smiles(&self) -> String {

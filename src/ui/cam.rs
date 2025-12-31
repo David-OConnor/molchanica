@@ -5,7 +5,7 @@ use lin_alg::f32::Vec3;
 use crate::{
     Selection, State, cam_misc,
     cam_misc::{cam_look_at_outside, move_cam_to_sel, reset_camera},
-    molecule::{MolType, MoleculeCommon},
+    molecules::common::MoleculeCommon,
     render::set_flashlight,
     ui::{
         COL_SPACING, COLOR_HIGHLIGHT, get_snap_name,

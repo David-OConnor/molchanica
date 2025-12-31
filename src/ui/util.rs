@@ -1,18 +1,18 @@
-use std::{io, path::Path};
+use std::io;
 
 use bio_apis::{amber_geostd, rcsb};
 use egui::{Color32, Popup, PopupAnchor, Pos2, RectAlign, RichText, Ui};
-use graphics::{Camera, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
     OperatingMode, State,
-    cam_misc::{move_mol_to_cam, reset_camera},
+    cam_misc::reset_camera,
     download_mols::load_atom_coords_rcsb,
     drawing::draw_peptide,
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     mol_editor,
     mol_lig::MoleculeSmall,
-    molecule::{MolGenericRef, MolType, MoleculeGeneric},
+    molecules::{MolGenericRef, MoleculeGeneric},
     render::{set_flashlight, set_static_light},
     ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING, set_window_title},
     util::{handle_err, reset_orbit_center},

@@ -2,13 +2,13 @@
 //! mapping 2D to 3D coordinates, and choosing the right item from what's open and visible.
 
 use graphics::{ControlScheme, Scene};
-use lin_alg::{f32::Vec3 as Vec3F32, map_linear};
+use lin_alg::f32::Vec3 as Vec3F32;
 use na_seq::{Element, Element::Hydrogen};
 
 use crate::{
     Selection, State, StateUi, ViewSelLevel,
     drawing::MoleculeView,
-    molecule::{Atom, AtomRole, Bond, Chain, MolType, MoleculeCommon, Residue},
+    molecules::{Atom, AtomRole, Bond, Chain, MolType, Residue, common::MoleculeCommon},
     util::orbit_center,
 };
 

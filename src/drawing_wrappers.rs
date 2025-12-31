@@ -8,7 +8,7 @@ use graphics::{Entity, Scene};
 use crate::{
     OperatingMode, State, drawing,
     drawing::EntityClass,
-    molecule::{MolGenericRef, MolGenericTrait, MolType},
+    molecules::{MolGenericRef, MolGenericTrait, MolType},
     util::clear_mol_entity_indices,
 };
 

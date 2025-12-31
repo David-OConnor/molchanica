@@ -8,7 +8,7 @@ use crate::{
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
-    molecule::{MolType, MoleculeCommon, MoleculePeptide},
+    molecules::{MolType, common::MoleculeCommon},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, cam::move_cam_to_mol,

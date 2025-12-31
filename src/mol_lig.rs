@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{mpsc, mpsc::Receiver},
     thread,
-    time::Instant,
 };
 
 use bio_apis::{ReqError, amber_geostd, amber_geostd::GeostdData, pubchem::ProteinStructure};
@@ -23,9 +22,9 @@ use na_seq::Element;
 use crate::{
     docking::{DockingSite, Pose},
     mol_characterization::MolCharacterization,
-    molecule::{
-        Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, MoleculeCommon,
-        Residue,
+    molecules::{
+        Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
+        common::MoleculeCommon,
     },
 };
 
@@ -112,8 +111,8 @@ impl MolGenericTrait for MoleculeSmall {
         MolGenericRef::Ligand(self)
     }
 
-    fn mol_type(&self) -> crate::molecule::MolType {
-        crate::molecule::MolType::Ligand
+    fn mol_type(&self) -> crate::molecules::MolType {
+        crate::molecules::MolType::Ligand
     }
 }
 

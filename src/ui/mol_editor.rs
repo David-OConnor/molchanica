@@ -1,9 +1,8 @@
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::sync::atomic::Ordering;
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
-use lin_alg::f64::Vec3;
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
@@ -14,15 +13,15 @@ use crate::{
     drawing::MoleculeView,
     mol_editor,
     mol_editor::{
-        MolEditorState, NEXT_ATOM_SN,
+        NEXT_ATOM_SN,
         add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
         exit_edit_mode, sync_md,
         templates::Template,
     },
     mol_lig::MoleculeSmall,
     mol_manip,
-    mol_manip::{ManipMode, MolManip},
-    molecule::{Bond, MolType},
+    mol_manip::ManipMode,
+    molecules::{Bond, MolType},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
         cam::cam_reset_controls,
@@ -30,7 +29,6 @@ use crate::{
         misc,
         misc::{active_color, section_box},
         mol_data::selected_data,
-        view_sel_selector,
     },
     util::handle_err,
 };

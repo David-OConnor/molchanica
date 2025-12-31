@@ -3,11 +3,7 @@
 
 use lin_alg::f64::Vec3;
 
-use crate::{
-    mol_lig::MoleculeSmall,
-    molecule::{HydrogenBond, MoleculeCommon},
-};
-
+use crate::{mol_lig::MoleculeSmall, molecules::HydrogenBond};
 // #[derive(Debug)]
 // pub enum PharmacophoreFeature {
 //     Hydrophobic(<(i8)>),

@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use egui::{ComboBox, RichText, Slider, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 
@@ -9,7 +7,7 @@ use crate::{
         EntityClass, MoleculeView, draw_density_point_cloud, draw_density_surface, draw_water,
     },
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
-    molecule::MolType,
+    molecules::MolType,
     ui::{
         COL_SPACING, DENS_ISO_MAX, DENS_ISO_MIN, misc,
         misc::{section_box, toggle_btn, toggle_btn_inv},

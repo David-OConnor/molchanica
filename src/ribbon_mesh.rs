@@ -7,7 +7,7 @@ use graphics::{Mesh, Vertex};
 use lin_alg::f32::Vec3 as Vec3F32;
 use na_seq::Element;
 
-use crate::molecule::Atom;
+use crate::molecules::Atom;
 
 /// Radii / dimensions for each cartoon element (Å).
 const HELIX_RADIUS: f32 = 0.6;

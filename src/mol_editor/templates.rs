@@ -8,7 +8,7 @@ use na_seq::{
     Element::{self, Carbon, Hydrogen, Nitrogen, Oxygen},
 };
 
-use crate::molecule::{Atom, Bond};
+use crate::molecules::{Atom, Bond};
 
 const BOND_LEN_AROMATIC: f64 = 1.39;
 const BOND_LEN_PENT_SAT: f64 = 1.53; // C-C single bonds

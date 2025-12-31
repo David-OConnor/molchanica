@@ -27,7 +27,7 @@ use crate::{
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     mol_lig::MoleculeSmall,
     mol_manip::ManipMode,
-    molecule::{
+    molecules::{
         Atom, Bond, MoGenericRefMut, MolGenericRef, MolType, MoleculeGeneric, MoleculePeptide,
         Residue, aa_color,
     },
