@@ -9,10 +9,9 @@ use bio_files::BondType;
 use na_seq::Element::*;
 
 use crate::molecules::common::MoleculeCommon;
+use crate::molecules::rotatable_bonds::RotatableBond;
 
 /// Describes a small molecule by features practical for description and characterization.
-/// todo: Indices are relevant features (e.g. which atoms and bonds constitute which ring, which atoms and
-/// todo bonds are part of functional groups etc. And/or tag the atoms/bonds directly?
 #[derive(Clone, Default, Debug)]
 pub struct MolCharacterization {
     pub num_atoms: usize,
@@ -23,35 +22,55 @@ pub struct MolCharacterization {
     pub mol_weight: f32,
 
     pub num_rings_total: usize,
-    pub num_rings_5_atom: usize,
-    pub num_rings_6_atom: usize,
-    pub num_aromatic_rings: usize,
-    pub num_aromatic_rings_5_atom: usize,
-    pub num_aromatic_rings_6_atom: usize,
+    // pub num_rings_5_atom: usize,
+    // pub num_rings_6_atom: usize,
+    /// Indices
+    pub rings_5_atom: Vec<[usize; 5]>,
+    pub rings_6_atom: Vec<[usize; 6]>,
+    // pub num_aromatic_rings: usize,
+    pub rings_aromatic_5_atom: Vec<[usize; 5]>,
+    pub rings_aromatic_6_atom: Vec<[usize; 6]>,
+    // pub num_aromatic_rings_5_atom: usize,
+    // pub num_aromatic_rings_6_atom: usize,
     pub num_aromatic_atoms: usize,
 
-    pub num_rotatable_bonds: usize,
+    // pub num_rotatable_bonds: usize,
+    /// Bond index.
+    pub rotatable_bonds: Vec<RotatableBond>,
 
     pub num_carbon: usize,
     pub num_hydrogen: usize,
-    pub num_nitrogen: usize,
-    pub num_oxygen: usize,
-    pub num_sulfur: usize,
-    pub num_phosphorus: usize,
+    pub nitrogen: Vec<usize>,
+    pub oxygen: Vec<usize>,
+    // pub num_sulfur: usize,
+    pub sulfur: Vec<usize>,
+    // pub num_phosphorus: usize,
+    pub phosphorus: Vec<usize>,
+    // pub num_fluorine: usize,
+    pub fluorine: Vec<usize>,
+    pub chlorine: Vec<usize>,
+    pub bromine: Vec<usize>,
+    // pub num_bromine: usize,
+    // pub num_iodine: usize,
+    pub iodine: Vec<usize>,
+    pub halogen: Vec<usize>,
+    // pub num_halogen: usize,
 
-    pub num_fluorine: usize,
-    pub num_chlorine: usize,
-    pub num_bromine: usize,
-    pub num_iodine: usize,
-    pub num_halogen: usize,
+    // pub num_amines: usize,
+    // pub num_amides: usize,
+    /// N atom
+    pub amines: Vec<usize>,
+    /// N atom
+    pub amides: Vec<usize>,
+    // pub num_carbonyl: usize,
+    /// C atom bound to O.
+    pub carbonyl: Vec<usize>,
+    /// O.
+    pub hydroxyl: Vec<usize>,
+    // pub num_hydroxyl: usize,
 
-    pub num_amines: usize,
-    pub num_amides: usize,
-    pub num_carbonyl: usize,
-    pub num_hydroxyl: usize,
-
-    pub hbd: usize,
-    pub hba: usize,
+    pub h_bond_donor: Vec<usize>,
+    pub h_bond_acceptor: Vec<usize>,
 
     pub net_partial_charge: Option<f32>,
     pub abs_partial_charge_sum: Option<f32>,
@@ -81,15 +100,17 @@ impl Display for MolCharacterization {
             self.mol_weight.round() as u16
         );
 
-        count_disp(&mut v, self.num_rings_5_atom, "pent");
-        count_disp(&mut v, self.num_rings_6_atom, "hex");
-        count_disp(&mut v, self.num_amides, "amide");
-        count_disp(&mut v, self.num_amines, "amine");
-        count_disp(&mut v, self.num_carbonyl, "carbonyl");
-        count_disp(&mut v, self.num_hydroxyl, "hydroxyl");
-        count_disp(&mut v, self.num_sulfur, "sulfur");
-        count_disp(&mut v, self.num_phosphorus, "phosphorus");
-        count_disp(&mut v, self.num_chlorine, "chlorine");
+        count_disp(&mut v, self.rings_5_atom.len(), "pent");
+        count_disp(&mut v, self.rings_6_atom.len(), "hex");
+
+
+        count_disp(&mut v, self.amides.len(), "amide");
+        count_disp(&mut v, self.amines.len(), "amine");
+        count_disp(&mut v, self.carbonyl.len(), "carbonyl");
+        count_disp(&mut v, self.hydroxyl.len(), "hydroxyl");
+        count_disp(&mut v, self.sulfur.len(), "sulfur");
+        count_disp(&mut v, self.phosphorus.len(), "phosphorus");
+        count_disp(&mut v, self.chlorine.len(), "chlorine");
 
         writeln!(f, "{v}")
     }
@@ -211,11 +232,11 @@ impl MolCharacterization {
             cycles_set.into_iter().collect()
         }
 
-        let n_atoms = mol.atoms.len();
-        let n_bonds = mol.bonds.len();
+        let num_atoms = mol.atoms.len();
+        let num_bonds = mol.bonds.len();
 
         let mut bond_type_by_edge: HashMap<(usize, usize), BondType> =
-            HashMap::with_capacity(n_bonds);
+            HashMap::with_capacity(num_bonds);
         for b in &mol.bonds {
             bond_type_by_edge.insert(edge_key(b.atom_0, b.atom_1), b.bond_type);
         }
@@ -224,15 +245,15 @@ impl MolCharacterization {
 
         let mut num_carbon = 0;
         let mut num_hydrogen = 0;
-        let mut num_nitrogen = 0;
-        let mut num_oxygen = 0;
-        let mut num_sulfur = 0;
-        let mut num_phosphorus = 0;
+        let mut nitrogen = Vec::new();
+        let mut oxygen = Vec::new();
+        let mut sulfur = Vec::new();
+        let mut phosphorus = Vec::new();
 
-        let mut num_fluorine = 0;
-        let mut num_chlorine = 0;
-        let mut num_bromine = 0;
-        let mut num_iodine = 0;
+        let mut fluorine = Vec::new();
+        let mut chlorine = Vec::new();
+        let mut bromine = Vec::new();
+        let mut iodine = Vec::new();
 
         let mut num_heavy_atoms = 0;
         let mut num_hetero_atoms = 0;
@@ -241,7 +262,7 @@ impl MolCharacterization {
         let mut net_q = 0.0f32;
         let mut abs_q = 0.0f32;
 
-        for atom in &mol.atoms {
+        for (i, atom) in mol.atoms.iter().enumerate() {
             mol_weight_f64 += atom.element.atomic_weight() as f64;
 
             if atom.element != Hydrogen {
@@ -254,15 +275,15 @@ impl MolCharacterization {
             match atom.element {
                 Carbon => num_carbon += 1,
                 Hydrogen => num_hydrogen += 1,
-                Nitrogen => num_nitrogen += 1,
-                Oxygen => num_oxygen += 1,
-                Sulfur => num_sulfur += 1,
-                Phosphorus => num_phosphorus += 1,
+                Nitrogen => nitrogen.push(i),
+                Oxygen => oxygen.push(i),
+                Sulfur => sulfur.push(i),
+                Phosphorus => phosphorus.push(i),
 
-                Fluorine => num_fluorine += 1,
-                Chlorine => num_chlorine += 1,
-                Bromine => num_bromine += 1,
-                Iodine => num_iodine += 1,
+                Fluorine => fluorine.push(i),
+                Chlorine => chlorine.push(i),
+                Bromine => bromine.push(i),
+                Iodine => iodine.push(i),
                 _ => {}
             }
 
@@ -277,14 +298,18 @@ impl MolCharacterization {
             }
         }
 
-        let num_halogen = num_fluorine + num_chlorine + num_bromine + num_iodine;
+        let mut halogen = Vec::with_capacity(fluorine.len() + chlorine.len() + bromine.len() + iodine.len());
+        halogen.extend(&fluorine);
+        halogen.extend(&chlorine);
+        halogen.extend(&bromine);
+        halogen.extend(&iodine);
 
-        let net_partial_charge = if all_charges_present && n_atoms > 0 {
+        let net_partial_charge = if all_charges_present && num_atoms > 0 {
             Some(net_q)
         } else {
             None
         };
-        let abs_partial_charge_sum = if all_charges_present && n_atoms > 0 {
+        let abs_partial_charge_sum = if all_charges_present && num_atoms > 0 {
             Some(abs_q)
         } else {
             None
@@ -293,10 +318,10 @@ impl MolCharacterization {
         let adj = &mol.adjacency_list;
 
         let num_rings_total = {
-            let mut seen = vec![false; n_atoms];
+            let mut seen = vec![false; num_atoms];
             let mut components = 0usize;
 
-            for i in 0..n_atoms {
+            for i in 0..num_atoms {
                 if seen[i] {
                     continue;
                 }
@@ -314,8 +339,8 @@ impl MolCharacterization {
                 }
             }
 
-            let v = n_atoms as isize;
-            let e = n_bonds as isize;
+            let v = num_atoms as isize;
+            let e = num_bonds as isize;
             let c = components as isize;
 
             let cyclomatic = e - v + c;
@@ -326,11 +351,11 @@ impl MolCharacterization {
             }
         };
 
-        let cycles_5 = count_cycles_len(adj, 5);
-        let cycles_6 = count_cycles_len(adj, 6);
+        let rings_5_atom: Vec<[usize; 5]> = count_cycles_len(adj, 5)
+            .into_iter().map(|v| v.try_into().unwrap()).collect();
 
-        let num_rings_5_atom = cycles_5.len();
-        let num_rings_6_atom = cycles_6.len();
+        let rings_6_atom:Vec<[usize; 6]> = count_cycles_len(adj, 6)
+            .into_iter().map(|v| v.try_into().unwrap()).collect();
 
         let is_kekule_aromatic_6c = |cyc: &[usize]| -> bool {
             if cyc.len() != 6 {
@@ -403,34 +428,35 @@ impl MolCharacterization {
             is_kekule_aromatic_6c(cyc)
         };
 
-        let num_aromatic_rings_5_atom = cycles_5.iter().filter(|c| is_cycle_aromatic(c)).count();
-        let num_aromatic_rings_6_atom = cycles_6.iter().filter(|c| is_cycle_aromatic(c)).count();
-        let num_aromatic_rings = num_aromatic_rings_5_atom + num_aromatic_rings_6_atom;
+        let rings_aromatic_5_atom: Vec<_> = rings_5_atom.to_vec().into_iter().filter(|c| is_cycle_aromatic(c)).collect();
+        let rings_aromatic_6_atom: Vec<_> = rings_6_atom.to_vec().into_iter().filter(|c| is_cycle_aromatic(c)).collect();
 
-        let mut aromatic_atom_flags = vec![false; n_atoms];
-        for cyc in cycles_5.iter().chain(cycles_6.iter()) {
-            if is_cycle_aromatic(cyc) {
-                for &a in cyc {
-                    aromatic_atom_flags[a] = true;
-                }
+        // This logic takes fused rings into account.
+        let num_aromatic_atoms = {
+            let mut arom_atoms = HashSet::new();
+            for r in & rings_aromatic_5_atom {
+                arom_atoms.extend(r.iter().copied());
             }
-        }
-        let num_aromatic_atoms = aromatic_atom_flags.iter().filter(|&&b| b).count();
+            for r in &rings_aromatic_6_atom {
+                arom_atoms.extend(r.iter().copied());
+            }
+            arom_atoms.len()
+        };
 
-        let mut bond_in_ring: HashMap<(usize, usize), bool> = HashMap::with_capacity(n_bonds);
+        let mut bond_in_ring: HashMap<(usize, usize), bool> = HashMap::with_capacity(num_bonds);
         for b in &mol.bonds {
             let k = edge_key(b.atom_0, b.atom_1);
             let in_ring = bfs_reachable_ignoring_edge(adj, b.atom_0, b.atom_1, k);
             bond_in_ring.insert(k, in_ring);
         }
 
-        let mut num_carbonyl = 0usize;
-        let mut num_hydroxyl = 0usize;
-        let mut num_amines = 0usize;
-        let mut num_amides = 0usize;
+        let mut carbonyl = Vec::new();
+        let mut hydroxyl = Vec::new();
+        let mut amines = Vec::new();
+        let mut amides = Vec::new();
 
-        let mut hbd = 0usize;
-        let mut hba = 0usize;
+        let mut hbd = 0;
+        let mut hba = 0;
 
         let is_double_bond = |a: usize, b: usize| -> bool {
             bond_type_by_edge
@@ -498,28 +524,28 @@ impl MolCharacterization {
             false
         };
 
-        for i in 0..n_atoms {
+        for i in 0..num_atoms {
             let el = mol.atoms[i].element;
 
             if el == Carbon && carbon_has_double_bonded_oxygen(i) {
-                num_carbonyl += 1;
+                carbonyl.push(i);
             }
 
             if el == Oxygen {
                 let has_h = adj[i].iter().any(|&n| mol.atoms[n].element == Hydrogen);
                 if has_h {
-                    num_hydroxyl += 1;
+                    hydroxyl.push(i);
                 }
             }
 
             if el == Nitrogen {
                 let amide = nitrogen_is_amide(i);
                 if amide {
-                    num_amides += 1;
+                    amides.push(i);
                 } else {
                     let has_c = adj[i].iter().any(|&n| mol.atoms[n].element == Carbon);
                     if has_c {
-                        num_amines += 1;
+                        amines.push(i);
                     }
                 }
             }
@@ -531,7 +557,7 @@ impl MolCharacterization {
                 .unwrap_or(false);
 
             let donor = match el {
-                Oxygen | Nitrogen | Sulfur => has_h && !positive,
+                Oxygen | Nitrogen | Sulfur => has_h,
                 _ => false,
             };
             if donor {
@@ -549,51 +575,9 @@ impl MolCharacterization {
             }
         }
 
-        let mut num_rotatable_bonds = 0usize;
-        for b in &mol.bonds {
-            let a = b.atom_0;
-            let c = b.atom_1;
-
-            if mol.atoms[a].element == Hydrogen || mol.atoms[c].element == Hydrogen {
-                continue;
-            }
-
-            let bt = bond_type_by_edge
-                .get(&edge_key(a, c))
-                .copied()
-                .unwrap_or(BondType::Single);
-            if bt != BondType::Single {
-                continue;
-            }
-
-            if bond_in_ring.get(&edge_key(a, c)).copied().unwrap_or(false) {
-                continue;
-            }
-
-            let a_deg = adj[a]
-                .iter()
-                .filter(|&&n| mol.atoms[n].element != Hydrogen)
-                .count();
-            let c_deg = adj[c]
-                .iter()
-                .filter(|&&n| mol.atoms[n].element != Hydrogen)
-                .count();
-            if a_deg <= 1 || c_deg <= 1 {
-                continue;
-            }
-
-            let amide_like = (mol.atoms[a].element == Nitrogen
-                && carbon_has_double_bonded_oxygen(c))
-                || (mol.atoms[c].element == Nitrogen && carbon_has_double_bonded_oxygen(a));
-            if amide_like {
-                continue;
-            }
-
-            num_rotatable_bonds += 1;
-        }
 
         let mut num_sp3_carbon = 0usize;
-        for i in 0..n_atoms {
+        for i in 0..num_atoms {
             if mol.atoms[i].element != Carbon {
                 continue;
             }
@@ -618,43 +602,42 @@ impl MolCharacterization {
         };
 
         Self {
-            num_atoms: n_atoms,
-            num_bonds: n_bonds,
+            num_atoms,
+            num_bonds,
             num_heavy_atoms,
             num_hetero_atoms,
 
             mol_weight: mol_weight_f64 as f32,
 
             num_rings_total,
-            num_rings_5_atom,
-            num_rings_6_atom,
-            num_aromatic_rings,
-            num_aromatic_rings_5_atom,
-            num_aromatic_rings_6_atom,
+            rings_5_atom,
+            rings_6_atom,
+            rings_aromatic_5_atom,
+            rings_aromatic_6_atom,
             num_aromatic_atoms,
 
-            num_rotatable_bonds,
+            rotatable_bonds: mol.find_rotatable_bonds(),
 
             num_carbon,
             num_hydrogen,
-            num_nitrogen,
-            num_oxygen,
-            num_sulfur,
-            num_phosphorus,
+            nitrogen,
+            oxygen,
+            sulfur,
+            phosphorus,
 
-            num_fluorine,
-            num_chlorine,
-            num_bromine,
-            num_iodine,
-            num_halogen,
+            fluorine,
+            chlorine,
+            bromine,
+            iodine,
+            halogen,
 
-            num_amines,
-            num_amides,
-            num_carbonyl,
-            num_hydroxyl,
+            amines,
+            amides,
+            carbonyl,
+            hydroxyl,
 
-            hbd,
-            hba,
+            h_bond_donor: hbd,
+            h_bond_acceptor: hba,
 
             net_partial_charge,
             abs_partial_charge_sum,
