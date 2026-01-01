@@ -864,8 +864,8 @@ fn template_section(
         add_t(Template::Amide, "−NH₂", "amide functional group");
 
         add_t(Template::AromaticRing, "Ar", "benzene/aromatic ring");
-        add_t(Template::Cyclohexane, "Hex", "cyclohexane ring");
+        add_t(Template::Cyclohexane, "⬣", "cyclohexane ring");
 
-        add_t(Template::PentaRing, "Pent", "5-atom ring");
+        add_t(Template::PentaRing, "⬟", "5-atom ring");
     });
 }

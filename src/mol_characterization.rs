@@ -8,7 +8,7 @@ use std::{
 use bio_files::BondType;
 use na_seq::Element::*;
 
-use crate::molecules::{common::MoleculeCommon, rotatable_bonds::RotatableBond};
+use crate::molecules::{common::MoleculeCommon, rotatable_bonds::RotatableBond, Atom};
 
 /// Describes a small molecule by features practical for description and characterization.
 #[derive(Clone, Default, Debug)]
@@ -17,23 +17,17 @@ pub struct MolCharacterization {
     pub num_bonds: usize,
     pub num_heavy_atoms: usize,
     pub num_hetero_atoms: usize,
-
-    pub mol_weight: f32,
-
-    pub num_rings_total: usize,
-    /// Indices
-    pub rings_5_atom: Vec<[usize; 5]>,
-    pub rings_6_atom: Vec<[usize; 6]>,
-    pub rings_aromatic_5_atom: Vec<[usize; 5]>,
-    pub rings_aromatic_6_atom: Vec<[usize; 6]>,
-    pub fused_rings_5_6: Vec<[usize; 6]>,
-    pub fused_rings_6_6: Vec<[usize; 6]>,
     pub num_aromatic_atoms: usize,
-
-    // pub num_rotatable_bonds: usize,
+    pub mol_weight: f32,
+    /// Single rings; either standalone, or part of a system.
+    pub rings: Vec<Ring>,
+    /// Fused rings, i.e. 2 or more rings with shared edges.
+    /// These are indices of the `rings` field here. Note that we only have
+    /// one level of ring systems. For example. 3 rings that have shared edges are one system of len 3;
+    /// we don't also include the len-2 subsystems.
+    pub ring_systems: Vec<Vec<usize>>,
     /// Bond index.
     pub rotatable_bonds: Vec<RotatableBond>,
-
     pub num_carbon: usize,
     pub num_hydrogen: usize,
     pub nitrogen: Vec<usize>,
@@ -49,28 +43,39 @@ pub struct MolCharacterization {
     pub amines: Vec<usize>,
     /// N atom
     pub amides: Vec<usize>,
+    /// Lone pair not part of the aromatic sextet
+    pub pyridine_like_aromatic_n: Vec<usize>,
+    /// Lone pair is part of the aromatic sextet
+    pub pyrrole_like_nh: Vec<usize>,
+    /// Has a C=N double bond
+    pub imine_like_n: Vec<usize>,
     /// C atom bound to O.
     pub carbonyl: Vec<usize>,
-    /// O.
+    /// O atom index.
     pub hydroxyl: Vec<usize>,
-
     pub h_bond_donor: Vec<usize>,
     pub h_bond_acceptor: Vec<usize>,
-
     pub net_partial_charge: Option<f32>,
     pub abs_partial_charge_sum: Option<f32>,
-
     pub num_sp3_carbon: usize,
     pub frac_csp3: f32,
+    // todo
+    pub topological_polar_surface_area: Option<f32>,
+    pub calc_log_p: Option<f32>,
+}
 
-    pub tpsa: Option<f32>,
-    pub clogp: Option<f32>,
+/// Represents a single ring; can be on its own, or part of a fused ring system.
+#[derive(Clone, Debug)]
+pub struct Ring {
+    pub atoms: Vec<usize>,
+    pub aromatic: bool,
 }
 
 /// A helper to reduce repetition in string formatting.
 fn count_disp(v: &mut String, count: usize, name: &str) {
     if count > 0 {
         *v += &format!(", {} {name}", count);
+        // For plurals.
         // if count >= 2 {
         //     *v += "s";
         // }
@@ -85,18 +90,34 @@ impl Display for MolCharacterization {
             self.mol_weight.round() as u32
         );
 
-        count_disp(&mut v, self.rings_5_atom.len(), "pent");
-        count_disp(&mut v, self.rings_6_atom.len(), "hex");
-        count_disp(&mut v, self.fused_rings_5_6.len(), "fused 5-6");
+        let mut rings_5 = 0;
+        let mut rings_6 = 0;
+        for ring in &self.rings {
+            if ring.atoms.len() == 5 {
+                rings_5 += 1;
+            } else if ring.atoms.len() == 6 {
+                rings_6 += 1;
+            }
+        }
+
+        count_disp(&mut v, rings_5, "⬟");
+        count_disp(&mut v, rings_6, "⬣");
+        count_disp(&mut v, self.ring_systems.len(), "fused ring systems");
 
         count_disp(&mut v, self.amides.len(), "amide");
         count_disp(&mut v, self.amines.len(), "amine");
+
+        count_disp(&mut v, self.pyridine_like_aromatic_n.len(), "pyridine-like");
+        count_disp(&mut v, self.pyrrole_like_nh.len(), "pyrrole-like");
+        count_disp(&mut v, self.imine_like_n.len(), "imine-like");
+
+
         count_disp(&mut v, self.carbonyl.len(), "carbonyl");
         count_disp(&mut v, self.hydroxyl.len(), "hydroxyl");
 
-        count_disp(&mut v, self.sulfur.len(), "sulfur");
-        count_disp(&mut v, self.phosphorus.len(), "phosphorus");
-        count_disp(&mut v, self.chlorine.len(), "chlorine");
+        count_disp(&mut v, self.sulfur.len(), "S");
+        count_disp(&mut v, self.phosphorus.len(), "P");
+        count_disp(&mut v, self.chlorine.len(), "Cl");
         count_disp(&mut v, self.halogen.len(), "halogen");
 
         writeln!(f, "{v}")
@@ -131,88 +152,6 @@ impl MolCharacterization {
                 }
             }
             false
-        }
-
-        fn canonical_cycle(nodes: &[usize]) -> Vec<usize> {
-            let n = nodes.len();
-
-            let (min_i, _) = nodes.iter().enumerate().min_by_key(|(_, v)| **v).unwrap();
-
-            let mut rot_fwd = Vec::with_capacity(n);
-            for k in 0..n {
-                rot_fwd.push(nodes[(min_i + k) % n]);
-            }
-
-            let mut rev = Vec::with_capacity(n);
-            for k in 0..n {
-                rev.push(nodes[(min_i + n - (k % n)) % n]);
-            }
-
-            if rev < rot_fwd { rev } else { rot_fwd }
-        }
-
-        fn count_cycles_len(adj: &[Vec<usize>], len: usize) -> Vec<Vec<usize>> {
-            let n = adj.len();
-            let mut cycles_set: HashSet<Vec<usize>> = HashSet::new();
-            let mut stack: Vec<usize> = Vec::with_capacity(len);
-            let mut visited = vec![false; n];
-
-            fn dfs(
-                adj: &[Vec<usize>],
-                s: usize,
-                u: usize,
-                len: usize,
-                stack: &mut Vec<usize>,
-                visited: &mut [bool],
-                cycles_set: &mut HashSet<Vec<usize>>,
-            ) {
-                if stack.len() == len {
-                    if adj[u].iter().any(|&v| v == s) {
-                        let cyc = canonical_cycle(stack);
-                        cycles_set.insert(cyc);
-                    }
-                    return;
-                }
-
-                for &v in &adj[u] {
-                    if v == s {
-                        continue;
-                    }
-                    if visited[v] {
-                        continue;
-                    }
-                    if v < s {
-                        continue;
-                    }
-
-                    visited[v] = true;
-                    stack.push(v);
-                    dfs(adj, s, v, len, stack, visited, cycles_set);
-                    stack.pop();
-                    visited[v] = false;
-                }
-            }
-
-            for s in 0..n {
-                visited[s] = true;
-                stack.clear();
-                stack.push(s);
-
-                for &v in &adj[s] {
-                    if v < s {
-                        continue;
-                    }
-                    visited[v] = true;
-                    stack.push(v);
-                    dfs(adj, s, v, len, &mut stack, &mut visited, &mut cycles_set);
-                    stack.pop();
-                    visited[v] = false;
-                }
-
-                visited[s] = false;
-            }
-
-            cycles_set.into_iter().collect()
         }
 
         let num_atoms = mol.atoms.len();
@@ -301,209 +240,27 @@ impl MolCharacterization {
 
         let adj = &mol.adjacency_list;
 
-        let num_rings_total = {
-            let mut seen = vec![false; num_atoms];
-            let mut components = 0usize;
+        let rings = rings(&adj, &mol.atoms, &bond_type_by_edge);
+        let ring_systems = fused_rings(&rings, &mol.atoms);
 
-            for i in 0..num_atoms {
-                if seen[i] {
-                    continue;
-                }
-                components += 1;
-                let mut q = VecDeque::new();
-                seen[i] = true;
-                q.push_back(i);
-                while let Some(u) = q.pop_front() {
-                    for &v in &adj[u] {
-                        if !seen[v] {
-                            seen[v] = true;
-                            q.push_back(v);
-                        }
-                    }
-                }
-            }
-
-            let v = num_atoms as isize;
-            let e = num_bonds as isize;
-            let c = components as isize;
-
-            let cyclomatic = e - v + c;
-            if cyclomatic > 0 {
-                cyclomatic as usize
-            } else {
-                0
-            }
-        };
-
-        let rings_5_atom: Vec<[usize; 5]> = count_cycles_len(adj, 5)
-            .into_iter()
-            .map(|v| v.try_into().unwrap())
-            .collect();
-
-        let rings_6_atom: Vec<[usize; 6]> = count_cycles_len(adj, 6)
-            .into_iter()
-            .map(|v| v.try_into().unwrap())
-            .collect();
-
-        let is_kekule_aromatic_6c = |cyc: &[usize]| -> bool {
-            if cyc.len() != 6 {
-                return false;
-            }
-            for &a in cyc {
-                match mol.atoms[a].element {
-                    Carbon | Nitrogen | Oxygen | Sulfur => {}
-                    _ => return false,
-                }
-            }
-
-            let mut kinds = [0u8; 6]; // 1=single, 2=double
-            let mut singles = 0usize;
-            let mut doubles = 0usize;
-
-            for k in 0..6 {
-                let a = cyc[k];
-                let b = cyc[(k + 1) % 6];
-                let Some(bt) = bond_type_by_edge.get(&edge_key(a, b)) else {
-                    return false;
-                };
-
-                match *bt {
-                    BondType::Single => {
-                        kinds[k] = 1;
-                        singles += 1;
-                    }
-                    BondType::Double => {
-                        kinds[k] = 2;
-                        doubles += 1;
-                    }
-                    BondType::Aromatic => return true,
-                    _ => return false,
-                }
-            }
-
-            if singles != 3 || doubles != 3 {
-                return false;
-            }
-
-            for k in 0..6 {
-                if kinds[k] == kinds[(k + 1) % 6] {
-                    return false;
-                }
-            }
-
-            true
-        };
-
-        let is_cycle_aromatic = |cyc: &[usize]| -> bool {
-            let n = cyc.len();
-            let mut all_bt_arom = true;
-
-            for k in 0..n {
-                let a = cyc[k];
-                let b = cyc[(k + 1) % n];
-                let Some(bt) = bond_type_by_edge.get(&edge_key(a, b)) else {
-                    return false;
-                };
-                if *bt != BondType::Aromatic {
-                    all_bt_arom = false;
-                    break;
-                }
-            }
-
-            if all_bt_arom {
-                return true;
-            }
-
-            is_kekule_aromatic_6c(cyc)
-        };
-
-        let rings_aromatic_5_atom: Vec<_> = rings_5_atom
+        let aromatic_atoms: HashSet<usize> = rings
             .iter()
-            .copied()
-            .filter(|c| is_cycle_aromatic(c))
+            .filter(|r| r.aromatic)
+            .flat_map(|r| r.atoms.iter().copied())
             .collect();
 
-        let rings_aromatic_6_atom: Vec<_> = rings_6_atom
-            .iter()
-            .copied()
-            .filter(|c| is_cycle_aromatic(c))
-            .collect();
+        let num_aromatic_atoms = aromatic_atoms.len();
 
-        // This logic takes fused rings into account.
-        let num_aromatic_atoms = {
-            let mut arom_atoms = HashSet::new();
-            for r in &rings_aromatic_5_atom {
-                arom_atoms.extend(r.iter().copied());
-            }
-            for r in &rings_aromatic_6_atom {
-                arom_atoms.extend(r.iter().copied());
-            }
-            arom_atoms.len()
-        };
-
-        // Detect fused rings:
-        // --- Fused ring detection (edge-sharing rings) -----------------------------------------
-
-        let edges_5: Vec<HashSet<(usize, usize)>> = rings_aromatic_5_atom
-            .iter()
-            .map(|r| cycle_edges(r))
-            .collect();
-
-        let edges_6: Vec<HashSet<(usize, usize)>> = rings_aromatic_6_atom
-            .iter()
-            .map(|r| cycle_edges(r))
-            .collect();
-
-        // fused_rings_5_6: store the *6-member* rings that share an edge with any 5-member ring.
-        let fused_rings_5_6: Vec<[usize; 6]> = {
-            let mut fused = HashSet::<[usize; 6]>::new();
-
-            for (i6, r6) in rings_aromatic_6_atom.iter().enumerate() {
-                let e6 = &edges_6[i6];
-
-                let mut ok = false;
-                for e5 in &edges_5 {
-                    if e6.intersection(e5).next().is_some() {
-                        ok = true;
-                        break;
-                    }
-                }
-
-                if ok {
-                    fused.insert(*r6);
-                }
-            }
-
-            fused.into_iter().collect()
-        };
-
-        // fused_rings_6_6: store 6-member rings that share an edge with another 6-member ring.
-        let fused_rings_6_6: Vec<[usize; 6]> = {
-            let mut fused = HashSet::<[usize; 6]>::new();
-
-            for i in 0..rings_aromatic_6_atom.len() {
-                for j in (i + 1)..rings_aromatic_6_atom.len() {
-                    if edges_6[i].intersection(&edges_6[j]).next().is_some() {
-                        fused.insert(rings_aromatic_6_atom[i]);
-                        fused.insert(rings_aromatic_6_atom[j]);
-                    }
-                }
-            }
-
-            fused.into_iter().collect()
-        };
-
-        let mut bond_in_ring: HashMap<(usize, usize), bool> = HashMap::with_capacity(num_bonds);
-        for b in &mol.bonds {
-            let k = edge_key(b.atom_0, b.atom_1);
-            let in_ring = bfs_reachable_ignoring_edge(adj, b.atom_0, b.atom_1, k);
-            bond_in_ring.insert(k, in_ring);
-        }
+        let ring_systems = fused_rings(&rings, &mol.atoms);
 
         let mut carbonyl = Vec::new();
         let mut hydroxyl = Vec::new();
         let mut amines = Vec::new();
         let mut amides = Vec::new();
+        let mut pyridine_like_aromatic_n = Vec::new();
+        let mut pyrrole_like_nh = Vec::new();
+        let mut imine_like_n = Vec::new();
+
 
         let mut h_bond_donor = Vec::new();
         let mut h_bond_acceptor = Vec::new();
@@ -593,18 +350,32 @@ impl MolCharacterization {
                 if amide {
                     amides.push(i);
                 } else {
-                    let has_c = adj[i].iter().any(|&n| mol.atoms[n].element == Carbon);
-                    if has_c {
+                    let in_aromatic_ring = aromatic_atoms.contains(&i);
+                    let has_h = adj[i].iter().any(|&j| mol.atoms[j].element == Hydrogen);
+
+                    let has_c_single = adj[i].iter().any(|&j| {
+                        mol.atoms[j].element == Carbon && is_single_non_arom(i, j)
+                    });
+
+                    let has_c_double = adj[i].iter().any(|&j| {
+                        mol.atoms[j].element == Carbon && is_double_bond(i, j)
+                    });
+
+                    if in_aromatic_ring {
+                        if has_h {
+                            pyrrole_like_nh.push(i);
+                        } else {
+                            pyridine_like_aromatic_n.push(i);
+                        }
+                    } else if has_c_double {
+                        imine_like_n.push(i);
+                    } else if has_c_single {
                         amines.push(i);
                     }
                 }
             }
 
             let has_h = adj[i].iter().any(|&n| mol.atoms[n].element == Hydrogen);
-            let positive = mol.atoms[i]
-                .partial_charge
-                .map(|q| q > 0.2)
-                .unwrap_or(false);
 
             let donor = match el {
                 Oxygen | Nitrogen | Sulfur => has_h,
@@ -656,27 +427,17 @@ impl MolCharacterization {
             num_bonds,
             num_heavy_atoms,
             num_hetero_atoms,
-
             mol_weight: mol_weight_f64 as f32,
-
-            num_rings_total,
-            rings_5_atom,
-            rings_6_atom,
-            rings_aromatic_5_atom,
-            rings_aromatic_6_atom,
-            fused_rings_5_6,
-            fused_rings_6_6,
+            rings,
+            ring_systems,
             num_aromatic_atoms,
-
             rotatable_bonds: mol.find_rotatable_bonds(),
-
             num_carbon,
             num_hydrogen,
             nitrogen,
             oxygen,
             sulfur,
             phosphorus,
-
             fluorine,
             chlorine,
             bromine,
@@ -685,6 +446,9 @@ impl MolCharacterization {
 
             amines,
             amides,
+            pyridine_like_aromatic_n,
+            pyrrole_like_nh,
+            imine_like_n,
             carbonyl,
             hydroxyl,
 
@@ -697,8 +461,8 @@ impl MolCharacterization {
             num_sp3_carbon,
             frac_csp3,
 
-            tpsa: None,
-            clogp: None,
+            topological_polar_surface_area: None,
+            calc_log_p: None,
         }
     }
 }
@@ -707,14 +471,251 @@ fn edge_key(a: usize, b: usize) -> (usize, usize) {
     if a < b { (a, b) } else { (b, a) }
 }
 
-/// For identifying fused rings. We treat rings as fused if they share at least one edge (bond).
-fn cycle_edges(cyc: &[usize]) -> HashSet<(usize, usize)> {
-    let n = cyc.len();
+fn canonical_cycle(nodes: &[usize]) -> Vec<usize> {
+    let n = nodes.len();
 
-    let mut result = HashSet::with_capacity(n);
+    let (min_i, _) = nodes.iter().enumerate().min_by_key(|(_, v)| **v).unwrap();
+
+    let mut rot_fwd = Vec::with_capacity(n);
     for k in 0..n {
-        result.insert(edge_key(cyc[k], cyc[(k + 1) % n]));
+        rot_fwd.push(nodes[(min_i + k) % n]);
+    }
+
+    let mut rev = Vec::with_capacity(n);
+    for k in 0..n {
+        rev.push(nodes[(min_i + n - (k % n)) % n]);
+    }
+
+    if rev < rot_fwd { rev } else { rot_fwd }
+}
+
+fn count_cycles_len(adj: &[Vec<usize>], len: usize) -> Vec<Vec<usize>> {
+    let n = adj.len();
+    let mut cycles_set: HashSet<Vec<usize>> = HashSet::new();
+    let mut stack: Vec<usize> = Vec::with_capacity(len);
+    let mut visited = vec![false; n];
+
+    fn dfs(
+        adj: &[Vec<usize>],
+        s: usize,
+        u: usize,
+        len: usize,
+        stack: &mut Vec<usize>,
+        visited: &mut [bool],
+        cycles_set: &mut HashSet<Vec<usize>>,
+    ) {
+        if stack.len() == len {
+            if adj[u].iter().any(|&v| v == s) {
+                let cyc = canonical_cycle(stack);
+                cycles_set.insert(cyc);
+            }
+            return;
+        }
+
+        for &v in &adj[u] {
+            if v == s {
+                continue;
+            }
+            if visited[v] {
+                continue;
+            }
+            if v < s {
+                continue;
+            }
+
+            visited[v] = true;
+            stack.push(v);
+            dfs(adj, s, v, len, stack, visited, cycles_set);
+            stack.pop();
+            visited[v] = false;
+        }
+    }
+
+    for s in 0..n {
+        visited[s] = true;
+        stack.clear();
+        stack.push(s);
+
+        for &v in &adj[s] {
+            if v < s {
+                continue;
+            }
+            visited[v] = true;
+            stack.push(v);
+            dfs(adj, s, v, len, &mut stack, &mut visited, &mut cycles_set);
+            stack.pop();
+            visited[v] = false;
+        }
+
+        visited[s] = false;
+    }
+
+    cycles_set.into_iter().collect()
+}
+
+/// Identify all rings in the molecule, and count the total number of aromatic atoms.
+fn rings(adj: &[Vec<usize>], atoms: &[Atom], bond_type_by_edge: &HashMap<(usize, usize), BondType>) -> Vec<Ring> {
+    let rings_5_atom: Vec<[usize; 5]> = count_cycles_len(adj, 5)
+        .into_iter()
+        .map(|v| v.try_into().unwrap())
+        .collect();
+
+    let rings_6_atom: Vec<[usize; 6]> = count_cycles_len(adj, 6)
+        .into_iter()
+        .map(|v| v.try_into().unwrap())
+        .collect();
+
+    let is_kekule_aromatic_6c = |cyc: &[usize]| -> bool {
+        if cyc.len() != 6 {
+            return false;
+        }
+        for &a in cyc {
+            match atoms[a].element {
+                Carbon | Nitrogen | Oxygen | Sulfur => {}
+                _ => return false,
+            }
+        }
+
+        let mut kinds = [0; 6]; // 1=single, 2=double
+        let mut singles = 0;
+        let mut doubles = 0;
+
+        for k in 0..6 {
+            let a = cyc[k];
+            let b = cyc[(k + 1) % 6];
+            let Some(bt) = bond_type_by_edge.get(&edge_key(a, b)) else {
+                return false;
+            };
+
+            match *bt {
+                BondType::Single => {
+                    kinds[k] = 1;
+                    singles += 1;
+                }
+                BondType::Double => {
+                    kinds[k] = 2;
+                    doubles += 1;
+                }
+                BondType::Aromatic => return true,
+                _ => return false,
+            }
+        }
+
+        if singles != 3 || doubles != 3 {
+            return false;
+        }
+
+        for k in 0..6 {
+            if kinds[k] == kinds[(k + 1) % 6] {
+                return false;
+            }
+        }
+
+        true
+    };
+
+    let is_cycle_aromatic = |cyc: &[usize]| -> bool {
+        let n = cyc.len();
+        let mut all_bt_arom = true;
+
+        for k in 0..n {
+            let a = cyc[k];
+            let b = cyc[(k + 1) % n];
+            let Some(bt) = bond_type_by_edge.get(&edge_key(a, b)) else {
+                return false;
+            };
+            if *bt != BondType::Aromatic {
+                all_bt_arom = false;
+                break;
+            }
+        }
+
+        if all_bt_arom {
+            return true;
+        }
+
+        is_kekule_aromatic_6c(cyc)
+    };
+
+    let mut result = Vec::new();
+    for ring in rings_5_atom {
+        result.push(Ring {
+            atoms: ring.to_vec(),
+            aromatic: is_cycle_aromatic(&ring),
+        })
+    }
+    for ring in rings_6_atom {
+        result.push(Ring {
+            atoms: ring.to_vec(),
+            aromatic: is_cycle_aromatic(&ring),
+        })
     }
 
     result
+}
+
+fn fused_rings(rings: &[Ring], _atoms: &[Atom]) -> Vec<Vec<usize>> {
+    fn ring_edges(r: &Ring) -> HashSet<(usize, usize)> {
+        let n = r.atoms.len();
+        let mut e = HashSet::with_capacity(n);
+        for k in 0..n {
+            let a = r.atoms[k];
+            let b = r.atoms[(k + 1) % n];
+            e.insert(edge_key(a, b));
+        }
+        e
+    }
+
+    let n = rings.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    // Precompute edges for each ring.
+    let edges: Vec<HashSet<(usize, usize)>> = rings.iter().map(ring_edges).collect();
+
+    // Build ring adjacency graph: edge-sharing => fused adjacency.
+    let mut radj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if edges[i].intersection(&edges[j]).next().is_some() {
+                radj[i].push(j);
+                radj[j].push(i);
+            }
+        }
+    }
+
+    // Connected components; keep only components with 2+ rings.
+    let mut seen = vec![false; n];
+    let mut systems: Vec<Vec<usize>> = Vec::new();
+
+    for s in 0..n {
+        if seen[s] {
+            continue;
+        }
+
+        let mut q = VecDeque::new();
+        let mut comp = Vec::new();
+        seen[s] = true;
+        q.push_back(s);
+
+        while let Some(u) = q.pop_front() {
+            comp.push(u);
+            for &v in &radj[u] {
+                if !seen[v] {
+                    seen[v] = true;
+                    q.push_back(v);
+                }
+            }
+        }
+
+        if comp.len() >= 2 {
+            comp.sort_unstable();
+            systems.push(comp);
+        }
+    }
+
+    // Deterministic output ordering: sort systems by their smallest ring index, then lexicographically.
+    systems.sort();
+    systems
 }
