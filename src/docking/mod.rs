@@ -25,7 +25,7 @@ use crate::{
 /// Bonds that are marked as flexible, using a semi-rigid conformation.
 pub struct Torsion {
     pub bond: usize, // Index.
-    pub dihedral_angle: f32,
+    pub dihedral_angle: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]

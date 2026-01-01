@@ -163,11 +163,6 @@ fn find_template(
 //     rotator.rotate_vec(v)
 // }
 
-fn rotate_about_axis(posit: Vec3, pivot: Vec3, axis: Vec3, angle: f64) -> Vec3 {
-    let q = Quaternion::from_axis_angle(axis, angle);
-    pivot + q.rotate_vec(posit - pivot)
-}
-
 /// Rotate all atoms in a single residue so that its bases align to an axis.
 fn align_bases(atoms: &mut [Atom], nt: Nucleotide, tgt_base_norm: Vec3, template: &TemplateData) {
     // todo: Delegate this to a fn as required.
