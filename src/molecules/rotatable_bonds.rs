@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 
 use bio_files::BondType;
-
+use lin_alg::f64::{Quaternion, Vec3};
 use crate::molecules::{Bond, common::MoleculeCommon};
 
 #[derive(Clone, Debug)]
@@ -17,7 +17,7 @@ impl MoleculeCommon {
     pub fn find_rotatable_bonds(&self) -> Vec<RotatableBond> {
         let mut out = Vec::new();
 
-        for (i, bond) in self.bonds.iter().enumerate() {
+        for (bond_i, bond) in self.bonds.iter().enumerate() {
             if !matches!(bond.bond_type, BondType::Single) {
                 continue;
             }
@@ -39,13 +39,89 @@ impl MoleculeCommon {
             }
 
             out.push(RotatableBond {
-                bond_i: i,
+                bond_i,
                 downstream_from_a1: downstream,
             });
         }
 
         out
     }
+
+
+    /// Rotate part of the molecule around a bond. Rotates the *smaller* part of the molecule as divided
+    /// by this bond: Each pivot rotation rotates the side of the flexible bond that
+    /// has fewer atoms; the intent is to minimize the overall position changes for these flexible bond angle
+    /// changes.
+    ///
+    /// For each rotatable bond, divide all atoms into two groups:
+    /// those upstream of this bond, and those downstream. Note that not all bonds make sense as
+    /// rotation centers. For example, bonds in rings.
+    ///
+    /// We assume this bond as been determined to be rotatable ahead of time.
+    pub fn rotate_around_bond(&mut self, bond_pivot: usize, rot_amt: f64) {
+        if let Some(posits) = rotate_around_bond(self, bond_pivot, rot_amt) {
+            self.atom_posits = posits;
+        }
+
+        // todo: Do we want this?
+        // We've updated atom positions in place; update internal coords.
+        for (i, a) in self.atoms.iter_mut().enumerate() {
+            a.posit = self.atom_posits[i];
+        }
+    }
+}
+
+/// See `MoleculeCommon::rotate_around_bond`; this allows us to do it without mutating.
+pub fn rotate_around_bond(mol: &MoleculeCommon, bond_pivot: usize, rot_amt: f64) -> Option<Vec<Vec3>> {
+    if bond_pivot >= mol.bonds.len() {
+        eprintln!("Error: Bond pivot out of bounds.");
+        return None;
+    }
+
+    let pivot = &mol.bonds[bond_pivot];
+
+    // Measure how many atoms would be "downstream" from each side
+    let side0_downstream = find_downstream_atoms(&mol.adjacency_list, pivot.atom_1, pivot.atom_0); // atoms on atom_0 side
+    let side1_downstream = find_downstream_atoms(&mol.adjacency_list, pivot.atom_0, pivot.atom_1); // atoms on atom_1 side
+
+    // Rotate the smaller side; keep pivot_idx on the larger side
+    let (pivot_idx, side_idx, downstream_atom_indices) =
+        if side0_downstream.len() > side1_downstream.len() {
+            (pivot.atom_0, pivot.atom_1, side1_downstream)
+        } else {
+            (pivot.atom_1, pivot.atom_0, side0_downstream)
+        };
+
+    // Pivot and side positions
+    let pivot_pos = mol.atom_posits[pivot_idx];
+    let side_pos = mol.atom_posits[side_idx];
+
+    let axis_raw = side_pos - pivot_pos;
+    let axis_len2 = axis_raw.dot(axis_raw);
+
+    if axis_len2 <= 1.0e-24 {
+        eprintln!("Error: bond axis is degenerate (zero length).");
+        return None;
+    }
+
+    let axis_vec = axis_raw.to_normalized();
+
+    // Build the Quaternion for this rotation (assumes rot_amt is radians)
+    let rotator = Quaternion::from_axis_angle(axis_vec, rot_amt);
+
+    // Now apply the rotation to each downstream atom:
+    let mut result = mol.atom_posits.clone();
+    
+    for &atom_idx in &downstream_atom_indices {
+        let old_pos = mol.atom_posits[atom_idx];
+        let relative = old_pos - pivot_pos;
+        let new_pos = pivot_pos + rotator.rotate_vec(relative);
+        
+        result[atom_idx] = new_pos;
+    }
+    
+    Some(result)
+
 }
 
 /// We use this to rotate molecules around a bond pivot. For example, by the user directly, or

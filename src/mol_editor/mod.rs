@@ -36,8 +36,7 @@ use crate::{
     mol_lig::MoleculeSmall,
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, MolGenericRef, MolType, common::MoleculeCommon,
-        rotatable_bonds::find_downstream_atoms,
+        Atom, Bond, MolGenericRef, MolType,
     },
     render::{
         ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, set_flashlight, set_static_light,

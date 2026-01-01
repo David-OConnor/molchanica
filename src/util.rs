@@ -15,6 +15,7 @@ use dynamics::ComputationDevice;
 use egui::Color32;
 use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
+use lin_alg::f64::Quaternion;
 use na_seq::{AaIdent, Element};
 
 use crate::{
@@ -1394,4 +1395,9 @@ pub fn res_color(
         },
         _ => COLOR_AA_NON_RESIDUE,
     }
+}
+
+pub fn rotate_about_axis(posit: Vec3, pivot: Vec3, axis: Vec3, angle: f64) -> Vec3 {
+    let q = Quaternion::from_axis_angle(axis, angle);
+    pivot + q.rotate_vec(posit - pivot)
 }

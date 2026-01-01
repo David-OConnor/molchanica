@@ -15,35 +15,23 @@ use md::md_setup;
 use mol_data::display_mol_data;
 use na_seq::{AaIdent, Element};
 
-use crate::{
-    CamSnapshot, MsaaSetting, OperatingMode, ResColoring, Selection, State, ViewSelLevel, cli,
-    cli::autocomplete_cli,
-    download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
-    drawing::color_viridis,
-    file_io::gemmi_path,
-    inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    mol_editor::enter_edit_mode,
-    molecules::MolGenericRef,
-    render::set_flashlight,
-    ui::{
-        cam::{cam_controls, cam_snapshots},
-        misc::section_box,
-        mol_data::{display_mol_data_peptide, metadata_disp},
-        mol_type_tools::mol_type_toolbars,
-        orca::orca_input,
-        rama_plot::plot_rama,
-        recent_files::recent_files,
-        sidebar::sidebar,
-        util::{
-            handle_redraw, init_with_scene, load_popups, open_lig_from_input, update_file_dialogs,
-        },
-        view::{ui_section_vis, view_settings},
-    },
+use crate::{CamSnapshot, MsaaSetting, OperatingMode, ResColoring, Selection, State, ViewSelLevel, cli, cli::autocomplete_cli, download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem}, drawing::color_viridis, file_io::gemmi_path, inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL}, mol_editor::enter_edit_mode, molecules::MolGenericRef, render::set_flashlight, ui::{
+    cam::{cam_controls, cam_snapshots},
+    misc::section_box,
+    mol_data::{display_mol_data_peptide, metadata_disp},
+    mol_type_tools::mol_type_toolbars,
+    orca::orca_input,
+    rama_plot::plot_rama,
+    recent_files::recent_files,
+    sidebar::sidebar,
     util::{
-        check_prefs_save, close_mol, close_peptide, cycle_selected, handle_err, handle_scene_flags,
-        handle_success, handle_thread_rx, orbit_center, select_from_search,
+        handle_redraw, init_with_scene, load_popups, open_lig_from_input, update_file_dialogs,
     },
-};
+    view::{ui_section_vis, view_settings},
+}, util::{
+    check_prefs_save, close_mol, close_peptide, cycle_selected, handle_err, handle_scene_flags,
+    handle_success, handle_thread_rx, orbit_center, select_from_search,
+}, mol_alignment};
 
 pub mod cam;
 mod md;
@@ -1290,6 +1278,24 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
             if ui.button(RichText::new("Mol editor").color(COLOR_HIGHLIGHT)).clicked() {
                 enter_edit_mode(state, scene, &mut engine_updates);
+            }
+
+            // todo temp
+            if ui.button("Align mols temp").clicked() {
+                if state.ligands.len() == 2 {
+                    let alignments = mol_alignment::align(&state.ligands[0], &state.ligands[1]);
+                    // Assume sorted score high to low
+                    if !alignments.is_empty() {
+                        // If you want to *apply* the aligned coords back into ligand 0 (visualize):
+                        // (pick whichever molecule you want to move)
+                        state.ligands[1].common.atom_posits = alignments[0].aligned_posits.clone();
+                        redraw_lig = true;
+                    }
+
+                    // If your render path needs an explicit flag:
+                    // state.redraw_ligands = true;   // or whatever your app uses
+
+                }
             }
         });
 

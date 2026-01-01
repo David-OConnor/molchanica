@@ -179,12 +179,6 @@ fn amide_group(
     (atoms, bonds)
 }
 
-// todo: C+P from nucleic acids
-fn rotate_about_axis(posit: Vec3, pivot: Vec3, axis: Vec3, angle: f64) -> Vec3 {
-    let q = Quaternion::from_axis_angle(axis, angle);
-    pivot + q.rotate_vec(posit - pivot)
-}
-
 /// Construct a ring of Carbons of len 5 or 6. The anchor[s] are atoms part of the structure we're
 /// adding the ring to, which will be part of the ring. So for a 6-atom ring, with one anchor, we add 5
 /// atoms to it, roughly in plane with any other atoms bonded to the anchor. With two anchors, we add 4 atoms
