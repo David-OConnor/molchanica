@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 
 use bio_files::BondType;
 use lin_alg::f64::{Quaternion, Vec3};
+
 use crate::molecules::{Bond, common::MoleculeCommon};
 
 #[derive(Clone, Debug)]
@@ -47,7 +48,6 @@ impl MoleculeCommon {
         out
     }
 
-
     /// Rotate part of the molecule around a bond. Rotates the *smaller* part of the molecule as divided
     /// by this bond: Each pivot rotation rotates the side of the flexible bond that
     /// has fewer atoms; the intent is to minimize the overall position changes for these flexible bond angle
@@ -72,7 +72,11 @@ impl MoleculeCommon {
 }
 
 /// See `MoleculeCommon::rotate_around_bond`; this allows us to do it without mutating.
-pub fn rotate_around_bond(mol: &MoleculeCommon, bond_pivot: usize, rot_amt: f64) -> Option<Vec<Vec3>> {
+pub fn rotate_around_bond(
+    mol: &MoleculeCommon,
+    bond_pivot: usize,
+    rot_amt: f64,
+) -> Option<Vec<Vec3>> {
     if bond_pivot >= mol.bonds.len() {
         eprintln!("Error: Bond pivot out of bounds.");
         return None;
@@ -111,17 +115,16 @@ pub fn rotate_around_bond(mol: &MoleculeCommon, bond_pivot: usize, rot_amt: f64)
 
     // Now apply the rotation to each downstream atom:
     let mut result = mol.atom_posits.clone();
-    
+
     for &atom_idx in &downstream_atom_indices {
         let old_pos = mol.atom_posits[atom_idx];
         let relative = old_pos - pivot_pos;
         let new_pos = pivot_pos + rotator.rotate_vec(relative);
-        
+
         result[atom_idx] = new_pos;
     }
-    
-    Some(result)
 
+    Some(result)
 }
 
 /// We use this to rotate molecules around a bond pivot. For example, by the user directly, or

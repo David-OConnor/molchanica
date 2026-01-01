@@ -13,9 +13,8 @@ use lin_alg::f64::{Quaternion, Vec3};
 
 use crate::{
     mol_editor::NEXT_ATOM_SN,
-    molecules::{Atom, Bond, build_adjacency_list},
+    molecules::{Atom, Bond, build_adjacency_list, rotatable_bonds::find_downstream_atoms},
 };
-use crate::molecules::rotatable_bonds::find_downstream_atoms;
 
 /// Contains fields shared by all molecule types.
 #[derive(Debug, Clone)]

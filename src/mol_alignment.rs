@@ -8,22 +8,21 @@
 //!
 //! [Web based BCL::MolAlign](http://servers.meilerlab.org/index.php/servers/molalign)
 
-use std::{
-    collections::{HashSet},
-    f64::consts::TAU,
-};
-
-use rayon::prelude::*;
+use std::{collections::HashSet, f64::consts::TAU};
 
 use bio_files::BondType;
 use lin_alg::f64::{Quaternion, Vec3, X_VEC, Y_VEC};
 use na_seq::Element::*;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
-use crate::docking::Torsion;
-use crate::mol_alignment;
-use crate::mol_lig::MoleculeSmall;
-use crate::molecules::{common::MoleculeCommon, rotatable_bonds::RotatableBond, Atom};
-use crate::util::rotate_about_axis;
+use rayon::prelude::*;
+
+use crate::{
+    docking::Torsion,
+    mol_alignment,
+    mol_lig::MoleculeSmall,
+    molecules::{Atom, common::MoleculeCommon, rotatable_bonds::RotatableBond},
+    util::rotate_about_axis,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct PoseAlignment {
@@ -68,7 +67,6 @@ impl PoseAlignment {
         }
 
         result
-
     }
 }
 
@@ -79,7 +77,6 @@ pub struct AlignmentResult {
     pub matched_pairs: Vec<(usize, usize)>, // (atom_i in atom 0, atom_j in atom 1)
     /// Atom_posits for atom 1; we leave atom 0 with its original positions.
     pub aligned_posits: Vec<Vec3>,
-    pub posits: Vec<Vec3>,
     /// Overall score?
     pub score: f64,
     pub avg_strain_energy: f64,
@@ -92,24 +89,7 @@ pub struct AlignmentResult {
 }
 
 impl AlignmentResult {
-    pub fn new(mol_template: &MoleculeSmall, mol_to_align: &MoleculeSmall) -> Self {
-        let cfg = mol_alignment::MolAlignConfig::default();
-
-
-
-        // If you want to see some actual numbers:
-        for (k, (ia, ib)) in result.matched_pairs.iter().take(10).enumerate() {
-            let a_aligned = result.aligned_a_posits[*ia];
-            let b = mol_to_align.atom_posits[*ib];
-            let d = (a_aligned - b).magnitude();
-            println!("pair[{k}] A[{ia}] <-> B[{ib}] dist={:.3}", d);
-        }
-
-        result
-    }
-
     fn score(&mut self) {}
-
 }
 
 #[derive(Clone, Debug)]
@@ -197,7 +177,10 @@ pub fn align(mol_template: &MoleculeSmall, mol_to_align: &MoleculeSmall) -> Vec<
 }
 
 /// Using fast and crude methods, create a starting alignment, to base future ones off.
-fn make_initial_alignment(mol_template: &MoleculeSmall, mol_to_align: &MoleculeSmall) -> AlignmentResult {
+fn make_initial_alignment(
+    mol_template: &MoleculeSmall,
+    mol_to_align: &MoleculeSmall,
+) -> AlignmentResult {
     let torsions = Vec::new();
     let anchor_atom_i = 0;
     let orientation = Quaternion::new_identity();
@@ -208,11 +191,14 @@ fn make_initial_alignment(mol_template: &MoleculeSmall, mol_to_align: &MoleculeS
         orientation,
     };
 
+    let pose = PoseAlignment::default();
+    let matched_pairs = Vec::new();
+    let aligned_posits = Vec::with_capacity(mol_to_align.common.atoms.len());
+
     AlignmentResult {
-        pose: PoseAlignment,
-        matched_pairs: Vec<(usize, usize)>, // (atom_i in atom 0, atom_j in atom 1)
-        aligned_posits: Vec<Vec3>,
-        posits: Vec<Vec3>,
+        pose,
+        matched_pairs,
+        aligned_posits,
         ..Default::default()
     }
 }

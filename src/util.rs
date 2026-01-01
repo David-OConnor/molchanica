@@ -14,8 +14,10 @@ use cudarc::{
 use dynamics::ComputationDevice;
 use egui::Color32;
 use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
-use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
-use lin_alg::f64::Quaternion;
+use lin_alg::{
+    f32::Vec3 as Vec3F32,
+    f64::{Quaternion, Vec3},
+};
 use na_seq::{AaIdent, Element};
 
 use crate::{

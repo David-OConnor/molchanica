@@ -8,8 +8,7 @@ use std::{
 use bio_files::BondType;
 use na_seq::Element::*;
 
-use crate::molecules::common::MoleculeCommon;
-use crate::molecules::rotatable_bonds::RotatableBond;
+use crate::molecules::{common::MoleculeCommon, rotatable_bonds::RotatableBond};
 
 /// Describes a small molecule by features practical for description and characterization.
 #[derive(Clone, Default, Debug)]
@@ -22,16 +21,13 @@ pub struct MolCharacterization {
     pub mol_weight: f32,
 
     pub num_rings_total: usize,
-    // pub num_rings_5_atom: usize,
-    // pub num_rings_6_atom: usize,
     /// Indices
     pub rings_5_atom: Vec<[usize; 5]>,
     pub rings_6_atom: Vec<[usize; 6]>,
-    // pub num_aromatic_rings: usize,
     pub rings_aromatic_5_atom: Vec<[usize; 5]>,
     pub rings_aromatic_6_atom: Vec<[usize; 6]>,
-    // pub num_aromatic_rings_5_atom: usize,
-    // pub num_aromatic_rings_6_atom: usize,
+    pub fused_rings_5_6: Vec<[usize; 6]>,
+    pub fused_rings_6_6: Vec<[usize; 6]>,
     pub num_aromatic_atoms: usize,
 
     // pub num_rotatable_bonds: usize,
@@ -42,32 +38,21 @@ pub struct MolCharacterization {
     pub num_hydrogen: usize,
     pub nitrogen: Vec<usize>,
     pub oxygen: Vec<usize>,
-    // pub num_sulfur: usize,
     pub sulfur: Vec<usize>,
-    // pub num_phosphorus: usize,
     pub phosphorus: Vec<usize>,
-    // pub num_fluorine: usize,
     pub fluorine: Vec<usize>,
     pub chlorine: Vec<usize>,
     pub bromine: Vec<usize>,
-    // pub num_bromine: usize,
-    // pub num_iodine: usize,
     pub iodine: Vec<usize>,
     pub halogen: Vec<usize>,
-    // pub num_halogen: usize,
-
-    // pub num_amines: usize,
-    // pub num_amides: usize,
     /// N atom
     pub amines: Vec<usize>,
     /// N atom
     pub amides: Vec<usize>,
-    // pub num_carbonyl: usize,
     /// C atom bound to O.
     pub carbonyl: Vec<usize>,
     /// O.
     pub hydroxyl: Vec<usize>,
-    // pub num_hydroxyl: usize,
 
     pub h_bond_donor: Vec<usize>,
     pub h_bond_acceptor: Vec<usize>,
@@ -97,20 +82,22 @@ impl Display for MolCharacterization {
         let mut v = format!(
             "#: {} Wt: {}",
             self.num_atoms,
-            self.mol_weight.round() as u16
+            self.mol_weight.round() as u32
         );
 
         count_disp(&mut v, self.rings_5_atom.len(), "pent");
         count_disp(&mut v, self.rings_6_atom.len(), "hex");
-
+        count_disp(&mut v, self.fused_rings_5_6.len(), "fused 5-6");
 
         count_disp(&mut v, self.amides.len(), "amide");
         count_disp(&mut v, self.amines.len(), "amine");
         count_disp(&mut v, self.carbonyl.len(), "carbonyl");
         count_disp(&mut v, self.hydroxyl.len(), "hydroxyl");
+
         count_disp(&mut v, self.sulfur.len(), "sulfur");
         count_disp(&mut v, self.phosphorus.len(), "phosphorus");
         count_disp(&mut v, self.chlorine.len(), "chlorine");
+        count_disp(&mut v, self.halogen.len(), "halogen");
 
         writeln!(f, "{v}")
     }
@@ -118,10 +105,6 @@ impl Display for MolCharacterization {
 
 impl MolCharacterization {
     pub fn new(mol: &MoleculeCommon) -> Self {
-        fn edge_key(a: usize, b: usize) -> (usize, usize) {
-            if a < b { (a, b) } else { (b, a) }
-        }
-
         fn bfs_reachable_ignoring_edge(
             adj: &[Vec<usize>],
             start: usize,
@@ -298,7 +281,8 @@ impl MolCharacterization {
             }
         }
 
-        let mut halogen = Vec::with_capacity(fluorine.len() + chlorine.len() + bromine.len() + iodine.len());
+        let mut halogen =
+            Vec::with_capacity(fluorine.len() + chlorine.len() + bromine.len() + iodine.len());
         halogen.extend(&fluorine);
         halogen.extend(&chlorine);
         halogen.extend(&bromine);
@@ -352,18 +336,23 @@ impl MolCharacterization {
         };
 
         let rings_5_atom: Vec<[usize; 5]> = count_cycles_len(adj, 5)
-            .into_iter().map(|v| v.try_into().unwrap()).collect();
+            .into_iter()
+            .map(|v| v.try_into().unwrap())
+            .collect();
 
-        let rings_6_atom:Vec<[usize; 6]> = count_cycles_len(adj, 6)
-            .into_iter().map(|v| v.try_into().unwrap()).collect();
+        let rings_6_atom: Vec<[usize; 6]> = count_cycles_len(adj, 6)
+            .into_iter()
+            .map(|v| v.try_into().unwrap())
+            .collect();
 
         let is_kekule_aromatic_6c = |cyc: &[usize]| -> bool {
             if cyc.len() != 6 {
                 return false;
             }
             for &a in cyc {
-                if mol.atoms[a].element != Carbon {
-                    return false;
+                match mol.atoms[a].element {
+                    Carbon | Nitrogen | Oxygen | Sulfur => {}
+                    _ => return false,
                 }
             }
 
@@ -428,19 +417,80 @@ impl MolCharacterization {
             is_kekule_aromatic_6c(cyc)
         };
 
-        let rings_aromatic_5_atom: Vec<_> = rings_5_atom.to_vec().into_iter().filter(|c| is_cycle_aromatic(c)).collect();
-        let rings_aromatic_6_atom: Vec<_> = rings_6_atom.to_vec().into_iter().filter(|c| is_cycle_aromatic(c)).collect();
+        let rings_aromatic_5_atom: Vec<_> = rings_5_atom
+            .iter()
+            .copied()
+            .filter(|c| is_cycle_aromatic(c))
+            .collect();
+
+        let rings_aromatic_6_atom: Vec<_> = rings_6_atom
+            .iter()
+            .copied()
+            .filter(|c| is_cycle_aromatic(c))
+            .collect();
 
         // This logic takes fused rings into account.
         let num_aromatic_atoms = {
             let mut arom_atoms = HashSet::new();
-            for r in & rings_aromatic_5_atom {
+            for r in &rings_aromatic_5_atom {
                 arom_atoms.extend(r.iter().copied());
             }
             for r in &rings_aromatic_6_atom {
                 arom_atoms.extend(r.iter().copied());
             }
             arom_atoms.len()
+        };
+
+        // Detect fused rings:
+        // --- Fused ring detection (edge-sharing rings) -----------------------------------------
+
+        let edges_5: Vec<HashSet<(usize, usize)>> = rings_aromatic_5_atom
+            .iter()
+            .map(|r| cycle_edges(r))
+            .collect();
+
+        let edges_6: Vec<HashSet<(usize, usize)>> = rings_aromatic_6_atom
+            .iter()
+            .map(|r| cycle_edges(r))
+            .collect();
+
+        // fused_rings_5_6: store the *6-member* rings that share an edge with any 5-member ring.
+        let fused_rings_5_6: Vec<[usize; 6]> = {
+            let mut fused = HashSet::<[usize; 6]>::new();
+
+            for (i6, r6) in rings_aromatic_6_atom.iter().enumerate() {
+                let e6 = &edges_6[i6];
+
+                let mut ok = false;
+                for e5 in &edges_5 {
+                    if e6.intersection(e5).next().is_some() {
+                        ok = true;
+                        break;
+                    }
+                }
+
+                if ok {
+                    fused.insert(*r6);
+                }
+            }
+
+            fused.into_iter().collect()
+        };
+
+        // fused_rings_6_6: store 6-member rings that share an edge with another 6-member ring.
+        let fused_rings_6_6: Vec<[usize; 6]> = {
+            let mut fused = HashSet::<[usize; 6]>::new();
+
+            for i in 0..rings_aromatic_6_atom.len() {
+                for j in (i + 1)..rings_aromatic_6_atom.len() {
+                    if edges_6[i].intersection(&edges_6[j]).next().is_some() {
+                        fused.insert(rings_aromatic_6_atom[i]);
+                        fused.insert(rings_aromatic_6_atom[j]);
+                    }
+                }
+            }
+
+            fused.into_iter().collect()
         };
 
         let mut bond_in_ring: HashMap<(usize, usize), bool> = HashMap::with_capacity(num_bonds);
@@ -455,8 +505,8 @@ impl MolCharacterization {
         let mut amines = Vec::new();
         let mut amides = Vec::new();
 
-        let mut hbd = 0;
-        let mut hba = 0;
+        let mut h_bond_donor = Vec::new();
+        let mut h_bond_acceptor = Vec::new();
 
         let is_double_bond = |a: usize, b: usize| -> bool {
             bond_type_by_edge
@@ -469,7 +519,7 @@ impl MolCharacterization {
             bond_type_by_edge
                 .get(&edge_key(a, b))
                 .map(|bt| *bt == BondType::Single)
-                .unwrap_or(true)
+                .unwrap_or(false)
         };
 
         let carbon_has_double_bonded_oxygen = |c: usize| -> bool {
@@ -561,20 +611,20 @@ impl MolCharacterization {
                 _ => false,
             };
             if donor {
-                hbd += 1;
+                h_bond_donor.push(i);
             }
 
             let acceptor = match el {
-                Oxygen => !positive && !oxygen_is_carboxylic_oh(i),
-                Nitrogen => !positive && !nitrogen_is_amide(i),
-                Sulfur => !positive,
+                Oxygen => !oxygen_is_carboxylic_oh(i),
+                Nitrogen => !nitrogen_is_amide(i),
+                Sulfur => true,
                 _ => false,
             };
+
             if acceptor {
-                hba += 1;
+                h_bond_acceptor.push(i);
             }
         }
-
 
         let mut num_sp3_carbon = 0usize;
         for i in 0..num_atoms {
@@ -614,6 +664,8 @@ impl MolCharacterization {
             rings_6_atom,
             rings_aromatic_5_atom,
             rings_aromatic_6_atom,
+            fused_rings_5_6,
+            fused_rings_6_6,
             num_aromatic_atoms,
 
             rotatable_bonds: mol.find_rotatable_bonds(),
@@ -636,8 +688,8 @@ impl MolCharacterization {
             carbonyl,
             hydroxyl,
 
-            h_bond_donor: hbd,
-            h_bond_acceptor: hba,
+            h_bond_donor,
+            h_bond_acceptor,
 
             net_partial_charge,
             abs_partial_charge_sum,
@@ -649,4 +701,20 @@ impl MolCharacterization {
             clogp: None,
         }
     }
+}
+
+fn edge_key(a: usize, b: usize) -> (usize, usize) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+/// For identifying fused rings. We treat rings as fused if they share at least one edge (bond).
+fn cycle_edges(cyc: &[usize]) -> HashSet<(usize, usize)> {
+    let n = cyc.len();
+
+    let mut result = HashSet::with_capacity(n);
+    for k in 0..n {
+        result.insert(edge_key(cyc[k], cyc[(k + 1) % n]));
+    }
+
+    result
 }
