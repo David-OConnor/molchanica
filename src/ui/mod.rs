@@ -1297,6 +1297,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             if ui.button("Align mols temp").clicked() {
                 if state.ligands.len() == 2 {
                     let alignments = mol_alignment::align(&state.ligands[0], &state.ligands[1]);
+
                     // Assume sorted score high to low
                     if !alignments.is_empty() {
                         println!("Found {} ring-based alignments", alignments.len());
@@ -1311,6 +1312,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         state.ligands[1].common.reset_posits();
 
 
+                        // [0] is the best score.
                         state.ligands[1].common.atom_posits = alignments[0].posits_aligned.clone();
                         redraw_lig = true;
                     }

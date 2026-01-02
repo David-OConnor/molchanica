@@ -8,11 +8,14 @@
 //!
 //! [Web based BCL::MolAlign](http://servers.meilerlab.org/index.php/servers/molalign)
 
-use std::{collections::HashSet, f64::consts::TAU};
+use std::{
+    collections::{HashMap, HashSet},
+    f64::consts::TAU,
+};
 
 use bio_files::BondType;
 use lin_alg::f64::{Quaternion, Vec3, X_VEC, Y_VEC};
-use na_seq::Element::*;
+use na_seq::{Element, Element::*};
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use rayon::prelude::*;
 
@@ -178,29 +181,97 @@ pub fn align(mol_template: &MoleculeSmall, mol_to_align: &MoleculeSmall) -> Vec<
 /// Move the template along force gradients until it finds its position of minimum energy.
 fn perform_md(mol: &MoleculeCommon, pose: &PoseAlignment) {}
 
-fn find_center_ring(rings: &[Ring], atoms: &[Atom], centroid: Vec3) -> Option<usize> {
-    if rings.is_empty() {
-        return None;
-    }
+// fn find_center_ring(rings: &[Ring], atoms: &[Atom], centroid: Vec3) -> Option<usize> {
+//     if rings.is_empty() {
+//         return None;
+//     }
+//
+//     let mut closest = 0;
+//     let mut closest_dist = f64::INFINITY;
+//
+//     for (i, ring) in rings.iter().enumerate() {
+//         let dist = (ring.center(atoms) - centroid).magnitude();
+//
+//         if dist < closest_dist {
+//             closest = i;
+//             closest_dist = dist;
+//         }
+//     }
+//
+//     Some(closest)
+// }
 
-    let mut closest = 0;
-    let mut closest_dist = f64::INFINITY;
+// todo: Crude/temporary
+fn calc_score(
+    mol_template: &MoleculeSmall,
+    mol_to_align: &MoleculeSmall,
+    posits_aligned: &[Vec3],
+) -> f64 {
+    const MISSING_ELEM_PENALTY: f64 = 25.0 * 25.0; // (Å^2) per unmatched atom
 
-    for (i, ring) in rings.iter().enumerate() {
-        let dist = (ring.center(atoms) - centroid).magnitude();
-
-        if dist < closest_dist {
-            closest = i;
-            closest_dist = dist;
+    fn chamfer_dir(a: &[Vec3], b: &[Vec3]) -> f64 {
+        if a.is_empty() {
+            return 0.0;
         }
+        if b.is_empty() {
+            return a.len() as f64 * MISSING_ELEM_PENALTY;
+        }
+
+        let mut sum = 0.0;
+        for &pa in a {
+            let mut best = f64::INFINITY;
+            for &pb in b {
+                let dist_sq = (pa - pb).magnitude_squared();
+                if dist_sq < best {
+                    best = dist_sq;
+                }
+            }
+            sum += best;
+        }
+        sum / a.len() as f64
     }
 
-    Some(closest)
-}
+    let atoms_t = &mol_template.common.atoms;
+    let atoms_m = &mol_to_align.common.atoms;
 
+    let mut by_el_t: HashMap<Element, Vec<Vec3>> = HashMap::new();
+    let mut by_el_m: HashMap<Element, Vec<Vec3>> = HashMap::new();
+
+    for a in atoms_t {
+        if a.element == Hydrogen {
+            continue;
+        }
+        by_el_t.entry(a.element).or_default().push(a.posit);
+    }
+
+    for (i, a) in atoms_m.iter().enumerate() {
+        if a.element == Hydrogen {
+            continue;
+        }
+        by_el_m
+            .entry(a.element)
+            .or_default()
+            .push(posits_aligned[i]);
+    }
+
+    let mut els: HashSet<Element> = HashSet::new();
+    els.extend(by_el_t.keys().copied());
+    els.extend(by_el_m.keys().copied());
+
+    let mut score = 0.0;
+    for el in els {
+        let a = by_el_t.get(&el).map(|v| v.as_slice()).unwrap_or(&[]);
+        let b = by_el_m.get(&el).map(|v| v.as_slice()).unwrap_or(&[]);
+        score += chamfer_dir(a, b) + chamfer_dir(b, a);
+    }
+
+    score
+}
 /// A crude approach to an initial alignment, by identifying rings near the molecules' center that are similar,
 /// then aligning both the position and plane. The result should be that the positions generated have
 /// these rings coplanar and with the same center.
+///
+/// Returns positions, and score.
 ///
 /// todo: Other improvementes like checking ring atom count, taking advantage of ring systems,
 /// todo: and rotating the result around the plane norm so they're fully aligned.
@@ -209,15 +280,16 @@ fn align_from_rings(
     mol_to_align: &MoleculeSmall,
     rings_t: &[Ring],
     rings_mta: &[Ring],
-    centroid_template: Vec3,
-    centroid_to_align: Vec3,
-) -> Vec<Vec<Vec3>> {
+) -> Vec<(Vec<Vec3>, f64)> {
     // todo: Break down this ring-based alignment into a dedicated fn.
     // Rough start: See if there are any rings near the center, which align between the two.
     // let ctr_ring_templ = find_center_ring(rings_t, &mol_template.common.atoms, centroid_template);
     // let ctr_ring_mta = find_center_ring(rings_mta, &mol_to_align.common.atoms, centroid_to_align);
 
     let mut result = Vec::new();
+
+    const ROT_COUNT: u16 = 1_000; // Radians
+    const ROT_STEP: f64 = TAU / ROT_COUNT as f64;
 
     // todo: This is a start: Handle multiple rings, fused rings with orientation, take into account ring size.
     // todo: Something like this for ring systems?
@@ -238,7 +310,6 @@ fn align_from_rings(
             // todo: Note that we have arbitrary sign on these norm vecs, so we may get a reversed alignment.
 
             // Align the two rings in orientation.
-            // todo: QC this logic!
             let rotator = Quaternion::from_unit_vecs(ring_m.plane_norm, ring_t.plane_norm);
 
             let mut posits_these_rings = Vec::with_capacity(mol_to_align.common.atoms.len());
@@ -248,7 +319,43 @@ fn align_from_rings(
                 posits_these_rings.push(ring_t_center + rotator.rotate_vec(posit_rel));
             }
 
-            result.push(posits_these_rings);
+            // todo: Could we, when scoring, create a "volume" of the combined molecules, and score
+            // todo to minmize this volume? E.g. mols  closely alignmed would have a small volume.
+            // todo: COuld you even use your Marching Cubes algorithm to do this? Try this!
+
+            let mut best_score = f64::INFINITY;
+            let mut best_i_rot = 0;
+
+            for i_rot in 0..ROT_COUNT {
+                let mut posits_to_test = posits_these_rings.clone();
+
+                let rot_amt = ROT_STEP * i_rot as f64;
+                let rotated = rotate_about_axis(
+                    &mut posits_to_test,
+                    ring_m_center,
+                    ring_t.plane_norm,
+                    rot_amt,
+                );
+
+                let mut score = calc_score(mol_template, mol_to_align, &posits_to_test);
+                if score < best_score {
+                    best_score = score;
+                    best_i_rot = i_rot;
+                }
+            }
+
+            // Apply the rotation with the best score.
+            let rot_amt = ROT_STEP * best_i_rot as f64;
+            rotate_about_axis(
+                &mut posits_these_rings,
+                ring_m_center,
+                ring_t.plane_norm,
+                rot_amt,
+            );
+
+            // Now, try rotating around the ring's norm to find the closest alignment.
+
+            result.push((posits_these_rings, best_score));
         }
 
         // todo: Take advantage of this to match ring systems.
@@ -289,20 +396,14 @@ fn make_initial_alignment(
     // todo: Consider trying multiple ring alignment configurations, instead of just closest-to-centroid
     // todo of each mol with each other.
 
-    let posits_from_ring_alignment = align_from_rings(
-        mol_template,
-        mol_to_align,
-        rings_t,
-        rings_mta,
-        centroid_template,
-        centroid_to_align,
-    );
+    let posits_from_ring_alignment =
+        align_from_rings(mol_template, mol_to_align, rings_t, rings_mta);
 
     // todo: Score these.
 
     let mut result = Vec::with_capacity(posits_from_ring_alignment.len());
 
-    for posits_aligned in posits_from_ring_alignment {
+    for (posits_aligned, score) in posits_from_ring_alignment {
         let pose = PoseAlignment {
             torsions: torsions.clone(),
             anchor_atom_i,
@@ -316,9 +417,13 @@ fn make_initial_alignment(
             pose,
             matched_pairs,
             posits_aligned,
+            score,
             ..Default::default()
         })
     }
+
+    // Lowest (best) score first.
+    result.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
 
     result
 }
