@@ -351,6 +351,38 @@ pub(in crate::ui) fn editor(
 
     ui.horizontal(|ui| {
         edit_tools(state, scene, ui, engine_updates, &mut redraw);
+
+        // todo: Show/hide this button A/R
+        if ui.button("Tautomer")
+            .on_hover_text("Cycle through different tautomers for the selected molecule.")
+            .clicked() {
+
+            let tautometers = state.mol_editor.mol.common.find_tautomers();
+
+            // todo: Only the first for now. Later, implement cycle
+            if !tautometers.is_empty() {
+
+                state.mol_editor.mol.common = tautometers[0].clone();
+
+                // todo: For now, so we don't need to add positioning logic to the find_tautomers function.
+                // todo: Only re-populate hydrogens on the changed atoms.
+                for i in 0..state.mol_editor.mol.common.atoms.len() {
+                    // Re-populate hydrogens on any atoms bonded to this.
+                    remove_hydrogens(&mut state.mol_editor.mol.common, i);
+                    populate_hydrogens_on_atom(
+                        &mut state.mol_editor.mol.common,
+                        i,
+                        &mut scene.entities,
+                        &mut state.ui,
+                        engine_updates,
+                        state.volatile.mol_manip.mode,
+                    );
+                }
+
+                sync_md(state);
+                redraw = true;
+            }
+        }
     });
 
     // ui.horizontal_wrapped(|ui| {
@@ -753,7 +785,6 @@ fn edit_tools(
                     *redraw = true;
                 }
             }
-
         }
     });
 
