@@ -23,11 +23,13 @@ use na_seq::{
     seq_complement,
 };
 
-use crate::molecules::{
-    Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
-    build_adjacency_list, common::MoleculeCommon,
+use crate::{
+    molecules::{
+        Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
+        build_adjacency_list, common::MoleculeCommon,
+    },
+    util::rotate_about_axis,
 };
-use crate::util::rotate_about_axis;
 
 const HELIX_TWIST: f64 = TAU / 10.0; // 36°
 // const HELIX_RISE: f64 = 3.4; // Å per base (visual B-DNA-ish)
