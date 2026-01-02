@@ -6,9 +6,10 @@ use std::{
 };
 
 use bio_files::BondType;
+use lin_alg::f64::Vec3;
 use na_seq::Element::*;
 
-use crate::molecules::{common::MoleculeCommon, rotatable_bonds::RotatableBond, Atom};
+use crate::molecules::{Atom, common::MoleculeCommon, rotatable_bonds::RotatableBond};
 
 /// Describes a small molecule by features practical for description and characterization.
 #[derive(Clone, Default, Debug)]
@@ -69,6 +70,20 @@ pub struct MolCharacterization {
 pub struct Ring {
     pub atoms: Vec<usize>,
     pub aromatic: bool,
+    /// Note: This is rel to `Atom.posit; not `atom_posits`, as that can easily change.
+    /// If `Atom.posit` changes, this must be updated.
+    pub plane_norm: Vec3,
+}
+
+impl Ring {
+    pub fn center(&self, atoms: &[Atom]) -> Vec3 {
+        let mut sum = Vec3::new_zero();
+        for i in &self.atoms {
+            sum += atoms[*i].posit;
+        }
+
+        sum / self.atoms.len() as f64
+    }
 }
 
 /// A helper to reduce repetition in string formatting.
@@ -110,7 +125,6 @@ impl Display for MolCharacterization {
         count_disp(&mut v, self.pyridine_like_aromatic_n.len(), "pyridine-like");
         count_disp(&mut v, self.pyrrole_like_nh.len(), "pyrrole-like");
         count_disp(&mut v, self.imine_like_n.len(), "imine-like");
-
 
         count_disp(&mut v, self.carbonyl.len(), "carbonyl");
         count_disp(&mut v, self.hydroxyl.len(), "hydroxyl");
@@ -261,7 +275,6 @@ impl MolCharacterization {
         let mut pyrrole_like_nh = Vec::new();
         let mut imine_like_n = Vec::new();
 
-
         let mut h_bond_donor = Vec::new();
         let mut h_bond_acceptor = Vec::new();
 
@@ -353,13 +366,13 @@ impl MolCharacterization {
                     let in_aromatic_ring = aromatic_atoms.contains(&i);
                     let has_h = adj[i].iter().any(|&j| mol.atoms[j].element == Hydrogen);
 
-                    let has_c_single = adj[i].iter().any(|&j| {
-                        mol.atoms[j].element == Carbon && is_single_non_arom(i, j)
-                    });
+                    let has_c_single = adj[i]
+                        .iter()
+                        .any(|&j| mol.atoms[j].element == Carbon && is_single_non_arom(i, j));
 
-                    let has_c_double = adj[i].iter().any(|&j| {
-                        mol.atoms[j].element == Carbon && is_double_bond(i, j)
-                    });
+                    let has_c_double = adj[i]
+                        .iter()
+                        .any(|&j| mol.atoms[j].element == Carbon && is_double_bond(i, j));
 
                     if in_aromatic_ring {
                         if has_h {
@@ -553,8 +566,53 @@ fn count_cycles_len(adj: &[Vec<usize>], len: usize) -> Vec<Vec<usize>> {
     cycles_set.into_iter().collect()
 }
 
+/// Ring plane normal using Newell's method. This is more robust than taking the cross product
+/// of 2 arbitrary atom pairs, due to the possibility of the ring plane not being perfectly flat.
+/// Assumes `ring` atom indices are in cyclic order.
+fn find_plane_norm(ring: &[usize], atoms: &[Atom]) -> Vec3 {
+    let n = ring.len();
+    debug_assert!(n >= 3);
+
+    let mut nx = 0.0;
+    let mut ny = 0.0;
+    let mut nz = 0.0;
+
+    for i in 0..n {
+        let p0 = atoms[ring[i]].posit;
+        let p1 = atoms[ring[(i + 1) % n]].posit;
+
+        nx += (p0.y - p1.y) * (p0.z + p1.z);
+        ny += (p0.z - p1.z) * (p0.x + p1.x);
+        nz += (p0.x - p1.x) * (p0.y + p1.y);
+    }
+
+    let norm = Vec3::new(nx, ny, nz);
+    let len2 = norm.dot(norm);
+    if len2 == 0.0 {
+        // Fallback: try any non-degenerate triple (keeps behavior similar to your original)
+        for a in 0..n {
+            let p0 = atoms[ring[a]].posit;
+            let p1 = atoms[ring[(a + 1) % n]].posit;
+            let p2 = atoms[ring[(a + 2) % n]].posit;
+            let v0 = p1 - p0;
+            let v1 = p2 - p0;
+            let cr = v0.cross(v1);
+            if cr.dot(cr) != 0.0 {
+                return cr.to_normalized();
+            }
+        }
+        // Truly degenerate; return something stable.
+        return Vec3::new(0.0, 0.0, 1.0);
+    }
+
+    norm.to_normalized()
+}
 /// Identify all rings in the molecule, and count the total number of aromatic atoms.
-fn rings(adj: &[Vec<usize>], atoms: &[Atom], bond_type_by_edge: &HashMap<(usize, usize), BondType>) -> Vec<Ring> {
+fn rings(
+    adj: &[Vec<usize>],
+    atoms: &[Atom],
+    bond_type_by_edge: &HashMap<(usize, usize), BondType>,
+) -> Vec<Ring> {
     let rings_5_atom: Vec<[usize; 5]> = count_cycles_len(adj, 5)
         .into_iter()
         .map(|v| v.try_into().unwrap())
@@ -642,12 +700,15 @@ fn rings(adj: &[Vec<usize>], atoms: &[Atom], bond_type_by_edge: &HashMap<(usize,
         result.push(Ring {
             atoms: ring.to_vec(),
             aromatic: is_cycle_aromatic(&ring),
+            plane_norm: find_plane_norm(&ring, atoms),
         })
     }
+
     for ring in rings_6_atom {
         result.push(Ring {
             atoms: ring.to_vec(),
             aromatic: is_cycle_aromatic(&ring),
+            plane_norm: find_plane_norm(&ring, &atoms),
         })
     }
 

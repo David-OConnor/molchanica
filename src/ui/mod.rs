@@ -1301,7 +1301,13 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     if !alignments.is_empty() {
                         // If you want to *apply* the aligned coords back into ligand 0 (visualize):
                         // (pick whichever molecule you want to move)
-                        state.ligands[1].common.atom_posits = alignments[0].aligned_posits.clone();
+
+                        // todo: Temp! This needs to be in the alignment flow.
+                        state.ligands[0].common.reset_posits();
+                        state.ligands[1].common.reset_posits();
+
+
+                        state.ligands[1].common.atom_posits = alignments[0].posits_aligned.clone();
                         redraw_lig = true;
                     }
 

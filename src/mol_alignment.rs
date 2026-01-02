@@ -19,6 +19,7 @@ use rayon::prelude::*;
 use crate::{
     docking::Torsion,
     mol_alignment,
+    mol_characterization::Ring,
     mol_lig::MoleculeSmall,
     molecules::{Atom, common::MoleculeCommon, rotatable_bonds::RotatableBond},
     util::rotate_about_axis,
@@ -76,7 +77,7 @@ pub struct AlignmentResult {
     pub pose: PoseAlignment,
     pub matched_pairs: Vec<(usize, usize)>, // (atom_i in atom 0, atom_j in atom 1)
     /// Atom_posits for atom 1; we leave atom 0 with its original positions.
-    pub aligned_posits: Vec<Vec3>,
+    pub posits_aligned: Vec<Vec3>,
     /// Overall score?
     pub score: f64,
     pub avg_strain_energy: f64,
@@ -176,6 +177,86 @@ pub fn align(mol_template: &MoleculeSmall, mol_to_align: &MoleculeSmall) -> Vec<
     result
 }
 
+/// Early concept: Use the template's atom positions as centers of attraction for the mol to align.
+/// Move the template along force gradients until it finds its position of minimum energy.
+fn perform_md(mol: &MoleculeCommon, pose: &PoseAlignment) {}
+
+fn find_center_ring(rings: &[Ring], atoms: &[Atom], centroid: Vec3) -> Option<usize> {
+    if rings.is_empty() {
+        return None;
+    }
+
+    let mut closest = 0;
+    let mut closest_dist = f64::INFINITY;
+
+    for (i, ring) in rings.iter().enumerate() {
+        let dist = (ring.center(atoms) - centroid).magnitude();
+
+        if dist < closest_dist {
+            closest = i;
+            closest_dist = dist;
+        }
+    }
+
+    Some(closest)
+}
+
+/// A crude approach to an initial alignment, by identifying rings near the molecules' center that are similar,
+/// then aligning both the position and plane. The result should be that the positions generated have
+/// these rings coplanar and with the same center.
+///
+/// todo: Other improvementes like checking ring atom count, taking advantage of ring systems,
+/// todo: and rotating the result around the plane norm so they're fully aligned.
+fn align_from_rings(
+    posits_aligned: &mut [Vec3],
+    mol_template: &MoleculeSmall,
+    mol_to_align: &MoleculeSmall,
+    rings_t: &[Ring],
+    rings_mta: &[Ring],
+    centroid_template: Vec3,
+    centroid_to_align: Vec3,
+) {
+    // todo: Break down this ring-based alignment into a dedicated fn.
+    // Rough start: See if there are any rings near the center, which align between the two.
+    let ctr_ring_templ = find_center_ring(rings_t, &mol_template.common.atoms, centroid_template);
+    let ctr_ring_mta = find_center_ring(rings_mta, &mol_to_align.common.atoms, centroid_to_align);
+
+    // todo: This is a start: Handle multiple rings, fused rings with orientation, take into account ring size.
+    // todo: Something like this for ring systems?
+
+    // Align the rings in plane, and position.
+    if let Some(c_t) = ctr_ring_templ {
+        if let Some(c_m) = ctr_ring_mta {
+            let ring_t = &rings_t[c_t];
+            let ring_m = &rings_mta[c_m];
+
+            let ring_t_center = ring_t.center(&mol_template.common.atoms);
+            let ring_m_center = ring_m.center(&mol_to_align.common.atoms);
+
+            // let posit_offset = ring_t_center - ring_m_center;
+
+            // todo: Note that we have arbitrary sign on these norm vecs, so we may get a reversed alignment.
+
+            // Align the two rings in orientation.
+            // todo: QC this logic!
+            let rotator = Quaternion::from_unit_vecs(ring_m.plane_norm, ring_t.plane_norm);
+
+            for (i, atom) in mol_to_align.common.atoms.iter().enumerate() {
+                let posit_rel = atom.posit - ring_m_center;
+
+                posits_aligned[i] = ring_t_center + rotator.rotate_vec(posit_rel);
+            }
+        }
+
+        // todo: Take advantage of this to match ring systems.
+        for sys in &mol_template.characterization.ring_systems {
+            if sys.contains(&c_t) {
+                // todo: Compare the nature of this system to mol-to-align.
+            }
+        }
+    }
+}
+
 /// Using fast and crude methods, create a starting alignment, to base future ones off.
 fn make_initial_alignment(
     mol_template: &MoleculeSmall,
@@ -185,6 +266,31 @@ fn make_initial_alignment(
     let anchor_atom_i = 0;
     let orientation = Quaternion::new_identity();
 
+    // todo: Kludge for now of resetting posits.
+
+    let centroid_template = mol_template.common.centroid();
+    let centroid_to_align = mol_to_align.common.centroid();
+
+    let rings_t = &mol_template.characterization.rings;
+    let rings_mta = &mol_to_align.characterization.rings;
+
+    let mut posits_aligned: Vec<_> = mol_to_align
+        .common
+        .atoms
+        .iter()
+        .map(|atom| atom.posit)
+        .collect();
+
+    align_from_rings(
+        &mut posits_aligned,
+        mol_template,
+        mol_to_align,
+        rings_t,
+        rings_mta,
+        centroid_template,
+        centroid_to_align,
+    );
+
     let pose = PoseAlignment {
         torsions,
         anchor_atom_i,
@@ -193,12 +299,11 @@ fn make_initial_alignment(
 
     let pose = PoseAlignment::default();
     let matched_pairs = Vec::new();
-    let aligned_posits = Vec::with_capacity(mol_to_align.common.atoms.len());
 
     AlignmentResult {
         pose,
         matched_pairs,
-        aligned_posits,
+        posits_aligned,
         ..Default::default()
     }
 }
