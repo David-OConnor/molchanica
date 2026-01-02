@@ -6,7 +6,10 @@ use std::collections::VecDeque;
 use bio_files::BondType;
 use lin_alg::f64::{Quaternion, Vec3};
 
-use crate::molecules::{Bond, common::MoleculeCommon};
+use crate::{
+    molecules::{Bond, common::MoleculeCommon},
+    util::rotate_about_axis,
+};
 
 #[derive(Clone, Debug)]
 pub struct RotatableBond {
@@ -116,6 +119,7 @@ pub fn rotate_around_bond(
     // Now apply the rotation to each downstream atom:
     let mut result = mol.atom_posits.clone();
 
+    // We're not using `rotate_about_axis` here due to only updating downstream atom indices.
     for &atom_idx in &downstream_atom_indices {
         let old_pos = mol.atom_posits[atom_idx];
         let relative = old_pos - pivot_pos;

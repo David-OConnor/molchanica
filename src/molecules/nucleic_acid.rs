@@ -311,6 +311,8 @@ fn build_single_strand(
         let mut tail_global_pos: Option<Vec3> = None;
         let mut tail_global_sn: Option<u32> = None;
 
+        let rotator = Quaternion::from_axis_angle(rot_axis, twist_cum);
+
         for atom_template in &template.atoms {
             let mut atom: Atom = atom_template.try_into().unwrap();
 
@@ -324,7 +326,8 @@ fn build_single_strand(
             // We also rotate on the first template, to take phase into account, e.g. for
             // offsetting the whole helix, or for the other half.
 
-            atom.posit = rotate_about_axis(atom.posit, posit_head_global, rot_axis, twist_cum);
+            // atom.posit = rotate_about_axis(atom.posit, posit_head_global, rot_axis, twist_cum);
+            atom.posit = posit_head_global + rotator.rotate_vec(atom.posit - posit_head_global);
 
             if tail_template_sn == Some(atom_template.serial_number) {
                 tail_global_pos = Some(atom.posit);
