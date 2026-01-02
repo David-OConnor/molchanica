@@ -1,9 +1,7 @@
 use std::{fs, io, io::ErrorKind, path::Path, sync::mpsc, thread, time::Instant};
 
 use bio_apis::pubchem;
-use bio_files::{
-    DensityMap, MmCif, Mol2, Pdbqt, Xyz, gemmi_sf_to_map, md_params::ForceFieldParams, sdf::Sdf,
-};
+use bio_files::{DensityMap, MmCif, Mol2, Pdbqt, Xyz, md_params::ForceFieldParams, sdf::Sdf};
 use chrono::Utc;
 use egui_file_dialog::FileDialog;
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
@@ -59,7 +57,7 @@ impl State {
             // todo: lib, .dat etc as required. Using Amber force fields and its format
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
-            "dcd" => self.open_trajectory(path)?,
+            "dcd" | "xtc" | "mdt" => self.open_trajectory(path)?,
             _ => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
@@ -118,13 +116,11 @@ impl State {
                 // is rough here, but good enough for now.
                 // todo: This isn't really opening a molecule, so is out of place. Good enough for now.
                 if let Some(name) = path.file_name().and_then(|os| os.to_str()) {
-                    // Note: This isn' tthe ideal place to handle 2fo-fc files, but they're in mmCIF format,
+                    // Note: This isn't the ideal place to handle 2fo-fc files, but they're in mmCIF format,
                     // so we handle here. We handle map and MTZ files elsewhere, even though they use a
                     // similar pipeline.
                     if name.contains("2fo") && name.contains("fc") {
-                        // todo: Experimenting with a local impl.
-                        gemmi_sf_to_map(path, gemmi_path())?;
-                        let dm = gemmi_sf_to_map(path, gemmi_path())?;
+                        let dm = DensityMap::load_sf_or_mtz(path, gemmi_path())?;
 
                         // let mut fft_planner = FftPlanner::new();
                         // let data = CifStructureFactors::new_from_path(path)?;
@@ -242,7 +238,7 @@ impl State {
 
     /// An electron density MTZ file. We use Gemmi's sf2map functionality, as we do for 2fo-fc files.
     pub fn open_mtz(&mut self, path: &Path) -> io::Result<()> {
-        let dm = gemmi_sf_to_map(path, gemmi_path())?;
+        let dm = DensityMap::load_sf_or_mtz(path, gemmi_path())?;
         self.load_density(dm);
 
         self.update_history(path, OpenType::Map);
@@ -345,7 +341,7 @@ impl State {
     /// Open a DTD (or perhaps more later) file. This is a trajectory of a MD run.
     /// todo: We have our own native format as well; support that too.
     pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
-        let snapshots = dynamics::load_dcd(path)?;
+        let snapshots = dynamics::load_snapshots_from_file(path)?;
 
         if self.mol_dynamics.is_none() {
             launch_md(self, false, true);
@@ -369,9 +365,9 @@ impl State {
     /// A single endpoint to save a number of file types
     pub fn save(&mut self, path: &Path) -> io::Result<()> {
         let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
-        let extension = binding;
+        let extension = binding.to_str().unwrap_or_default();
 
-        match extension.to_str().unwrap_or_default() {
+        match extension {
             "pdb" | "cif" => {
                 // todo: Eval how you want to handle this. For now, the raw CIF or PDB.
                 // if let Some(pdb) = &mut self.pdb {
@@ -440,10 +436,16 @@ impl State {
             },
             // todo: Consider if you want to store the original map bytes, as you do with
             // todo mmCIF files, instead of saving what you parsed.
-            "map" => match &self.peptide {
+            "map" | "mtz" => match &self.peptide {
+                // todo: Support 2fo-fc as well?
                 Some(mol) => match &mol.density_map {
                     Some(dm) => {
-                        dm.save(path)?;
+                        match extension {
+                            "map" => dm.save(path)?,
+                            "mtz" => dm.save_sf_or_mtz(path, gemmi_path())?,
+                            _ => unreachable!(),
+                        }
+
                         // self.to_save.last_map_opened = Some(path.to_owned());
 
                         // self.update_history(path, OpenType::Map, &mol.common.ident.clone());
@@ -466,13 +468,16 @@ impl State {
                     ));
                 }
             },
-            "dcd" => {
+            "dcd" | "xtc" | "mdt" => {
                 if let Some(md) = &self.mol_dynamics {
                     let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
+
+                    // This function in the `dynamics` lib will handle saving in the appropriate format
+                    // for the given file extension.
                     if md.save_snapshots_to_file(path, ratio).is_err() {
                         return Err(io::Error::new(
                             ErrorKind::InvalidData,
-                            "Probably saving the MD trajectory to a DCD file.",
+                            "Probably saving the MD trajectory to a file.",
                         ));
                     }
                 }

@@ -330,10 +330,10 @@ fn align_from_rings(
                 let mut posits_to_test = posits_these_rings.clone();
 
                 let rot_amt = ROT_STEP * i_rot as f64;
-                let rotated = rotate_about_axis(
+                rotate_about_axis(
                     &mut posits_to_test,
                     ring_m_center,
-                    ring_t.plane_norm,
+                    ring_m.plane_norm,
                     rot_amt,
                 );
 
@@ -349,7 +349,7 @@ fn align_from_rings(
             rotate_about_axis(
                 &mut posits_these_rings,
                 ring_m_center,
-                ring_t.plane_norm,
+                ring_m.plane_norm,
                 rot_amt,
             );
 

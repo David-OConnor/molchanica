@@ -3,17 +3,17 @@
 //!
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::atomic::Ordering,
 };
 
-use bio_files::BondType;
 use lin_alg::f64::{Quaternion, Vec3};
+use na_seq::Element::*;
 
 use crate::{
     mol_editor::NEXT_ATOM_SN,
-    molecules::{Atom, Bond, build_adjacency_list, rotatable_bonds::find_downstream_atoms},
+    molecules::{Atom, Bond, build_adjacency_list},
 };
 
 /// Contains fields shared by all molecule types.
@@ -196,7 +196,6 @@ impl MoleculeCommon {
             Ordering::Release,
         )
     }
-
     /// The sum of each atom's elemental atomic weight, in Daltons (amu).
     pub fn atomic_weight(&self) -> f32 {
         let result: f64 = self
