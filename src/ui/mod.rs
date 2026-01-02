@@ -1299,8 +1299,12 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     let alignments = mol_alignment::align(&state.ligands[0], &state.ligands[1]);
                     // Assume sorted score high to low
                     if !alignments.is_empty() {
+                        println!("Found {} ring-based alignments", alignments.len());
+
                         // If you want to *apply* the aligned coords back into ligand 0 (visualize):
                         // (pick whichever molecule you want to move)
+
+                        // note: Try this as an alignment example: K3J and K2T
 
                         // todo: Temp! This needs to be in the alignment flow.
                         state.ligands[0].common.reset_posits();
@@ -1310,10 +1314,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         state.ligands[1].common.atom_posits = alignments[0].posits_aligned.clone();
                         redraw_lig = true;
                     }
-
-                    // If your render path needs an explicit flag:
-                    // state.redraw_ligands = true;   // or whatever your app uses
-
                 }
             }
         });
