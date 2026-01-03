@@ -239,6 +239,16 @@ impl MoleculeCommon {
 
         result
     }
+    
+    /// Uses both the indentifier and filename, if different.
+    pub fn name(&self) -> String {
+        let mut result = self.ident.to_string();
+        if self.filename.to_lowercase() != result.to_lowercase() {
+            result.push_str(format!(" | {}", self.filename).as_str());
+        }
+        
+        result
+    }
 
     /// A helper used to ensure that there is a valid atom for each bond. (Checks both SN and index),
     /// and that checks if the adjacency list is up to date. This is used for debugging only.
