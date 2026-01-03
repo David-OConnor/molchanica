@@ -14,13 +14,16 @@ use std::{
 };
 
 use bio_files::BondType;
+use dynamics::compute_energy_snapshot;
 use lin_alg::f64::{Quaternion, Vec3, X_VEC, Y_VEC};
 use na_seq::{Element, Element::*};
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use rayon::prelude::*;
 
 use crate::{
+    State,
     docking::Torsion,
+    md::launch_md_energy_computation,
     mol_alignment,
     mol_characterization::Ring,
     mol_lig::MoleculeSmall,
@@ -80,10 +83,15 @@ pub struct AlignmentResult {
     pub pose: PoseAlignment,
     pub matched_pairs: Vec<(usize, usize)>, // (atom_i in atom 0, atom_j in atom 1)
     /// Atom_posits for atom 1; we leave atom 0 with its original positions.
+    /// todo: Once we start flexing both molecules, these terms template and MTA don't make much sense.
+    /// They make more sense for rigid molecules maybe?
+    pub posits_template: Vec<Vec3>,
     pub posits_aligned: Vec<Vec3>,
     /// Overall score?
     pub score: f64,
-    pub avg_strain_energy: f64,
+    // todo: How does this work given we have two molecules? For now just the Mol-to-align.
+    /// This is the potential energy of the molecule, averaged over the number of atoms in the molecule.
+    pub avg_strain_energy: f32,
     pub similarity_measure: f64,
     /// Sum of avg_strain_energy and similarity_measure.
     pub alignment_score: f64,
@@ -165,14 +173,18 @@ impl Default for MolAlignConfig {
 
 /// Entry point for the alignment.
 ///
-pub fn align(mol_template: &MoleculeSmall, mol_to_align: &MoleculeSmall) -> Vec<AlignmentResult> {
+pub fn align(
+    state: &State,
+    mol_template: &MoleculeSmall,
+    mol_to_align: &MoleculeSmall,
+) -> Vec<AlignmentResult> {
     let char_template = &mol_template.characterization;
     let char_align = &mol_to_align.characterization;
 
     println!("\n\nChar template: {char_template:?}");
     println!("\nChar align: {char_align:?}");
 
-    let mut result = make_initial_alignment(mol_template, mol_to_align);
+    let mut result = make_initial_alignment(state, mol_template, mol_to_align);
 
     result
 }
@@ -271,7 +283,7 @@ fn calc_score(
 /// then aligning both the position and plane. The result should be that the positions generated have
 /// these rings coplanar and with the same center.
 ///
-/// Returns positions, and score.
+/// Returns (positions template, positions_mta), and score.
 ///
 /// todo: Other improvementes like checking ring atom count, taking advantage of ring systems,
 /// todo: and rotating the result around the plane norm so they're fully aligned.
@@ -280,7 +292,7 @@ fn align_from_rings(
     mol_to_align: &MoleculeSmall,
     rings_t: &[Ring],
     rings_mta: &[Ring],
-) -> Vec<(Vec<Vec3>, f64)> {
+) -> Vec<(Vec<Vec3>, Vec<Vec3>, f64)> {
     // todo: Break down this ring-based alignment into a dedicated fn.
     // Rough start: See if there are any rings near the center, which align between the two.
     // let ctr_ring_templ = find_center_ring(rings_t, &mol_template.common.atoms, centroid_template);
@@ -297,73 +309,65 @@ fn align_from_rings(
     // Align the rings in plane, and position.
     for ring_t in rings_t {
         for ring_m in rings_mta {
-            // if let Some(c_t) = ctr_ring_templ {
-            //     if let Some(c_m) = ctr_ring_mta {
-            //         let ring_t = &rings_t[c_t];
-            //         let ring_m = &rings_mta[c_m];
-
             let ring_t_center = ring_t.center(&mol_template.common.atoms);
             let ring_m_center = ring_m.center(&mol_to_align.common.atoms);
 
-            // let posit_offset = ring_t_center - ring_m_center;
+            // Try both orientations of the ring plane relative alignment.
+            for ring_norm_sign in [-1., 1.] {
+                let ring_t_plane_norm = ring_t.plane_norm * ring_norm_sign;
 
-            // todo: Note that we have arbitrary sign on these norm vecs, so we may get a reversed alignment.
+                // Align the two rings in orientation.
+                let rotator = Quaternion::from_unit_vecs(ring_m.plane_norm, ring_t_plane_norm);
 
-            // Align the two rings in orientation.
-            let rotator = Quaternion::from_unit_vecs(ring_m.plane_norm, ring_t.plane_norm);
+                let mut posits_these_rings = Vec::with_capacity(mol_to_align.common.atoms.len());
+                for atom in &mol_to_align.common.atoms {
+                    let posit_rel = atom.posit - ring_m_center;
 
-            let mut posits_these_rings = Vec::with_capacity(mol_to_align.common.atoms.len());
-            for atom in &mol_to_align.common.atoms {
-                let posit_rel = atom.posit - ring_m_center;
+                    posits_these_rings.push(ring_t_center + rotator.rotate_vec(posit_rel));
+                }
 
-                posits_these_rings.push(ring_t_center + rotator.rotate_vec(posit_rel));
-            }
+                // todo: Could we, when scoring, create a "volume" of the combined molecules, and score
+                // todo to minmize this volume? E.g. mols  closely alignmed would have a small volume.
+                // todo: COuld you even use your Marching Cubes algorithm to do this? Try this!
 
-            // todo: Could we, when scoring, create a "volume" of the combined molecules, and score
-            // todo to minmize this volume? E.g. mols  closely alignmed would have a small volume.
-            // todo: COuld you even use your Marching Cubes algorithm to do this? Try this!
+                let mut best_score = f64::INFINITY;
+                let mut best_i_rot = 0;
 
-            let mut best_score = f64::INFINITY;
-            let mut best_i_rot = 0;
+                for i_rot in 0..ROT_COUNT {
+                    let mut posits_to_test = posits_these_rings.clone();
 
-            for i_rot in 0..ROT_COUNT {
-                let mut posits_to_test = posits_these_rings.clone();
+                    // Note: Here and in the final application, we seem to have to use ring_t
+                    // for the center and plane norm, even though I believe they should be equivalent
+                    // after our translation.
+                    let rot_amt = ROT_STEP * i_rot as f64;
+                    rotate_about_axis(
+                        &mut posits_to_test,
+                        ring_t_center,
+                        ring_t_plane_norm,
+                        rot_amt,
+                    );
 
-                let rot_amt = ROT_STEP * i_rot as f64;
+                    let mut score = calc_score(mol_template, mol_to_align, &posits_to_test);
+                    if score < best_score {
+                        best_score = score;
+                        best_i_rot = i_rot;
+                    }
+                }
+
+                // Apply the rotation with the best score.
+                let rot_amt = ROT_STEP * best_i_rot as f64;
                 rotate_about_axis(
-                    &mut posits_to_test,
-                    ring_m_center,
-                    ring_m.plane_norm,
+                    &mut posits_these_rings,
+                    ring_t_center,
+                    ring_t_plane_norm,
                     rot_amt,
                 );
 
-                let mut score = calc_score(mol_template, mol_to_align, &posits_to_test);
-                if score < best_score {
-                    best_score = score;
-                    best_i_rot = i_rot;
-                }
+                // Now, try rotating around the ring's norm to find the closest alignment.
+                let posits_template = Vec::with_capacity(mol_template.common.atoms.len());
+                result.push((posits_template, posits_these_rings, best_score));
             }
-
-            // Apply the rotation with the best score.
-            let rot_amt = ROT_STEP * best_i_rot as f64;
-            rotate_about_axis(
-                &mut posits_these_rings,
-                ring_m_center,
-                ring_m.plane_norm,
-                rot_amt,
-            );
-
-            // Now, try rotating around the ring's norm to find the closest alignment.
-
-            result.push((posits_these_rings, best_score));
         }
-
-        // todo: Take advantage of this to match ring systems.
-        // for sys in &mol_template.characterization.ring_systems {
-        //     if sys.contains(&c_t) {
-        //         // todo: Compare the nature of this system to mol-to-align.
-        //     }
-        // }
     }
 
     result
@@ -371,6 +375,7 @@ fn align_from_rings(
 
 /// Using fast and crude methods, create a starting alignment, to base future ones off.
 fn make_initial_alignment(
+    state: &State,
     mol_template: &MoleculeSmall,
     mol_to_align: &MoleculeSmall,
 ) -> Vec<AlignmentResult> {
@@ -403,7 +408,7 @@ fn make_initial_alignment(
 
     let mut result = Vec::with_capacity(posits_from_ring_alignment.len());
 
-    for (posits_aligned, score) in posits_from_ring_alignment {
+    for (posits_template, posits_aligned, score) in posits_from_ring_alignment {
         let pose = PoseAlignment {
             torsions: torsions.clone(),
             anchor_atom_i,
@@ -413,11 +418,19 @@ fn make_initial_alignment(
         let pose = PoseAlignment::default();
         let matched_pairs = Vec::new();
 
+        let mut avg_strain_energy = 0.0;
+        let energy = launch_md_energy_computation(state, &mut HashSet::new());
+        if let Ok(energy) = energy {
+            avg_strain_energy = energy.energy_potential / posits_aligned.len() as f32;
+        }
+
         result.push(AlignmentResult {
             pose,
             matched_pairs,
+            posits_template,
             posits_aligned,
             score,
+            avg_strain_energy,
             ..Default::default()
         })
     }
