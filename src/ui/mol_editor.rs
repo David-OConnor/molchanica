@@ -353,15 +353,15 @@ pub(in crate::ui) fn editor(
         edit_tools(state, scene, ui, engine_updates, &mut redraw);
 
         // todo: Show/hide this button A/R
-        if ui.button("Tautomer")
+        if ui
+            .button("Tautomer")
             .on_hover_text("Cycle through different tautomers for the selected molecule.")
-            .clicked() {
-
+            .clicked()
+        {
             let tautometers = state.mol_editor.mol.common.find_tautomers();
 
             // todo: Only the first for now. Later, implement cycle
             if !tautometers.is_empty() {
-
                 state.mol_editor.mol.common = tautometers[0].clone();
 
                 // todo: For now, so we don't need to add positioning logic to the find_tautomers function.

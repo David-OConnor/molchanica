@@ -590,7 +590,10 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
 }
 
 /// Called directly from the UI;
-pub fn launch_md_energy_computation(state: &mut State) -> Result<Snapshot, ParamError> {
+pub fn launch_md_energy_computation(
+    state: &State,
+    pep_atom_set: &mut HashSet<(usize, usize)>,
+) -> Result<Snapshot, ParamError> {
     // todo: DRY with the primary MD run.
     let ligs: Vec<_> = state
         .ligands
@@ -676,7 +679,6 @@ pub fn launch_md_energy_computation(state: &mut State) -> Result<Snapshot, Param
         });
     }
 
-    let pep_atom_set = &mut state.volatile.md_peptide_selected;
     let peptide_only_near_lig = if state.ui.md.peptide_only_near_ligs {
         Some(STATIC_ATOM_DIST_THRESH)
     } else {

@@ -1296,16 +1296,18 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             // todo temp
             if ui.button("Align mols temp").clicked() {
                 if state.ligands.len() == 2 {
-                    let alignments = mol_alignment::align(&state.ligands[0], &state.ligands[1]);
+                    let alignments = mol_alignment::align(state,&state.ligands[0], &state.ligands[1]);
 
                     // Assume sorted score high to low
                     if !alignments.is_empty() {
                         println!("Found {} ring-based alignments", alignments.len());
+                        println!("Best alignment strain energy: {}", alignments[0].avg_strain_energy);
 
                         // If you want to *apply* the aligned coords back into ligand 0 (visualize):
                         // (pick whichever molecule you want to move)
 
                         // note: Try this as an alignment example: K3J and K2T
+                        // or neostigmine.sdf and physostigmine.sdf
 
                         // todo: Temp! This needs to be in the alignment flow.
                         state.ligands[0].common.reset_posits();

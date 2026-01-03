@@ -12,7 +12,7 @@ const MAX_TAUTOMERS: usize = 512;
 
 impl MoleculeCommon {
     /// Find tautomers of this molecule. These are structural isomers that readily interconvert.
-    /// I.e. shifting around single vs double bonds, and which atoms have hydrogens bound.
+    ///It shifts around single vs double bonds, and which corresponding atoms have hydrogens bound.
     ///
     /// Notes:
     /// - This version enumerates *explicit-H* prototropic tautomers (it requires H atoms in `atoms`).

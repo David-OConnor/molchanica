@@ -151,12 +151,15 @@ pub fn md_setup(
                 }
 
                 if ready_to_run {
-                    match launch_md_energy_computation(state) {
+                    let mut pep_md = state.volatile.md_peptide_selected.clone(); // Avoids borrow problem.
+                    match launch_md_energy_computation(state, &mut pep_md) {
                         Ok(en) => {
                             let data = format!("E result. PE: {:.2}, PE NB: {:.3} PE Bonded: {:.2}",
                                                en.energy_potential, en.energy_potential_nonbonded, en.energy_potential_bonded);
                             println!("{data}");
                             handle_success(&mut state.ui, data);
+
+                            state.volatile.md_peptide_selected = pep_md;
 
                         }
                         Err(e) => handle_err(&mut state.ui, format!("Error computing energy: {:?}", e))
