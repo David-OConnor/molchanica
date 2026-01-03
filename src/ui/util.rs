@@ -18,6 +18,7 @@ use crate::{
     ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING, set_window_title},
     util::{handle_err, reset_orbit_center},
 };
+use crate::ui::{COLOR_ACTIVE, COLOR_INACTIVE};
 
 /// Run this each frame, after all UI elements that affect it are rendered.
 pub fn update_file_dialogs(
@@ -260,8 +261,36 @@ pub fn load_popups(
                 }
             });
 
-            // todo temp.
-            state.volatile.mols_to_align = vec![0, 1];
+            for (i, mol) in state.ligands.iter().enumerate() {
+                let mta = &mut state.volatile.mols_to_align;
+
+                let selected_pos = mta.iter().position(|&x| x == i);
+                let color = if selected_pos.is_some() { COLOR_ACTIVE } else { COLOR_INACTIVE };
+
+                if ui
+                    .button(RichText::new(mol.common.name()).color(color))
+                    .clicked()
+                {
+                    match selected_pos {
+                        Some(pos) => {
+                            // Toggle off.
+                            mta.swap_remove(pos);
+                        }
+                        None => {
+                            // Toggle on (cap at 2, avoid duplicates).
+                            match mta.len() {
+                                0 | 1 => mta.push(i),
+                                _ => {
+                                    // Keep the most recent selection and add this as the newest:
+                                    // [old, recent] -> [recent, i]
+                                    mta[0] = mta[1];
+                                    mta[1] = i;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             if state.volatile.mols_to_align.len() == 2 && ui.button("Run alignment").clicked() {
                 let mut redraw_lig = false;
@@ -272,24 +301,6 @@ pub fn load_popups(
     };
 }
 
-// pub fn load_file(
-//     path: &Path,
-//     state: &mut State,
-//     redraw: &mut bool,
-//     reset_cam: &mut bool,
-//     engine_updates: &mut EngineUpdates,
-//     scene: &mut Scene,
-// ) -> io::Result<()> {
-//     state.open(path, Some(scene), engine_updates)?;
-//
-//     // Clear last map opened here, vice in `open_molecule`, to prevent it clearing the map
-//     // on init.
-//
-//     *redraw = true;
-//     *reset_cam = true;
-//
-//     Ok(())
-// }
 
 pub fn handle_redraw(
     state: &mut State,

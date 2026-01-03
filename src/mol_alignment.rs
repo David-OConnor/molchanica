@@ -96,14 +96,22 @@ pub struct AlignmentResult {
 }
 
 pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
+    let mta = &state.volatile.mols_to_align;
+
+    // todo: You must explicitly set which is the template.
+    if mta.len() != 2 {
+        eprintln!("Error: Alignment requires exactly two molecules to align.");
+        return;
+    }
+
     // todo: Temp! This needs to be in the alignment flow.
-    state.ligands[0].common.reset_posits();
-    state.ligands[1].common.reset_posits();
+    state.ligands[mta[0]].common.reset_posits();
+    state.ligands[mta[1]].common.reset_posits();
 
     let alignments = align(
         state,
-        &state.ligands[state.volatile.mols_to_align[0]],
-        &state.ligands[state.volatile.mols_to_align[1]],
+        &state.ligands[mta[0]],
+        &state.ligands[mta[1]],
     );
 
     // Assume sorted score high to low

@@ -517,11 +517,7 @@ impl MoleculeNucleicAcid {
             adjacency_list,
             atom_posits,
             metadata,
-            visible: true,
-            path: None,
-            filename: String::new(),
-            selected_for_md: false,
-            entity_i_range: None,
+            ..Default::default()
         };
 
         Ok(Self {
