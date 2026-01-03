@@ -4,7 +4,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::Ordering,
 };
 
@@ -36,6 +36,8 @@ pub struct MoleculeCommon {
     /// but is safer and easier than trying to sync Vec indices.
     pub visible: bool,
     pub path: Option<PathBuf>,
+    /// This is a cached derivative of `path`.
+    pub filename: String,
     pub selected_for_md: bool,
     pub entity_i_range: Option<(usize, usize)>,
 }
@@ -52,6 +54,7 @@ impl Default for MoleculeCommon {
             atom_posits: Vec::new(),
             visible: true,
             path: None,
+            filename: String::new(),
             selected_for_md: false,
             entity_i_range: None,
         }
@@ -73,6 +76,12 @@ impl MoleculeCommon {
     ) -> Self {
         let atom_posits = atoms.iter().map(|a| a.posit).collect();
 
+        let filename = match &path {
+            Some(p) => p.file_stem().unwrap().to_string_lossy().to_string(),
+
+            None => String::new(),
+        };
+
         let mut result = Self {
             ident,
             metadata,
@@ -80,11 +89,17 @@ impl MoleculeCommon {
             bonds,
             atom_posits,
             path,
+            filename,
             ..Self::default()
         };
 
         result.build_adjacency_list();
         result
+    }
+
+    pub fn update_path(&mut self, path: &Path) {
+        self.path = Some(path.to_owned());
+        self.filename = path.file_stem().unwrap().to_string_lossy().to_string();
     }
 
     /// Build a list of, for each atom, all atoms bonded to it.

@@ -231,6 +231,7 @@ impl MoleculeCommon {
             metadata: HashMap::new(),
             visible: true,
             path: None,
+            filename: String::from("From SMILES"),
             selected_for_md: false,
             entity_i_range: None,
         })

@@ -93,21 +93,22 @@ impl State {
         let molecule = match extension.to_str().unwrap() {
             "sdf" => {
                 let mut m: MoleculeSmall = Sdf::load(path)?.try_into()?;
-                m.common.path = Some(path.to_owned());
+                m.common.update_path(path);
                 Ok(MoleculeGeneric::Ligand(m))
             }
             "mol2" => {
                 let mut m: MoleculeSmall = Mol2::load(path)?.try_into()?;
-                m.common.path = Some(path.to_owned());
+                m.common.update_path(path);
                 Ok(MoleculeGeneric::Ligand(m))
             }
             "xyz" => {
-                let m = MoleculeSmall::from_xyz(Xyz::load(path)?, path)?;
+                let mut m = MoleculeSmall::from_xyz(Xyz::load(path)?, path)?;
+                m.common.update_path(path);
                 Ok(MoleculeGeneric::Ligand(m))
             }
             "pdbqt" => {
                 let mut m: MoleculeSmall = Pdbqt::load(path)?.try_into()?;
-                m.common.path = Some(path.to_owned());
+                m.common.update_path(path);
                 Ok(MoleculeGeneric::Ligand(m))
             }
             "cif" => {

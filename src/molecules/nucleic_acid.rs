@@ -28,7 +28,7 @@ use crate::{
         Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
         build_adjacency_list, common::MoleculeCommon,
     },
-    util::rotate_about_axis,
+    util::rotate_about_point,
 };
 
 const HELIX_TWIST: f64 = TAU / 10.0; // 36°
@@ -519,6 +519,7 @@ impl MoleculeNucleicAcid {
             metadata,
             visible: true,
             path: None,
+            filename: String::new(),
             selected_for_md: false,
             entity_i_range: None,
         };

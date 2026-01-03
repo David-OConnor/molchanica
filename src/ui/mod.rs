@@ -23,6 +23,7 @@ use crate::{
     file_io::gemmi_path,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     mol_alignment,
+    mol_alignment::run_alignment,
     mol_editor::enter_edit_mode,
     molecules::MolGenericRef,
     render::set_flashlight,
@@ -1293,32 +1294,8 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 enter_edit_mode(state, scene, &mut engine_updates);
             }
 
-            // todo temp
-            if ui.button("Align mols temp").clicked() {
-                if state.ligands.len() == 2 {
-                    let alignments = mol_alignment::align(state,&state.ligands[0], &state.ligands[1]);
-
-                    // Assume sorted score high to low
-                    if !alignments.is_empty() {
-                        println!("Found {} ring-based alignments", alignments.len());
-                        println!("Best alignment strain energy: {}", alignments[0].avg_strain_energy);
-
-                        // If you want to *apply* the aligned coords back into ligand 0 (visualize):
-                        // (pick whichever molecule you want to move)
-
-                        // note: Try this as an alignment example: K3J and K2T
-                        // or neostigmine.sdf and physostigmine.sdf
-
-                        // todo: Temp! This needs to be in the alignment flow.
-                        state.ligands[0].common.reset_posits();
-                        state.ligands[1].common.reset_posits();
-
-
-                        // [0] is the best score.
-                        state.ligands[1].common.atom_posits = alignments[0].posits_aligned.clone();
-                        redraw_lig = true;
-                    }
-                }
+            if state.ligands.len() >= 2 &&ui.button("Align").clicked() {
+               state.ui.popup.alignment = true;
             }
         });
 

@@ -99,10 +99,16 @@ fn mol_picker_one(
             }
 
             let row_h = ui.spacing().interact_size.y;
+
+            let mut name = mol.ident.to_string();
+            if mol.filename.to_lowercase() != name.to_lowercase() {
+                name.push_str(format!(" | {}", mol.filename).as_str());
+            }
+
             let sel_btn = ui
                 .add_sized(
                     egui::vec2(ui.available_width(), row_h),
-                    egui::Button::new(egui::RichText::new(&mol.ident).color(color)),
+                    egui::Button::new(RichText::new(name).color(color)),
                 )
                 .on_hover_text(help_text);
 
