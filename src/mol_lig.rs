@@ -87,8 +87,6 @@ impl MoleculeSmall {
         let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
         let characterization = MolCharacterization::new(&common);
 
-        println!("Char: {:?}", characterization);
-
         Self {
             common,
             idents,

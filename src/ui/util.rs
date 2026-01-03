@@ -10,6 +10,7 @@ use crate::{
     download_mols::load_atom_coords_rcsb,
     drawing::draw_peptide,
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+    mol_alignment::run_alignment,
     mol_editor,
     mol_lig::MoleculeSmall,
     molecules::{MolGenericRef, MoleculeGeneric},
@@ -232,6 +233,43 @@ pub fn load_popups(
             }
         }
     }
+
+    if state.ui.popup.alignment {
+        let popup_id = ui.make_persistent_id("alignment_popup");
+
+        Popup::new(
+            popup_id,
+            ui.ctx().clone(), // todo clone???
+            PopupAnchor::Position(Pos2::new(200., 120.)),
+            ui.layer_id(), // draw on top of the current layer
+        )
+        // .align(RectAlign::TOP)
+        .align(RectAlign::BOTTOM_START)
+        .open(true)
+        .gap(4.0)
+        .show(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("Choose molecules to align:");
+
+                ui.add_space(ROW_SPACING);
+                if ui
+                    .button(RichText::new("Close").color(Color32::LIGHT_RED))
+                    .clicked()
+                {
+                    state.ui.popup.alignment = false;
+                }
+            });
+
+            // todo temp.
+            state.volatile.mols_to_align = vec![0, 1];
+
+            if state.volatile.mols_to_align.len() == 2 && ui.button("Run alignment").clicked() {
+                let mut redraw_lig = false;
+
+                run_alignment(state, &mut redraw_lig);
+            }
+        });
+    };
 }
 
 // pub fn load_file(

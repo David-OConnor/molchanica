@@ -8,7 +8,7 @@ use lin_alg::f64::{Quaternion, Vec3};
 
 use crate::{
     molecules::{Bond, common::MoleculeCommon},
-    util::rotate_about_axis,
+    util::rotate_about_point,
 };
 
 #[derive(Clone, Debug)]

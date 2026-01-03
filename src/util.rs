@@ -1399,11 +1399,10 @@ pub fn res_color(
     }
 }
 
-/// Rotate positions about an axis.
-pub fn rotate_about_axis(posits: &mut [Vec3], pivot: Vec3, axis: Vec3, angle: f64) {
-    let q = Quaternion::from_axis_angle(axis, angle);
-
+/// Rotate all positions about `center` using `rotator`.
+pub fn rotate_about_point(posits: &mut [Vec3], pivot: Vec3, rotator: Quaternion) {
     for p in posits {
-        *p = pivot + q.rotate_vec(*p - pivot)
+        let rel = *p - pivot;
+        *p = pivot + rotator.rotate_vec(rel);
     }
 }
