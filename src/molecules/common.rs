@@ -239,14 +239,14 @@ impl MoleculeCommon {
 
         result
     }
-    
+
     /// Uses both the indentifier and filename, if different.
     pub fn name(&self) -> String {
         let mut result = self.ident.to_string();
         if self.filename.to_lowercase() != result.to_lowercase() {
             result.push_str(format!(" | {}", self.filename).as_str());
         }
-        
+
         result
     }
 

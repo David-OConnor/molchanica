@@ -20,8 +20,13 @@ use rayon::prelude::*;
 const RING_ALIGN_ROT_COUNT: u16 = 1_000; // Radians
 
 use crate::{
-    State, docking::Torsion, md::launch_md_energy_computation, mol_alignment,
-    mol_characterization::Ring, mol_lig::MoleculeSmall, molecules::common::MoleculeCommon,
+    State,
+    docking::Torsion,
+    md::launch_md_energy_computation,
+    mol_alignment,
+    mol_characterization::Ring,
+    mol_lig::MoleculeSmall,
+    molecules::{Atom, common::MoleculeCommon},
     util::rotate_about_point,
 };
 
@@ -108,11 +113,7 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
     state.ligands[mta[0]].common.reset_posits();
     state.ligands[mta[1]].common.reset_posits();
 
-    let alignments = align(
-        state,
-        &state.ligands[mta[0]],
-        &state.ligands[mta[1]],
-    );
+    let alignments = align(state, &state.ligands[mta[0]], &state.ligands[mta[1]]);
 
     // Assume sorted score high to low
     if !alignments.is_empty() {
@@ -129,7 +130,7 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
         // or neostigmine.sdf and physostigmine.sdf
 
         // [0] is the best score.
-        state.ligands[1].common.atom_posits = alignments[0].posits_query.clone();
+        state.ligands[mta[1]].common.atom_posits = alignments[0].posits_query.clone();
 
         *redraw_lig = true;
     }
@@ -497,6 +498,53 @@ fn make_initial_alignment(
 
     // Lowest (best) score first.
     result.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+
+    result
+}
+
+#[allow(non_snake_case)]
+/// A synthetic potential and force we use to align molecules. Components:
+/// - Element
+/// - FF type (GAFF2)
+/// - Type in residue (?)
+/// - Bond types
+/// - Partial charge
+///
+/// A negative potential is attractive (todo?)
+fn force_synthetic(atom_t: &Atom, atom_q: &Atom) -> f32 {
+    // todo: dist_sq?
+    // Note: template is the "source"; query is the "target", to use our terminology
+    // from elsewhere.
+    let diff = atom_q.posit - atom_t.posit;
+    let dist = diff.magnitude();
+
+    // See Wang, 2023.
+    let y = 10.
+        * ((atom_t.partial_charge.unwrap_or(0.) - atom_q.partial_charge.unwrap_or(0.)).abs() - 1.);
+
+    let f_charge = if y < -1. && y < 1. {
+        0.25 * (y + 1.) * (y - 1.)
+    } else {
+        0.
+    };
+
+    let f_el = if atom_t.element == atom_q.element {
+        1.
+    } else {
+        0.
+    };
+
+    // todo: Be careful: Make sure you're not filtering out based on similar or
+    // todo equivalent FF types.
+    let f_ff_type = if atom_t.force_field_type == atom_q.force_field_type {
+        1.
+    } else {
+        0.
+    };
+
+    // todo: More including the type of bonds connected to this el.
+
+    let result = f_charge + f_el + f_ff_type;
 
     result
 }

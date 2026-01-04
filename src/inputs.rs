@@ -560,6 +560,7 @@ pub fn event_dev_handler(
                 &state_.mol_editor.mol,
                 &state_.ui,
                 state_.volatile.mol_manip.mode,
+                state_.ligands.len(),
             ),
             OperatingMode::ProteinEditor => (),
         }
@@ -587,6 +588,7 @@ pub fn event_dev_handler(
                     &state_.mol_editor.mol,
                     &state_.ui,
                     state_.volatile.mol_manip.mode,
+                    state_.ligands.len(),
                 );
                 updates.entities = EntityUpdate::Classes(vec![EntityClass::Ligand as u32]);
             }
@@ -608,6 +610,7 @@ pub fn event_dev_handler(
             &state_.mol_editor.mol,
             &state_.ui,
             state_.volatile.mol_manip.mode,
+            state_.ligands.len(),
         );
         updates.entities = EntityUpdate::All;
     }

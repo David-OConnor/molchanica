@@ -282,7 +282,7 @@ impl MolEditorState {
 
         // Clear all entities for non-editor molecules. And render the initial relaxation
         // from building dynamics.
-        redraw(&mut scene.entities, &self.mol, state_ui, manip_mode);
+        redraw(&mut scene.entities, &self.mol, state_ui, manip_mode, 0);
 
         set_flashlight(scene);
         engine_updates.entities = EntityUpdate::All;
@@ -331,7 +331,7 @@ impl MolEditorState {
 
         self.md_state.as_mut().unwrap().snapshots = Vec::new();
 
-        redraw(entities, &self.mol, state_ui, manip_mode);
+        redraw(entities, &self.mol, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -349,7 +349,7 @@ impl MolEditorState {
             self.mol.common.atom_posits[i] = atom.posit.into();
         }
 
-        redraw(entities, &self.mol, state_ui, manip_mode);
+        redraw(entities, &self.mol, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -498,6 +498,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
         &state.mol_editor.mol,
         &state.ui,
         state.volatile.mol_manip.mode,
+        0,
     );
 
     set_static_light(scene, Vec3F32::new_zero(), STATIC_LIGHT_MOL_SIZE);
@@ -536,6 +537,7 @@ pub fn redraw(
     mol: &MoleculeSmall,
     ui: &StateUi,
     manip_mode: ManipMode,
+    num_ligs: usize,
 ) {
     entities.clear();
 
@@ -546,6 +548,7 @@ pub fn redraw(
         &None,
         manip_mode,
         OperatingMode::MolEditor,
+        num_ligs,
     ));
 }
 

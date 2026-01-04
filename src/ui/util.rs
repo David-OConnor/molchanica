@@ -3,6 +3,7 @@ use std::io;
 use bio_apis::{amber_geostd, rcsb};
 use egui::{Color32, Popup, PopupAnchor, Pos2, RectAlign, RichText, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use lin_alg::f64::Vec3;
 
 use crate::{
     OperatingMode, State,
@@ -15,10 +16,12 @@ use crate::{
     mol_lig::MoleculeSmall,
     molecules::{MolGenericRef, MoleculeGeneric},
     render::{set_flashlight, set_static_light},
-    ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING, set_window_title},
+    ui::{
+        COL_SPACING, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        cam::move_cam_to_mol, set_window_title,
+    },
     util::{handle_err, reset_orbit_center},
 };
-use crate::ui::{COLOR_ACTIVE, COLOR_INACTIVE};
 
 /// Run this each frame, after all UI elements that affect it are rendered.
 pub fn update_file_dialogs(
@@ -241,7 +244,7 @@ pub fn load_popups(
         Popup::new(
             popup_id,
             ui.ctx().clone(), // todo clone???
-            PopupAnchor::Position(Pos2::new(200., 120.)),
+            PopupAnchor::Position(Pos2::new(300., 120.)),
             ui.layer_id(), // draw on top of the current layer
         )
         // .align(RectAlign::TOP)
@@ -265,7 +268,11 @@ pub fn load_popups(
                 let mta = &mut state.volatile.mols_to_align;
 
                 let selected_pos = mta.iter().position(|&x| x == i);
-                let color = if selected_pos.is_some() { COLOR_ACTIVE } else { COLOR_INACTIVE };
+                let color = if selected_pos.is_some() {
+                    COLOR_ACTIVE
+                } else {
+                    COLOR_INACTIVE
+                };
 
                 if ui
                     .button(RichText::new(mol.common.name()).color(color))
@@ -292,15 +299,32 @@ pub fn load_popups(
                 }
             }
 
+            ui.add_space(ROW_SPACING);
+            ui.separator();
             if state.volatile.mols_to_align.len() == 2 && ui.button("Run alignment").clicked() {
                 let mut redraw_lig = false;
 
                 run_alignment(state, &mut redraw_lig);
+
+                // Set visualization settings to view the result.
+                state.ligands[state.volatile.mols_to_align[0]]
+                    .common
+                    .visible = true;
+                state.ligands[state.volatile.mols_to_align[1]]
+                    .common
+                    .visible = true;
+                state.ui.color_by_mol = true;
+                move_cam_to_mol(
+                    &state.ligands[state.volatile.mols_to_align[0]].common,
+                    &mut state.ui.cam_snapshot,
+                    scene,
+                    Vec3::new_zero(),
+                    engine_updates,
+                )
             }
         });
     };
 }
-
 
 pub fn handle_redraw(
     state: &mut State,
