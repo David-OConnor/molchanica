@@ -1312,7 +1312,11 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             }
 
             if state.ligands.len() >= 2 &&ui.button("Align").clicked() {
-               state.ui.popup.alignment = true;
+               state.ui.popup.alignment = !state.ui.popup.alignment;
+
+                if state.volatile.mols_to_align.len() < 2 {
+                    state.volatile.mols_to_align = vec![0, 1];
+                }
             }
         });
 

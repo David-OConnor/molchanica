@@ -8,12 +8,21 @@
 //!
 //! [Web based BCL::MolAlign](http://servers.meilerlab.org/index.php/servers/molalign)
 
-use std::{collections::{HashMap, HashSet}, f64::consts::TAU, io};
+use std::{
+    collections::{HashMap, HashSet},
+    f64::consts::TAU,
+    io,
+};
+
 use bio_files::BondType;
-use dynamics::{FfMolType, ParamError};
-use lin_alg::f64::{Quaternion, Vec3};
-use lin_alg::f32::Vec3 as Vec3F32;
-use lin_alg::map_linear;
+use dynamics::{
+    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
+};
+use lin_alg::{
+    f32::Vec3 as Vec3F32,
+    f64::{Quaternion, Vec3},
+    map_linear,
+};
 use na_seq::{Element, Element::*};
 use rayon::prelude::*;
 
@@ -22,14 +31,12 @@ const RING_ALIGN_ROT_COUNT: u16 = 1_000; // Radians
 use crate::{
     State,
     docking::Torsion,
-    md::launch_md_energy_computation,
+    md::{build_dynamics, launch_md_energy_computation},
     mol_characterization::Ring,
     mol_lig::MoleculeSmall,
-    molecules::{Atom, common::MoleculeCommon},
+    molecules::{Atom, Bond, common::MoleculeCommon},
     util::rotate_about_point,
 };
-use crate::md::build_dynamics;
-use crate::molecules::Bond;
 
 #[derive(Clone, Debug, Default)]
 pub struct PoseAlignment {
@@ -114,10 +121,14 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
     state.ligands[mta[0]].common.reset_posits();
     state.ligands[mta[1]].common.reset_posits();
 
-    let Ok(alignments) = align(state, &state.ligands[mta[0]], &state.ligands[mta[1]]) else {
+    let Ok((alignments, md)) = align(state, &state.ligands[mta[0]], &state.ligands[mta[1]]) else {
         eprintln!("Error: Alignment failed.");
-        return
+        return;
     };
+
+    println!("Snaps: {:?}", md.snapshots.len());
+
+    state.mol_dynamics = Some(md);
 
     // Assume sorted score high to low
     if !alignments.is_empty() {
@@ -141,38 +152,64 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
 }
 
 /// Entry point for the alignment.
-///
+/// Returns MdState for the purpose of viewing snapshots, for debugging etc.
 pub fn align(
     state: &State,
     mol_template: &MoleculeSmall,
     mol_to_align: &MoleculeSmall,
-) -> Result<Vec<AlignmentResult>, ParamError> {
+) -> Result<(Vec<AlignmentResult>, MdState), ParamError> {
     let mut result = make_initial_alignment(state, mol_template, mol_to_align);
 
-    let mol_q_md = mol_to_align.common.clone();
-    let mols_md= vec![(FfMolType::SmallOrganic, &mol_q_md)];
+    let mut md_state_out = MdState::default();
 
-    let mut md_state = build_dynamics(
-        &state.dev,
-        &mols_md,
-        None,
-        &state.ff_param_set,
-        &state.mol_specific_params,
-        &state.to_save.md_config,
-        false,
-        None,
-        &mut HashSet::new(),
-        true,
-    )?;
+    let cfg = MdConfig {
+        integrator: Integrator::VerletVelocity { thermostat: None },
+        hydrogen_constraint: HydrogenConstraint::Flexible,
+        max_init_relaxation_iters: None,
+        overrides: MdOverrides {
+            skip_water: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
-    let num_steps = 100;
-    let dt = 0.001; // ps
+    for alignment in &mut result {
+        let mol_q_md = MoleculeCommon {
+            selected_for_md: true,
+            atom_posits: alignment.posits_query.clone(),
+            ..mol_to_align.common.clone()
+        };
 
-    for _ in 0..num_steps {
-        md_state.step(&state.dev, dt);
+        let mols_md = vec![(FfMolType::SmallOrganic, &mol_q_md)];
+
+        let mut md_state = build_dynamics(
+            &state.dev,
+            &mols_md,
+            None,
+            &state.ff_param_set,
+            &state.mol_specific_params,
+            &cfg,
+            false,
+            None,
+            &mut HashSet::new(),
+            true,
+        )?;
+
+        let num_steps = 100;
+        let dt = 0.001; // ps
+
+        println!("Running MD for alignment...");
+        for _ in 0..num_steps {
+            md_state.step(&state.dev, dt);
+        }
+
+        println!("Complete");
+
+        md_state_out = md_state;
+        break; // todo temp!!
     }
 
-    Ok(result)
+    Ok((result, md_state_out))
 }
 
 /// Early concept: Use the template's atom positions as centers of attraction for the query mol.
@@ -561,8 +598,6 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[Bond], bonds_q: &[Bo
     const THRESH_DIST: f32 = 4.; //  Å
     const THRESH_DIST_SQ: f32 = THRESH_DIST * THRESH_DIST;
 
-
-
     // Note: template is the "source"; query is the "target", to use our terminology
     // from elsewhere.
     let diff: Vec3F32 = (atom_q.posit - atom_t.posit).into();
@@ -576,11 +611,12 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[Bond], bonds_q: &[Bo
 
     // Charge diffs smaller than `THRESH_Q` are attractive; larger are repulsive. Map linearly.
     let f_q = {
-        let q_diff = (atom_t.partial_charge.unwrap_or(0.) - atom_q.partial_charge.unwrap_or(0.)).abs();
+        let q_diff =
+            (atom_t.partial_charge.unwrap_or(0.) - atom_q.partial_charge.unwrap_or(0.)).abs();
         let width = 0.08;
 
         // 1 when q_diff=0, decays to 0
-        let score = (- (q_diff / width).powi(2)).exp(); // Gaussian
+        let score = (-(q_diff / width).powi(2)).exp(); // Gaussian
         -COEFF_Q * score
     };
 
@@ -590,7 +626,6 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[Bond], bonds_q: &[Bo
     } else {
         0.
     };
-
 
     // Attractive if they share atom name.
     let f_ff_atom_name = if atom_t.type_in_res == atom_q.type_in_res {
@@ -614,17 +649,20 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[Bond], bonds_q: &[Bo
     // If the bond count is the same, attractive. If different, slightly repulsive, depending on teh difference.
     let f_bonds = {
         let mut bond_count_t = 0.;
-        for bond in bonds_t { bond_count_t += bond.bond_type.order(); }
+        for bond in bonds_t {
+            bond_count_t += bond.bond_type.order();
+        }
 
         let mut bond_count_q = 0.;
-        for bond in bonds_q { bond_count_q += bond.bond_type.order(); }
+        for bond in bonds_q {
+            bond_count_q += bond.bond_type.order();
+        }
 
         let db = (bond_count_q - bond_count_t).abs();
-        let thresh = 0.5;  // “close enough” bond-order sum
-        let width  = 0.25; // smoothness
+        let thresh = 0.5; // “close enough” bond-order sum
+        let width = 0.25; // smoothness
         COEFF_BONDS * ((db - thresh) / width).tanh()
     };
-
 
     let f_mag = f_q + f_el + f_ff_atom_name + f_ff_type + f_bonds;
 
@@ -636,7 +674,11 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[Bond], bonds_q: &[Bo
     // Gradually roll off the force with distance.
     let dist_term = smooth_gate(dist, THRESH_DIST, 1.);
 
-    let dir = if dist > 1e-6 { diff / dist } else { Vec3F32::new_zero() };
+    let dir = if dist > 1e-6 {
+        diff / dist
+    } else {
+        Vec3F32::new_zero()
+    };
 
     dir * f_mag * dist_term
 }

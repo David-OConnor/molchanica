@@ -42,6 +42,7 @@ mod mol_characterization;
 mod mol_editor;
 mod mol_lig;
 mod mol_manip;
+mod mol_screening;
 mod molecules;
 mod orca;
 mod pharmacophore;

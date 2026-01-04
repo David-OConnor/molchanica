@@ -262,7 +262,6 @@ fn mod_color_for_ligand(
         }
     }
 
-
     if color_by_q {
         return blend_color(*color, LIGAND_COLOR, LIGAND_BLEND_AMT);
     }
