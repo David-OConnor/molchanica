@@ -74,6 +74,8 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
         return;
     }
 
+    let num_ligs = state.ligands.len();
+
     let mut entities = Vec::new();
     for (i_mol, mol) in state.ligands.iter_mut().enumerate() {
         let start_i_mol = ent_i_start + entities.len();
@@ -85,6 +87,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
             &state.volatile.active_mol,
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
+            num_ligs,
         );
 
         // Note: This may already be set.
@@ -133,6 +136,7 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
             &state.volatile.active_mol,
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
+            state.ligands.len(),
         );
 
         // Note: This may already be set.
@@ -181,6 +185,7 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
             &state.volatile.active_mol,
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
+            state.ligands.len(),
         );
 
         // Note: This may already be set.
@@ -229,6 +234,7 @@ pub fn draw_all_mol_of_type<T: MolGenericTrait>(
             &state.volatile.active_mol,
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
+            state.ligands.len(),
         ));
 
         let end_i = entities.len();
@@ -259,6 +265,7 @@ fn update_inplace_inner(
         &state.volatile.active_mol,
         state.volatile.mol_manip.mode,
         state.volatile.operating_mode,
+        state.ligands.len(),
     );
 
     if ents_updated.len() != ent_i_end - ent_i_start {

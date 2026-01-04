@@ -22,8 +22,6 @@ use crate::{
     drawing::color_viridis,
     file_io::gemmi_path,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    mol_alignment,
-    mol_alignment::run_alignment,
     mol_editor::enter_edit_mode,
     molecules::MolGenericRef,
     render::set_flashlight,
@@ -539,6 +537,25 @@ pub fn view_sel_selector(
         }
         // todo: We could color these based on current vs nominal length and/or frequency.
         ViewSelLevel::Bond => (),
+    }
+
+    if !state.ligands.is_empty() {
+        let color = if state.ui.color_by_mol {
+            COLOR_ACTIVE
+        } else {
+            COLOR_INACTIVE
+        };
+
+        if ui
+            .button(RichText::new("Contrast ligs").color(color))
+            .on_hover_text(
+                "Color each small molecule a different color, so you can tell them apart.",
+            )
+            .clicked()
+        {
+            state.ui.color_by_mol = !state.ui.color_by_mol;
+            *redraw = true;
+        }
     }
 
     ui.add_space(COL_SPACING);

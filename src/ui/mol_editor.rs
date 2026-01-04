@@ -99,7 +99,7 @@ fn change_el_button(
             );
         }
 
-        mol_editor::redraw(entities, mol, state_ui, manip_mode);
+        mol_editor::redraw(entities, mol, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
 
         *redraw = true;
@@ -446,6 +446,7 @@ pub(in crate::ui) fn editor(
             &state.mol_editor.mol,
             &state.ui,
             state.volatile.mol_manip.mode,
+            0,
         );
         engine_updates.entities = EntityUpdate::All;
     }
@@ -632,6 +633,7 @@ fn edit_tools(
                             &state.mol_editor.mol,
                             &state.ui,
                             state.volatile.mol_manip.mode,
+                            0,
                         );
                     }
                 }

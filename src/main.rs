@@ -574,6 +574,8 @@ struct StateUi {
     /// If true, the surface mesh is colored according to the atom or residue colors closest to
     /// it. (E.g. CPK, by partial charge, by hydrophobicity etc). If false, it's a solid color.
     color_surface_mesh: bool,
+    /// Color ligands by molecule, to contrast.
+    color_by_mol: bool,
 }
 
 /// For showing and hiding UI sections.

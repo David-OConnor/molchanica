@@ -244,7 +244,25 @@ fn cache_lig_color(el: Element) -> Option<&'static OnceLock<Color>> {
 }
 
 /// Make ligands stand out visually, when colored by atom.
-fn mod_color_for_ligand(color: &Color, el: Element, color_by_q: bool) -> Color {
+fn mod_color_for_ligand(
+    color: &Color,
+    el: Element,
+    color_by_q: bool,
+    color_by_mol: bool,
+    mol_i: usize,
+    num_mols: usize,
+) -> Color {
+    // For now, color by mol overrides others, but only for Carbon atoms.
+    if color_by_mol {
+        let mol_color = color_viridis(mol_i, 0, num_mols);
+        if el == Element::Carbon {
+            return mol_color;
+        } else {
+            return blend_color(*color, mol_color, LIGAND_BLEND_AMT);
+        }
+    }
+
+
     if color_by_q {
         return blend_color(*color, LIGAND_COLOR, LIGAND_BLEND_AMT);
     }
@@ -891,6 +909,7 @@ pub fn draw_mol(
     active_mol: &Option<(MolType, usize)>,
     manip_mode: ManipMode,
     mode: OperatingMode,
+    num_mols: usize,
 ) -> Vec<Entity> {
     let mut result = Vec::new();
 
@@ -1004,6 +1023,9 @@ pub fn draw_mol(
                                     &color,
                                     atom.element,
                                     ui.atom_color_by_charge,
+                                    ui.color_by_mol,
+                                    mol_i,
+                                    num_mols,
                                 )
                             }
                         }
@@ -1197,6 +1219,9 @@ pub fn draw_mol(
                                     color,
                                     atom.element,
                                     ui.atom_color_by_charge,
+                                    ui.color_by_mol,
+                                    mol_i,
+                                    num_mols,
                                 )
                             }
                         }

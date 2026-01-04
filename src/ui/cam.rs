@@ -331,8 +331,6 @@ pub fn move_cam_to_mol(
         *center = mol.centroid().into();
     }
 
-    // todo: Address this.
-    // state.ui.cam_snapshot = None;
     *cam_snapshot = None;
 }
 
