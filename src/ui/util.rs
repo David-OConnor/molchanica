@@ -10,6 +10,7 @@ use crate::{
     cam_misc::reset_camera,
     download_mols::load_atom_coords_rcsb,
     drawing::draw_peptide,
+    drawing_wrappers,
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     mol_alignment::run_alignment,
     mol_editor,
@@ -302,9 +303,7 @@ pub fn load_popups(
             ui.add_space(ROW_SPACING);
             ui.separator();
             if state.volatile.mols_to_align.len() == 2 && ui.button("Run alignment").clicked() {
-                let mut redraw_lig = false;
-
-                run_alignment(state, &mut redraw_lig);
+                run_alignment(state, &mut false);
 
                 // Set visualization settings to view the result.
                 state.ligands[state.volatile.mols_to_align[0]]
@@ -314,6 +313,10 @@ pub fn load_popups(
                     .common
                     .visible = true;
                 state.ui.color_by_mol = true;
+
+                draw_all_ligs(state, scene);
+                engine_updates.entities = EntityUpdate::All; // todo: Just ligs.
+
                 move_cam_to_mol(
                     &state.ligands[state.volatile.mols_to_align[0]].common,
                     &mut state.ui.cam_snapshot,
