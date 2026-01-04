@@ -55,7 +55,7 @@ cudarc = { version = "0.18.1", default-features = false, features = ["std", "dri
 #na_seq = { path = "../na_seq" }
 #bio_apis = { path = "../bio_apis" }
 #mcubes = { path = "../mcubes" }
-#bio_files = { path = "../bio_files" }
+bio_files = { path = "../bio_files" }
 dynamics = { path = "../dynamics" }
 
 

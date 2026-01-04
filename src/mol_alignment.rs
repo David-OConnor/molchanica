@@ -8,12 +8,12 @@
 //!
 //! [Web based BCL::MolAlign](http://servers.meilerlab.org/index.php/servers/molalign)
 
-use std::{
-    collections::{HashMap, HashSet},
-    f64::consts::TAU,
-};
-
+use std::{collections::{HashMap, HashSet}, f64::consts::TAU, io};
+use bio_files::BondType;
+use dynamics::{FfMolType, ParamError};
 use lin_alg::f64::{Quaternion, Vec3};
+use lin_alg::f32::Vec3 as Vec3F32;
+use lin_alg::map_linear;
 use na_seq::{Element, Element::*};
 use rayon::prelude::*;
 
@@ -23,12 +23,13 @@ use crate::{
     State,
     docking::Torsion,
     md::launch_md_energy_computation,
-    mol_alignment,
     mol_characterization::Ring,
     mol_lig::MoleculeSmall,
     molecules::{Atom, common::MoleculeCommon},
     util::rotate_about_point,
 };
+use crate::md::build_dynamics;
+use crate::molecules::Bond;
 
 #[derive(Clone, Debug, Default)]
 pub struct PoseAlignment {
@@ -84,17 +85,17 @@ pub struct AlignmentResult {
     /// Post-alignment atom positions.
     /// The template molecule has no overall orientation and position transform, but has rotations
     /// around rotatable bonds. The query molecule has an overall position and orientation as well,
-    /// to align it relative to the template.
+    /// to align it relative to the template. Note that these are fuzzy distinctions, as both molecules are flexible.
+    /// it mainly applies to screening many "query" molecules against a template, and in these absolute
+    /// positions and orientations.
     pub posits_template: Vec<Vec3>,
     pub posits_query: Vec<Vec3>,
     /// Overall score?
     pub score: f64,
     // todo: How does this work given we have two molecules? For now just the Mol-to-align.
     /// This is the potential energy of the molecule, averaged over the number of atoms in the molecule.
-    pub avg_strain_energy: f32,
+    pub avg_potential_e: f32,
     pub similarity_measure: f64,
-    /// Sum of avg_strain_energy and similarity_measure.
-    pub alignment_score: f64,
     /// Grades chemical and/or shape similarity. Insufficient when the molecules are of sufficiently
     /// different sizes.
     pub tanimoto_coefficient: f64,
@@ -113,14 +114,17 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
     state.ligands[mta[0]].common.reset_posits();
     state.ligands[mta[1]].common.reset_posits();
 
-    let alignments = align(state, &state.ligands[mta[0]], &state.ligands[mta[1]]);
+    let Ok(alignments) = align(state, &state.ligands[mta[0]], &state.ligands[mta[1]]) else {
+        eprintln!("Error: Alignment failed.");
+        return
+    };
 
     // Assume sorted score high to low
     if !alignments.is_empty() {
         println!("Found {} ring-based alignments", alignments.len());
         println!(
             "Best alignment strain energy: {}",
-            alignments[0].avg_strain_energy
+            alignments[0].avg_potential_e
         );
 
         // If you want to *apply* the aligned coords back into ligand 0 (visualize):
@@ -142,10 +146,33 @@ pub fn align(
     state: &State,
     mol_template: &MoleculeSmall,
     mol_to_align: &MoleculeSmall,
-) -> Vec<AlignmentResult> {
+) -> Result<Vec<AlignmentResult>, ParamError> {
     let mut result = make_initial_alignment(state, mol_template, mol_to_align);
 
-    result
+    let mol_q_md = mol_to_align.common.clone();
+    let mols_md= vec![(FfMolType::SmallOrganic, &mol_q_md)];
+
+    let mut md_state = build_dynamics(
+        &state.dev,
+        &mols_md,
+        None,
+        &state.ff_param_set,
+        &state.mol_specific_params,
+        &state.to_save.md_config,
+        false,
+        None,
+        &mut HashSet::new(),
+        true,
+    )?;
+
+    let num_steps = 100;
+    let dt = 0.001; // ps
+
+    for _ in 0..num_steps {
+        md_state.step(&state.dev, dt);
+    }
+
+    Ok(result)
 }
 
 /// Early concept: Use the template's atom positions as centers of attraction for the query mol.
@@ -491,7 +518,7 @@ fn make_initial_alignment(
             posits_template,
             posits_query: posits_aligned,
             score,
-            avg_strain_energy,
+            avg_potential_e: avg_strain_energy,
             ..Default::default()
         })
     }
@@ -502,49 +529,114 @@ fn make_initial_alignment(
     result
 }
 
-#[allow(non_snake_case)]
-/// A synthetic potential and force we use to align molecules. Components:
+fn smooth_gate(dist: f32, thresh: f32, width: f32) -> f32 {
+    const WIDTH: f32 = 0.5;
+
+    let x = (dist - thresh) / width;
+    WIDTH * (1.0 - x.tanh())
+}
+
+/// A synthetic potential and force we use to align molecules. Aligns the Query molecule to the Template one
+/// by nudging it using forces, or an energy-minimization algorithm.  Components:
 /// - Element
 /// - FF type (GAFF2)
 /// - Type in residue (?)
 /// - Bond types
 /// - Partial charge
 ///
-/// A negative potential is attractive (todo?)
-fn force_synthetic(atom_t: &Atom, atom_q: &Atom) -> f32 {
-    // todo: dist_sq?
+/// Note: In the position diff convention we use, attractive potentials are negative.
+/// `bonds_t` and `bonds_q` are only the bonds connected to the respective atoms.
+fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[Bond], bonds_q: &[Bond]) -> Vec3F32 {
+    const COEFF_EL: f32 = 0.5;
+
+    const COEFF_Q: f32 = 0.5;
+    // If the charge diff is closer than this, attract. If farther, repel.
+    const THRESH_Q: f32 = 0.3;
+
+    const COEFF_ATOM_NAME: f32 = 0.5;
+    const COEFF_FF_TYPE: f32 = 0.5;
+    const COEFF_BONDS: f32 = 0.5;
+
+    // todo: Go with dist, or dist_sq?
+    const THRESH_DIST: f32 = 4.; //  Å
+    const THRESH_DIST_SQ: f32 = THRESH_DIST * THRESH_DIST;
+
+
+
     // Note: template is the "source"; query is the "target", to use our terminology
     // from elsewhere.
-    let diff = atom_q.posit - atom_t.posit;
-    let dist = diff.magnitude();
+    let diff: Vec3F32 = (atom_q.posit - atom_t.posit).into();
+    let dist_sq = diff.magnitude_squared();
 
-    // See Wang, 2023.
-    let y = 10.
-        * ((atom_t.partial_charge.unwrap_or(0.) - atom_q.partial_charge.unwrap_or(0.)).abs() - 1.);
+    if dist_sq < THRESH_DIST {
+        return Vec3F32::new_zero();
+    }
 
-    let f_charge = if y < -1. && y < 1. {
-        0.25 * (y + 1.) * (y - 1.)
-    } else {
-        0.
+    let dist = dist_sq.sqrt();
+
+    // Charge diffs smaller than `THRESH_Q` are attractive; larger are repulsive. Map linearly.
+    let f_q = {
+        let q_diff = (atom_t.partial_charge.unwrap_or(0.) - atom_q.partial_charge.unwrap_or(0.)).abs();
+        let width = 0.08;
+
+        // 1 when q_diff=0, decays to 0
+        let score = (- (q_diff / width).powi(2)).exp(); // Gaussian
+        -COEFF_Q * score
     };
 
+    // Attractive if they share element.
     let f_el = if atom_t.element == atom_q.element {
-        1.
+        -COEFF_EL
     } else {
         0.
     };
 
-    // todo: Be careful: Make sure you're not filtering out based on similar or
+
+    // Attractive if they share atom name.
+    let f_ff_atom_name = if atom_t.type_in_res == atom_q.type_in_res {
+        -COEFF_ATOM_NAME
+    } else {
+        0.
+    };
+
+    // Attractive if they share forcefield type (e.g. from GAFF2).
     // todo equivalent FF types.
+    // todo: Use `dynamics::param_inference::matches_def()` or similar, to make sure similar but not
+    // todo identical FF types count as matches. E.g. cc and cd. Or perhaps have them scored partially.
+    // if matches_def()
+
     let f_ff_type = if atom_t.force_field_type == atom_q.force_field_type {
-        1.
+        -COEFF_FF_TYPE
     } else {
         0.
     };
 
-    // todo: More including the type of bonds connected to this el.
+    // If the bond count is the same, attractive. If different, slightly repulsive, depending on teh difference.
+    let f_bonds = {
+        let mut bond_count_t = 0.;
+        for bond in bonds_t { bond_count_t += bond.bond_type.order(); }
 
-    let result = f_charge + f_el + f_ff_type;
+        let mut bond_count_q = 0.;
+        for bond in bonds_q { bond_count_q += bond.bond_type.order(); }
 
-    result
+        let db = (bond_count_q - bond_count_t).abs();
+        let thresh = 0.5;  // “close enough” bond-order sum
+        let width  = 0.25; // smoothness
+        COEFF_BONDS * ((db - thresh) / width).tanh()
+    };
+
+
+    let f_mag = f_q + f_el + f_ff_atom_name + f_ff_type + f_bonds;
+
+    println!("F mag: {:?}", f_mag);
+
+    // Experimenting: Only apply the potential for a close distance. It can pull the query molecule's
+    // atoms into place, but shouldn't affect ones far away. (?)
+
+    // Gradually roll off the force with distance.
+    let dist_term = smooth_gate(dist, THRESH_DIST, 1.);
+
+    let dir = if dist > 1e-6 { diff / dist } else { Vec3F32::new_zero() };
+
+    dir * f_mag * dist_term
 }
