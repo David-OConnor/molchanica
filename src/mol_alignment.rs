@@ -26,7 +26,10 @@ use lin_alg::{
 use na_seq::{Element, Element::*};
 use rayon::prelude::*;
 
+// For initial rotation. Higher values take longer, but provide more precise results.
 const RING_ALIGN_ROT_COUNT: u16 = 1_000; // Radians
+
+const COEFF_F_SYNTHETIC: f32 = 1.; // todo: A/R.
 
 use crate::{
     State,
@@ -156,9 +159,9 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
 pub fn align(
     state: &State,
     mol_template: &MoleculeSmall,
-    mol_to_align: &MoleculeSmall,
+    mol_query: &MoleculeSmall,
 ) -> Result<(Vec<AlignmentResult>, MdState), ParamError> {
-    let mut result = make_initial_alignment(state, mol_template, mol_to_align);
+    let mut result = make_initial_alignment(state, mol_template, mol_query);
 
     let mut md_state_out = MdState::default();
 
@@ -177,7 +180,7 @@ pub fn align(
         let mol_q_md = MoleculeCommon {
             selected_for_md: true,
             atom_posits: alignment.posits_query.clone(),
-            ..mol_to_align.common.clone()
+            ..mol_query.common.clone()
         };
 
         let mols_md = vec![(FfMolType::SmallOrganic, &mol_q_md)];
@@ -197,10 +200,67 @@ pub fn align(
 
         let num_steps = 100;
         let dt = 0.001; // ps
+        let dt_half = dt / 2.;
+
+        // For out synthetic-force VV integrator.
+        let mut acc_by_atom = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
 
         println!("Running MD for alignment...");
         for _ in 0..num_steps {
+            // Step using bonded and intra-atom nonbonded forces.
             md_state.step(&state.dev, dt);
+
+            // Apply our synthetic potential, drawing it to the template.
+            for atom_t in &mol_template.common.atoms {
+                // We use the synthetic query atom, as it is what's maintaining position and velocity
+                // during the simulation.
+                let bonds_t: Vec<_> = mol_template
+                    .common
+                    .bonds
+                    .iter()
+                    .filter(|b| {
+                        b.atom_0_sn == atom_t.serial_number || b.atom_1_sn == atom_t.serial_number
+                    })
+                    .collect();
+
+                for (i_q, atom_q_dyn) in md_state.atoms.iter_mut().enumerate() {
+                    let atom_q = &mol_query.common.atoms[i_q];
+
+                    let bonds_q: Vec<_> = mol_query
+                        .common
+                        .bonds
+                        .iter()
+                        .filter(|b| {
+                            b.atom_0_sn == atom_q.serial_number
+                                || b.atom_1_sn == atom_q.serial_number
+                        })
+                        .collect();
+
+                    let force = force_synthetic(atom_t, atom_q, &bonds_t, &bonds_q);
+
+                    // todo: Need to interate through atoms_md here.
+
+                    // We apply a position and velocity update here directly, as our integrators don't
+                    // take into account externally-added accels. For example, the VV integrator applies
+                    // a kick and drift at start, then zeros accel and force.
+
+                    // todo: Simple Euler-style integration for now. Todo: Use the same logic
+                    // todo as your VV integrator.
+
+                    // todo: You must measure the PE from the synthetic force in addition to that
+                    // todo tracked by the Dynamics integrator.
+
+                    // Simple Velocity Verlet integrator, mirroring our DT sim.
+                    // Kick + half drift
+                    atom_q_dyn.vel += acc_by_atom[i_q] * dt;
+                    atom_q_dyn.posit += atom_q_dyn.vel * dt_half;
+
+                    acc_by_atom[i_q] = force * COEFF_F_SYNTHETIC / atom_q_dyn.mass;
+
+                    // Second kick + half drift.
+                    atom_q_dyn.vel += acc_by_atom[i_q] * dt_half;
+                }
+            }
         }
 
         println!("Complete");
@@ -583,7 +643,7 @@ fn smooth_gate(dist: f32, thresh: f32, width: f32) -> f32 {
 ///
 /// Note: In the position diff convention we use, attractive potentials are negative.
 /// `bonds_t` and `bonds_q` are only the bonds connected to the respective atoms.
-fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[Bond], bonds_q: &[Bond]) -> Vec3F32 {
+fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&Bond]) -> Vec3F32 {
     const COEFF_EL: f32 = 0.5;
 
     const COEFF_Q: f32 = 0.5;
