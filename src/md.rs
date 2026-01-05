@@ -310,7 +310,7 @@ pub fn run_dynamics(md_state: &mut MdState, dev: &ComputationDevice, dt: f32, n_
             disp_count += 1;
         }
 
-        md_state.step(dev, dt);
+        md_state.step(dev, dt, None);
     }
     println!(
         "\nMD computation time: {}",
@@ -491,7 +491,7 @@ impl State {
                 post_run_cleanup(self, scene, engine_updates);
                 break;
             }
-            md.step(&self.dev, self.to_save.md_dt);
+            md.step(&self.dev, self.to_save.md_dt, None);
         }
     }
 }

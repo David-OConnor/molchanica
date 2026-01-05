@@ -374,7 +374,7 @@ impl MolEditorState {
 
         self.last_dt_run = Instant::now();
 
-        md.step(dev, self.dt_md);
+        md.step(dev, self.dt_md, None);
 
         // unsafe {
         //     I += 1;
