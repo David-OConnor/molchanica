@@ -2,26 +2,25 @@
 //!
 //! One application: Recovering native ligand binding poses.
 //!
-//! [Wang, 2023: Z-Align](https://www.biorxiv.org/content/10.1101/2023.12.17.572051v2.full.pdf)
+//! [Wang, 2023: Z-Align. The closest approach to ours](https://www.biorxiv.org/content/10.1101/2023.12.17.572051v2.full.pdf)
+//! This uses an MD engine (OpenFF) with GAFF2 force fields, and energy minimization.
+//!
 //! [Brown, 2020: BCL::MolAlign](https://pmc.ncbi.nlm.nih.gov/articles/PMC6598199/)
 //! [BCL on Github](https://github.com/BCLCommons/bcl)
 //!
-//! [Web based BCL::MolAlign](http://servers.meilerlab.org/index.php/servers/molalign)
+//! [Web based BCL::MolAlign. May be useful for validation.](http://servers.meilerlab.org/index.php/servers/molalign)
 
 use std::{
     collections::{HashMap, HashSet},
     f64::consts::TAU,
-    io,
 };
 
-use bio_files::BondType;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
 };
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
-    map_linear,
 };
 use na_seq::{Element, Element::*};
 use rayon::prelude::*;
@@ -29,7 +28,7 @@ use rayon::prelude::*;
 // For initial rotation. Higher values take longer, but provide more precise results.
 const RING_ALIGN_ROT_COUNT: u16 = 1_000; // Radians
 
-const COEFF_F_SYNTHETIC: f32 = 1.; // todo: A/R.
+const COEFF_F_SYNTHETIC: f32 = 0.1;
 
 use crate::{
     State,
@@ -168,7 +167,7 @@ pub fn align(
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity { thermostat: None },
         hydrogen_constraint: HydrogenConstraint::Flexible,
-        max_init_relaxation_iters: None,
+        max_init_relaxation_iters: Some(100), // todo: A/R
         overrides: MdOverrides {
             skip_water: true,
             ..Default::default()
@@ -198,69 +197,65 @@ pub fn align(
             true,
         )?;
 
-        let num_steps = 100;
+        let num_steps = 1_000;
         let dt = 0.001; // ps
-        let dt_half = dt / 2.;
+        // let dt_half = dt / 2.;
 
-        // For out synthetic-force VV integrator.
-        let mut acc_by_atom = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
+        // // For out synthetic-force VV integrator.
+        // let mut acc_by_atom = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
+        // let mut vel_by_atom = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
 
+        let mut bonds_q_by_atom = Vec::with_capacity(mol_query.common.atoms.len());
+        for atom_q in &mol_query.common.atoms {
+            let bonds: Vec<_> = mol_query
+                .common
+                .bonds
+                .iter()
+                .filter(|b| {
+                    b.atom_0_sn == atom_q.serial_number || b.atom_1_sn == atom_q.serial_number
+                })
+                .collect();
+            bonds_q_by_atom.push(bonds);
+        }
+
+        let mut bonds_t_by_atom = Vec::with_capacity(mol_template.common.atoms.len());
+        for atom_q in &mol_template.common.atoms {
+            let bonds: Vec<_> = mol_template
+                .common
+                .bonds
+                .iter()
+                .filter(|b| {
+                    b.atom_0_sn == atom_q.serial_number || b.atom_1_sn == atom_q.serial_number
+                })
+                .collect();
+            bonds_t_by_atom.push(bonds);
+        }
+
+        let mut forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
         println!("Running MD for alignment...");
         for _ in 0..num_steps {
-            // Step using bonded and intra-atom nonbonded forces.
-            md_state.step(&state.dev, dt);
+            // Reset force each step.
+            forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
 
-            // Apply our synthetic potential, drawing it to the template.
-            for atom_t in &mol_template.common.atoms {
-                // We use the synthetic query atom, as it is what's maintaining position and velocity
-                // during the simulation.
-                let bonds_t: Vec<_> = mol_template
-                    .common
-                    .bonds
-                    .iter()
-                    .filter(|b| {
-                        b.atom_0_sn == atom_t.serial_number || b.atom_1_sn == atom_t.serial_number
-                    })
-                    .collect();
+            // We update the synthetic query atoms, as they're what's maintaining position and velocity
+            // during the simulation.
+            for (i_q, atom_q_dyn) in md_state.atoms.iter_mut().enumerate() {
+                let atom_q = &mol_query.common.atoms[i_q];
 
-                for (i_q, atom_q_dyn) in md_state.atoms.iter_mut().enumerate() {
-                    let atom_q = &mol_query.common.atoms[i_q];
-
-                    let bonds_q: Vec<_> = mol_query
-                        .common
-                        .bonds
-                        .iter()
-                        .filter(|b| {
-                            b.atom_0_sn == atom_q.serial_number
-                                || b.atom_1_sn == atom_q.serial_number
-                        })
-                        .collect();
-
-                    let force = force_synthetic(atom_t, atom_q, &bonds_t, &bonds_q);
-
-                    // todo: Need to interate through atoms_md here.
-
-                    // We apply a position and velocity update here directly, as our integrators don't
-                    // take into account externally-added accels. For example, the VV integrator applies
-                    // a kick and drift at start, then zeros accel and force.
-
-                    // todo: Simple Euler-style integration for now. Todo: Use the same logic
-                    // todo as your VV integrator.
-
-                    // todo: You must measure the PE from the synthetic force in addition to that
-                    // todo tracked by the Dynamics integrator.
-
-                    // Simple Velocity Verlet integrator, mirroring our DT sim.
-                    // Kick + half drift
-                    atom_q_dyn.vel += acc_by_atom[i_q] * dt;
-                    atom_q_dyn.posit += atom_q_dyn.vel * dt_half;
-
-                    acc_by_atom[i_q] = force * COEFF_F_SYNTHETIC / atom_q_dyn.mass;
-
-                    // Second kick + half drift.
-                    atom_q_dyn.vel += acc_by_atom[i_q] * dt_half;
+                // Apply our synthetic potential, drawing it to the template.
+                for (i_t, atom_t) in mol_template.common.atoms.iter().enumerate() {
+                    let force = force_synthetic(
+                        atom_t,
+                        atom_q,
+                        &bonds_t_by_atom[i_t],
+                        &bonds_q_by_atom[i_q],
+                    );
+                    forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
                 }
             }
+
+            // Step using bonded and intra-atom nonbonded forces.
+            md_state.step(&state.dev, dt, Some(forces_by_atom_q));
         }
 
         println!("Complete");
@@ -663,20 +658,22 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
     let diff: Vec3F32 = (atom_q.posit - atom_t.posit).into();
     let dist_sq = diff.magnitude_squared();
 
-    if dist_sq < THRESH_DIST {
+    if dist_sq > THRESH_DIST_SQ {
         return Vec3F32::new_zero();
     }
 
     let dist = dist_sq.sqrt();
 
     // Charge diffs smaller than `THRESH_Q` are attractive; larger are repulsive. Map linearly.
+    // For example, if atom atom's charge is -0.32, and the other is -0.31, they should attract. If
+    // they're say, -0.32, and -0.01, they should repel, as that's a significant difference.
     let f_q = {
         let q_diff =
             (atom_t.partial_charge.unwrap_or(0.) - atom_q.partial_charge.unwrap_or(0.)).abs();
-        let width = 0.08;
 
+        // todo: QC this logic. May not be right.
         // 1 when q_diff=0, decays to 0
-        let score = (-(q_diff / width).powi(2)).exp(); // Gaussian
+        let score = (-(q_diff / THRESH_Q).powi(2)).exp(); // Gaussian
         -COEFF_Q * score
     };
 
@@ -725,8 +722,6 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
     };
 
     let f_mag = f_q + f_el + f_ff_atom_name + f_ff_type + f_bonds;
-
-    println!("F mag: {:?}", f_mag);
 
     // Experimenting: Only apply the potential for a close distance. It can pull the query molecule's
     // atoms into place, but shouldn't affect ones far away. (?)

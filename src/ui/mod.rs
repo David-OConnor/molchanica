@@ -14,6 +14,7 @@ use graphics::{ControlScheme, EngineUpdates, Mesh, Scene};
 use md::md_setup;
 use mol_data::display_mol_data;
 use na_seq::{AaIdent, Element};
+use popups::load_popups;
 
 use crate::{
     CamSnapshot, MsaaSetting, OperatingMode, ResColoring, Selection, State, ViewSelLevel, cli,
@@ -34,9 +35,7 @@ use crate::{
         rama_plot::plot_rama,
         recent_files::recent_files,
         sidebar::sidebar,
-        util::{
-            handle_redraw, init_with_scene, load_popups, open_lig_from_input, update_file_dialogs,
-        },
+        util::{handle_redraw, init_with_scene, open_lig_from_input, update_file_dialogs},
         view::{ui_section_vis, view_settings},
     },
     util::{
@@ -52,6 +51,7 @@ mod mol_data;
 mod mol_editor;
 mod mol_type_tools;
 mod orca;
+mod popups;
 mod rama_plot;
 mod recent_files;
 mod sidebar;
