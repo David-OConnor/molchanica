@@ -16,14 +16,14 @@ use crate::{
     util::res_color,
 };
 
-const SOLVENT_RAD: f32 = 1.4; // water probe
+pub const SOLVENT_RAD: f32 = 1.4; // water probe
 
 /// Create a mesh of the solvent-accessible surface. We do this using the ball-rolling method
 /// based on Van-der-Waals radius, then use the Marching Cubes algorithm to generate an iso mesh with
 /// iso value = 0.
 ///
 /// Atoms is (posit, vdw radius).
-pub fn make_sas_mesh(atoms: &[(Vec3, f32)], precision: f32) -> Mesh {
+pub fn make_sas_mesh(atoms: &[(Vec3, f32)], radius: f32, precision: f32) -> Mesh {
     if atoms.is_empty() {
         return Mesh::default();
     }
@@ -34,7 +34,7 @@ pub fn make_sas_mesh(atoms: &[(Vec3, f32)], precision: f32) -> Mesh {
     let mut r_max: f32 = 0.0;
 
     for (posit, vdw_radius) in atoms {
-        let r = vdw_radius + SOLVENT_RAD;
+        let r = vdw_radius + radius;
         r_max = r_max.max(r);
 
         bb_min = Vec3::new(
@@ -71,7 +71,7 @@ pub fn make_sas_mesh(atoms: &[(Vec3, f32)], precision: f32) -> Mesh {
 
     // Fill signed-squared-distance field
     for (center, vdw_radius) in atoms {
-        let rad = *vdw_radius + SOLVENT_RAD;
+        let rad = *vdw_radius + radius;
         let rad2 = rad * rad;
 
         let lo = ((*center - Vec3::splat(rad)) - bb_min) / precision;

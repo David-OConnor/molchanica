@@ -9,15 +9,19 @@
 //! [BCL on Github](https://github.com/BCLCommons/bcl)
 //!
 //! [Web based BCL::MolAlign. May be useful for validation.](http://servers.meilerlab.org/index.php/servers/molalign)
+//!
+//! Keywords etc for the reverse process? the specific term is 3D similarity searching (shape same) or field based similarity searching (shape+electrostatic field same)
+//! https://pubs.acs.org/doi/abs/10.1021/ci700130j
 
 use std::{
     collections::{HashMap, HashSet},
     f64::consts::TAU,
 };
-
+use std::time::Instant;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
 };
+use graphics::{Mesh, Vertex};
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
@@ -26,9 +30,15 @@ use na_seq::{Element, Element::*};
 use rayon::prelude::*;
 
 // For initial rotation. Higher values take longer, but provide more precise results.
-const RING_ALIGN_ROT_COUNT: u16 = 1_000; // Radians
+const RING_ALIGN_ROT_COUNT: u16 = 3_000; // Radians
 
-const COEFF_F_SYNTHETIC: f32 = 0.1;
+// Setting this higher prioritizes our synthetic alignment forces relative to normal MD forces.
+const COEFF_F_SYNTHETIC: f32 = 10.;
+
+// These coefficients are for computing the mesh which represents combined molecule
+// volume.
+const VOL_RADIUS: f32 = SOLVENT_RAD; // todo: A/R. mod from 1.4
+const VOL_PRECISION: f32 = 0.6; // todo: A/R.
 
 use crate::{
     State,
@@ -39,6 +49,7 @@ use crate::{
     molecules::{Atom, Bond, common::MoleculeCommon},
     util::rotate_about_point,
 };
+use crate::sa_surface::{make_sas_mesh, SOLVENT_RAD};
 
 #[derive(Clone, Debug, Default)]
 pub struct PoseAlignment {
@@ -89,8 +100,9 @@ impl PoseAlignment {
 /// For scores, a higher negative value indicates more similarity.
 #[derive(Clone, Debug, Default)]
 pub struct AlignmentResult {
-    pub pose: PoseAlignment,
-    pub matched_pairs: Vec<(usize, usize)>, // (atom_i in atom 0, atom_j in atom 1)
+    // pub pose: PoseAlignment,
+    // todo: Evaluate if you want this.
+    // pub matched_pairs: Vec<(usize, usize)>, // (atom_i in atom 0, atom_j in atom 1)
     /// Post-alignment atom positions.
     /// The template molecule has no overall orientation and position transform, but has rotations
     /// around rotatable bonds. The query molecule has an overall position and orientation as well,
@@ -100,14 +112,17 @@ pub struct AlignmentResult {
     pub posits_template: Vec<Vec3>,
     pub posits_query: Vec<Vec3>,
     /// Overall score?
-    pub score: f64,
+    pub score: f32,
     // todo: How does this work given we have two molecules? For now just the Mol-to-align.
     /// This is the potential energy of the molecule, averaged over the number of atoms in the molecule.
     pub avg_potential_e: f32,
-    pub similarity_measure: f64,
+    // pub similarity_measure: f64,
+    /// The combined volume, in Å^3 from all atoms in both molecules. A smaller volume
+    /// may indiacate a better score.
+    pub volume: f32,
     /// Grades chemical and/or shape similarity. Insufficient when the molecules are of sufficiently
     /// different sizes.
-    pub tanimoto_coefficient: f64,
+    pub tanimoto_coefficient: f32,
 }
 
 pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
@@ -129,7 +144,6 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
     };
 
     println!("Snaps: {:?}", md.snapshots.len());
-
     state.mol_dynamics = Some(md);
 
     // Assume sorted score high to low
@@ -153,6 +167,131 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
     }
 }
 
+fn run_md(alignment: &mut AlignmentResult,
+          mol_template: &MoleculeCommon, mol_query: &MoleculeCommon, state: &State,
+          cfg: &MdConfig) -> Result<(Vec<Vec3>, Vec<Vec3>, MdState), ParamError> {
+    // This is what we use for the MD and synthetic force. It's the same as mol_query,
+    // but has updated atom positions.
+    let mut mol_q_md = MoleculeCommon {
+        selected_for_md: true,
+        atom_posits: alignment.posits_query.clone(),
+        ..mol_query.clone()
+    };
+
+    let mols_md = vec![(FfMolType::SmallOrganic, &mol_q_md)];
+
+    let mut md = build_dynamics(
+        &state.dev,
+        &mols_md,
+        None,
+        &state.ff_param_set,
+        &state.mol_specific_params,
+        &cfg,
+        false,
+        None,
+        &mut HashSet::new(),
+        false,
+    )?;
+
+    let num_steps = 2_000;
+    let dt = 0.001; // ps
+
+    // // For out synthetic-force VV integrator.
+    // let mut acc_by_atom = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
+    // let mut vel_by_atom = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
+
+    let mut bonds_q_by_atom = Vec::with_capacity(mol_query.atoms.len());
+    for atom_q in &mol_query.atoms {
+        let bonds: Vec<_> = mol_query
+            .bonds
+            .iter()
+            .filter(|b| {
+                b.atom_0_sn == atom_q.serial_number || b.atom_1_sn == atom_q.serial_number
+            })
+            .collect();
+        bonds_q_by_atom.push(bonds);
+    }
+
+    let mut bonds_t_by_atom = Vec::with_capacity(mol_template.atoms.len());
+    for atom_q in &mol_template.atoms {
+        let bonds: Vec<_> = mol_template
+            .bonds
+            .iter()
+            .filter(|b| {
+                b.atom_0_sn == atom_q.serial_number || b.atom_1_sn == atom_q.serial_number
+            })
+            .collect();
+        bonds_t_by_atom.push(bonds);
+    }
+
+    let mut forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
+    println!("Running MD for alignment...");
+    for _ in 0..num_steps {
+
+        // Experimenting.
+        // let (free_charge_t, free_charge_q) = free_charge(&mol_template.atoms, &mol_query.atoms);
+
+        // Reset force each step.
+        forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
+
+        // We update the synthetic query atoms, as they're what's maintaining position and velocity
+        // during the simulation.
+        for (i_q, atom_q_dyn) in md.atoms.iter_mut().enumerate() {
+            let atom_q = &mol_q_md.atoms[i_q];
+
+            // Apply our synthetic potential, drawing it to the template.
+            for (i_t, atom_t) in mol_template.atoms.iter().enumerate() {
+                let force = force_synthetic(
+                    atom_t,
+                    atom_q,
+                    // i_q,
+                    &bonds_t_by_atom[i_t],
+                    &bonds_q_by_atom[i_q],
+                    // &free_q,
+                    md.step_count,
+                );
+                forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
+            }
+
+            // Add the free charge; out of the inner-loop fn, as we also take into account other query
+            // atoms.
+
+            // let charge_q = atom_q.partial_charge.unwrap_or(0.0);
+
+            // // Query: Similar charges are repulsive; to cancel out the attraction from the template.
+            // for (i_charge_t, charge_t) in free_charge_t.iter().enumerate() {
+            //     let diff = (charge_t - charge_q).abs();
+            //     // Attraction:
+            //
+            //     forces_by_atom_q[i_q] +=
+            // }
+            //
+            // // Template: Similar charges are attractive.
+            // for (i_charge_t, charge_t) in free_charge_t.iter().enumerate() {
+            //     let diff = (charge_t - charge_q).abs();
+            //     // Attraction:
+            //
+            //     forces_by_atom_q[i_q] +=
+            // }
+
+        }
+
+        // Step using bonded and intra-atom nonbonded forces.
+        md.step(&state.dev, dt, Some(forces_by_atom_q));
+
+        // Update our atom positions.
+        for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
+            atom_q.posit = md.atoms[i].posit.into();
+            mol_q_md.atom_posits[i] = atom_q.posit;
+        }
+    }
+
+    println!("Complete");
+
+    // todo: Mol T>
+    Ok((mol_template.atom_posits.clone(),  mol_q_md.atom_posits, md))
+}
+
 /// Entry point for the alignment.
 /// Returns MdState for the purpose of viewing snapshots, for debugging etc.
 pub fn align(
@@ -162,121 +301,52 @@ pub fn align(
 ) -> Result<(Vec<AlignmentResult>, MdState), ParamError> {
     let mut result = make_initial_alignment(state, mol_template, mol_query);
 
-    let mut md_state_out = MdState::default();
+    let md_state = {
+        let mut md = MdState::default();
 
-    let cfg = MdConfig {
-        integrator: Integrator::VerletVelocity { thermostat: None },
-        hydrogen_constraint: HydrogenConstraint::Flexible,
-        max_init_relaxation_iters: Some(100), // todo: A/R
-        overrides: MdOverrides {
-            skip_water: true,
+        const TEMP: f32 = 60.; // K. Very low to minimize jiggling.
+        let cfg_md = MdConfig {
+            // A lower thermostat value is more aggressive. We want aggressive for this.
+            integrator: Integrator::VerletVelocity { thermostat: Some(0.001) },
+            hydrogen_constraint: HydrogenConstraint::Flexible,
+            max_init_relaxation_iters: Some(300), // todo: A/R
+            temp_target: TEMP,
+            overrides: MdOverrides {
+                skip_water: true,
+                snapshots_during_energy_min: true,
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    for alignment in &mut result {
-        let mol_q_md = MoleculeCommon {
-            selected_for_md: true,
-            atom_posits: alignment.posits_query.clone(),
-            ..mol_query.common.clone()
         };
 
-        let mols_md = vec![(FfMolType::SmallOrganic, &mol_q_md)];
+        for alignment in &mut result {
+          let (posits_t, posits_q, md_this_align) = run_md(alignment, &mol_template.common, &mol_query.common, state, &cfg_md)?;
 
-        let mut md_state = build_dynamics(
-            &state.dev,
-            &mols_md,
-            None,
-            &state.ff_param_set,
-            &state.mol_specific_params,
-            &cfg,
-            false,
-            None,
-            &mut HashSet::new(),
-            true,
-        )?;
+            // Update the initial alignment with the computed positions.
+            alignment.posits_template = posits_t;
+            alignment.posits_query = posits_q;
 
-        let num_steps = 1_000;
-        let dt = 0.001; // ps
-        // let dt_half = dt / 2.;
+            // Update the score.
+            alignment.score = calc_score(mol_template, mol_query, &alignment.posits_template, &alignment.posits_query);
+            alignment.volume = calc_volume(&mol_template.common, &mol_query.common, VOL_RADIUS, VOL_PRECISION);
 
-        // // For out synthetic-force VV integrator.
-        // let mut acc_by_atom = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
-        // let mut vel_by_atom = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
+            md = md_this_align;
+            break;
+        };
 
-        let mut bonds_q_by_atom = Vec::with_capacity(mol_query.common.atoms.len());
-        for atom_q in &mol_query.common.atoms {
-            let bonds: Vec<_> = mol_query
-                .common
-                .bonds
-                .iter()
-                .filter(|b| {
-                    b.atom_0_sn == atom_q.serial_number || b.atom_1_sn == atom_q.serial_number
-                })
-                .collect();
-            bonds_q_by_atom.push(bonds);
-        }
+        md
+    };
 
-        let mut bonds_t_by_atom = Vec::with_capacity(mol_template.common.atoms.len());
-        for atom_q in &mol_template.common.atoms {
-            let bonds: Vec<_> = mol_template
-                .common
-                .bonds
-                .iter()
-                .filter(|b| {
-                    b.atom_0_sn == atom_q.serial_number || b.atom_1_sn == atom_q.serial_number
-                })
-                .collect();
-            bonds_t_by_atom.push(bonds);
-        }
-
-        let mut forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
-        println!("Running MD for alignment...");
-        for _ in 0..num_steps {
-            // Reset force each step.
-            forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.common.atoms.len()];
-
-            // We update the synthetic query atoms, as they're what's maintaining position and velocity
-            // during the simulation.
-            for (i_q, atom_q_dyn) in md_state.atoms.iter_mut().enumerate() {
-                let atom_q = &mol_query.common.atoms[i_q];
-
-                // Apply our synthetic potential, drawing it to the template.
-                for (i_t, atom_t) in mol_template.common.atoms.iter().enumerate() {
-                    let force = force_synthetic(
-                        atom_t,
-                        atom_q,
-                        &bonds_t_by_atom[i_t],
-                        &bonds_q_by_atom[i_q],
-                    );
-                    forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
-                }
-            }
-
-            // Step using bonded and intra-atom nonbonded forces.
-            md_state.step(&state.dev, dt, Some(forces_by_atom_q));
-        }
-
-        println!("Complete");
-
-        md_state_out = md_state;
-        break; // todo temp!!
-    }
-
-    Ok((result, md_state_out))
+    Ok((result, md_state))
 }
-
-/// Early concept: Use the template's atom positions as centers of attraction for the query mol.
-/// Move the template along force gradients until it finds its position of minimum energy.
-fn perform_md(mol: &MoleculeCommon, pose: &PoseAlignment) {}
 
 // todo: Crude/temporary
 fn calc_score(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
+    posits_template: &[Vec3],
     posits_query: &[Vec3],
-) -> f64 {
+) -> f32 {
     const MISSING_ELEM_PENALTY: f64 = 25.0 * 25.0; // (Å^2) per unmatched atom
 
     fn chamfer_dir(a: &[Vec3], b: &[Vec3]) -> f64 {
@@ -325,14 +395,14 @@ fn calc_score(
     els.extend(by_el_t.keys().copied());
     els.extend(by_el_m.keys().copied());
 
-    let mut score = 0.0;
+    let mut res = 0.0;
     for el in els {
         let a = by_el_t.get(&el).map(|v| v.as_slice()).unwrap_or(&[]);
         let b = by_el_m.get(&el).map(|v| v.as_slice()).unwrap_or(&[]);
-        score += chamfer_dir(a, b) + chamfer_dir(b, a);
+        res += chamfer_dir(a, b) + chamfer_dir(b, a);
     }
 
-    score
+    res as f32
 }
 
 /// For initial alignment when one or more mol is missing rings. Find the carbon with at least
@@ -373,10 +443,10 @@ fn find_best_rotation_about_axis(
     axis_center: Vec3,
     axis_dir_unit: Vec3,
     rot_count: u16,
-) -> (u16, f64) {
+) -> (u16, f32) {
     let rot_step = TAU / rot_count as f64;
 
-    let mut best_score = f64::INFINITY;
+    let mut best_score = f32::INFINITY;
     let mut best = 0;
 
     for i_rot in 0..rot_count {
@@ -386,7 +456,9 @@ fn find_best_rotation_about_axis(
         let rotator = Quaternion::from_axis_angle(axis_dir_unit, rot_amt);
         rotate_about_point(&mut posits_to_test, axis_center, rotator);
 
-        let score = calc_score(mol_template, mol_query, &posits_to_test);
+        let posits_template = mol_template.common.atoms.iter().map(|a| a.posit).collect::<Vec<_>>();
+
+        let score = calc_score(mol_template, mol_query, &posits_template, &posits_to_test);
         if score < best_score {
             best_score = score;
             best = i_rot;
@@ -403,7 +475,7 @@ fn apply_best_rotation_about_axis(
     axis_center: Vec3,
     axis_dir_unit: Vec3,
     rot_count: u16,
-) -> (u16, f64) {
+) -> (u16, f32) {
     let (best_i_rot, best_score) = find_best_rotation_about_axis(
         mol_template,
         mol_query,
@@ -426,7 +498,7 @@ fn apply_best_rotation_about_axis(
 fn align_from_similar_center(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
-) -> Option<Vec<(Vec<Vec3>, Vec<Vec3>, f64)>> {
+) -> Option<Vec<(Vec<Vec3>, Vec<Vec3>, f32)>> {
     let mut result = Vec::new();
 
     let atoms_t = &mol_template.common.atoms;
@@ -511,7 +583,7 @@ fn align_from_rings(
     mol_query: &MoleculeSmall,
     rings_t: &[Ring],
     rings_q: &[Ring],
-) -> Option<Vec<(Vec<Vec3>, Vec<Vec3>, f64)>> {
+) -> Option<Vec<(Vec<Vec3>, Vec<Vec3>, f32)>> {
     if rings_t.is_empty() || rings_q.is_empty() {
         return None;
     }
@@ -564,15 +636,12 @@ fn make_initial_alignment(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
 ) -> Vec<AlignmentResult> {
-    let torsions = Vec::new();
-    let anchor_atom_i = 0;
-    let orientation = Quaternion::new_identity();
+    // let torsions = Vec::new();
+    // let anchor_atom_i = 0;
+    // let orientation = Quaternion::new_identity();
 
     let rings_t = &mol_template.characterization.rings;
     let rings_q = &mol_query.characterization.rings;
-
-    // todo: Consider trying multiple ring alignment configurations, instead of just closest-to-centroid
-    // todo of each mol with each other.
 
     let posits_initial_alignment = if rings_t.is_empty() || rings_q.is_empty() {
         align_from_similar_center(mol_template, mol_query)
@@ -587,14 +656,14 @@ fn make_initial_alignment(
     let mut result = Vec::with_capacity(posits_initial_alignment.len());
 
     for (posits_template, posits_aligned, score) in posits_initial_alignment {
-        let pose = PoseAlignment {
-            torsions: torsions.clone(),
-            anchor_atom_i,
-            orientation,
-        };
+        // let pose = PoseAlignment {
+        //     torsions: torsions.clone(),
+        //     anchor_atom_i,
+        //     orientation,
+        // };
 
-        let pose = PoseAlignment::default();
-        let matched_pairs = Vec::new();
+        // let pose = PoseAlignment::default();
+        // let matched_pairs = Vec::new();
 
         // todo: You must mark the mol in question as selected for MD, or this won't work.
         let mut avg_strain_energy = 0.0;
@@ -602,15 +671,15 @@ fn make_initial_alignment(
         if let Ok(energy) = energy {
             avg_strain_energy = energy.energy_potential / posits_aligned.len() as f32;
         }
-        // todo: Or should this be between the 2 mols?
 
         result.push(AlignmentResult {
-            pose,
-            matched_pairs,
+            // pose,
+            // matched_pairs,
             posits_template,
             posits_query: posits_aligned,
             score,
             avg_potential_e: avg_strain_energy,
+            volume: calc_volume(&mol_template.common, &mol_query.common, VOL_RADIUS, VOL_PRECISION),
             ..Default::default()
         })
     }
@@ -621,11 +690,57 @@ fn make_initial_alignment(
     result
 }
 
-fn smooth_gate(dist: f32, thresh: f32, width: f32) -> f32 {
-    const WIDTH: f32 = 0.5;
+// /// Experimenting. For each atom in the template, attract like charges, until
+// /// it is *filled*?. An example of filled may be a query atom within q=0.02  is colocated with
+// /// it.
+// ///
+// /// To do this, template charges attract similar query charges. Other query charges repl query charges.
+// ///
+// /// Todo: Instead, should we set up a charge or potential grid?
+// ///
+// /// Output is broken down into (indexes_t, indexes_q); we could return a single list to compare all
+// /// Q to, but this may help use save distance computations when applying. (?)
+// fn free_charge(
+//     atoms_t: &[Atom],
+//     atoms_q: &[Atom],
+// ) -> (Vec<f32>, Vec<f32>) {
+//     let mut res_t = Vec::with_capacity(atoms_t.len());
+//     let mut res_q = Vec::with_capacity(atoms_q.len());
+//
+//     for atom_t in atoms_t {
+//         res_t.push(atom_t.partial_charge.unwrap_or_default());
+//     }
+//
+//     for atom_q in atoms_q {
+//         res_q.push(atom_q.partial_charge.unwrap_or_default());
+//     }
+//
+//     (res_t, res_q)
+// }
 
-    let x = (dist - thresh) / width;
-    WIDTH * (1.0 - x.tanh())
+fn smoothstep01(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Adjust force to create a smooth potential. When distance is close to 0, the force should be close
+/// to 0. When distance is more than ~2Å or so, force should gradually ramp to 0. There should be a
+/// *sweet spot* where force is at a maximum; for example, 0.5Å. At this maximum, we should return 1.
+fn scale_force_w_dist(dist: f32, r_peak: f32, r_max_: f32) -> f32 {
+    const R_MAX_DEFAULT: f32 = 2.0;
+    let r_max = r_max_.max(r_peak * 1.5); // ensure r_max > r_peak
+
+    if dist >= r_max {
+        return 0.0;
+    }
+
+    if dist < r_peak {
+        // Ramp up smoothly from 0 at dist=0 to 1 at dist=r_peak (zero slope at both ends).
+        smoothstep01(dist / r_peak)
+    } else {
+        // Ramp down smoothly from 1 at dist=r_peak to 0 at dist=r_max (zero slope at both ends).
+        1.0 - smoothstep01((dist - r_peak) / (r_max - r_peak))
+    }
 }
 
 /// A synthetic potential and force we use to align molecules. Aligns the Query molecule to the Template one
@@ -638,27 +753,39 @@ fn smooth_gate(dist: f32, thresh: f32, width: f32) -> f32 {
 ///
 /// Note: In the position diff convention we use, attractive potentials are negative.
 /// `bonds_t` and `bonds_q` are only the bonds connected to the respective atoms.
-fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&Bond]) -> Vec3F32 {
-    const COEFF_EL: f32 = 0.5;
+// fn force_synthetic(atom_t: &Atom, atom_q: &Atom, i_q: usize, bonds_t: &[&Bond], bonds_q: &[&Bond], free_q: &(Vec<f32>, Vec<f32>)) -> Vec3F32 {
+fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&Bond], step: usize) -> Vec3F32 {
+    const COEFF_EL: f32 = 0.3;
 
-    const COEFF_Q: f32 = 0.5;
+    const COEFF_Q: f32 = 1.2;
     // If the charge diff is closer than this, attract. If farther, repel.
-    const THRESH_Q: f32 = 0.3;
+    const THRESH_Q: f32 = 0.06;
 
     const COEFF_ATOM_NAME: f32 = 0.5;
-    const COEFF_FF_TYPE: f32 = 0.5;
+    const COEFF_FF_TYPE: f32 = 0.3;
     const COEFF_BONDS: f32 = 0.5;
 
+    // todo: You likely want a different dist thresh per type.
     // todo: Go with dist, or dist_sq?
-    const THRESH_DIST: f32 = 4.; //  Å
+    const THRESH_DIST: f32 = 2.5; //  Å
+    const THRESH_DIST_DOUBLED: f32 = THRESH_DIST * 2.;
+
     const THRESH_DIST_SQ: f32 = THRESH_DIST * THRESH_DIST;
+    const THRESH_DIST_SQ_DOUBLED: f32 = THRESH_DIST_DOUBLED * THRESH_DIST_DOUBLED;
+
+    // Experimenting with ramping force by dist
+    const R_PEAK: f32 = 0.7;   // Å  (sweet spot; strongest correction)
+    const R_MAX: f32 = 2.0;    // Å  (beyond this, no pull)
+    // const SHARPNESS: f32 = 2.0;
+
 
     // Note: template is the "source"; query is the "target", to use our terminology
     // from elsewhere.
     let diff: Vec3F32 = (atom_q.posit - atom_t.posit).into();
     let dist_sq = diff.magnitude_squared();
 
-    if dist_sq > THRESH_DIST_SQ {
+    // This saves computation for distant atoms.
+    if dist_sq > THRESH_DIST_SQ_DOUBLED {
         return Vec3F32::new_zero();
     }
 
@@ -669,12 +796,11 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
     // they're say, -0.32, and -0.01, they should repel, as that's a significant difference.
     let f_q = {
         let q_diff =
-            (atom_t.partial_charge.unwrap_or(0.) - atom_q.partial_charge.unwrap_or(0.)).abs();
+            (atom_t.partial_charge.unwrap_or(0.0) - atom_q.partial_charge.unwrap_or(0.0)).abs();
 
-        // todo: QC this logic. May not be right.
-        // 1 when q_diff=0, decays to 0
-        let score = (-(q_diff / THRESH_Q).powi(2)).exp(); // Gaussian
-        -COEFF_Q * score
+        let f = COEFF_Q * (q_diff / THRESH_Q - 1.0);
+
+        f.min(0.)
     };
 
     // Attractive if they share element.
@@ -697,10 +823,19 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
     // todo identical FF types count as matches. E.g. cc and cd. Or perhaps have them scored partially.
     // if matches_def()
 
+    // Should never be missing.
+    let ff_t = &atom_t.force_field_type.clone().unwrap_or(String::new());
+    let ff_q = &atom_q.force_field_type.clone().unwrap_or(String::new());
+
     let f_ff_type = if atom_t.force_field_type == atom_q.force_field_type {
         -COEFF_FF_TYPE
     } else {
-        0.
+        // todo:  Hacks. Leverage your existing system, and the param files.
+        if (ff_t == "cc" && ff_q == "cd") || (ff_t == "cd" && ff_q == "cc") {
+            -COEFF_FF_TYPE * 0.9
+        } else {
+            0.
+        }
     };
 
     // If the bond count is the same, attractive. If different, slightly repulsive, depending on teh difference.
@@ -721,13 +856,11 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
         COEFF_BONDS * ((db - thresh) / width).tanh()
     };
 
-    let f_mag = f_q + f_el + f_ff_atom_name + f_ff_type + f_bonds;
+    // let f_mag = f_q + f_el + f_ff_atom_name + f_ff_type + f_bonds;
 
-    // Experimenting: Only apply the potential for a close distance. It can pull the query molecule's
-    // atoms into place, but shouldn't affect ones far away. (?)
+    // todo: Breaking it down piece by piece
+    let f_mag = f_el + f_q + f_ff_type;
 
-    // Gradually roll off the force with distance.
-    let dist_term = smooth_gate(dist, THRESH_DIST, 1.);
 
     let dir = if dist > 1e-6 {
         diff / dist
@@ -735,5 +868,59 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
         Vec3F32::new_zero()
     };
 
-    dir * f_mag * dist_term
+    let dist_term = scale_force_w_dist(dist, R_PEAK, R_MAX);
+    // Convert negative-attractive convention into a positive pull strength.
+    // Spring-like force (goes to 0 as dist->0), gated by sweet-spot bump.
+    let f_vec = dir * f_mag *  dist_term;
+
+    if step.is_multiple_of(500) {
+        // if atom_q.serial_number.is_multiple_of(4) && atom_t.serial_number.is_multiple_of(4) {
+        //     // println!(
+        //     //     "P T: {:.2} P Q: {:.2}, f_el: {:.2}, f_q: {:.2}, dist: {:.3}, d term: {:.3}, F: {:.4}",
+        //     //     atom_t.posit, atom_q.posit, f_el, f_q, dist, dist_term, f_vec
+        //     // );
+            println!("Rel forces. El: {f_el:.3} Q: {f_q:.3} Bonds: {f_bonds:.3} FF: {f_ff_type:.3}")
+        // }
+    }
+
+    f_vec
+    // Vec3F32::new_zero()
+}
+
+/// Use a Marching-Cubes-generated isosurface to compute the volume of both template and query
+/// molecules overlaid. A smaller volume may indicate a better match.
+fn calc_volume(mol_a: &MoleculeCommon, mol_b: &MoleculeCommon, radius: f32, precision: f32) -> f32 {
+    let start = Instant::now();
+
+    let mut atoms = Vec::with_capacity(mol_a.atoms.len() + mol_b.atoms.len());
+    for atom in &mol_a.atoms {
+        atoms.push((atom.posit.into(), atom.element.vdw_radius()));
+    }
+    for atom in &mol_b.atoms {
+        atoms.push((atom.posit.into(), atom.element.vdw_radius()));
+    }
+
+    // API issue here: Conver *back* to mcubes::Mesh, so we can access the `volume` method.
+    let mesh_graphics = make_sas_mesh(&atoms, radius, precision);
+
+    let vertices: Vec<mcubes::Vertex> = mesh_graphics
+        .vertices
+        .iter()
+        // I'm not sure why we need to invert the normal here; same reason we use InsideOnly above.
+        .map(|v|
+            mcubes::Vertex { posit: Vec3F32::from_slice(&v.position).unwrap(), normal: -v.normal }
+        )
+        .collect();
+
+    let mesh = mcubes::Mesh {
+        indices: mesh_graphics.indices,
+        vertices
+    };
+
+    let res = mesh.volume();
+
+    let elapsed = start.elapsed().as_millis();
+    println!("Volume computation took {} ms", elapsed);
+
+    res
 }
