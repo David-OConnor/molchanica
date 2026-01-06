@@ -41,6 +41,7 @@ use crate::{
     sa_surface,
     sa_surface::make_sas_mesh,
 };
+use crate::sa_surface::SOLVENT_RAD;
 
 // todo: Move this A/R
 pub const HYDROPATHY_WINDOW_SIZE: usize = 9; // e.g. for coloring residues
@@ -821,7 +822,7 @@ pub fn handle_scene_flags(
                     precision = 0.75;
                 }
 
-                make_sas_mesh(&atoms, precision)
+                make_sas_mesh(&atoms, SOLVENT_RAD, precision)
             };
 
             sa_surface::update_sas_mesh_coloring(mol, &state.ui, &mut scene.meshes, engine_updates);

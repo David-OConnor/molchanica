@@ -30,6 +30,7 @@ use crate::{
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center, res_color},
     viridis_lut::VIRIDIS,
 };
+use crate::sa_surface::SOLVENT_RAD;
 // const LIGAND_COLOR_ANCHOR: Color = (1., 0., 1.);
 
 const COLOR_MOL_MOVING: Color = (1., 1., 1.);
@@ -1473,7 +1474,7 @@ pub fn filter_pep_atoms_by_dist<'a>(
             .collect();
 
         // todo: DOn't create this each drawing! Cache the atoms near the sfc pre-computed.
-        let mesh = make_sas_mesh(&atoms, NEAR_SFC_MESH_PRECISION);
+        let mesh = make_sas_mesh(&atoms, SOLVENT_RAD, NEAR_SFC_MESH_PRECISION);
         mesh.vertices
             .iter()
             .map(|v| Vec3::from_slice(&v.position).unwrap())

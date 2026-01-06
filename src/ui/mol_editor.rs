@@ -300,7 +300,7 @@ pub(in crate::ui) fn editor(
             }
 
             if let Some(md) = &mut state.mol_editor.md_state {
-                md.minimize_energy(&state.dev, MAX_RELAX_ITERS); // todo: Iters A/R.
+                md.minimize_energy(&state.dev, MAX_RELAX_ITERS, None); // todo: Iters A/R.
                 state.mol_editor.load_atom_posits_from_md(&mut scene.entities, &state.ui,
                                                           engine_updates, state.volatile.mol_manip.mode, );
             }
