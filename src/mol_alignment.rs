@@ -21,7 +21,7 @@ use std::time::Instant;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
 };
-use graphics::{Mesh, Vertex};
+
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
@@ -39,6 +39,13 @@ const COEFF_F_SYNTHETIC: f32 = 10.;
 // volume.
 const VOL_RADIUS: f32 = SOLVENT_RAD; // todo: A/R. mod from 1.4
 const VOL_PRECISION: f32 = 0.6; // todo: A/R.
+
+const RELAX_ITERS_FINAL: usize = 30;
+
+const NUM_STEPS: usize = 400;
+const DT: f32 = 0.004; // ps
+
+const TEMP: f32 = 60.; // K. Very low to minimize jiggling.
 
 use crate::{
     State,
@@ -58,7 +65,6 @@ pub struct PoseAlignment {
     /// Only for rigid and torsion-set-based conformations.
     /// todo: Consider normalizing positions to be around the origin, for numerical precision issues.
     pub anchor_atom_i: usize,
-    // pub anchor_posit: Vec3,
     /// Only for rigid and torsion-set-based conformations.
     pub orientation: Quaternion,
 }
@@ -193,9 +199,6 @@ fn run_md(alignment: &mut AlignmentResult,
         false,
     )?;
 
-    let num_steps = 2_000;
-    let dt = 0.001; // ps
-
     // // For out synthetic-force VV integrator.
     // let mut acc_by_atom = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
     // let mut vel_by_atom = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
@@ -226,7 +229,7 @@ fn run_md(alignment: &mut AlignmentResult,
 
     let mut forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
     println!("Running MD for alignment...");
-    for _ in 0..num_steps {
+    for _ in 0..NUM_STEPS {
 
         // Experimenting.
         // let (free_charge_t, free_charge_q) = free_charge(&mol_template.atoms, &mol_query.atoms);
@@ -244,10 +247,8 @@ fn run_md(alignment: &mut AlignmentResult,
                 let force = force_synthetic(
                     atom_t,
                     atom_q,
-                    // i_q,
                     &bonds_t_by_atom[i_t],
                     &bonds_q_by_atom[i_q],
-                    // &free_q,
                     md.step_count,
                 );
                 forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
@@ -277,18 +278,24 @@ fn run_md(alignment: &mut AlignmentResult,
         }
 
         // Step using bonded and intra-atom nonbonded forces.
-        md.step(&state.dev, dt, Some(forces_by_atom_q));
+        md.step(&state.dev, DT, Some(forces_by_atom_q));
 
-        // Update our atom positions.
+        // Update our atom positions from the MD run.
         for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
             atom_q.posit = md.atoms[i].posit.into();
             mol_q_md.atom_posits[i] = atom_q.posit;
         }
     }
 
+    // Experiment with this, and rm obviously if youre whole process is to relax.
+    md.minimize_energy(&state.dev, RELAX_ITERS_FINAL, None);
+    for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
+        atom_q.posit = md.atoms[i].posit.into();
+        mol_q_md.atom_posits[i] = atom_q.posit;
+    }
+
     println!("Complete");
 
-    // todo: Mol T>
     Ok((mol_template.atom_posits.clone(),  mol_q_md.atom_posits, md))
 }
 
@@ -299,17 +306,20 @@ pub fn align(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
 ) -> Result<(Vec<AlignmentResult>, MdState), ParamError> {
+    let start = Instant::now();
+
     let mut result = make_initial_alignment(state, mol_template, mol_query);
 
     let md_state = {
         let mut md = MdState::default();
 
-        const TEMP: f32 = 60.; // K. Very low to minimize jiggling.
         let cfg_md = MdConfig {
             // A lower thermostat value is more aggressive. We want aggressive for this.
             integrator: Integrator::VerletVelocity { thermostat: Some(0.001) },
-            hydrogen_constraint: HydrogenConstraint::Flexible,
-            max_init_relaxation_iters: Some(300), // todo: A/R
+            // hydrogen_constraint: HydrogenConstraint::Flexible,
+            hydrogen_constraint: HydrogenConstraint::Constrained,
+            // max_init_relaxation_iters: Some(300), // todo: A/R
+            max_init_relaxation_iters: None,
             temp_target: TEMP,
             overrides: MdOverrides {
                 skip_water: true,
@@ -336,6 +346,9 @@ pub fn align(
 
         md
     };
+
+    let elapsed = start.elapsed().as_millis();
+    println!("Aligned 1 mol in {elapsed} ms");
 
     Ok((result, md_state))
 }
@@ -810,13 +823,6 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
         0.
     };
 
-    // Attractive if they share atom name.
-    let f_ff_atom_name = if atom_t.type_in_res == atom_q.type_in_res {
-        -COEFF_ATOM_NAME
-    } else {
-        0.
-    };
-
     // Attractive if they share forcefield type (e.g. from GAFF2).
     // todo equivalent FF types.
     // todo: Use `dynamics::param_inference::matches_def()` or similar, to make sure similar but not
@@ -856,11 +862,7 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
         COEFF_BONDS * ((db - thresh) / width).tanh()
     };
 
-    // let f_mag = f_q + f_el + f_ff_atom_name + f_ff_type + f_bonds;
-
-    // todo: Breaking it down piece by piece
     let f_mag = f_el + f_q + f_ff_type;
-
 
     let dir = if dist > 1e-6 {
         diff / dist
@@ -879,12 +881,11 @@ fn force_synthetic(atom_t: &Atom, atom_q: &Atom, bonds_t: &[&Bond], bonds_q: &[&
         //     //     "P T: {:.2} P Q: {:.2}, f_el: {:.2}, f_q: {:.2}, dist: {:.3}, d term: {:.3}, F: {:.4}",
         //     //     atom_t.posit, atom_q.posit, f_el, f_q, dist, dist_term, f_vec
         //     // );
-            println!("Rel forces. El: {f_el:.3} Q: {f_q:.3} Bonds: {f_bonds:.3} FF: {f_ff_type:.3}")
+        //     println!("Rel forces. El: {f_el:.3} Q: {f_q:.3} Bonds: {f_bonds:.3} FF: {f_ff_type:.3}")
         // }
     }
 
     f_vec
-    // Vec3F32::new_zero()
 }
 
 /// Use a Marching-Cubes-generated isosurface to compute the volume of both template and query
@@ -900,7 +901,7 @@ fn calc_volume(mol_a: &MoleculeCommon, mol_b: &MoleculeCommon, radius: f32, prec
         atoms.push((atom.posit.into(), atom.element.vdw_radius()));
     }
 
-    // API issue here: Conver *back* to mcubes::Mesh, so we can access the `volume` method.
+    // API issue here: Convert *back* to mcubes::Mesh, so we can access the `volume` method.
     let mesh_graphics = make_sas_mesh(&atoms, radius, precision);
 
     let vertices: Vec<mcubes::Vertex> = mesh_graphics
