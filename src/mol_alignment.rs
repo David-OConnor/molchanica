@@ -32,6 +32,9 @@ use rayon::prelude::*;
 // For initial rotation. Higher values take longer, but provide more precise results.
 const RING_ALIGN_ROT_COUNT: u16 = 3_000; // Radians
 
+// For each rotatable template bond, try these many rotations around it.
+const TEMPLATE_ROT_COUNT: u16 = 8;
+
 // Setting this higher prioritizes our synthetic alignment forces relative to normal MD forces.
 const COEFF_F_SYNTHETIC: f32 = 10.;
 
@@ -229,7 +232,67 @@ fn run_md(alignment: &mut AlignmentResult,
 
     let mut forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
     println!("Running MD for alignment...");
+
+    // Experimenting with the gradient descent energy min
+    // {
+    //     let (mut last_step, mut alpha, mut e_prev, initial_velocities, prev_recip) =
+    //        md.minimize_energy_setup(&state.dev, &Some(forces_by_atom_q));
+    //
+    //     let max_iters = 100;
+    //
+    //     let start_en_min = Instant::now();
+    //     let mut iters = 0;
+    //     for _ in 0..max_iters {
+    //
+    //         // Reset force each step.
+    //         forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
+    //
+    //         // We update the synthetic query atoms, as they're what's maintaining position and velocity
+    //         // during the simulation.
+    //         for (i_q, atom_q_dyn) in md.atoms.iter_mut().enumerate() {
+    //             let atom_q = &mol_q_md.atoms[i_q];
+    //             // Apply our synthetic potential, drawing it to the template.
+    //             for (i_t, atom_t) in mol_template.atoms.iter().enumerate() {
+    //                 let force = force_synthetic(
+    //                     atom_t,
+    //                     atom_q,
+    //                     &bonds_t_by_atom[i_t],
+    //                     &bonds_q_by_atom[i_q],
+    //                     md.step_count,
+    //                 );
+    //                 forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
+    //             }
+    //         }
+    //
+    //
+    //         iters += 1;
+    //         if md.step_energy_min(
+    //             &state.dev,
+    //             &mut last_step,
+    //             &mut alpha,
+    //             &mut e_prev,
+    //             &Some(forces_by_atom_q)
+    //         ) {
+    //             break; // Converged.
+    //         }
+    //
+    //         // Update our atom positions from the MD run; required for the next synthetic force compuatation.
+    //         for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
+    //             atom_q.posit = md.atoms[i].posit.into();
+    //             mol_q_md.atom_posits[i] = atom_q.posit;
+    //         }
+    //     }
+    //
+    //     md.minimize_energy_cleanup(&state.dev, prev_recip, &initial_velocities);
+    //
+    //
+    //     let elapsed = start_en_min.elapsed().as_millis();
+    //     println!("Energy min (with synth F) in {elapsed} ms. Used {iters} of {max_iters} iters");
+    //
+    // }
+
     for _ in 0..NUM_STEPS {
+        // break; // todo temp while testing energy minim
 
         // Experimenting.
         // let (free_charge_t, free_charge_q) = free_charge(&mol_template.atoms, &mol_query.atoms);
@@ -253,34 +316,12 @@ fn run_md(alignment: &mut AlignmentResult,
                 );
                 forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
             }
-
-            // Add the free charge; out of the inner-loop fn, as we also take into account other query
-            // atoms.
-
-            // let charge_q = atom_q.partial_charge.unwrap_or(0.0);
-
-            // // Query: Similar charges are repulsive; to cancel out the attraction from the template.
-            // for (i_charge_t, charge_t) in free_charge_t.iter().enumerate() {
-            //     let diff = (charge_t - charge_q).abs();
-            //     // Attraction:
-            //
-            //     forces_by_atom_q[i_q] +=
-            // }
-            //
-            // // Template: Similar charges are attractive.
-            // for (i_charge_t, charge_t) in free_charge_t.iter().enumerate() {
-            //     let diff = (charge_t - charge_q).abs();
-            //     // Attraction:
-            //
-            //     forces_by_atom_q[i_q] +=
-            // }
-
         }
 
         // Step using bonded and intra-atom nonbonded forces.
         md.step(&state.dev, DT, Some(forces_by_atom_q));
 
-        // Update our atom positions from the MD run.
+        // Update our atom positions from the MD run; required for the next synthetic force compuatation.
         for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
             atom_q.posit = md.atoms[i].posit.into();
             mol_q_md.atom_posits[i] = atom_q.posit;
@@ -288,7 +329,8 @@ fn run_md(alignment: &mut AlignmentResult,
     }
 
     // Experiment with this, and rm obviously if youre whole process is to relax.
-    md.minimize_energy(&state.dev, RELAX_ITERS_FINAL, None);
+    // md.minimize_energy(&state.dev, RELAX_ITERS_FINAL, None);
+
     for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
         atom_q.posit = md.atoms[i].posit.into();
         mol_q_md.atom_posits[i] = atom_q.posit;
@@ -703,33 +745,6 @@ fn make_initial_alignment(
     result
 }
 
-// /// Experimenting. For each atom in the template, attract like charges, until
-// /// it is *filled*?. An example of filled may be a query atom within q=0.02  is colocated with
-// /// it.
-// ///
-// /// To do this, template charges attract similar query charges. Other query charges repl query charges.
-// ///
-// /// Todo: Instead, should we set up a charge or potential grid?
-// ///
-// /// Output is broken down into (indexes_t, indexes_q); we could return a single list to compare all
-// /// Q to, but this may help use save distance computations when applying. (?)
-// fn free_charge(
-//     atoms_t: &[Atom],
-//     atoms_q: &[Atom],
-// ) -> (Vec<f32>, Vec<f32>) {
-//     let mut res_t = Vec::with_capacity(atoms_t.len());
-//     let mut res_q = Vec::with_capacity(atoms_q.len());
-//
-//     for atom_t in atoms_t {
-//         res_t.push(atom_t.partial_charge.unwrap_or_default());
-//     }
-//
-//     for atom_q in atoms_q {
-//         res_q.push(atom_q.partial_charge.unwrap_or_default());
-//     }
-//
-//     (res_t, res_q)
-// }
 
 fn smoothstep01(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
