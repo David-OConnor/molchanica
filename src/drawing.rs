@@ -26,11 +26,10 @@ use crate::{
         MESH_DENSITY_SURFACE, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, MESH_SPHERE_HIGHRES,
         MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES, WATER_BOND_THICKNESS, WATER_OPACITY,
     },
-    sa_surface::make_sas_mesh,
+    sa_surface::{SOLVENT_RAD, make_sas_mesh},
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center, res_color},
     viridis_lut::VIRIDIS,
 };
-use crate::sa_surface::SOLVENT_RAD;
 // const LIGAND_COLOR_ANCHOR: Color = (1., 0., 1.);
 
 const COLOR_MOL_MOVING: Color = (1., 1., 1.);

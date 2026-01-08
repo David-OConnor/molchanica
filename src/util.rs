@@ -39,9 +39,8 @@ use crate::{
     render::{Color, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, set_flashlight},
     ribbon_mesh::build_cartoon_mesh,
     sa_surface,
-    sa_surface::make_sas_mesh,
+    sa_surface::{SOLVENT_RAD, make_sas_mesh},
 };
-use crate::sa_surface::SOLVENT_RAD;
 
 // todo: Move this A/R
 pub const HYDROPATHY_WINDOW_SIZE: usize = 9; // e.g. for coloring residues
