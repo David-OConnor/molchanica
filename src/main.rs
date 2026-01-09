@@ -40,7 +40,6 @@ mod md;
 mod mol_alignment;
 mod mol_characterization;
 mod mol_editor;
-mod mol_lig;
 mod mol_manip;
 mod mol_screening;
 mod molecules;
@@ -87,12 +86,12 @@ use lin_alg::{
     f32::{Quaternion, Vec3},
     f64::Vec3 as Vec3F64,
 };
-use mol_lig::MoleculeSmall;
 use mol_manip::MolManip;
 use molecules::{
     MoGenericRefMut, MolGenericRef, MolIdent, MolType, MoleculePeptide,
     lipid::{LipidShape, MoleculeLipid, load_lipid_templates},
     nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands, load_na_templates},
+    small::MoleculeSmall,
 };
 
 use crate::{
@@ -171,9 +170,8 @@ impl Display for ViewSelLevel {
 struct FileDialogs {
     load: FileDialog,
     save: FileDialog,
-    // todo: Add these A/R.
-    // load_editor: FileDialog,
-    // save_editor: FileDialog,
+    /// This is for selecting a folder; not file.
+    screening: FileDialog,
 }
 
 impl Default for FileDialogs {
@@ -216,7 +214,18 @@ impl Default for FileDialogs {
         let load = FileDialog::with_config(cfg_all.clone()).default_file_filter("All");
         let save = FileDialog::with_config(cfg_all).default_save_extension("Protein");
 
-        Self { load, save }
+        let cfg_screening = FileDialogConfig {
+            title: Some("Select screening folder".to_string()),
+            ..Default::default()
+        };
+
+        let screening = FileDialog::with_config(cfg_screening);
+
+        Self {
+            load,
+            save,
+            screening,
+        }
     }
 }
 

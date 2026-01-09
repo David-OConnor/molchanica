@@ -8,10 +8,9 @@ use lin_alg::{
 
 use crate::{
     Selection, State, StateUi,
-    mol_lig::MoleculeSmall,
     molecules::{
         MoleculePeptide, common::MoleculeCommon, lipid::MoleculeLipid,
-        nucleic_acid::MoleculeNucleicAcid,
+        nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
     },
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
     ui::cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},

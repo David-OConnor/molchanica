@@ -30,10 +30,12 @@ use na_seq::{Element, Element::*};
 use rayon::prelude::*;
 
 // For initial rotation. Higher values take longer, but provide more precise results.
-const RING_ALIGN_ROT_COUNT: u16 = 3_000; // Radians
+pub const RING_ALIGN_ROT_COUNT: u16 = 1_000;
+pub const RING_ALIGN_ROT_COUNT_QUICK: u16 = 60;
 
 // For each rotatable template bond, try these many rotations around it.
-const TEMPLATE_ROT_COUNT: u16 = 8;
+// Raising this value can lead to much longer computation times.
+const TEMPLATE_BOND_ROT_COUNT: u16 = 8;
 
 // Setting this higher prioritizes our synthetic alignment forces relative to normal MD forces.
 const COEFF_F_SYNTHETIC: f32 = 20.;
@@ -57,8 +59,7 @@ use crate::{
     docking::Torsion,
     md::{build_dynamics, launch_md_energy_computation},
     mol_characterization::Ring,
-    mol_lig::MoleculeSmall,
-    molecules::{Atom, Bond, common::MoleculeCommon},
+    molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
     util::rotate_about_point,
 };
@@ -345,16 +346,16 @@ fn run_md(
     let mut mol_t_posits = mol_template.atom_posits.clone();
     if !aligning_template_to_query {
         // Now, run the reverse process for the template molecule to relax it.
-        let (_, mol_t_atom_posits, _md_rev) = run_md(
-            &mol_template.atom_posits,
-            // Query and template are swapped here.
-            mol_query,
-            mol_template,
-            state,
-            cfg,
-            true
-        )?;
-        mol_t_posits = mol_t_atom_posits;
+        // let (_, mol_t_atom_posits, _md_rev) = run_md(
+        //     &mol_template.atom_posits,
+        //     // Query and template are swapped here.
+        //     mol_query,
+        //     mol_template,
+        //     state,
+        //     cfg,
+        //     true
+        // )?;
+        // mol_t_posits = mol_t_atom_posits;
     }
 
     println!("Complete");
@@ -371,63 +372,96 @@ pub fn align(
 ) -> Result<(Vec<AlignmentResult>, MdState), ParamError> {
     let start = Instant::now();
 
-    let mut result = make_initial_alignment(state, mol_template, mol_query);
+    let mut result = make_initial_alignment(mol_template, mol_query, RING_ALIGN_ROT_COUNT);
 
-    let md_state = {
-        let mut md = MdState::default();
-
-        let cfg_md = MdConfig {
-            // A lower thermostat value is more aggressive. We want aggressive for this.
-            integrator: Integrator::VerletVelocity {
-                thermostat: Some(TEMP_COEFF),
-            },
-            // hydrogen_constraint: HydrogenConstraint::Flexible,
-            hydrogen_constraint: HydrogenConstraint::Constrained,
-            // max_init_relaxation_iters: Some(300), // todo: A/R
-            max_init_relaxation_iters: None,
-            temp_target: TEMP,
-            overrides: MdOverrides {
-                skip_water: true,
-                snapshots_during_energy_min: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        for alignment in &mut result {
-            let (posits_t, posits_q, md_this_align) = run_md(
-                &alignment.posits_query,
-                &mol_template.common,
-                &mol_query.common,
-                state,
-                &cfg_md,
-                false,
-            )?;
-
-            // Update the initial alignment with the computed positions.
-            alignment.posits_template = posits_t;
-            alignment.posits_query = posits_q;
-
-            // Update the score.
-            alignment.score = calc_score(
-                mol_template,
-                mol_query,
-                &alignment.posits_template,
-                &alignment.posits_query,
-            );
-            alignment.volume = calc_volume(
-                &mol_template.common,
-                &mol_query.common,
-                VOL_RADIUS,
-                VOL_PRECISION,
-            );
-
-            md = md_this_align;
-            break;
+    for alignment in &mut result {
+        // Compute an initial strain energy.
+        // todo: You must mark the mol in question as selected for MD, or this won't work.
+        let energy = launch_md_energy_computation(state, &mut HashSet::new());
+        if let Ok(energy) = energy {
+            alignment.avg_potential_e_query =
+                energy.energy_potential / alignment.posits_query.len() as f32;
         }
 
-        md
-    };
+        alignment.volume = calc_volume(
+            &mol_template.common,
+            &mol_query.common,
+            VOL_RADIUS,
+            VOL_PRECISION,
+        );
+    }
+
+    // Try different template rotations around rotatable bonds.
+
+    let rot_step = TAU / TEMPLATE_BOND_ROT_COUNT as f64;
+
+    let mut md_state = MdState::default();
+
+    for bond in &mol_template
+        .characterization
+        .as_ref()
+        .unwrap()
+        .rotatable_bonds
+    {
+        for i_rot in 0..TEMPLATE_BOND_ROT_COUNT {
+            // todo: Instead of computing downstream atoms, use those that are part of
+            // todo RotatableBond ?
+
+            let mut mol_template_this_pose = mol_template.clone().common;
+            mol_template_this_pose.rotate_around_bond(bond.bond_i, TAU / i_rot as f64 * rot_step);
+
+            let cfg_md = MdConfig {
+                // A lower thermostat value is more aggressive. We want aggressive for this.
+                integrator: Integrator::VerletVelocity {
+                    thermostat: Some(TEMP_COEFF),
+                },
+                // hydrogen_constraint: HydrogenConstraint::Flexible,
+                hydrogen_constraint: HydrogenConstraint::Constrained,
+                // max_init_relaxation_iters: Some(300), // todo: A/R
+                max_init_relaxation_iters: None,
+                temp_target: TEMP,
+                overrides: MdOverrides {
+                    skip_water: true,
+                    snapshots_during_energy_min: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            for alignment in &mut result {
+                let (posits_t, posits_q, md_this_align) = run_md(
+                    &alignment.posits_query,
+                    &mol_template_this_pose,
+                    &mol_query.common,
+                    state,
+                    &cfg_md,
+                    false,
+                )?;
+
+                // Update the initial alignment with the computed positions.
+                alignment.posits_template = posits_t;
+                alignment.posits_query = posits_q;
+
+                // Update the score.
+                alignment.score = calc_score(
+                    mol_template,
+                    mol_query,
+                    &alignment.posits_template,
+                    &alignment.posits_query,
+                );
+
+                alignment.volume = calc_volume(
+                    &mol_template.common,
+                    &mol_query.common,
+                    VOL_RADIUS,
+                    VOL_PRECISION,
+                );
+
+                md_state = md_this_align;
+                break;
+            }
+        }
+    }
 
     let elapsed = start.elapsed().as_millis();
     println!("Aligned 1 mol in {elapsed} ms");
@@ -435,48 +469,53 @@ pub fn align(
     Ok((result, md_state))
 }
 
+/// A helper for score calculation.
+fn chamfer_dir(a: &[Vec3], b: &[Vec3]) -> f64 {
+    const MISSING_ELEM_PENALTY: f64 = 25.0 * 25.0; // (Å^2) per unmatched atom
+
+    if a.is_empty() {
+        return 0.0;
+    }
+    if b.is_empty() {
+        return a.len() as f64 * MISSING_ELEM_PENALTY;
+    }
+
+    let mut sum = 0.0;
+    for &pa in a {
+        let mut best = f64::INFINITY;
+        for &pb in b {
+            let dist_sq = (pa - pb).magnitude_squared();
+            if dist_sq < best {
+                best = dist_sq;
+            }
+        }
+        sum += best;
+    }
+    sum / a.len() as f64
+}
+
 // todo: Crude/temporary
+/// A lower score is better.
 fn calc_score(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
     posits_template: &[Vec3],
     posits_query: &[Vec3],
 ) -> f32 {
-    const MISSING_ELEM_PENALTY: f64 = 25.0 * 25.0; // (Å^2) per unmatched atom
-
-    fn chamfer_dir(a: &[Vec3], b: &[Vec3]) -> f64 {
-        if a.is_empty() {
-            return 0.0;
-        }
-        if b.is_empty() {
-            return a.len() as f64 * MISSING_ELEM_PENALTY;
-        }
-
-        let mut sum = 0.0;
-        for &pa in a {
-            let mut best = f64::INFINITY;
-            for &pb in b {
-                let dist_sq = (pa - pb).magnitude_squared();
-                if dist_sq < best {
-                    best = dist_sq;
-                }
-            }
-            sum += best;
-        }
-        sum / a.len() as f64
-    }
-
     let atoms_t = &mol_template.common.atoms;
     let atoms_q = &mol_query.common.atoms;
 
     let mut by_el_t: HashMap<Element, Vec<Vec3>> = HashMap::new();
     let mut by_el_m: HashMap<Element, Vec<Vec3>> = HashMap::new();
 
-    for a in atoms_t {
+    for (i, a) in atoms_t.iter().enumerate() {
         if a.element == Hydrogen {
             continue;
         }
-        by_el_t.entry(a.element).or_default().push(a.posit);
+        by_el_t
+            .entry(a.element)
+            .or_default()
+            .push(posits_template[i]);
     }
 
     for (i, a) in atoms_q.iter().enumerate() {
@@ -494,6 +533,7 @@ fn calc_score(
     for el in els {
         let a = by_el_t.get(&el).map(|v| v.as_slice()).unwrap_or(&[]);
         let b = by_el_m.get(&el).map(|v| v.as_slice()).unwrap_or(&[]);
+
         res += chamfer_dir(a, b) + chamfer_dir(b, a);
     }
 
@@ -598,6 +638,7 @@ fn apply_best_rotation_about_axis(
 fn align_from_similar_center(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
+    rot_count: u16,
 ) -> Option<Vec<(Vec<Vec3>, Vec<Vec3>, f32)>> {
     let mut result = Vec::new();
 
@@ -636,8 +677,6 @@ fn align_from_similar_center(
 
     // Try aligning each neighbor-bond direction pair, in both axis directions (bond is undirected).
     // Then rotate around the aligned bond axis to find the best score (same pattern as rings).
-    const ROT_COUNT: u16 = RING_ALIGN_ROT_COUNT;
-
     for &nbr_t in nbrs_t {
         let bond_t_dir_raw = (atoms_t[nbr_t].posit - posit_ctr_t).to_normalized();
 
@@ -660,7 +699,7 @@ fn align_from_similar_center(
                     &mut posits_q_aligned,
                     posit_ctr_t,
                     bond_t_dir,
-                    ROT_COUNT,
+                    rot_count,
                 );
 
                 let posits_template = Vec::with_capacity(mol_template.common.atoms.len());
@@ -683,6 +722,7 @@ fn align_from_rings(
     mol_query: &MoleculeSmall,
     rings_t: &[Ring],
     rings_q: &[Ring],
+    rot_count: u16,
 ) -> Option<Vec<(Vec<Vec3>, Vec<Vec3>, f32)>> {
     if rings_t.is_empty() || rings_q.is_empty() {
         return None;
@@ -718,7 +758,7 @@ fn align_from_rings(
                     &mut posits_q_aligned,
                     ring_t_center,
                     ring_t_plane_norm,
-                    RING_ALIGN_ROT_COUNT,
+                    rot_count,
                 );
 
                 let posits_template = Vec::with_capacity(mol_template.common.atoms.len());
@@ -731,22 +771,26 @@ fn align_from_rings(
 }
 
 /// Using fast and crude methods, create a starting alignment, to base future ones off.
-fn make_initial_alignment(
-    state: &State,
+// pub to allow for use in mol_screening.rs
+pub fn make_initial_alignment(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
+    rot_count: u16,
 ) -> Vec<AlignmentResult> {
-    // let torsions = Vec::new();
-    // let anchor_atom_i = 0;
-    // let orientation = Quaternion::new_identity();
+    let Some(char_template) = &mol_template.characterization else {
+        return Vec::new();
+    };
+    let Some(char_query) = &mol_query.characterization else {
+        return Vec::new();
+    };
 
-    let rings_t = &mol_template.characterization.rings;
-    let rings_q = &mol_query.characterization.rings;
+    let rings_t = &char_template.rings;
+    let rings_q = &char_query.rings;
 
     let posits_initial_alignment = if rings_t.is_empty() || rings_q.is_empty() {
-        align_from_similar_center(mol_template, mol_query)
+        align_from_similar_center(mol_template, mol_query, rot_count)
     } else {
-        align_from_rings(mol_template, mol_query, rings_t, rings_q)
+        align_from_rings(mol_template, mol_query, rings_t, rings_q, rot_count)
     };
 
     let Some(posits_initial_alignment) = posits_initial_alignment else {
@@ -756,36 +800,10 @@ fn make_initial_alignment(
     let mut result = Vec::with_capacity(posits_initial_alignment.len());
 
     for (posits_template, posits_aligned, score) in posits_initial_alignment {
-        // let pose = PoseAlignment {
-        //     torsions: torsions.clone(),
-        //     anchor_atom_i,
-        //     orientation,
-        // };
-
-        // let pose = PoseAlignment::default();
-        // let matched_pairs = Vec::new();
-
-        // todo: You must mark the mol in question as selected for MD, or this won't work.
-        let mut avg_strain_energy_query = 0.0;
-        let energy = launch_md_energy_computation(state, &mut HashSet::new());
-        if let Ok(energy) = energy {
-            avg_strain_energy_query = energy.energy_potential / posits_aligned.len() as f32;
-        }
-
         result.push(AlignmentResult {
-            // pose,
-            // matched_pairs,
             posits_template,
             posits_query: posits_aligned,
             score,
-            avg_potential_e_query: avg_strain_energy_query,
-            avg_potential_e_template: 0., // todo: A/R
-            volume: calc_volume(
-                &mol_template.common,
-                &mol_query.common,
-                VOL_RADIUS,
-                VOL_PRECISION,
-            ),
             ..Default::default()
         })
     }

@@ -18,10 +18,9 @@ use crate::{
         exit_edit_mode, sync_md,
         templates::Template,
     },
-    mol_lig::MoleculeSmall,
     mol_manip,
     mol_manip::ManipMode,
-    molecules::{Bond, MolType},
+    molecules::{Bond, MolType, small::MoleculeSmall},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
         cam::cam_reset_controls,

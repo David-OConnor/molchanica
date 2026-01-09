@@ -11,10 +11,9 @@ use crate::{
     Selection, State, download_mols, drawing,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI},
     label,
-    mol_lig::MoleculeSmall,
     molecules::{
         Atom, Bond, MoGenericRefMut, MolGenericRef, MolIdent, MolType, Residue, aa_color,
-        lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
+        lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
     },
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, cam::move_cam_to_active_mol,

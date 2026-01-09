@@ -8,6 +8,7 @@ pub mod common;
 pub mod lipid;
 pub mod nucleic_acid;
 pub mod rotatable_bonds;
+pub mod small;
 
 use std::{
     collections::HashMap,
@@ -39,12 +40,12 @@ use dynamics::{
 use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use rayon::prelude::*;
+use small::MoleculeSmall;
 
 use crate::{
     Selection,
     bond_inference::create_hydrogen_bonds,
     drawing::EntityClass,
-    mol_lig::MoleculeSmall,
     molecules::{common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid},
     prefs::OpenType,
     reflection::{DensityPt, DensityRect, ReflectionsData},

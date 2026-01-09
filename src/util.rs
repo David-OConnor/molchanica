@@ -28,11 +28,10 @@ use crate::{
         color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
     },
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
-    mol_lig::MoleculeSmall,
     mol_manip::ManipMode,
     molecules::{
         Atom, Bond, MoGenericRefMut, MolGenericRef, MolType, MoleculeGeneric, MoleculePeptide,
-        Residue, aa_color,
+        Residue, aa_color, small::MoleculeSmall,
     },
     prefs::OpenType,
     reflection,

@@ -18,7 +18,7 @@ use dynamics::{
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
 use lin_alg::{
     f32::{Quaternion as QuaternionF32, Vec3 as Vec3F32},
-    f64::{Quaternion, Vec3},
+    f64::Vec3,
 };
 use na_seq::{
     AtomTypeInRes,
@@ -33,9 +33,8 @@ use crate::{
     },
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     md::change_snapshot_helper,
-    mol_lig::MoleculeSmall,
     mol_manip::ManipMode,
-    molecules::{Atom, Bond, MolGenericRef, MolType, common::MoleculeCommon},
+    molecules::{Atom, Bond, MolGenericRef, MolType, small::MoleculeSmall},
     render::{
         ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, set_flashlight, set_static_light,
     },

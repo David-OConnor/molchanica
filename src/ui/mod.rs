@@ -1,5 +1,6 @@
 use std::{
     io::Cursor,
+    path::Path,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
@@ -23,7 +24,10 @@ use crate::{
     drawing::color_viridis,
     file_io::gemmi_path,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
+    mol_characterization::MolCharacterization,
     mol_editor::enter_edit_mode,
+    mol_screening,
+    mol_screening::screen_by_alignment,
     molecules::MolGenericRef,
     render::set_flashlight,
     ui::{
@@ -1311,12 +1315,23 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 enter_edit_mode(state, scene, &mut engine_updates);
             }
 
-            if state.ligands.len() >= 2 &&ui.button("Align").clicked() {
+            if state.ligands.len() >= 2 &&ui.button("Align")
+                .on_hover_text("Perform flexible alignment on two opened small molecules. This button opens a \
+                window which lets you configure and run this alignment, then view the resulting 3D conformations,\
+                and similarity metrics.")
+                .clicked() {
                state.ui.popup.alignment = !state.ui.popup.alignment;
 
                 if state.volatile.mols_to_align.len() < 2 {
                     state.volatile.mols_to_align = vec![0, 1];
                 }
+            }
+
+            if  ui.button("Alignment screen")
+                .on_hover_text("Perform a fast small molecule alignment screening from all \
+                files in a selected folder").clicked() {
+
+                state.volatile.dialogs.screening.pick_directory();
             }
         });
 

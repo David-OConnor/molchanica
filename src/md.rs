@@ -9,7 +9,7 @@ use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 #[cfg(feature = "cuda")]
 use cudarc::driver::HostSlice;
 use dynamics::{
-    ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
+    ComputationDevice, FfMolType, MdConfig, MdState, MolDynamics, ParamError,
     compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
@@ -18,12 +18,12 @@ use lin_alg::f64::Vec3;
 use crate::{
     MdStateLocal, State,
     drawing::{draw_peptide, draw_water},
-    mol_lig::MoleculeSmall,
     molecules::{
         MoleculePeptide,
         common::MoleculeCommon,
         lipid::MoleculeLipid,
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
+        small::MoleculeSmall,
     },
     util::{handle_err, handle_success},
 };

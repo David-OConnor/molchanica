@@ -9,8 +9,9 @@ use na_seq::AaIdent;
 
 use crate::{
     State, StateUi,
-    mol_lig::MoleculeSmall,
-    molecules::{MoGenericRefMut, MolIdent, MolType, MoleculeGeneric, MoleculePeptide},
+    molecules::{
+        MoGenericRefMut, MolIdent, MolType, MoleculeGeneric, MoleculePeptide, small::MoleculeSmall,
+    },
     render::set_flashlight,
     util::handle_err,
 };

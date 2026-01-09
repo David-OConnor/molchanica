@@ -16,10 +16,9 @@ use crate::{
     drawing::draw_peptide,
     drawing_wrappers,
     md::launch_md,
-    mol_lig::MoleculeSmall,
     molecules::{
         MolGenericTrait, MolIdent, MolType, MoleculeGeneric, MoleculePeptide,
-        common::MoleculeCommon,
+        common::MoleculeCommon, small::MoleculeSmall,
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
@@ -659,7 +658,6 @@ impl State {
 
                 if let Some(p) = &self.ff_param_set.small_mol {
                     mol.update_ff_related(&mut self.mol_specific_params, p);
-
                     mol.update_aux(&self.volatile.active_mol);
                 } else {
                     handle_err(

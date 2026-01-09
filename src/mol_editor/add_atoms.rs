@@ -12,9 +12,8 @@ use na_seq::{
 use crate::{
     StateUi, mol_editor,
     mol_editor::{MolEditorState, NEXT_ATOM_SN, redraw, templates::Template},
-    mol_lig::MoleculeSmall,
     mol_manip::ManipMode,
-    molecules::{Atom, Bond, common::MoleculeCommon},
+    molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
 };
 
 #[derive(Clone, Copy, PartialEq)]

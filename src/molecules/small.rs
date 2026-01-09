@@ -46,7 +46,7 @@ pub struct MoleculeSmall {
     /// Simplified Molecular Input Line Entry System
     /// A cache for display as required. This is a text representation of a molecular formula.
     pub smiles: Option<String>,
-    pub characterization: MolCharacterization,
+    pub characterization: Option<MolCharacterization>,
 }
 
 impl MoleculeSmall {
@@ -85,12 +85,10 @@ impl MoleculeSmall {
         }
 
         let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
-        let characterization = MolCharacterization::new(&common);
 
         Self {
             common,
             idents,
-            characterization,
             ..Default::default()
         }
     }
@@ -490,6 +488,8 @@ impl MoleculeSmall {
                 posit.x += offset; // Arbitrary axis and direction.
             }
         }
+
+        self.characterization = Some(MolCharacterization::new(&self.common));
     }
 
     /// Update partial charges, FF types, and mol-specific params.
