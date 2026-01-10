@@ -181,7 +181,7 @@ pub fn handle_mol_manip_in_plane(
                     // todo: X vs Y?
 
                     const ROT_FACTOR: f64 = 0.008;
-                    mol.rotate_around_bond(mol_i, ROT_FACTOR * delta.0);
+                    mol.rotate_around_bond(mol_i, ROT_FACTOR * delta.0, None);
                 }
                 OperatingMode::ProteinEditor => (),
             }
@@ -403,6 +403,12 @@ pub fn set_manip(
     mode: ManipMode,
     sel: &Selection,
 ) {
+    if mode == ManipMode::None {
+        vol.mol_manip.mode = ManipMode::None;
+        vol.mol_manip.pivot = None;
+        return;
+    }
+
     let (mol_type_active, i_active) = match vol.operating_mode {
         OperatingMode::Primary => match vol.active_mol {
             Some(v) => v,

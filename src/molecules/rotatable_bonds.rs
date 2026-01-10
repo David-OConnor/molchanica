@@ -61,8 +61,13 @@ impl MoleculeCommon {
     /// rotation centers. For example, bonds in rings.
     ///
     /// We assume this bond as been determined to be rotatable ahead of time.
-    pub fn rotate_around_bond(&mut self, bond_pivot: usize, rot_amt: f64) {
-        if let Some(posits) = rotate_around_bond(self, bond_pivot, rot_amt) {
+    pub fn rotate_around_bond(
+        &mut self,
+        bond_pivot: usize,
+        rot_amt: f64,
+        downstream: Option<&[usize]>,
+    ) {
+        if let Some(posits) = rotate_around_bond(self, bond_pivot, rot_amt, downstream) {
             self.atom_posits = posits;
         }
 
@@ -79,6 +84,8 @@ pub fn rotate_around_bond(
     mol: &MoleculeCommon,
     bond_pivot: usize,
     rot_amt: f64,
+    // Optionally provide as a cache; this can be calculated otherwise.
+    downstream: Option<&[usize]>,
 ) -> Option<Vec<Vec3>> {
     if bond_pivot >= mol.bonds.len() {
         eprintln!("Error: Bond pivot out of bounds.");
@@ -88,8 +95,28 @@ pub fn rotate_around_bond(
     let pivot = &mol.bonds[bond_pivot];
 
     // Measure how many atoms would be "downstream" from each side
-    let side0_downstream = find_downstream_atoms(&mol.adjacency_list, pivot.atom_1, pivot.atom_0); // atoms on atom_0 side
-    let side1_downstream = find_downstream_atoms(&mol.adjacency_list, pivot.atom_0, pivot.atom_1); // atoms on atom_1 side
+    let side0_downstream = if let Some(downstream) = downstream {
+        downstream.to_vec()
+    } else {
+        find_downstream_atoms(&mol.adjacency_list, pivot.atom_1, pivot.atom_0) // atoms on atom_0 side
+    };
+
+    // This is a simple check for all atoms not in side0_downstream, but is faster.
+    let side1_downstream = {
+        let mut v = Vec::with_capacity(mol.atoms.len() - side0_downstream.len());
+
+        let mut on_side0 = vec![false; mol.atoms.len()];
+        for &idx in &side0_downstream {
+            on_side0[idx] = true;
+        }
+
+        for i in 0..mol.atoms.len() {
+            if !on_side0[i] {
+                v.push(i);
+            }
+        }
+        v
+    };
 
     // Rotate the smaller side; keep pivot_idx on the larger side
     let (pivot_idx, side_idx, downstream_atom_indices) =

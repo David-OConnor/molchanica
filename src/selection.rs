@@ -8,6 +8,9 @@ use na_seq::{Element, Element::Hydrogen};
 use crate::{
     Selection, State, StateUi, ViewSelLevel,
     drawing::MoleculeView,
+    mol_editor::sync_md,
+    mol_manip,
+    mol_manip::ManipMode,
     molecules::{Atom, AtomRole, Bond, Chain, MolType, Residue, common::MoleculeCommon},
     util::orbit_center,
 };
@@ -654,8 +657,44 @@ pub(crate) fn handle_selection_attempt(
         },
     };
 
-    let (selection, _dist) = match state.ui.view_sel_level {
-        ViewSelLevel::Bond => {
+    let (sel_atoms, dist_atoms) = {
+            let (
+                atoms_along_ray_pep,
+                atoms_along_ray_lig,
+                atoms_along_ray_na,
+                atoms_along_ray_lipid,
+            ) = points_along_ray_atom(
+                selected_ray,
+                pep_atoms,
+                &lig_atoms,
+                &na_atoms,
+                &lipid_atoms,
+                dist_thresh,
+            );
+
+            find_selected_atom_or_bond(
+                &atoms_along_ray_pep,
+                &atoms_along_ray_lig,
+                &atoms_along_ray_na,
+                &atoms_along_ray_lipid,
+                pep_atoms,
+                pep_res,
+                &lig_atoms,
+                &na_atoms,
+                &lipid_atoms,
+                &selected_ray,
+                &state.ui,
+                &Vec::new(),
+                &[],
+                &[],
+                &[],
+                &[],
+                false,
+                state.volatile.inputs_commanded.run,
+            )
+    };
+
+    let (sel_bonds, dist_bonds) = {
             let mut pep_bonds = Vec::new();
             // todo: I don' tlike these clones.
             if let Some(mol) = &state.peptide {
@@ -714,46 +753,10 @@ pub(crate) fn handle_selection_attempt(
                 true,
                 state.volatile.inputs_commanded.run,
             )
-        }
-        _ => {
-            let (
-                atoms_along_ray_pep,
-                atoms_along_ray_lig,
-                atoms_along_ray_na,
-                atoms_along_ray_lipid,
-            ) = points_along_ray_atom(
-                selected_ray,
-                pep_atoms,
-                &lig_atoms,
-                &na_atoms,
-                &lipid_atoms,
-                dist_thresh,
-            );
-
-            find_selected_atom_or_bond(
-                &atoms_along_ray_pep,
-                &atoms_along_ray_lig,
-                &atoms_along_ray_na,
-                &atoms_along_ray_lipid,
-                pep_atoms,
-                pep_res,
-                &lig_atoms,
-                &na_atoms,
-                &lipid_atoms,
-                &selected_ray,
-                &state.ui,
-                &Vec::new(),
-                &[],
-                &[],
-                &[],
-                &[],
-                false,
-                state.volatile.inputs_commanded.run,
-            )
-        }
     };
 
-    match selection {
+    // Change the active molecule to the one of the selected atom or bond.
+    match sel_atoms {
         Selection::AtomPeptide(_)
         | Selection::AtomsPeptide(_)
         | Selection::BondPeptide(_)
@@ -775,6 +778,12 @@ pub(crate) fn handle_selection_attempt(
         }
         _ => (),
     }
+
+    let selection = if dist_atoms < dist_bonds {
+        sel_atoms
+    } else {
+        sel_bonds
+    };
 
     if selection == state.ui.selection {
         // Toggle.
@@ -905,6 +914,8 @@ pub fn handle_selection_attempt_mol_editor(
         )
     };
 
+    // todo: This fn is DRY with the non-editor version.
+
     let selection = if dist_atoms < dist_bonds {
         sel_atoms
     } else {
@@ -916,6 +927,43 @@ pub fn handle_selection_attempt_mol_editor(
         state.ui.selection = Selection::None;
     } else {
         state.ui.selection = selection;
+    }
+
+    // Adjust the atom or bond being manipulated, or deselect manipulation if appropriate.
+    let manip_mode_new = match state.volatile.mol_manip.mode {
+        ManipMode::Rotate((_mol_type, mol_i)) => {
+            match &state.ui.selection {
+                Selection::AtomLig(_) => ManipMode::None,
+                Selection::BondLig(_) => ManipMode::Rotate((MolType::Ligand, mol_i)), // todo: QC
+                _ => ManipMode::None,
+            }
+        }
+        ManipMode::Move((_mol_type, mol_i)) => {
+            match &state.ui.selection {
+                Selection::AtomLig(_) => ManipMode::Move((MolType::Ligand, mol_i)), // todo: QC
+                Selection::BondLig(_) => ManipMode::None,
+                _ => ManipMode::None,
+            }
+        }
+        _ => ManipMode::None,
+    };
+
+    // if let Some(mm) = manip_mode_new {
+    let mut rebuild_md = false;
+    mol_manip::set_manip(
+        &mut state.volatile,
+        &mut state.to_save.save_flag,
+        scene,
+        &mut false,
+        redraw,
+        &mut false,
+        &mut false,
+        &mut rebuild_md,
+        manip_mode_new,
+        &state.ui.selection,
+    );
+    if rebuild_md {
+        sync_md(state);
     }
 
     *redraw = true;

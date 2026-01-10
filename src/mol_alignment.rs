@@ -22,6 +22,7 @@ use std::{
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
 };
+use egui::Align;
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
@@ -35,7 +36,7 @@ pub const RING_ALIGN_ROT_COUNT_QUICK: u16 = 60;
 
 // For each rotatable template bond, try these many rotations around it.
 // Raising this value can lead to much longer computation times.
-const TEMPLATE_BOND_ROT_COUNT: u16 = 8;
+const TEMPLATE_BOND_ROT_COUNT: u16 = 6;
 
 // Setting this higher prioritizes our synthetic alignment forces relative to normal MD forces.
 const COEFF_F_SYNTHETIC: f32 = 20.;
@@ -59,7 +60,10 @@ use crate::{
     docking::Torsion,
     md::{build_dynamics, launch_md_energy_computation},
     mol_characterization::Ring,
-    molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
+    molecules::{
+        Atom, Bond, common::MoleculeCommon, rotatable_bonds::find_downstream_atoms,
+        small::MoleculeSmall,
+    },
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
     util::rotate_about_point,
 };
@@ -102,7 +106,7 @@ impl PoseAlignment {
 
         let mut mol_ = mol.clone();
         for torsion in &self.torsions {
-            mol_.rotate_around_bond(torsion.bond, torsion.dihedral_angle);
+            mol_.rotate_around_bond(torsion.bond, torsion.dihedral_angle, None);
         }
 
         result
@@ -372,9 +376,9 @@ pub fn align(
 ) -> Result<(Vec<AlignmentResult>, MdState), ParamError> {
     let start = Instant::now();
 
-    let mut result = make_initial_alignment(mol_template, mol_query, RING_ALIGN_ROT_COUNT);
+    let mut alignments_init = make_initial_alignment(mol_template, mol_query, RING_ALIGN_ROT_COUNT);
 
-    for alignment in &mut result {
+    for alignment in &mut alignments_init {
         // Compute an initial strain energy.
         // todo: You must mark the mol in question as selected for MD, or this won't work.
         let energy = launch_md_energy_computation(state, &mut HashSet::new());
@@ -397,18 +401,33 @@ pub fn align(
 
     let mut md_state = MdState::default();
 
-    for bond in &mol_template
+    // todo: Could do with_capacity?
+    let mut res = Vec::new();
+
+    for bond_rot in &mol_template
         .characterization
         .as_ref()
         .unwrap()
         .rotatable_bonds
     {
+        let bond = &mol_template.common.bonds[bond_rot.bond_i];
+        let downstream_t = &bond_rot.downstream_from_a1;
+
+        // let downstream_t = find_downstream_atoms(
+        //     &mol_template.common.adjacency_list,
+        //     bond.atom_1,
+        //     bond.atom_0,
+        // );
+
         for i_rot in 0..TEMPLATE_BOND_ROT_COUNT {
-            // todo: Instead of computing downstream atoms, use those that are part of
-            // todo RotatableBond ?
+            let rot_amt = rot_step * i_rot as f64;
 
             let mut mol_template_this_pose = mol_template.clone().common;
-            mol_template_this_pose.rotate_around_bond(bond.bond_i, TAU / i_rot as f64 * rot_step);
+            mol_template_this_pose.rotate_around_bond(
+                bond_rot.bond_i,
+                rot_amt,
+                Some(downstream_t),
+            );
 
             let cfg_md = MdConfig {
                 // A lower thermostat value is more aggressive. We want aggressive for this.
@@ -428,9 +447,9 @@ pub fn align(
                 ..Default::default()
             };
 
-            for alignment in &mut result {
+            for alignment_init in &mut alignments_init {
                 let (posits_t, posits_q, md_this_align) = run_md(
-                    &alignment.posits_query,
+                    &alignment_init.posits_query,
                     &mol_template_this_pose,
                     &mol_query.common,
                     state,
@@ -438,24 +457,43 @@ pub fn align(
                     false,
                 )?;
 
-                // Update the initial alignment with the computed positions.
-                alignment.posits_template = posits_t;
-                alignment.posits_query = posits_q;
-
-                // Update the score.
-                alignment.score = calc_score(
+                let score  = calc_score(
                     mol_template,
                     mol_query,
-                    &alignment.posits_template,
-                    &alignment.posits_query,
+                    &posits_t,
+                    &posits_q,
                 );
 
-                alignment.volume = calc_volume(
+                // todo: Wrong; pass in the posits.
+                let volume = calc_volume(
                     &mol_template.common,
                     &mol_query.common,
                     VOL_RADIUS,
                     VOL_PRECISION,
                 );
+
+                let energy_t = 0.; // todo: A/R
+                // let energy_t = launch_md_energy_computation(state, &mut HashSet::new());
+                let energy_q = md_this_align.snapshots.last().unwrap().energy_potential;
+
+
+                let avg_potential_e_template =
+                    energy_t / posits_t.len() as f32;
+
+
+                let avg_potential_e_query =
+                    energy_q/ posits_q.len() as f32;
+
+
+                res.push(AlignmentResult {
+                    posits_template: posits_t,
+                    posits_query: posits_q,
+                    score,
+                    volume,
+                    avg_potential_e_template,
+                    avg_potential_e_query,
+                    ..Default::default()
+                });
 
                 md_state = md_this_align;
                 break;
@@ -466,7 +504,9 @@ pub fn align(
     let elapsed = start.elapsed().as_millis();
     println!("Aligned 1 mol in {elapsed} ms");
 
-    Ok((result, md_state))
+    res.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+
+    Ok((res, md_state))
 }
 
 /// A helper for score calculation.
