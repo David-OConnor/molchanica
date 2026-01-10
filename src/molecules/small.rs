@@ -81,7 +81,7 @@ impl MoleculeSmall {
             }
         }
 
-        if ident.len() <= 4 {
+        if ident.len() <= 4 && ident.parse::<u32>().is_err() {
             // This is a guess
             idents.push(MolIdent::PdbeAmber(ident.clone()));
         }

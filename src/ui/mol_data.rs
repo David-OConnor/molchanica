@@ -802,6 +802,17 @@ pub(in crate::ui) fn display_mol_data(
                     // an intermediate SMILES representation, upon clicking the button.
                     if pubchem_cid.is_none() {
                         if ui.button("PubChem").clicked() {
+                            // If we already have SMILES, this saves an API call.
+                            if let Some(smiles) = m.smiles.as_ref() {
+                                let cids = pubchem::find_cids_from_search(&smiles, true)
+                                    .unwrap_or_default();
+                                if !cids.is_empty() {
+                                    let cid = cids[0];
+                                    update_cid = Some(cid);
+                                    pubchem::open_overview(cid);
+                                }
+                            }
+                            // This runs if we have neither CID, nor SMILES.
                             if let Ok(cid) = pubchem::get_cid_from_pdbe_id(&mol.common().ident) {
                                 update_cid = Some(cid);
                                 pubchem::open_overview(cid);
