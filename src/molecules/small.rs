@@ -10,7 +10,7 @@ use std::{
 
 use bio_apis::{ReqError, amber_geostd, amber_geostd::GeostdData, pubchem::ProteinStructure};
 use bio_files::{
-    ChargeType, Mol2, MolType, Pdbqt, Sdf, Xyz, create_bonds,
+    ChargeType, Mol2, MolType, Pdbqt, PharmacaphoreFeatures, Sdf, Xyz, create_bonds,
     md_params::{ForceFieldParams, ForceFieldParamsVec},
 };
 use dynamics::{
@@ -34,7 +34,7 @@ const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
 #[derive(Debug, Default, Clone)]
 pub struct MoleculeSmall {
     pub common: MoleculeCommon,
-    pub lig_data: Option<Ligand>,
+    // pub lig_data: Option<Ligand>,
     pub idents: Vec<MolIdent>,
     /// FF type and partial charge on all atoms. Quick lookup flag.
     pub ff_params_loaded: bool,
@@ -47,6 +47,8 @@ pub struct MoleculeSmall {
     /// A cache for display as required. This is a text representation of a molecular formula.
     pub smiles: Option<String>,
     pub characterization: Option<MolCharacterization>,
+    /// Note: These are loaded from SDF, but we use our data in MolCharacterization instead.
+    pub pharmacophore_features: Vec<PharmacaphoreFeatures>,
 }
 
 impl MoleculeSmall {
@@ -161,7 +163,9 @@ impl TryFrom<Sdf> for MoleculeSmall {
             .collect::<Result<_, _>>()?;
 
         // Handle path and state-specific items after; not supported by TryFrom.
-        Ok(Self::new(m.ident, atoms, bonds, m.metadata.clone(), None))
+        let mut result = Self::new(m.ident, atoms, bonds, m.metadata.clone(), None);
+        result.pharmacophore_features = m.pharmacophore_features;
+        Ok(result)
     }
 }
 
@@ -270,6 +274,7 @@ impl MoleculeSmall {
             bonds,
             chains: Vec::new(),
             residues: Vec::new(),
+            pharmacophore_features: self.pharmacophore_features.clone(),
         }
     }
 

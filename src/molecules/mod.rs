@@ -200,14 +200,14 @@ impl<'a> MolGenericRef<'a> {
 
 /// We currently use this for mol description.
 #[derive(Debug)]
-pub enum MoGenericRefMut<'a> {
+pub enum MolGenericRefMut<'a> {
     Peptide(&'a mut MoleculePeptide),
     Ligand(&'a mut MoleculeSmall),
     NucleicAcid(&'a mut MoleculeNucleicAcid),
     Lipid(&'a mut MoleculeLipid),
 }
 
-impl<'a> MoGenericRefMut<'a> {
+impl<'a> MolGenericRefMut<'a> {
     pub fn common_mut(&mut self) -> &mut MoleculeCommon {
         match self {
             Self::Peptide(m) => &mut m.common,

@@ -16,9 +16,10 @@
 use std::{
     collections::{HashMap, HashSet},
     f64::consts::TAU,
+    path::PathBuf,
     time::Instant,
 };
-use std::path::PathBuf;
+
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
 };

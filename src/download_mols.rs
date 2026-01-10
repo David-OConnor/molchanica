@@ -10,7 +10,7 @@ use na_seq::AaIdent;
 use crate::{
     State, StateUi,
     molecules::{
-        MoGenericRefMut, MolIdent, MolType, MoleculeGeneric, MoleculePeptide, small::MoleculeSmall,
+        MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, MoleculePeptide, small::MoleculeSmall,
     },
     render::set_flashlight,
     util::handle_err,
@@ -181,7 +181,7 @@ pub fn load_geostd2(
                         }
                     }
                     if let Some(lig) = state.active_mol_mut() {
-                        if let MoGenericRefMut::Ligand(l) = lig {
+                        if let MolGenericRefMut::Ligand(l) = lig {
                             l.frcmod_loaded = true;
                         }
                     }

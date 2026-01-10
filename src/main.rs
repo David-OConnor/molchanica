@@ -88,7 +88,7 @@ use lin_alg::{
 };
 use mol_manip::MolManip;
 use molecules::{
-    MoGenericRefMut, MolGenericRef, MolIdent, MolType, MoleculePeptide,
+    MolGenericRef, MolGenericRefMut, MolIdent, MolType, MoleculePeptide,
     lipid::{LipidShape, MoleculeLipid, load_lipid_templates},
     nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands, load_na_templates},
     small::MoleculeSmall,
@@ -824,27 +824,27 @@ impl State {
 
     /// Helper
     /// todo: DRy with the non-mutable variant.
-    pub fn active_mol_mut(&mut self) -> Option<MoGenericRefMut<'_>> {
+    pub fn active_mol_mut(&mut self) -> Option<MolGenericRefMut<'_>> {
         match self.volatile.active_mol {
             Some((mol_type, i)) => match mol_type {
                 MolType::Peptide => None,
                 MolType::Ligand => {
                     if i < self.ligands.len() {
-                        Some(MoGenericRefMut::Ligand(&mut self.ligands[i]))
+                        Some(MolGenericRefMut::Ligand(&mut self.ligands[i]))
                     } else {
                         None
                     }
                 }
                 MolType::NucleicAcid => {
                     if i < self.nucleic_acids.len() {
-                        Some(MoGenericRefMut::NucleicAcid(&mut self.nucleic_acids[i]))
+                        Some(MolGenericRefMut::NucleicAcid(&mut self.nucleic_acids[i]))
                     } else {
                         None
                     }
                 }
                 MolType::Lipid => {
                     if i < self.lipids.len() {
-                        Some(MoGenericRefMut::Lipid(&mut self.lipids[i]))
+                        Some(MolGenericRefMut::Lipid(&mut self.lipids[i]))
                     } else {
                         None
                     }

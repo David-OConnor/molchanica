@@ -12,7 +12,7 @@ use crate::{
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI},
     label,
     molecules::{
-        Atom, Bond, MoGenericRefMut, MolGenericRef, MolIdent, MolType, Residue, aa_color,
+        Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
         lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
     },
     ui::{
@@ -546,7 +546,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
         if let Some((_, i)) = state.volatile.active_mol {
             let mol = &mut state.ligands[i];
             if let Some(pep) = &state.peptide {
-                move_mol_to_res(&mut MoGenericRefMut::Ligand(mol), pep, &res);
+                move_mol_to_res(&mut MolGenericRefMut::Ligand(mol), pep, &res);
                 move_cam_to_active_mol(state, scene, pep.center, engine_updates);
             }
         }
@@ -669,14 +669,14 @@ pub(in crate::ui) fn display_mol_data_peptide(
 
 pub(in crate::ui) fn display_mol_data(
     state: &mut State,
-    scene: &mut Scene,
+    // scene: &mut Scene,
     ui: &mut Ui,
-    redraw_pep: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
-    close: &mut bool,
-    engine_updates: &mut EngineUpdates,
+    // redraw_pep: &mut bool,
+    // redraw_lig: &mut bool,
+    // redraw_na: &mut bool,
+    // redraw_lipid: &mut bool,
+    // close: &mut bool,
+    // engine_updates: &mut EngineUpdates,
 ) {
     ui.horizontal(|ui| {
         let Some((active_mol_type, active_mol_i)) = state.volatile.active_mol else {
@@ -686,133 +686,74 @@ pub(in crate::ui) fn display_mol_data(
         if let Some(mol) = state.active_mol() {
             mol_descrip(&mol, ui);
         }
-        //
-        // {
-        //     let mut color_move = COLOR_INACTIVE;
-        //     let mut color_rotate = COLOR_INACTIVE;
-        //
-        //     match state.volatile.mol_manip.mode {
-        //         ManipMode::Move((mol_type, mol_i)) => {
-        //             if mol_type == active_mol_type && mol_i == active_mol_i {
-        //                 color_move = COLOR_ACTIVE;
-        //             }
-        //         }
-        //         ManipMode::Rotate((mol_type, mol_i)) => {
-        //             if mol_type == active_mol_type && mol_i == active_mol_i {
-        //                 color_rotate = COLOR_ACTIVE;
-        //             }
-        //         }
-        //         ManipMode::None => (),
-        //     }
-        //
-        //     // ✥ doesn't work in EGUI.
-        //     if ui.button(RichText::new("↔").color(color_move))
-        //         .on_hover_text("(Hotkey: M. M or Esc to stop)) Move the active molecule by clicking and dragging with \
-        //         the mouse. Scroll to move it forward and back.")
-        //         .clicked() {
-        //
-        //         set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw_pep, redraw_lig, redraw_na, redraw_lipid,&mut false,
-        //                   ManipMode::Move((active_mol_type, active_mol_i)), &state.ui.selection,);
-        //     }
-        //
-        //     if ui.button(RichText::new("⟳").color(color_rotate))
-        //         .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll.")
-        //         .clicked() {
-        //
-        //         set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw_pep, redraw_lig,redraw_na, redraw_lipid,&mut false,
-        //                   ManipMode::Rotate((active_mol_type, active_mol_i)), &state.ui.selection,);
-        //     }
-        // }
 
-        // if let Some(mol) = &mut state.active_mol_mut() {
-        //     if ui
-        //         .button(RichText::new("Move to cam").color(COLOR_HIGHLIGHT))
-        //         .on_hover_text(
-        //             "Move the molecule to be a short distance in front of the camera.",
-        //         )
-        //         .clicked()
-        //     {
-        //         move_mol_to_cam(mol.common_mut(), &scene.camera);
-        //
-        //         match active_mol_type {
-        //             MolType::Ligand => *redraw_lig = true,
-        //             MolType::NucleicAcid => *redraw_na = true,
-        //             MolType::Lipid => *redraw_lipid = true,
-        //             _ => unimplemented!()
-        //         }
-        //     }
-        //
-        //     if ui
-        //         .button(RichText::new("Reset pos").color(COLOR_HIGHLIGHT))
-        //         .on_hover_text(
-        //             "Move the molecule to its absolute coordinates, e.g. as defined in \
-        //                 its source mmCIF, Mol2 or SDF file.",
-        //         )
-        //         .clicked()
-        //     {
-        //         mol.common_mut().reset_posits();
-        //
-        //         // todo: Use the inplace move.
-        //         match active_mol_type {
-        //             MolType::Ligand => *redraw_lig = true,
-        //             MolType::NucleicAcid => *redraw_na = true,
-        //             MolType::Lipid => *redraw_lipid = true,
-        //             _ => unimplemented!()
-        //         }
-        //     }
-        //
-        //     if active_mol_type == MolType::Ligand {
-        //         if ui
-        //             .button(RichText::new("Similar mols").color(COLOR_HIGHLIGHT))
-        //             .on_hover_text(
-        //                 "Using PubChem, find, download, and open similar molecules to this one.",
-        //             )
-        //             .clicked()
-        //         {
-        //             let mol = &state.ligands[active_mol_i];
-        //
-        //             // todo: This needs to be in its own thread; long-running blockign call.
-        //
-        //             // todo: Support more than CID. Requires a mode to rcsb api.
-        //             for ident in &mol.idents {
-        //                 if let MolIdent::PubChem(cid) = ident {
-        //                     // todo: This doesn't show because it doesn't get a chance to render prior to the block.
-        //                     handle_success(&mut state.ui, "Searching for similar molecules...".to_string());
-        //                     match pubchem::find_similar_mols(*cid) {
-        //                         Ok(cids) => {
-        //                             // todo: This is temp
-        //                             println!("Similar mols to {cid}: {:?}", cids);
-        //                             let max_results = 20;
-        //                             let cids_str = cids
-        //                                 .iter()
-        //                                 .take(max_results)
-        //                                 .map(|x| x.to_string())
-        //                                 .collect::<Vec<_>>()
-        //                                 .join(", ");
-        //
-        //                             handle_success(&mut state.ui, format!("Similar PubChem CIDs: {cids_str}..."));
-        //                         }
-        //
-        //                         Err(e) => {
-        //                             handle_err(&mut state.ui, "Problem finding similar molecules on PubChem".to_owned());
-        //                         }
-        //                     }
-        //                     break;
-        //                 }
-        //             }
-        //         }
-        //
-        //         if ui.button("Metadata")
-        //             .on_hover_text("Display metadata for this molecule")
-        //             .clicked() {
-        //             if let Some((mol_type, _)) = state.ui.popup.metadata && mol_type == MolType::Ligand {
-        //                 state.ui.popup.metadata = None;
-        //             } else {
-        //                 state.ui.popup.metadata = Some((MolType::Ligand, active_mol_i))
-        //             }
-        //         }
-        //     }
-        // }
+        if active_mol_type == MolType::Ligand {
+            if ui
+                .button(RichText::new("Similar mols").color(COLOR_HIGHLIGHT))
+                .on_hover_text(
+                    "Using PubChem, find, download, and open similar molecules to this one.",
+                )
+                .clicked()
+            {
+                let mol = &state.ligands[active_mol_i];
+
+                // todo: This needs to be in its own thread; long-running blockign call.
+
+                // todo: Support more than CID. Requires a mode to rcsb api.
+                for ident in &mol.idents {
+                    println!("IDEN: {:?}", ident); // todo temp
+                    if let MolIdent::PubChem(cid) = ident {
+                        // todo: This doesn't show because it doesn't get a chance to render prior to the block.
+                        handle_success(
+                            &mut state.ui,
+                            "Searching for similar molecules...".to_string(),
+                        );
+                        match pubchem::find_similar_mols(*cid) {
+                            Ok(cids) => {
+                                // todo: This is temp
+                                println!("Similar mols to {cid}: {:?}", cids);
+                                let max_results = 20;
+                                let cids_str = cids
+                                    .iter()
+                                    .take(max_results)
+                                    .map(|x| x.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+
+                                handle_success(
+                                    &mut state.ui,
+                                    format!("Similar PubChem CIDs: {cids_str}..."),
+                                );
+                            }
+
+                            Err(e) => {
+                                handle_err(
+                                    &mut state.ui,
+                                    "Problem finding similar molecules on PubChem".to_owned(),
+                                );
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if ui
+                .button("Metadata")
+                .on_hover_text("Display metadata for this molecule")
+                .clicked()
+            {
+                if let Some((mol_type, _)) = state.ui.popup.metadata
+                    && mol_type == MolType::Ligand
+                {
+                    state.ui.popup.metadata = None;
+                } else {
+                    state.ui.popup.metadata = Some((MolType::Ligand, active_mol_i))
+                }
+            }
+        }
+
+        let mut update_cid = None; // to avoid a borrow error.
 
         if let Some(mol) = state.active_mol() {
             match mol {
@@ -857,6 +798,17 @@ pub(in crate::ui) fn display_mol_data(
                         }
                     }
 
+                    // If we have a PDBE ID, but no PubChem ID, try to find one using
+                    // an intermediate SMILES representation, upon clicking the button.
+                    if pubchem_cid.is_none() {
+                        if ui.button("PubChem").clicked() {
+                            if let Ok(cid) = pubchem::get_cid_from_pdbe_id(&mol.common().ident) {
+                                update_cid = Some(cid);
+                                pubchem::open_overview(cid);
+                            }
+                        }
+                    }
+
                     if let Some(cid) = pubchem_cid {
                         if ui.button("Find assoc structs").clicked() {
                             // todo: Don't block.
@@ -887,6 +839,13 @@ pub(in crate::ui) fn display_mol_data(
             }
         }
 
+        if let Some(mol) = state.active_mol_mut() {
+            if let Some(cid) = update_cid
+                && let MolGenericRefMut::Ligand(m) = mol
+            {
+                m.idents.push(MolIdent::PubChem(cid));
+            }
+        }
         ui.add_space(COL_SPACING);
     });
 }

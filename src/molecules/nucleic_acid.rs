@@ -252,7 +252,11 @@ fn create_paired_ds_segment(
     // --- 3. Align Template B ---
     let nt_b = nt_a.complement();
     // Convert template atoms to a temporary Vec<Atom> for alignment calc
-    let atoms_b_raw: Vec<Atom> = template_b.atoms.iter().map(|a| a.try_into().unwrap()).collect();
+    let atoms_b_raw: Vec<Atom> = template_b
+        .atoms
+        .iter()
+        .map(|a| a.try_into().unwrap())
+        .collect();
 
     let frame_b_local = BaseFrame::from_atoms(&atoms_b_raw, nt_b, template_b)
         .ok_or_else(|| io::Error::other("Could not extract BaseFrame from Template B"))?;
@@ -281,8 +285,12 @@ fn create_paired_ds_segment(
         atom.posit = trans + rot.rotate_vec(atom.posit);
         atom.serial_number += sn_offset;
 
-        if atom_tmpl.serial_number == head_local_sn { b_head_global_sn = atom.serial_number; }
-        if atom_tmpl.serial_number == tail_local_sn { b_tail_global_sn = atom.serial_number; }
+        if atom_tmpl.serial_number == head_local_sn {
+            b_head_global_sn = atom.serial_number;
+        }
+        if atom_tmpl.serial_number == tail_local_sn {
+            b_tail_global_sn = atom.serial_number;
+        }
 
         local_to_global_sn.insert(atom_tmpl.serial_number, atom.serial_number);
         res_atom_sns.push(atom.serial_number);
@@ -312,7 +320,13 @@ fn create_paired_ds_segment(
         end: ResidueEnd::Internal,
     };
 
-    Ok((atoms_out, bonds_out, res, b_head_global_sn, b_tail_global_sn))
+    Ok((
+        atoms_out,
+        bonds_out,
+        res,
+        b_head_global_sn,
+        b_tail_global_sn,
+    ))
 }
 
 /// Build a single or double strand of DNA or RNA. If double-stranded, use the
@@ -336,7 +350,7 @@ fn build_strands(
 
     // Trackers for Strand A backbone
     let mut prev_tail_sn: Option<u32> = None; // For A-strand P-O3' bond
-    let mut prev_o3p = posit_5p;              // For A-strand positioning
+    let mut prev_o3p = posit_5p; // For A-strand positioning
 
     // Trackers for Strand B backbone (NEW)
     let mut prev_b_head_sn: Option<u32> = None; // For B-strand O3'-P bond
@@ -379,7 +393,13 @@ fn build_strands(
             atom_sns: Vec::new(),
             atoms: Vec::new(),
             dihedral: None,
-            end: if is_first { ResidueEnd::NTerminus } else if is_last { ResidueEnd::CTerminus } else { ResidueEnd::Internal },
+            end: if is_first {
+                ResidueEnd::NTerminus
+            } else if is_last {
+                ResidueEnd::CTerminus
+            } else {
+                ResidueEnd::Internal
+            },
         };
 
         let mut local_to_global_sn = HashMap::new();
@@ -424,17 +444,17 @@ fn build_strands(
             atoms_out.push(atom);
         }
 
-
-
-
         // --- BASE STACKING: twist residue i about its own base normal (through C1') ---
         // This makes stacking geometry driven by bases, not by backbone heuristics.
 
         let segment_start = atoms_out.len() - template.atoms.len();
         let segment_end = atoms_out.len();
 
-        let frame_a_now = BaseFrame::from_atoms(&atoms_out[segment_start..segment_end], nt, template)
-            .ok_or_else(|| io::Error::other("Could not extract BaseFrame from Strand A (post-place)"))?;
+        let frame_a_now =
+            BaseFrame::from_atoms(&atoms_out[segment_start..segment_end], nt, template)
+                .ok_or_else(|| {
+                    io::Error::other("Could not extract BaseFrame from Strand A (post-place)")
+                })?;
 
         if stack_ref_wc_dir.is_none() {
             stack_ref_wc_dir = Some(frame_a_now.wc_dir);
@@ -442,7 +462,8 @@ fn build_strands(
 
         let desired_wc = {
             let ref_wc = stack_ref_wc_dir.unwrap();
-            let q = Quaternion::from_axis_angle(frame_a_now.normal, helix_phase + (i as f64) * TWIST);
+            let q =
+                Quaternion::from_axis_angle(frame_a_now.normal, helix_phase + (i as f64) * TWIST);
             q.rotate_vec(ref_wc)
         };
 
@@ -464,25 +485,17 @@ fn build_strands(
             }
         }
 
-
-
-
-
         // Push the Residue for Strand A
         res_out.push(res);
 
-
         // --- STEP 2: Create Strand B Segment (Dependent on Step 1) ---
         if strands == Strands::Double {
-            let template_complementary = find_template(nt.complement(), na_type, is_first, is_last, templates)?;
+            let template_complementary =
+                find_template(nt.complement(), na_type, is_first, is_last, templates)?;
 
             // 2a. Generate the geometry and atoms for the complementary residue
-            let (atoms_comp, mut bonds_comp, mut res_comp, b_head_sn, b_tail_sn) = create_paired_ds_segment(
-                &atoms_segment,
-                nt,
-                template,
-                &template_complementary
-            )?;
+            let (atoms_comp, mut bonds_comp, mut res_comp, b_head_sn, b_tail_sn) =
+                create_paired_ds_segment(&atoms_segment, nt, template, &template_complementary)?;
 
             let current_comp_start_idx = atoms_out.len();
             let sn_offset = 20000; // Must match the offset in create_paired_ds_segment
@@ -500,9 +513,11 @@ fn build_strands(
                 let orig_sn_0 = bond.atom_0_sn - sn_offset;
                 let orig_sn_1 = bond.atom_1_sn - sn_offset;
 
-                let local_idx_0 = template_complementary.find_atom_i_by_sn(orig_sn_0)
+                let local_idx_0 = template_complementary
+                    .find_atom_i_by_sn(orig_sn_0)
                     .ok_or_else(|| io::Error::other("SN not found in template B"))?;
-                let local_idx_1 = template_complementary.find_atom_i_by_sn(orig_sn_1)
+                let local_idx_1 = template_complementary
+                    .find_atom_i_by_sn(orig_sn_1)
                     .ok_or_else(|| io::Error::other("SN not found in template B"))?;
 
                 bond.atom_0 = current_comp_start_idx + local_idx_0;
@@ -512,17 +527,25 @@ fn build_strands(
 
             // 2d. Fix Residue indicRes and push
             res_comp.serial_number = (seq.len() * 2 - i) as u32;
-            res_comp.atoms = res_comp.atoms.iter().map(|x| x + current_comp_start_idx).collect();
+            res_comp.atoms = res_comp
+                .atoms
+                .iter()
+                .map(|x| x + current_comp_start_idx)
+                .collect();
             res_out.push(res_comp);
 
             // 2e. Fix backbone bond for B (antiparallel: 3' -> 5')
             if let Some(prev_head) = prev_b_head_sn {
                 let orig_tail_sn = b_tail_sn - sn_offset;
-                let tail_local_idx = template_complementary.find_atom_i_by_sn(orig_tail_sn).unwrap();
+                let tail_local_idx = template_complementary
+                    .find_atom_i_by_sn(orig_tail_sn)
+                    .unwrap();
                 let idx_tail = current_comp_start_idx + tail_local_idx;
 
                 // Find the previous head in the global list
-                let idx_prev_head = atoms_out.iter().position(|a| a.serial_number == prev_head)
+                let idx_prev_head = atoms_out
+                    .iter()
+                    .position(|a| a.serial_number == prev_head)
                     .ok_or_else(|| io::Error::other("Previous B-head not found"))?;
 
                 bonds_out.push(Bond {
@@ -555,9 +578,9 @@ fn build_strands(
 
         // 3b. Inter-residue backbone bond (Prev O3' -> Curr P)
         if !is_first {
-            let cur_head_sn = *local_to_global_sn.get(
-                &template.atoms[head_i].serial_number
-            ).unwrap();
+            let cur_head_sn = *local_to_global_sn
+                .get(&template.atoms[head_i].serial_number)
+                .unwrap();
 
             let prev_sn = prev_tail_sn.ok_or_else(|| io::Error::other("Missing prev tail sn"))?;
 
@@ -574,7 +597,8 @@ fn build_strands(
 
         if !is_last {
             prev_o3p = tail_global_pos.ok_or_else(|| io::Error::other("Tail atom not captured"))?;
-            prev_tail_sn = Some(tail_global_sn.ok_or_else(|| io::Error::other("Tail sn not captured"))?);
+            prev_tail_sn =
+                Some(tail_global_sn.ok_or_else(|| io::Error::other("Tail sn not captured"))?);
         }
     }
 
@@ -614,7 +638,7 @@ impl MoleculeNucleicAcid {
                 NucleicAcidType::Dna => "dna",
                 NucleicAcidType::Rna => "rna",
             }
-                .to_string(),
+            .to_string(),
         );
         metadata.insert(
             "strands".to_string(),
@@ -622,7 +646,7 @@ impl MoleculeNucleicAcid {
                 Strands::Single => "single",
                 Strands::Double => "double",
             }
-                .to_string(),
+            .to_string(),
         );
 
         let atom_posits = atoms.iter().map(|a| a.posit).collect();
@@ -680,7 +704,6 @@ impl MoleculeNucleicAcid {
     }
 }
 
-
 impl MolGenericTrait for MoleculeNucleicAcid {
     fn common(&self) -> &MoleculeCommon {
         &self.common
@@ -699,10 +722,9 @@ impl MolGenericTrait for MoleculeNucleicAcid {
     }
 }
 
-
 /// Returns (DNA, RNA)
 pub fn load_na_templates()
-    -> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
+-> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
     let templates_dna = load_templates(OL24_LIB)?;
     let templates_rna = load_templates(RNA_LIB)?;
 
@@ -713,10 +735,10 @@ pub fn load_na_templates()
 
 #[derive(Clone, Copy, Debug)]
 struct BaseFrame {
-    c1_prime: Vec3, // sugar anchor
-    n_glyco: Vec3,  // N9 (purine) or N1 (pyrimidine)
-    normal: Vec3,   // base-plane normal (unit)
-    wc_dir: Vec3,   // in-plane direction pointing toward Watson–Crick edge (unit)
+    c1_prime: Vec3,  // sugar anchor
+    n_glyco: Vec3,   // N9 (purine) or N1 (pyrimidine)
+    normal: Vec3,    // base-plane normal (unit)
+    wc_dir: Vec3,    // in-plane direction pointing toward Watson–Crick edge (unit)
     glyco_dir: Vec3, // in-plane projection of (C1' -> N) (unit)
 }
 
@@ -733,13 +755,13 @@ impl BaseFrame {
         };
 
         let c1_idx = template.find_atom_i_by_name("C1'")?;
-        let n_idx  = template.find_atom_i_by_name(n_name)?;
+        let n_idx = template.find_atom_i_by_name(n_name)?;
         let p0_idx = template.find_atom_i_by_name(plane_0)?;
         let p1_idx = template.find_atom_i_by_name(plane_1)?;
         let wc_idx = template.find_atom_i_by_name(wc_name)?;
 
         let c1_pos = atoms.get(c1_idx)?.posit;
-        let n_pos  = atoms.get(n_idx)?.posit;
+        let n_pos = atoms.get(n_idx)?.posit;
         let p0_pos = atoms.get(p0_idx)?.posit;
         let p1_pos = atoms.get(p1_idx)?.posit;
         let wc_pos = atoms.get(wc_idx)?.posit;
@@ -786,7 +808,7 @@ fn signed_angle_around_axis(axis_unit: Vec3, from: Vec3, to: Vec3) -> f64 {
     let axis = axis_unit.to_normalized();
 
     let mut f = from - axis * from.dot(axis);
-    let mut t = to   - axis * to.dot(axis);
+    let mut t = to - axis * to.dot(axis);
 
     let f_norm = f.magnitude();
     let t_norm = t.magnitude();
@@ -801,8 +823,6 @@ fn signed_angle_around_axis(axis_unit: Vec3, from: Vec3, to: Vec3) -> f64 {
     let cos = f.dot(t) as f64;
     sin.atan2(cos)
 }
-
-
 
 /// Calculate rigid transform mapping `src` base frame to `dst`, prioritizing:
 /// 1) base-plane normal

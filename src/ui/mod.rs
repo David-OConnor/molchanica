@@ -1241,7 +1241,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             } else if state.ui.db_input.len() >= 5 && !inp_lower.starts_with("pdb_")&& !inp_lower.starts_with("db") {
                 let button_clicked = ui.button("Search PubChem").clicked();
                 if button_clicked || enter_pressed {
-                    let cids = find_cids_from_search(&state.ui.db_input.trim());
+                    let cids = find_cids_from_search(&state.ui.db_input.trim(), false);
 
                     match cids {
                         Ok(c) => {
@@ -1305,7 +1305,8 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         ui.horizontal(|ui| {
             // Show the picker, at least.
             if !state.ligands.is_empty() || !state.lipids.is_empty() || !state.nucleic_acids.is_empty() {
-                display_mol_data(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut redraw_na, &mut redraw_lipid, &mut close_active_mol, &mut engine_updates);
+                // display_mol_data(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut redraw_na, &mut redraw_lipid, &mut close_active_mol, &mut engine_updates);
+                display_mol_data(state, ui);
             }
 
             if ui.button(RichText::new("Mol editor").color(COLOR_HIGHLIGHT)).clicked() {

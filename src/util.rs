@@ -30,7 +30,7 @@ use crate::{
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, MoGenericRefMut, MolGenericRef, MolType, MoleculeGeneric, MoleculePeptide,
+        Atom, Bond, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, MoleculePeptide,
         Residue, aa_color, small::MoleculeSmall,
     },
     prefs::OpenType,
@@ -948,7 +948,7 @@ pub fn make_egui_color(color: Color) -> Color32 {
 ///
 /// Return a center suitable for docking.
 pub fn move_mol_to_res(
-    mol: &mut MoGenericRefMut,
+    mol: &mut MolGenericRefMut,
     peptide: &MoleculePeptide,
     res: &Residue,
 ) -> Vec3 {
