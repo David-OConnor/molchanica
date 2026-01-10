@@ -434,6 +434,7 @@ struct PopupState {
     recent_files: bool,
     metadata: Option<(MolType, usize)>,
     alignment: bool,
+    alignment_screening: bool,
 }
 
 struct StateUiMd {

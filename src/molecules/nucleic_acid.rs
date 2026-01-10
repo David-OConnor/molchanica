@@ -35,6 +35,9 @@ const HELIX_TWIST: f64 = TAU / 10.0; // 36°
 // const HELIX_RISE: f64 = 3.4; // Å per base (visual B-DNA-ish)
 const HELIX_RADIUS: f64 = 10.0; // Å (tweak to taste)
 
+const RISE: f64 = 3.4;
+const TWIST: f64 = 36.0_f64.to_radians();
+
 #[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)]
 pub enum NucleicAcidType {
     #[default]
@@ -161,6 +164,40 @@ fn find_template(
     }
 }
 
+// /// Rotate all atoms in a single residue so that its bases align to a plane, and are located
+// /// at the correct spacing and relative positions.
+// fn align_bases(atoms: &mut [Atom], nt: Nucleotide, tgt_base_norm: Vec3, template: &TemplateData) {
+//     // todo: Delegate this to a fn as required.
+//     let (base_n_name, plane_0_name, plane_1_name) = match nt {
+//         A | G => ("N9", "C8", "C4"),
+//         C | T => ("N1", "C6", "C2"),
+//     };
+//
+//     let base_n = template.find_atom_by_name(base_n_name).unwrap().posit;
+//     let plane_0 = template.find_atom_by_name(plane_0_name).unwrap().posit;
+//     let plane_1 = template.find_atom_by_name(plane_1_name).unwrap().posit;
+//
+//     // These are arbitrary; choose any bonds in the base; they share the same plane.
+//     let base_rot_axis = {
+//         let base_anchor = template.find_atom_by_name("C1'").unwrap().posit;
+//         (base_anchor - base_n).to_normalized()
+//     };
+//
+//     let base_plane_norm = {
+//         // todo: QC sign/direction on this
+//         let plane_bond_0 = (base_n - plane_0).to_normalized();
+//         let plane_bond_1 = (base_n - plane_1).to_normalized();
+//         (plane_bond_0.cross(plane_bond_1)).to_normalized()
+//     };
+//
+//     // todo: QC dir
+//     // This is the shortest rotation to align the bases, but it's not along the bond in question...
+//     let norm_rot = Quaternion::from_unit_vecs(tgt_base_norm, base_plane_norm);
+//
+//     for atom in atoms {
+//     }
+// }
+
 /// Create the complementary residue for a double strand.
 ///
 /// This works by:
@@ -183,44 +220,39 @@ fn create_paired_ds_segment(
     let frame_a = BaseFrame::from_atoms(atoms_a, nt_a, template_a)
         .ok_or_else(|| io::Error::other("Could not extract BaseFrame from Strand A"))?;
 
-    // --- 2. Construct Target Frame for Strand B ---
-    // The vector from C1' to N defines the direction the base "points"
-    let vec_c1_n_a = (frame_a.n_glyco - frame_a.c1_prime).to_normalized();
+    // --- 2. Construct Target Frame for Strand B (BASE-FIRST) ---
 
-    // B-DNA Geometry Constants
+    // B-DNA-ish constants (still idealized)
     let dist_c1_c1 = 10.85;
-    let dyad_angle = 54.0_f64.to_radians();
     let bond_len_c1_n = 1.47;
 
-    // A. Find the vector pointing across the helix to the other C1'
-    // We rotate the glycosidic bond by the dyad angle
-    let rot_to_dyad = Quaternion::from_axis_angle(frame_a.normal, dyad_angle);
-    let dir_c1a_to_c1b = rot_to_dyad.rotate_vec(vec_c1_n_a);
-    let target_c1_b = frame_a.c1_prime + (dir_c1a_to_c1b * dist_c1_c1);
+    // Across-pair direction is approximately opposite of the sugar-attachment direction in-plane.
+    // (C1'->N points "inward"; across to the other sugar goes outward.)
+    let dir_c1a_to_c1b = (-frame_a.glyco_dir).to_normalized();
+    let target_c1_b = frame_a.c1_prime + dir_c1a_to_c1b * dist_c1_c1;
 
-    // B. Flip the Normal for the antiparallel strand
-    let target_normal_b = -frame_a.normal;
+    // Keep the base planes coplanar for realistic stacking.
+    let target_normal_b = frame_a.normal;
 
-    // C. Rotate the glycosidic bond 180 degrees around the normal
-    // This makes the base face Strand A instead of pointing the same way
-    let rotate_180 = Quaternion::from_axis_angle(frame_a.normal, std::f64::consts::PI);
-    let target_vec_c1_n_b = rotate_180.rotate_vec(vec_c1_n_a);
-    let target_n_b = target_c1_b + (target_vec_c1_n_b * bond_len_c1_n);
+    // Complement should present the opposite Watson–Crick edge direction so the WC edges meet.
+    let target_wc_dir_b = (-frame_a.wc_dir).to_normalized();
+
+    // Glycosidic direction for B should point from C1'_b toward the base interior (toward A)
+    let target_glyco_dir_b = (-dir_c1a_to_c1b).to_normalized();
+    let target_n_b = target_c1_b + target_glyco_dir_b * bond_len_c1_n;
 
     let target_frame_b = BaseFrame {
         c1_prime: target_c1_b,
         n_glyco: target_n_b,
         normal: target_normal_b,
+        wc_dir: target_wc_dir_b,
+        glyco_dir: target_glyco_dir_b,
     };
 
     // --- 3. Align Template B ---
     let nt_b = nt_a.complement();
     // Convert template atoms to a temporary Vec<Atom> for alignment calc
-    let atoms_b_raw: Vec<Atom> = template_b
-        .atoms
-        .iter()
-        .map(|a| a.try_into().unwrap())
-        .collect();
+    let atoms_b_raw: Vec<Atom> = template_b.atoms.iter().map(|a| a.try_into().unwrap()).collect();
 
     let frame_b_local = BaseFrame::from_atoms(&atoms_b_raw, nt_b, template_b)
         .ok_or_else(|| io::Error::other("Could not extract BaseFrame from Template B"))?;
@@ -249,12 +281,8 @@ fn create_paired_ds_segment(
         atom.posit = trans + rot.rotate_vec(atom.posit);
         atom.serial_number += sn_offset;
 
-        if atom_tmpl.serial_number == head_local_sn {
-            b_head_global_sn = atom.serial_number;
-        }
-        if atom_tmpl.serial_number == tail_local_sn {
-            b_tail_global_sn = atom.serial_number;
-        }
+        if atom_tmpl.serial_number == head_local_sn { b_head_global_sn = atom.serial_number; }
+        if atom_tmpl.serial_number == tail_local_sn { b_tail_global_sn = atom.serial_number; }
 
         local_to_global_sn.insert(atom_tmpl.serial_number, atom.serial_number);
         res_atom_sns.push(atom.serial_number);
@@ -284,13 +312,7 @@ fn create_paired_ds_segment(
         end: ResidueEnd::Internal,
     };
 
-    Ok((
-        atoms_out,
-        bonds_out,
-        res,
-        b_head_global_sn,
-        b_tail_global_sn,
-    ))
+    Ok((atoms_out, bonds_out, res, b_head_global_sn, b_tail_global_sn))
 }
 
 /// Build a single or double strand of DNA or RNA. If double-stranded, use the
@@ -310,9 +332,11 @@ fn build_strands(
 
     let mut res_i: usize = 0;
 
+    let mut stack_ref_wc_dir: Option<Vec3> = None;
+
     // Trackers for Strand A backbone
     let mut prev_tail_sn: Option<u32> = None; // For A-strand P-O3' bond
-    let mut prev_o3p = posit_5p; // For A-strand positioning
+    let mut prev_o3p = posit_5p;              // For A-strand positioning
 
     // Trackers for Strand B backbone (NEW)
     let mut prev_b_head_sn: Option<u32> = None; // For B-strand O3'-P bond
@@ -355,13 +379,7 @@ fn build_strands(
             atom_sns: Vec::new(),
             atoms: Vec::new(),
             dihedral: None,
-            end: if is_first {
-                ResidueEnd::NTerminus
-            } else if is_last {
-                ResidueEnd::CTerminus
-            } else {
-                ResidueEnd::Internal
-            },
+            end: if is_first { ResidueEnd::NTerminus } else if is_last { ResidueEnd::CTerminus } else { ResidueEnd::Internal },
         };
 
         let mut local_to_global_sn = HashMap::new();
@@ -406,17 +424,65 @@ fn build_strands(
             atoms_out.push(atom);
         }
 
+
+
+
+        // --- BASE STACKING: twist residue i about its own base normal (through C1') ---
+        // This makes stacking geometry driven by bases, not by backbone heuristics.
+
+        let segment_start = atoms_out.len() - template.atoms.len();
+        let segment_end = atoms_out.len();
+
+        let frame_a_now = BaseFrame::from_atoms(&atoms_out[segment_start..segment_end], nt, template)
+            .ok_or_else(|| io::Error::other("Could not extract BaseFrame from Strand A (post-place)"))?;
+
+        if stack_ref_wc_dir.is_none() {
+            stack_ref_wc_dir = Some(frame_a_now.wc_dir);
+        }
+
+        let desired_wc = {
+            let ref_wc = stack_ref_wc_dir.unwrap();
+            let q = Quaternion::from_axis_angle(frame_a_now.normal, helix_phase + (i as f64) * TWIST);
+            q.rotate_vec(ref_wc)
+        };
+
+        let angle = signed_angle_around_axis(frame_a_now.normal, frame_a_now.wc_dir, desired_wc);
+        let rot_stack = Quaternion::from_axis_angle(frame_a_now.normal, angle);
+
+        for atom in atoms_out[segment_start..segment_end].iter_mut() {
+            let rel = atom.posit - frame_a_now.c1_prime;
+            atom.posit = frame_a_now.c1_prime + rot_stack.rotate_vec(rel);
+        }
+
+        // Refresh atoms_segment so Strand B pairing sees the *stacked* base geometry.
+        atoms_segment = atoms_out[segment_start..segment_end].to_vec();
+
+        // If you captured tail position earlier, recompute from the global atom SN after rotation.
+        if let Some(sn) = tail_global_sn {
+            if let Some(a) = atoms_out.iter().find(|a| a.serial_number == sn) {
+                tail_global_pos = Some(a.posit);
+            }
+        }
+
+
+
+
+
         // Push the Residue for Strand A
         res_out.push(res);
 
+
         // --- STEP 2: Create Strand B Segment (Dependent on Step 1) ---
         if strands == Strands::Double {
-            let template_complementary =
-                find_template(nt.complement(), na_type, is_first, is_last, templates)?;
+            let template_complementary = find_template(nt.complement(), na_type, is_first, is_last, templates)?;
 
             // 2a. Generate the geometry and atoms for the complementary residue
-            let (atoms_comp, mut bonds_comp, mut res_comp, b_head_sn, b_tail_sn) =
-                create_paired_ds_segment(&atoms_segment, nt, template, &template_complementary)?;
+            let (atoms_comp, mut bonds_comp, mut res_comp, b_head_sn, b_tail_sn) = create_paired_ds_segment(
+                &atoms_segment,
+                nt,
+                template,
+                &template_complementary
+            )?;
 
             let current_comp_start_idx = atoms_out.len();
             let sn_offset = 20000; // Must match the offset in create_paired_ds_segment
@@ -434,11 +500,9 @@ fn build_strands(
                 let orig_sn_0 = bond.atom_0_sn - sn_offset;
                 let orig_sn_1 = bond.atom_1_sn - sn_offset;
 
-                let local_idx_0 = template_complementary
-                    .find_atom_i_by_sn(orig_sn_0)
+                let local_idx_0 = template_complementary.find_atom_i_by_sn(orig_sn_0)
                     .ok_or_else(|| io::Error::other("SN not found in template B"))?;
-                let local_idx_1 = template_complementary
-                    .find_atom_i_by_sn(orig_sn_1)
+                let local_idx_1 = template_complementary.find_atom_i_by_sn(orig_sn_1)
                     .ok_or_else(|| io::Error::other("SN not found in template B"))?;
 
                 bond.atom_0 = current_comp_start_idx + local_idx_0;
@@ -448,25 +512,17 @@ fn build_strands(
 
             // 2d. Fix Residue indicRes and push
             res_comp.serial_number = (seq.len() * 2 - i) as u32;
-            res_comp.atoms = res_comp
-                .atoms
-                .iter()
-                .map(|x| x + current_comp_start_idx)
-                .collect();
+            res_comp.atoms = res_comp.atoms.iter().map(|x| x + current_comp_start_idx).collect();
             res_out.push(res_comp);
 
             // 2e. Fix backbone bond for B (antiparallel: 3' -> 5')
             if let Some(prev_head) = prev_b_head_sn {
                 let orig_tail_sn = b_tail_sn - sn_offset;
-                let tail_local_idx = template_complementary
-                    .find_atom_i_by_sn(orig_tail_sn)
-                    .unwrap();
+                let tail_local_idx = template_complementary.find_atom_i_by_sn(orig_tail_sn).unwrap();
                 let idx_tail = current_comp_start_idx + tail_local_idx;
 
                 // Find the previous head in the global list
-                let idx_prev_head = atoms_out
-                    .iter()
-                    .position(|a| a.serial_number == prev_head)
+                let idx_prev_head = atoms_out.iter().position(|a| a.serial_number == prev_head)
                     .ok_or_else(|| io::Error::other("Previous B-head not found"))?;
 
                 bonds_out.push(Bond {
@@ -499,9 +555,9 @@ fn build_strands(
 
         // 3b. Inter-residue backbone bond (Prev O3' -> Curr P)
         if !is_first {
-            let cur_head_sn = *local_to_global_sn
-                .get(&template.atoms[head_i].serial_number)
-                .unwrap();
+            let cur_head_sn = *local_to_global_sn.get(
+                &template.atoms[head_i].serial_number
+            ).unwrap();
 
             let prev_sn = prev_tail_sn.ok_or_else(|| io::Error::other("Missing prev tail sn"))?;
 
@@ -518,8 +574,7 @@ fn build_strands(
 
         if !is_last {
             prev_o3p = tail_global_pos.ok_or_else(|| io::Error::other("Tail atom not captured"))?;
-            prev_tail_sn =
-                Some(tail_global_sn.ok_or_else(|| io::Error::other("Tail sn not captured"))?);
+            prev_tail_sn = Some(tail_global_sn.ok_or_else(|| io::Error::other("Tail sn not captured"))?);
         }
     }
 
@@ -559,7 +614,7 @@ impl MoleculeNucleicAcid {
                 NucleicAcidType::Dna => "dna",
                 NucleicAcidType::Rna => "rna",
             }
-            .to_string(),
+                .to_string(),
         );
         metadata.insert(
             "strands".to_string(),
@@ -567,7 +622,7 @@ impl MoleculeNucleicAcid {
                 Strands::Single => "single",
                 Strands::Double => "double",
             }
-            .to_string(),
+                .to_string(),
         );
 
         let atom_posits = atoms.iter().map(|a| a.posit).collect();
@@ -625,6 +680,7 @@ impl MoleculeNucleicAcid {
     }
 }
 
+
 impl MolGenericTrait for MoleculeNucleicAcid {
     fn common(&self) -> &MoleculeCommon {
         &self.common
@@ -643,9 +699,10 @@ impl MolGenericTrait for MoleculeNucleicAcid {
     }
 }
 
+
 /// Returns (DNA, RNA)
 pub fn load_na_templates()
--> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
+    -> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
     let templates_dna = load_templates(OL24_LIB)?;
     let templates_rna = load_templates(RNA_LIB)?;
 
@@ -654,70 +711,116 @@ pub fn load_na_templates()
 
 // ----- Helpers below for DS alignment. WIP
 
-/// A geometric frame describing a nucleotide base's position and orientation.
 #[derive(Clone, Copy, Debug)]
 struct BaseFrame {
-    c1_prime: Vec3, // The anchor on the sugar
-    n_glyco: Vec3,  // N9 (Purine) or N1 (Pyrimidine)
-    normal: Vec3,   // Vector perpendicular to the base plane
+    c1_prime: Vec3, // sugar anchor
+    n_glyco: Vec3,  // N9 (purine) or N1 (pyrimidine)
+    normal: Vec3,   // base-plane normal (unit)
+    wc_dir: Vec3,   // in-plane direction pointing toward Watson–Crick edge (unit)
+    glyco_dir: Vec3, // in-plane projection of (C1' -> N) (unit)
+}
+
+fn project_onto_plane(v: Vec3, n_unit: Vec3) -> Vec3 {
+    v - n_unit * v.dot(n_unit)
 }
 
 impl BaseFrame {
-    /// Extract the frame from a list of atoms (template or transformed).
     fn from_atoms(atoms: &[Atom], nt: Nucleotide, template: &TemplateData) -> Option<Self> {
-        // Map nucleotide type to atom names
-        let (n_name, plane_0, plane_1) = match nt {
-            A | G => ("N9", "C8", "C4"),
-            C | T => ("N1", "C6", "C2"),
+        let (n_name, plane_0, plane_1, wc_name) = match nt {
+            A | G => ("N9", "C8", "C4", "N1"),
+            C | T => ("N1", "C6", "C2", "N3"),
+            U => ("N1", "C6", "C2", "N3"),
         };
 
         let c1_idx = template.find_atom_i_by_name("C1'")?;
-        let n_idx = template.find_atom_i_by_name(n_name)?;
+        let n_idx  = template.find_atom_i_by_name(n_name)?;
         let p0_idx = template.find_atom_i_by_name(plane_0)?;
         let p1_idx = template.find_atom_i_by_name(plane_1)?;
+        let wc_idx = template.find_atom_i_by_name(wc_name)?;
 
         let c1_pos = atoms.get(c1_idx)?.posit;
-        let n_pos = atoms.get(n_idx)?.posit;
+        let n_pos  = atoms.get(n_idx)?.posit;
         let p0_pos = atoms.get(p0_idx)?.posit;
         let p1_pos = atoms.get(p1_idx)?.posit;
+        let wc_pos = atoms.get(wc_idx)?.posit;
 
-        // Calculate Normal using cross product of two vectors in the ring
+        // Base-plane normal (use two ring vectors anchored at glycosidic N)
         let v1 = (p0_pos - n_pos).to_normalized();
         let v2 = (p1_pos - n_pos).to_normalized();
-        let normal = v1.cross(v2).to_normalized();
+        let mut normal = v1.cross(v2).to_normalized();
+
+        // In-plane projected glycosidic direction (C1' -> N)
+        let glyco_raw = n_pos - c1_pos;
+        let mut glyco_dir = project_onto_plane(glyco_raw, normal);
+        if glyco_dir.magnitude_squared() < 1.0e-8 {
+            return None;
+        }
+        glyco_dir = glyco_dir.to_normalized();
+
+        // In-plane Watson–Crick edge direction (N -> WC atom)
+        let wc_raw = wc_pos - n_pos;
+        let mut wc_dir = project_onto_plane(wc_raw, normal);
+        if wc_dir.magnitude_squared() < 1.0e-8 {
+            // fallback: pick something in-plane orthogonal to glyco_dir
+            wc_dir = normal.cross(glyco_dir);
+        }
+        wc_dir = wc_dir.to_normalized();
+
+        // Make handedness consistent (prevents random 180° flips when templates differ)
+        if normal.dot(glyco_dir.cross(wc_dir)) < 0.0 {
+            normal = -normal;
+            wc_dir = -wc_dir;
+        }
 
         Some(Self {
             c1_prime: c1_pos,
             n_glyco: n_pos,
             normal,
+            wc_dir,
+            glyco_dir,
         })
     }
 }
 
-/// Calculate the rigid transformation to map `src` frame to `dst` frame.
-/// Returns (Rotation, Translation).
+fn signed_angle_around_axis(axis_unit: Vec3, from: Vec3, to: Vec3) -> f64 {
+    let axis = axis_unit.to_normalized();
+
+    let mut f = from - axis * from.dot(axis);
+    let mut t = to   - axis * to.dot(axis);
+
+    let f_norm = f.magnitude();
+    let t_norm = t.magnitude();
+    if f_norm < 1.0e-8 || t_norm < 1.0e-8 {
+        return 0.0;
+    }
+
+    f = f / f_norm;
+    t = t / t_norm;
+
+    let sin = axis.dot(f.cross(t)) as f64;
+    let cos = f.dot(t) as f64;
+    sin.atan2(cos)
+}
+
+
+
+/// Calculate rigid transform mapping `src` base frame to `dst`, prioritizing:
+/// 1) base-plane normal
+/// 2) Watson–Crick in-plane direction
+/// 3) anchor translation at C1'
 fn calculate_alignment(src: BaseFrame, dst: BaseFrame) -> (Quaternion, Vec3) {
-    // 1. Align the base plane normals
-    // This effectively flips the nucleotide "upside down" for the second strand
+    // 1) Align normals
     let rot_normal = Quaternion::from_unit_vecs(src.normal, dst.normal);
 
-    // 2. Align the "pointing" direction (C1' -> N)
-    let src_dir = (src.n_glyco - src.c1_prime).to_normalized();
-    let dst_dir = (dst.n_glyco - dst.c1_prime).to_normalized();
+    // 2) Rotate within the plane about the (already-aligned) normal to align WC edge direction
+    let src_wc_rot = rot_normal.rotate_vec(src.wc_dir);
+    let angle = signed_angle_around_axis(dst.normal, src_wc_rot, dst.wc_dir);
+    let rot_plane = Quaternion::from_axis_angle(dst.normal, angle);
 
-    // Rotate the source direction by our first rotation to see where it lands
-    let src_dir_rotated = rot_normal.rotate_vec(src_dir);
-
-    // Find the rotation around the NEW normal to align the pointing direction
-    let rot_plane = Quaternion::from_unit_vecs(src_dir_rotated, dst_dir);
-
-    // Combine them (order matters: normal alignment then plane alignment)
     let total_rot = rot_plane * rot_normal;
 
-    // 3. Translation
-    // Map the rotated C1' of the template exactly to the target C1'
-    let src_c1_rotated = total_rot.rotate_vec(src.c1_prime);
-    let translation = dst.c1_prime - src_c1_rotated;
+    // 3) Translate so rotated C1' lands exactly on target C1'
+    let translation = dst.c1_prime - total_rot.rotate_vec(src.c1_prime);
 
     (total_rot, translation)
 }

@@ -22,7 +22,7 @@ pub fn screen_by_alignment(
     mols_query: &[MoleculeSmall],
     score_thresh: f32,
     size_diff_thresh: f32,
-) -> Vec<usize> {
+) -> Vec<(usize, f32)> {
     // todo: You may need to load in chunks from disk if the set is large, but Mol2 and SDF files
     // todo are small, so maybe skip that for now.
 
@@ -48,10 +48,12 @@ pub fn screen_by_alignment(
         // Assume sorted by score already.
         if !init_alignments.is_empty() {
             if init_alignments[0].score <= score_thresh {
-                res.push(i);
+                res.push((i, init_alignments[0].score));
             }
         }
     }
+
+    res.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
     let elapsed = start.elapsed().as_millis();
     println!(

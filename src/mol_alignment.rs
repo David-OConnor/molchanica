@@ -18,7 +18,7 @@ use std::{
     f64::consts::TAU,
     time::Instant,
 };
-
+use std::path::PathBuf;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
 };
@@ -69,6 +69,9 @@ pub struct StateAlignment {
     pub mols_to_align: Vec<usize>,
     pub flexible_template: bool,
     pub results: Vec<AlignmentResult>,
+    pub results_screening: Vec<AlignmentResult>,
+    pub screening_path: Option<PathBuf>,
+    pub mols_passed_screening: Vec<MoleculeSmall>,
 }
 
 #[derive(Clone, Debug, Default)]

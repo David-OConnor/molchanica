@@ -63,24 +63,7 @@ pub fn update_file_dialogs(
     }
 
     if let Some(path) = &state.volatile.dialogs.screening.take_picked() {
-        // todo: Don't unwrap.
-
-        // todo: Don't block; launch a new thread.
-
-        // let path = Path::new("C:/Users/the_a/Desktop/bio_misc/amber_geostd/c");
-        if let Ok(mols) = mol_screening::load_mols(path) {
-            let template = mols[0].clone();
-            // todo: UI controls for these, along with path.
-            let score_thresh = 60.;
-            let size_diff_thresh = 0.4;
-            let alignment_result =
-                screen_by_alignment(&template, &mols, score_thresh, size_diff_thresh);
-        } else {
-            handle_err(
-                &mut state.ui,
-                format!("Failed to load molecules from {path:?}"),
-            );
-        }
+        state.volatile.alignment.screening_path = Some(path.to_owned());
     }
 
     Ok(())

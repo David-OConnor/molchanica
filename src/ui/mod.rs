@@ -24,10 +24,7 @@ use crate::{
     drawing::color_viridis,
     file_io::gemmi_path,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    mol_characterization::MolCharacterization,
     mol_editor::enter_edit_mode,
-    mol_screening,
-    mol_screening::screen_by_alignment,
     molecules::MolGenericRef,
     render::set_flashlight,
     ui::{
@@ -1331,7 +1328,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 .on_hover_text("Perform a fast small molecule alignment screening from all \
                 files in a selected folder").clicked() {
 
-                state.volatile.dialogs.screening.pick_directory();
+                state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
             }
         });
 
