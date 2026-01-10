@@ -95,6 +95,7 @@ use molecules::{
 };
 
 use crate::{
+    mol_alignment::StateAlignment,
     mol_editor::MolEditorState,
     orca::StateOrca,
     prefs::ToSave,
@@ -322,7 +323,7 @@ struct StateVolatile {
     /// Outer the protein index. Inner: A collection of points on the surface, sufficient to
     /// determine if a given atom is near the surface.
     protein_sfc_mesh_coarse: Vec<Vec<f32>>,
-    mols_to_align: Vec<usize>,
+    alignment: StateAlignment,
 }
 
 impl Default for StateVolatile {
@@ -351,7 +352,7 @@ impl Default for StateVolatile {
             orbit_center: None,
             orca_avail: Default::default(),
             protein_sfc_mesh_coarse: Default::default(),
-            mols_to_align: Default::default(),
+            alignment: Default::default(),
         }
     }
 }

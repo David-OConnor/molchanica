@@ -22,7 +22,6 @@ use std::{
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
 };
-use egui::Align;
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
@@ -60,13 +59,17 @@ use crate::{
     docking::Torsion,
     md::{build_dynamics, launch_md_energy_computation},
     mol_characterization::Ring,
-    molecules::{
-        Atom, Bond, common::MoleculeCommon, rotatable_bonds::find_downstream_atoms,
-        small::MoleculeSmall,
-    },
+    molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
     util::rotate_about_point,
 };
+
+#[derive(Clone, Debug, Default)]
+pub struct StateAlignment {
+    pub mols_to_align: Vec<usize>,
+    pub flexible_template: bool,
+    pub results: Vec<AlignmentResult>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct PoseAlignment {
@@ -143,7 +146,7 @@ pub struct AlignmentResult {
 }
 
 pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
-    let mta = &state.volatile.mols_to_align;
+    let mta = &state.volatile.alignment.mols_to_align;
 
     // todo: You must explicitly set which is the template.
     if mta.len() != 2 {
@@ -180,6 +183,8 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
         // [0] is the best score.
         state.ligands[mta[0]].common.atom_posits = alignments[0].posits_template.clone();
         state.ligands[mta[1]].common.atom_posits = alignments[0].posits_query.clone();
+
+        state.volatile.alignment.results = alignments;
 
         *redraw_lig = true;
     }
@@ -419,15 +424,25 @@ pub fn align(
         //     bond.atom_0,
         // );
 
-        for i_rot in 0..TEMPLATE_BOND_ROT_COUNT {
-            let rot_amt = rot_step * i_rot as f64;
+        let count = if state.volatile.alignment.flexible_template {
+            TEMPLATE_BOND_ROT_COUNT
+        } else {
+            1
+        };
 
+        for i_rot in 0..count {
+            // Note: Clone not required if not using the flexible template.
             let mut mol_template_this_pose = mol_template.clone().common;
-            mol_template_this_pose.rotate_around_bond(
-                bond_rot.bond_i,
-                rot_amt,
-                Some(downstream_t),
-            );
+
+            if state.volatile.alignment.flexible_template {
+                let rot_amt = rot_step * i_rot as f64;
+
+                mol_template_this_pose.rotate_around_bond(
+                    bond_rot.bond_i,
+                    rot_amt,
+                    Some(downstream_t),
+                );
+            }
 
             let cfg_md = MdConfig {
                 // A lower thermostat value is more aggressive. We want aggressive for this.
@@ -457,12 +472,7 @@ pub fn align(
                     false,
                 )?;
 
-                let score  = calc_score(
-                    mol_template,
-                    mol_query,
-                    &posits_t,
-                    &posits_q,
-                );
+                let score = calc_score(mol_template, mol_query, &posits_t, &posits_q);
 
                 // todo: Wrong; pass in the posits.
                 let volume = calc_volume(
@@ -476,14 +486,9 @@ pub fn align(
                 // let energy_t = launch_md_energy_computation(state, &mut HashSet::new());
                 let energy_q = md_this_align.snapshots.last().unwrap().energy_potential;
 
+                let avg_potential_e_template = energy_t / posits_t.len() as f32;
 
-                let avg_potential_e_template =
-                    energy_t / posits_t.len() as f32;
-
-
-                let avg_potential_e_query =
-                    energy_q/ posits_q.len() as f32;
-
+                let avg_potential_e_query = energy_q / posits_q.len() as f32;
 
                 res.push(AlignmentResult {
                     posits_template: posits_t,

@@ -161,79 +161,161 @@ fn find_template(
     }
 }
 
-// fn rot_z(v: Vec3, theta: f64) -> Vec3 {
-//     let rotator = Quaternion::from_axis_angle(Z_VEC, theta);
-//     rotator.rotate_vec(v)
-// }
+/// Create the complementary residue for a double strand.
+///
+/// This works by:
+/// 1. Calculating the geometry of the current strand's base (Strand A).
+/// 2. Constructing the theoretical position of the complementary base (Strand B)
+///    based on B-DNA parameters (C1'-C1' distance and dyad angles).
+/// 3. Aligning the raw template for Strand B to this target position.
+/// Create the complementary residue for a double strand.
+///
+/// This uses B-DNA dyad symmetry to:
+/// 1. Mirror the orientation of the base so it faces "inward".
+/// 2. Flip the normal so the backbone runs antiparallel and faces "outward".
+fn create_paired_ds_segment(
+    atoms_a: &[Atom],
+    nt_a: Nucleotide,
+    template_a: &TemplateData,
+    template_b: &TemplateData,
+) -> io::Result<(Vec<Atom>, Vec<Bond>, Residue, u32, u32)> {
+    // --- 1. Get Geometry of Strand A ---
+    let frame_a = BaseFrame::from_atoms(atoms_a, nt_a, template_a)
+        .ok_or_else(|| io::Error::other("Could not extract BaseFrame from Strand A"))?;
 
-/// Rotate all atoms in a single residue so that its bases align to an axis.
-fn align_bases(atoms: &mut [Atom], nt: Nucleotide, tgt_base_norm: Vec3, template: &TemplateData) {
-    // todo: Delegate this to a fn as required.
-    let (base_n_name, plane_0_name, plane_1_name) = match nt {
-        A | G => ("N9", "C8", "C4"),
-        C | T => ("N1", "C6", "C2"),
+    // --- 2. Construct Target Frame for Strand B ---
+    // The vector from C1' to N defines the direction the base "points"
+    let vec_c1_n_a = (frame_a.n_glyco - frame_a.c1_prime).to_normalized();
+
+    // B-DNA Geometry Constants
+    let dist_c1_c1 = 10.85;
+    let dyad_angle = 54.0_f64.to_radians();
+    let bond_len_c1_n = 1.47;
+
+    // A. Find the vector pointing across the helix to the other C1'
+    // We rotate the glycosidic bond by the dyad angle
+    let rot_to_dyad = Quaternion::from_axis_angle(frame_a.normal, dyad_angle);
+    let dir_c1a_to_c1b = rot_to_dyad.rotate_vec(vec_c1_n_a);
+    let target_c1_b = frame_a.c1_prime + (dir_c1a_to_c1b * dist_c1_c1);
+
+    // B. Flip the Normal for the antiparallel strand
+    let target_normal_b = -frame_a.normal;
+
+    // C. Rotate the glycosidic bond 180 degrees around the normal
+    // This makes the base face Strand A instead of pointing the same way
+    let rotate_180 = Quaternion::from_axis_angle(frame_a.normal, std::f64::consts::PI);
+    let target_vec_c1_n_b = rotate_180.rotate_vec(vec_c1_n_a);
+    let target_n_b = target_c1_b + (target_vec_c1_n_b * bond_len_c1_n);
+
+    let target_frame_b = BaseFrame {
+        c1_prime: target_c1_b,
+        n_glyco: target_n_b,
+        normal: target_normal_b,
     };
 
-    let base_n = template.find_atom_by_name(base_n_name).unwrap().posit;
-    let plane_0 = template.find_atom_by_name(plane_0_name).unwrap().posit;
-    let plane_1 = template.find_atom_by_name(plane_1_name).unwrap().posit;
+    // --- 3. Align Template B ---
+    let nt_b = nt_a.complement();
+    // Convert template atoms to a temporary Vec<Atom> for alignment calc
+    let atoms_b_raw: Vec<Atom> = template_b
+        .atoms
+        .iter()
+        .map(|a| a.try_into().unwrap())
+        .collect();
 
-    // These are arbitrary; choose any bonds in the base; they share the same plane.
-    let base_rot_axis = {
-        let base_anchor = template.find_atom_by_name("C1'").unwrap().posit;
-        (base_anchor - base_n).to_normalized()
-    };
+    let frame_b_local = BaseFrame::from_atoms(&atoms_b_raw, nt_b, template_b)
+        .ok_or_else(|| io::Error::other("Could not extract BaseFrame from Template B"))?;
 
-    let base_plane_norm = {
-        // todo: QC sign/direction on this
-        let plane_bond_0 = (base_n - plane_0).to_normalized();
-        let plane_bond_1 = (base_n - plane_1).to_normalized();
-        (plane_bond_0.cross(plane_bond_1)).to_normalized()
-    };
+    let (rot, trans) = calculate_alignment(frame_b_local, target_frame_b);
 
-    // todo: QC dir
-    // This is the shortest rotation to align the bases, but it's not along the bond in question...
-    let norm_rot = Quaternion::from_unit_vecs(tgt_base_norm, base_plane_norm);
+    // --- 4. Generate Output ---
+    let mut atoms_out = Vec::new();
+    let mut local_to_global_sn = HashMap::new();
+    let mut res_atom_sns = Vec::new();
+    let mut res_atom_indices = Vec::new();
+    let sn_offset = 20000; // Offset to distinguish Strand B from Strand A
 
-    for atom in atoms {
-        // atom.posit = rotate_about_axis(atom.posit, posit_head_global, rot_axis, twist_cum);
+    // Get Head (P) and Tail (O3') for backbone connectivity
+    let (head_local_idx, tail_local_idx) = template_b.attach_points()?;
+    let head_local_sn = template_b.atoms[head_local_idx.unwrap_or(0)].serial_number;
+    let tail_local_sn = template_b.atoms[tail_local_idx.unwrap_or(0)].serial_number;
+
+    let mut b_head_global_sn = 0;
+    let mut b_tail_global_sn = 0;
+
+    for (idx, atom_tmpl) in template_b.atoms.iter().enumerate() {
+        let mut atom: Atom = atom_tmpl.try_into().unwrap();
+
+        // Apply transformation: Rotate then Translate
+        atom.posit = trans + rot.rotate_vec(atom.posit);
+        atom.serial_number += sn_offset;
+
+        if atom_tmpl.serial_number == head_local_sn {
+            b_head_global_sn = atom.serial_number;
+        }
+        if atom_tmpl.serial_number == tail_local_sn {
+            b_tail_global_sn = atom.serial_number;
+        }
+
+        local_to_global_sn.insert(atom_tmpl.serial_number, atom.serial_number);
+        res_atom_sns.push(atom.serial_number);
+        res_atom_indices.push(idx);
+        atoms_out.push(atom);
     }
+
+    let mut bonds_out = Vec::new();
+    for bond_tmpl in &template_b.bonds {
+        let mut b = Bond {
+            atom_0: 0, // Resolved by caller using global indices
+            atom_1: 0,
+            atom_0_sn: *local_to_global_sn.get(&bond_tmpl.atom_0_sn).unwrap(),
+            atom_1_sn: *local_to_global_sn.get(&bond_tmpl.atom_1_sn).unwrap(),
+            bond_type: bond_tmpl.bond_type,
+            is_backbone: true,
+        };
+        bonds_out.push(b);
+    }
+
+    let res = Residue {
+        serial_number: 0, // Set by caller
+        res_type: ResidueType::Other(format!("Nucleotide: {}", nt_b)),
+        atom_sns: res_atom_sns,
+        atoms: res_atom_indices,
+        dihedral: None,
+        end: ResidueEnd::Internal,
+    };
+
+    Ok((
+        atoms_out,
+        bonds_out,
+        res,
+        b_head_global_sn,
+        b_tail_global_sn,
+    ))
 }
 
-fn build_single_strand(
+/// Build a single or double strand of DNA or RNA. If double-stranded, use the
+/// base alignment geometry to define the helix shape.
+fn build_strands(
     seq: &[Nucleotide],
     na_type: NucleicAcidType,
     posit_5p: Vec3,
     templates: &HashMap<String, TemplateData>,
+    strands: Strands,
     helix_phase: f64,
-    // helix_reverse: bool,
     strand_label: &str,
 ) -> io::Result<(Vec<Atom>, Vec<Bond>, Vec<Residue>)> {
     let mut atoms_out = Vec::new();
     let mut bonds_out = Vec::new();
     let mut res_out = Vec::new();
 
-    let mut atom_sn: u32 = 1;
     let mut res_i: usize = 0;
 
-    // Used for the bond between residues.
-    let mut prev_tail_sn: Option<u32> = None;
+    // Trackers for Strand A backbone
+    let mut prev_tail_sn: Option<u32> = None; // For A-strand P-O3' bond
+    let mut prev_o3p = posit_5p; // For A-strand positioning
 
-    // We use this for offsetting bond serial numbers.
-    let mut atom_count_current: u32 = 0;
-
-    // This is, except for at the 5' end, the previous O3' position.
-    let mut prev_o3p = posit_5p;
-
-    // We increment this, applying increasing (And wrapping) rotations for each
-    // nucleotide.
-    let mut twist_cum = helix_phase;
-
-    // let twist_per_nt = if helix_reverse {
-    //     -HELIX_TWIST
-    // } else {
-    //     HELIX_TWIST
-    // };
+    // Trackers for Strand B backbone (NEW)
+    let mut prev_b_head_sn: Option<u32> = None; // For B-strand O3'-P bond
 
     for (i, &nt) in seq.iter().enumerate() {
         let is_first = i == 0;
@@ -242,28 +324,18 @@ fn build_single_strand(
         let template = find_template(nt, na_type, is_first, is_last, templates)?;
         let (head_local_i, tail_local_i) = template.attach_points()?;
 
-        // P is the first atom in the template for non 5' variants; so for non-5', head_local_i is `Some`,
-        // and we use it. For 5' ones, we find the one with name "P", or equivalently, index 0.
+        // --- PREP: Calculate Global Position for Strand A Head ---
         let head_i = match head_local_i {
             Some(i) => i,
             None => template.find_atom_i_by_name("P").unwrap_or(0),
         };
 
-        let posit_head_local = template
-            .atoms
-            .get(head_i)
-            .ok_or_else(|| io::Error::other("Head attach index out of range"))?
-            .posit;
+        let posit_head_local = template.atoms[head_i].posit;
 
-        // We're about to overwrite this, but need it for rotation.
         let posit_head_global = if is_first {
             prev_o3p
         } else {
-            // Since we're attacking the central head atom to the tail oxygen of the previous
-            // residue, find what position this H should be, then subtract to position the P. (And other 3 Os)
-            // which are part of the res we're adding.
-
-            // todo: Unwrap is not ideal, but working for the templates we're using.
+            // Find tetrahedral position for Phosphate relative to previous O3'
             let o_0 = template.find_atom_by_name("OP1").unwrap().posit;
             let o_1 = template.find_atom_by_name("OP2").unwrap().posit;
             let o_2 = template.find_atom_by_name("O5'").unwrap().posit;
@@ -274,146 +346,181 @@ fn build_single_strand(
 
         let translation = posit_head_global - posit_head_local;
 
-        let end = if is_first {
-            ResidueEnd::NTerminus
-        } else if is_last {
-            ResidueEnd::CTerminus
-        } else {
-            ResidueEnd::Internal
-        };
+        // --- STEP 1: Create Strand A Segment (MOVED UP) ---
+        // We must do this FIRST so `atoms_segment` is ready for Strand B logic.
+
         let mut res = Residue {
             serial_number: res_i as u32 + 1,
             res_type: ResidueType::Other(format!("Nucleotide: {nt}")),
             atom_sns: Vec::new(),
             atoms: Vec::new(),
             dihedral: None,
-            end,
+            end: if is_first {
+                ResidueEnd::NTerminus
+            } else if is_last {
+                ResidueEnd::CTerminus
+            } else {
+                ResidueEnd::Internal
+            },
         };
 
-        // Translate atom positions, and convert from `AtomGeneric` to `Atom`.
         let mut local_to_global_sn = HashMap::new();
+        let mut atoms_segment = Vec::new(); // Important: Holds this residue's atoms for geometry calc
 
-        let rot_axis = if is_first {
-            Z_VEC
-        } else {
-            (posit_head_global - prev_o3p).to_normalized()
-        };
+        // Capture tail info for Strand A backbone logic later
+        let mut tail_global_pos: Option<Vec3> = None;
+        let mut tail_global_sn: Option<u32> = None;
 
-        // This is for rotation around the P-O3' bond.
+        // Identify the tail atom serial in the template to capture its global position
         let tail_template_sn = if !is_last {
-            let tail_i =
-                tail_local_i.ok_or_else(|| io::Error::other("Missing tail attach point"))?;
-            Some(template.atoms[tail_i].serial_number)
+            let t_i = tail_local_i.ok_or_else(|| io::Error::other("Missing tail attach point"))?;
+            Some(template.atoms[t_i].serial_number)
         } else {
             None
         };
 
-        let mut tail_global_pos: Option<Vec3> = None;
-        let mut tail_global_sn: Option<u32> = None;
-
-        let rotator = Quaternion::from_axis_angle(rot_axis, twist_cum);
-
         for atom_template in &template.atoms {
             let mut atom: Atom = atom_template.try_into().unwrap();
 
+            // 1. Assign Serial and Residue
             let new_sn = (atoms_out.len() as u32) + 1;
             atom.serial_number = new_sn;
             atom.residue = Some(res_i);
 
+            // 2. Position Atom
             atom.posit += translation;
+            // (Rotation logic would go here if you re-enable helix twist)
 
-            // We rotate all atoms in this template around the P - O3' bond.
-            // We also rotate on the first template, to take phase into account, e.g. for
-            // offsetting the whole helix, or for the other half.
-
-            // atom.posit = rotate_about_axis(atom.posit, posit_head_global, rot_axis, twist_cum);
-            atom.posit = posit_head_global + rotator.rotate_vec(atom.posit - posit_head_global);
-
+            // 3. Capture Tail Position (for next iteration of Strand A)
             if tail_template_sn == Some(atom_template.serial_number) {
                 tail_global_pos = Some(atom.posit);
                 tail_global_sn = Some(new_sn);
             }
 
+            // 4. Store locally and globally
             res.atom_sns.push(new_sn);
             res.atoms.push(new_sn as usize - 1);
-
             local_to_global_sn.insert(atom_template.serial_number, new_sn);
+
+            atoms_segment.push(atom.clone()); // <--- Crucial: Populates geometry for Step 2
             atoms_out.push(atom);
         }
 
-        // Perform a second rotation to keep the bases aligned in plane with one another.
-        // todo: Set this norm A/R. It's the normal vec to all bases after this transform.
-        let tgt_base_norm = Z_VEC;
-        align_bases(&mut atoms_out, nt, tgt_base_norm, template);
-
-        // twist_cum += twist_per_nt;
-        twist_cum += HELIX_TWIST;
-
+        // Push the Residue for Strand A
         res_out.push(res);
-        res_i += 1;
 
+        // --- STEP 2: Create Strand B Segment (Dependent on Step 1) ---
+        if strands == Strands::Double {
+            let template_complementary =
+                find_template(nt.complement(), na_type, is_first, is_last, templates)?;
+
+            // 2a. Generate the geometry and atoms for the complementary residue
+            let (atoms_comp, mut bonds_comp, mut res_comp, b_head_sn, b_tail_sn) =
+                create_paired_ds_segment(&atoms_segment, nt, template, &template_complementary)?;
+
+            let current_comp_start_idx = atoms_out.len();
+            let sn_offset = 20000; // Must match the offset in create_paired_ds_segment
+
+            // 2b. Add Atoms to global list
+            for mut atom in atoms_comp {
+                // Ensure the atom knows it belongs to the residue we are about to push
+                atom.residue = Some(res_out.len());
+                atoms_out.push(atom);
+            }
+
+            // 2c. Fix internal bonds indices for B
+            for bond in bonds_comp.iter_mut() {
+                // Subtract offset to find original index in the template
+                let orig_sn_0 = bond.atom_0_sn - sn_offset;
+                let orig_sn_1 = bond.atom_1_sn - sn_offset;
+
+                let local_idx_0 = template_complementary
+                    .find_atom_i_by_sn(orig_sn_0)
+                    .ok_or_else(|| io::Error::other("SN not found in template B"))?;
+                let local_idx_1 = template_complementary
+                    .find_atom_i_by_sn(orig_sn_1)
+                    .ok_or_else(|| io::Error::other("SN not found in template B"))?;
+
+                bond.atom_0 = current_comp_start_idx + local_idx_0;
+                bond.atom_1 = current_comp_start_idx + local_idx_1;
+                bonds_out.push(bond.clone());
+            }
+
+            // 2d. Fix Residue indicRes and push
+            res_comp.serial_number = (seq.len() * 2 - i) as u32;
+            res_comp.atoms = res_comp
+                .atoms
+                .iter()
+                .map(|x| x + current_comp_start_idx)
+                .collect();
+            res_out.push(res_comp);
+
+            // 2e. Fix backbone bond for B (antiparallel: 3' -> 5')
+            if let Some(prev_head) = prev_b_head_sn {
+                let orig_tail_sn = b_tail_sn - sn_offset;
+                let tail_local_idx = template_complementary
+                    .find_atom_i_by_sn(orig_tail_sn)
+                    .unwrap();
+                let idx_tail = current_comp_start_idx + tail_local_idx;
+
+                // Find the previous head in the global list
+                let idx_prev_head = atoms_out
+                    .iter()
+                    .position(|a| a.serial_number == prev_head)
+                    .ok_or_else(|| io::Error::other("Previous B-head not found"))?;
+
+                bonds_out.push(Bond {
+                    atom_0: idx_tail,
+                    atom_1: idx_prev_head,
+                    atom_0_sn: b_tail_sn,
+                    atom_1_sn: prev_head,
+                    bond_type: BondType::Single,
+                    is_backbone: true, // Uncomment if your Bond struct has this field
+                });
+            }
+
+            // Update the tracker for the next residue in Strand B
+            prev_b_head_sn = Some(b_head_sn);
+        }
+
+        // --- STEP 3: Add Bonds for Strand A ---
+
+        // 3a. Intra-residue bonds (within the nucleotide)
         for bond_template in &template.bonds {
-            let atom_0_sn = *local_to_global_sn
-                .get(&bond_template.atom_0_sn)
-                .ok_or_else(|| io::Error::other("Bond atom_0_sn missing from local->global map"))?;
-
-            let atom_1_sn = *local_to_global_sn
-                .get(&bond_template.atom_1_sn)
-                .ok_or_else(|| io::Error::other("Bond atom_1_sn missing from local->global map"))?;
+            let atom_0_sn = *local_to_global_sn.get(&bond_template.atom_0_sn).unwrap();
+            let atom_1_sn = *local_to_global_sn.get(&bond_template.atom_1_sn).unwrap();
 
             let mut bond = bond_template.clone();
             bond.atom_0_sn = atom_0_sn;
             bond.atom_1_sn = atom_1_sn;
-
+            // Note: Bond::from_generic likely scans `atoms_out` to find indices
             bonds_out.push(Bond::from_generic(&bond, &atoms_out)?);
         }
 
-        // Add inter-residue backbone bond: prev_tail -- current_head
+        // 3b. Inter-residue backbone bond (Prev O3' -> Curr P)
         if !is_first {
-            let head_i =
-                head_local_i.ok_or_else(|| io::Error::other("Missing head attach point"))?;
-            let head_local_sn = template
-                .atoms
-                .get(head_i)
-                .ok_or_else(|| io::Error::other("Head attach index out of range"))?
-                .serial_number;
-            let cur_head_sn = *local_to_global_sn.get(&head_local_sn).ok_or_else(|| {
-                io::Error::other("Head attach serial missing from local->global map")
-            })?;
+            let cur_head_sn = *local_to_global_sn
+                .get(&template.atoms[head_i].serial_number)
+                .unwrap();
 
-            let prev_tail_sn =
-                prev_tail_sn.ok_or_else(|| io::Error::other("Missing prev tail sn"))?;
+            let prev_sn = prev_tail_sn.ok_or_else(|| io::Error::other("Missing prev tail sn"))?;
 
             let bond = bio_files::BondGeneric {
-                atom_0_sn: prev_tail_sn,
+                atom_0_sn: prev_sn,
                 atom_1_sn: cur_head_sn,
                 bond_type: BondType::Single,
             };
-
             bonds_out.push(Bond::from_generic(&bond, &atoms_out)?);
         }
 
-        // Update the attach point.
+        // --- STEP 4: Update Iteration State ---
+        res_i += 1; // Increment residue counter
+
         if !is_last {
-            let tail_i =
-                tail_local_i.ok_or_else(|| io::Error::other("Missing tail attach point"))?;
-            let tail_atom = template
-                .atoms
-                .get(tail_i)
-                .ok_or_else(|| io::Error::other("Tail attach index out of range"))?;
-
-            let cur_tail_sn = *local_to_global_sn
-                .get(&tail_atom.serial_number)
-                .ok_or_else(|| {
-                    io::Error::other("Tail attach serial missing from local->global map")
-                })?;
-
             prev_o3p = tail_global_pos.ok_or_else(|| io::Error::other("Tail atom not captured"))?;
             prev_tail_sn =
                 Some(tail_global_sn.ok_or_else(|| io::Error::other("Tail sn not captured"))?);
         }
-
-        atom_count_current += template.atoms.len() as u32;
     }
 
     Ok((atoms_out, bonds_out, res_out))
@@ -441,47 +548,7 @@ impl MoleculeNucleicAcid {
         };
 
         let (mut atoms, mut bonds, mut residues) =
-            build_single_strand(seq, na_type, posit_5p, templates, 0., "strand_0")?;
-
-        if strands == Strands::Double && !seq.is_empty() {
-            let seq2 = seq_complement(seq);
-            let (atoms2, bonds2, mut residues2) = build_single_strand(
-                &seq2,
-                na_type,
-                posit_5p,
-                templates,
-                TAU / 2.,
-                // true,
-                "strand_1",
-            )?;
-
-            let sn_offset = atoms.len() as u32;
-
-            // Shift serial_numbers + bonds for second strand, then append.
-            let mut atoms2_shifted = atoms2;
-            for a in &mut atoms2_shifted {
-                a.serial_number += sn_offset;
-            }
-
-            let mut bonds2_shifted = bonds2;
-            for b in &mut bonds2_shifted {
-                b.atom_0 += sn_offset as usize;
-                b.atom_1 += sn_offset as usize;
-                b.atom_0_sn += sn_offset;
-                b.atom_1_sn += sn_offset;
-            }
-
-            let mut residues2_shifted = residues2;
-            for res in &mut residues2_shifted {
-                for atom in &mut res.atoms {
-                    *atom += sn_offset as usize;
-                }
-            }
-
-            atoms.extend(atoms2_shifted);
-            bonds.extend(bonds2_shifted);
-            residues.extend(residues2_shifted);
-        }
+            build_strands(seq, na_type, posit_5p, templates, strands, 0., "strand_0")?;
 
         let adjacency_list = build_adjacency_list(&bonds, atoms.len());
 
@@ -583,4 +650,74 @@ pub fn load_na_templates()
     let templates_rna = load_templates(RNA_LIB)?;
 
     Ok((templates_dna, templates_rna))
+}
+
+// ----- Helpers below for DS alignment. WIP
+
+/// A geometric frame describing a nucleotide base's position and orientation.
+#[derive(Clone, Copy, Debug)]
+struct BaseFrame {
+    c1_prime: Vec3, // The anchor on the sugar
+    n_glyco: Vec3,  // N9 (Purine) or N1 (Pyrimidine)
+    normal: Vec3,   // Vector perpendicular to the base plane
+}
+
+impl BaseFrame {
+    /// Extract the frame from a list of atoms (template or transformed).
+    fn from_atoms(atoms: &[Atom], nt: Nucleotide, template: &TemplateData) -> Option<Self> {
+        // Map nucleotide type to atom names
+        let (n_name, plane_0, plane_1) = match nt {
+            A | G => ("N9", "C8", "C4"),
+            C | T => ("N1", "C6", "C2"),
+        };
+
+        let c1_idx = template.find_atom_i_by_name("C1'")?;
+        let n_idx = template.find_atom_i_by_name(n_name)?;
+        let p0_idx = template.find_atom_i_by_name(plane_0)?;
+        let p1_idx = template.find_atom_i_by_name(plane_1)?;
+
+        let c1_pos = atoms.get(c1_idx)?.posit;
+        let n_pos = atoms.get(n_idx)?.posit;
+        let p0_pos = atoms.get(p0_idx)?.posit;
+        let p1_pos = atoms.get(p1_idx)?.posit;
+
+        // Calculate Normal using cross product of two vectors in the ring
+        let v1 = (p0_pos - n_pos).to_normalized();
+        let v2 = (p1_pos - n_pos).to_normalized();
+        let normal = v1.cross(v2).to_normalized();
+
+        Some(Self {
+            c1_prime: c1_pos,
+            n_glyco: n_pos,
+            normal,
+        })
+    }
+}
+
+/// Calculate the rigid transformation to map `src` frame to `dst` frame.
+/// Returns (Rotation, Translation).
+fn calculate_alignment(src: BaseFrame, dst: BaseFrame) -> (Quaternion, Vec3) {
+    // 1. Align the base plane normals
+    // This effectively flips the nucleotide "upside down" for the second strand
+    let rot_normal = Quaternion::from_unit_vecs(src.normal, dst.normal);
+
+    // 2. Align the "pointing" direction (C1' -> N)
+    let src_dir = (src.n_glyco - src.c1_prime).to_normalized();
+    let dst_dir = (dst.n_glyco - dst.c1_prime).to_normalized();
+
+    // Rotate the source direction by our first rotation to see where it lands
+    let src_dir_rotated = rot_normal.rotate_vec(src_dir);
+
+    // Find the rotation around the NEW normal to align the pointing direction
+    let rot_plane = Quaternion::from_unit_vecs(src_dir_rotated, dst_dir);
+
+    // Combine them (order matters: normal alignment then plane alignment)
+    let total_rot = rot_plane * rot_normal;
+
+    // 3. Translation
+    // Map the rotated C1' of the template exactly to the target C1'
+    let src_c1_rotated = total_rot.rotate_vec(src.c1_prime);
+    let translation = dst.c1_prime - src_c1_rotated;
+
+    (total_rot, translation)
 }

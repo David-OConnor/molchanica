@@ -7,6 +7,7 @@ use crate::{
     State,
     download_mols::load_atom_coords_rcsb,
     drawing_wrappers::draw_all_ligs,
+    label,
     mol_alignment::run_alignment,
     molecules::MolGenericRef,
     ui::{
@@ -199,7 +200,7 @@ pub(in crate::ui) fn load_popups(
             ui.horizontal(|ui| {
                 ui.label("Choose molecules to align:");
 
-                ui.add_space(ROW_SPACING);
+                ui.add_space(COL_SPACING);
                 if ui
                     .button(RichText::new("Close").color(Color32::LIGHT_RED))
                     .clicked()
@@ -208,8 +209,34 @@ pub(in crate::ui) fn load_popups(
                 }
             });
 
+            if !state.volatile.alignment.results.is_empty() {
+                let res = &state.volatile.alignment.results[0];
+                ui.label("Results:");
+
+                label!(ui, format!("Score: {:.2} E template: {:.2} E query: {:.2} Vol: {:.2}",
+                res.score, res.avg_potential_e_template, res.avg_potential_e_query, res.volume),
+                    Color32::WHITE);
+            }
+
+            ui.add_space(ROW_SPACING);
+
+            ui.horizontal(|ui| {
+                let help_text = "If selected, the template atom will be allowed to take on different \
+                conformations based on its rotatable bonds. If not, only the query molecule will \
+                be flexible.";
+
+                ui.label("Treat the template molecule as flexible.")
+                    .on_hover_text(help_text);
+                 ui.checkbox(&mut state.volatile.alignment.flexible_template, "")
+                     .on_hover_text(help_text);
+            });
+
+            ui.add_space(ROW_SPACING);
+
+
+
             for (i, mol) in state.ligands.iter().enumerate() {
-                let mta = &mut state.volatile.mols_to_align;
+                let mta = &mut state.volatile.alignment.mols_to_align;
 
                 let selected_pos = mta.iter().position(|&x| x == i);
                 let color = if selected_pos.is_some() {
@@ -245,21 +272,21 @@ pub(in crate::ui) fn load_popups(
 
             ui.add_space(ROW_SPACING);
             ui.separator();
-            if state.volatile.mols_to_align.len() == 2 && ui.button("Run alignment").clicked() {
+            if state.volatile.alignment.mols_to_align.len() == 2 && ui.button("Run alignment").clicked() {
                 run_alignment(state, &mut false);
 
                 // Set visualization settings to view the result.
-                state.ligands[state.volatile.mols_to_align[0]]
+                state.ligands[state.volatile.alignment.mols_to_align[0]]
                     .common
                     .visible = true;
-                state.ligands[state.volatile.mols_to_align[1]]
+                state.ligands[state.volatile.alignment.mols_to_align[1]]
                     .common
                     .visible = true;
                 state.ui.color_by_mol = true;
 
                 for (i, mol) in state.ligands.iter_mut().enumerate() {
                     // Required to make our snapshots work, in the current implementation.
-                    mol.common.selected_for_md = i == state.volatile.mols_to_align[1];
+                    mol.common.selected_for_md = i == state.volatile.alignment.mols_to_align[1];
                 }
 
                 *redraw_lig = true;
@@ -267,7 +294,7 @@ pub(in crate::ui) fn load_popups(
                 // engine_updates.entities = EntityUpdate::All; // todo: Just ligs.
 
                 move_cam_to_mol(
-                    &state.ligands[state.volatile.mols_to_align[0]].common,
+                    &state.ligands[state.volatile.alignment.mols_to_align[0]].common,
                     &mut state.ui.cam_snapshot,
                     scene,
                     Vec3::new_zero(),

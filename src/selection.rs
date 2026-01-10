@@ -658,12 +658,8 @@ pub(crate) fn handle_selection_attempt(
     };
 
     let (sel_atoms, dist_atoms) = {
-            let (
-                atoms_along_ray_pep,
-                atoms_along_ray_lig,
-                atoms_along_ray_na,
-                atoms_along_ray_lipid,
-            ) = points_along_ray_atom(
+        let (atoms_along_ray_pep, atoms_along_ray_lig, atoms_along_ray_na, atoms_along_ray_lipid) =
+            points_along_ray_atom(
                 selected_ray,
                 pep_atoms,
                 &lig_atoms,
@@ -672,55 +668,51 @@ pub(crate) fn handle_selection_attempt(
                 dist_thresh,
             );
 
-            find_selected_atom_or_bond(
-                &atoms_along_ray_pep,
-                &atoms_along_ray_lig,
-                &atoms_along_ray_na,
-                &atoms_along_ray_lipid,
-                pep_atoms,
-                pep_res,
-                &lig_atoms,
-                &na_atoms,
-                &lipid_atoms,
-                &selected_ray,
-                &state.ui,
-                &Vec::new(),
-                &[],
-                &[],
-                &[],
-                &[],
-                false,
-                state.volatile.inputs_commanded.run,
-            )
+        find_selected_atom_or_bond(
+            &atoms_along_ray_pep,
+            &atoms_along_ray_lig,
+            &atoms_along_ray_na,
+            &atoms_along_ray_lipid,
+            pep_atoms,
+            pep_res,
+            &lig_atoms,
+            &na_atoms,
+            &lipid_atoms,
+            &selected_ray,
+            &state.ui,
+            &Vec::new(),
+            &[],
+            &[],
+            &[],
+            &[],
+            false,
+            state.volatile.inputs_commanded.run,
+        )
     };
 
     let (sel_bonds, dist_bonds) = {
-            let mut pep_bonds = Vec::new();
-            // todo: I don' tlike these clones.
-            if let Some(mol) = &state.peptide {
-                pep_bonds = mol.common.bonds.clone();
-            }
+        let mut pep_bonds = Vec::new();
+        // todo: I don' tlike these clones.
+        if let Some(mol) = &state.peptide {
+            pep_bonds = mol.common.bonds.clone();
+        }
 
-            let mut lig_bonds = Vec::new();
-            // todo: I don' tlike these clones.
-            for mol in &state.ligands {
-                lig_bonds.push(mol.common.bonds.clone());
-            }
+        let mut lig_bonds = Vec::new();
+        // todo: I don' tlike these clones.
+        for mol in &state.ligands {
+            lig_bonds.push(mol.common.bonds.clone());
+        }
 
-            let mut na_bonds = Vec::new();
-            for mol in &state.nucleic_acids {
-                na_bonds.push(mol.common.bonds.clone());
-            }
-            let mut lipid_bonds = Vec::new();
-            for mol in &state.lipids {
-                lipid_bonds.push(mol.common.bonds.clone());
-            }
-            let (
-                atoms_along_ray_pep,
-                atoms_along_ray_lig,
-                atoms_along_ray_na,
-                atoms_along_ray_lipid,
-            ) = points_along_ray_bond(
+        let mut na_bonds = Vec::new();
+        for mol in &state.nucleic_acids {
+            na_bonds.push(mol.common.bonds.clone());
+        }
+        let mut lipid_bonds = Vec::new();
+        for mol in &state.lipids {
+            lipid_bonds.push(mol.common.bonds.clone());
+        }
+        let (atoms_along_ray_pep, atoms_along_ray_lig, atoms_along_ray_na, atoms_along_ray_lipid) =
+            points_along_ray_bond(
                 selected_ray,
                 &pep_bonds,
                 &lig_bonds,
@@ -733,26 +725,26 @@ pub(crate) fn handle_selection_attempt(
                 dist_thresh,
             );
 
-            find_selected_atom_or_bond(
-                &atoms_along_ray_pep,
-                &atoms_along_ray_lig,
-                &atoms_along_ray_na,
-                &atoms_along_ray_lipid,
-                pep_atoms,
-                &Vec::new(), // todo: Peptide residues. once ready.
-                &lig_atoms,
-                &na_atoms,
-                &lipid_atoms,
-                &selected_ray,
-                &state.ui,
-                &Vec::new(),
-                &pep_bonds,
-                &lig_bonds,
-                &na_bonds,
-                &lipid_bonds,
-                true,
-                state.volatile.inputs_commanded.run,
-            )
+        find_selected_atom_or_bond(
+            &atoms_along_ray_pep,
+            &atoms_along_ray_lig,
+            &atoms_along_ray_na,
+            &atoms_along_ray_lipid,
+            pep_atoms,
+            &Vec::new(), // todo: Peptide residues. once ready.
+            &lig_atoms,
+            &na_atoms,
+            &lipid_atoms,
+            &selected_ray,
+            &state.ui,
+            &Vec::new(),
+            &pep_bonds,
+            &lig_bonds,
+            &na_bonds,
+            &lipid_bonds,
+            true,
+            state.volatile.inputs_commanded.run,
+        )
     };
 
     // Change the active molecule to the one of the selected atom or bond.

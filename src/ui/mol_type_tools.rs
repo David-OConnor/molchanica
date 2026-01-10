@@ -198,8 +198,8 @@ pub(in crate::ui) fn na_section(
             .selected_text(state.to_save.nucleic_acid.strands.to_string())
             .show_ui(ui, |ui| {
                 // todo: Temp SS only until we sort out strand alignment
-                for v in &[Strands::Single] {
-                    // for v in &[Strands::Single, Strands::Double] {
+                // for v in &[Strands::Single] {
+                for v in &[Strands::Single, Strands::Double] {
                     ui.selectable_value(&mut state.to_save.nucleic_acid.strands, *v, v.to_string());
                 }
             });
