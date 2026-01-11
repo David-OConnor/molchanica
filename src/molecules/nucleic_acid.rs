@@ -1,7 +1,11 @@
-#![allow(unused)]
+// todo: You may be nissing, on G, the H on H1 (WOuld be H1)
 
-//! For setting up and rendering nucleic acids: DNA and RNA.
-
+//! For setting up and rendering nucleic acids: DNA and RNA. This module loads atom positions
+//! for each base from Amber templates, and positions atoms to be geometrically consistent,
+//! and realistic.
+//!
+//! Ref pic: https://upload.wikimedia.org/wikipedia/commons/4/4c/DNA_Structure%2BKey%2BLabelled.pn_NoBB.png
+//!
 // todo: Load Amber FF params for nucleic acids.
 
 use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io, sync::atomic::Ordering};
@@ -168,6 +172,34 @@ fn wc_pairs(nt: Nucleotide) -> &'static [(&'static str, &'static str, f64)] {
     }
 }
 
+fn atom_pos_from_name(atoms: &[Atom], name: &str) -> Vec3 {
+    for atom in atoms {
+        if atom.type_in_res_general.as_deref() == Some(name) {
+            return atom.posit;
+        }
+    }
+    panic!("Atom of name {} not found", name);
+}
+
+/// We use this for finding our pivot to align to the helix centroid (ish),
+/// and rotate around for the twist. We pick the atom closest to the rotation
+/// point, then offset it slightly.
+fn base_center_ref(atoms_base: &[Atom], nt: Nucleotide) -> Vec3 {
+    let offset = 0.5; // Å. A fudge, for now. Half way through the H bond?
+
+    let (name_closest, name_dir_ref) = match nt {
+        A => ("N1", "C4"), // The atom across the ring.
+        T => ("N3", "H3"),
+        C => ("N3", "C6"), // The atom across the ring.
+        G => ("N1", "H1"),
+    };
+    let closest = atom_pos_from_name(atoms_base, name_closest);
+    let dir_ref = atom_pos_from_name(atoms_base, name_dir_ref);
+
+    let dir = (closest - dir_ref).to_normalized();
+    closest + dir * offset
+}
+
 /// Find the normal vector to the plane of the base atoms.
 fn find_base_plane_norm(template: &TemplateData) -> Vec3 {
     // These are arbitrary base atom labels shared by all NTs.
@@ -322,6 +354,8 @@ fn build_strands(
     let mut res_i: usize = 0;
     let mut atom_sn_offset = 0;
 
+    let helix_axis = Y_VEC;
+
     for (i_nt, &nt) in seq.iter().enumerate() {
         let is_first = i_nt == 0;
         let is_last = i_nt + 1 == seq.len();
@@ -342,14 +376,15 @@ fn build_strands(
         };
 
         let height_offset = RISE * i_nt as f64;
+        let helix_angle = TWIST * i_nt as f64;
+
         let template = find_template(nt, na_type, is_first, is_last, templates)?;
 
         let (mut atoms_base, mut bonds_base) = base_from_template(template, nt, na_type);
 
-        // Update SN and posit
+        // Update SN.
         for atom in &mut atoms_base {
             atom.serial_number += atom_sn_offset;
-            atom.posit += Vec3::new(0.0, height_offset, 0.0);
         }
         for bond in &mut bonds_base {
             bond.atom_0_sn += atom_sn_offset;
@@ -363,10 +398,10 @@ fn build_strands(
             // For the A strand, as initially present in the template.
             let plane_norm = find_base_plane_norm(template);
 
-            let plane_rotator = Quaternion::from_unit_vecs(plane_norm, Y_VEC);
-            let mut posits: Vec<_> = atoms_base.iter().map(|a| a.posit).collect();
+            let plane_rotator = Quaternion::from_unit_vecs(plane_norm, helix_axis);
 
             let pivot = template.find_atom_by_name("N1").unwrap().posit;
+            let mut posits: Vec<_> = atoms_base.iter().map(|a| a.posit).collect();
             rotate_about_point(&mut posits, pivot, plane_rotator);
 
             for (i, atom) in atoms_base.iter_mut().enumerate() {
@@ -374,20 +409,30 @@ fn build_strands(
             }
         }
 
-        // Slide, along the plane axis, the base atoms so they're centered on the helix axis.
+        // This is where we move the slide pivot to, and rotate around to position
+        // helically. Located along the helix axis, at the correct height for this nt.
+        // todo: This pivot is probably wrong. It should probably move around in a small
+        // todo circle.
+        let pivot = Vec3::new(0.0, height_offset, 0.0);
+        // Move so that 1:  This base's plane is at the correct height. 2: Slide, along the plane axis,
+        // so the base atoms are centered on the helix axis.
         {
-            // todo: Plcae holder. Find what actually should be slid to the middle; likely the center
-            // todo: between hydrogen bonds of two bases. (Or offset appropriatly from a single strand)
-
-            // This is where we move the slide pivot to.
-            let ref_posit = Vec3::new(0.0, height_offset, 0.0);
-
-            // todo: We have arbitrarily chosedn the first atom at the pivot. This is incorrect,
-            // todo but good enough for now.
-            let offset = ref_posit - atoms_base[0].posit;
-
+            let posit_to_align = base_center_ref(&atoms_base, nt);
+            let offset = pivot - posit_to_align;
             for atom in &mut atoms_base {
                 atom.posit += offset;
+            }
+        }
+
+        // Rotate, to form the helix, using the same pivot.
+        {
+            let helix_rot = Quaternion::from_axis_angle(helix_axis, helix_angle);
+
+            let mut posits: Vec<_> = atoms_base.iter().map(|a| a.posit).collect();
+            rotate_about_point(&mut posits, pivot, helix_rot);
+
+            for (i, atom) in atoms_base.iter_mut().enumerate() {
+                atom.posit = posits[i];
             }
         }
 
@@ -410,11 +455,12 @@ fn build_strands(
             // The plane norm is now the Y vec; align the second strand to it.
             // todo: You passing in `template` here is probably wrong, as you moved the positions!!
             // todo: Come back to this after your SS bases are correct.
-            let posits_comp =
-                align_bases(&template, nt, na_type, is_first, is_last, templates, Y_VEC);
+            let posits_comp = align_bases(
+                &template, nt, na_type, is_first, is_last, templates, helix_axis,
+            );
 
             for atom in &mut atoms_comp {
-                atom.serial_number == atom_sn_offset;
+                atom.serial_number += atom_sn_offset;
                 atom.posit += Vec3::new(0.0, height_offset, 0.0);
             }
 
@@ -672,6 +718,7 @@ pub fn base_from_template(
                 ("C5", "C6"),
                 ("C6", "O6"),
                 ("C6", "N1"),
+                ("N1", "H1"),
                 //
                 ("C4", "N9"),
                 ("N9", "C8"),
