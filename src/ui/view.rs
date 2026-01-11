@@ -325,8 +325,8 @@ pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
     from a primary sequence.";
     vis_helper(&mut state.ui.ui_vis.amino_acids, "AA", tooltip, ui);
 
-    let tooltip = "Show or hide the molecular dynamics section.";
-    vis_helper(&mut state.ui.ui_vis.dynamics, "Dynamics", tooltip, ui);
+    let tooltip = "Show or hide the molecular dynamics section of the UI.";
+    vis_helper(&mut state.ui.ui_vis.dynamics, "MD", tooltip, ui);
 
     // todo: Do we want this button available if ORCA is not on the PATH? Maybe check at runtime,
     // todo or check when clicking this button. Not sure yet.
