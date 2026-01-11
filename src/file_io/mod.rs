@@ -654,11 +654,13 @@ impl State {
                     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
                 }
 
-                self.mol_dynamics = None;
-
                 if let Some(p) = &self.ff_param_set.small_mol {
                     mol.update_ff_related(&mut self.mol_specific_params, p);
-                    mol.update_aux(&self.volatile.active_mol);
+                    mol.update_aux(
+                        &self.volatile.active_mol,
+                        &self.to_save.smiles_map,
+                        &mut self.volatile.smiles_pending_data_avail,
+                    );
                 } else {
                     handle_err(
                         &mut self.ui,
@@ -685,47 +687,6 @@ impl State {
                             break;
                         }
                     }
-                }
-
-                for ident in &mol.idents {
-                    match self.to_save.smiles_map.get(&ident) {
-                        Some(v) => {
-                            println!("Loaded smiles for {ident:?} from our local DB: {v}");
-                            mol.smiles = Some(v.clone());
-                            break;
-                        }
-                        None => {
-                            let (tx, rx) = mpsc::channel(); // one-shot channel
-                            let ident_for_thread = ident.clone();
-
-                            println!("Loading smiles for {ident:?} from PubChem...");
-
-                            match ident {
-                                MolIdent::PdbeAmber(id) => {
-                                    thread::spawn(move || {
-                                        let data = pubchem::get_smiles_chem_name(
-                                            &ident_for_thread.to_str(),
-                                        );
-                                        let _ = tx.send((ident_for_thread, data));
-                                    });
-                                    break;
-                                }
-                                MolIdent::PubChem(cid) => {
-                                    thread::spawn(move || {
-                                        // part of our borrow-checker workaround
-                                        let cid_: u32 = ident_for_thread.to_str().parse().unwrap();
-                                        let data = pubchem::get_smiles(cid_);
-                                        let _ = tx.send((ident_for_thread, data));
-                                    });
-                                    break;
-                                }
-                                _ => (),
-                            }
-
-                            self.volatile.smiles_pending_data_avail = Some(rx);
-                        }
-                    }
-                    break;
                 }
 
                 centroid = mol.common.centroid();

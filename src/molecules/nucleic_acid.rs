@@ -4,7 +4,7 @@
 
 // todo: Load Amber FF params for nucleic acids.
 
-use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io};
+use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io, sync::atomic::Ordering};
 
 use bincode::{Decode, Encode};
 use bio_files::{
@@ -15,7 +15,7 @@ use dynamics::{
     find_tetra_posit_final,
     params::{OL24_LIB, RNA_LIB},
 };
-use lin_alg::f64::{Quaternion, Vec3, Z_VEC};
+use lin_alg::f64::{Quaternion, Vec3, Y_VEC, Z_VEC};
 use na_seq::{
     AminoAcid,
     Element::*,
@@ -25,6 +25,7 @@ use na_seq::{
 
 use crate::{
     Templates,
+    mol_editor::NEXT_ATOM_SN,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
         build_adjacency_list, common::MoleculeCommon,
@@ -32,12 +33,12 @@ use crate::{
     util::rotate_about_point,
 };
 
-const HELIX_TWIST: f64 = TAU / 10.0; // 36°
-// const HELIX_RISE: f64 = 3.4; // Å per base (visual B-DNA-ish)
-const HELIX_RADIUS: f64 = 10.0; // Å (tweak to taste)
-
+// Axial rise; height difference between two consecutive bases.
+// This is a suitable default for B-DNA.
 const RISE: f64 = 3.4;
-const TWIST: f64 = 36.0_f64.to_radians();
+
+// ~10.5 bp per turn, so ~34 Å per helical turn (10.5 × 3.4)
+const TWIST: f64 = 34.0_f64.to_radians();
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)]
 pub enum NucleicAcidType {
@@ -167,6 +168,18 @@ fn wc_pairs(nt: Nucleotide) -> &'static [(&'static str, &'static str, f64)] {
     }
 }
 
+/// Find the normal vector to the plane of the base atoms.
+fn find_base_plane_norm(template: &TemplateData) -> Vec3 {
+    // These are arbitrary base atom labels shared by all NTs.
+    let n1 = template.find_atom_by_name("N1").unwrap();
+    let c2 = template.find_atom_by_name("C2").unwrap();
+    let c3 = template.find_atom_by_name("C4").unwrap();
+
+    let v1 = n1.posit - c2.posit;
+    let v2 = c3.posit - c2.posit;
+    v1.cross(v2).to_normalized()
+}
+
 /// Aligns bases using a set of geometric transformations. Places them in the way A-T, and C-G bases
 /// are aligned in real life. Returns the positions of the complementary base, with the alignment.
 ///
@@ -178,6 +191,7 @@ fn align_bases(
     is_first: bool,
     is_last: bool,
     templates: &HashMap<String, TemplateData>,
+    plane_norm: Vec3,
 ) -> Vec<Vec3> {
     let nt_comp = nt.complement();
     let templ_comp = find_template(nt_comp, na_type, is_first, is_last, templates).unwrap();
@@ -188,66 +202,7 @@ fn align_bases(
     let n1 = template.find_atom_by_name("N1").unwrap();
     let n1_comp = templ_comp.find_atom_by_name("N1").unwrap();
 
-    // Rel the original NT.
-    let plane_norm = {
-        // Arbitrary
-        // These are shared by all NTs.
-        let n1 = template.find_atom_by_name("N1").unwrap();
-        let c2 = template.find_atom_by_name("C2").unwrap();
-        let c3 = template.find_atom_by_name("C3").unwrap();
-
-        let v1 = n1.posit - c2.posit;
-        let v2 = c3.posit - c2.posit;
-        v1.cross(v2).to_normalized()
-    };
-    // todo: DRY
-    let plane_norm_compl = {
-        // Arbitrary
-        // These are shared by all NTs.
-        let c2 = templ_comp.find_atom_by_name("C2").unwrap();
-        let c3 = templ_comp.find_atom_by_name("C3").unwrap();
-
-        let v1 = n1_comp.posit - c2.posit;
-        let v2 = c3.posit - c2.posit;
-        v1.cross(v2).to_normalized()
-    };
-
-    // // Rotate the complementary base atoms to be in line with the original.
-    // let plane_aligner = Quaternion::from_unit_vecs(plane_norm_compl, plane_norm);
-    // let mut posits_compl: Vec<_> = atoms_base_comp.iter().map(|a| a.posit).collect();
-    // // The pivot can be any base atom.
-    // rotate_about_point(
-    //     &mut posits_compl,
-    //     n1_comp.posit,
-    //     plane_aligner,
-    // );
-    //
-    // // Rotate along the plane axis to have the correct orientation.
-    // // todo: What's the rotation amount?
-    // let rotator = Quaternion::from_axis_angle(plane_norm, rot_amt);
-    // rotate_about_point(
-    //     &mut posits_compl,
-    //     // todo: Should the pivot be the ring center?
-    //     n1_comp.posit,
-    //     plane_aligner,
-    // );
-    //
-    //
-    // match nt {
-    //     A => {}
-    //     T => {}
-    //     C => {}
-    //     G => {}
-    // }
-
-    // // Slide the complementary base atoms be in the appropriate position. (e.g. with H bonds)
-    //
-    // match nt {
-    //     A => {}
-    //     T => {}
-    //     C => {}
-    //     G => {}
-    // }
+    let plane_norm_compl = find_base_plane_norm(template);
 
     // Position the bases relative to each other, based on the pairing.
 
@@ -350,52 +305,6 @@ fn align_bases(
     posits_compl
 }
 
-/// Search our library, and choose the correct template for a given nucleic acid
-/// in the chain.
-fn find_template(
-    nt: Nucleotide,
-    na_type: NucleicAcidType,
-    is_first: bool,
-    is_last: bool,
-    templates: &HashMap<String, TemplateData>,
-) -> io::Result<&TemplateData> {
-    let mut nt_str = nt.to_str_upper();
-
-    // Note: We also have, for DNA, "neutral" templates that have an N suffix.
-    // We have many other templates for RNA. I'm not sure what they're for. Structural?
-    let ident = match na_type {
-        NucleicAcidType::Dna => {
-            if is_first && !is_last {
-                format!("D{nt_str}5")
-            } else if is_last && !is_first {
-                format!("D{nt_str}3")
-            } else {
-                format!("D{nt_str}")
-            }
-        }
-        NucleicAcidType::Rna => {
-            if nt_str == "T" {
-                nt_str = "U".to_string();
-            }
-
-            if is_first && !is_last {
-                format!("{nt_str}5")
-            } else if is_last && !is_first {
-                format!("{nt_str}3")
-            } else {
-                nt_str
-            }
-        }
-    };
-
-    match templates.get(&ident) {
-        Some(t) => Ok(t),
-        None => Err(io::Error::other(format!(
-            "Unable to find the template for ident {ident}"
-        ))),
-    }
-}
-
 /// Build a single or double strand of DNA or RNA. If double-stranded, use the
 /// base alignment geometry to define the helix shape.
 fn build_strands(
@@ -405,54 +314,17 @@ fn build_strands(
     templates: &HashMap<String, TemplateData>,
     strands: Strands,
     helix_phase: f64,
-    strand_label: &str,
 ) -> io::Result<(Vec<Atom>, Vec<Bond>, Vec<Residue>)> {
     let mut atoms_out = Vec::new();
     let mut bonds_out = Vec::new();
     let mut res_out = Vec::new();
 
     let mut res_i: usize = 0;
+    let mut atom_sn_offset = 0;
 
-    let mut stack_ref_wc_dir: Option<Vec3> = None;
-
-    // Trackers for Strand A backbone
-    let mut prev_tail_sn: Option<u32> = None; // For A-strand P-O3' bond
-    let mut prev_o3p = posit_5p; // For A-strand positioning
-
-    // Trackers for Strand B backbone (NEW)
-    let mut prev_b_head_sn: Option<u32> = None; // For B-strand O3'-P bond
-
-    for (i, &nt) in seq.iter().enumerate() {
-        let is_first = i == 0;
-        let is_last = i + 1 == seq.len();
-
-        let template = find_template(nt, na_type, is_first, is_last, templates)?;
-        let (head_local_i, tail_local_i) = template.attach_points()?;
-
-        // --- PREP: Calculate Global Position for Strand A Head ---
-        let head_i = match head_local_i {
-            Some(i) => i,
-            None => template.find_atom_i_by_name("P").unwrap_or(0),
-        };
-
-        let posit_head_local = template.atoms[head_i].posit;
-
-        let posit_head_global = if is_first {
-            prev_o3p
-        } else {
-            // Find tetrahedral position for Phosphate relative to previous O3'
-            let o_0 = template.find_atom_by_name("OP1").unwrap().posit;
-            let o_1 = template.find_atom_by_name("OP2").unwrap().posit;
-            let o_2 = template.find_atom_by_name("O5'").unwrap().posit;
-
-            let o_3p_posit = find_tetra_posit_final(posit_head_local, o_0, o_1, o_2);
-            prev_o3p + o_3p_posit
-        };
-
-        let translation = posit_head_global - posit_head_local;
-
-        // --- STEP 1: Create Strand A Segment (MOVED UP) ---
-        // We must do this FIRST so `atoms_segment` is ready for Strand B logic.
+    for (i_nt, &nt) in seq.iter().enumerate() {
+        let is_first = i_nt == 0;
+        let is_last = i_nt + 1 == seq.len();
 
         let mut res = Residue {
             serial_number: res_i as u32 + 1,
@@ -469,107 +341,110 @@ fn build_strands(
             },
         };
 
-        let mut local_to_global_sn = HashMap::new();
-        let mut atoms_segment = Vec::new(); // Important: Holds this residue's atoms for geometry calc
+        let height_offset = RISE * i_nt as f64;
+        let template = find_template(nt, na_type, is_first, is_last, templates)?;
 
-        // Capture tail info for Strand A backbone logic later
-        let mut tail_global_pos: Option<Vec3> = None;
-        let mut tail_global_sn: Option<u32> = None;
+        let (mut atoms_base, mut bonds_base) = base_from_template(template, nt, na_type);
 
-        // Identify the tail atom serial in the template to capture its global position
-        let tail_template_sn = if !is_last {
-            let t_i = tail_local_i.ok_or_else(|| io::Error::other("Missing tail attach point"))?;
-            Some(template.atoms[t_i].serial_number)
-        } else {
-            None
-        };
+        // Update SN and posit
+        for atom in &mut atoms_base {
+            atom.serial_number += atom_sn_offset;
+            atom.posit += Vec3::new(0.0, height_offset, 0.0);
+        }
+        for bond in &mut bonds_base {
+            bond.atom_0_sn += atom_sn_offset;
+            bond.atom_1_sn += atom_sn_offset;
+        }
 
-        //// here: sTART our base-based code
-        ////////---------
-        let (atoms_base, bonds_base) = base_from_template(template, nt, na_type);
+        atom_sn_offset += atoms_base.len() as u32;
+
+        // Rotate the base atoms so their planes are aligned to the (arbitrarily-chosen) Y axis.
+        {
+            // For the A strand, as initially present in the template.
+            let plane_norm = find_base_plane_norm(template);
+
+            let plane_rotator = Quaternion::from_unit_vecs(plane_norm, Y_VEC);
+            let mut posits: Vec<_> = atoms_base.iter().map(|a| a.posit).collect();
+
+            let pivot = template.find_atom_by_name("N1").unwrap().posit;
+            rotate_about_point(&mut posits, pivot, plane_rotator);
+
+            for (i, atom) in atoms_base.iter_mut().enumerate() {
+                atom.posit = posits[i];
+            }
+        }
+
+        // Slide, along the plane axis, the base atoms so they're centered on the helix axis.
+        {
+            // todo: Plcae holder. Find what actually should be slid to the middle; likely the center
+            // todo: between hydrogen bonds of two bases. (Or offset appropriatly from a single strand)
+
+            // This is where we move the slide pivot to.
+            let ref_posit = Vec3::new(0.0, height_offset, 0.0);
+
+            // todo: We have arbitrarily chosedn the first atom at the pivot. This is incorrect,
+            // todo but good enough for now.
+            let offset = ref_posit - atoms_base[0].posit;
+
+            for atom in &mut atoms_base {
+                atom.posit += offset;
+            }
+        }
+
+        // Populate our all-NT atoms and bonds with those of the base from this NT.
+        for atom in &atoms_base {
+            atoms_out.push(atom.clone());
+        }
+        for bond in &bonds_base {
+            bonds_out.push(bond.clone());
+        }
+
+        let (mut atoms_comp, mut bonds_comp) = (Vec::new(), Vec::new());
 
         // Position the opposite base.
         if strands == Strands::Double {
-            let posits_compl = align_bases(&template, nt, na_type, is_first, is_last, templates);
-        }
+            let nt_comp = nt.complement();
+            let template_comp = find_template(nt_comp, na_type, is_first, is_last, templates)?;
+            (atoms_comp, bonds_comp) = base_from_template(template_comp, nt_comp, na_type);
 
-        ///////------
+            // The plane norm is now the Y vec; align the second strand to it.
+            // todo: You passing in `template` here is probably wrong, as you moved the positions!!
+            // todo: Come back to this after your SS bases are correct.
+            let posits_comp =
+                align_bases(&template, nt, na_type, is_first, is_last, templates, Y_VEC);
 
-        for atom_template in &template.atoms {
-            let mut atom: Atom = atom_template.try_into().unwrap();
-
-            // 1. Assign Serial and Residue
-            let new_sn = (atoms_out.len() as u32) + 1;
-            atom.serial_number = new_sn;
-            atom.residue = Some(res_i);
-
-            // 2. Position Atom
-            atom.posit += translation;
-            // (Rotation logic would go here if you re-enable helix twist)
-
-            // 3. Capture Tail Position (for next iteration of Strand A)
-            if tail_template_sn == Some(atom_template.serial_number) {
-                tail_global_pos = Some(atom.posit);
-                tail_global_sn = Some(new_sn);
+            for atom in &mut atoms_comp {
+                atom.serial_number == atom_sn_offset;
+                atom.posit += Vec3::new(0.0, height_offset, 0.0);
             }
 
-            // 4. Store locally and globally
-            res.atom_sns.push(new_sn);
-            res.atoms.push(new_sn as usize - 1);
-            local_to_global_sn.insert(atom_template.serial_number, new_sn);
+            atom_sn_offset += atoms_comp.len() as u32;
 
-            atoms_segment.push(atom.clone()); // <--- Crucial: Populates geometry for Step 2
-            atoms_out.push(atom);
-        }
+            let compl_sn_offset = 100_00; // todo for now.
 
-        // If you captured tail position earlier, recompute from the global atom SN after rotation.
-        if let Some(sn) = tail_global_sn {
-            if let Some(a) = atoms_out.iter().find(|a| a.serial_number == sn) {
-                tail_global_pos = Some(a.posit);
+            // We'll update atom indices at the end, synchronizing them to SN.
+            for atom in &atoms_comp {
+                atoms_out.push(atom.clone());
+            }
+            for bond in &bonds_comp {
+                bonds_out.push(bond.clone());
             }
         }
+    }
 
-        // Push the Residue for Strand A
-        res_out.push(res);
+    // Now, update all bond indices based on serial numbers.
+    for bond in &mut bonds_out {
+        let atom_0 = atoms_out
+            .iter()
+            .position(|a| a.serial_number == bond.atom_0_sn)
+            .unwrap();
+        let atom_1 = atoms_out
+            .iter()
+            .position(|a| a.serial_number == bond.atom_1_sn)
+            .unwrap();
 
-        // --- STEP 3: Add Bonds for Strand A ---
-
-        // 3a. Intra-residue bonds (within the nucleotide)
-        for bond_template in &template.bonds {
-            let atom_0_sn = *local_to_global_sn.get(&bond_template.atom_0_sn).unwrap();
-            let atom_1_sn = *local_to_global_sn.get(&bond_template.atom_1_sn).unwrap();
-
-            let mut bond = bond_template.clone();
-            bond.atom_0_sn = atom_0_sn;
-            bond.atom_1_sn = atom_1_sn;
-            // Note: Bond::from_generic likely scans `atoms_out` to find indices
-            bonds_out.push(Bond::from_generic(&bond, &atoms_out)?);
-        }
-
-        // 3b. Inter-residue backbone bond (Prev O3' -> Curr P)
-        if !is_first {
-            let cur_head_sn = *local_to_global_sn
-                .get(&template.atoms[head_i].serial_number)
-                .unwrap();
-
-            let prev_sn = prev_tail_sn.ok_or_else(|| io::Error::other("Missing prev tail sn"))?;
-
-            let bond = bio_files::BondGeneric {
-                atom_0_sn: prev_sn,
-                atom_1_sn: cur_head_sn,
-                bond_type: BondType::Single,
-            };
-            bonds_out.push(Bond::from_generic(&bond, &atoms_out)?);
-        }
-
-        // --- STEP 4: Update Iteration State ---
-        res_i += 1; // Increment residue counter
-
-        if !is_last {
-            prev_o3p = tail_global_pos.ok_or_else(|| io::Error::other("Tail atom not captured"))?;
-            prev_tail_sn =
-                Some(tail_global_sn.ok_or_else(|| io::Error::other("Tail sn not captured"))?);
-        }
+        bond.atom_0 = atom_0;
+        bond.atom_1 = atom_1;
     }
 
     Ok((atoms_out, bonds_out, res_out))
@@ -597,9 +472,7 @@ impl MoleculeNucleicAcid {
         };
 
         let (mut atoms, mut bonds, mut residues) =
-            build_strands(seq, na_type, posit_5p, templates, strands, 0., "strand_0")?;
-
-        let adjacency_list = build_adjacency_list(&bonds, atoms.len());
+            build_strands(seq, na_type, posit_5p, templates, strands, 0.)?;
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -619,22 +492,18 @@ impl MoleculeNucleicAcid {
             .to_string(),
         );
 
-        let atom_posits = atoms.iter().map(|a| a.posit).collect();
-
-        let common = MoleculeCommon {
-            ident: match (na_type, strands) {
-                (NucleicAcidType::Dna, Strands::Single) => format!("DNA(ss) {}nt", seq.len()),
-                (NucleicAcidType::Dna, Strands::Double) => format!("DNA(ds) {}nt", seq.len()),
-                (NucleicAcidType::Rna, Strands::Single) => format!("RNA(ss) {}nt", seq.len()),
-                (NucleicAcidType::Rna, Strands::Double) => format!("RNA(ds) {}nt", seq.len()),
-            },
-            atoms,
-            bonds,
-            adjacency_list,
-            atom_posits,
-            metadata,
-            ..Default::default()
+        let ident = match (na_type, strands) {
+            (NucleicAcidType::Dna, Strands::Single) => format!("DNA(ss) {}nt", seq.len()),
+            (NucleicAcidType::Dna, Strands::Double) => format!("DNA(ds) {}nt", seq.len()),
+            (NucleicAcidType::Rna, Strands::Single) => format!("RNA(ss) {}nt", seq.len()),
+            (NucleicAcidType::Rna, Strands::Double) => format!("RNA(ds) {}nt", seq.len()),
         };
+
+        let mut common = MoleculeCommon::new(ident, atoms, bonds, metadata, None);
+
+        // todo: Put these in when ready.
+        // NEXT_ATOM_SN.store(0, Ordering::Release);
+        // common.reassign_sns();
 
         Ok(Self {
             na_type,
@@ -708,6 +577,10 @@ pub fn base_from_template(
     nt: Nucleotide,
     na_type: NucleicAcidType,
 ) -> (Vec<Atom>, Vec<Bond>) {
+    // for at in template.atoms.iter() {
+    //     println!("{nt} Template atom: {:?}", at.type_in_res_general);
+    // }
+
     let (a_names, b_names) = match nt {
         A => {
             let a = vec![
@@ -750,9 +623,9 @@ pub fn base_from_template(
                 ("C4", "O4"),
                 ("C4", "C5"),
                 ("C5", "C7"),
-                ("C7", "C71"),
-                ("C7", "C72"),
-                ("C7", "C73"),
+                ("C7", "H71"),
+                ("C7", "H72"),
+                ("C7", "H73"),
                 ("C5", "C6"),
                 ("C6", "H6"),
                 ("C6", "N1"),
@@ -762,38 +635,37 @@ pub fn base_from_template(
         }
         C => {
             let a = vec![
-                "N1", "N3", "C2", "C4", "C5", "C6", "O2", "H5", "H6", "H41", "H42",
+                "N1", "N3", "N4", "C2", "C4", "C5", "C6", "O2", "H5", "H6", "H41", "H42",
             ];
 
             let b = vec![
                 ("N1", "C2"),
                 ("C2", "O2"),
-                ("C2", "O2"),
                 ("C2", "N3"),
                 ("N3", "C4"),
                 ("C4", "N4"),
-                ("N4", "N41"),
-                ("N4", "N42"),
+                ("N4", "H41"),
+                ("N4", "H42"),
                 ("C4", "C5"),
                 ("C5", "H5"),
                 ("C5", "C6"),
                 ("C6", "H6"),
-                ("H6", "N1"),
+                ("C6", "N1"),
             ];
 
             (a, b)
         }
         G => {
             let a = vec![
-                "N1", "N2", "N3", "N7", "N9", "C2", "C4", "C5", "C6", "C8", "H1", "H5", "H21",
+                "N1", "N2", "N3", "N7", "N9", "C2", "C4", "C5", "C6", "C8", "H1", "H8", "H21",
                 "H22", "O6",
             ];
 
             let b = vec![
                 ("N1", "C2"),
                 ("C2", "N2"),
-                ("N2", "N21"),
-                ("N2", "N22"),
+                ("N2", "H21"),
+                ("N2", "H22"),
                 ("C2", "N3"),
                 ("N3", "C4"),
                 ("C4", "C5"),
@@ -813,12 +685,13 @@ pub fn base_from_template(
     };
 
     // For the smalleset: C.
-    let mut atoms = Vec::with_capacity(11);
-    let mut bonds = Vec::with_capacity(13);
+    let mut atoms = Vec::with_capacity(12);
+    let mut bonds = Vec::with_capacity(12);
 
     for a in a_names {
         atoms.push(template.find_atom_by_name(a).unwrap().into());
     }
+
     for (a0, a1) in b_names {
         let atom_0_sn = template.find_atom_by_name(a0).unwrap().serial_number;
         let atom_1_sn = template.find_atom_by_name(a1).unwrap().serial_number;
@@ -835,4 +708,50 @@ pub fn base_from_template(
     }
 
     (atoms, bonds)
+}
+
+/// Search our library, and choose the correct template for a given nucleic acid
+/// in the chain.
+fn find_template(
+    nt: Nucleotide,
+    na_type: NucleicAcidType,
+    is_first: bool,
+    is_last: bool,
+    templates: &HashMap<String, TemplateData>,
+) -> io::Result<&TemplateData> {
+    let mut nt_str = nt.to_str_upper();
+
+    // Note: We also have, for DNA, "neutral" templates that have an N suffix.
+    // We have many other templates for RNA. I'm not sure what they're for. Structural?
+    let ident = match na_type {
+        NucleicAcidType::Dna => {
+            if is_first && !is_last {
+                format!("D{nt_str}5")
+            } else if is_last && !is_first {
+                format!("D{nt_str}3")
+            } else {
+                format!("D{nt_str}")
+            }
+        }
+        NucleicAcidType::Rna => {
+            if nt_str == "T" {
+                nt_str = "U".to_string();
+            }
+
+            if is_first && !is_last {
+                format!("{nt_str}5")
+            } else if is_last && !is_first {
+                format!("{nt_str}3")
+            } else {
+                nt_str
+            }
+        }
+    };
+
+    match templates.get(&ident) {
+        Some(t) => Ok(t),
+        None => Err(io::Error::other(format!(
+            "Unable to find the template for ident {ident}"
+        ))),
+    }
 }

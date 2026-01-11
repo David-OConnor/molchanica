@@ -590,6 +590,7 @@ struct StateUi {
     color_by_mol: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 /// For showing and hiding UI sections.
 pub struct UiVisibility {
     aa_seq: bool,

@@ -813,7 +813,9 @@ pub(in crate::ui) fn display_mol_data(
                                 }
                             }
                             // This runs if we have neither CID, nor SMILES.
-                            if let Ok(cid) = pubchem::get_cid_from_pdbe_id(&mol.common().ident) {
+                            if let Ok((cid, _smiles)) =
+                                pubchem::get_cid_from_pdbe_id(&mol.common().ident)
+                            {
                                 update_cid = Some(cid);
                                 pubchem::open_overview(cid);
                             }

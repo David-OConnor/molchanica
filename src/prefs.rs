@@ -21,8 +21,8 @@ use graphics::{
 use lin_alg::f64::Vec3;
 
 use crate::{
-    CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, Selection, State, ViewSelLevel,
-    Visibility,
+    CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, Selection, State, UiVisibility,
+    ViewSelLevel, Visibility,
     docking::DockingSite,
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
@@ -159,6 +159,7 @@ pub struct ToSave {
     pub mol_view: MoleculeView,
     pub view_sel_level: ViewSelLevel,
     pub visibility: Visibility,
+    pub ui_visibility: UiVisibility,
     pub near_sel_only: bool,
     pub near_lig_only: bool,
     pub nearby_dist_thresh: u16,
@@ -196,6 +197,7 @@ impl Default for ToSave {
             near_lig_only: Default::default(),
             nearby_dist_thresh: Default::default(),
             visibility: Default::default(),
+            ui_visibility: Default::default(),
             smiles_map: Default::default(),
             save_flag: false,
             lipid: Default::default(),
@@ -286,7 +288,7 @@ impl State {
     /// Update when prefs change, periodically etc.
     /// todo: See the note in PerMolsave::from_state. Workaround for order-related bugs.
     pub fn update_save_prefs(&mut self, on_init: bool) {
-        println!("Saving state to prefs file.");
+        println!("Saving state to prefs file");
 
         // Sync molecule positions.
         // todo: Consider the same for proteins.
@@ -315,6 +317,7 @@ impl State {
         self.to_save.near_lig_only = self.ui.show_near_lig_only;
         self.to_save.nearby_dist_thresh = self.ui.nearby_dist_thresh;
         self.to_save.visibility = self.ui.visibility.clone();
+        self.to_save.ui_visibility = self.ui.ui_vis.clone();
         self.to_save.color_surface_mesh = self.ui.color_surface_mesh;
 
         self.to_save_prev = self.to_save.clone();
@@ -365,6 +368,7 @@ impl State {
         self.ui.show_near_lig_only = self.to_save.near_lig_only;
         self.ui.nearby_dist_thresh = self.to_save.nearby_dist_thresh;
         self.ui.visibility = self.to_save.visibility.clone();
+        self.ui.ui_vis = self.to_save.ui_visibility.clone();
 
         self.ui.movement_speed_input = self.to_save.movement_speed.to_string();
         self.ui.rotation_sens_input = self.to_save.rotation_sens.to_string();

@@ -188,6 +188,7 @@ impl MoleculeCommon {
 
     /// Re-assign atom serial numbers as 1-ripple. Useful after or during editing, especially
     /// prior to saving in SDF format, which doesn't explicitly list SNs with the atom.
+    /// We also  use it when assembling nucleic acids and other molecule generation.
     pub fn reassign_sns(&mut self) {
         // todo: Be more clever about this.
         let mut updated_sns = Vec::with_capacity(self.atoms.len());
@@ -211,6 +212,7 @@ impl MoleculeCommon {
             Ordering::Release,
         )
     }
+
     /// The sum of each atom's elemental atomic weight, in Daltons (amu).
     pub fn atomic_weight(&self) -> f32 {
         let result: f64 = self

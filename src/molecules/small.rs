@@ -8,7 +8,9 @@ use std::{
     thread,
 };
 
-use bio_apis::{ReqError, amber_geostd, amber_geostd::GeostdData, pubchem::ProteinStructure};
+use bio_apis::{
+    ReqError, amber_geostd, amber_geostd::GeostdData, pubchem, pubchem::ProteinStructure,
+};
 use bio_files::{
     ChargeType, Mol2, MolType, Pdbqt, PharmacaphoreFeatures, Sdf, Xyz, create_bonds,
     md_params::{ForceFieldParams, ForceFieldParamsVec},
@@ -486,7 +488,12 @@ impl MoleculeSmall {
         *geostd_thread = Some(rx);
     }
 
-    pub fn update_aux(&mut self, active_mol: &Option<(Mt, usize)>) {
+    pub fn update_aux(
+        &mut self,
+        active_mol: &Option<(Mt, usize)>,
+        smiles_map: &HashMap<MolIdent, String>,
+        smiles_pending_data_avail: &mut Option<Receiver<(MolIdent, Result<String, ReqError>)>>,
+    ) {
         if let Some((_, i)) = active_mol {
             let offset = LIGAND_ABS_POSIT_OFFSET * (*i as f64);
             for posit in &mut self.common.atom_posits {
@@ -495,6 +502,50 @@ impl MoleculeSmall {
         }
 
         self.characterization = Some(MolCharacterization::new(&self.common));
+
+        // Load the SMILES respresentation from our local DB, or online. If online,
+        // launch this in a separate thread.
+        for ident in &self.idents {
+            match smiles_map.get(&ident) {
+                Some(v) => {
+                    println!("Loaded smiles for {ident:?} from our local DB: {v}");
+                    self.smiles = Some(v.clone());
+                    break;
+                }
+                None => {
+                    let (tx, rx) = mpsc::channel(); // one-shot channel
+                    let ident_for_thread = ident.clone();
+
+                    println!("Loading smiles for {ident:?} from PubChem...");
+
+                    match ident {
+                        MolIdent::PdbeAmber(_) => {
+                            thread::spawn(move || {
+                                let data =
+                                    pubchem::get_smiles_chem_name(&ident_for_thread.to_str());
+                                // Note: this commented-out call below also gets PubChem CID.
+                                // pubchem::get_cid_from_pdbe_id(&ident_for_thread.to_str());
+                                let _ = tx.send((ident_for_thread, data));
+                            });
+                            break;
+                        }
+                        MolIdent::PubChem(_) => {
+                            thread::spawn(move || {
+                                // part of our borrow-checker workaround
+                                let cid_: u32 = ident_for_thread.to_str().parse().unwrap();
+                                let data = pubchem::get_smiles(cid_);
+                                let _ = tx.send((ident_for_thread, data));
+                            });
+                            break;
+                        }
+                        _ => (),
+                    }
+
+                    *smiles_pending_data_avail = Some(rx);
+                }
+            }
+            break;
+        }
     }
 
     /// Update partial charges, FF types, and mol-specific params.
