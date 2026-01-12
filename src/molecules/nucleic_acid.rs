@@ -553,27 +553,48 @@ pub fn base_from_template(
             (a, b)
         }
         T => {
-            let a = vec![
-                "N1", "N3", "C2", "C4", "C5", "C6", "C7", "O2", "O4", "H3", "H6", "H71", "H72",
-                "H73",
-            ];
+            // Note: Uracil is similar, but removes the C7 methyl group attached to C5. (Replaced with a single H5)
+            let a = match na_type {
+                NucleicAcidType::Dna => vec![
+                    "N1", "N3", "C2", "C4", "C5", "C6", "C7", "O2", "O4", "H3", "H6", "H71", "H72",
+                    "H73",
+                ],
+                NucleicAcidType::Rna => vec![
+                    "N1", "N3", "C2", "C4", "C5", "C6", "O2", "O4", "H3", "H5", "H6",
+                ]
+            };
 
-            let b = vec![
-                ("N1", "C2"),
-                ("C2", "O2"),
-                ("C2", "N3"),
-                ("N3", "H3"),
-                ("N3", "C4"),
-                ("C4", "O4"),
-                ("C4", "C5"),
-                ("C5", "C7"),
-                ("C7", "H71"),
-                ("C7", "H72"),
-                ("C7", "H73"),
-                ("C5", "C6"),
-                ("C6", "H6"),
-                ("C6", "N1"),
-            ];
+            let b = match na_type {
+                NucleicAcidType::Dna => vec![
+                    ("N1", "C2"),
+                    ("C2", "O2"),
+                    ("C2", "N3"),
+                    ("N3", "H3"),
+                    ("N3", "C4"),
+                    ("C4", "O4"),
+                    ("C4", "C5"),
+                    ("C5", "C7"),
+                    ("C7", "H71"),
+                    ("C7", "H72"),
+                    ("C7", "H73"),
+                    ("C5", "C6"),
+                    ("C6", "H6"),
+                    ("C6", "N1"),
+                ],
+                NucleicAcidType::Rna => vec![
+                    ("N1", "C2"),
+                    ("C2", "O2"),
+                    ("C2", "N3"),
+                    ("N3", "H3"),
+                    ("N3", "C4"),
+                    ("C4", "O4"),
+                    ("C4", "C5"),
+                    ("C5", "H5"),
+                    ("C5", "C6"),
+                    ("C6", "H6"),
+                    ("C6", "N1"),
+                ],
+            };
 
             (a, b)
         }
@@ -629,7 +650,7 @@ pub fn base_from_template(
         }
     };
 
-    // For the smalleset: C.
+    // For the smalleset: C. DNA.
     let mut atoms = Vec::with_capacity(12);
     let mut bonds = Vec::with_capacity(12);
 
