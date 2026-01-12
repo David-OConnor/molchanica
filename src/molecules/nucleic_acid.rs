@@ -8,34 +8,30 @@
 //!
 // todo: Load Amber FF params for nucleic acids.
 
-use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io, sync::atomic::Ordering};
-
+use std::{collections::HashMap,fmt::Display, io,};
+use std::f64::consts::TAU;
 use bincode::{Decode, Encode};
 use bio_files::{
-    BondGeneric, BondType, ResidueEnd, ResidueType,
+    BondType, ResidueEnd, ResidueType,
     mol_templates::{TemplateData, load_templates},
 };
 use dynamics::{
-    find_tetra_posit_final,
     params::{OL24_LIB, RNA_LIB},
 };
-use lin_alg::f64::{Quaternion, Vec3, Y_VEC, Z_VEC};
+use lin_alg::f64::{Quaternion, Vec3, Y_VEC};
 use na_seq::{
     AminoAcid,
     Element::*,
     Nucleotide::{self, *},
-    seq_complement,
 };
 
 use crate::{
-    Templates,
-    mol_editor::NEXT_ATOM_SN,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
-        build_adjacency_list, common::MoleculeCommon,
+        common::MoleculeCommon,
     },
-    util::rotate_about_point,
 };
+use crate::util::rotate_atoms_about_point;
 
 // Axial rise; height difference between two consecutive bases.
 // This is a suitable default for B-DNA.
@@ -43,6 +39,16 @@ const RISE: f64 = 3.4;
 
 // ~10.5 bp per turn, so ~34 Å per helical turn (10.5 × 3.4)
 const TWIST: f64 = 34.0_f64.to_radians();
+
+// Used for aligning bases with each other. These are distances between the heavy atoms; not the H.
+// These are all div2. First listed name is for first listed NT. I.e. A: N1 to T: N3.
+const H_BOND_AT_N1_N3_DIV2: f64 = 2.85 / 2.;
+const H_BOND_AT_N6_O4_DIV2: f64 = 2.81 / 2.;
+// todo: Update these A/R
+const H_BOND_CG_N3_N1_DIV2: f64 = 2.83 / 2.;
+const H_BOND_CG_N4_O6_DIV2: f64 = 2.71 / 2.;
+const H_BOND_CG_O2_N2_DIV2: f64 = 2.82 / 2.;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)]
 pub enum NucleicAcidType {
@@ -124,53 +130,6 @@ pub struct MoleculeNucleicAcid {
     //     pub residues: Vec<Residue>,
 }
 
-/// Helper for base alignment
-fn signed_angle_about_axis(a: Vec3, b: Vec3, axis_unit: Vec3) -> f64 {
-    // a, b need not be normalized; axis_unit must be normalized
-    let a_n = a.to_normalized();
-    let b_n = b.to_normalized();
-    let sin = axis_unit.dot(a_n.cross(b_n));
-    let cos = a_n.dot(b_n);
-    sin.atan2(cos)
-}
-
-/// Helper for base alignment
-fn project_onto_plane(v: Vec3, plane_norm_unit: Vec3) -> Vec3 {
-    v - plane_norm_unit * v.dot(plane_norm_unit)
-}
-
-/// Helper for base alignment
-///
-/// Returns (pivot_atom_name, ref_atom_name) used to define an in-plane direction.
-/// The direction is (ref - pivot) projected onto the plane.
-fn in_plane_reference_atoms(nt: Nucleotide) -> (&'static str, &'static str) {
-    use Nucleotide::*;
-    match nt {
-        // Purines: glycosidic is N9. Use a ring atom that should exist in your templates.
-        A | G => ("N9", "C4"),
-        // Pyrimidines: glycosidic is N1.
-        C | T => ("N1", "C4"),
-    }
-}
-
-/// Helper for base alignment
-/// Watson–Crick heavy-atom pairings (template_atom, complement_atom, target_distance_Å).
-fn wc_pairs(nt: Nucleotide) -> &'static [(&'static str, &'static str, f64)] {
-    use Nucleotide::*;
-    // Typical heavy atom distances are ~2.8–3.0 Å; tune if you want.
-    const D: f64 = 2.9;
-
-    match nt {
-        // If template is A, complement is T
-        A => &[("N6", "O4", D), ("N1", "N3", D)],
-        // If template is T, complement is A
-        T => &[("O4", "N6", D), ("N3", "N1", D)],
-        // If template is C, complement is G
-        C => &[("N4", "O6", D), ("N3", "N1", D), ("O2", "N2", D)],
-        // If template is G, complement is C
-        G => &[("O6", "N4", D), ("N1", "N3", D), ("N2", "O2", D)],
-    }
-}
 
 fn atom_pos_from_name(atoms: &[Atom], name: &str) -> Vec3 {
     for atom in atoms {
@@ -185,19 +144,17 @@ fn atom_pos_from_name(atoms: &[Atom], name: &str) -> Vec3 {
 /// and rotate around for the twist. We pick the atom closest to the rotation
 /// point, then offset it slightly.
 fn base_center_ref(atoms_base: &[Atom], nt: Nucleotide) -> Vec3 {
-    let offset = 0.5; // Å. A fudge, for now. Half way through the H bond?
-
-    let (name_closest, name_dir_ref) = match nt {
-        A => ("N1", "C4"), // The atom across the ring.
-        T => ("N3", "H3"),
-        C => ("N3", "C6"), // The atom across the ring.
-        G => ("N1", "H1"),
+    let (name_heavy, name_dir_ref, offset) = match nt {
+        A => ("N1", "C4", -H_BOND_AT_N1_N3_DIV2), // The atom across the ring.
+        T => ("N3", "H3", H_BOND_AT_N1_N3_DIV2),
+        C => ("N3", "C6", -H_BOND_CG_N3_N1_DIV2), // The atom across the ring.
+        G => ("N1", "H1", H_BOND_CG_N3_N1_DIV2),
     };
-    let closest = atom_pos_from_name(atoms_base, name_closest);
+    let heavy = atom_pos_from_name(atoms_base, name_heavy);
     let dir_ref = atom_pos_from_name(atoms_base, name_dir_ref);
 
-    let dir = (closest - dir_ref).to_normalized();
-    closest + dir * offset
+    let dir = (dir_ref - heavy).to_normalized();
+    heavy + dir * offset
 }
 
 /// Find the normal vector to the plane of the base atoms.
@@ -213,128 +170,67 @@ fn find_base_plane_norm(template: &TemplateData) -> Vec3 {
 }
 
 /// Aligns bases using a set of geometric transformations. Places them in the way A-T, and C-G bases
-/// are aligned in real life. Returns the positions of the complementary base, with the alignment.
+/// are aligned  with H bonds. Returns the positions of the complementary base, with the alignment.
 ///
-/// Returns positions of the complementary base.
+/// This positions relative to the or original base.
 fn align_bases(
     template: &TemplateData,
+    templ_comp: &TemplateData,
+    // nt of strand A.
     nt: Nucleotide,
     na_type: NucleicAcidType,
-    is_first: bool,
-    is_last: bool,
-    templates: &HashMap<String, TemplateData>,
+    atoms_base: &[Atom],
     plane_norm: Vec3,
+    helix_angle: f64,
 ) -> Vec<Vec3> {
     let nt_comp = nt.complement();
-    let templ_comp = find_template(nt_comp, na_type, is_first, is_last, templates).unwrap();
 
-    let (atoms_base_comp, bonds_base_comp) = base_from_template(templ_comp, nt_comp, na_type);
+    let (mut atoms_base_comp, bonds_base_comp) = base_from_template(templ_comp, nt_comp, na_type);
 
     // An arbitrary anchor.
-    let n1 = template.find_atom_by_name("N1").unwrap();
-    let n1_comp = templ_comp.find_atom_by_name("N1").unwrap();
-
-    let plane_norm_compl = find_base_plane_norm(template);
+    // let n1 = template.find_atom_by_name("N1").unwrap();
 
     // Position the bases relative to each other, based on the pairing.
 
     // Rotate the complementary base plane onto the template base plane.
-    let plane_aligner = Quaternion::from_unit_vecs(plane_norm_compl, plane_norm);
+    {
+        let plane_norm_compl = find_base_plane_norm(template);
 
-    let mut posits_compl: Vec<_> = atoms_base_comp.iter().map(|a| a.posit).collect();
+        // The negative sign here is important; otherwise the planes will be in the opposite
+        // direction relative to each other than they should be.
+        let plane_aligner = Quaternion::from_unit_vecs(plane_norm_compl, -plane_norm);
 
-    rotate_about_point(&mut posits_compl, n1_comp.posit, plane_aligner);
-
-    // --- 1) Rotate within the plane (about plane_norm) to correct orientation ---
-
-    // Define an in-plane direction on the template and on the (already plane-aligned) complementary.
-    let (pivot_name_t, ref_name_t) = in_plane_reference_atoms(nt);
-    let (pivot_name_c, ref_name_c) = in_plane_reference_atoms(nt_comp);
-
-    let pivot_t = template.find_atom_by_name(pivot_name_t).unwrap();
-    let ref_t = template.find_atom_by_name(ref_name_t).unwrap();
-
-    // NOTE: these come from templ_comp, but ref_c must be rotated the same way as the rest of posits_compl.
-    let pivot_c = templ_comp.find_atom_by_name(pivot_name_c).unwrap();
-    let ref_c = templ_comp.find_atom_by_name(ref_name_c).unwrap();
-
-    // Compute template in-plane direction.
-    let mut dir_t = ref_t.posit - pivot_t.posit;
-    dir_t = project_onto_plane(dir_t, plane_norm);
-    let dir_t = dir_t.to_normalized();
-
-    // Compute complementary in-plane direction AFTER plane_aligner (same as applying to the vector).
-    // Because we rotated about pivot_c's position, pivot stays fixed; vectors rotate by the quaternion.
-    let mut dir_c = ref_c.posit - pivot_c.posit;
-    dir_c = plane_aligner.rotate_vec(dir_c);
-    dir_c = project_onto_plane(dir_c, plane_norm);
-    let dir_c = dir_c.to_normalized();
-
-    // In a WC pair, the glycosidic directions should generally oppose across the pair.
-    // So we align complementary dir to -dir_t (not +dir_t).
-    let rot_amt = signed_angle_about_axis(dir_c, -dir_t, plane_norm);
-    let rotator = Quaternion::from_axis_angle(plane_norm, rot_amt);
-
-    rotate_about_point(&mut posits_compl, n1_comp.posit, rotator);
-
-    // --- 2) Translate into the template frame (co-locate the anchor) ---
-    // After the rotations, N1_comp is still at its original position (we rotated about it).
-    // Move complementary so its N1 lands on the template's N1.
-    let delta_anchor = n1.posit - n1_comp.posit;
-    for p in &mut posits_compl {
-        *p += delta_anchor;
+        let n1_comp = templ_comp.find_atom_by_name("N1").unwrap(); // This anchor is arbitrary.
+        rotate_atoms_about_point(&mut atoms_base_comp, n1_comp.posit, plane_aligner);
     }
 
-    // --- 3) Slide in the plane to satisfy Watson–Crick H-bond geometry ---
+    // Find these H-bond mid points, for one of the H bonds. Set their positions
+    // equal to each other.
+    let ctr_ref = base_center_ref(atoms_base, nt);
+    let ctr_ref_comp = base_center_ref(&atoms_base_comp, nt_comp);
 
-    // Build a fast name->position map for the moved complementary base.
-    // Assumes atoms_base_comp and posits_compl are in the same order.
-    let mut compl_pos_by_name: HashMap<&str, Vec3> = HashMap::new();
-    for (a, p) in atoms_base_comp.iter().zip(posits_compl.iter()) {
-        compl_pos_by_name.insert(a.type_in_res_general.as_deref().unwrap(), *p);
+    // This shifts the (already plane-matched) complementary base so the H bonds are set up
+    // between the two *center* donor/acceptor pairs. Also handles the plane-shift maneuver
+    // along the helix axis.
+    let offset = ctr_ref - ctr_ref_comp;
+    for a in &mut atoms_base_comp {
+        a.posit += offset;
     }
 
-    let pairs = wc_pairs(nt);
+    // Now, rotate around this common H bond center, along the plane, until the rest of the
+    // geometry lines up. (Most visibly noted by the 2 or 3 H bonds). This approach of choosing the rotation angle is inelegant, and
+    // is hard-coded to the template values.
+    let amt = match nt {
+        A => 25.,
+        T => -25.,
+        C => -25.,
+        G => 25.,
+    }  * TAU / 32. + helix_angle;
 
-    let mut shifts = Vec::new();
-    for (a_name, b_name, d_target) in pairs {
-        let a = template.find_atom_by_name(a_name).unwrap().posit;
-        let b = *compl_pos_by_name.get(*b_name).unwrap();
+    let aligner = Quaternion::from_axis_angle(plane_norm, amt);
+    rotate_atoms_about_point(&mut atoms_base_comp, ctr_ref, aligner);
 
-        let mut ab = b - a;
-        ab = project_onto_plane(ab, plane_norm);
-
-        // If ab is degenerate, skip this constraint.
-        let ab_len = ab.magnitude_squared();
-        if ab_len <= 1.0e-6 {
-            continue;
-        }
-
-        let ab_dir = ab / ab_len;
-
-        // Desired b position: along current in-plane direction from a, but at target distance.
-        let b_des = a + ab_dir * *d_target;
-
-        shifts.push(b_des - b);
-    }
-
-    if !shifts.is_empty() {
-        // Average shift, then force it to lie in the plane.
-        let mut shift = Vec3::new_zero();
-        for s in &shifts {
-            shift += *s;
-        }
-        shift /= shifts.len() as f64;
-        shift = project_onto_plane(shift, plane_norm);
-
-        for p in &mut posits_compl {
-            *p += shift;
-        }
-    }
-
-    // If you want additional “pair centering” (e.g., align ring centers), do it here.
-
-    posits_compl
+    atoms_base_comp.iter().map(|a| a.posit).collect()
 }
 
 /// Build a single or double strand of DNA or RNA. If double-stranded, use the
@@ -385,6 +281,7 @@ fn build_strands(
         // Update SN.
         for atom in &mut atoms_base {
             atom.serial_number += atom_sn_offset;
+            atom.residue = Some(res_out.len()); // Not -1; haven't added this residue yet.
         }
         for bond in &mut bonds_base {
             bond.atom_0_sn += atom_sn_offset;
@@ -401,12 +298,7 @@ fn build_strands(
             let plane_rotator = Quaternion::from_unit_vecs(plane_norm, helix_axis);
 
             let pivot = template.find_atom_by_name("N1").unwrap().posit;
-            let mut posits: Vec<_> = atoms_base.iter().map(|a| a.posit).collect();
-            rotate_about_point(&mut posits, pivot, plane_rotator);
-
-            for (i, atom) in atoms_base.iter_mut().enumerate() {
-                atom.posit = posits[i];
-            }
+            rotate_atoms_about_point(&mut atoms_base, pivot, plane_rotator);
         }
 
         // This is where we move the slide pivot to, and rotate around to position
@@ -427,55 +319,60 @@ fn build_strands(
         // Rotate, to form the helix, using the same pivot.
         {
             let helix_rot = Quaternion::from_axis_angle(helix_axis, helix_angle);
-
-            let mut posits: Vec<_> = atoms_base.iter().map(|a| a.posit).collect();
-            rotate_about_point(&mut posits, pivot, helix_rot);
-
-            for (i, atom) in atoms_base.iter_mut().enumerate() {
-                atom.posit = posits[i];
-            }
+            rotate_atoms_about_point(&mut atoms_base, pivot, helix_rot);
         }
 
         // Populate our all-NT atoms and bonds with those of the base from this NT.
         for atom in &atoms_base {
             atoms_out.push(atom.clone());
+            res.atoms.push(atoms_base.len() - 1);
+            res.atom_sns.push(atom.serial_number);
         }
-        for bond in &bonds_base {
-            bonds_out.push(bond.clone());
+        for bond in bonds_base {
+            bonds_out.push(bond);
         }
 
-        let (mut atoms_comp, mut bonds_comp) = (Vec::new(), Vec::new());
 
         // Position the opposite base.
         if strands == Strands::Double {
             let nt_comp = nt.complement();
             let template_comp = find_template(nt_comp, na_type, is_first, is_last, templates)?;
-            (atoms_comp, bonds_comp) = base_from_template(template_comp, nt_comp, na_type);
+            let (mut atoms_comp, mut bonds_comp) = base_from_template(template_comp, nt_comp, na_type);
 
             // The plane norm is now the Y vec; align the second strand to it.
             // todo: You passing in `template` here is probably wrong, as you moved the positions!!
             // todo: Come back to this after your SS bases are correct.
             let posits_comp = align_bases(
-                &template, nt, na_type, is_first, is_last, templates, helix_axis,
+                &template, &template_comp, nt, na_type, &atoms_base, helix_axis, helix_angle
             );
 
-            for atom in &mut atoms_comp {
-                atom.serial_number += atom_sn_offset;
-                atom.posit += Vec3::new(0.0, height_offset, 0.0);
+            let compl_sn_offset = 100_00; // todo for now.
+
+            for (i, atom) in atoms_comp.iter_mut().enumerate() {
+                atom.serial_number += atom_sn_offset + compl_sn_offset;
+                atom.posit = posits_comp[i];
+                atom.residue = Some(res_out.len())
+            }
+
+            for bond in &mut bonds_comp {
+                bond.atom_0_sn += atom_sn_offset + compl_sn_offset;
+                bond.atom_1_sn += atom_sn_offset + compl_sn_offset;
             }
 
             atom_sn_offset += atoms_comp.len() as u32;
 
-            let compl_sn_offset = 100_00; // todo for now.
-
             // We'll update atom indices at the end, synchronizing them to SN.
-            for atom in &atoms_comp {
-                atoms_out.push(atom.clone());
+            for atom in atoms_comp {
+                res.atoms.push(atoms_base.len() - 1);
+                res.atom_sns.push(atom.serial_number);
+                atoms_out.push(atom);
             }
-            for bond in &bonds_comp {
-                bonds_out.push(bond.clone());
+            for bond in bonds_comp {
+                bonds_out.push(bond);
             }
         }
+
+        res_out.push(res);
     }
 
     // Now, update all bond indices based on serial numbers.
@@ -484,6 +381,7 @@ fn build_strands(
             .iter()
             .position(|a| a.serial_number == bond.atom_0_sn)
             .unwrap();
+
         let atom_1 = atoms_out
             .iter()
             .position(|a| a.serial_number == bond.atom_1_sn)
@@ -527,7 +425,7 @@ impl MoleculeNucleicAcid {
                 NucleicAcidType::Dna => "dna",
                 NucleicAcidType::Rna => "rna",
             }
-            .to_string(),
+                .to_string(),
         );
         metadata.insert(
             "strands".to_string(),
@@ -535,7 +433,7 @@ impl MoleculeNucleicAcid {
                 Strands::Single => "single",
                 Strands::Double => "double",
             }
-            .to_string(),
+                .to_string(),
         );
 
         let ident = match (na_type, strands) {
@@ -609,7 +507,7 @@ impl MolGenericTrait for MoleculeNucleicAcid {
 
 /// Loads templates from Amber data built into the binary. Returns (DNA, RNA)
 pub fn load_na_templates()
--> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
+    -> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
     let templates_dna = load_templates(OL24_LIB)?;
     let templates_rna = load_templates(RNA_LIB)?;
 
