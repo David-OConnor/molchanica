@@ -1,4 +1,4 @@
-use egui::{Color32, Context, RichText, Ui};
+use egui::{Color32, Context, RichText, ScrollArea, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
@@ -435,24 +435,30 @@ pub(in crate::ui) fn sidebar(
             ui.separator();
             ui.add_space(ROW_SPACING / 2.);
 
-            // todo: Function or macro to reduce this DRY.
-            mol_picker(
-                state,
-                scene,
-                ui,
-                redraw_pep,
-                redraw_lig,
-                redraw_lipid,
-                redraw_na,
-                engine_updates,
-            );
+            ScrollArea::vertical()
+                .min_scrolled_height(600.0)
+                .show(ui, |ui| {
+                    // todo: Function or macro to reduce this DRY.
+                    mol_picker(
+                        state,
+                        scene,
+                        ui,
+                        redraw_pep,
+                        redraw_lig,
+                        redraw_lipid,
+                        redraw_na,
+                        engine_updates,
+                    );
 
-            // todo: UI flag to show or hide this.
-            if let Some(m) = &state.active_mol() {
-                if let MolGenericRef::Small(mol) = m {
-                    mol_char_disp(mol, ui);
-                }
-            }
+                    // todo: UI flag to show or hide this.
+                    if state.ui.ui_vis.mol_char {
+                        if let Some(m) = &state.active_mol() {
+                            if let MolGenericRef::Small(mol) = m {
+                                mol_char_disp(mol, ui);
+                            }
+                        }
+                    }
+                });
         });
 
     engine_updates.ui_reserved_px.0 = out.response.rect.width();
@@ -470,7 +476,15 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         return;
     };
 
-    label!(ui, "Molecule details", Color32::WHITE);
+    // label!(ui, "Molecule details", Color32::WHITE);
+
+    // todo: Small font?
+    for ident in &mol.idents {
+        ui.horizontal(|ui| {
+            label!(ui, format!("{}:", ident.label()), Color32::GRAY);
+            label!(ui, ident.ident_innner(), Color32::WHITE);
+        });
+    }
 
     // Basics
     mol_char_helper(ui, "Atoms", &char.num_atoms.to_string());
@@ -478,7 +492,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     mol_char_helper(ui, "Heavy", &char.num_heavy_atoms.to_string());
     mol_char_helper(ui, "Hetero", &char.num_hetero_atoms.to_string());
     // mol_char_helper(ui, "Aromatic", &char.num_atoms.to_string() );
-    mol_char_helper(ui, "Weight", &char.mol_weight.to_string());
+    mol_char_helper(ui, "Weight", &format!("{:.2}", char.mol_weight));
 
     ui.add_space(ROW_SPACING);
     // Functional groups
@@ -513,19 +527,24 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     );
     mol_char_helper(ui, "Valence elecs", &char.num_valence_elecs.to_string());
 
+    // Geometry
+    ui.add_space(ROW_SPACING);
+
+    mol_char_helper(ui, "TPSA (Crippen)", &format!("{:.2}", char.tpsa_ertl));
+    mol_char_helper(ui, "TPSA (Geometric)", &format!("{:.2}", char.tpsa_topo));
+    mol_char_helper(ui, "ASA (Labute)", &format!("{:.2}", char.asa_labute));
+    mol_char_helper(ui, "ASA (Geometric)", &format!("{:.2}", char.asa_topo));
+    mol_char_helper(ui, "Volume", &format!("{:.2}", char.volume));
+
     // Computed properties
     ui.add_space(ROW_SPACING);
-    mol_char_helper(ui, "TPSA (traditional)", &format!("{:.2}", char.tpsa_ertl));
-    mol_char_helper(ui, "TPSA", &format!("{:.2}", char.tpsa_topo));
+
     mol_char_helper(ui, "LogP", &format!("{:.2}", char.calc_log_p));
     mol_char_helper(
         ui,
         "Molar Refractivity",
         &format!("{:.2}", char.molar_refractivity),
     );
-    mol_char_helper(ui, "ASA (Labute)", &format!("{:.2}", char.asa_labute));
-    mol_char_helper(ui, "ASA", &format!("{:.2}", char.asa_topo));
-    mol_char_helper(ui, "Volume", &format!("{:.2}", char.volume));
     mol_char_helper(ui, "Balaban J Index", &format!("{:.2}", char.balaban_j));
     mol_char_helper(ui, "Bertz Complexity", &format!("{:.2}", char.bertz_ct));
     mol_char_helper(

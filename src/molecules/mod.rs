@@ -1150,7 +1150,7 @@ pub enum MolIdent {
 
 impl MolIdent {
     /// Useful for some APIs, for example.
-    pub fn to_str(&self) -> String {
+    pub fn ident_innner(&self) -> String {
         match self {
             Self::PubChem(cid) => cid.to_string(),
             Self::DrugBank(v) => v.clone(),
@@ -1161,6 +1161,20 @@ impl MolIdent {
             Self::IupacName(v) => v.clone(),
             Self::PubchemTitle(v) => v.clone(),
         }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::PubChem(_) => "PubChem CID",
+            Self::DrugBank(_) => "DrugBank",
+            Self::PdbeAmber(_) => "PDBe",
+            Self::Smiles(_) => "SMILES",
+            Self::InchI(_) => "InChI",
+            Self::InchIKey(_) => "InChIKey",
+            Self::IupacName(_) => "IUPAC",
+            Self::PubchemTitle(_) => "PubChem Title",
+        }
+        .to_owned()
     }
 }
 

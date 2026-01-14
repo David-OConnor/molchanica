@@ -603,6 +603,7 @@ pub struct UiVisibility {
     amino_acids: bool,
     dynamics: bool,
     orca: bool,
+    mol_char: bool,
 }
 
 impl Default for UiVisibility {
@@ -616,6 +617,7 @@ impl Default for UiVisibility {
             amino_acids: false,
             dynamics: true,
             orca: false,
+            mol_char: true, // todo: For now.
         }
     }
 }

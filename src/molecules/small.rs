@@ -532,7 +532,7 @@ impl MoleculeSmall {
                         MolIdent::PubChem(_) => {
                             thread::spawn(move || {
                                 // part of our borrow-checker workaround
-                                let cid_: u32 = ident_for_thread.to_str().parse().unwrap();
+                                let cid_: u32 = ident_for_thread.ident_innner().parse().unwrap();
 
                                 println!(
                                     "Launching thread for PubChem properties HTTP for {ident_for_thread:?}..."
@@ -562,7 +562,8 @@ impl MoleculeSmall {
                 match ident {
                     MolIdent::PdbeAmber(_) => {
                         thread::spawn(move || {
-                            let data = pubchem::get_smiles_chem_name(&ident_for_thread.to_str());
+                            let data =
+                                pubchem::get_smiles_chem_name(&ident_for_thread.ident_innner());
                             // Note: this commented-out call below also gets PubChem CID.
                             // pubchem::get_cid_from_pdbe_id(&ident_for_thread.to_str());
 

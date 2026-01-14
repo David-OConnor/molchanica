@@ -883,12 +883,6 @@ pub fn handle_thread_rx(state: &mut State) {
                             .to_save
                             .pubchem_properties_map
                             .insert(ident.clone(), props.clone());
-
-                        // todo print temp
-                        println!(
-                            "\n\n\nProp map after update: {:?}\n\n",
-                            state.to_save.pubchem_properties_map
-                        );
                     }
                     Err(_) => {
                         // Note: This is currently broken.

@@ -488,7 +488,6 @@ impl MolCharacterization {
             num_valence_elecs += a.element.valence_electrons();
         }
 
-        // todo: ERTL is experimental.
         let tpsa_ertl = tpsa_ertl(
             mol,
             &mol.adjacency_list,
