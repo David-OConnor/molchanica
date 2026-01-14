@@ -1134,6 +1134,18 @@ pub enum MolIdent {
     DrugBank(String),
     /// PDBe, or Amber Geostd
     PdbeAmber(String),
+    /// A SMILES (Simplified Molecular Input Line Entry System) string, which includes both
+    /// stereochemical and isotopic information. See the glossary entry on SMILES for more detail.
+    Smiles(String),
+    /// Standard IUPAC International Chemical Identifier (InChI). It does not allow for user
+    /// selectable options in dealing with the stereochemistry and tautomer layers of the InChI string
+    InchI(String),
+    /// Hashed version of the full standard InChI, consisting of 27 characters.
+    InchIKey(String),
+    /// Chemical name systematically determined according to the IUPAC nomenclatures
+    IupacName(String),
+    /// The title used for the PubChem compound summary page.
+    PubchemTitle(String),
 }
 
 impl MolIdent {
@@ -1143,6 +1155,28 @@ impl MolIdent {
             Self::PubChem(cid) => cid.to_string(),
             Self::DrugBank(v) => v.clone(),
             Self::PdbeAmber(v) => v.clone(),
+            Self::Smiles(v) => v.clone(),
+            Self::InchI(v) => v.clone(),
+            Self::InchIKey(v) => v.clone(),
+            Self::IupacName(v) => v.clone(),
+            Self::PubchemTitle(v) => v.clone(),
         }
+    }
+}
+
+impl Display for MolIdent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::PubChem(cid) => format!("PubChem CID: {}", cid),
+            Self::DrugBank(ident) => format!("DrugBank: {ident}"),
+            Self::PdbeAmber(ident) => format!("PDBe: {ident}"),
+            Self::Smiles(ident) => format!("SMILES: {ident}"),
+            Self::InchI(ident) => format!("InchI: {ident}"),
+            Self::InchIKey(ident) => format!("InChIKey: {ident}"),
+            Self::IupacName(ident) => format!("IUPAC: {ident}"),
+            Self::PubchemTitle(ident) => format!("Title: {ident}"),
+        };
+
+        write!(f, "{v}")
     }
 }

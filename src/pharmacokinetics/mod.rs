@@ -32,24 +32,6 @@ fn estimate_tpsa(ch: &MolCharacterization) -> f32 {
     (17.0 * o + 12.0 * n + 25.0 * s + 13.0 * p + 1.5 * hba + 2.0 * hbd).clamp(0.0, 300.0)
 }
 
-fn estimate_log_p(ch: &MolCharacterization) -> f32 {
-    // Very rough: carbons/halogens increase logP; hetero/HBD/HBA decrease it; rings nudge it up.
-    let c = ch.num_carbon as f32;
-    let hetero = ch.num_hetero_atoms as f32;
-    let hal = ch.halogen.len() as f32;
-    let hba = ch.h_bond_acceptor.len() as f32;
-    let hbd = ch.h_bond_donor.len() as f32;
-    let rings = ch.rings.len() as f32;
-    let arom = ch.num_aromatic_atoms as f32;
-
-    let mut lp: f32 = 0.04 * c + 0.35 * rings + 0.02 * arom + 0.55 * hal
-        - 0.25 * hetero
-        - 0.18 * hba
-        - 0.25 * hbd;
-    lp = lp.clamp(-2.0, 8.0);
-    lp
-}
-
 /// Estimates of how the molecule, in drug form, acts in the human body.
 /// https://en.wikipedia.org/wiki/Pharmacokinetics
 #[derive(Clone, Debug, Default)]
@@ -91,11 +73,9 @@ impl Pharmacokinetics {
         let hbd = ch.h_bond_donor.len() as f32;
         let hba = ch.h_bond_acceptor.len() as f32;
 
-        let tpsa = ch
-            .topological_polar_surface_area
-            .unwrap_or_else(|| estimate_tpsa(ch));
+        let tpsa = ch.tpsa_ertl;
 
-        let log_p = ch.calc_log_p.unwrap_or_else(|| estimate_log_p(ch));
+        let log_p = ch.calc_log_p;
 
         let abs_net_charge = ch.net_partial_charge.map(|q| q.abs()).unwrap_or(0.0);
 

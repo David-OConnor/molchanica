@@ -140,8 +140,8 @@ fn features_from_molecule(mol: &MoleculeSmall) -> [f32; AQ_SOL_FEATURE_DIM] {
     };
 
     let mol_weight = c.mol_weight;
-    let mol_log_p = c.calc_log_p.unwrap_or(0.0);
-    let mol_mr = c.m_r;
+    let mol_log_p = c.calc_log_p;
+    let mol_mr = c.molar_refractivity;
 
     let heavy_atom_count = c.num_heavy_atoms as f32;
 
@@ -161,7 +161,7 @@ fn features_from_molecule(mol: &MoleculeSmall) -> [f32; AQ_SOL_FEATURE_DIM] {
 
     let ring_count = c.rings.len() as f32;
 
-    let tpsa = c.topological_polar_surface_area.unwrap_or(0.0);
+    let tpsa = c.tpsa_ertl; // todo: Choose the appropriate one here; ertl or topo.
 
     // If you later compute these, map them here.
     let labute_asa = 0.0;

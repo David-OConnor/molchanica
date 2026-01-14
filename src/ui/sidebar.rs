@@ -6,9 +6,9 @@ use crate::{
     State,
     cam_misc::move_mol_to_cam,
     label,
-    mol_characterization::MolCharacterization,
+    mol_characterization::{MolCharacterization, RingType},
     mol_manip::{ManipMode, set_manip},
-    molecules::{MolType, common::MoleculeCommon},
+    molecules::{MolGenericRef, MolType, common::MoleculeCommon, small::MoleculeSmall},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, cam::move_cam_to_mol,
@@ -446,7 +446,91 @@ pub(in crate::ui) fn sidebar(
                 redraw_na,
                 engine_updates,
             );
+
+            // todo: UI flag to show or hide this.
+            if let Some(m) = &state.active_mol() {
+                if let MolGenericRef::Small(mol) = m {
+                    mol_char_disp(mol, ui);
+                }
+            }
         });
 
     engine_updates.ui_reserved_px.0 = out.response.rect.width();
+}
+
+fn mol_char_helper(ui: &mut Ui, name: &str, v: &str) {
+    ui.horizontal(|ui| {
+        label!(ui, format!("{name}:"), Color32::GRAY);
+        label!(ui, v, Color32::WHITE);
+    });
+}
+
+fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
+    let Some(char) = &mol.characterization else {
+        return;
+    };
+
+    label!(ui, "Molecule details", Color32::WHITE);
+
+    // Basics
+    mol_char_helper(ui, "Atoms", &char.num_atoms.to_string());
+    mol_char_helper(ui, "Bonds", &char.num_bonds.to_string());
+    mol_char_helper(ui, "Heavy", &char.num_heavy_atoms.to_string());
+    mol_char_helper(ui, "Hetero", &char.num_hetero_atoms.to_string());
+    // mol_char_helper(ui, "Aromatic", &char.num_atoms.to_string() );
+    mol_char_helper(ui, "Weight", &char.mol_weight.to_string());
+
+    ui.add_space(ROW_SPACING);
+    // Functional groups
+    let mut num_aromatic = 0;
+    let mut num_sat = 0;
+    let mut num_aliphatic = 0;
+    for ring in &char.rings {
+        match ring.ring_type {
+            RingType::Aromatic => num_aromatic += 1,
+            RingType::Saturated => num_sat += 1,
+            RingType::Aliphatic => num_aliphatic += 1,
+        }
+    }
+
+    mol_char_helper(ui, "Rings Ar", &num_aromatic.to_string());
+    mol_char_helper(ui, "Rings Sat", &num_sat.to_string());
+    mol_char_helper(ui, "Rings Ali", &num_aliphatic.to_string());
+
+    // todo: Rings
+    mol_char_helper(ui, "Amines", &char.amines.len().to_string());
+    mol_char_helper(ui, "Amides", &char.amides.len().to_string());
+    mol_char_helper(ui, "Carbonyl", &char.carbonyl.len().to_string());
+    mol_char_helper(ui, "Hydroxyl", &char.hydroxyl.len().to_string());
+
+    ui.add_space(ROW_SPACING);
+    // Misc properties
+    mol_char_helper(ui, "H bond donor:", &char.h_bond_donor.len().to_string());
+    mol_char_helper(
+        ui,
+        "H bond acceptor",
+        &char.h_bond_acceptor.len().to_string(),
+    );
+    mol_char_helper(ui, "Valence elecs", &char.num_valence_elecs.to_string());
+
+    // Computed properties
+    ui.add_space(ROW_SPACING);
+    mol_char_helper(ui, "TPSA (traditional)", &format!("{:.2}", char.tpsa_ertl));
+    mol_char_helper(ui, "TPSA", &format!("{:.2}", char.tpsa_topo));
+    mol_char_helper(ui, "LogP", &format!("{:.2}", char.calc_log_p));
+    mol_char_helper(
+        ui,
+        "Molar Refractivity",
+        &format!("{:.2}", char.molar_refractivity),
+    );
+    mol_char_helper(ui, "ASA (Labute)", &format!("{:.2}", char.asa_labute));
+    mol_char_helper(ui, "ASA", &format!("{:.2}", char.asa_topo));
+    mol_char_helper(ui, "Volume", &format!("{:.2}", char.volume));
+    mol_char_helper(ui, "Balaban J Index", &format!("{:.2}", char.balaban_j));
+    mol_char_helper(ui, "Bertz Complexity", &format!("{:.2}", char.bertz_ct));
+    mol_char_helper(
+        ui,
+        "Complexity",
+        &format!("{:.2}", char.complexity.unwrap_or(0.0)),
+    );
 }

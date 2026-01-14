@@ -795,6 +795,7 @@ pub(in crate::ui) fn display_mol_data(
                                     pdbe::open_overview(id);
                                 }
                             }
+                            _ => (),
                         }
                     }
 
@@ -803,15 +804,22 @@ pub(in crate::ui) fn display_mol_data(
                     if pubchem_cid.is_none() {
                         if ui.button("PubChem").clicked() {
                             // If we already have SMILES, this saves an API call.
-                            if let Some(smiles) = m.smiles.as_ref() {
-                                let cids = pubchem::find_cids_from_search(&smiles, true)
-                                    .unwrap_or_default();
-                                if !cids.is_empty() {
-                                    let cid = cids[0];
-                                    update_cid = Some(cid);
-                                    pubchem::open_overview(cid);
+                            for ident in &m.idents {
+                                if let MolIdent::Smiles(smiles) = ident {
+                                    // todo: Don't block ?
+                                    let cids = pubchem::find_cids_from_search(&smiles, true)
+                                        .unwrap_or_default();
+
+                                    if !cids.is_empty() {
+                                        let cid = cids[0];
+                                        update_cid = Some(cid);
+                                        pubchem::open_overview(cid);
+                                    }
+
+                                    break;
                                 }
                             }
+
                             // This runs if we have neither CID, nor SMILES.
                             if let Ok((cid, _smiles)) =
                                 pubchem::get_cid_from_pdbe_id(&mol.common().ident)

@@ -71,6 +71,7 @@ use bincode::{Decode, Encode};
 use bio_apis::{
     ReqError,
     amber_geostd::{GeostdData, GeostdItem},
+    pubchem,
     rcsb::{FilesAvailable, PdbDataResults},
 };
 use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
@@ -286,7 +287,7 @@ struct StateVolatile {
         )>,
     >,
     /// Receives thread data upon an HTTP result completion.
-    smiles_pending_data_avail: Option<Receiver<(MolIdent, Result<String, ReqError>)>>,
+    pubchem_properties_avail: Option<Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>>,
     /// The first param is the index.
     amber_geostd_data_avail: Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
     /// We may change CWD during CLI navigation; keep prefs directory constant.
@@ -332,7 +333,7 @@ impl Default for StateVolatile {
         Self {
             dialogs: Default::default(),
             inputs_commanded: Default::default(),
-            smiles_pending_data_avail: Default::default(),
+            pubchem_properties_avail: Default::default(),
             mol_pending_data_avail: Default::default(),
             amber_geostd_data_avail: Default::default(),
             prefs_dir: env::current_dir().unwrap(), // This is why we can't derive.

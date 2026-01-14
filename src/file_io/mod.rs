@@ -656,10 +656,11 @@ impl State {
 
                 if let Some(p) = &self.ff_param_set.small_mol {
                     mol.update_ff_related(&mut self.mol_specific_params, p);
+
                     mol.update_aux(
                         &self.volatile.active_mol,
-                        &self.to_save.smiles_map,
-                        &mut self.volatile.smiles_pending_data_avail,
+                        &self.to_save.pubchem_properties_map,
+                        &mut self.volatile.pubchem_properties_avail,
                     );
                 } else {
                     handle_err(

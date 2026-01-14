@@ -4,13 +4,17 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::{Display, Formatter},
+    time::Instant,
 };
 
 use bio_files::BondType;
-use lin_alg::f64::Vec3;
+use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
 use na_seq::Element::*;
 
-use crate::molecules::{Atom, common::MoleculeCommon, rotatable_bonds::RotatableBond};
+use crate::{
+    molecules::{Atom, common::MoleculeCommon, rotatable_bonds::RotatableBond},
+    sa_surface::{SOLVENT_RAD, make_sas_mesh},
+};
 
 /// Describes a small molecule by features practical for description and characterization.
 /// These properties are derived quickly from a molecule, and are simple and objective.
@@ -58,19 +62,41 @@ pub struct MolCharacterization {
     pub hydroxyl: Vec<usize>,
     pub h_bond_donor: Vec<usize>,
     pub h_bond_acceptor: Vec<usize>,
+    /// These charges are None if we are missing any partial charges.
     pub net_partial_charge: Option<f32>,
     pub abs_partial_charge_sum: Option<f32>,
     pub num_sp3_carbon: usize,
     pub frac_csp3: f32,
-    // todo
-    pub topological_polar_surface_area: Option<f32>,
-    pub calc_log_p: Option<f32>,
-    // todo: New properties here.
-    pub m_r: f32,                 // tood; impl
+    /// Total polar surface area. A 2D/topology-based estimate (Å²) of how much of the molecule’s surface is polar (mainly
+    /// contributions from N, O, S, P). Correlates with permeability/absorption and hydrogen bonding.
+    /// This is the Ertl approach similar to RDKit, and is present in data sets.
+    pub tpsa_ertl: f32,
+    /// Uses geometry to compute TPSA. I think this will be more accurate, as it takes into account
+    /// 3D geometry, but may be less effective in ML contexts, or when comparing to other data
+    /// in general, as they don't usually use this.
+    pub tpsa_topo: f32,
+    /// The (calculated) log10 of the partition coefficient P between octanol and water for the
+    /// neutral compound. Higher logP generally means more hydrophobic/lipophilic.
+    pub calc_log_p: f32,
+    /// A measure related to the molecule’s polarizability and volume (often derived alongside logP
+    /// in fragment methods like Wildman–Crippen). Higher MR usually means “bigger/more polarizable.”
+    pub molar_refractivity: f32,
     pub num_valence_elecs: usize, // todo: Impl
-    pub labute_asa: f32,
-    pub balaban_j: f32, //todo?
-    pub bertz_ct: f32,  // todo: impl
+    // todo: Topological ASA too;
+    /// Solvent accessible surface area (ASA).
+    pub asa_labute: f32,
+    pub asa_topo: f32,
+    /// The Balaban J index: a topological connectivity descriptor derived from the graph distance
+    /// matrix. Captures aspects of branching/compactness and overall graph structure.
+    pub balaban_j: f32,
+    /// Bertz complexity index (Cₜ), a graph-based measure intended to quantify molecular structural
+    /// complexity (branching, ring structure, heteroatom variety). Higher means “more complex.”
+    pub bertz_ct: f32,
+    /// We load volume and complexity from PubChem's API currently.
+    /// Analytic volume of the first diverse conformer (default conformer) for a compound.
+    pub volume: f32,
+    /// The molecular complexity rating of a compound, computed using the Bertz/Hendrickson/Ihlenfeldt formula.
+    pub complexity: Option<f32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -462,18 +488,18 @@ impl MolCharacterization {
             num_valence_elecs += a.element.valence_electrons();
         }
 
-        // TPSA approximation
-        let tpsa = tpsa_approx(
+        // todo: ERTL is experimental.
+        let tpsa_ertl = tpsa_ertl(
             mol,
-            adj,
+            &mol.adjacency_list,
             &bond_type_by_edge,
             &aromatic_atoms,
-            &amides_set,
-            &hydroxyl_set,
+            None,
         );
+        let (tpsa_topo, asa_topo, volume) = tpsa_topo(mol);
 
         // 3D ASA proxy
-        let labute_asa = labute_asa_proxy(mol);
+        let asa_labute = labute_asa_proxy(mol);
 
         // Exact Balaban J
         let balaban_j = balaban_j_exact(mol);
@@ -484,14 +510,26 @@ impl MolCharacterization {
         // Simple monotonic heuristics for logP and MR (good ML features, not RDKit-identical)
         let rings_ct = rings.len() as f32;
         let hal_ct = halogen.len() as f32;
-        let hetero_ct = num_hetero_atoms as f32;
 
-        let calc_log_p = (0.54 * (num_carbon as f32)) + (1.10 * hal_ct) + (0.25 * rings_ct)
-            - (1.30 * hetero_ct)
-            - (0.01 * tpsa);
+        // todo: WHich?
+        // let hetero_ct = num_hetero_atoms as f32;
+        let hetero_ct = num_hetero_atoms as f32 - hal_ct;
 
-        let m_r = (0.10 * (mol_weight_f64 as f32)) + (0.45 * rings_ct) + (0.20 * hal_ct)
-            - (0.25 * hetero_ct);
+        // todo: These values may be provincial.
+        // todo: Move to the system RDKit uses, so you can mimic its results. Use the AqSolDb
+        // todo data set as a reference. These may be good enough for now.
+        // Note: For this dataset, the negative penalty for Hetero atoms was also
+        // reducing accuracy for the large complex A-8, so it is adjusted.
+        let calc_log_p = (0.13 * (num_carbon as f32)) + (0.10 * hal_ct) - (0.17 * rings_ct)
+            + (0.07 * hetero_ct)
+            + (0.01 * tpsa_topo)
+            + 0.92; // Intercept
+
+        // MR Fix: Increased MW weight (0.10 -> 0.27)
+        let m_r = (0.27 * (mol_weight_f64 as f32)) + (2.30 * rings_ct)
+            - (2.74 * hal_ct)
+            - (3.27 * hetero_ct)
+            + 5.92; // Intercept
 
         Self {
             num_atoms,
@@ -532,13 +570,17 @@ impl MolCharacterization {
             num_sp3_carbon,
             frac_csp3,
             //
-            topological_polar_surface_area: Some(tpsa),
-            calc_log_p: Some(calc_log_p),
-            m_r,
+            tpsa_ertl,
+            tpsa_topo,
+            calc_log_p,
+            molar_refractivity: m_r,
             num_valence_elecs,
-            labute_asa,
+            asa_labute,
+            asa_topo,
             balaban_j,
             bertz_ct,
+            volume,
+            complexity: None,
         }
     }
 }
@@ -937,59 +979,473 @@ fn labute_asa_proxy(mol: &MoleculeCommon) -> f32 {
     total as f32
 }
 
-/// TPSA approximation using only local chemistry you already detect.
-/// NOT a full Ertl table method; it’s a stable proxy for feature vectors.
-fn tpsa_approx(
+/// todo: Make a self-contained module for this, and othe rthings that use this nomenclature? (e.g. logP and MR?)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TpsaAtomType {
+    // N (aliphatic, neutral)
+    N_3single,       // [N](-*)(-*)-*
+    N_single_double, // [N](-*)d*
+    N_triple,        // [N]#*
+    N_nitro_like,    // [N](-*)(d*)d*
+    N_azide_middle,  // [N](d*)#*
+    N_3ring_subst,   // [N]1(-*)-*-*-1
+    NH_2single,      // [NH](-*)-*
+    NH_3ring,        // [NH]1-*-*-1
+    NH_double,       // [NH]d*
+    NH2_single,      // [NH2]-*
+
+    // N (aliphatic, cation)
+    Nplus_quat,           // [N+](-*)(-*)(-*)-*
+    Nplus_2single_double, // [N+](-*)(-*)d*
+    Nplus_isocyano,       // [N+](-*)#*
+    NHplus_3single,       // [NH+](-*)(-*)-*
+    NHplus_single_double, // [NH+](-*)d*
+    NH2plus_2single,      // [NH2+](-*)-*
+    NH2plus_double,       // [NH2+]d*
+    NH3plus_single,       // [NH3+]-*
+
+    // N aromatic (neutral/cation)
+    n_arom2,            // [n](:*):*
+    n_arom3,            // [n](:*)(:*):*
+    n_single_arom2,     // [n](-*)(:*):*
+    n_oxide_like,       // [n](d*)(:*):*
+    nH_arom2,           // [nH](:*):*
+    nplus_arom3,        // [n+](:*)(:*):*
+    nplus_single_arom2, // [n+](-*)(:*):*
+    nHplus_arom2,       // [nH+](:*):*
+
+    // O
+    O_2single,     // [O](-*)-*
+    O_3ring,       // [O]1-*-*-1
+    O_double,      // [O]d*
+    OH_single,     // [OH]-*
+    Ominus_single, // [O-]-*
+    o_aromatic,    // [o](:*):*
+
+    // S
+    S_2single,         // [S](-*)-*
+    S_double,          // [S]d*
+    S_2single_double,  // [S](-*)(-*)d*
+    S_2single_2double, // [S](-*)(-*)(d*)d*
+    SH_single,         // [SH]-*
+    s_aromatic,        // [s](:*):*
+    s_aromatic_double, // [s](d*)(:*):*
+
+    // P
+    P_3single,         // [P](-*)(-*)-*
+    P_single_double,   // [P](-*)d*
+    P_3single_double,  // [P](-*)(-*)(-*)d*
+    PH_2single_double, // [PH](-*)(-*)d*
+}
+
+fn tpsa_contrib(t: TpsaAtomType) -> f32 {
+    use TpsaAtomType::*;
+    match t {
+        N_3single => 3.24,
+        N_single_double => 12.36,
+        N_triple => 23.79,
+        N_nitro_like => 11.68,
+        N_azide_middle => 13.60,
+        N_3ring_subst => 3.01,
+        NH_2single => 12.03,
+        NH_3ring => 21.94,
+        NH_double => 23.85,
+        NH2_single => 26.02,
+
+        Nplus_quat => 0.00,
+        Nplus_2single_double => 3.01,
+        Nplus_isocyano => 4.36,
+        NHplus_3single => 4.44,
+        NHplus_single_double => 13.97,
+        NH2plus_2single => 16.61,
+        NH2plus_double => 25.59,
+        NH3plus_single => 27.64,
+
+        n_arom2 => 12.89,
+        n_arom3 => 4.41,
+        n_single_arom2 => 4.93,
+        n_oxide_like => 8.39,
+        nH_arom2 => 15.79,
+        nplus_arom3 => 4.10,
+        nplus_single_arom2 => 3.88,
+        nHplus_arom2 => 14.14,
+
+        O_2single => 9.23,
+        O_3ring => 12.53,
+        O_double => 17.07,
+        OH_single => 20.23,
+        Ominus_single => 23.06,
+        o_aromatic => 13.14,
+
+        S_2single => 25.30,
+        S_double => 32.09,
+        S_2single_double => 19.21,
+        S_2single_2double => 8.38,
+        SH_single => 38.80,
+        s_aromatic => 28.24,
+        s_aromatic_double => 21.70,
+
+        P_3single => 13.59,
+        P_single_double => 34.14,
+        P_3single_double => 9.81,
+        PH_2single_double => 23.47,
+    }
+}
+
+/// todo: For etrls TPSM
+fn bond_order_counts(
+    i: usize,
+    mol: &MoleculeCommon,
+    adj: &[Vec<usize>],
+    bond_type_by_edge: &HashMap<(usize, usize), BondType>,
+) -> (usize, usize, usize, usize) {
+    let mut single = 0usize;
+    let mut double = 0usize;
+    let mut triple = 0usize;
+    let mut aromatic = 0usize;
+
+    for &j in &adj[i] {
+        if mol.atoms[j].element == Hydrogen {
+            continue;
+        }
+        match bond_type_by_edge
+            .get(&edge_key(i, j))
+            .copied()
+            .unwrap_or(BondType::Single)
+        {
+            BondType::Single => single += 1,
+            BondType::Double => double += 1,
+            BondType::Triple => triple += 1,
+            BondType::Aromatic => aromatic += 1,
+            _ => single += 1,
+        }
+    }
+    (single, double, triple, aromatic)
+}
+
+/// todo: For etrls TPSM
+fn explicit_h_count(i: usize, mol: &MoleculeCommon, adj: &[Vec<usize>]) -> usize {
+    adj[i]
+        .iter()
+        .filter(|&&j| mol.atoms[j].element == Hydrogen)
+        .count()
+}
+
+/// Detect if atom i participates in any 3-member ring (triangle).
+/// todo: For etrls TPSM
+fn in_3_member_ring(
+    i: usize,
+    mol: &MoleculeCommon,
+    adj: &[Vec<usize>],
+    bond_type_by_edge: &HashMap<(usize, usize), BondType>,
+) -> bool {
+    let neigh: Vec<usize> = adj[i]
+        .iter()
+        .copied()
+        .filter(|&j| mol.atoms[j].element != Hydrogen)
+        .collect();
+
+    for a_idx in 0..neigh.len() {
+        for b_idx in (a_idx + 1)..neigh.len() {
+            let a = neigh[a_idx];
+            let b = neigh[b_idx];
+            if bond_type_by_edge.contains_key(&edge_key(a, b)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// todo: For etrls TPSM
+fn has_double_to_element(
+    i: usize,
+    el: na_seq::Element,
+    mol: &MoleculeCommon,
+    adj: &[Vec<usize>],
+    bond_type_by_edge: &HashMap<(usize, usize), BondType>,
+) -> bool {
+    adj[i].iter().any(|&j| {
+        mol.atoms[j].element == el
+            && bond_type_by_edge
+                .get(&edge_key(i, j))
+                .copied()
+                .unwrap_or(BondType::Single)
+                == BondType::Double
+    })
+}
+
+/// Ertl fragment TPSA (Å²).
+///
+/// `formal_charge`: optional per-atom integer formal charge.
+/// `implicit_h`: optional per-atom implicit H count (in addition to any explicit H atoms).
+pub fn tpsa_ertl(
     mol: &MoleculeCommon,
     adj: &[Vec<usize>],
     bond_type_by_edge: &HashMap<(usize, usize), BondType>,
     aromatic_atoms: &HashSet<usize>,
-    amides: &HashSet<usize>,
-    hydroxyl: &HashSet<usize>,
+    formal_charge: Option<&[i8]>,
 ) -> f32 {
     use na_seq::Element::*;
 
-    let is_double_bond = |a: usize, b: usize| -> bool {
-        bond_type_by_edge
-            .get(&edge_key(a, b))
-            .map(|bt| *bt == BondType::Double)
-            .unwrap_or(false)
-    };
-
-    let mut psa = 0.0f32;
+    let mut sum = 0.0f32;
 
     for i in 0..mol.atoms.len() {
-        match mol.atoms[i].element {
-            Oxygen => {
-                let is_carbonyl_o = adj[i]
-                    .iter()
-                    .any(|&n| mol.atoms[n].element == Carbon && is_double_bond(i, n));
+        let el = mol.atoms[i].element;
+        let is_arom = aromatic_atoms.contains(&i);
 
-                if hydroxyl.contains(&i) {
-                    psa += 20.2; // OH / COOH-ish
-                } else if is_carbonyl_o {
-                    psa += 17.0; // C=O oxygen
+        let q = formal_charge.map(|a| a[i] as i32).unwrap_or(0);
+        let h = explicit_h_count(i, mol, adj);
+
+        let (single, double, triple, aromatic) = bond_order_counts(i, mol, adj, bond_type_by_edge);
+        let heavy_degree = single + double + triple + aromatic;
+
+        let in3 = in_3_member_ring(i, mol, adj, bond_type_by_edge);
+
+        let ty: Option<TpsaAtomType> = match el {
+            Oxygen => {
+                if is_arom {
+                    Some(TpsaAtomType::o_aromatic)
+                } else if q < 0 {
+                    Some(TpsaAtomType::Ominus_single)
+                } else if double >= 1 {
+                    Some(TpsaAtomType::O_double)
+                } else if h >= 1 {
+                    Some(TpsaAtomType::OH_single)
+                } else if in3 {
+                    Some(TpsaAtomType::O_3ring)
+                } else if heavy_degree >= 1 {
+                    Some(TpsaAtomType::O_2single)
                 } else {
-                    psa += 17.0; // ether-like O
+                    None
                 }
             }
+
             Nitrogen => {
-                if amides.contains(&i) {
-                    psa += 12.0; // amide N is less polar/accepting
-                } else if aromatic_atoms.contains(&i) {
-                    let has_h = adj[i].iter().any(|&n| mol.atoms[n].element == Hydrogen);
-                    psa += if has_h { 15.0 } else { 13.0 };
+                if is_arom {
+                    let has_exocyclic_single = adj[i].iter().any(|&j| {
+                        if mol.atoms[j].element == Hydrogen {
+                            return false;
+                        }
+                        let bt = bond_type_by_edge
+                            .get(&edge_key(i, j))
+                            .copied()
+                            .unwrap_or(BondType::Single);
+                        bt == BondType::Single && !aromatic_atoms.contains(&j)
+                    });
+
+                    let has_n_oxide_like =
+                        has_double_to_element(i, Oxygen, mol, adj, bond_type_by_edge);
+
+                    if q > 0 {
+                        if h >= 1 {
+                            Some(TpsaAtomType::nHplus_arom2)
+                        } else if has_exocyclic_single {
+                            Some(TpsaAtomType::nplus_single_arom2)
+                        } else {
+                            Some(TpsaAtomType::nplus_arom3)
+                        }
+                    } else {
+                        if h >= 1 {
+                            Some(TpsaAtomType::nH_arom2)
+                        } else if has_n_oxide_like {
+                            Some(TpsaAtomType::n_oxide_like)
+                        } else if has_exocyclic_single {
+                            Some(TpsaAtomType::n_single_arom2)
+                        } else if aromatic >= 3 || heavy_degree >= 3 {
+                            Some(TpsaAtomType::n_arom3)
+                        } else {
+                            Some(TpsaAtomType::n_arom2)
+                        }
+                    }
                 } else {
-                    psa += 25.0; // generic amine/imine-ish N
+                    if q > 0 {
+                        if h == 0 && heavy_degree >= 4 {
+                            Some(TpsaAtomType::Nplus_quat)
+                        } else if h == 0 && triple >= 1 {
+                            Some(TpsaAtomType::Nplus_isocyano)
+                        } else if h == 0 && double >= 1 && single >= 2 {
+                            Some(TpsaAtomType::Nplus_2single_double)
+                        } else if h == 1 && double >= 1 {
+                            Some(TpsaAtomType::NHplus_single_double)
+                        } else if h == 1 {
+                            Some(TpsaAtomType::NHplus_3single)
+                        } else if h == 2 && double >= 1 {
+                            Some(TpsaAtomType::NH2plus_double)
+                        } else if h == 2 {
+                            Some(TpsaAtomType::NH2plus_2single)
+                        } else if h >= 3 {
+                            Some(TpsaAtomType::NH3plus_single)
+                        } else {
+                            None
+                        }
+                    } else {
+                        if in3 && h == 0 && double == 0 && triple == 0 && heavy_degree == 3 {
+                            Some(TpsaAtomType::N_3ring_subst)
+                        } else if in3 && h == 1 && double == 0 && triple == 0 && heavy_degree == 2 {
+                            Some(TpsaAtomType::NH_3ring)
+                        } else if double >= 2 {
+                            Some(TpsaAtomType::N_nitro_like)
+                        } else if double >= 1 && triple >= 1 {
+                            Some(TpsaAtomType::N_azide_middle)
+                        } else if triple >= 1 && heavy_degree == 1 {
+                            Some(TpsaAtomType::N_triple)
+                        } else if h == 2 && double == 0 && triple == 0 && heavy_degree == 1 {
+                            Some(TpsaAtomType::NH2_single)
+                        } else if h == 1 && double >= 1 {
+                            Some(TpsaAtomType::NH_double)
+                        } else if h == 1 && double == 0 && triple == 0 && heavy_degree == 2 {
+                            Some(TpsaAtomType::NH_2single)
+                        } else if double >= 1 && heavy_degree >= 2 {
+                            Some(TpsaAtomType::N_single_double)
+                        } else if h == 0 && double == 0 && triple == 0 && heavy_degree == 3 {
+                            Some(TpsaAtomType::N_3single)
+                        } else {
+                            None
+                        }
+                    }
                 }
             }
-            Sulfur => psa += 25.0,
-            Phosphorus => psa += 35.0,
-            _ => {}
+
+            Sulfur => {
+                if is_arom {
+                    if double >= 1 {
+                        Some(TpsaAtomType::s_aromatic_double)
+                    } else {
+                        Some(TpsaAtomType::s_aromatic)
+                    }
+                } else if h >= 1 && heavy_degree == 1 {
+                    Some(TpsaAtomType::SH_single)
+                } else if double >= 2 {
+                    Some(TpsaAtomType::S_2single_2double)
+                } else if double >= 1 && heavy_degree >= 3 {
+                    Some(TpsaAtomType::S_2single_double)
+                } else if double >= 1 {
+                    Some(TpsaAtomType::S_double)
+                } else if heavy_degree >= 1 {
+                    Some(TpsaAtomType::S_2single)
+                } else {
+                    None
+                }
+            }
+
+            Phosphorus => {
+                if h >= 1 && double >= 1 {
+                    Some(TpsaAtomType::PH_2single_double)
+                } else if double >= 1 && single >= 3 {
+                    Some(TpsaAtomType::P_3single_double)
+                } else if double >= 1 {
+                    Some(TpsaAtomType::P_single_double)
+                } else if heavy_degree >= 3 {
+                    Some(TpsaAtomType::P_3single)
+                } else {
+                    None
+                }
+            }
+
+            _ => None,
+        };
+
+        if let Some(t) = ty {
+            sum += tpsa_contrib(t);
         }
     }
 
-    psa
+    sum
+}
+
+/// Compute TPSA, and volume by creating and analyzing a mesh. We count surface area
+/// from triangles within a certain distance of O and N atoms, and Hs bonded to them.
+fn tpsa_topo(mol: &MoleculeCommon) -> (f32, f32, f32) {
+    // This radius is a mod to the VDW radius used to compute the mesh.
+    let radius = -0.08;
+    // Lower values take significantly longer, but are more accurate.
+    let precision = 0.5;
+
+    // If a triangle's center (?) is within this dist sq of a polar atom,
+    // count it towards the TPSA.
+    let dist_sq_thresh_tpsa = 1.5f32.powi(2); // todo
+
+    let start = Instant::now();
+
+    let mut atoms = Vec::with_capacity(mol.atoms.len());
+    for atom in &mol.atoms {
+        atoms.push((atom.posit.into(), atom.element.vdw_radius()));
+    }
+
+    // API issue here: Convert *back* to mcubes::Mesh, so we can access the `volume` method.
+    let mesh_graphics = make_sas_mesh(&atoms, radius, precision);
+
+    let vertices: Vec<mcubes::Vertex> = mesh_graphics
+        .vertices
+        .iter()
+        // I'm not sure why we need to invert the normal here; same reason we use InsideOnly above.
+        .map(|v| mcubes::Vertex {
+            posit: Vec3F32::from_slice(&v.position).unwrap(),
+            normal: -v.normal,
+        })
+        .collect();
+
+    let mesh = mcubes::Mesh {
+        indices: mesh_graphics.indices,
+        vertices,
+    };
+
+    let vol = mesh.volume();
+
+    let polar_atoms: Vec<_> = mol
+        .atoms
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| match a.element {
+            Oxygen | Nitrogen => true,
+            Hydrogen => {
+                for adj in &mol.adjacency_list[*i] {
+                    if matches!(mol.atoms[*adj].element, Oxygen | Nitrogen) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        })
+        .map(|(i, a)| a)
+        .collect();
+
+    // todo: Scale the area based on dist?
+    let mut tpsa = 0.0;
+    let mut asa = 0.;
+
+    for tri in mesh.indices.chunks(3) {
+        let i0 = tri[0];
+        let i1 = tri[1];
+        let i2 = tri[2];
+
+        let p0 = mesh.vertices[i0].posit;
+        let p1 = mesh.vertices[i1].posit;
+        let p2 = mesh.vertices[i2].posit;
+
+        let centroid = (p0 + p1 + p2) / 3.0;
+        let e1 = p1 - p0;
+        let e2 = p2 - p0;
+        let area = 0.5 * e1.cross(e2).magnitude();
+
+        asa += area;
+
+        for polar in &polar_atoms {
+            let p: Vec3F32 = polar.posit.into();
+
+            if (centroid - p).magnitude_squared() < dist_sq_thresh_tpsa {
+                tpsa += area;
+                break;
+            }
+        }
+    }
+
+    let elapsed = start.elapsed().as_millis();
+    // println!("TPSA (topo) computation took {} ms", elapsed);
+
+    (tpsa, asa, vol)
 }
 
 /// Exact Balaban J (distance-sum connectivity index) per component.

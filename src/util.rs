@@ -853,13 +853,13 @@ pub fn handle_scene_flags(
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
 pub fn handle_thread_rx(state: &mut State) {
-    if let Some(rx) = &mut state.volatile.smiles_pending_data_avail {
+    if let Some(rx) = &mut state.volatile.pubchem_properties_avail {
         match rx.try_recv() {
-            Ok((ident_type, http_result)) => {
+            Ok((ident, http_result)) => {
                 let mut mol = None;
                 for mol_ in &mut state.ligands {
                     for ident_ in &mol_.idents {
-                        if ident_ == &ident_type {
+                        if ident_ == &ident {
                             mol = Some(mol_);
                             break;
                         }
@@ -867,31 +867,40 @@ pub fn handle_thread_rx(state: &mut State) {
                 }
 
                 let Some(mol) = mol else {
-                    state.volatile.smiles_pending_data_avail = None;
-                    eprintln!("Unable to find the mol we requested smiles for: {ident_type:?}");
+                    state.volatile.pubchem_properties_avail = None;
+                    eprintln!(
+                        "Unable to find the mol we requested PubChem properties for: {ident:?}"
+                    );
                     return;
                 };
 
                 match http_result {
-                    Ok(smiles) => {
-                        println!("Loaded smiles for {ident_type:?} from Pubchem: {smiles}");
-                        mol.smiles = Some(smiles.clone());
+                    Ok(props) => {
+                        println!("Received PubChem properties over HTTP.");
+                        mol.update_idents_and_char_from_pubchem(&props);
 
                         state
                             .to_save
-                            .smiles_map
-                            .insert(ident_type.clone(), smiles.clone());
+                            .pubchem_properties_map
+                            .insert(ident.clone(), props.clone());
+
+                        // todo print temp
+                        println!(
+                            "\n\n\nProp map after update: {:?}\n\n",
+                            state.to_save.pubchem_properties_map
+                        );
                     }
                     Err(_) => {
                         // Note: This is currently broken.
-                        println!("Unable to find Smiles for ident {ident_type:?}, generating one.");
+                        // println!("Unable to find Smiles for ident {ident_type:?}, generating one.");
+                        eprintln!("Unable to find PubChem properties for ident {ident:?}");
                         // todo: Not saving to cache; not confident enough.
-                        mol.smiles = Some(mol.common.to_smiles());
+                        // mol.smiles = Some(mol.common.to_smiles());
                     }
                 }
-                state.volatile.smiles_pending_data_avail = None;
+                state.volatile.pubchem_properties_avail = None;
             }
-            // E.g. no results. COuld handle explicit errors too.
+            // E.g. no results. Could handle explicit errors too.
             Err(_) => {}
         }
     }

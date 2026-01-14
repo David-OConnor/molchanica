@@ -272,7 +272,9 @@ impl MolEditorState {
         // Load the initial relaxation into atom positions.
         self.load_atom_posits_from_md(&mut scene.entities, state_ui, engine_updates, manip_mode);
 
-        self.mol.smiles = Some(self.mol.common.to_smiles());
+        // self.mol.smiles = Some(self.mol.common.to_smiles());
+        // todo: Update SMILES For our editor molecule here, once we get our smiles-gen code working reliably.
+        // todo: This will be a self.mol.idents update or edit.
 
         self.move_to_origin();
         scene.input_settings.control_scheme = ControlScheme::Arc {

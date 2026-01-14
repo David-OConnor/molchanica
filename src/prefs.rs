@@ -11,7 +11,10 @@ use bincode::{
     de::BorrowDecoder,
     error::{DecodeError, EncodeError},
 };
-use bio_apis::rcsb::{FilesAvailable, PdbDataResults};
+use bio_apis::{
+    pubchem,
+    rcsb::{FilesAvailable, PdbDataResults},
+};
 use chrono::{DateTime, TimeZone, Utc};
 use dynamics::MdConfig;
 use graphics::{
@@ -163,7 +166,7 @@ pub struct ToSave {
     pub near_sel_only: bool,
     pub near_lig_only: bool,
     pub nearby_dist_thresh: u16,
-    pub smiles_map: HashMap<MolIdent, String>,
+    pub pubchem_properties_map: HashMap<MolIdent, pubchem::Properties>,
     /// We use this to mark that we should perform a save, even if one
     /// of the fields here didn't change. E.g. after moving a molecule.
     /// This is caught during our periodic check for changes in this struct.
@@ -198,7 +201,7 @@ impl Default for ToSave {
             nearby_dist_thresh: Default::default(),
             visibility: Default::default(),
             ui_visibility: Default::default(),
-            smiles_map: Default::default(),
+            pubchem_properties_map: Default::default(),
             save_flag: false,
             lipid: Default::default(),
             nucleic_acid: Default::default(),

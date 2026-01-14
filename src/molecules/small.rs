@@ -45,9 +45,9 @@ pub struct MoleculeSmall {
     pub frcmod_loaded: bool,
     /// E.g. loaded proteins from Pubchem.
     pub associated_structures: Vec<ProteinStructure>,
-    /// Simplified Molecular Input Line Entry System
-    /// A cache for display as required. This is a text representation of a molecular formula.
-    pub smiles: Option<String>,
+    // /// Simplified Molecular Input Line Entry System
+    // /// A cache for display as required. This is a text representation of a molecular formula.
+    // pub smiles: Option<String>,
     pub characterization: Option<MolCharacterization>,
     /// Note: These are loaded from SDF, but we use our data in MolCharacterization instead.
     pub pharmacophore_features: Vec<PharmacaphoreFeatures>,
@@ -469,7 +469,7 @@ impl MoleculeSmall {
     /// the Geostd one. We could do this with coordinates, but that might be complicated.
     /// For now, we perform a sanity check about atom count by element. If it passes,
     /// we replace molecule atom and bond data with that loaded from the mol2.
-    fn search_geostd(
+    fn _search_geostd(
         &mut self,
         ident: &str,
         geostd_thread: &mut Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
@@ -491,8 +491,10 @@ impl MoleculeSmall {
     pub fn update_aux(
         &mut self,
         active_mol: &Option<(Mt, usize)>,
-        smiles_map: &HashMap<MolIdent, String>,
-        smiles_pending_data_avail: &mut Option<Receiver<(MolIdent, Result<String, ReqError>)>>,
+        pubchem_properties_map: &HashMap<MolIdent, pubchem::Properties>,
+        pubchem_properties_avail: &mut Option<
+            Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>,
+        >,
     ) {
         if let Some((_, i)) = active_mol {
             let offset = LIGAND_ABS_POSIT_OFFSET * (*i as f64);
@@ -503,48 +505,147 @@ impl MoleculeSmall {
 
         self.characterization = Some(MolCharacterization::new(&self.common));
 
-        // Load the SMILES respresentation from our local DB, or online. If online,
+        // Load PubChem properties from either our prefs file, or online. If online,
         // launch this in a separate thread.
+        let mut pubchem_ident_exists = false;
+
+        println!("Prop map loaded: {:?}", pubchem_properties_map.keys());
+
         for ident in &self.idents {
-            match smiles_map.get(&ident) {
-                Some(v) => {
-                    println!("Loaded smiles for {ident:?} from our local DB: {v}");
-                    self.smiles = Some(v.clone());
+            match pubchem_properties_map.get(&ident) {
+                Some(props) => {
+                    println!("Loaded Properties for {ident:?} from our local DB.");
+
+                    // todo: Break this etc out into a separate function A/R to update based on properties
+                    self.update_idents_and_char_from_pubchem(props);
                     break;
                 }
                 None => {
                     let (tx, rx) = mpsc::channel(); // one-shot channel
                     let ident_for_thread = ident.clone();
 
-                    println!("Loading smiles for {ident:?} from PubChem...");
+                    println!("\nLoading PubChem properties for {ident:?} over HTTP...");
 
+                    // todo: Follow-up on and/or update this. E.g. you should no longer be getting smiles
+                    // todo for a pubchem ID, but instead
                     match ident {
-                        MolIdent::PdbeAmber(_) => {
-                            thread::spawn(move || {
-                                let data =
-                                    pubchem::get_smiles_chem_name(&ident_for_thread.to_str());
-                                // Note: this commented-out call below also gets PubChem CID.
-                                // pubchem::get_cid_from_pdbe_id(&ident_for_thread.to_str());
-                                let _ = tx.send((ident_for_thread, data));
-                            });
-                            break;
-                        }
                         MolIdent::PubChem(_) => {
                             thread::spawn(move || {
                                 // part of our borrow-checker workaround
                                 let cid_: u32 = ident_for_thread.to_str().parse().unwrap();
-                                let data = pubchem::get_smiles(cid_);
+
+                                println!(
+                                    "Launching thread for PubChem properties HTTP for {ident_for_thread:?}..."
+                                ); // todo temp?
+                                let data = pubchem::properties(cid_);
+
                                 let _ = tx.send((ident_for_thread, data));
                             });
+
+                            pubchem_ident_exists = true;
+                            *pubchem_properties_avail = Some(rx);
                             break;
                         }
                         _ => (),
                     }
-
-                    *smiles_pending_data_avail = Some(rx);
                 }
             }
             break;
+        }
+
+        // todo here, fill this out. We should acquire a PubChem CID, then query full properties from PubCHem
+        // todo: Both of these should be in threads.
+        if !pubchem_ident_exists {
+            for ident in &self.idents {
+                let ident_for_thread = ident.clone();
+
+                match ident {
+                    MolIdent::PdbeAmber(_) => {
+                        thread::spawn(move || {
+                            let data = pubchem::get_smiles_chem_name(&ident_for_thread.to_str());
+                            // Note: this commented-out call below also gets PubChem CID.
+                            // pubchem::get_cid_from_pdbe_id(&ident_for_thread.to_str());
+
+                            // let _ = tx.send((ident_for_thread, data));
+                        });
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        // for ident in &self.idents {
+        //     if let MolIdent::PubChem(cid) = ident {
+        //         // todo: Make it a thread (non-blocking)
+        //         match pubchem::properties(*cid) {
+        //             Ok(props) => {
+        //                 println!("Successfully loaded properties from PubChem over HTTP");
+        //
+        //                 self.update_idents_and_char_from_pubchem(&props);
+        //                 break;
+        //             }
+        //             Err(e) => {
+        //                 eprintln!("Error loading PubChem properties: {e:?}");
+        //             }
+        //         }
+        //     }
+        // }
+    }
+
+    pub fn update_idents_and_char_from_pubchem(&mut self, props: &pubchem::Properties) {
+        let mut smiles_exists = false;
+        let mut inchi_exists = false;
+        let mut inchi_key_exists = false;
+        let mut iupac_name_exists = false;
+        let mut title_exists = false;
+
+        for ident in &self.idents {
+            if matches!(ident, MolIdent::Smiles(_)) {
+                smiles_exists = true;
+            }
+            if matches!(ident, MolIdent::InchI(_)) {
+                inchi_exists = true;
+            }
+            if matches!(ident, MolIdent::InchIKey(_)) {
+                inchi_key_exists = true;
+            }
+            if matches!(ident, MolIdent::IupacName(_)) {
+                iupac_name_exists = true;
+            }
+            if matches!(ident, MolIdent::PubchemTitle(_)) {
+                title_exists = true;
+            }
+        }
+
+        if !smiles_exists {
+            self.idents.push(MolIdent::Smiles(props.smiles.clone()));
+        }
+        if !inchi_exists {
+            self.idents.push(MolIdent::InchI(props.inchi.clone()));
+        }
+        if !inchi_key_exists {
+            self.idents
+                .push(MolIdent::InchIKey(props.inchi_key.clone()));
+        }
+        if !iupac_name_exists {
+            self.idents
+                .push(MolIdent::IupacName(props.iupac_name.clone()));
+        }
+        if !title_exists {
+            self.idents
+                .push(MolIdent::PubchemTitle(props.title.clone()));
+        }
+
+        if let Some(char) = &mut self.characterization {
+            println!(
+                "LogP Calc:{:.1} | PubChem: {:.2} TPSA calc: {:.1} PubChem: {:.2}\n",
+                char.calc_log_p, props.log_p, char.tpsa_ertl, props.total_polar_surface_area
+            );
+
+            char.calc_log_p = props.log_p;
+            char.tpsa_ertl = props.total_polar_surface_area;
+            char.volume = props.volume;
+            char.complexity = Some(props.complexity);
         }
     }
 

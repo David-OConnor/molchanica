@@ -20,7 +20,7 @@ use crate::{
     },
     mol_manip,
     mol_manip::ManipMode,
-    molecules::{Bond, MolType, small::MoleculeSmall},
+    molecules::{Bond, MolIdent, MolType, small::MoleculeSmall},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
         cam::cam_reset_controls,
@@ -386,8 +386,11 @@ pub(in crate::ui) fn editor(
 
     // ui.horizontal_wrapped(|ui| {
     ui.horizontal(|ui| {
-        if let Some(sm) = &state.mol_editor.mol.smiles {
-            ui.label(RichText::new(sm));
+        for ident in &state.mol_editor.mol.idents {
+            if let MolIdent::Smiles(smiles) = ident {
+                ui.label(RichText::new(smiles));
+                break;
+            }
         }
 
         if state.mol_editor.md_state.is_some() {
