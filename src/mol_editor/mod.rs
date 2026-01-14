@@ -541,7 +541,7 @@ pub fn redraw(
     entities.clear();
 
     entities.extend(draw_mol(
-        MolGenericRef::Ligand(mol),
+        MolGenericRef::Small(mol),
         0,
         ui,
         &None,
@@ -679,7 +679,7 @@ fn draw_bond(
 
 /// Save the editor's molecule to disk.
 pub fn save(state: &mut State, path: &Path) -> io::Result<()> {
-    let mol = MolGenericRef::Ligand(&state.mol_editor.mol);
+    let mol = MolGenericRef::Small(&state.mol_editor.mol);
 
     let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
     let extension = binding;

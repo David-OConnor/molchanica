@@ -39,7 +39,7 @@ pub(in crate::ui) fn mol_type_toolbars(
         if let Some(mol) = &state.active_mol()
             && state.peptide.is_some()
         {
-            if let MolGenericRef::Ligand(_) = mol {
+            if let MolGenericRef::Small(_) = mol {
                 ui.add_space(COL_SPACING);
                 ui.label("Docking:");
 

@@ -34,6 +34,8 @@ Cargo.lock
 *.pt
 *.safetensors
 *.vocab
+/AqSolDb_mols
+/mol_models
 
 # Our prefs format.
 *.dae
@@ -48,3 +50,4 @@ Cargo.lock
 /orca_temp
 
 *.water_init_template
+

@@ -47,7 +47,7 @@ pub(in crate::ui) fn load_popups(
             // These vars avoid dbl borrow.
             // todo: Is this always the lig you want?
             if let Some(lig) = &state.active_mol() {
-                if let MolGenericRef::Ligand(l) = lig {
+                if let MolGenericRef::Small(l) = lig {
                     load_ff = !l.ff_params_loaded;
                     load_frcmod = !l.frcmod_loaded;
 
@@ -123,7 +123,7 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.show_associated_structures {
         let mut associated_structs = Vec::new();
         if let Some(lig) = state.active_mol() {
-            if let MolGenericRef::Ligand(l) = lig {
+            if let MolGenericRef::Small(l) = lig {
                 // todo: I don't like this clone, but not sure how else to do it.
                 associated_structs = l.associated_structures.clone();
             }

@@ -1134,7 +1134,7 @@ pub fn find_nearest_mol_dist_to_cam(state: &State, cam: &Camera) -> Option<f32> 
     }
 
     for mol in &state.ligands {
-        if let Some(v) = find_nearest_mol_inner(MolGenericRef::Ligand(mol), cam)
+        if let Some(v) = find_nearest_mol_inner(MolGenericRef::Small(mol), cam)
             && v < nearest
         {
             nearest = v;

@@ -20,6 +20,8 @@ including [RSCB PDB](https://www.rcsb.org/),
 and [LMSD](https://www.lipidmaps.org/databases/lmsd/overview). Uses parallel computing to accelerate calculations. (GPU,
 SIMD, and thread pools.)
 
+Includes drug-design features.
+
 ## Installation
 
 ### Windows and Linux
@@ -51,6 +53,8 @@ and either installing the CUDA toolkit, or disabling CUDA.
 - Edit small molecules in 3D with integrated dynamics
 - Visualize electron density from crystallography and Cryo-Em data
 - Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed).
+- Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
+  and more.
 
 ## Molecule types supported for viewing and dynamics
 
@@ -204,7 +208,8 @@ See below for a reference.
 
 - **Ctrl + scroll**: Change the fog distance. (hide distant atoms)
 
-- **Delete**: In the primary mode, close the active molecule. In the molecule editor, this deletes the selected atom or bond.
+- **Delete**: In the primary mode, close the active molecule. In the molecule editor, this deletes the selected atom or
+  bond.
 
 - **Enter**: Move the camera to the selected atom, bond, or residue.
 

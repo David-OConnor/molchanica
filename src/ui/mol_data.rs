@@ -546,7 +546,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
         if let Some((_, i)) = state.volatile.active_mol {
             let mol = &mut state.ligands[i];
             if let Some(pep) = &state.peptide {
-                move_mol_to_res(&mut MolGenericRefMut::Ligand(mol), pep, &res);
+                move_mol_to_res(&mut MolGenericRefMut::Small(mol), pep, &res);
                 move_cam_to_active_mol(state, scene, pep.center, engine_updates);
             }
         }
@@ -758,7 +758,7 @@ pub(in crate::ui) fn display_mol_data(
         if let Some(mol) = state.active_mol() {
             match mol {
                 MolGenericRef::Peptide(_) => {}
-                MolGenericRef::Ligand(m) => {
+                MolGenericRef::Small(m) => {
                     ui.add_space(COL_SPACING);
                     if !m.ff_params_loaded {
                         ui.label(RichText::new("FF/q").color(Color32::LIGHT_RED))
@@ -854,7 +854,7 @@ pub(in crate::ui) fn display_mol_data(
 
         if let Some(mol) = state.active_mol_mut() {
             if let Some(cid) = update_cid
-                && let MolGenericRefMut::Ligand(m) = mol
+                && let MolGenericRefMut::Small(m) = mol
             {
                 m.idents.push(MolIdent::PubChem(cid));
             }

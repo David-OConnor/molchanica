@@ -24,8 +24,9 @@ use crate::{
     drawing::color_viridis,
     file_io::gemmi_path,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
+    mol_characterization::RingType,
     mol_editor::enter_edit_mode,
-    molecules::MolGenericRef,
+    molecules::{MolGenericRef, MolGenericRefMut},
     render::set_flashlight,
     ui::{
         cam::{cam_controls, cam_snapshots},
@@ -560,6 +561,50 @@ pub fn view_sel_selector(
     }
 
     ui.add_space(COL_SPACING);
+}
+
+fn mol_characterization(state: &mut State, ui: &mut Ui) {
+    if let Some(m) = state.active_mol() {
+        if let MolGenericRef::Small(mol) = m {
+            let Some(char) = &mol.characterization else {
+                return;
+            };
+
+            // todo: Placeholder. Maybe we put this in a popup instead? Or at least make it hideable
+            ui.horizontal(|ui| {
+                section_box().show(ui, |ui| {
+                    ui.label("Mol details: ");
+                    ui.label(char.to_string());
+
+                    let rings_sat = char.rings.iter().filter(|r| r.ring_type == RingType::Saturated).count();
+                    let rings_ar = char.rings.iter().filter(|r| r.ring_type == RingType::Aromatic).count();
+                    let rings_ali = char.rings.iter().filter(|r| r.ring_type == RingType::Aliphatic).count();
+
+                    ui.label(format!("Hvy: {} Het: {} Rot: {} Net q: {:?} Abs Q: {:?} \
+                     Sp3 C: {}, frac_csp3: {} tpsa: {:?} calc_log_p: {:?}, m_r: {} val elecs: {}, balaban J: {}, bertz CT: {} ASA: {} \
+                     Rings sat: {}  Rings ar: {} Rings ali: {}",
+                                     char.num_heavy_atoms,
+                                     char.num_hetero_atoms,
+                                     char.rotatable_bonds.len(),
+                                     char.net_partial_charge,
+                                     char.abs_partial_charge_sum,
+                                     char.num_sp3_carbon,
+                                     char.frac_csp3,
+                                     char.topological_polar_surface_area,
+                                     char.calc_log_p,
+                                     char.m_r,
+                                     char.num_valence_elecs,
+                                     char.balaban_j,
+                                     char.bertz_ct,
+                        rings_sat,
+                        rings_ar,
+                        rings_ali,
+                        char.labute_asa
+                    ));
+                });
+            });
+        }
+    }
 }
 
 fn selection_section(
@@ -1318,7 +1363,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 window which lets you configure and run this alignment, then view the resulting 3D conformations,\
                 and similarity metrics.")
                 .clicked() {
-               state.ui.popup.alignment = !state.ui.popup.alignment;
+                state.ui.popup.alignment = !state.ui.popup.alignment;
 
                 if state.volatile.alignment.mols_to_align.len() < 2 {
                     state.volatile.alignment.mols_to_align = vec![0, 1];
@@ -1332,6 +1377,9 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
             }
         });
+
+        // Todo: Move to popups  etc A/R.
+        mol_characterization(state, ui);
 
         let redraw_prev = redraw_peptide;
         selection_section(state, &mut redraw_peptide, ui, &mut scene.meshes, &mut engine_updates);
@@ -1386,7 +1434,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
         if state.ui.ui_vis.smiles {
             if let Some(mol) = &state.active_mol() &&
-                let MolGenericRef::Ligand(m) = mol {
+                let MolGenericRef::Small(m) = mol {
                 if let Some(smiles) = &m.smiles {
                     draw_smiles(smiles, ui);
                 }

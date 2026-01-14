@@ -32,7 +32,7 @@ use crate::{
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
 
-/// A molecue representing a small organic molecule. Omits mol-generic fields.
+/// A molecule representing a small organic molecule. Omits mol-generic fields.
 #[derive(Debug, Default, Clone)]
 pub struct MoleculeSmall {
     pub common: MoleculeCommon,
@@ -108,7 +108,7 @@ impl MolGenericTrait for MoleculeSmall {
     }
 
     fn to_ref(&self) -> MolGenericRef<'_> {
-        MolGenericRef::Ligand(self)
+        MolGenericRef::Small(self)
     }
 
     fn mol_type(&self) -> crate::molecules::MolType {

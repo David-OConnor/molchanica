@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
-use bio_apis::{ReqError, amber_geostd, amber_geostd::GeostdItem, rcsb};
+use bio_apis::{
+    ReqError, amber_geostd, amber_geostd::GeostdItem, pubchem::StructureSearchNamespace, rcsb,
+};
 use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use na_seq::AaIdent;
@@ -38,7 +40,7 @@ pub fn load_sdf_drugbank(ident: &str) -> Result<MoleculeSmall, ReqError> {
 
 /// Download an SDF file from PubChem, and parse as a molecule.
 pub fn load_sdf_pubchem(cid: u32) -> Result<MoleculeSmall, ReqError> {
-    match Sdf::load_pubchem(cid) {
+    match Sdf::load_pubchem(StructureSearchNamespace::Cid, &cid.to_string()) {
         Ok(m) => Ok(m.try_into().map_err(|e| ReqError::from(e))?),
         Err(_) => Err(ReqError::Http),
     }
@@ -181,7 +183,7 @@ pub fn load_geostd2(
                         }
                     }
                     if let Some(lig) = state.active_mol_mut() {
-                        if let MolGenericRefMut::Ligand(l) = lig {
+                        if let MolGenericRefMut::Small(l) = lig {
                             l.frcmod_loaded = true;
                         }
                     }

@@ -44,6 +44,7 @@ mod mol_manip;
 mod mol_screening;
 mod molecules;
 mod orca;
+mod pharmacokinetics;
 mod pharmacophore;
 mod selection;
 mod smiles;
@@ -798,7 +799,7 @@ impl State {
                 }
                 MolType::Ligand => {
                     if i < self.ligands.len() {
-                        Some(MolGenericRef::Ligand(&self.ligands[i]))
+                        Some(MolGenericRef::Small(&self.ligands[i]))
                     } else {
                         None
                     }
@@ -831,7 +832,7 @@ impl State {
                 MolType::Peptide => None,
                 MolType::Ligand => {
                     if i < self.ligands.len() {
-                        Some(MolGenericRefMut::Ligand(&mut self.ligands[i]))
+                        Some(MolGenericRefMut::Small(&mut self.ligands[i]))
                     } else {
                         None
                     }

@@ -8,16 +8,14 @@
 //!
 // todo: Load Amber FF params for nucleic acids.
 
-use std::{collections::HashMap,fmt::Display, io,};
-use std::f64::consts::TAU;
+use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io, sync::atomic::Ordering};
+
 use bincode::{Decode, Encode};
 use bio_files::{
     BondType, ResidueEnd, ResidueType,
     mol_templates::{TemplateData, load_templates},
 };
-use dynamics::{
-    params::{OL24_LIB, RNA_LIB},
-};
+use dynamics::params::{OL24_LIB, RNA_LIB};
 use lin_alg::f64::{Quaternion, Vec3, Y_VEC};
 use na_seq::{
     AminoAcid,
@@ -26,16 +24,19 @@ use na_seq::{
 };
 
 use crate::{
+    mol_editor::NEXT_ATOM_SN,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
         common::MoleculeCommon,
     },
+    util::rotate_atoms_about_point,
 };
-use crate::util::rotate_atoms_about_point;
 
 // Axial rise; height difference between two consecutive bases.
-// This is a suitable default for B-DNA.
+// This is a suitable default for B-DNA. (Note: Measurement of 3.17 from bdna mmCIF file, with radius of 4.65)
 const RISE: f64 = 3.4;
+
+const N1_9_RADIUS: f64 = 4.64;
 
 // ~10.5 bp per turn, so ~34 Å per helical turn (10.5 × 3.4)
 const TWIST: f64 = 34.0_f64.to_radians();
@@ -48,7 +49,6 @@ const H_BOND_AT_N6_O4_DIV2: f64 = 2.81 / 2.;
 const H_BOND_CG_N3_N1_DIV2: f64 = 2.83 / 2.;
 const H_BOND_CG_N4_O6_DIV2: f64 = 2.71 / 2.;
 const H_BOND_CG_O2_N2_DIV2: f64 = 2.82 / 2.;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)]
 pub enum NucleicAcidType {
@@ -129,7 +129,6 @@ pub struct MoleculeNucleicAcid {
     //     /// We use residues to denote headgroups and chains.
     //     pub residues: Vec<Residue>,
 }
-
 
 fn atom_pos_from_name(atoms: &[Atom], name: &str) -> Vec3 {
     for atom in atoms {
@@ -225,7 +224,9 @@ fn align_bases(
         T => -25.,
         C => -25.,
         G => 25.,
-    }  * TAU / 32. + helix_angle;
+    } * TAU
+        / 32.
+        + helix_angle;
 
     let aligner = Quaternion::from_axis_angle(plane_norm, amt);
     rotate_atoms_about_point(&mut atoms_base_comp, ctr_ref, aligner);
@@ -241,23 +242,26 @@ fn build_strands(
     posit_5p: Vec3,
     templates: &HashMap<String, TemplateData>,
     strands: Strands,
-    helix_phase: f64,
 ) -> io::Result<(Vec<Atom>, Vec<Bond>, Vec<Residue>)> {
     let mut atoms_out = Vec::new();
     let mut bonds_out = Vec::new();
     let mut res_out = Vec::new();
 
-    let mut res_i: usize = 0;
     let mut atom_sn_offset = 0;
 
     let helix_axis = Y_VEC;
+
+    // We use these to create bonds between backbone segments of adjacent NTs. The o3' from
+    // the previous NT joins to the P of the next.
+    let mut prev_strand_a_o3p_sn = 0;
+    let mut prev_strand_b_o3p_sn = 0;
 
     for (i_nt, &nt) in seq.iter().enumerate() {
         let is_first = i_nt == 0;
         let is_last = i_nt + 1 == seq.len();
 
         let mut res = Residue {
-            serial_number: res_i as u32 + 1,
+            serial_number: i_nt as u32 + 1,
             res_type: ResidueType::Other(format!("Nucleotide: {nt}")),
             atom_sns: Vec::new(),
             atoms: Vec::new(),
@@ -272,9 +276,12 @@ fn build_strands(
         };
 
         let height_offset = RISE * i_nt as f64;
-        let helix_angle = TWIST * i_nt as f64;
+        let mut helix_angle = TWIST * i_nt as f64;
 
-        let template = find_template(nt, na_type, is_first, is_last, templates)?;
+        // todo temp! Marking is_first false because I'm having a problem with geometry (in the template?)
+        // todo for the initial one rel to the others, helix rot is off.
+        // let template = find_template(nt, na_type, is_first, is_last, templates)?;
+        let template = find_template(nt, na_type, false, is_last, templates)?;
 
         let (mut atoms_base, mut bonds_base) = base_from_template(template, nt, na_type);
 
@@ -291,36 +298,40 @@ fn build_strands(
         atom_sn_offset += atoms_base.len() as u32;
 
         // Rotate the base atoms so their planes are aligned to the (arbitrarily-chosen) Y axis.
-        {
-            // For the A strand, as initially present in the template.
+        // For the A strand, as initially present in the template.
+        let plane_rotator = {
             let plane_norm = find_base_plane_norm(template);
+            Quaternion::from_unit_vecs(plane_norm, helix_axis)
+        };
 
-            let plane_rotator = Quaternion::from_unit_vecs(plane_norm, helix_axis);
-
-            let pivot = template.find_atom_by_name("N1").unwrap().posit;
-            rotate_atoms_about_point(&mut atoms_base, pivot, plane_rotator);
-        }
+        let pivot_plane_align = template.find_atom_by_name("N1").unwrap().posit;
+        rotate_atoms_about_point(&mut atoms_base, pivot_plane_align, plane_rotator);
 
         // This is where we move the slide pivot to, and rotate around to position
         // helically. Located along the helix axis, at the correct height for this nt.
         // todo: This pivot is probably wrong. It should probably move around in a small
         // todo circle.
-        let pivot = Vec3::new(0.0, height_offset, 0.0);
         // Move so that 1:  This base's plane is at the correct height. 2: Slide, along the plane axis,
         // so the base atoms are centered on the helix axis.
-        {
+        let pivot_helix_rot = Vec3::new(0.0, height_offset, 0.0);
+        let central_shift_and_height_offset = {
             let posit_to_align = base_center_ref(&atoms_base, nt);
-            let offset = pivot - posit_to_align;
-            for atom in &mut atoms_base {
-                atom.posit += offset;
-            }
+            pivot_helix_rot - posit_to_align
+        };
+
+        for atom in &mut atoms_base {
+            atom.posit += central_shift_and_height_offset;
+        }
+
+        if matches!(nt, T | C) {
+            // helix_angle += TAU / 2. // todo experimenting.
+            helix_angle += 10. * TAU / 16. // todo experimenting.
         }
 
         // Rotate, to form the helix, using the same pivot.
-        {
-            let helix_rot = Quaternion::from_axis_angle(helix_axis, helix_angle);
-            rotate_atoms_about_point(&mut atoms_base, pivot, helix_rot);
-        }
+        let helix_rot = Quaternion::from_axis_angle(helix_axis, helix_angle);
+
+        rotate_atoms_about_point(&mut atoms_base, pivot_helix_rot, helix_rot);
 
         // Populate our all-NT atoms and bonds with those of the base from this NT.
         for atom in &atoms_base {
@@ -332,31 +343,42 @@ fn build_strands(
             bonds_out.push(bond);
         }
 
-
         // Position the opposite base.
         if strands == Strands::Double {
             let nt_comp = nt.complement();
-            let template_comp = find_template(nt_comp, na_type, is_first, is_last, templates)?;
-            let (mut atoms_comp, mut bonds_comp) = base_from_template(template_comp, nt_comp, na_type);
+            // todo temp! Marking is_first false because I'm having a problem with geometry (in the template?)
+            // todo for the initial one rel to the others, helix rot is off.
+            let template_comp = find_template(nt_comp, na_type, false, is_last, templates)?;
+            // let template_comp = find_template(nt_comp, na_type, is_first, is_last, templates)?;
+
+            let (mut atoms_comp, mut bonds_comp) =
+                base_from_template(template_comp, nt_comp, na_type);
 
             // The plane norm is now the Y vec; align the second strand to it.
             // todo: You passing in `template` here is probably wrong, as you moved the positions!!
             // todo: Come back to this after your SS bases are correct.
             let posits_comp = align_bases(
-                &template, &template_comp, nt, na_type, &atoms_base, helix_axis, helix_angle
+                &template,
+                &template_comp,
+                nt,
+                na_type,
+                &atoms_base,
+                helix_axis,
+                helix_angle,
             );
 
-            let compl_sn_offset = 100_00; // todo for now.
+            let compl_sn_offset = 100_000; // todo for now.
+            let offset_sn = atom_sn_offset + compl_sn_offset;
 
             for (i, atom) in atoms_comp.iter_mut().enumerate() {
-                atom.serial_number += atom_sn_offset + compl_sn_offset;
+                atom.serial_number += offset_sn;
                 atom.posit = posits_comp[i];
                 atom.residue = Some(res_out.len())
             }
 
             for bond in &mut bonds_comp {
-                bond.atom_0_sn += atom_sn_offset + compl_sn_offset;
-                bond.atom_1_sn += atom_sn_offset + compl_sn_offset;
+                bond.atom_0_sn += offset_sn;
+                bond.atom_1_sn += offset_sn;
             }
 
             atom_sn_offset += atoms_comp.len() as u32;
@@ -372,10 +394,145 @@ fn build_strands(
             }
         }
 
+        // Add the backbone. We perform, to start, the same transformations we do on the base:
+        // - Rotate using the plane aligner
+        // - Position using the [combined] height and base-centering offset
+        // - Rotate around the helix center.
+        // todo: There are faster ways to perform this filtering.
+        {
+            let bb_sn_offset = 10_000_000; // todo for now.
+
+            let offset_sn = atom_sn_offset + bb_sn_offset;
+
+            let (mut atoms_bb, mut bonds_bb) = backbone_from_template(template, nt, na_type);
+            // todo: Experimenting witih using the same backbone everywhere due to geometry mismatches with
+            // todo T and C.
+            // let template_a = find_template(A, na_type, false, is_last, templates)?;
+            // let (mut atoms_bb, mut bonds_bb) = backbone_from_template(template_a, A, na_type);
+            if strands == Strands::Double {
+                // let atoms_backbone_b = [];
+            }
+
+            for atom in &mut atoms_bb {
+                atom.serial_number += offset_sn;
+                atom.residue = Some(res_out.len());
+            }
+            atom_sn_offset += atoms_bb.len() as u32;
+
+            for bond in &mut bonds_bb {
+                bond.atom_0_sn += offset_sn;
+                bond.atom_1_sn += offset_sn;
+            }
+
+            // // todo TS
+            // let plane_rotator_bb = {
+            //     let plane_norm = find_base_plane_norm(template);
+            //     Quaternion::from_unit_vecs(plane_norm, helix_axis)
+            // };
+
+            rotate_atoms_about_point(&mut atoms_bb, pivot_plane_align, plane_rotator);
+
+            for atom in &mut atoms_bb {
+                atom.posit += central_shift_and_height_offset;
+            }
+
+            // let helix_rot_bb = Quaternion::from_axis_angle(helix_axis, helix_angle);
+            rotate_atoms_about_point(&mut atoms_bb, pivot_helix_rot, helix_rot);
+
+            // Add the bond between the backbone and base.
+            let base_link_name = match nt {
+                A | G => "N9",
+                T | C => "N1",
+            };
+
+            let atom_base_linker = atoms_base
+                .iter()
+                .find(|a| a.type_in_res_general.as_deref().unwrap() == base_link_name)
+                .unwrap();
+
+            let atom_bb_linker = atoms_bb
+                .iter()
+                .find(|a| a.type_in_res_general.as_deref().unwrap() == "C1'")
+                .unwrap()
+                .clone();
+
+            bonds_out.push(Bond::new_basic(
+                atom_base_linker.serial_number,
+                atom_bb_linker.serial_number,
+                BondType::Single,
+            ));
+
+            // A rotation not present in our bases: Rotate around the linking bond, so
+            // the backbone segments line up with each other.
+            // We observe from the template that T and C must be rotated around the bond
+            // which joins them to the base. (I'm not sure why.
+
+            if matches!(nt, T | C) {
+                let bond_axis = (atom_base_linker.posit - atom_bb_linker.posit).to_normalized();
+                // let rot_link_bond = Quaternion::from_axis_angle(bond_axis, TAU / 2.);
+                let rot_link_bond = Quaternion::from_axis_angle(bond_axis, 8.0 * TAU / 16.);
+                rotate_atoms_about_point(&mut atoms_bb, atom_bb_linker.posit, rot_link_bond);
+            }
+
+            // todo: Second strand.
+            if strands == Strands::Double {}
+
+            // Add a bond connecting this strand's P to the previous strand's backbone O3'.
+            if !is_first {
+                let this_p_sn = atoms_bb
+                    .iter()
+                    .find(|a| a.element == Phosphorus)
+                    .unwrap()
+                    .serial_number;
+
+                bonds_out.push(Bond::new_basic(
+                    prev_strand_a_o3p_sn,
+                    this_p_sn,
+                    BondType::Single,
+                ));
+            }
+
+            // Mark the SN of this strand's O3', for the next one's P to bond to.
+            if !is_last {
+                prev_strand_a_o3p_sn = atoms_bb
+                    .iter()
+                    .find(|a| a.type_in_res_general.as_deref().unwrap() == "O3'")
+                    .unwrap()
+                    .serial_number;
+            }
+
+            // todo: You're missing the H (HO5') on O5' on the 5' backbone.
+            let mut skipped_sns_first = Vec::new();
+            for atom in atoms_bb {
+                let tir = atom.type_in_res_general.as_deref().unwrap();
+                // We're not using the 5' template due to a positional difference; instead, skip the atoms.
+                if is_first && (atom.element == Phosphorus || tir == "OP1" || tir == "OP2") {
+                    skipped_sns_first.push(atom.serial_number);
+                    continue;
+                }
+
+                res.atoms.push(atoms_base.len() - 1);
+                res.atom_sns.push(atom.serial_number);
+                atoms_out.push(atom);
+            }
+
+            for bond in bonds_bb {
+                if skipped_sns_first.contains(&bond.atom_0_sn)
+                    || skipped_sns_first.contains(&bond.atom_1_sn)
+                {
+                    continue;
+                }
+                bonds_out.push(bond);
+            }
+        }
+
+        // Add a bond connecting each backbone to the next.
+        // todo
+
         res_out.push(res);
     }
 
-    // Now, update all bond indices based on serial numbers.
+    // Update all bond indices based on serial numbers.
     for bond in &mut bonds_out {
         let atom_0 = atoms_out
             .iter()
@@ -415,8 +572,8 @@ impl MoleculeNucleicAcid {
             NucleicAcidType::Rna => templates_rna,
         };
 
-        let (mut atoms, mut bonds, mut residues) =
-            build_strands(seq, na_type, posit_5p, templates, strands, 0.)?;
+        let (atoms, bonds, mut residues) =
+            build_strands(seq, na_type, posit_5p, templates, strands)?;
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -425,7 +582,7 @@ impl MoleculeNucleicAcid {
                 NucleicAcidType::Dna => "dna",
                 NucleicAcidType::Rna => "rna",
             }
-                .to_string(),
+            .to_string(),
         );
         metadata.insert(
             "strands".to_string(),
@@ -433,7 +590,7 @@ impl MoleculeNucleicAcid {
                 Strands::Single => "single",
                 Strands::Double => "double",
             }
-                .to_string(),
+            .to_string(),
         );
 
         let ident = match (na_type, strands) {
@@ -445,9 +602,8 @@ impl MoleculeNucleicAcid {
 
         let mut common = MoleculeCommon::new(ident, atoms, bonds, metadata, None);
 
-        // todo: Put these in when ready.
-        // NEXT_ATOM_SN.store(0, Ordering::Release);
-        // common.reassign_sns();
+        NEXT_ATOM_SN.store(1, Ordering::Release);
+        common.reassign_sns();
 
         Ok(Self {
             na_type,
@@ -507,7 +663,7 @@ impl MolGenericTrait for MoleculeNucleicAcid {
 
 /// Loads templates from Amber data built into the binary. Returns (DNA, RNA)
 pub fn load_na_templates()
-    -> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
+-> io::Result<(HashMap<String, TemplateData>, HashMap<String, TemplateData>)> {
     let templates_dna = load_templates(OL24_LIB)?;
     let templates_rna = load_templates(RNA_LIB)?;
 
@@ -521,10 +677,6 @@ pub fn base_from_template(
     nt: Nucleotide,
     na_type: NucleicAcidType,
 ) -> (Vec<Atom>, Vec<Bond>) {
-    // for at in template.atoms.iter() {
-    //     println!("{nt} Template atom: {:?}", at.type_in_res_general);
-    // }
-
     let (a_names, b_names) = match nt {
         A => {
             let a = vec![
@@ -561,7 +713,7 @@ pub fn base_from_template(
                 ],
                 NucleicAcidType::Rna => vec![
                     "N1", "N3", "C2", "C4", "C5", "C6", "O2", "O4", "H3", "H5", "H6",
-                ]
+                ],
             };
 
             let b = match na_type {
@@ -650,7 +802,7 @@ pub fn base_from_template(
         }
     };
 
-    // For the smalleset: C. DNA.
+    // For the smallest: C. DNA.
     let mut atoms = Vec::with_capacity(12);
     let mut bonds = Vec::with_capacity(12);
 
@@ -662,15 +814,47 @@ pub fn base_from_template(
         let atom_0_sn = template.find_atom_by_name(a0).unwrap().serial_number;
         let atom_1_sn = template.find_atom_by_name(a1).unwrap().serial_number;
 
+        // Todo: Aromatics etc A/R too
+        let bond_type = if a0.contains("O") || a1.contains("O") {
+            BondType::Double
+        // } else if a0 ==
+        } else {
+            BondType::Single
+        };
+
         // We will fill out indices later.
-        bonds.push(Bond {
-            atom_0_sn,
-            atom_1_sn,
-            bond_type: BondType::Single,
-            atom_0: 0,
-            atom_1: 0,
-            is_backbone: false,
-        });
+        bonds.push(Bond::new_basic(atom_0_sn, atom_1_sn, bond_type));
+    }
+
+    (atoms, bonds)
+}
+
+pub fn backbone_from_template(
+    template: &TemplateData,
+    nt: Nucleotide,
+    na_type: NucleicAcidType,
+) -> (Vec<Atom>, Vec<Bond>) {
+    let (base_atoms, _) = base_from_template(template, nt, na_type);
+    let base_atom_sns: Vec<_> = base_atoms.iter().map(|a| a.serial_number).collect();
+
+    // todo: Incorrect capacity for backbone.
+    let mut atoms = Vec::with_capacity(12);
+    let mut bonds = Vec::with_capacity(12);
+
+    for a in &template.atoms {
+        if !base_atom_sns.contains(&a.serial_number) {
+            atoms.push(a.into());
+        }
+    }
+
+    let bb_atom_sns: Vec<_> = atoms.iter().map(|a: &Atom| a.serial_number).collect();
+
+    for b in &template.bonds {
+        // This && check excludes the bond connecting the BB to the base.
+        if bb_atom_sns.contains(&b.atom_0_sn) && bb_atom_sns.contains(&b.atom_1_sn) {
+            // We will fill out indices later.
+            bonds.push(Bond::new_basic(b.atom_0_sn, b.atom_1_sn, BondType::Single));
+        }
     }
 
     (atoms, bonds)

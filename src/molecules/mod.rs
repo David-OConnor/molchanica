@@ -143,7 +143,7 @@ impl MoleculeGeneric {
 #[derive(Clone, Debug)]
 pub enum MolGenericRef<'a> {
     Peptide(&'a MoleculePeptide),
-    Ligand(&'a MoleculeSmall),
+    Small(&'a MoleculeSmall),
     NucleicAcid(&'a MoleculeNucleicAcid),
     Lipid(&'a MoleculeLipid),
 }
@@ -152,7 +152,7 @@ impl<'a> MolGenericRef<'a> {
     pub fn common(&self) -> &MoleculeCommon {
         match self {
             Self::Peptide(m) => &m.common,
-            Self::Ligand(m) => &m.common,
+            Self::Small(m) => &m.common,
             Self::NucleicAcid(m) => &m.common,
             Self::Lipid(m) => &m.common,
         }
@@ -161,7 +161,7 @@ impl<'a> MolGenericRef<'a> {
     pub fn mol_type(&self) -> MolType {
         match self {
             Self::Peptide(_) => MolType::Peptide,
-            Self::Ligand(_) => MolType::Ligand,
+            Self::Small(_) => MolType::Ligand,
             Self::NucleicAcid(_) => MolType::NucleicAcid,
             Self::Lipid(_) => MolType::Lipid,
         }
@@ -171,28 +171,28 @@ impl<'a> MolGenericRef<'a> {
     /// doesn't include serial numbers; this will break bonds.
     pub fn to_sdf(&self) -> Sdf {
         match self {
-            Self::Ligand(l) => l.to_sdf(),
+            Self::Small(l) => l.to_sdf(),
             _ => unimplemented!(),
         }
     }
 
     pub fn to_xyz(&self) -> Xyz {
         match self {
-            Self::Ligand(l) => l.to_xyz(),
+            Self::Small(l) => l.to_xyz(),
             _ => unimplemented!(),
         }
     }
 
     pub fn to_mol2(&self) -> Mol2 {
         match self {
-            Self::Ligand(l) => l.to_mol2(),
+            Self::Small(l) => l.to_mol2(),
             _ => unimplemented!(),
         }
     }
 
     pub fn to_pdbqt(&self) -> Pdbqt {
         match self {
-            Self::Ligand(l) => l.to_pdbqt(),
+            Self::Small(l) => l.to_pdbqt(),
             _ => unimplemented!(),
         }
     }
@@ -202,7 +202,7 @@ impl<'a> MolGenericRef<'a> {
 #[derive(Debug)]
 pub enum MolGenericRefMut<'a> {
     Peptide(&'a mut MoleculePeptide),
-    Ligand(&'a mut MoleculeSmall),
+    Small(&'a mut MoleculeSmall),
     NucleicAcid(&'a mut MoleculeNucleicAcid),
     Lipid(&'a mut MoleculeLipid),
 }
@@ -211,7 +211,7 @@ impl<'a> MolGenericRefMut<'a> {
     pub fn common_mut(&mut self) -> &mut MoleculeCommon {
         match self {
             Self::Peptide(m) => &mut m.common,
-            Self::Ligand(m) => &mut m.common,
+            Self::Small(m) => &mut m.common,
             Self::NucleicAcid(m) => &mut m.common,
             Self::Lipid(m) => &mut m.common,
         }
@@ -220,7 +220,7 @@ impl<'a> MolGenericRefMut<'a> {
     pub fn common(&self) -> &MoleculeCommon {
         match self {
             Self::Peptide(m) => &m.common,
-            Self::Ligand(m) => &m.common,
+            Self::Small(m) => &m.common,
             Self::NucleicAcid(m) => &m.common,
             Self::Lipid(m) => &m.common,
         }
@@ -229,7 +229,7 @@ impl<'a> MolGenericRefMut<'a> {
     pub fn mol_type(&self) -> MolType {
         match self {
             Self::Peptide(_) => MolType::Peptide,
-            Self::Ligand(_) => MolType::Ligand,
+            Self::Small(_) => MolType::Ligand,
             Self::NucleicAcid(_) => MolType::NucleicAcid,
             Self::Lipid(_) => MolType::Lipid,
         }
@@ -527,6 +527,18 @@ pub struct Bond {
 }
 
 impl Bond {
+    /// For example, if we wish to populate indices later.
+    pub fn new_basic(atom_0_sn: u32, atom_1_sn: u32, bond_type: BondType) -> Self {
+        Self {
+            bond_type,
+            atom_0_sn,
+            atom_1_sn,
+            atom_0: 0,
+            atom_1: 0,
+            is_backbone: false,
+        }
+    }
+
     pub fn to_generic(&self) -> BondGeneric {
         BondGeneric {
             bond_type: self.bond_type,

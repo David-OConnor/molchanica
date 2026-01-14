@@ -81,7 +81,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol = drawing::draw_mol(
-            MolGenericRef::Ligand(mol),
+            MolGenericRef::Small(mol),
             i_mol,
             &state.ui,
             &state.volatile.active_mol,
@@ -300,7 +300,7 @@ pub fn update_all_ligs_inplace(state: &State, scene: &mut Scene) {
             continue;
         };
 
-        let mol = MolGenericRef::Ligand(lig);
+        let mol = MolGenericRef::Small(lig);
         update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
     }
 }
@@ -336,7 +336,7 @@ pub fn update_single_ligand_inplace(i: usize, state: &State, scene: &mut Scene) 
         return;
     };
 
-    let mol = MolGenericRef::Ligand(ligand);
+    let mol = MolGenericRef::Small(ligand);
     update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
 }
 

@@ -1,4 +1,5 @@
-//! An experiment to categorize small molecules, and find similar ones
+//! See the description of the struct.
+//! Note: (AqSolDB data)[https://github.com/mcsorkun/AqSolDB] may be a good source to validate these.
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -12,6 +13,7 @@ use na_seq::Element::*;
 use crate::molecules::{Atom, common::MoleculeCommon, rotatable_bonds::RotatableBond};
 
 /// Describes a small molecule by features practical for description and characterization.
+/// These properties are derived quickly from a molecule, and are simple and objective.
 #[derive(Clone, Default, Debug)]
 pub struct MolCharacterization {
     pub num_atoms: usize,
@@ -63,13 +65,26 @@ pub struct MolCharacterization {
     // todo
     pub topological_polar_surface_area: Option<f32>,
     pub calc_log_p: Option<f32>,
+    // todo: New properties here.
+    pub m_r: f32,                 // tood; impl
+    pub num_valence_elecs: usize, // todo: Impl
+    pub labute_asa: f32,
+    pub balaban_j: f32, //todo?
+    pub bertz_ct: f32,  // todo: impl
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum RingType {
+    Aromatic,
+    Saturated,
+    Aliphatic,
 }
 
 /// Represents a single ring; can be on its own, or part of a fused ring system.
 #[derive(Clone, Debug)]
 pub struct Ring {
     pub atoms: Vec<usize>,
-    pub aromatic: bool,
+    pub ring_type: RingType,
     /// Note: This is rel to `Atom.posit; not `atom_posits`, as that can easily change.
     /// If `Atom.posit` changes, this must be updated.
     pub plane_norm: Vec3,
@@ -133,6 +148,9 @@ impl Display for MolCharacterization {
         count_disp(&mut v, self.phosphorus.len(), "P");
         count_disp(&mut v, self.chlorine.len(), "Cl");
         count_disp(&mut v, self.halogen.len(), "halogen");
+
+        count_disp(&mut v, self.h_bond_donor.len(), "H don");
+        count_disp(&mut v, self.h_bond_acceptor.len(), "H acc");
 
         writeln!(f, "{v}")
     }
@@ -259,7 +277,7 @@ impl MolCharacterization {
 
         let aromatic_atoms: HashSet<usize> = rings
             .iter()
-            .filter(|r| r.aromatic)
+            .filter(|r| r.ring_type == RingType::Aromatic)
             .flat_map(|r| r.atoms.iter().copied())
             .collect();
 
@@ -435,6 +453,46 @@ impl MolCharacterization {
             0.0
         };
 
+        let amides_set: HashSet<usize> = amides.iter().copied().collect();
+        let hydroxyl_set: HashSet<usize> = hydroxyl.iter().copied().collect();
+
+        // Exact valence electron count
+        let mut num_valence_elecs = 0usize;
+        for a in &mol.atoms {
+            num_valence_elecs += a.element.valence_electrons();
+        }
+
+        // TPSA approximation
+        let tpsa = tpsa_approx(
+            mol,
+            adj,
+            &bond_type_by_edge,
+            &aromatic_atoms,
+            &amides_set,
+            &hydroxyl_set,
+        );
+
+        // 3D ASA proxy
+        let labute_asa = labute_asa_proxy(mol);
+
+        // Exact Balaban J
+        let balaban_j = balaban_j_exact(mol);
+
+        // Bertz CT proxy
+        let bertz_ct = bertz_ct_proxy(mol);
+
+        // Simple monotonic heuristics for logP and MR (good ML features, not RDKit-identical)
+        let rings_ct = rings.len() as f32;
+        let hal_ct = halogen.len() as f32;
+        let hetero_ct = num_hetero_atoms as f32;
+
+        let calc_log_p = (0.54 * (num_carbon as f32)) + (1.10 * hal_ct) + (0.25 * rings_ct)
+            - (1.30 * hetero_ct)
+            - (0.01 * tpsa);
+
+        let m_r = (0.10 * (mol_weight_f64 as f32)) + (0.45 * rings_ct) + (0.20 * hal_ct)
+            - (0.25 * hetero_ct);
+
         Self {
             num_atoms,
             num_bonds,
@@ -473,9 +531,14 @@ impl MolCharacterization {
 
             num_sp3_carbon,
             frac_csp3,
-
-            topological_polar_surface_area: None,
-            calc_log_p: None,
+            //
+            topological_polar_surface_area: Some(tpsa),
+            calc_log_p: Some(calc_log_p),
+            m_r,
+            num_valence_elecs,
+            labute_asa,
+            balaban_j,
+            bertz_ct,
         }
     }
 }
@@ -695,19 +758,63 @@ fn rings(
         is_kekule_aromatic_6c(cyc)
     };
 
+    let atom_is_sp3_like = |i: usize| -> bool {
+        for &j in &adj[i] {
+            let Some(bt) = bond_type_by_edge.get(&edge_key(i, j)) else {
+                continue;
+            };
+            if *bt != BondType::Single {
+                return false;
+            }
+        }
+        true
+    };
+
+    let ring_is_saturated = |cyc: &[usize]| -> bool {
+        let n = cyc.len();
+        // ring bonds must be single
+        for k in 0..n {
+            let a = cyc[k];
+            let b = cyc[(k + 1) % n];
+            let Some(bt) = bond_type_by_edge.get(&edge_key(a, b)) else {
+                return false;
+            };
+            if *bt != BondType::Single {
+                return false;
+            }
+        }
+        // ring atoms must be sp3-like (no double/aromatic anywhere)
+        cyc.iter().all(|&i| atom_is_sp3_like(i))
+    };
+
     let mut result = Vec::new();
     for ring in rings_5_atom {
+        let mut ring_type = RingType::Aliphatic;
+        if is_cycle_aromatic(&ring) {
+            ring_type = RingType::Aromatic;
+        } else if ring_is_saturated(&ring) {
+            ring_type = RingType::Saturated;
+        }
+
         result.push(Ring {
             atoms: ring.to_vec(),
-            aromatic: is_cycle_aromatic(&ring),
+            ring_type,
             plane_norm: find_plane_norm(&ring, atoms),
         })
     }
 
+    // todo: DRY
     for ring in rings_6_atom {
+        let mut ring_type = RingType::Aliphatic;
+        if is_cycle_aromatic(&ring) {
+            ring_type = RingType::Aromatic;
+        } else if ring_is_saturated(&ring) {
+            ring_type = RingType::Saturated;
+        }
+
         result.push(Ring {
             atoms: ring.to_vec(),
-            aromatic: is_cycle_aromatic(&ring),
+            ring_type,
             plane_norm: find_plane_norm(&ring, &atoms),
         })
     }
@@ -779,4 +886,279 @@ fn fused_rings(rings: &[Ring], _atoms: &[Atom]) -> Vec<Vec<usize>> {
     // Deterministic output ordering: sort systems by their smallest ring index, then lexicographically.
     systems.sort();
     systems
+}
+
+/// Pairwise-cap-occlusion ASA proxy:
+/// Start with each atom’s 4πr², then subtract a spherical-cap area for each *bonded* neighbor sphere overlap.
+/// This is fast and stable and uses 3D coords; it ignores higher-order overlaps.
+fn labute_asa_proxy(mol: &MoleculeCommon) -> f32 {
+    let n = mol.atoms.len();
+    if n == 0 {
+        return 0.0;
+    }
+
+    let four_pi = 4.0 * std::f64::consts::PI;
+    let two_pi = 2.0 * std::f64::consts::PI;
+
+    let mut total = 0.0f64;
+
+    for i in 0..n {
+        let ri = mol.atoms[i].element.vdw_radius() as f64;
+        let mut area_i = four_pi * ri * ri;
+
+        for &j in &mol.adjacency_list[i] {
+            let rj = mol.atoms[j].element.vdw_radius() as f64;
+            let d = (mol.atoms[i].posit - mol.atoms[j].posit).magnitude();
+            if d <= 0.0 || d >= ri + rj {
+                continue;
+            }
+
+            // i fully buried by j
+            if d <= (rj - ri).abs() && rj >= ri {
+                area_i = 0.0;
+                break;
+            }
+
+            // Plane offset from center i along i->j axis:
+            // x = (d^2 - rj^2 + ri^2) / (2d)
+            let x = (d * d - rj * rj + ri * ri) / (2.0 * d);
+            let hi = (ri - x).clamp(0.0, 2.0 * ri);
+
+            // Covered spherical cap area on i: 2π r h
+            let cap = two_pi * ri * hi;
+            area_i -= cap;
+        }
+
+        if area_i > 0.0 {
+            total += area_i;
+        }
+    }
+
+    total as f32
+}
+
+/// TPSA approximation using only local chemistry you already detect.
+/// NOT a full Ertl table method; it’s a stable proxy for feature vectors.
+fn tpsa_approx(
+    mol: &MoleculeCommon,
+    adj: &[Vec<usize>],
+    bond_type_by_edge: &HashMap<(usize, usize), BondType>,
+    aromatic_atoms: &HashSet<usize>,
+    amides: &HashSet<usize>,
+    hydroxyl: &HashSet<usize>,
+) -> f32 {
+    use na_seq::Element::*;
+
+    let is_double_bond = |a: usize, b: usize| -> bool {
+        bond_type_by_edge
+            .get(&edge_key(a, b))
+            .map(|bt| *bt == BondType::Double)
+            .unwrap_or(false)
+    };
+
+    let mut psa = 0.0f32;
+
+    for i in 0..mol.atoms.len() {
+        match mol.atoms[i].element {
+            Oxygen => {
+                let is_carbonyl_o = adj[i]
+                    .iter()
+                    .any(|&n| mol.atoms[n].element == Carbon && is_double_bond(i, n));
+
+                if hydroxyl.contains(&i) {
+                    psa += 20.2; // OH / COOH-ish
+                } else if is_carbonyl_o {
+                    psa += 17.0; // C=O oxygen
+                } else {
+                    psa += 17.0; // ether-like O
+                }
+            }
+            Nitrogen => {
+                if amides.contains(&i) {
+                    psa += 12.0; // amide N is less polar/accepting
+                } else if aromatic_atoms.contains(&i) {
+                    let has_h = adj[i].iter().any(|&n| mol.atoms[n].element == Hydrogen);
+                    psa += if has_h { 15.0 } else { 13.0 };
+                } else {
+                    psa += 25.0; // generic amine/imine-ish N
+                }
+            }
+            Sulfur => psa += 25.0,
+            Phosphorus => psa += 35.0,
+            _ => {}
+        }
+    }
+
+    psa
+}
+
+/// Exact Balaban J (distance-sum connectivity index) per component.
+/// Uses BFS distances (unweighted).
+fn balaban_j_exact(mol: &MoleculeCommon) -> f32 {
+    let n = mol.atoms.len();
+    let m = mol.bonds.len();
+    if n < 2 || m == 0 {
+        return 0.0;
+    }
+
+    // connected components
+    let mut comp_id = vec![usize::MAX; n];
+    let mut comps: Vec<Vec<usize>> = Vec::new();
+
+    for s in 0..n {
+        if comp_id[s] != usize::MAX {
+            continue;
+        }
+        let cid = comps.len();
+        let mut q = VecDeque::new();
+        let mut comp = Vec::new();
+
+        comp_id[s] = cid;
+        q.push_back(s);
+
+        while let Some(u) = q.pop_front() {
+            comp.push(u);
+            for &v in &mol.adjacency_list[u] {
+                if comp_id[v] == usize::MAX {
+                    comp_id[v] = cid;
+                    q.push_back(v);
+                }
+            }
+        }
+
+        comps.push(comp);
+    }
+
+    // edges list
+    let mut edges = Vec::with_capacity(m);
+    for b in &mol.bonds {
+        edges.push(edge_key(b.atom_0, b.atom_1));
+    }
+
+    // compute per component, then average weighted by edges
+    let mut total_edges = 0usize;
+    let mut accum = 0.0f64;
+
+    let mut dist = vec![u32::MAX; n];
+    let mut q = VecDeque::new();
+
+    for (cid, comp) in comps.iter().enumerate() {
+        let nc = comp.len();
+        if nc < 2 {
+            continue;
+        }
+
+        // edges in component
+        let mut comp_edges = Vec::new();
+        for &(a, b) in &edges {
+            if comp_id[a] == cid {
+                comp_edges.push((a, b));
+            }
+        }
+        let mc = comp_edges.len();
+        if mc == 0 {
+            continue;
+        }
+
+        // circuit rank for this component: gamma = m - n + 1
+        let gamma = (mc as i64) - (nc as i64) + 1;
+        let denom = (gamma + 1) as f64;
+        if denom <= 0.0 {
+            continue;
+        }
+
+        // distance row sums D_i (sum of distances from i to all nodes in component)
+        let mut dsum = vec![0u32; n];
+
+        for &src in comp {
+            dist.fill(u32::MAX);
+            dist[src] = 0;
+            q.clear();
+            q.push_back(src);
+
+            while let Some(u) = q.pop_front() {
+                let du = dist[u];
+                for &v in &mol.adjacency_list[u] {
+                    if dist[v] == u32::MAX {
+                        dist[v] = du + 1;
+                        q.push_back(v);
+                    }
+                }
+            }
+
+            let mut sum = 0u32;
+            for &v in comp {
+                sum = sum.saturating_add(dist[v]);
+            }
+            dsum[src] = sum.max(1); // avoid 0
+        }
+
+        let mut s = 0.0f64;
+        for (a, b) in comp_edges {
+            let da = dsum[a] as f64;
+            let db = dsum[b] as f64;
+            s += 1.0 / (da * db).sqrt();
+        }
+
+        let j = (mc as f64 / denom) * s;
+
+        total_edges += mc;
+        accum += j * (mc as f64);
+    }
+
+    if total_edges == 0 {
+        return 0.0;
+    }
+    (accum / (total_edges as f64)) as f32
+}
+
+/// Bertz CT proxy: topology branching term + element-diversity term.
+/// Deterministic, fast, and stable for ML features.
+fn bertz_ct_proxy(mol: &MoleculeCommon) -> f32 {
+    use na_seq::Element::*;
+    let n = mol.atoms.len();
+    if n == 0 {
+        return 0.0;
+    }
+
+    // branching/connectivity complexity (ignore H)
+    let mut topo = 0.0f64;
+    for i in 0..n {
+        if mol.atoms[i].element == Hydrogen {
+            continue;
+        }
+        let deg = mol.adjacency_list[i]
+            .iter()
+            .filter(|&&j| mol.atoms[j].element != Hydrogen)
+            .count();
+
+        // ln(deg!) = Σ ln(k)
+        for k in 2..=deg {
+            topo += (k as f64).ln();
+        }
+    }
+
+    // element diversity (ignore H): Shannon entropy scaled by size
+    let mut counts: HashMap<na_seq::Element, usize> = HashMap::new();
+    let mut heavy = 0usize;
+
+    for a in &mol.atoms {
+        if a.element == Hydrogen {
+            continue;
+        }
+        heavy += 1;
+        *counts.entry(a.element).or_insert(0) += 1;
+    }
+
+    let mut ent = 0.0f64;
+    for (_el, c) in counts {
+        let p = c as f64 / heavy.max(1) as f64;
+        if p > 0.0 {
+            ent -= p * p.ln();
+        }
+    }
+
+    let div = ent * (heavy as f64).ln().max(1.0);
+
+    (topo + div) as f32
 }
