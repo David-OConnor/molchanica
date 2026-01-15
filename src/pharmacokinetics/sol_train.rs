@@ -8,29 +8,74 @@ use burn::{
         dataset::InMemDataset,
     },
     module::Module,
-    nn::loss::{MseLoss, Reduction},
+    nn::{
+        Linear, LinearConfig,
+        loss::{MseLoss, Reduction},
+    },
     optim::AdamConfig,
     record::CompactRecorder,
     tensor::{
-        Tensor, TensorData,
+        Tensor, TensorData, activation,
         backend::{AutodiffBackend, Backend},
     },
     train::{RegressionOutput, TrainOutput, TrainStep, ValidStep, metric::LossMetric},
 };
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // use crate::pharmacokinetics::sol_infer::{
-use crate::pharmacokinetics::sol_infer::{
-    AQ_SOL_FEATURE_DIM, AqSolModel, AqSolModelConfig, MODEL_CFG_FILE, MODEL_FILE, SCALER_FILE,
-    StandardScaler,
-};
+// use molchanica::pharmacokinetics::sol_infer::{
+//     AQ_SOL_FEATURE_DIM, AqSolModel, AqSolModelConfig, MODEL_CFG_FILE, MODEL_FILE, SCALER_FILE,
+//     StandardScaler,
+// };
+
+// We have put the constants here in the training module; we are having trouble importing from
+// Molchanica directly.
+pub const AQ_SOL_FEATURE_DIM: usize = 17;
+
+pub const MODEL_CFG_FILE: &str = "aqsol_model_config.json";
+pub const MODEL_FILE: &str = "aqsol_model";
+pub const SCALER_FILE: &str = "aqsol_scaler.json";
 
 type TrainBackend = Autodiff<NdArray>;
 type TrainDevice = <TrainBackend as Backend>::Device;
 
 type ValidBackend = <TrainBackend as AutodiffBackend>::InnerBackend; // == NdArray
 type ValidDevice = <ValidBackend as Backend>::Device;
+
+#[derive(Config, Debug)]
+pub struct AqSolModelConfig {
+    pub input_dim: usize,
+    pub hidden_dim: usize,
+    pub hidden_dim2: usize,
+}
+
+#[derive(Module, Debug)]
+pub struct AqSolModel<B: Backend> {
+    fc1: Linear<B>,
+    fc2: Linear<B>,
+    fc3: Linear<B>,
+}
+
+impl AqSolModelConfig {
+    pub fn init<B: Backend>(&self, device: &B::Device) -> AqSolModel<B> {
+        AqSolModel {
+            fc1: LinearConfig::new(self.input_dim, self.hidden_dim).init(device),
+            fc2: LinearConfig::new(self.hidden_dim, self.hidden_dim2).init(device),
+            fc3: LinearConfig::new(self.hidden_dim2, 1).init(device),
+        }
+    }
+}
+
+impl<B: Backend> AqSolModel<B> {
+    pub fn forward(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
+        let x = self.fc1.forward(x);
+        let x = activation::relu(x); // Burn 0.19: relu is a free function, not a method. :contentReference[oaicite:2]{index=2}
+        let x = self.fc2.forward(x);
+        let x = activation::relu(x);
+        self.fc3.forward(x)
+    }
+}
 
 impl TrainStep<AqSolBatch<TrainBackend>, RegressionOutput<TrainBackend>>
     for AqSolModel<TrainBackend>
@@ -74,6 +119,12 @@ const TRAIN_SPLIT: f32 = 0.9;
 struct Sample {
     x: [f32; AQ_SOL_FEATURE_DIM],
     y: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StandardScaler {
+    pub mean: Vec<f32>,
+    pub std: Vec<f32>,
 }
 
 #[derive(Clone, Debug)]
@@ -236,7 +287,7 @@ fn fit_scaler(train: &[Sample]) -> StandardScaler {
     StandardScaler { mean, std }
 }
 
-fn main() {
+pub fn main() {
     let model_dir = Path::new(MODEL_DIR);
     fs::create_dir_all(model_dir).unwrap();
 

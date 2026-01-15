@@ -36,6 +36,7 @@ mod reflection;
 mod cam_misc;
 mod drawing_wrappers;
 mod drug_design;
+mod lib;
 mod md;
 mod mol_alignment;
 mod mol_characterization;
@@ -51,6 +52,7 @@ mod smiles;
 mod tautomers;
 #[cfg(test)]
 mod tests;
+mod train_sol;
 mod viridis_lut;
 // todo: Eval if there's another way or if you can remove this post a refactor
 // mod train;

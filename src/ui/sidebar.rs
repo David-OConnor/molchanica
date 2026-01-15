@@ -435,39 +435,45 @@ pub(in crate::ui) fn sidebar(
             ui.separator();
             ui.add_space(ROW_SPACING / 2.);
 
-            ScrollArea::vertical()
-                .min_scrolled_height(600.0)
-                .show(ui, |ui| {
-                    // todo: Function or macro to reduce this DRY.
-                    mol_picker(
-                        state,
-                        scene,
-                        ui,
-                        redraw_pep,
-                        redraw_lig,
-                        redraw_lipid,
-                        redraw_na,
-                        engine_updates,
-                    );
+            // ScrollArea::vertical()
+            //     .min_scrolled_height(600.0)
+            //     .show(ui, |ui| {
+            // todo: Function or macro to reduce this DRY.
+            mol_picker(
+                state,
+                scene,
+                ui,
+                redraw_pep,
+                redraw_lig,
+                redraw_lipid,
+                redraw_na,
+                engine_updates,
+            );
 
-                    // todo: UI flag to show or hide this.
-                    if state.ui.ui_vis.mol_char {
-                        if let Some(m) = &state.active_mol() {
-                            if let MolGenericRef::Small(mol) = m {
-                                mol_char_disp(mol, ui);
-                            }
-                        }
+            // todo: UI flag to show or hide this.
+            if state.ui.ui_vis.mol_char {
+                if let Some(m) = &state.active_mol() {
+                    if let MolGenericRef::Small(mol) = m {
+                        mol_char_disp(mol, ui);
                     }
-                });
+                }
+            }
+            // });
         });
 
     engine_updates.ui_reserved_px.0 = out.response.rect.width();
 }
 
-fn mol_char_helper(ui: &mut Ui, name: &str, v: &str) {
+fn mol_char_helper(ui: &mut Ui, items: &[(&str, &str)]) {
     ui.horizontal(|ui| {
-        label!(ui, format!("{name}:"), Color32::GRAY);
-        label!(ui, v, Color32::WHITE);
+        for (i, (name, v)) in items.iter().enumerate() {
+            label!(ui, format!("{name}:"), Color32::GRAY);
+            label!(ui, *v, Color32::WHITE);
+
+            if i != items.len() - 1 {
+                ui.add_space(COL_SPACING / 2.);
+            }
+        }
     });
 }
 
@@ -475,8 +481,6 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     let Some(char) = &mol.characterization else {
         return;
     };
-
-    // label!(ui, "Molecule details", Color32::WHITE);
 
     // todo: Small font?
     for ident in &mol.idents {
@@ -486,16 +490,23 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         });
     }
 
+    ui.add_space(ROW_SPACING);
     // Basics
-    mol_char_helper(ui, "Atoms", &char.num_atoms.to_string());
-    mol_char_helper(ui, "Bonds", &char.num_bonds.to_string());
-    mol_char_helper(ui, "Heavy", &char.num_heavy_atoms.to_string());
-    mol_char_helper(ui, "Hetero", &char.num_hetero_atoms.to_string());
-    // mol_char_helper(ui, "Aromatic", &char.num_atoms.to_string() );
-    mol_char_helper(ui, "Weight", &format!("{:.2}", char.mol_weight));
+    mol_char_helper(
+        ui,
+        &[
+            ("Atoms", &char.num_atoms.to_string()),
+            ("Bonds", &char.num_bonds.to_string()),
+            ("Heavy", &char.num_heavy_atoms.to_string()),
+            ("Het", &char.num_hetero_atoms.to_string()),
+        ],
+    );
+
+    mol_char_helper(ui, &[("Weight", &format!("{:.2}", char.mol_weight))]);
 
     ui.add_space(ROW_SPACING);
     // Functional groups
+
     let mut num_aromatic = 0;
     let mut num_sat = 0;
     let mut num_aliphatic = 0;
@@ -507,49 +518,81 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         }
     }
 
-    mol_char_helper(ui, "Rings Ar", &num_aromatic.to_string());
-    mol_char_helper(ui, "Rings Sat", &num_sat.to_string());
-    mol_char_helper(ui, "Rings Ali", &num_aliphatic.to_string());
+    mol_char_helper(
+        ui,
+        &[
+            ("Rings Ar", &num_aromatic.to_string()),
+            ("Sat", &num_sat.to_string()),
+            ("Ali", &num_aliphatic.to_string()),
+        ],
+    );
 
     // todo: Rings
-    mol_char_helper(ui, "Amines", &char.amines.len().to_string());
-    mol_char_helper(ui, "Amides", &char.amides.len().to_string());
-    mol_char_helper(ui, "Carbonyl", &char.carbonyl.len().to_string());
-    mol_char_helper(ui, "Hydroxyl", &char.hydroxyl.len().to_string());
+    mol_char_helper(
+        ui,
+        &[
+            ("Amine", &char.amines.len().to_string()),
+            ("Amide", &char.amides.len().to_string()),
+            ("Carbonyl", &char.carbonyl.len().to_string()),
+            ("Hydroxyl", &char.hydroxyl.len().to_string()),
+        ],
+    );
 
     ui.add_space(ROW_SPACING);
     // Misc properties
-    mol_char_helper(ui, "H bond donor:", &char.h_bond_donor.len().to_string());
     mol_char_helper(
         ui,
-        "H bond acceptor",
-        &char.h_bond_acceptor.len().to_string(),
+        &[
+            ("H bond donor:", &char.h_bond_donor.len().to_string()),
+            ("acceptor", &char.h_bond_acceptor.len().to_string()),
+            ("Valence elecs", &char.num_valence_elecs.to_string()),
+        ],
     );
-    mol_char_helper(ui, "Valence elecs", &char.num_valence_elecs.to_string());
 
     // Geometry
-    ui.add_space(ROW_SPACING);
+    // ui.add_space(ROW_SPACING);
 
-    mol_char_helper(ui, "TPSA (Crippen)", &format!("{:.2}", char.tpsa_ertl));
-    mol_char_helper(ui, "TPSA (Geometric)", &format!("{:.2}", char.tpsa_topo));
-    mol_char_helper(ui, "ASA (Labute)", &format!("{:.2}", char.asa_labute));
-    mol_char_helper(ui, "ASA (Geometric)", &format!("{:.2}", char.asa_topo));
-    mol_char_helper(ui, "Volume", &format!("{:.2}", char.volume));
+    mol_char_helper(
+        ui,
+        &[
+            ("TPSA (Ertl)", &format!("{:.2}", char.tpsa_ertl)),
+            ("PSA (Geom)", &format!("{:.2}", char.psa_topo)),
+        ],
+    );
+
+    mol_char_helper(
+        ui,
+        &[
+            ("ASA (Labute)", &format!("{:.2}", char.asa_labute)),
+            ("ASA (Geom)", &format!("{:.2}", char.asa_topo)),
+            ("Volume", &format!("{:.2}", char.volume)),
+        ],
+    );
 
     // Computed properties
     ui.add_space(ROW_SPACING);
 
-    mol_char_helper(ui, "LogP", &format!("{:.2}", char.calc_log_p));
     mol_char_helper(
         ui,
-        "Molar Refractivity",
-        &format!("{:.2}", char.molar_refractivity),
+        &[
+            ("LogP", &format!("{:.2}", char.calc_log_p)),
+            ("Mol Refrac", &format!("{:.2}", char.molar_refractivity)),
+        ],
     );
-    mol_char_helper(ui, "Balaban J Index", &format!("{:.2}", char.balaban_j));
-    mol_char_helper(ui, "Bertz Complexity", &format!("{:.2}", char.bertz_ct));
+
     mol_char_helper(
         ui,
-        "Complexity",
-        &format!("{:.2}", char.complexity.unwrap_or(0.0)),
+        &[
+            ("Balaban J", &format!("{:.2}", char.balaban_j)),
+            ("Bertz Complexity", &format!("{:.2}", char.bertz_ct)),
+        ],
+    );
+
+    mol_char_helper(
+        ui,
+        &[(
+            "Complexity",
+            &format!("{:.2}", char.complexity.unwrap_or(0.0)),
+        )],
     );
 }

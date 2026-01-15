@@ -74,7 +74,7 @@ pub struct MolCharacterization {
     /// Uses geometry to compute TPSA. I think this will be more accurate, as it takes into account
     /// 3D geometry, but may be less effective in ML contexts, or when comparing to other data
     /// in general, as they don't usually use this.
-    pub tpsa_topo: f32,
+    pub psa_topo: f32,
     /// The (calculated) log10 of the partition coefficient P between octanol and water for the
     /// neutral compound. Higher logP generally means more hydrophobic/lipophilic.
     pub calc_log_p: f32,
@@ -495,7 +495,7 @@ impl MolCharacterization {
             &aromatic_atoms,
             None,
         );
-        let (tpsa_topo, asa_topo, volume) = tpsa_topo(mol);
+        let (psa_topo, asa_topo, volume) = tpsa_topo(mol);
 
         // 3D ASA proxy
         let asa_labute = labute_asa_proxy(mol);
@@ -521,7 +521,7 @@ impl MolCharacterization {
         // reducing accuracy for the large complex A-8, so it is adjusted.
         let calc_log_p = (0.13 * (num_carbon as f32)) + (0.10 * hal_ct) - (0.17 * rings_ct)
             + (0.07 * hetero_ct)
-            + (0.01 * tpsa_topo)
+            + (0.01 * psa_topo)
             + 0.92; // Intercept
 
         // MR Fix: Increased MW weight (0.10 -> 0.27)
@@ -570,7 +570,7 @@ impl MolCharacterization {
             frac_csp3,
             //
             tpsa_ertl,
-            tpsa_topo,
+            psa_topo,
             calc_log_p,
             molar_refractivity: m_r,
             num_valence_elecs,

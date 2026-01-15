@@ -11,21 +11,13 @@ use burn::{
 use serde::{Deserialize, Serialize};
 
 use crate::molecules::small::MoleculeSmall;
-
-pub const AQ_SOL_FEATURE_DIM: usize = 17;
-
-pub const MODEL_CFG_FILE: &str = "aqsol_model_config.json";
-pub const MODEL_FILE: &str = "aqsol_model";
-pub const SCALER_FILE: &str = "aqsol_scaler.json";
+use crate::pharmacokinetics::sol_train::{
+    AQ_SOL_FEATURE_DIM, AqSolModel, AqSolModelConfig, MODEL_CFG_FILE, MODEL_FILE, SCALER_FILE,
+    StandardScaler,
+};
 
 type InferBackend = NdArray;
 type InferDevice = <InferBackend as Backend>::Device;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StandardScaler {
-    pub mean: Vec<f32>,
-    pub std: Vec<f32>,
-}
 
 impl StandardScaler {
     pub fn apply_in_place(&self, x: &mut [f32; AQ_SOL_FEATURE_DIM]) {
@@ -37,40 +29,6 @@ impl StandardScaler {
             };
             x[i] = (x[i] - self.mean[i]) / s;
         }
-    }
-}
-
-#[derive(Config, Debug)]
-pub struct AqSolModelConfig {
-    pub input_dim: usize,
-    pub hidden_dim: usize,
-    pub hidden_dim2: usize,
-}
-
-#[derive(Module, Debug)]
-pub struct AqSolModel<B: Backend> {
-    fc1: Linear<B>,
-    fc2: Linear<B>,
-    fc3: Linear<B>,
-}
-
-impl AqSolModelConfig {
-    pub fn init<B: Backend>(&self, device: &B::Device) -> AqSolModel<B> {
-        AqSolModel {
-            fc1: LinearConfig::new(self.input_dim, self.hidden_dim).init(device),
-            fc2: LinearConfig::new(self.hidden_dim, self.hidden_dim2).init(device),
-            fc3: LinearConfig::new(self.hidden_dim2, 1).init(device),
-        }
-    }
-}
-
-impl<B: Backend> AqSolModel<B> {
-    pub fn forward(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        let x = self.fc1.forward(x);
-        let x = activation::relu(x); // Burn 0.19: relu is a free function, not a method. :contentReference[oaicite:2]{index=2}
-        let x = self.fc2.forward(x);
-        let x = activation::relu(x);
-        self.fc3.forward(x)
     }
 }
 

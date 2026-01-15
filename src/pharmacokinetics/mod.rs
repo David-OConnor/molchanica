@@ -6,7 +6,7 @@
 //! [PK-DB](https://pk-db.com/) [Paper, 2020](https://academic.oup.com/nar/article/49/D1/D1358/5957165?login=false)
 
 mod sol_infer;
-mod sol_train;
+pub mod sol_train; // Pub to allow access from the training entry point.
 mod solubility;
 
 use crate::{mol_characterization::MolCharacterization, molecules::small::MoleculeSmall};
@@ -29,7 +29,8 @@ fn estimate_tpsa(ch: &MolCharacterization) -> f32 {
     let hbd = ch.h_bond_donor.len() as f32;
 
     // Ballpark contributions; clamp to a sane range.
-    (17.0 * o + 12.0 * n + 25.0 * s + 13.0 * p + 1.5 * hba + 2.0 * hbd).clamp(0.0, 300.0)
+    let v: f32 = 17.0 * o + 12.0 * n + 25.0 * s + 13.0 * p + 1.5 * hba + 2.0 * hbd;
+    v.clamp(0.0, 300.0)
 }
 
 /// Estimates of how the molecule, in drug form, acts in the human body.
