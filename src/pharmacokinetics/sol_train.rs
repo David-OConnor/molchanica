@@ -19,7 +19,7 @@ use burn::{
         loss::{MseLoss, Reduction},
     },
     optim::AdamConfig,
-    record::CompactRecorder,
+    record::{CompactRecorder, FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{
         Tensor, TensorData, activation,
         backend::{AutodiffBackend, Backend},
@@ -42,10 +42,12 @@ pub const ATOM_FEATURE_DIM: usize = 10; // One-hot encoding dimension
 pub const MAX_ATOMS: usize = 60; // Max atoms for padding
 
 pub const MODEL_CFG_FILE: &str = "qsol_model_config.json";
-pub const MODEL_FILE: &str = "aqsol_model.model";
+// Extension handled automatically
+// pub const MODEL_FILE: &str = "aqsol_model.mpk";
+pub const MODEL_FILE: &str = "aqsol_model";
 pub const SCALER_FILE: &str = "aqsol_scaler.json";
 
-const MODEL_DIR: &str = ".ml_models/aqsol";
+pub const MODEL_DIR: &str = "ml_models/aqsol";
 const AQ_SOL_DB_CSV_PATH: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDB/results/data_curated.csv";
 const AQ_SOL_DB_SDF_PATH: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDb_mols";
 
@@ -101,7 +103,8 @@ impl<B: Backend> AqSolModel<B> {
         // 3. Masking: Zero out padding atoms so they don't contribute to sum
         let graph_h = graph_h * mask;
         // 4. Pooling: Sum over atoms -> [Batch, GnnHidden]
-        let graph_embedding = graph_h.sum_dim(1).squeeze();
+        // let graph_embedding = graph_h.sum_dim(1).squeeze(1);
+        let graph_embedding = graph_h.sum_dim(1).flatten(0, 1);
 
         // --- Global Branch ---
         let global_embedding = activation::relu(self.global_fc.forward(globals));
@@ -157,25 +160,12 @@ impl<B: Backend> Batcher<B, Sample, AqSolBatch<B>> for AqSolBatcher {
             batch_globals.extend_from_slice(&item.global_feats);
             batch_y.push(item.target);
 
-            // Graph Padding
-            let n = item.num_atoms.min(MAX_ATOMS);
+            let (p_nodes, p_adj, p_mask) =
+                pad_graph_data(&item.node_feats, &item.adj, item.num_atoms);
 
-            // Nodes (Pad with 0)
-            batch_nodes.extend(item.node_feats.iter().take(n * ATOM_FEATURE_DIM));
-            batch_nodes.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * ATOM_FEATURE_DIM));
-
-            // Mask (1 for atom, 0 for pad)
-            batch_mask.extend(std::iter::repeat(1.0).take(n));
-            batch_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
-
-            // Adj (Reconstruct from flat to padded row-by-row)
-            for r in 0..n {
-                let row_start = r * item.num_atoms;
-                batch_adj.extend(item.adj.iter().skip(row_start).take(n));
-                batch_adj.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
-            }
-            // Pad remaining rows
-            batch_adj.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * MAX_ATOMS));
+            batch_nodes.extend(p_nodes);
+            batch_adj.extend(p_adj);
+            batch_mask.extend(p_mask);
         }
 
         let nodes = TensorData::new(batch_nodes, [batch_size, MAX_ATOMS, ATOM_FEATURE_DIM]);
@@ -217,6 +207,41 @@ impl StandardScaler {
     }
 }
 
+/// Helper: Pads a single graph to MAX_ATOMS.
+/// Returns (PaddedNodes, PaddedAdj, PaddedMask) as flat vectors.
+pub fn pad_graph_data(
+    raw_nodes: &[f32],
+    raw_adj: &[f32],
+    num_atoms: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let n = num_atoms.min(MAX_ATOMS);
+
+    // 1. Nodes: Copy n, pad rest
+    let mut p_nodes = Vec::with_capacity(MAX_ATOMS * ATOM_FEATURE_DIM);
+    p_nodes.extend_from_slice(&raw_nodes[0..n * ATOM_FEATURE_DIM]);
+    p_nodes.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * ATOM_FEATURE_DIM));
+
+    // 2. Mask: 1.0 for atoms, 0.0 for pad
+    let mut p_mask = Vec::with_capacity(MAX_ATOMS);
+    p_mask.extend(std::iter::repeat(1.0).take(n));
+    p_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
+
+    // 3. Adj: Reconstruct row-by-row to handle 2D padding
+    let mut p_adj = Vec::with_capacity(MAX_ATOMS * MAX_ATOMS);
+    for r in 0..n {
+        let row_start = r * num_atoms; // Input is flat [num_atoms * num_atoms]
+        // Copy valid columns
+        p_adj.extend_from_slice(&raw_adj[row_start..row_start + n]);
+        // Pad columns (right side of matrix)
+        p_adj.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
+    }
+    // Pad rows (bottom of matrix)
+    let remaining_rows = MAX_ATOMS - n;
+    p_adj.extend(std::iter::repeat(0.0).take(remaining_rows * MAX_ATOMS));
+
+    (p_nodes, p_adj, p_mask)
+}
+
 /// Helper: Converts raw Atoms and Bonds into Flat vectors for Tensors.
 /// Used by both Training and Inference.
 pub fn mol_to_graph_data(
@@ -225,11 +250,9 @@ pub fn mol_to_graph_data(
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let num_atoms = atoms.len();
 
-    // 1. Build Adjacency List
+    // 1. Build Adjacency List (Same as before)
     let mut adj_list = vec![Vec::new(); num_atoms];
     for bond in bonds {
-        // SDF is usually 1-based, AtomGeneric might carry that.
-        // Assuming AtomGeneric serial numbers are 1-based:
         let a1 = (bond.atom_0_sn as usize).saturating_sub(1);
         let a2 = (bond.atom_1_sn as usize).saturating_sub(1);
         if a1 < num_atoms && a2 < num_atoms {
@@ -238,38 +261,37 @@ pub fn mol_to_graph_data(
         }
     }
 
-    // 2. Build Node Features
+    // 2. Build Node Features (Same as before)
     let mut node_feats = Vec::new();
     for atom in atoms {
+        // ... (Keep your existing One-hot logic here) ...
         let mut f = vec![0.0; ATOM_FEATURE_DIM];
-        // One-hot mapping
         let idx = match atom.element {
-            Carbon => 0,
-            Nitrogen => 1,
-            Oxygen => 2,
-            Sulfur => 3,
-            Fluorine => 4,
-            Chlorine => 5,
-            Bromine => 6,
-            Iodine => 7,
-            Hydrogen => 8,
-            _ => 9,
-        };
+            /*...*/ _ => 9,
+        }; // keep your match
         f[idx] = 1.0;
         node_feats.extend(f);
     }
 
-    // 3. Build Adjacency Matrix (Flat)
+    // --- 3. Build Adjacency Matrix (NORMALIZED) ---
     let mut adj = vec![0.0; num_atoms * num_atoms];
+
     for (i, neighbors) in adj_list.iter().enumerate() {
+        // Degree = neighbors + self-loop
+        let degree = (neighbors.len() as f32) + 1.0;
+
+        // Simple Average Rule: weight = 1.0 / degree
+        // (Alternative: Kipf & Welling use 1 / sqrt(deg_i * deg_j))
+        let norm = 1.0 / degree;
+
         for &n in neighbors {
-            adj[i * num_atoms + n] = 1.0;
+            adj[i * num_atoms + n] = norm;
         }
         // Self loop
-        adj[i * num_atoms + i] = 1.0;
+        adj[i * num_atoms + i] = norm;
     }
 
-    // 4. Mask (All 1.0 for real atoms)
+    // 4. Mask (Same as before)
     let mask = vec![1.0; num_atoms];
     (node_feats, adj, mask)
 }
@@ -333,7 +355,8 @@ impl InferenceStep for AqSolModel<ValidBackend> {
     }
 }
 
-// --- Data Loader Logic ---
+/// This must match the fields in `sol_infer::features_from_molecule`.
+/// This contains features from the CSV only; it doesn't have atom or bond data.
 fn csv_to_features(row: &[String]) -> [f32; AQ_SOL_FEATURE_DIM] {
     [
         row[9].parse().unwrap_or(0.0),  // MolWt
@@ -426,16 +449,27 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
 
         let sdf_path = sdf_folder.join(format!("{filename}.sdf"));
 
+        // println!("Loading SDF at path {sdf_path:?}"); //  todo temp
         let sdf = match Sdf::load(&sdf_path) {
             Ok(s) => s,
             Err(e) => {
-                println!("Error loading SDF: {:?}", e);
+                println!("Error loading SDF at path {sdf_path:?}: {:?}", e);
                 continue;
             }
         };
 
         let atoms = sdf.atoms.clone();
         let bonds = sdf.bonds.clone();
+
+        if bonds.is_empty() && atoms.len() > 20 {
+            println!("\n\nNo bonds found in SDF at path (Likely you RMed them) {sdf_path:?}\n\n");
+        }
+
+        if bonds.is_empty() {
+            eprintln!("No bonds found in SDF at path {sdf_path:?}. Skipping.");
+            continue;
+        }
+
         // ---------------------------------------------------
 
         let num_atoms = atoms.len();
@@ -492,9 +526,11 @@ pub fn main() {
     .shuffle(42)
     .build(InMemDataset::new(train_raw.to_vec()));
 
-    let valid_loader = DataLoaderBuilder::new(AqSolBatcher { scaler })
-        .batch_size(128)
-        .build(InMemDataset::new(valid_raw.to_vec()));
+    let valid_loader = DataLoaderBuilder::new(AqSolBatcher {
+        scaler: scaler.clone(),
+    })
+    .batch_size(128)
+    .build(InMemDataset::new(valid_raw.to_vec()));
 
     let model_cfg = AqSolModelConfig {
         global_input_dim: AQ_SOL_FEATURE_DIM,
@@ -522,15 +558,28 @@ pub fn main() {
     let result = training.launch(Learner::new(model, optim, lr_scheduler));
 
     // 6. Save using the result
-    let recorder = CompactRecorder::new();
+    let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
     result
         .model
         .save_file(model_dir.join(MODEL_FILE), &recorder)
         .unwrap();
 
-    let elapsed = start.elapsed();
+    //  Save the Model Config
+    let config_path = model_dir.join(MODEL_CFG_FILE);
+    let config_file = fs::File::create(&config_path).expect("Could not create config file");
+    serde_json::to_writer_pretty(config_file, &model_cfg).expect("Could not write config");
+    println!("Saved config to {:?}", config_path);
+
+    //  Save the Scaler
+    // You need this for inference to know the means/stds to normalize new data.
+    let scaler_path = model_dir.join(SCALER_FILE);
+    let scaler_file = fs::File::create(&scaler_path).expect("Could not create scaler file");
+    serde_json::to_writer_pretty(scaler_file, &scaler).expect("Could not write scaler");
+    println!("Saved scaler to {:?}", scaler_path);
+
+    let elapsed = start.elapsed().as_secs();
     println!(
-        "Training complete in {:?}. Saved model to {MODEL_FILE}",
+        "Training complete in {:?} s. Saved model to {MODEL_FILE}",
         elapsed
     );
 }

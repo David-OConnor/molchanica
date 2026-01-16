@@ -1,19 +1,21 @@
-use std::{fs, io, path::Path};
+use std::{fs, io, path::Path, time::Instant};
 
 use bio_files::{AtomGeneric, BondGeneric};
 use burn::{
     backend::NdArray,
     config::Config,
     module::Module,
-    record::{CompactRecorder, Recorder},
+    record::{FullPrecisionSettings, NamedMpkFileRecorder, Recorder},
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
-use crate::molecules::small::MoleculeSmall;
-// Import everything needed from sol_train
-use crate::pharmacokinetics::sol_train::{
-    AQ_SOL_FEATURE_DIM, ATOM_FEATURE_DIM, AqSolModel, AqSolModelConfig, MAX_ATOMS, MODEL_CFG_FILE,
-    MODEL_FILE, SCALER_FILE, StandardScaler, mol_to_graph_data,
+use crate::{
+    molecules::small::MoleculeSmall,
+    pharmacokinetics::sol_train::{
+        AQ_SOL_FEATURE_DIM, ATOM_FEATURE_DIM, AqSolModel, AqSolModelConfig, MAX_ATOMS,
+        MODEL_CFG_FILE, MODEL_DIR, MODEL_FILE, SCALER_FILE, StandardScaler, mol_to_graph_data,
+        pad_graph_data,
+    },
 };
 
 type InferBackend = NdArray;
@@ -25,7 +27,9 @@ pub struct AqSolInfer {
 }
 
 impl AqSolInfer {
-    pub fn load(model_dir: &Path) -> io::Result<Self> {
+    pub fn load() -> io::Result<Self> {
+        let model_dir = Path::new(MODEL_DIR);
+
         let cfg_bytes = fs::read(model_dir.join(MODEL_CFG_FILE))?;
         let scaler_bytes = fs::read(model_dir.join(SCALER_FILE))?;
 
@@ -35,7 +39,7 @@ impl AqSolInfer {
         let device = Default::default();
         let mut model = config.init::<InferBackend>(&device);
 
-        let recorder = CompactRecorder::new();
+        let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
         model = model
             .load_file(model_dir.join(MODEL_FILE), &recorder, &device)
             .map_err(|e| io::Error::other(e))?;
@@ -48,8 +52,14 @@ impl AqSolInfer {
     }
 
     pub fn infer(&self, mol: &MoleculeSmall) -> io::Result<f32> {
+        println!("Starting solubility inference...");
+        let start = Instant::now();
+
         // 1. Calculate Global Features
-        let mut global_raw = features_from_molecule(mol);
+        let mut global_raw = features_from_molecule(mol)?;
+
+        println!("INFERENCE CALCULATED FEATURES: {:?}", global_raw); // <--- Add this
+
         self.scaler.apply_in_place(&mut global_raw);
 
         // 2. Calculate Graph Features
@@ -63,25 +73,8 @@ impl AqSolInfer {
         }
 
         let (node_vec, adj_vec, _) = mol_to_graph_data(&atoms_gen, &bonds_gen);
-
-        // 3. Manual Padding (Match the Batcher logic)
-        let mut padded_nodes = node_vec;
-        padded_nodes
-            .extend(std::iter::repeat(0.0).take((MAX_ATOMS - num_atoms) * ATOM_FEATURE_DIM));
-
-        let mut padded_adj = Vec::with_capacity(MAX_ATOMS * MAX_ATOMS);
-        for r in 0..num_atoms {
-            let start = r * num_atoms;
-            // Copy row
-            padded_adj.extend_from_slice(&adj_vec[start..start + num_atoms]);
-            // Pad row
-            padded_adj.extend(std::iter::repeat(0.0).take(MAX_ATOMS - num_atoms));
-        }
-        // Pad remaining rows
-        padded_adj.extend(std::iter::repeat(0.0).take((MAX_ATOMS - num_atoms) * MAX_ATOMS));
-
-        let mut padded_mask = vec![1.0; num_atoms];
-        padded_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - num_atoms));
+        let (padded_nodes, padded_adj, padded_mask) =
+            pad_graph_data(&node_vec, &adj_vec, num_atoms);
 
         // 4. Create Tensors
         // Note: Batch size is 1
@@ -111,22 +104,31 @@ impl AqSolInfer {
             .to_vec::<f32>()
             .map_err(|_| io::Error::other("Tensor error"))?[0];
 
+        let elapsed = start.elapsed();
+        println!("Inference complete in {:?}", elapsed);
+
         Ok(val)
     }
 }
 
-pub fn infer(mol: &MoleculeSmall, model_dir: &Path) -> io::Result<f32> {
-    AqSolInfer::load(model_dir)?.infer(mol)
+pub fn infer_solubility(mol: &MoleculeSmall) -> io::Result<f32> {
+    AqSolInfer::load()?.infer(mol)
 }
 
-// Logic to extract the 17 global features from your MoleculeSmall struct
-fn features_from_molecule(mol: &MoleculeSmall) -> [f32; AQ_SOL_FEATURE_DIM] {
+/// This must match the fields in `sol_train::csv_to_featuers`.
+/// This contains features from the CSV only; it doesn't have atom or bond data.
+fn features_from_molecule(mol: &MoleculeSmall) -> io::Result<[f32; AQ_SOL_FEATURE_DIM]> {
     let c = match mol.characterization.as_ref() {
         Some(c) => c,
-        None => return [0.0; AQ_SOL_FEATURE_DIM],
+        None => {
+            return io::Result::Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Missing mol characterization",
+            ));
+        }
     };
 
-    [
+    Ok([
         c.mol_weight,
         c.calc_log_p,
         c.molar_refractivity,
@@ -136,14 +138,13 @@ fn features_from_molecule(mol: &MoleculeSmall) -> [f32; AQ_SOL_FEATURE_DIM] {
         c.num_hetero_atoms as f32,
         c.rotatable_bonds.len() as f32,
         c.num_valence_elecs as f32,
-        // Placeholders if you don't calculate these yet:
-        0.0, // NumAromaticRings
-        0.0, // NumSaturatedRings
-        0.0, // NumAliphaticRings
+        c.num_rings_aromatic as f32,
+        c.num_rings_saturated as f32,
+        c.num_rings_aliphatic as f32,
         c.rings.len() as f32,
         c.tpsa_ertl,
         c.asa_labute,
         c.balaban_j,
         c.bertz_ct,
-    ]
+    ])
 }

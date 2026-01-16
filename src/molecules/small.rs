@@ -31,6 +31,7 @@ use crate::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
+    pharmacokinetics::{Pharmacokinetics, sol_infer},
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
@@ -54,6 +55,7 @@ pub struct MoleculeSmall {
     pub characterization: Option<MolCharacterization>,
     /// Note: These are loaded from SDF, but we use our data in MolCharacterization instead.
     pub pharmacophore_features: Vec<PharmacaphoreFeatures>,
+    pub pharmacokinetics: Option<Pharmacokinetics>,
 }
 
 impl MoleculeSmall {
@@ -583,22 +585,18 @@ impl MoleculeSmall {
             }
         }
 
-        // for ident in &self.idents {
-        //     if let MolIdent::PubChem(cid) = ident {
-        //         // todo: Make it a thread (non-blocking)
-        //         match pubchem::properties(*cid) {
-        //             Ok(props) => {
-        //                 println!("Successfully loaded properties from PubChem over HTTP");
-        //
-        //                 self.update_idents_and_char_from_pubchem(&props);
-        //                 break;
-        //             }
-        //             Err(e) => {
-        //                 eprintln!("Error loading PubChem properties: {e:?}");
-        //             }
-        //         }
-        //     }
-        // }
+        // todo: We may wish to run this after updating params from PubChem, but this is fine for now,
+        // todo, or in general if you get everything you need Hi-fi from calculations.
+
+        // todo: This may be a good place to popular pharmacokinetics in general.
+        let sol = sol_infer::infer_solubility(self);
+        println!("\n\nInferred solubility: {sol:?}\n\n");
+        if let Ok(s) = sol {
+            self.pharmacokinetics = Some(Pharmacokinetics {
+                solubility_water: s,
+                ..Default::default()
+            })
+        }
     }
 
     pub fn update_idents_and_char_from_pubchem(&mut self, props: &pubchem::Properties) {

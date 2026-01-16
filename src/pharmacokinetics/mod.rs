@@ -5,7 +5,7 @@
 //! [Aqueous Solubility Data Curation](https://github.com/mcsorkun/AqSolDB) [Paper, 2019](https://www.nature.com/articles/s41597-019-0151-1)
 //! [PK-DB](https://pk-db.com/) [Paper, 2020](https://academic.oup.com/nar/article/49/D1/D1358/5957165?login=false)
 
-mod sol_infer;
+pub mod sol_infer;
 pub mod sol_train; // Pub to allow access from the training entry point.
 mod solubility;
 
@@ -37,6 +37,7 @@ fn estimate_tpsa(ch: &MolCharacterization) -> f32 {
 /// https://en.wikipedia.org/wiki/Pharmacokinetics
 #[derive(Clone, Debug, Default)]
 pub struct Pharmacokinetics {
+    // todo: While WIP, consider making individual fields optional.
     /// LogS, where S is the aqueous solubility in mol/L (or M).
     pub solubility_water: f32,
     pub solubility_lipid: f32,

@@ -28,6 +28,10 @@ pub struct MolCharacterization {
     pub mol_weight: f32,
     /// Single rings; either standalone, or part of a system.
     pub rings: Vec<Ring>,
+    /// These ring counts are conveniences, derived from `rings`.
+    pub num_rings_aromatic: usize,
+    pub num_rings_saturated: usize,
+    pub num_rings_aliphatic: usize,
     /// Fused rings, i.e. 2 or more rings with shared edges.
     /// These are indices of the `rings` field here. Note that we only have
     /// one level of ring systems. For example. 3 rings that have shared edges are one system of len 3;
@@ -301,6 +305,18 @@ impl MolCharacterization {
         let rings = rings(&adj, &mol.atoms, &bond_type_by_edge);
         let ring_systems = fused_rings(&rings, &mol.atoms);
 
+        let mut num_rings_aromatic = 0;
+        let mut num_rings_saturated = 0;
+        let mut num_rings_aliphatic = 0;
+
+        for ring in &rings {
+            match ring.ring_type {
+                RingType::Aromatic => num_rings_aromatic += 1,
+                RingType::Saturated => num_rings_saturated += 1,
+                RingType::Aliphatic => num_rings_aliphatic += 1,
+            }
+        }
+
         let aromatic_atoms: HashSet<usize> = rings
             .iter()
             .filter(|r| r.ring_type == RingType::Aromatic)
@@ -308,8 +324,6 @@ impl MolCharacterization {
             .collect();
 
         let num_aromatic_atoms = aromatic_atoms.len();
-
-        let ring_systems = fused_rings(&rings, &mol.atoms);
 
         let mut carbonyl = Vec::new();
         let mut hydroxyl = Vec::new();
@@ -479,8 +493,8 @@ impl MolCharacterization {
             0.0
         };
 
-        let amides_set: HashSet<usize> = amides.iter().copied().collect();
-        let hydroxyl_set: HashSet<usize> = hydroxyl.iter().copied().collect();
+        // let amides_set: HashSet<usize> = amides.iter().copied().collect();
+        // let hydroxyl_set: HashSet<usize> = hydroxyl.iter().copied().collect();
 
         // Exact valence electron count
         let mut num_valence_elecs = 0usize;
@@ -537,6 +551,9 @@ impl MolCharacterization {
             num_hetero_atoms,
             mol_weight: mol_weight_f64 as f32,
             rings,
+            num_rings_aromatic,
+            num_rings_saturated,
+            num_rings_aliphatic,
             ring_systems,
             num_aromatic_atoms,
             rotatable_bonds: mol.find_rotatable_bonds(),

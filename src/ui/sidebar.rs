@@ -507,23 +507,12 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
     // Functional groups
 
-    let mut num_aromatic = 0;
-    let mut num_sat = 0;
-    let mut num_aliphatic = 0;
-    for ring in &char.rings {
-        match ring.ring_type {
-            RingType::Aromatic => num_aromatic += 1,
-            RingType::Saturated => num_sat += 1,
-            RingType::Aliphatic => num_aliphatic += 1,
-        }
-    }
-
     mol_char_helper(
         ui,
         &[
-            ("Rings Ar", &num_aromatic.to_string()),
-            ("Sat", &num_sat.to_string()),
-            ("Ali", &num_aliphatic.to_string()),
+            ("Rings Ar", &char.num_rings_aromatic.to_string()),
+            ("Sat", &char.num_rings_saturated.to_string()),
+            ("Ali", &char.num_rings_aliphatic.to_string()),
         ],
     );
 
@@ -595,4 +584,14 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
             &format!("{:.2}", char.complexity.unwrap_or(0.0)),
         )],
     );
+
+    if let Some(pk) = &mol.pharmacokinetics {
+        ui.add_space(ROW_SPACING);
+        ui.separator();
+        label!(ui, "Pharmacokinetics", Color32::LIGHT_BLUE);
+        mol_char_helper(
+            ui,
+            &[("Sol (water)", &format!("{:.2}", pk.solubility_water))],
+        );
+    }
 }
