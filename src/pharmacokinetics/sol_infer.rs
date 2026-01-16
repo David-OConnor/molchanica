@@ -1,58 +1,39 @@
 use std::{fs, io, path::Path};
 
+use bio_files::{AtomGeneric, BondGeneric};
 use burn::{
     backend::NdArray,
     config::Config,
     module::Module,
-    nn::{Linear, LinearConfig},
     record::{CompactRecorder, Recorder},
-    tensor::{Tensor, TensorData, activation, backend::Backend},
+    tensor::{Tensor, TensorData, backend::Backend},
 };
-use serde::{Deserialize, Serialize};
 
 use crate::molecules::small::MoleculeSmall;
+// Import everything needed from sol_train
 use crate::pharmacokinetics::sol_train::{
-    AQ_SOL_FEATURE_DIM, AqSolModel, AqSolModelConfig, MODEL_CFG_FILE, MODEL_FILE, SCALER_FILE,
-    StandardScaler,
+    AQ_SOL_FEATURE_DIM, ATOM_FEATURE_DIM, AqSolModel, AqSolModelConfig, MAX_ATOMS, MODEL_CFG_FILE,
+    MODEL_FILE, SCALER_FILE, StandardScaler, mol_to_graph_data,
 };
 
 type InferBackend = NdArray;
-type InferDevice = <InferBackend as Backend>::Device;
-
-impl StandardScaler {
-    pub fn apply_in_place(&self, x: &mut [f32; AQ_SOL_FEATURE_DIM]) {
-        for i in 0..AQ_SOL_FEATURE_DIM {
-            let s = if self.std[i].abs() < 1.0e-12 {
-                1.0
-            } else {
-                self.std[i]
-            };
-            x[i] = (x[i] - self.mean[i]) / s;
-        }
-    }
-}
 
 pub struct AqSolInfer {
-    model_cfg: AqSolModelConfig,
-    scaler: StandardScaler,
     model: AqSolModel<InferBackend>,
-    device: InferDevice,
+    scaler: StandardScaler,
+    device: <InferBackend as Backend>::Device,
 }
 
 impl AqSolInfer {
     pub fn load(model_dir: &Path) -> io::Result<Self> {
-        let cfg_bytes =
-            fs::read(model_dir.join(MODEL_CFG_FILE)).map_err(|e| io::Error::other(e))?;
-        let scaler_bytes =
-            fs::read(model_dir.join(SCALER_FILE)).map_err(|e| io::Error::other(e))?;
+        let cfg_bytes = fs::read(model_dir.join(MODEL_CFG_FILE))?;
+        let scaler_bytes = fs::read(model_dir.join(SCALER_FILE))?;
 
-        let model_cfg: AqSolModelConfig =
-            serde_json::from_slice(&cfg_bytes).map_err(|e| io::Error::other(e))?;
-        let scaler: StandardScaler =
-            serde_json::from_slice(&scaler_bytes).map_err(|e| io::Error::other(e))?;
+        let config: AqSolModelConfig = serde_json::from_slice(&cfg_bytes)?;
+        let scaler: StandardScaler = serde_json::from_slice(&scaler_bytes)?;
 
-        let device = InferDevice::default();
-        let mut model = model_cfg.init::<InferBackend>(&device);
+        let device = Default::default();
+        let mut model = config.init::<InferBackend>(&device);
 
         let recorder = CompactRecorder::new();
         model = model
@@ -60,28 +41,77 @@ impl AqSolInfer {
             .map_err(|e| io::Error::other(e))?;
 
         Ok(Self {
-            model_cfg,
-            scaler,
             model,
+            scaler,
             device,
         })
     }
 
     pub fn infer(&self, mol: &MoleculeSmall) -> io::Result<f32> {
-        let mut feats = features_from_molecule(mol);
+        // 1. Calculate Global Features
+        let mut global_raw = features_from_molecule(mol);
+        self.scaler.apply_in_place(&mut global_raw);
 
-        self.scaler.apply_in_place(&mut feats);
+        // 2. Calculate Graph Features
+        // Convert MoleculeSmall atoms to AtomGeneric for the shared function
+        let atoms_gen: Vec<AtomGeneric> = mol.common.atoms.iter().map(|a| a.to_generic()).collect();
+        let bonds_gen: Vec<BondGeneric> = mol.common.bonds.iter().map(|a| a.to_generic()).collect();
 
-        let x_data = TensorData::new(feats.to_vec(), [1usize, self.model_cfg.input_dim]);
-        let x = Tensor::<InferBackend, 2>::from_data(x_data, &self.device);
+        let num_atoms = atoms_gen.len();
+        if num_atoms == 0 {
+            return Ok(0.0); // Or handle error
+        }
 
-        let y = self.model.forward(x);
-        let y_vec = y
+        let (node_vec, adj_vec, _) = mol_to_graph_data(&atoms_gen, &bonds_gen);
+
+        // 3. Manual Padding (Match the Batcher logic)
+        let mut padded_nodes = node_vec;
+        padded_nodes
+            .extend(std::iter::repeat(0.0).take((MAX_ATOMS - num_atoms) * ATOM_FEATURE_DIM));
+
+        let mut padded_adj = Vec::with_capacity(MAX_ATOMS * MAX_ATOMS);
+        for r in 0..num_atoms {
+            let start = r * num_atoms;
+            // Copy row
+            padded_adj.extend_from_slice(&adj_vec[start..start + num_atoms]);
+            // Pad row
+            padded_adj.extend(std::iter::repeat(0.0).take(MAX_ATOMS - num_atoms));
+        }
+        // Pad remaining rows
+        padded_adj.extend(std::iter::repeat(0.0).take((MAX_ATOMS - num_atoms) * MAX_ATOMS));
+
+        let mut padded_mask = vec![1.0; num_atoms];
+        padded_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - num_atoms));
+
+        // 4. Create Tensors
+        // Note: Batch size is 1
+        let t_globals = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(global_raw.to_vec(), [1, AQ_SOL_FEATURE_DIM]),
+            &self.device,
+        );
+        let t_nodes = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(padded_nodes, [1, MAX_ATOMS, ATOM_FEATURE_DIM]),
+            &self.device,
+        );
+        let t_adj = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(padded_adj, [1, MAX_ATOMS, MAX_ATOMS]),
+            &self.device,
+        );
+        let t_mask = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(padded_mask, [1, MAX_ATOMS, 1]),
+            &self.device,
+        );
+
+        // 5. Forward Pass
+        let y = self.model.forward(t_nodes, t_adj, t_mask, t_globals);
+
+        // Extract result
+        let val = y
             .into_data()
             .to_vec::<f32>()
-            .map_err(|e| io::Error::other(""))?;
+            .map_err(|_| io::Error::other("Tensor error"))?[0];
 
-        Ok(y_vec[0])
+        Ok(val)
     }
 }
 
@@ -89,60 +119,31 @@ pub fn infer(mol: &MoleculeSmall, model_dir: &Path) -> io::Result<f32> {
     AqSolInfer::load(model_dir)?.infer(mol)
 }
 
+// Logic to extract the 17 global features from your MoleculeSmall struct
 fn features_from_molecule(mol: &MoleculeSmall) -> [f32; AQ_SOL_FEATURE_DIM] {
     let c = match mol.characterization.as_ref() {
         Some(c) => c,
-        None => {
-            return [0.0; AQ_SOL_FEATURE_DIM];
-        }
+        None => return [0.0; AQ_SOL_FEATURE_DIM],
     };
 
-    let mol_weight = c.mol_weight;
-    let mol_log_p = c.calc_log_p;
-    let mol_mr = c.molar_refractivity;
-
-    let heavy_atom_count = c.num_heavy_atoms as f32;
-
-    let num_h_acceptors = c.h_bond_acceptor.len() as f32;
-    let num_h_donors = c.h_bond_donor.len() as f32;
-
-    let num_het_atoms = c.num_hetero_atoms as f32;
-    let num_rotatable_bonds = c.rotatable_bonds.len() as f32;
-
-    let num_valence_elec = c.num_valence_elecs as f32;
-
-    // If you don’t already classify rings by aromatic/saturated/aliphatic, these remain 0.
-    // You can wire these to your ring classifier when available.
-    let num_aromatic_rings = 0.0;
-    let num_saturated_rings = 0.0;
-    let num_aliphatic_rings = 0.0;
-
-    let ring_count = c.rings.len() as f32;
-
-    let tpsa = c.tpsa_ertl; // todo: Choose the appropriate one here; ertl or topo.
-
-    // If you later compute these, map them here.
-    let labute_asa = 0.0;
-    let balaban_j = c.balaban_j;
-    let bertz_ct = c.bertz_ct;
-
     [
-        mol_weight,
-        mol_log_p,
-        mol_mr,
-        heavy_atom_count,
-        num_h_acceptors,
-        num_h_donors,
-        num_het_atoms,
-        num_rotatable_bonds,
-        num_valence_elec,
-        num_aromatic_rings,
-        num_saturated_rings,
-        num_aliphatic_rings,
-        ring_count,
-        tpsa,
-        labute_asa,
-        balaban_j,
-        bertz_ct,
+        c.mol_weight,
+        c.calc_log_p,
+        c.molar_refractivity,
+        c.num_heavy_atoms as f32,
+        c.h_bond_acceptor.len() as f32,
+        c.h_bond_donor.len() as f32,
+        c.num_hetero_atoms as f32,
+        c.rotatable_bonds.len() as f32,
+        c.num_valence_elecs as f32,
+        // Placeholders if you don't calculate these yet:
+        0.0, // NumAromaticRings
+        0.0, // NumSaturatedRings
+        0.0, // NumAliphaticRings
+        c.rings.len() as f32,
+        c.tpsa_ertl,
+        c.asa_labute,
+        c.balaban_j,
+        c.bertz_ct,
     ]
 }

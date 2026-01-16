@@ -36,6 +36,7 @@ Cargo.lock
 *.vocab
 /AqSolDb_mols
 /mol_models
+/ml_models
 
 # Our prefs format.
 *.dae

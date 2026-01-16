@@ -9,7 +9,10 @@ use std::{
 };
 
 use bio_apis::{
-    ReqError, amber_geostd, amber_geostd::GeostdData, pubchem, pubchem::ProteinStructure,
+    ReqError, amber_geostd,
+    amber_geostd::GeostdData,
+    pubchem,
+    pubchem::{ProteinStructure, StructureSearchNamespace},
 };
 use bio_files::{
     ChargeType, Mol2, MolType, Pdbqt, PharmacaphoreFeatures, Sdf, Xyz, create_bonds,
@@ -524,20 +527,23 @@ impl MoleculeSmall {
                     let (tx, rx) = mpsc::channel(); // one-shot channel
                     let ident_for_thread = ident.clone();
 
-                    println!("\nLoading PubChem properties for {ident:?} over HTTP...");
-
                     // todo: Follow-up on and/or update this. E.g. you should no longer be getting smiles
                     // todo for a pubchem ID, but instead
                     match ident {
                         MolIdent::PubChem(_) => {
+                            println!("\nLoading PubChem properties for {ident:?} over HTTP...");
+
                             thread::spawn(move || {
                                 // part of our borrow-checker workaround
-                                let cid_: u32 = ident_for_thread.ident_innner().parse().unwrap();
+                                let cid: u32 = ident_for_thread.ident_innner().parse().unwrap();
 
                                 println!(
                                     "Launching thread for PubChem properties HTTP for {ident_for_thread:?}..."
                                 ); // todo temp?
-                                let data = pubchem::properties(cid_);
+                                let data = pubchem::properties(
+                                    StructureSearchNamespace::Cid,
+                                    &cid.to_string(),
+                                );
 
                                 let _ = tx.send((ident_for_thread, data));
                             });
@@ -553,22 +559,24 @@ impl MoleculeSmall {
             break;
         }
 
-        // todo here, fill this out. We should acquire a PubChem CID, then query full properties from PubCHem
-        // todo: Both of these should be in threads.
+        // If we don't have a PubChemID, load SMILES, then get a PubChem ID.
         if !pubchem_ident_exists {
             for ident in &self.idents {
+                let (tx, rx) = mpsc::channel(); // one-shot channel
                 let ident_for_thread = ident.clone();
 
                 match ident {
                     MolIdent::PdbeAmber(_) => {
+                        println!("\nLoading PubChem properties for {ident:?} over HTTP...");
                         thread::spawn(move || {
                             let data =
-                                pubchem::get_smiles_chem_name(&ident_for_thread.ident_innner());
-                            // Note: this commented-out call below also gets PubChem CID.
-                            // pubchem::get_cid_from_pdbe_id(&ident_for_thread.to_str());
+                                pubchem::properties_from_pdbe_id(&ident_for_thread.ident_innner());
 
-                            // let _ = tx.send((ident_for_thread, data));
+                            let _ = tx.send((ident_for_thread, data));
                         });
+
+                        *pubchem_properties_avail = Some(rx);
+                        break;
                     }
                     _ => (),
                 }
