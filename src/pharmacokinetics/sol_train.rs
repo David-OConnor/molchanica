@@ -4,7 +4,7 @@
 
 use std::{fs, io, path::Path, time::Instant};
 
-use bio_files::{AtomGeneric, BondGeneric};
+use bio_files::{AtomGeneric, BondGeneric, Sdf};
 use burn::{
     backend::{Autodiff, NdArray, Wgpu},
     config::Config,
@@ -333,126 +333,102 @@ impl InferenceStep for AqSolModel<ValidBackend> {
     }
 }
 
-// impl<B: Backend> ValidStep<AqSolBatch<B>, ClassificationOutput<B>> for Model<B> {
-//     fn step(&self, batch: AqSolBatch<B>) -> ClassificationOutput<B> {
-//         self.forward_classification(batch.adj, batch.targets)
-//     }
-// }
-
-// impl TrainStep<AqSolBatch<TrainBackend>, RegressionOutput<TrainBackend>>
-//     for AqSolModel<TrainBackend>
-// {
-//     fn step(&self, batch: AqSolBatch<TrainBackend>) -> TrainOutput<RegressionOutput<TrainBackend>> {
-//         // The logic remains largely the same, but ensure your Backend
-//         // matches the specific requirements of the generalized TrainStep.
-//         let pred = self.forward(batch.nodes, batch.adj, batch.mask, batch.globals);
-//         let loss = MseLoss::new().forward(pred.clone(), batch.targets.clone(), Reduction::Mean);
-//         let grads = loss.backward();
-//
-//         TrainOutput::new(
-//             self,
-//             grads,
-//             RegressionOutput::new(loss, pred, batch.targets),
-//         )
-//     }
-// }
-//
-// impl ValidStep<AqSolBatch<ValidBackend>, RegressionOutput<ValidBackend>>
-//     for AqSolModel<ValidBackend>
-// {
-//     fn step(&self, batch: AqSolBatch<ValidBackend>) -> RegressionOutput<ValidBackend> {
-//         let pred = self.forward(batch.nodes, batch.adj, batch.mask, batch.globals);
-//         let loss = MseLoss::new().forward(pred.clone(), batch.targets.clone(), Reduction::Mean);
-//         RegressionOutput::new(loss, pred, batch.targets)
-//     }
-// }
-
-// --- CSV Deserialization Helpers ---
-
-/// This corresponds to `AqSolDb`'s `data_curated`.csv.
-#[derive(Clone, Debug, Deserialize)]
-struct CsvRow {
-    #[serde(rename = "ID")]
-    id: String,
-    #[serde(rename = "Solubility")]
-    solubility: f32,
-    #[serde(rename = "MolWt")]
-    mol_weight: f32,
-    #[serde(rename = "MolLogP")]
-    mol_log_p: f32,
-    #[serde(rename = "MolMR")]
-    mol_mr: f32,
-    #[serde(rename = "HeavyAtomCount")]
-    heavy_atom_count: u16,
-    #[serde(rename = "NumHAcceptors")]
-    num_h_acceptors: u8,
-    #[serde(rename = "NumHDonors")]
-    num_h_donors: u8,
-    #[serde(rename = "NumHeteroatoms")]
-    num_het_atoms: u8,
-    #[serde(rename = "NumRotatableBonds")]
-    num_rotatable_bonds: u8,
-    #[serde(rename = "NumValenceElectrons")]
-    num_valence_elec: u16,
-    #[serde(rename = "NumAromaticRings")]
-    num_aromatic_rings: u8,
-    #[serde(rename = "NumSaturatedRings")]
-    num_saturated_rings: u8,
-    #[serde(rename = "NumAliphaticRings")]
-    num_aliphatic_rings: u8,
-    #[serde(rename = "RingCount")]
-    ring_count: u8,
-    #[serde(rename = "TPSA")]
-    tpsa: f32,
-    #[serde(rename = "LabuteASA")]
-    labute_asa: f32,
-    #[serde(rename = "BalabanJ")]
-    balaban_j: f32,
-    #[serde(rename = "BertzCT")]
-    bertz_ct: f32,
-}
-
-fn features_from_csv_row(r: &CsvRow) -> [f32; AQ_SOL_FEATURE_DIM] {
+// --- Data Loader Logic ---
+fn csv_to_features(row: &[String]) -> [f32; AQ_SOL_FEATURE_DIM] {
     [
-        r.mol_weight,
-        r.mol_log_p,
-        r.mol_mr,
-        r.heavy_atom_count as f32,
-        r.num_h_acceptors as f32,
-        r.num_h_donors as f32,
-        r.num_het_atoms as f32,
-        r.num_rotatable_bonds as f32,
-        r.num_valence_elec as f32,
-        r.num_aromatic_rings as f32,
-        r.num_saturated_rings as f32,
-        r.num_aliphatic_rings as f32,
-        r.ring_count as f32,
-        r.tpsa,
-        r.labute_asa,
-        r.balaban_j,
-        r.bertz_ct,
+        row[9].parse().unwrap_or(0.0),  // MolWt
+        row[10].parse().unwrap_or(0.0), // MolLogP
+        row[11].parse().unwrap_or(0.0), // MolMR
+        row[12].parse().unwrap_or(0.0), // HeavyAtomCount
+        row[13].parse().unwrap_or(0.0), // NumHAcceptors
+        row[14].parse().unwrap_or(0.0), // NumHDonors
+        row[15].parse().unwrap_or(0.0), // NumHeteroatoms
+        row[16].parse().unwrap_or(0.0), // NumRotatableBonds
+        row[17].parse().unwrap_or(0.0), // NumValenceElectrons
+        row[18].parse().unwrap_or(0.0), // NumAromaticRings
+        row[19].parse().unwrap_or(0.0), // NumSaturatedRings
+        row[20].parse().unwrap_or(0.0), // NumAliphaticRings
+        row[21].parse().unwrap_or(0.0), // RingCount
+        row[22].parse().unwrap_or(0.0), // TPSA
+        row[23].parse().unwrap_or(0.0), // LabuteASA
+        row[24].parse().unwrap_or(0.0), // BalabanJ
+        row[25].parse().unwrap_or(0.0), // BertzCT
     ]
 }
 
-// --- Data Loader Logic ---
+fn split_csv_line(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+
+    let bytes = line.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                if in_quotes {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                        cur.push('"');
+                        i += 2;
+                        continue;
+                    } else {
+                        in_quotes = false;
+                        i += 1;
+                        continue;
+                    }
+                } else {
+                    in_quotes = true;
+                    i += 1;
+                    continue;
+                }
+            }
+            b',' => {
+                if !in_quotes {
+                    out.push(cur);
+                    cur = String::new();
+                    i += 1;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+
+        cur.push(bytes[i] as char);
+        i += 1;
+    }
+
+    out.push(cur);
+    out
+}
 
 fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
     let mut samples = Vec::new();
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .from_path(csv_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    for result in rdr.deserialize::<CsvRow>() {
-        let row = result.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let csv_data = fs::read_to_string(csv_path)?;
 
-        // 1. Load SDF
-        let sdf_path = sdf_folder.join(format!("{}.sdf", row.id));
+    // Skip the header.
+    for line in csv_data.lines().skip(1) {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
 
-        // --- TODO: REPLACE THIS WITH YOUR REAL SDF PARSER ---
-        // e.g., let mol = crate::io::read_sdf(&sdf_path)?;
-        // let atoms = mol.atoms; let bonds = mol.bonds;
-        let (atoms, bonds) = mock_load_sdf_atoms(&sdf_path);
+        let cols: Vec<String> = split_csv_line(line);
+
+        // for col in &cols {
+        //     println!("-col: {col}");
+        // }
+
+        let filename = &cols[0];
+        let features = csv_to_features(&cols);
+        let solubility: f32 = cols[5].parse().unwrap();
+
+        let sdf_path = sdf_folder.join(format!("{filename}.sdf"));
+
+        let sdf = Sdf::load(&sdf_path)?;
+        let atoms = sdf.atoms.clone();
+        let bonds = sdf.bonds.clone();
         // ---------------------------------------------------
 
         let num_atoms = atoms.len();
@@ -462,25 +438,18 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
 
         let (n_feats, adj, _) = mol_to_graph_data(&atoms, &bonds);
 
+        println!("Solubility: {}", solubility);
+
         samples.push(Sample {
-            global_feats: features_from_csv_row(&row),
+            global_feats: features,
             node_feats: n_feats,
             adj: adj,
             num_atoms: num_atoms,
-            target: row.solubility,
+            target: solubility,
         });
     }
 
     Ok(samples)
-}
-
-// Temporary Mock to allow compilation.
-fn mock_load_sdf_atoms(_p: &Path) -> (Vec<AtomGeneric>, Vec<BondGeneric>) {
-    // Just returning a dummy carbon so compilation succeeds.
-    // Logic: In real code, parse the SDF file here.
-    let mut a = AtomGeneric::default();
-    a.element = Carbon;
-    (vec![a], vec![])
 }
 
 // ==============================================================================================

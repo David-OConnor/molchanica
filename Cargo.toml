@@ -55,8 +55,6 @@ serde = { version = "1.0.228", features = ["derive"] }
 burn = { version = "0.20.0", features = ["std", "train", "wgpu", "ndarray", "fusion", "autotune"], default-features = false }
 
 serde_json = "1.0.145"  # todo: RM?
-clap = { version = "4.5.54", features = ["derive"] }  # todo: RM
-csv = "1.4.0"  # todo: RM
 
 # Note: This section must be at the bottom; applies to all elements below it.
 [target.'cfg(not(target_os = "windows"))'.dependencies]
