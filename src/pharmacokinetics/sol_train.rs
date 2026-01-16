@@ -426,7 +426,14 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
 
         let sdf_path = sdf_folder.join(format!("{filename}.sdf"));
 
-        let sdf = Sdf::load(&sdf_path)?;
+        let sdf = match Sdf::load(&sdf_path) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("Error loading SDF: {:?}", e);
+                continue;
+            }
+        };
+
         let atoms = sdf.atoms.clone();
         let bonds = sdf.bonds.clone();
         // ---------------------------------------------------
@@ -437,8 +444,6 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
         }
 
         let (n_feats, adj, _) = mol_to_graph_data(&atoms, &bonds);
-
-        println!("Solubility: {}", solubility);
 
         samples.push(Sample {
             global_feats: features,
