@@ -18,11 +18,12 @@ use na_seq::{AminoAcid, Element};
 use regex::Regex;
 
 use crate::{
-    Selection, State,
     cam_misc::{cam_look_at, reset_camera},
     download_mols,
     molecules::AtomRole,
     render::set_flashlight,
+    selection::Selection,
+    state::State,
     util,
 };
 

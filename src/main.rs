@@ -16,7 +16,6 @@
 //! [S3 Geostd link](https://daedalus-mols.s3.us-east-1.amazonaws.com/amber_geostd)
 
 mod bond_inference;
-// mod docking;
 mod docking;
 mod download_mols;
 mod drawing;
@@ -48,12 +47,11 @@ mod pharmacokinetics;
 mod pharmacophore;
 mod selection;
 mod smiles;
+mod state;
 mod tautomers;
 #[cfg(test)]
 mod tests;
 mod viridis_lut;
-// todo: Eval if there's another way or if you can remove this post a refactor
-// mod train;
 
 #[cfg(feature = "cuda")]
 use std::sync::Arc;
@@ -95,6 +93,8 @@ use molecules::{
     nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands, load_na_templates},
     small::MoleculeSmall,
 };
+use selection::{Selection, ViewSelLevel};
+use state::{State, StateUi, StateVolatile};
 
 use crate::{
     mol_alignment::StateAlignment,
@@ -132,43 +132,6 @@ struct CudaFunctions {
 //     #[cfg(feature = "cuda")]
 //     Gpu((ComputationDevice, Arc<CudaModule>>)),
 // }
-
-#[derive(Clone, Copy, PartialEq, Debug, Default, Encode, Decode)]
-pub enum ViewSelLevel {
-    #[default]
-    Atom,
-    Bond,
-    Residue,
-}
-
-impl ViewSelLevel {
-    pub fn next(self) -> Self {
-        match self {
-            Self::Atom => Self::Bond,
-            Self::Bond => Self::Residue,
-            Self::Residue => Self::Atom,
-        }
-    }
-
-    // todo: repetitive
-    pub fn prev(self) -> Self {
-        match self {
-            Self::Atom => Self::Residue,
-            Self::Bond => Self::Atom,
-            Self::Residue => Self::Bond,
-        }
-    }
-}
-
-impl Display for ViewSelLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Atom => write!(f, "Atom"),
-            Self::Residue => write!(f, "Residue"),
-            Self::Bond => write!(f, "Bond"),
-        }
-    }
-}
 
 struct FileDialogs {
     load: FileDialog,
@@ -268,117 +231,26 @@ pub struct MdStateLocal {
     pub start: Option<Instant>,
 }
 
-/// Temporary, and generated state.
-struct StateVolatile {
-    dialogs: FileDialogs,
-    // /// Center and size are used for setting the camera. Dependent on the molecule atom positions.
-    // mol_center: Vec3,
-    // mol_size: f32, // Dimension-agnostic
-    /// We Use this to keep track of key press state for the camera movement, so we can continuously
-    /// update the flashlight when moving.
-    inputs_commanded: InputsCommanded,
-    // todo: Replace with the V2 version A/R
-    // docking_setup: Option<DockingSetup>,
-    /// Receives thread data upon an HTTP result completion.
-    mol_pending_data_avail: Option<
-        Receiver<(
-            Result<PdbDataResults, ReqError>,
-            Result<FilesAvailable, ReqError>,
-        )>,
-    >,
-    /// Receives thread data upon an HTTP result completion.
-    pubchem_properties_avail: Option<Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>>,
-    /// The first param is the index.
-    amber_geostd_data_avail: Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
-    /// We may change CWD during CLI navigation; keep prefs directory constant.
-    prefs_dir: PathBuf,
-    /// Entered by the user, for this session.
-    cli_input_history: Vec<String>,
-    cli_input_selected: usize,
-    /// Pre-computed from the molecule
-    aa_seq_text: String,
-    flags: SceneFlags,
-    /// Cached so we don't compute each UI paint. Picoseconds.
-    md_runtime: f32,
-    active_mol: Option<(MolType, usize)>,
-    mol_manip: MolManip,
-    /// For restoring after temprarily disabling mouse look.
-    control_scheme_prev: ControlScheme,
-    /// We maintain a set of atom indices of peptides that are used in MD. This for example, might
-    /// exclude hetero atoms and atoms not near a docking site. (mol i, atom i)
-    md_peptide_selected: HashSet<(usize, usize)>,
-    /// Ctrl, alt, shift etc.
-    key_modifiers: Modifiers,
-    operating_mode: OperatingMode,
-    /// Allows restoring after entering the mol edit mode.
-    primary_mode_cam: Camera,
-    mol_editing: Option<usize>,
-    md_local: MdStateLocal,
-    orbit_center: Option<(MolType, usize)>,
-    /// ORCA is available on the system path.
-    orca_avail: bool,
-    // /// Per-protein. Computed as required; None before then.
-    // hydropathy_data: Option<Vec<Vec<(usize, usize)>>>,
-    // /// If present, there must be one per vertex. Rebuild this whenever we
-    // /// rebuild this mesh.
-    // sa_surface_mesh_colors: Option<Vec<(u8, u8, u8)>>,
-    /// Outer the protein index. Inner: A collection of points on the surface, sufficient to
-    /// determine if a given atom is near the surface.
-    protein_sfc_mesh_coarse: Vec<Vec<f32>>,
-    alignment: StateAlignment,
-}
-
-impl Default for StateVolatile {
-    fn default() -> Self {
-        Self {
-            dialogs: Default::default(),
-            inputs_commanded: Default::default(),
-            pubchem_properties_avail: Default::default(),
-            mol_pending_data_avail: Default::default(),
-            amber_geostd_data_avail: Default::default(),
-            prefs_dir: env::current_dir().unwrap(), // This is why we can't derive.
-            cli_input_history: Default::default(),
-            cli_input_selected: Default::default(),
-            aa_seq_text: Default::default(),
-            flags: Default::default(),
-            md_runtime: Default::default(),
-            active_mol: Default::default(),
-            mol_manip: Default::default(),
-            control_scheme_prev: Default::default(),
-            md_peptide_selected: Default::default(),
-            key_modifiers: Default::default(),
-            operating_mode: Default::default(),
-            primary_mode_cam: Default::default(),
-            mol_editing: Default::default(),
-            md_local: Default::default(),
-            orbit_center: None,
-            orca_avail: Default::default(),
-            protein_sfc_mesh_coarse: Default::default(),
-            alignment: Default::default(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
-struct Visibility {
-    hide_sidechains: bool,
-    hide_water: bool,
+pub struct Visibility {
+    pub hide_sidechains: bool,
+    pub hide_water: bool,
     /// Hide hetero atoms: i.e. ones not part of a polypeptide.
-    hide_hetero: bool,
-    hide_protein: bool,
-    hide_ligand: bool,
-    hide_nucleic_acids: bool,
-    hide_lipids: bool,
-    hide_hydrogen: bool,
-    hide_h_bonds: bool,
-    dim_peptide: bool,
-    hide_density_point_cloud: bool,
-    hide_density_surface: bool,
-    labels_mol: bool,
-    labels_atom_sn: bool,
-    labels_atom_q: bool,
-    labels_atom_detailed: bool,
-    labels_bond: bool,
+    pub hide_hetero: bool,
+    pub hide_protein: bool,
+    pub hide_ligand: bool,
+    pub hide_nucleic_acids: bool,
+    pub hide_lipids: bool,
+    pub hide_hydrogen: bool,
+    pub hide_h_bonds: bool,
+    pub dim_peptide: bool,
+    pub hide_density_point_cloud: bool,
+    pub hide_density_surface: bool,
+    pub labels_mol: bool,
+    pub labels_atom_sn: bool,
+    pub labels_atom_q: bool,
+    pub labels_atom_detailed: bool,
+    pub labels_bond: bool,
 }
 
 impl Default for Visibility {
@@ -524,74 +396,6 @@ impl Display for ResColoring {
     }
 }
 
-/// Ui text fields and similar.
-#[derive(Default)]
-struct StateUi {
-    mol_view: MoleculeView,
-    view_sel_level: ViewSelLevel,
-    /// Mouse cursor
-    cursor_pos: Option<(f32, f32)>,
-    db_input: String,
-    cam_snapshot_name: String,
-    atom_res_search: String,
-    /// To selection.
-    show_near_sel_only: bool,
-    show_near_lig_only: bool,
-    /// Protein atoms near its surface; hide internal ones.
-    show_near_sfc_only: bool,
-    /// Angstrom. For selections, or ligand.
-    nearby_dist_thresh: u16,
-    view_depth: (u16, u16), // angstrom. min, max.
-    cam_snapshot: Option<usize>,
-    dt_render: f32, // Seconds
-    // For selecting residues from the GUI.
-    chain_to_pick_res: Option<usize>,
-    /// Workaround for a bug or limitation in EGUI's `is_pointer_button_down_on`.
-    // inputs_commanded: InputsCommanded,
-    visibility: Visibility,
-    selection: Selection,
-    left_click_down: bool,
-    middle_click_down: bool,
-    autodock_path_valid: bool,
-    mouse_in_window: bool,
-    docking_site_x: String,
-    docking_site_y: String,
-    docking_site_z: String,
-    docking_site_size: String,
-    /// For the arc/orbit cam only.
-    orbit_selected_atom: bool,
-    // todo: Re-implement A/R
-    // binding_energy_disp: Option<BindingEnergy>,
-    current_snapshot: usize,
-    /// A flag so we know to update the flashlight upon loading a new model; this should be done within
-    /// a callback.
-    show_docking_tools: bool,
-    movement_speed_input: String,
-    rotation_sens_input: String,
-    mol_move_sens_input: String, // scroll
-    cmd_line_input: String,
-    cmd_line_output: String,
-    /// Indicates CLI, or errors more broadly by changing its displayed color.
-    cmd_line_out_is_err: bool,
-    ui_vis: UiVisibility,
-    /// Use a viridis or simialar colr scheme to color residues gradually based on their
-    /// position in the sequence.
-    res_coloring: ResColoring,
-    atom_color_by_charge: bool,
-    /// Affects the electron density mesh.
-    density_iso_level: f32,
-    // /// E.g. set to original for from the mmCIF file, or Dynamics to view it after MD.
-    // peptide_atom_posits: PeptideAtomPosits,
-    popup: PopupState,
-    md: StateUiMd,
-    ph_input: String,
-    /// If true, the surface mesh is colored according to the atom or residue colors closest to
-    /// it. (E.g. CPK, by partial charge, by hydrophobicity etc). If false, it's a solid color.
-    color_surface_mesh: bool,
-    /// Color ligands by molecule, to contrast.
-    color_by_mol: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Encode, Decode)]
 /// For showing and hiding UI sections.
 pub struct UiVisibility {
@@ -619,40 +423,6 @@ impl Default for UiVisibility {
             orca: false,
             mol_char: true, // todo: For now.
         }
-    }
-}
-
-#[derive(Clone, PartialEq, Debug, Default, Encode, Decode)]
-pub enum Selection {
-    #[default]
-    None,
-    /// Of the protein
-    AtomPeptide(usize),
-    /// Of the protein
-    Residue(usize),
-    /// Of the protein
-    AtomsPeptide(Vec<usize>),
-    /// Molecule index, atom index
-    AtomLig((usize, usize)),
-    /// Mol, set of atom indices
-    AtomsLig((usize, Vec<usize>)),
-    /// Molecule index, atom index
-    AtomNucleicAcid((usize, usize)),
-    /// Molecule index, atom index
-    AtomLipid((usize, usize)),
-    BondPeptide(usize),
-    BondLig((usize, usize)),
-    BondsLig((usize, Vec<usize>)),
-    BondNucleicAcid((usize, usize)),
-    BondLipid((usize, usize)),
-}
-
-impl Selection {
-    pub fn is_bond(&self) -> bool {
-        matches!(
-            self,
-            Self::BondPeptide(_) | Self::BondLig(_) | Self::BondNucleicAcid(_) | Self::BondLipid(_)
-        )
     }
 }
 
@@ -689,176 +459,6 @@ struct Templates {
     pub rna: HashMap<String, TemplateData>,
     // todo: A/R
     pub amino_acid: Vec<MoleculeSmall>,
-}
-
-struct State {
-    pub ui: StateUi,
-    pub volatile: StateVolatile,
-    pub cif_pdb_raw: Option<String>,
-    // todo: Allow multiple?
-    pub peptide: Option<MoleculePeptide>,
-    pub ligands: Vec<MoleculeSmall>,
-    pub nucleic_acids: Vec<MoleculeNucleicAcid>,
-    pub lipids: Vec<MoleculeLipid>,
-    pub cam_snapshots: Vec<CamSnapshot>,
-    /// This allows us to keep in-memory data for other molecules.
-    pub to_save: ToSave,
-    /// We store the previous ToSave, to know when we need to write to disk.
-    /// Note: This is simpler, but not as efficient as explicitly setting a flag
-    /// whenever we change state.
-    pub to_save_prev: ToSave,
-    pub dev: ComputationDevice,
-    /// This is None if Computation Device is CPU.
-    #[cfg(feature = "cuda")]
-    pub kernel_reflections: Option<CudaFunction>,
-    pub mol_dynamics: Option<MdState>,
-    // todo: Combine these params in a single struct.
-    pub ff_param_set: FfParamSet,
-    pub mol_specific_params: HashMap<String, ForceFieldParams>,
-    pub templates: Templates,
-    pub mol_editor: MolEditorState,
-    pub orca: StateOrca,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        // Many other UI defaults are loaded after the initial prefs load in `main`.
-        let ui = StateUi {
-            view_depth: (VIEW_DEPTH_NEAR_MIN, FOG_DIST_DEFAULT),
-            nearby_dist_thresh: 15,
-            density_iso_level: 1.8,
-            ..Default::default()
-        };
-
-        Self {
-            ui,
-            volatile: Default::default(),
-            cif_pdb_raw: Default::default(),
-            peptide: Default::default(),
-            ligands: Default::default(),
-            nucleic_acids: Default::default(),
-            lipids: Default::default(),
-            cam_snapshots: Default::default(),
-            to_save: Default::default(),
-            to_save_prev: Default::default(),
-            dev: Default::default(),
-            #[cfg(feature = "cuda")]
-            kernel_reflections: None,
-            mol_dynamics: Default::default(),
-            ff_param_set: Default::default(),
-            mol_specific_params: Default::default(),
-            templates: Default::default(),
-            mol_editor: Default::default(),
-            orca: Default::default(),
-        }
-    }
-}
-
-impl State {
-    /// E.g. when loading a new molecule.
-    pub fn reset_selections(&mut self) {
-        self.ui.selection = Selection::None;
-        self.cam_snapshots = Vec::new();
-        self.ui.cam_snapshot = None;
-        self.ui.chain_to_pick_res = None;
-    }
-
-    // todo: Re-implement with v2 A/R
-    // /// Gets the docking setup, creating it if it doesn't exist. Returns `None` if molecule
-    // /// or ligand are absent.
-    // pub fn get_make_docking_setup(&mut self) -> Option<&DockingSetup> {
-    //     None
-    //     let (Some(mol), Some(lig)) = (&self.molecule, &mut self.ligand) else {
-    //         return None;
-    //     };
-    //
-    //     Some(self.volatile.docking_setup.get_or_insert_with(|| {
-    //         DockingSetup::new(mol, lig, &self.volatile.lj_lookup_table, &self.bh_config)
-    //     }))
-    // }
-
-    pub fn update_docking_site(&mut self, posit: Vec3F64) {
-        // if let Some(lig) = &mut self.ligand {
-        //     if let Some(data) = &mut lig.lig_data {
-        //         data.docking_site.site_center = posit;
-        //
-        //         self.ui.docking_site_x = posit.x.to_string();
-        //         self.ui.docking_site_y = posit.y.to_string();
-        //         self.ui.docking_site_z = posit.z.to_string();
-        //     }
-        // }
-    }
-
-    /// Helper
-    pub fn active_mol(&self) -> Option<MolGenericRef<'_>> {
-        match self.volatile.active_mol {
-            Some((mol_type, i)) => match mol_type {
-                MolType::Peptide => {
-                    if self.peptide.is_some() {
-                        Some(MolGenericRef::Peptide(&self.peptide.as_ref().unwrap()))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Ligand => {
-                    if i < self.ligands.len() {
-                        Some(MolGenericRef::Small(&self.ligands[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::NucleicAcid => {
-                    if i < self.nucleic_acids.len() {
-                        Some(MolGenericRef::NucleicAcid(&self.nucleic_acids[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Lipid => {
-                    if i < self.lipids.len() {
-                        Some(MolGenericRef::Lipid(&self.lipids[i]))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            },
-            None => None,
-        }
-    }
-
-    /// Helper
-    /// todo: DRy with the non-mutable variant.
-    pub fn active_mol_mut(&mut self) -> Option<MolGenericRefMut<'_>> {
-        match self.volatile.active_mol {
-            Some((mol_type, i)) => match mol_type {
-                MolType::Peptide => None,
-                MolType::Ligand => {
-                    if i < self.ligands.len() {
-                        Some(MolGenericRefMut::Small(&mut self.ligands[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::NucleicAcid => {
-                    if i < self.nucleic_acids.len() {
-                        Some(MolGenericRefMut::NucleicAcid(&mut self.nucleic_acids[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Lipid => {
-                    if i < self.lipids.len() {
-                        Some(MolGenericRefMut::Lipid(&mut self.lipids[i]))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            },
-            None => None,
-        }
-    }
 }
 
 fn main() {

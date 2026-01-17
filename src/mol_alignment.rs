@@ -56,12 +56,12 @@ const TEMP: f32 = 60.; // K. Very low to minimize jiggling.
 const TEMP_COEFF: f64 = 0.01;
 
 use crate::{
-    State,
     docking::Torsion,
     md::{build_dynamics, launch_md_energy_computation},
     mol_characterization::Ring,
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    state::State,
     util::rotate_about_point,
 };
 

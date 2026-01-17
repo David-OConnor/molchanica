@@ -5,16 +5,16 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use lin_alg::f64::{Quaternion, Vec3};
 use na_seq::Element::*;
 
-use crate::{
-    mol_editor::NEXT_ATOM_SN,
-    molecules::{Atom, Bond, build_adjacency_list},
-};
+// Used by the mol editor, and alignment.
+pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);
+
+use crate::molecules::{Atom, Bond, build_adjacency_list};
 
 /// Contains fields shared by all molecule types.
 #[derive(Debug, Clone)]

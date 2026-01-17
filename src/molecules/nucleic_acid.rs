@@ -24,10 +24,9 @@ use na_seq::{
 };
 
 use crate::{
-    mol_editor::NEXT_ATOM_SN,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
-        common::MoleculeCommon,
+        common::{MoleculeCommon, NEXT_ATOM_SN},
     },
     util::rotate_atoms_about_point,
 };

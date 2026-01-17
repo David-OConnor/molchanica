@@ -38,7 +38,7 @@ use bio_files::{
 };
 use dynamics::params::LIPID_21_LIB;
 use lin_alg::f64::{Quaternion, Vec3, Y_VEC, Z_VEC};
-use na_seq::Element::{self, *};
+use na_seq::Element;
 use rand::{Rng, distr::Uniform, rngs::ThreadRng};
 
 use crate::molecules::{

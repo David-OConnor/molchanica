@@ -1,6 +1,5 @@
 use std::{
     io::Cursor,
-    path::Path,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
@@ -18,16 +17,17 @@ use na_seq::{AaIdent, Element};
 use popups::load_popups;
 
 use crate::{
-    CamSnapshot, MsaaSetting, OperatingMode, ResColoring, Selection, State, ViewSelLevel, cli,
+    CamSnapshot, MsaaSetting, OperatingMode, ResColoring, cli,
     cli::autocomplete_cli,
     download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
     drawing::color_viridis,
     file_io::gemmi_path,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    mol_characterization::RingType,
     mol_editor::enter_edit_mode,
-    molecules::{MolGenericRef, MolGenericRefMut, MolIdent},
+    molecules::{MolGenericRef, MolIdent},
     render::set_flashlight,
+    selection::{Selection, ViewSelLevel},
+    state::State,
     ui::{
         cam::{cam_controls, cam_snapshots},
         misc::section_box,

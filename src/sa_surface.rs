@@ -9,10 +9,11 @@ use lin_alg::f32::{Vec3, Vec3 as Vec3F32};
 use mcubes::{MarchingCubes, MeshSide};
 
 use crate::{
-    StateUi, ViewSelLevel,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, SAS_ISO_OPACITY, color_viridis_float},
     molecules::MoleculePeptide,
     render::MESH_SOLVENT_SURFACE,
+    selection::ViewSelLevel,
+    state::StateUi,
     util::res_color,
 };
 

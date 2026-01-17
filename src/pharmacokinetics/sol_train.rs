@@ -4,8 +4,6 @@
 
 use std::{fs, io, path::Path, time::Instant};
 
-use crate::mol_characterization::MolCharacterization;
-use crate::molecules::small::MoleculeSmall;
 use bio_files::{AtomGeneric, BondGeneric, Sdf};
 use burn::{
     backend::{Autodiff, NdArray, Wgpu},
@@ -34,11 +32,16 @@ use burn::{
 use na_seq::Element::*;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
+
+// use molchanica::molecules;
+
+// Todo: Problem importing from Molchanica, but we'd like to use these characteristics.
+// use crate::{mol_characterization::MolCharacterization, molecules::small::MoleculeSmall};
 // ==============================================================================================
 // 1. CONSTANTS & CONFIGURATION
 // ==============================================================================================
 
-pub const AQ_SOL_FEATURE_DIM: usize = 17; // Update this A/R as you add or remove features.
+pub const AQ_SOL_FEATURE_DIM: usize = 14; // Update this A/R as you add or remove features.
 
 pub const ATOM_FEATURE_DIM: usize = 10; // One-hot encoding dimension
 pub const MAX_ATOMS: usize = 60; // Max atoms for padding
@@ -359,60 +362,31 @@ impl InferenceStep for AqSolModel<ValidBackend> {
     }
 }
 
-/// This must match the fields in `sol_train::csv_to_featuers`.
+/// This must match the fields in `sol_infer::features_from_molecule`.
 /// This contains features from the CSV only; it doesn't have atom or bond data.
-pub fn features_from_molecule(c: &MolCharacterization) -> io::Result<[f32; AQ_SOL_FEATURE_DIM]> {
-    Ok([
-        c.mol_weight,
-        c.log_p,
-        c.molar_refractivity,
-        c.num_heavy_atoms as f32,
-        c.h_bond_acceptor.len() as f32,
-        c.h_bond_donor.len() as f32,
-        c.num_hetero_atoms as f32,
-        c.halogen.len() as f32,
-        c.rotatable_bonds.len() as f32,
-        c.num_valence_elecs as f32,
-        c.num_rings_aromatic as f32,
-        c.num_rings_saturated as f32,
-        c.num_rings_aliphatic as f32,
-        c.rings.len() as f32,
-        c.psa_topo,
-        c.asa_topo,
-        c.volume,
-        // Use the non-geometric TPSA and ASA values; they're more similar to the training data.
-        // c.tpsa_ertl,
-        // c.asa_labute,
-        // c.balaban_j,
-        // c.bertz_ct,
-    ])
+fn csv_to_features(row: &[String]) -> [f32; AQ_SOL_FEATURE_DIM] {
+    [
+        row[9].parse().unwrap_or(0.0),  // MolWt
+        row[10].parse().unwrap_or(0.0), // MolLogP
+        row[11].parse().unwrap_or(0.0), // MolMR
+        row[12].parse().unwrap_or(0.0), // HeavyAtomCount
+        row[13].parse().unwrap_or(0.0), // NumHAcceptors
+        row[14].parse().unwrap_or(0.0), // NumHDonors
+        row[15].parse().unwrap_or(0.0), // NumHeteroatoms
+        row[16].parse().unwrap_or(0.0), // NumRotatableBonds
+        row[17].parse().unwrap_or(0.0), // NumValenceElectrons
+        row[18].parse().unwrap_or(0.0), // NumAromaticRings
+        row[19].parse().unwrap_or(0.0), // NumSaturatedRings
+        row[20].parse().unwrap_or(0.0), // NumAliphaticRings
+        row[21].parse().unwrap_or(0.0), // RingCount
+        row[22].parse().unwrap_or(0.0), // TPSA
+                                        // ASA is not matching, although I'm not sure why.
+                                        // row[23].parse().unwrap_or(0.0), // LabuteASA
+                                        // Balaban J and BertCT: We are unable to accurate calculate them, so skip for ML.
+                                        // row[24].parse().unwrap_or(0.0), // BalabanJ
+                                        // row[25].parse().unwrap_or(0.0), // BertzCT
+    ]
 }
-
-// /// This must match the fields in `sol_infer::features_from_molecule`.
-// /// This contains features from the CSV only; it doesn't have atom or bond data.
-// fn csv_to_features(row: &[String]) -> [f32; AQ_SOL_FEATURE_DIM] {
-//     [
-//         row[9].parse().unwrap_or(0.0),  // MolWt
-//         row[10].parse().unwrap_or(0.0), // MolLogP
-//         row[11].parse().unwrap_or(0.0), // MolMR
-//         row[12].parse().unwrap_or(0.0), // HeavyAtomCount
-//         row[13].parse().unwrap_or(0.0), // NumHAcceptors
-//         row[14].parse().unwrap_or(0.0), // NumHDonors
-//         row[15].parse().unwrap_or(0.0), // NumHeteroatoms
-//         row[16].parse().unwrap_or(0.0), // NumRotatableBonds
-//         row[17].parse().unwrap_or(0.0), // NumValenceElectrons
-//         row[18].parse().unwrap_or(0.0), // NumAromaticRings
-//         row[19].parse().unwrap_or(0.0), // NumSaturatedRings
-//         row[20].parse().unwrap_or(0.0), // NumAliphaticRings
-//         row[21].parse().unwrap_or(0.0), // RingCount
-//         row[22].parse().unwrap_or(0.0), // TPSA
-//                                         // ASA is not matching, although I'm not sure why.
-//                                         // row[23].parse().unwrap_or(0.0), // LabuteASA
-//                                         // Balaban J and BertCT: We are unable to accurate calculate them, so skip for ML.
-//                                         // row[24].parse().unwrap_or(0.0), // BalabanJ
-//                                         // row[25].parse().unwrap_or(0.0), // BertzCT
-//     ]
-// }
 
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -479,7 +453,7 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
         // }
 
         let filename = &cols[0];
-        // let global_feats = csv_to_features(&cols);
+        let features_property = csv_to_features(&cols);
 
         let solubility: f32 = cols[5].parse().unwrap();
 
@@ -496,11 +470,12 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
 
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
-        let features_property = {
-            let mol: MoleculeSmall = sdf.clone().try_into()?;
-            let char = MolCharacterization::new(&mol.common);
-            features_from_molecule(&char)?
-        };
+        // todo: Unable to import from molchanica.
+        // let features_property = {
+        //     let mol: MoleculeSmall = sdf.clone().try_into()?;
+        //     let char = MolCharacterization::new(&mol.common);
+        //     features_from_molecule(&char)?
+        // };
 
         let atoms = sdf.atoms.clone();
         let bonds = sdf.bonds.clone();

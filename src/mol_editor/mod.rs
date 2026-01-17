@@ -2,12 +2,7 @@ pub mod add_atoms;
 pub mod templates;
 
 use std::{
-    collections::HashMap,
-    io,
-    io::ErrorKind,
-    path::Path,
-    sync::atomic::{AtomicU32, Ordering},
-    time::Instant,
+    collections::HashMap, io, io::ErrorKind, path::Path, sync::atomic::Ordering, time::Instant,
 };
 
 use bio_files::{BondType, Mol2, Pdbqt, Sdf, Xyz, md_params::ForceFieldParams};
@@ -26,7 +21,7 @@ use na_seq::{
 };
 
 use crate::{
-    OperatingMode, Selection, State, StateUi, ViewSelLevel,
+    OperatingMode,
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView, atom_color,
         bond_entities, draw_mol, draw_peptide,
@@ -34,10 +29,12 @@ use crate::{
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     md::change_snapshot_helper,
     mol_manip::ManipMode,
-    molecules::{Atom, Bond, MolGenericRef, MolType, small::MoleculeSmall},
+    molecules::{Atom, Bond, MolGenericRef, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
     render::{
         ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, set_flashlight, set_static_light,
     },
+    selection::{Selection, ViewSelLevel},
+    state::{State, StateUi},
     util::find_neighbor_posit,
 };
 
@@ -45,8 +42,6 @@ pub const INIT_CAM_DIST: f32 = 20.;
 
 // Set a higher value to place the light farther away. (More uniform, dimmer lighting)
 pub const STATIC_LIGHT_MOL_SIZE: f32 = 500.;
-
-pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);
 
 const MOL_IDENT: &str = "editor_mol";
 

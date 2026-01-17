@@ -10,9 +10,11 @@ use lin_alg::{
 use na_seq::Element;
 
 use crate::{
-    OperatingMode, Selection, State, StateVolatile,
+    OperatingMode,
     inputs::{SENS_MOL_ROT_MOUSE, SENS_MOL_ROT_SCROLL},
     molecules::{MolType, common::MoleculeCommon},
+    selection::Selection,
+    state::{State, StateVolatile},
 };
 
 /// Blender-style mouse dragging of the molecule. For movement, creates a plane of the camera view,

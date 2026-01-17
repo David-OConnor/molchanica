@@ -9,9 +9,8 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
-use crate::mol_characterization::MolCharacterization;
-use crate::pharmacokinetics::sol_train::features_from_molecule;
 use crate::{
+    mol_characterization::MolCharacterization,
     molecules::small::MoleculeSmall,
     pharmacokinetics::sol_train::{
         AQ_SOL_FEATURE_DIM, ATOM_FEATURE_DIM, AqSolModel, AqSolModelConfig, MAX_ATOMS,
@@ -121,4 +120,33 @@ impl AqSolInfer {
 
 pub fn infer_solubility(mol: &MoleculeSmall) -> io::Result<f32> {
     AqSolInfer::load()?.infer(mol)
+}
+
+/// This must match the fields in `sol_train::csv_to_featuers`.
+/// This contains features from the CSV only; it doesn't have atom or bond data.
+pub fn features_from_molecule(c: &MolCharacterization) -> io::Result<[f32; AQ_SOL_FEATURE_DIM]> {
+    Ok([
+        c.mol_weight,
+        c.log_p,
+        c.molar_refractivity,
+        c.num_heavy_atoms as f32,
+        c.h_bond_acceptor.len() as f32,
+        c.h_bond_donor.len() as f32,
+        c.num_hetero_atoms as f32,
+        // c.halogen.len() as f32,
+        c.rotatable_bonds.len() as f32,
+        c.num_valence_elecs as f32,
+        c.num_rings_aromatic as f32,
+        c.num_rings_saturated as f32,
+        c.num_rings_aliphatic as f32,
+        c.rings.len() as f32,
+        // c.psa_topo,
+        // c.asa_topo,
+        // c.volume,
+        // Use the non-geometric TPSA and ASA values; they're more similar to the training data.
+        c.tpsa_ertl,
+        // c.asa_labute,
+        // c.balaban_j,
+        // c.bertz_ct,
+    ])
 }

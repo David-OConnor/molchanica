@@ -25,7 +25,7 @@ use dynamics::{
 use na_seq::Element;
 
 use crate::{
-    docking::{DockingSite, Pose},
+    // docking::{DockingSite, Pose},
     mol_characterization::MolCharacterization,
     molecules::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
@@ -128,8 +128,8 @@ pub struct Ligand {
     pub _anchor_atom: usize, // Index.
     /// Note: We may deprecate this in favor of our Amber MD-based approach to flexibility.
     pub _flexible_bonds: Vec<usize>, // Index
-    pub _pose: Pose,
-    pub _docking_site: DockingSite,
+                             // pub _pose: Pose,
+                             // pub _docking_site: DockingSite,
 }
 
 impl TryFrom<Mol2> for MoleculeSmall {

@@ -16,7 +16,7 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    MdStateLocal, State,
+    MdStateLocal,
     drawing::{draw_peptide, draw_water},
     molecules::{
         MoleculePeptide,
@@ -25,6 +25,7 @@ use crate::{
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
         small::MoleculeSmall,
     },
+    state::State,
     util::{handle_err, handle_success},
 };
 

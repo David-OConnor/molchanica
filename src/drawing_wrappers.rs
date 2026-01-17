@@ -6,9 +6,10 @@
 use graphics::{Entity, Scene};
 
 use crate::{
-    OperatingMode, State, drawing,
+    OperatingMode, drawing,
     drawing::EntityClass,
     molecules::{MolGenericRef, MolGenericTrait, MolType},
+    state::State,
     util::clear_mol_entity_indices,
 };
 

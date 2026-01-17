@@ -9,18 +9,18 @@ use na_seq::{
 };
 
 use crate::{
-    Selection, State, StateUi, ViewSelLevel,
     drawing::MoleculeView,
     mol_editor,
     mol_editor::{
-        NEXT_ATOM_SN,
         add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
         exit_edit_mode, sync_md,
         templates::Template,
     },
     mol_manip,
     mol_manip::ManipMode,
-    molecules::{Bond, MolIdent, MolType, small::MoleculeSmall},
+    molecules::{Bond, MolIdent, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
+    selection::{Selection, ViewSelLevel},
+    state::{State, StateUi},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
         cam::cam_reset_controls,

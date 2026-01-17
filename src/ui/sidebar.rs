@@ -1,14 +1,14 @@
-use egui::{Color32, Context, RichText, ScrollArea, Ui};
+use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    State,
     cam_misc::move_mol_to_cam,
     label,
-    mol_characterization::{MolCharacterization, RingType},
+    mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon, small::MoleculeSmall},
+    state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, cam::move_cam_to_mol,

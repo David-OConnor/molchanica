@@ -5,9 +5,9 @@ use egui::{Color32, Popup, PopupAnchor, Pos2, RectAlign, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
-    State,
     molecules::MolType,
     prefs::OpenType,
+    state::State,
     ui::{COL_SPACING, ROW_SPACING},
     util::handle_err,
 };

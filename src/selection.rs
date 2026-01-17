@@ -1,19 +1,56 @@
 //! For determining which items the user has selected using the mouse cursor. Involves
 //! mapping 2D to 3D coordinates, and choosing the right item from what's open and visible.
 
+use std::{fmt, fmt::Display};
+
+use bincode::{Decode, Encode};
 use graphics::{ControlScheme, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 use na_seq::{Element, Element::Hydrogen};
 
 use crate::{
-    Selection, State, StateUi, ViewSelLevel,
     drawing::MoleculeView,
     mol_editor::sync_md,
     mol_manip,
     mol_manip::ManipMode,
     molecules::{Atom, AtomRole, Bond, Chain, MolType, Residue, common::MoleculeCommon},
+    state::{State, StateUi},
     util::orbit_center,
 };
+
+#[derive(Clone, PartialEq, Debug, Default, Encode, Decode)]
+pub enum Selection {
+    #[default]
+    None,
+    /// Of the protein
+    AtomPeptide(usize),
+    /// Of the protein
+    Residue(usize),
+    /// Of the protein
+    AtomsPeptide(Vec<usize>),
+    /// Molecule index, atom index
+    AtomLig((usize, usize)),
+    /// Mol, set of atom indices
+    AtomsLig((usize, Vec<usize>)),
+    /// Molecule index, atom index
+    AtomNucleicAcid((usize, usize)),
+    /// Molecule index, atom index
+    AtomLipid((usize, usize)),
+    BondPeptide(usize),
+    BondLig((usize, usize)),
+    BondsLig((usize, Vec<usize>)),
+    BondNucleicAcid((usize, usize)),
+    BondLipid((usize, usize)),
+}
+
+impl Selection {
+    pub fn is_bond(&self) -> bool {
+        matches!(
+            self,
+            Self::BondPeptide(_) | Self::BondLig(_) | Self::BondNucleicAcid(_) | Self::BondLipid(_)
+        )
+    }
+}
 
 // For hydrogens
 const SELECTION_DIST_THRESH_H: f32 = 0.4; // e.g. ball + stick, or stick.
@@ -1016,4 +1053,41 @@ fn ray_metrics(ray_origin: Vec3F32, ray_dir: Vec3F32, posit: Vec3F32) -> (f32, f
     let closest = ray_origin + ray_dir * t;
     let dist_to_ray = (posit - closest).magnitude();
     (dist_to_ray, t)
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Default, Encode, Decode)]
+pub enum ViewSelLevel {
+    #[default]
+    Atom,
+    Bond,
+    Residue,
+}
+
+impl ViewSelLevel {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Atom => Self::Bond,
+            Self::Bond => Self::Residue,
+            Self::Residue => Self::Atom,
+        }
+    }
+
+    // todo: repetitive
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Atom => Self::Residue,
+            Self::Bond => Self::Atom,
+            Self::Residue => Self::Bond,
+        }
+    }
+}
+
+impl Display for ViewSelLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Atom => write!(f, "Atom"),
+            Self::Residue => write!(f, "Residue"),
+            Self::Bond => write!(f, "Bond"),
+        }
+    }
 }

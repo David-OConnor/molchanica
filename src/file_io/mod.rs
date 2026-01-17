@@ -1,6 +1,5 @@
-use std::{fs, io, io::ErrorKind, path::Path, sync::mpsc, thread, time::Instant};
+use std::{fs, io, io::ErrorKind, path::Path, time::Instant};
 
-use bio_apis::pubchem;
 use bio_files::{DensityMap, MmCif, Mol2, Pdbqt, Xyz, md_params::ForceFieldParams, sdf::Sdf};
 use chrono::Utc;
 use egui_file_dialog::FileDialog;
@@ -10,18 +9,19 @@ use na_seq::{AaIdent, Element};
 use rand::Rng;
 
 use crate::{
-    Selection, State,
     cam_misc::move_mol_to_cam,
     download_mols,
     drawing::draw_peptide,
     drawing_wrappers,
     md::launch_md,
     molecules::{
-        MolGenericTrait, MolIdent, MolType, MoleculeGeneric, MoleculePeptide,
-        common::MoleculeCommon, small::MoleculeSmall,
+        MolGenericTrait, MolType, MoleculeGeneric, MoleculePeptide, common::MoleculeCommon,
+        small::MoleculeSmall,
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
+    selection::Selection,
+    state::State,
     util::{handle_err, handle_success},
 };
 

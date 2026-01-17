@@ -5,7 +5,6 @@ use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use na_seq::seq_from_str;
 
 use crate::{
-    State,
     docking::dock,
     drawing::EntityClass,
     drawing_wrappers::{draw_all_lipids, draw_all_nucleic_acids},
@@ -14,6 +13,7 @@ use crate::{
         lipid::{LipidShape, make_bacterial_lipids},
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
     },
+    state::State,
     ui,
     ui::{COL_SPACING, COLOR_ACTION, misc::section_box},
     util::{clear_mol_entity_indices, handle_err},

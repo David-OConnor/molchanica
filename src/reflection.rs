@@ -23,7 +23,8 @@ use rayon::prelude::*;
 use rustfft::{FftPlanner, num_complex::Complex};
 
 use crate::{
-    ComputationDevice, State, drawing::draw_density_surface, render::MESH_DENSITY_SURFACE, util,
+    ComputationDevice, drawing::draw_density_surface, render::MESH_DENSITY_SURFACE, state::State,
+    util,
 };
 
 pub const DENSITY_CELL_MARGIN: f64 = 3.0;

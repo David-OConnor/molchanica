@@ -1,17 +1,16 @@
 use bio_apis::{amber_geostd, rcsb};
 use egui::{Color32, Popup, PopupAnchor, Pos2, RectAlign, RichText, Ui};
-use graphics::{EngineUpdates, EntityUpdate, Scene};
+use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    State,
     download_mols::load_atom_coords_rcsb,
-    drawing_wrappers::draw_all_ligs,
     label,
     mol_alignment::run_alignment,
     mol_screening,
     mol_screening::screen_by_alignment,
     molecules::MolGenericRef,
+    state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         cam::move_cam_to_mol,

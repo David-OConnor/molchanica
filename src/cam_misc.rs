@@ -7,12 +7,13 @@ use lin_alg::{
 };
 
 use crate::{
-    Selection, State, StateUi,
     molecules::{
         MoleculePeptide, common::MoleculeCommon, lipid::MoleculeLipid,
         nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
     },
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
+    selection::Selection,
+    state::{State, StateUi},
     ui::cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
 };
 

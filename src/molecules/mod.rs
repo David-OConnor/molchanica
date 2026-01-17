@@ -43,12 +43,12 @@ use rayon::prelude::*;
 use small::MoleculeSmall;
 
 use crate::{
-    Selection,
     bond_inference::create_hydrogen_bonds,
     drawing::EntityClass,
     molecules::{common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid},
     prefs::OpenType,
     reflection::{DensityPt, DensityRect, ReflectionsData},
+    selection::Selection,
     util::mol_center_size,
 };
 
@@ -1023,25 +1023,6 @@ impl MoleculePeptide {
         Ok(())
     }
 }
-
-// #[derive(Clone, Copy, PartialEq, Default)]
-// pub enum PeptideAtomPosits {
-//     #[default]
-//     /// E.g. as imported from a mmCIF file, from experimental data
-//     Original,
-//     /// As calculated in a snapshot from a MD sim
-//     Dynamics,
-// }
-
-// impl Display for PeptideAtomPosits {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let val = match self {
-//             Self::Original => "Original",
-//             Self::Dynamics => "Dynamics",
-//         };
-//         write!(f, "{val}")
-//     }
-// }
 
 pub fn build_adjacency_list(bonds: &Vec<Bond>, atoms_len: usize) -> Vec<Vec<usize>> {
     let mut result = vec![Vec::new(); atoms_len];

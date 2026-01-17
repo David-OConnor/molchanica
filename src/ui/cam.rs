@@ -3,10 +3,12 @@ use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, 
 use lin_alg::f32::Vec3;
 
 use crate::{
-    Selection, State, cam_misc,
+    cam_misc,
     cam_misc::{cam_look_at_outside, move_cam_to_sel, reset_camera},
     molecules::common::MoleculeCommon,
     render::set_flashlight,
+    selection::Selection,
+    state::State,
     ui::{
         COL_SPACING, COLOR_HIGHLIGHT, get_snap_name,
         misc::{self, section_box},

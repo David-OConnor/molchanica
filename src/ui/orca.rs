@@ -10,8 +10,9 @@ use egui::{Color32, ComboBox, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
-    State, label, orca,
+    label, orca,
     orca::TaskType,
+    state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, misc},
     util::{handle_err, handle_success},
 };

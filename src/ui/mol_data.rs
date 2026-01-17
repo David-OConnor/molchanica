@@ -8,13 +8,15 @@ use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    Selection, State, download_mols, drawing,
+    download_mols, drawing,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI},
     label,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
         lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
     },
+    selection::Selection,
+    state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, cam::move_cam_to_active_mol,
         mol_descrip,

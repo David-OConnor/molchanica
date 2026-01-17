@@ -14,7 +14,7 @@ use lin_alg::{
 use na_seq::Element;
 
 use crate::{
-    OperatingMode, ResColoring, Selection, State, StateUi, ViewSelLevel,
+    OperatingMode, ResColoring,
     mol_manip::ManipMode,
     molecules::{
         Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
@@ -27,6 +27,8 @@ use crate::{
         MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES, WATER_BOND_THICKNESS, WATER_OPACITY,
     },
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    selection::{Selection, ViewSelLevel},
+    state::{State, StateUi},
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center, res_color},
     viridis_lut::VIRIDIS,
 };

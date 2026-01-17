@@ -10,10 +10,11 @@ use na_seq::{
 };
 
 use crate::{
-    StateUi, mol_editor,
+    mol_editor,
     mol_editor::{MolEditorState, NEXT_ATOM_SN, redraw, templates::Template},
     mol_manip::ManipMode,
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
+    state::StateUi,
 };
 
 #[derive(Clone, Copy, PartialEq)]

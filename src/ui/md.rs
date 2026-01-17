@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use dynamics::{
     ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig,
     SimBoxInit, TAU_TEMP_DEFAULT, snapshot::Snapshot,
@@ -9,11 +7,11 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    State,
     drawing::EntityClass,
     file_io::save_trajectory,
     label,
     md::{launch_md, launch_md_energy_computation, post_run_cleanup},
+    state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE,
         cam::move_cam_to_active_mol, flag_btn, misc, num_field,

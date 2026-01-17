@@ -10,11 +10,11 @@ use graphics::{ControlScheme, EngineUpdates, Scene};
 use na_seq::AaIdent;
 
 use crate::{
-    State, StateUi,
     molecules::{
         MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, MoleculePeptide, small::MoleculeSmall,
     },
     render::set_flashlight,
+    state::{State, StateUi},
     util::handle_err,
 };
 

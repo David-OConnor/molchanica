@@ -11,7 +11,7 @@ use lin_alg::f32::Vec3;
 use na_seq::Element::Carbon;
 
 use crate::{
-    OperatingMode, Selection, State,
+    OperatingMode,
     cam_misc::move_cam_to_sel,
     drawing,
     drawing::EntityClass,
@@ -22,6 +22,8 @@ use crate::{
     molecules::MolType,
     render::set_flashlight,
     selection,
+    selection::Selection,
+    state::State,
     ui::cam::{FOG_DIST_MIN, set_fog_dist},
     util::{close_mol, cycle_selected},
 };

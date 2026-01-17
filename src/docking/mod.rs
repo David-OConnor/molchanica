@@ -15,9 +15,9 @@ use graphics::{EngineUpdates, Scene};
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
 
 use crate::{
-    State,
     md::{filter_peptide_atoms, post_run_cleanup, run_dynamics},
     molecules::{MoleculePeptide, small::MoleculeSmall},
+    state::State,
 };
 
 #[derive(Clone, Debug, Default)]

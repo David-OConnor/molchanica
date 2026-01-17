@@ -24,12 +24,13 @@ use graphics::{
 use lin_alg::f64::Vec3;
 
 use crate::{
-    CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, Selection, State, UiVisibility,
-    ViewSelLevel, Visibility,
+    CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, UiVisibility, Visibility,
     docking::DockingSite,
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     molecules::MolIdent,
+    selection::{Selection, ViewSelLevel},
+    state::State,
 };
 
 pub const DEFAULT_PREFS_FILE: &str = "molchanica_prefs.mca";

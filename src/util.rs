@@ -21,8 +21,7 @@ use lin_alg::{
 use na_seq::{AaIdent, Element};
 
 use crate::{
-    CamSnapshot, OperatingMode, PREFS_SAVE_INTERVAL, ResColoring, Selection, State, StateUi,
-    ViewSelLevel, cam_misc,
+    CamSnapshot, OperatingMode, PREFS_SAVE_INTERVAL, ResColoring, cam_misc,
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
         color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
@@ -39,6 +38,8 @@ use crate::{
     ribbon_mesh::build_cartoon_mesh,
     sa_surface,
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    selection::{Selection, ViewSelLevel},
+    state::{State, StateUi},
 };
 
 // todo: Move this A/R
