@@ -713,3 +713,30 @@ pub fn launch_md_energy_computation(
 
     compute_energy_snapshot(&state.dev, &mols, &state.ff_param_set)
 }
+
+pub struct StateUiMd {
+    /// The state we store for this is a float, so we need to store state text too.
+    pub dt_input: String,
+    pub temp_input: String,
+    pub pressure_input: String,
+    pub simbox_pad_input: String,
+    pub langevin_γ: String,
+    /// Only perform MD on peptide atoms near a ligand.
+    pub peptide_only_near_ligs: bool,
+    /// Peptide atoms don't move, but exert forces.
+    pub peptide_static: bool,
+}
+
+impl Default for StateUiMd {
+    fn default() -> Self {
+        Self {
+            dt_input: Default::default(),
+            temp_input: Default::default(),
+            pressure_input: Default::default(),
+            simbox_pad_input: Default::default(),
+            langevin_γ: Default::default(),
+            peptide_only_near_ligs: true,
+            peptide_static: true,
+        }
+    }
+}

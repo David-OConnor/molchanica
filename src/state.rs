@@ -7,9 +7,10 @@ use std::{
     sync::mpsc::Receiver,
 };
 
+use bincode::{Decode, Encode};
 use bio_apis::{
     ReqError,
-    amber_geostd::GeostdData,
+    amber_geostd::{GeostdData, GeostdItem},
     pubchem,
     rcsb::{FilesAvailable, PdbDataResults},
 };
@@ -20,9 +21,10 @@ use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
 use lin_alg::f64::Vec3 as Vec3F64;
 
 use crate::{
-    CamSnapshot, FileDialogs, MdStateLocal, OperatingMode, PopupState, ResColoring, SceneFlags,
-    StateUiMd, Templates, UiVisibility, Visibility,
+    CamSnapshot, MdStateLocal, OperatingMode, ResColoring, SceneFlags, Templates, UiVisibility,
     drawing::MoleculeView,
+    file_io::FileDialogs,
+    md::StateUiMd,
     mol_alignment::StateAlignment,
     mol_editor::MolEditorState,
     mol_manip::MolManip,
@@ -364,4 +366,64 @@ pub struct StateUi {
     pub color_surface_mesh: bool,
     /// Color ligands by molecule, to contrast.
     pub color_by_mol: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+pub struct Visibility {
+    pub hide_sidechains: bool,
+    pub hide_water: bool,
+    /// Hide hetero atoms: i.e. ones not part of a polypeptide.
+    pub hide_hetero: bool,
+    pub hide_protein: bool,
+    pub hide_ligand: bool,
+    pub hide_nucleic_acids: bool,
+    pub hide_lipids: bool,
+    pub hide_hydrogen: bool,
+    pub hide_h_bonds: bool,
+    pub dim_peptide: bool,
+    pub hide_density_point_cloud: bool,
+    pub hide_density_surface: bool,
+    pub labels_mol: bool,
+    pub labels_atom_sn: bool,
+    pub labels_atom_q: bool,
+    pub labels_atom_detailed: bool,
+    pub labels_bond: bool,
+}
+
+impl Default for Visibility {
+    fn default() -> Self {
+        Self {
+            hide_sidechains: false,
+            hide_water: false,
+            hide_hetero: false,
+            hide_protein: false,
+            hide_ligand: false,
+            hide_nucleic_acids: false,
+            hide_lipids: false,
+            hide_hydrogen: true,
+            hide_h_bonds: false,
+            dim_peptide: false,
+            hide_density_point_cloud: false,
+            hide_density_surface: false,
+            labels_mol: true,
+            labels_atom_sn: false,
+            labels_atom_q: false,
+            labels_atom_detailed: false,
+            labels_bond: false,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PopupState {
+    pub show_get_geostd: bool,
+    pub show_associated_structures: bool,
+    pub show_settings: bool,
+    pub get_geostd_items: Vec<GeostdItem>,
+    pub residue_selector: bool,
+    pub rama_plot: bool,
+    pub recent_files: bool,
+    pub metadata: Option<(MolType, usize)>,
+    pub alignment: bool,
+    pub alignment_screening: bool,
 }

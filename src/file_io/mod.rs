@@ -2,7 +2,7 @@ use std::{fs, io, io::ErrorKind, path::Path, time::Instant};
 
 use bio_files::{DensityMap, MmCif, Mol2, Pdbqt, Xyz, md_params::ForceFieldParams, sdf::Sdf};
 use chrono::Utc;
-use egui_file_dialog::FileDialog;
+use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::{AaIdent, Element};
@@ -843,4 +843,66 @@ pub fn save_trajectory(dialog: &mut FileDialog) -> io::Result<()> {
     dialog.save_file();
 
     Ok(())
+}
+
+pub struct FileDialogs {
+    pub load: FileDialog,
+    pub save: FileDialog,
+    /// This is for selecting a folder; not file.
+    pub screening: FileDialog,
+}
+
+impl Default for FileDialogs {
+    fn default() -> Self {
+        let cfg_all = FileDialogConfig::default()
+            .add_file_filter_extensions(
+                "All",
+                vec![
+                    "cif", "mol2", "sdf", "xyz", "pdbqt", "map", "mtz", "frcmod", "dat", "prmtop",
+                ],
+            )
+            .add_file_filter_extensions(
+                "Molecule (small)",
+                vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
+            )
+            .add_file_filter_extensions("Protein (CIF)", vec!["cif"])
+            .add_file_filter_extensions("Density", vec!["map", "mtz", "cif"])
+            .add_file_filter_extensions("Mol dynamics", vec!["frcmod", "dat", "lib", "prmtop"])
+            //
+            .add_file_filter_extensions(
+                "Molecule (small)",
+                vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
+            )
+            .add_file_filter_extensions("DCD (trajectory)", vec!["dcd"])
+            .add_file_filter_extensions("XTC (trajectory)", vec!["xtc"])
+            .add_file_filter_extensions("MDT (trajectory)", vec!["mdt"])
+            //
+            .add_save_extension("Protein (CIF)", "cif")
+            .add_save_extension("Mol2", "mol2")
+            .add_save_extension("SDF", "sdf")
+            .add_save_extension("XYZ", "xyz")
+            .add_save_extension("Pdbqt", "pdbqt")
+            .add_save_extension("Map", "map")
+            .add_save_extension("MTZ", "mtz")
+            .add_save_extension("Prmtop", "prmtop")
+            .add_save_extension("DCD", "dcd")
+            .add_save_extension("XTC", "xtc")
+            .add_save_extension("MDT", "mdt"); // Our own trajectory format
+
+        let load = FileDialog::with_config(cfg_all.clone()).default_file_filter("All");
+        let save = FileDialog::with_config(cfg_all).default_save_extension("Protein");
+
+        let cfg_screening = FileDialogConfig {
+            title: Some("Select screening folder".to_string()),
+            ..Default::default()
+        };
+
+        let screening = FileDialog::with_config(cfg_screening);
+
+        Self {
+            load,
+            save,
+            screening,
+        }
+    }
 }

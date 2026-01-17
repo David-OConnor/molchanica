@@ -133,68 +133,6 @@ struct CudaFunctions {
 //     Gpu((ComputationDevice, Arc<CudaModule>>)),
 // }
 
-struct FileDialogs {
-    load: FileDialog,
-    save: FileDialog,
-    /// This is for selecting a folder; not file.
-    screening: FileDialog,
-}
-
-impl Default for FileDialogs {
-    fn default() -> Self {
-        let cfg_all = FileDialogConfig::default()
-            .add_file_filter_extensions(
-                "All",
-                vec![
-                    "cif", "mol2", "sdf", "xyz", "pdbqt", "map", "mtz", "frcmod", "dat", "prmtop",
-                ],
-            )
-            .add_file_filter_extensions(
-                "Molecule (small)",
-                vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
-            )
-            .add_file_filter_extensions("Protein (CIF)", vec!["cif"])
-            .add_file_filter_extensions("Density", vec!["map", "mtz", "cif"])
-            .add_file_filter_extensions("Mol dynamics", vec!["frcmod", "dat", "lib", "prmtop"])
-            //
-            .add_file_filter_extensions(
-                "Molecule (small)",
-                vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
-            )
-            .add_file_filter_extensions("DCD (trajectory)", vec!["dcd"])
-            .add_file_filter_extensions("XTC (trajectory)", vec!["xtc"])
-            .add_file_filter_extensions("MDT (trajectory)", vec!["mdt"])
-            //
-            .add_save_extension("Protein (CIF)", "cif")
-            .add_save_extension("Mol2", "mol2")
-            .add_save_extension("SDF", "sdf")
-            .add_save_extension("XYZ", "xyz")
-            .add_save_extension("Pdbqt", "pdbqt")
-            .add_save_extension("Map", "map")
-            .add_save_extension("MTZ", "mtz")
-            .add_save_extension("Prmtop", "prmtop")
-            .add_save_extension("DCD", "dcd")
-            .add_save_extension("XTC", "xtc")
-            .add_save_extension("MDT", "mdt"); // Our own trajectory format
-
-        let load = FileDialog::with_config(cfg_all.clone()).default_file_filter("All");
-        let save = FileDialog::with_config(cfg_all).default_save_extension("Protein");
-
-        let cfg_screening = FileDialogConfig {
-            title: Some("Select screening folder".to_string()),
-            ..Default::default()
-        };
-
-        let screening = FileDialog::with_config(cfg_screening);
-
-        Self {
-            load,
-            save,
-            screening,
-        }
-    }
-}
-
 /// Flags to accomplish things that must be done somewhere with access to `Scene`.
 #[derive(Default)]
 struct SceneFlags {
@@ -231,52 +169,6 @@ pub struct MdStateLocal {
     pub start: Option<Instant>,
 }
 
-#[derive(Debug, Clone, PartialEq, Encode, Decode)]
-pub struct Visibility {
-    pub hide_sidechains: bool,
-    pub hide_water: bool,
-    /// Hide hetero atoms: i.e. ones not part of a polypeptide.
-    pub hide_hetero: bool,
-    pub hide_protein: bool,
-    pub hide_ligand: bool,
-    pub hide_nucleic_acids: bool,
-    pub hide_lipids: bool,
-    pub hide_hydrogen: bool,
-    pub hide_h_bonds: bool,
-    pub dim_peptide: bool,
-    pub hide_density_point_cloud: bool,
-    pub hide_density_surface: bool,
-    pub labels_mol: bool,
-    pub labels_atom_sn: bool,
-    pub labels_atom_q: bool,
-    pub labels_atom_detailed: bool,
-    pub labels_bond: bool,
-}
-
-impl Default for Visibility {
-    fn default() -> Self {
-        Self {
-            hide_sidechains: false,
-            hide_water: false,
-            hide_hetero: false,
-            hide_protein: false,
-            hide_ligand: false,
-            hide_nucleic_acids: false,
-            hide_lipids: false,
-            hide_hydrogen: true,
-            hide_h_bonds: false,
-            dim_peptide: false,
-            hide_density_point_cloud: false,
-            hide_density_surface: false,
-            labels_mol: true,
-            labels_atom_sn: false,
-            labels_atom_q: false,
-            labels_atom_detailed: false,
-            labels_bond: false,
-        }
-    }
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Encode, Decode)]
 enum MsaaSetting {
@@ -294,47 +186,6 @@ impl MsaaSetting {
             Self::Four => "4×",
         }
         .to_owned()
-    }
-}
-
-#[derive(Default)]
-struct PopupState {
-    show_get_geostd: bool,
-    show_associated_structures: bool,
-    show_settings: bool,
-    get_geostd_items: Vec<GeostdItem>,
-    residue_selector: bool,
-    rama_plot: bool,
-    recent_files: bool,
-    metadata: Option<(MolType, usize)>,
-    alignment: bool,
-    alignment_screening: bool,
-}
-
-struct StateUiMd {
-    /// The state we store for this is a float, so we need to store state text too.
-    dt_input: String,
-    temp_input: String,
-    pressure_input: String,
-    simbox_pad_input: String,
-    langevin_γ: String,
-    /// Only perform MD on peptide atoms near a ligand.
-    peptide_only_near_ligs: bool,
-    /// Peptide atoms don't move, but exert forces.
-    peptide_static: bool,
-}
-
-impl Default for StateUiMd {
-    fn default() -> Self {
-        Self {
-            dt_input: Default::default(),
-            temp_input: Default::default(),
-            pressure_input: Default::default(),
-            simbox_pad_input: Default::default(),
-            langevin_γ: Default::default(),
-            peptide_only_near_ligs: true,
-            peptide_static: true,
-        }
     }
 }
 
