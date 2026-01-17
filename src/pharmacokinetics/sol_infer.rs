@@ -9,6 +9,8 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
+use crate::mol_characterization::MolCharacterization;
+use crate::pharmacokinetics::sol_train::features_from_molecule;
 use crate::{
     molecules::small::MoleculeSmall,
     pharmacokinetics::sol_train::{
@@ -56,7 +58,13 @@ impl AqSolInfer {
         let start = Instant::now();
 
         // 1. Calculate Global Features
-        let mut global_raw = features_from_molecule(mol)?;
+        let Some(char) = &mol.characterization else {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Missing molecule characterization; can't infer solubility",
+            ));
+        };
+        let mut global_raw = features_from_molecule(char)?;
 
         println!("INFERENCE CALCULATED FEATURES: {:?}", global_raw); // <--- Add this
 
@@ -113,38 +121,4 @@ impl AqSolInfer {
 
 pub fn infer_solubility(mol: &MoleculeSmall) -> io::Result<f32> {
     AqSolInfer::load()?.infer(mol)
-}
-
-/// This must match the fields in `sol_train::csv_to_featuers`.
-/// This contains features from the CSV only; it doesn't have atom or bond data.
-fn features_from_molecule(mol: &MoleculeSmall) -> io::Result<[f32; AQ_SOL_FEATURE_DIM]> {
-    let c = match mol.characterization.as_ref() {
-        Some(c) => c,
-        None => {
-            return io::Result::Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Missing mol characterization",
-            ));
-        }
-    };
-
-    Ok([
-        c.mol_weight,
-        c.calc_log_p,
-        c.molar_refractivity,
-        c.num_heavy_atoms as f32,
-        c.h_bond_acceptor.len() as f32,
-        c.h_bond_donor.len() as f32,
-        c.num_hetero_atoms as f32,
-        c.rotatable_bonds.len() as f32,
-        c.num_valence_elecs as f32,
-        c.num_rings_aromatic as f32,
-        c.num_rings_saturated as f32,
-        c.num_rings_aliphatic as f32,
-        c.rings.len() as f32,
-        c.tpsa_ertl,
-        c.asa_labute,
-        c.balaban_j,
-        c.bertz_ct,
-    ])
 }

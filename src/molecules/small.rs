@@ -514,8 +514,6 @@ impl MoleculeSmall {
         // launch this in a separate thread.
         let mut pubchem_ident_exists = false;
 
-        println!("Prop map loaded: {:?}", pubchem_properties_map.keys());
-
         for ident in &self.idents {
             match pubchem_properties_map.get(&ident) {
                 Some(props) => {
@@ -646,10 +644,10 @@ impl MoleculeSmall {
         if let Some(char) = &mut self.characterization {
             println!(
                 "LogP Calc:{:.1} | PubChem: {:.2} TPSA calc: {:.1} PubChem: {:.2}\n",
-                char.calc_log_p, props.log_p, char.tpsa_ertl, props.total_polar_surface_area
+                char.log_p, props.log_p, char.tpsa_ertl, props.total_polar_surface_area
             );
 
-            char.calc_log_p = props.log_p;
+            char.log_p = props.log_p;
             char.tpsa_ertl = props.total_polar_surface_area;
             char.volume = props.volume;
             char.complexity = Some(props.complexity);

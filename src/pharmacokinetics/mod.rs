@@ -77,7 +77,7 @@ impl Pharmacokinetics {
 
         let tpsa = ch.tpsa_ertl;
 
-        let log_p = ch.calc_log_p;
+        let log_p = ch.log_p;
 
         let abs_net_charge = ch.net_partial_charge.map(|q| q.abs()).unwrap_or(0.0);
 

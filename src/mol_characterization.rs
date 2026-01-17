@@ -11,6 +11,7 @@ use bio_files::BondType;
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
 use na_seq::Element::*;
 
+use crate::molecules::Bond;
 use crate::{
     molecules::{Atom, common::MoleculeCommon, rotatable_bonds::RotatableBond},
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
@@ -81,7 +82,7 @@ pub struct MolCharacterization {
     pub psa_topo: f32,
     /// The (calculated) log10 of the partition coefficient P between octanol and water for the
     /// neutral compound. Higher logP generally means more hydrophobic/lipophilic.
-    pub calc_log_p: f32,
+    pub log_p: f32,
     /// A measure related to the molecule’s polarizability and volume (often derived alongside logP
     /// in fragment methods like Wildman–Crippen). Higher MR usually means “bigger/more polarizable.”
     pub molar_refractivity: f32,
@@ -511,14 +512,11 @@ impl MolCharacterization {
         );
         let (psa_topo, asa_topo, volume) = tpsa_topo(mol);
 
-        // 3D ASA proxy
         let asa_labute = labute_asa_proxy(mol);
 
-        // Exact Balaban J
-        let balaban_j = balaban_j_exact(mol);
+        let balaban_j = calc_balaban_j(mol);
 
-        // Bertz CT proxy
-        let bertz_ct = bertz_ct_proxy(mol);
+        let bertz_ct = bertz_ct(&mol, 100) as f32;
 
         // Simple monotonic heuristics for logP and MR (good ML features, not RDKit-identical)
         let rings_ct = rings.len() as f32;
@@ -539,7 +537,7 @@ impl MolCharacterization {
             + 0.92; // Intercept
 
         // MR Fix: Increased MW weight (0.10 -> 0.27)
-        let m_r = (0.27 * (mol_weight_f64 as f32)) + (2.30 * rings_ct)
+        let mol_refractivity = (0.27 * (mol_weight_f64 as f32)) + (2.30 * rings_ct)
             - (2.74 * hal_ct)
             - (3.27 * hetero_ct)
             + 5.92; // Intercept
@@ -588,8 +586,8 @@ impl MolCharacterization {
             //
             tpsa_ertl,
             psa_topo,
-            calc_log_p,
-            molar_refractivity: m_r,
+            log_p: calc_log_p,
+            molar_refractivity: mol_refractivity,
             num_valence_elecs,
             asa_labute,
             asa_topo,
@@ -1466,31 +1464,78 @@ fn tpsa_topo(mol: &MoleculeCommon) -> (f32, f32, f32) {
 
 /// Exact Balaban J (distance-sum connectivity index) per component.
 /// Uses BFS distances (unweighted).
-fn balaban_j_exact(mol: &MoleculeCommon) -> f32 {
-    let n = mol.atoms.len();
-    let m = mol.bonds.len();
-    if n < 2 || m == 0 {
+fn calc_balaban_j(mol: &MoleculeCommon) -> f32 {
+    use na_seq::Element::Hydrogen;
+
+    let n_all = mol.atoms.len();
+    if n_all < 2 || mol.bonds.is_empty() {
         return 0.0;
     }
 
-    // connected components
+    // old -> heavy
+    let mut old_to_h: Vec<Option<usize>> = vec![None; n_all];
+    let mut h_to_old: Vec<usize> = Vec::new();
+    for i in 0..n_all {
+        if mol.atoms[i].element != Hydrogen {
+            old_to_h[i] = Some(h_to_old.len());
+            h_to_old.push(i);
+        }
+    }
+
+    let n = h_to_old.len();
+    if n < 2 {
+        return 0.0;
+    }
+
+    // heavy adjacency
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (hi, &oi) in h_to_old.iter().enumerate() {
+        for &oj in &mol.adjacency_list[oi] {
+            if let Some(hj) = old_to_h[oj] {
+                adj[hi].push(hj);
+            }
+        }
+    }
+
+    // heavy edges (dedup via edge_key + HashSet-like behavior using a map)
+    let mut edges: Vec<(usize, usize)> = Vec::new();
+    {
+        let mut seen: HashMap<(usize, usize), ()> = HashMap::new();
+        for b in &mol.bonds {
+            let a = b.atom_0;
+            let c = b.atom_1;
+            let Some(ha) = old_to_h[a] else { continue };
+            let Some(hc) = old_to_h[c] else { continue };
+            let e = edge_key(ha, hc);
+            if seen.insert(e, ()).is_none() {
+                edges.push(e);
+            }
+        }
+    }
+
+    let m = edges.len();
+    if m == 0 {
+        return 0.0;
+    }
+
+    // components on heavy graph
     let mut comp_id = vec![usize::MAX; n];
     let mut comps: Vec<Vec<usize>> = Vec::new();
+    let mut q = VecDeque::new();
 
     for s in 0..n {
         if comp_id[s] != usize::MAX {
             continue;
         }
         let cid = comps.len();
-        let mut q = VecDeque::new();
         let mut comp = Vec::new();
-
         comp_id[s] = cid;
+        q.clear();
         q.push_back(s);
 
         while let Some(u) = q.pop_front() {
             comp.push(u);
-            for &v in &mol.adjacency_list[u] {
+            for &v in &adj[u] {
                 if comp_id[v] == usize::MAX {
                     comp_id[v] = cid;
                     q.push_back(v);
@@ -1501,18 +1546,12 @@ fn balaban_j_exact(mol: &MoleculeCommon) -> f32 {
         comps.push(comp);
     }
 
-    // edges list
-    let mut edges = Vec::with_capacity(m);
-    for b in &mol.bonds {
-        edges.push(edge_key(b.atom_0, b.atom_1));
-    }
-
-    // compute per component, then average weighted by edges
+    // per component, edge-weighted average (your original aggregation)
     let mut total_edges = 0usize;
     let mut accum = 0.0f64;
 
     let mut dist = vec![u32::MAX; n];
-    let mut q = VecDeque::new();
+    let mut bfs = VecDeque::new();
 
     for (cid, comp) in comps.iter().enumerate() {
         let nc = comp.len();
@@ -1520,8 +1559,7 @@ fn balaban_j_exact(mol: &MoleculeCommon) -> f32 {
             continue;
         }
 
-        // edges in component
-        let mut comp_edges = Vec::new();
+        let mut comp_edges: Vec<(usize, usize)> = Vec::new();
         for &(a, b) in &edges {
             if comp_id[a] == cid {
                 comp_edges.push((a, b));
@@ -1532,28 +1570,26 @@ fn balaban_j_exact(mol: &MoleculeCommon) -> f32 {
             continue;
         }
 
-        // circuit rank for this component: gamma = m - n + 1
-        let gamma = (mc as i64) - (nc as i64) + 1;
-        let denom = (gamma + 1) as f64;
+        let denom = (mc as i64 - nc as i64 + 2) as f64; // gamma+1 = (m-n+1)+1
         if denom <= 0.0 {
             continue;
         }
 
-        // distance row sums D_i (sum of distances from i to all nodes in component)
+        // D_i for nodes in this component
         let mut dsum = vec![0u32; n];
 
         for &src in comp {
             dist.fill(u32::MAX);
             dist[src] = 0;
-            q.clear();
-            q.push_back(src);
+            bfs.clear();
+            bfs.push_back(src);
 
-            while let Some(u) = q.pop_front() {
+            while let Some(u) = bfs.pop_front() {
                 let du = dist[u];
-                for &v in &mol.adjacency_list[u] {
+                for &v in &adj[u] {
                     if dist[v] == u32::MAX {
                         dist[v] = du + 1;
-                        q.push_back(v);
+                        bfs.push_back(v);
                     }
                 }
             }
@@ -1562,14 +1598,16 @@ fn balaban_j_exact(mol: &MoleculeCommon) -> f32 {
             for &v in comp {
                 sum = sum.saturating_add(dist[v]);
             }
-            dsum[src] = sum.max(1); // avoid 0
+            dsum[src] = sum;
         }
 
         let mut s = 0.0f64;
-        for (a, b) in comp_edges {
-            let da = dsum[a] as f64;
-            let db = dsum[b] as f64;
-            s += 1.0 / (da * db).sqrt();
+        for (a, b) in &comp_edges {
+            let da = dsum[*a] as f64;
+            let db = dsum[*b] as f64;
+            if da > 0.0 && db > 0.0 {
+                s += 1.0 / (da * db).sqrt();
+            }
         }
 
         let j = (mc as f64 / denom) * s;
@@ -1579,58 +1617,225 @@ fn balaban_j_exact(mol: &MoleculeCommon) -> f32 {
     }
 
     if total_edges == 0 {
-        return 0.0;
+        0.0
+    } else {
+        (accum / total_edges as f64) as f32
     }
-    (accum / (total_edges as f64)) as f32
 }
 
-/// Bertz CT proxy: topology branching term + element-diversity term.
-/// Deterministic, fast, and stable for ML features.
-fn bertz_ct_proxy(mol: &MoleculeCommon) -> f32 {
-    use na_seq::Element::*;
-    let n = mol.atoms.len();
-    if n == 0 {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum ConnKey {
+    Pair(u32, u32),
+    Triple(u32, u32, u32),
+}
+
+fn bond_order_f64(b: &Bond) -> f64 {
+    use BondType::*;
+    match b.bond_type {
+        Single => 1.0,
+        Double => 2.0,
+        Triple => 3.0,
+        Aromatic => 1.5,
+        _ => 1.0,
+    }
+}
+
+fn info_entropy(counts: &[f64]) -> f64 {
+    let total: f64 = counts.iter().sum();
+    if total <= 0.0 {
+        return 0.0;
+    }
+    let inv = 1.0 / total;
+    let ln2 = std::f64::consts::LN_2;
+
+    let mut h = 0.0;
+    for &c in counts {
+        if c <= 0.0 {
+            continue;
+        }
+        let p = c * inv;
+        h -= p * (p.ln() / ln2); // log2
+    }
+    h
+}
+
+/// Unweighted BFS all-pairs shortest paths (u16), INF=u16::MAX.
+/// This corresponds to RDKit GetDistanceMatrix(... useBO=0, useAtomWts=0).
+fn all_pairs_shortest_paths(adj: &[Vec<usize>]) -> Vec<Vec<u16>> {
+    let n = adj.len();
+    let inf: u16 = u16::MAX;
+    let mut dmat = vec![vec![inf; n]; n];
+
+    for s in 0..n {
+        let mut q = VecDeque::new();
+        dmat[s][s] = 0;
+        q.push_back(s);
+
+        while let Some(v) = q.pop_front() {
+            let dv = dmat[s][v];
+            let nd = dv.saturating_add(1);
+            for &u in &adj[v] {
+                if dmat[s][u] == inf {
+                    dmat[s][u] = nd;
+                    q.push_back(u);
+                }
+            }
+        }
+    }
+    dmat
+}
+
+/// Equivalent to RDKit _AssignSymmetryClasses(...).
+/// Two atoms are in the same class if their sorted distance vectors match
+/// out to the `cutoff`th entry (RDKit truncation behavior).
+fn assign_symmetry_classes(dmat: &[Vec<u16>], num_atoms: usize, cutoff: usize) -> Vec<u32> {
+    let use_k = cutoff.min(num_atoms);
+
+    let mut keys_seen: Vec<Vec<u16>> = Vec::new();
+    let mut sym_class: Vec<u32> = vec![0; num_atoms];
+
+    for i in 0..num_atoms {
+        let mut row = dmat[i].clone();
+        row.sort_unstable();
+        row.truncate(use_k);
+
+        let mut found: Option<usize> = None;
+        for (idx, k) in keys_seen.iter().enumerate() {
+            if *k == row {
+                found = Some(idx);
+                break;
+            }
+        }
+
+        let cls = match found {
+            Some(idx) => (idx as u32) + 1,
+            None => {
+                keys_seen.push(row);
+                keys_seen.len() as u32
+            }
+        };
+
+        sym_class[i] = cls;
+    }
+
+    sym_class
+}
+
+/// Equivalent to RDKit _CreateBondDictEtc(mol, numAtoms)
+/// Returns:
+/// - bondDict: (i,j) -> bond order (f64)
+/// - neighborList: adjacency list
+/// - vdList: degree per atom
+fn create_bond_dict_etc(
+    mol: &MoleculeCommon,
+) -> (HashMap<(usize, usize), f64>, Vec<Vec<usize>>, Vec<usize>) {
+    let num_atoms = mol.atoms.len();
+
+    let mut bond_dict: HashMap<(usize, usize), f64> = HashMap::with_capacity(mol.bonds.len());
+    for b in &mol.bonds {
+        bond_dict.insert(edge_key(b.atom_0, b.atom_1), bond_order_f64(b));
+    }
+
+    let neighbor_list: Vec<Vec<usize>> = mol.adjacency_list.clone();
+    let mut vd_list: Vec<usize> = vec![0; num_atoms];
+    for i in 0..num_atoms {
+        vd_list[i] = neighbor_list[i].len();
+    }
+
+    (bond_dict, neighbor_list, vd_list)
+}
+
+/// Equivalent to RDKit _LookUpBondOrder(i, j, bondDict)
+fn look_up_bond_order(i: usize, j: usize, bond_dict: &HashMap<(usize, usize), f64>) -> f64 {
+    bond_dict.get(&edge_key(i, j)).copied().unwrap_or(1.0)
+}
+
+/// Equivalent to RDKit _CalculateEntropies(connectionDict, atomTypeDict, numAtoms)
+fn calculate_entropies(
+    connection_dict: &HashMap<ConnKey, f64>,
+    atom_type_dict: &HashMap<u32, f64>,
+    num_atoms: usize,
+) -> f64 {
+    let conn_counts: Vec<f64> = connection_dict.values().copied().collect();
+    let tot_conn: f64 = conn_counts.iter().sum();
+
+    let atom_counts: Vec<f64> = atom_type_dict.values().copied().collect();
+
+    let ln2 = std::f64::consts::LN_2;
+
+    // RDKit: connectionIE = totConn*(InfoEntropy(conn)+log2(totConn))
+    let connection_ie = if tot_conn > 0.0 {
+        tot_conn * (info_entropy(&conn_counts) + (tot_conn.ln() / ln2))
+    } else {
+        0.0
+    };
+
+    // RDKit: atomTypeIE = numAtoms * InfoEntropy(atomType)
+    let atom_type_ie = (num_atoms as f64) * info_entropy(&atom_counts);
+
+    atom_type_ie + connection_ie
+}
+
+/// RDKit-style BertzCT (structure-only), translated from the Python you posted.
+/// - cutoff: same semantics as RDKit (distance-vector truncation length)
+pub fn bertz_ct(mol: &MoleculeCommon, cutoff: usize) -> f64 {
+    let num_atoms = mol.atoms.len();
+    if num_atoms < 2 {
         return 0.0;
     }
 
-    // branching/connectivity complexity (ignore H)
-    let mut topo = 0.0f64;
-    for i in 0..n {
-        if mol.atoms[i].element == Hydrogen {
-            continue;
-        }
-        let deg = mol.adjacency_list[i]
-            .iter()
-            .filter(|&&j| mol.atoms[j].element != Hydrogen)
-            .count();
+    // RDKit: dMat = GetDistanceMatrix(... useBO=0, useAtomWts=0, force=1)
+    let dmat = all_pairs_shortest_paths(&mol.adjacency_list);
 
-        // ln(deg!) = Σ ln(k)
-        for k in 2..=deg {
-            topo += (k as f64).ln();
+    // RDKit: bondDict, neighborList, vdList = _CreateBondDictEtc(mol, numAtoms)
+    let (bond_dict, neighbor_list, vd_list) = create_bond_dict_etc(mol);
+
+    // RDKit: symmetryClasses = _AssignSymmetryClasses(...)
+    let symmetry_classes = assign_symmetry_classes(&dmat, num_atoms, cutoff);
+
+    let mut atom_type_dict: HashMap<u32, f64> = HashMap::new();
+    let mut connection_dict: HashMap<ConnKey, f64> = HashMap::new();
+
+    for atom_idx in 0..num_atoms {
+        // RDKit: hingeAtomNumber = mol.GetAtomWithIdx(atomIdx).GetAtomicNum()
+        let hinge_atom_number = mol.atoms[atom_idx].element.atomic_number() as u32;
+        *atom_type_dict.entry(hinge_atom_number).or_insert(0.0) += 1.0;
+
+        let hinge_atom_class = symmetry_classes[atom_idx];
+        let num_neighbors = vd_list[atom_idx];
+
+        for i in 0..num_neighbors {
+            let neighbor_i_idx = neighbor_list[atom_idx][i];
+            let ni_class = symmetry_classes[neighbor_i_idx];
+            let bond_i_order = look_up_bond_order(atom_idx, neighbor_i_idx, &bond_dict);
+
+            // RDKit: if (bond_i_order > 1) and (neighbor_iIdx > atomIdx):
+            if bond_i_order > 1.0 && neighbor_i_idx > atom_idx {
+                let num_connections = bond_i_order * (bond_i_order - 1.0) / 2.0;
+                let a = hinge_atom_class.min(ni_class);
+                let b = hinge_atom_class.max(ni_class);
+                *connection_dict.entry(ConnKey::Pair(a, b)).or_insert(0.0) += num_connections;
+            }
+
+            for j in (i + 1)..num_neighbors {
+                let neighbor_j_idx = neighbor_list[atom_idx][j];
+                let nj_class = symmetry_classes[neighbor_j_idx];
+                let bond_j_order = look_up_bond_order(atom_idx, neighbor_j_idx, &bond_dict);
+
+                let num_connections = bond_i_order * bond_j_order;
+                let a = ni_class.min(nj_class);
+                let c = ni_class.max(nj_class);
+                *connection_dict
+                    .entry(ConnKey::Triple(a, hinge_atom_class, c))
+                    .or_insert(0.0) += num_connections;
+            }
         }
     }
 
-    // element diversity (ignore H): Shannon entropy scaled by size
-    let mut counts: HashMap<na_seq::Element, usize> = HashMap::new();
-    let mut heavy = 0usize;
-
-    for a in &mol.atoms {
-        if a.element == Hydrogen {
-            continue;
-        }
-        heavy += 1;
-        *counts.entry(a.element).or_insert(0) += 1;
+    // RDKit: if not connectionDict: connectionDict = {'a': 1}
+    if connection_dict.is_empty() {
+        connection_dict.insert(ConnKey::Pair(1, 1), 1.0);
     }
 
-    let mut ent = 0.0f64;
-    for (_el, c) in counts {
-        let p = c as f64 / heavy.max(1) as f64;
-        if p > 0.0 {
-            ent -= p * p.ln();
-        }
-    }
-
-    let div = ent * (heavy as f64).ln().max(1.0);
-
-    (topo + div) as f32
+    calculate_entropies(&connection_dict, &atom_type_dict, num_atoms)
 }

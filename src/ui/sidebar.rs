@@ -564,7 +564,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     mol_char_helper(
         ui,
         &[
-            ("LogP", &format!("{:.2}", char.calc_log_p)),
+            ("LogP", &format!("{:.2}", char.log_p)),
             ("Mol Refrac", &format!("{:.2}", char.molar_refractivity)),
         ],
     );

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use bio_files::BondType::{Double, Single};
+use bio_files::BondType::*;
 use na_seq::Element::*;
 
 use crate::molecules::{Atom, Bond, common::MoleculeCommon};
@@ -123,20 +123,21 @@ fn is_hetero(atom: &Atom) -> bool {
     matches!(atom.element, Nitrogen | Oxygen | Sulfur)
 }
 
+// Doesn't take into account aromatic bonds. Is that ok?
 fn bond_order(b: &Bond) -> Option<u8> {
-    use bio_files::BondType::*;
     match b.bond_type {
         Single => Some(1),
         Double => Some(2),
+        Triple => Some(3),
         _ => None,
     }
 }
 
 fn set_bond_order(b: &mut Bond, order: u8) {
-    use bio_files::BondType::*;
     b.bond_type = match order {
         1 => Single,
         2 => Double,
+        3 => Triple,
         _ => b.bond_type,
     };
 }
