@@ -1,3 +1,4 @@
+// Prevents the Terminal displaying on Windows.
 // #![cfg_attr(
 //     all(not(debug_assertions), target_os = "windows"),
 //     windows_subsystem = "windows"
@@ -55,56 +56,16 @@ mod viridis_lut;
 
 #[cfg(feature = "cuda")]
 use std::sync::Arc;
-use std::{
-    collections::{HashMap, HashSet},
-    env, fmt,
-    fmt::{Display, Formatter},
-    path::PathBuf,
-    process::Command,
-    sync::mpsc::Receiver,
-    time::Instant,
-};
+use std::{fmt::Display, process::Command, time::Instant};
 
 use bincode::{Decode, Encode};
-use bio_apis::{
-    ReqError,
-    amber_geostd::{GeostdData, GeostdItem},
-    pubchem,
-    rcsb::{FilesAvailable, PdbDataResults},
-};
-use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
 #[cfg(feature = "cuda")]
-use cudarc::{
-    driver::{CudaContext, CudaFunction, CudaModule, CudaStream},
-    nvrtc::Ptx,
-};
-use drawing::MoleculeView;
-use dynamics::{ComputationDevice, Integrator, MdState, SimBoxInit, params::FfParamSet};
-use egui_file_dialog::{FileDialog, FileDialogConfig};
-use graphics::{Camera, ControlScheme, InputsCommanded, winit::event::Modifiers};
-use lin_alg::{
-    f32::{Quaternion, Vec3},
-    f64::Vec3 as Vec3F64,
-};
-use mol_manip::MolManip;
-use molecules::{
-    MolGenericRef, MolGenericRefMut, MolIdent, MolType, MoleculePeptide,
-    lipid::{LipidShape, MoleculeLipid, load_lipid_templates},
-    nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands, load_na_templates},
-    small::MoleculeSmall,
-};
-use selection::{Selection, ViewSelLevel};
-use state::{State, StateUi, StateVolatile};
+use cudarc::driver::CudaFunction;
+use dynamics::{ComputationDevice, Integrator, SimBoxInit, params::FfParamSet};
+use molecules::{MolType, lipid::load_lipid_templates, nucleic_acid::load_na_templates};
+use state::State;
 
-use crate::{
-    mol_alignment::StateAlignment,
-    mol_editor::MolEditorState,
-    orca::StateOrca,
-    prefs::ToSave,
-    render::render,
-    ui::cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
-    util::handle_err,
-};
+use crate::{render::render, util::handle_err};
 
 // Note: If you haven't generated this file yet when compiling (e.g. from a freshly-cloned repo),
 // make an edit to one of the CUDA files (e.g. add a newline), then run, to create this file.
@@ -147,169 +108,6 @@ struct SceneFlags {
     pub clear_density_drawing: bool,
     pub new_density_loaded: bool,
     pub new_mol_loaded: bool,
-}
-
-// todo: Rename A/R
-#[derive(Clone, Copy, PartialEq, Default)]
-pub enum OperatingMode {
-    #[default]
-    Primary,
-    /// For editing small molecules
-    MolEditor,
-    /// For editing proteins
-    ProteinEditor,
-}
-
-// todo: Remove or augment A/R
-#[derive(Default)]
-pub struct MdStateLocal {
-    /// This flag lets us defer launch by a frame, so we can display a flag.
-    pub launching: bool,
-    pub running: bool,
-    pub start: Option<Instant>,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Encode, Decode)]
-enum MsaaSetting {
-    None = 1,
-    // Two = 2, // todo: Not supported on this depth texture, but we could switch to a different one.
-    #[default]
-    Four = 4,
-}
-
-impl MsaaSetting {
-    pub fn to_str(self) -> String {
-        match self {
-            Self::None => "None",
-            // Self::Two => "2×",
-            Self::Four => "4×",
-        }
-        .to_owned()
-    }
-}
-
-#[derive(Clone, PartialEq, Encode, Decode)]
-struct LipidUi {
-    /// For the combo box. Stays at 0 if none loaded.
-    pub lipid_to_add: usize,
-    pub shape: LipidShape,
-    pub mol_count: u16,
-}
-
-impl Default for LipidUi {
-    fn default() -> Self {
-        Self {
-            lipid_to_add: 0,
-            shape: Default::default(),
-            mol_count: 10,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Encode, Decode)]
-struct NucleicAcidUi {
-    pub seq_to_create: String,
-    pub na_type: NucleicAcidType,
-    pub strands: Strands,
-}
-
-impl Default for NucleicAcidUi {
-    fn default() -> Self {
-        Self {
-            seq_to_create: String::from("ATCG"),
-            na_type: Default::default(),
-            strands: Default::default(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Default, Debug, Encode, Decode)]
-pub enum ResColoring {
-    #[default]
-    /// A unique color per amino acid, to quickly differentiate them.
-    AminoAcid,
-    /// Position in sequence, e.g. mapped using viridis
-    Position,
-    /// Also with a Viridis-style approach.
-    Hydrophobicity,
-}
-
-impl Display for ResColoring {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let v = match self {
-            Self::AminoAcid => "AA",
-            Self::Position => "Posit",
-            Self::Hydrophobicity => "Hydro",
-        };
-
-        write!(f, "{v}")
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
-/// For showing and hiding UI sections.
-pub struct UiVisibility {
-    aa_seq: bool,
-    smiles: bool,
-    selfies: bool,
-    lipids: bool,
-    nucleic_acids: bool,
-    amino_acids: bool,
-    dynamics: bool,
-    orca: bool,
-    mol_char: bool,
-}
-
-impl Default for UiVisibility {
-    fn default() -> Self {
-        Self {
-            aa_seq: false,
-            smiles: false,
-            selfies: false,
-            lipids: false,
-            nucleic_acids: false,
-            amino_acids: false,
-            dynamics: true,
-            orca: false,
-            mol_char: true, // todo: For now.
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
-pub struct CamSnapshot {
-    // We don't use camera directly, so we don't have to store the projection matrix, and so we can impl
-    // Encode/Decode
-    pub position: Vec3,
-    pub orientation: Quaternion,
-    pub far: f32,
-    pub name: String,
-}
-
-impl CamSnapshot {
-    pub fn from_cam(cam: &Camera, name: String) -> Self {
-        Self {
-            position: cam.position,
-            orientation: cam.orientation,
-            far: cam.far,
-            name,
-        }
-    }
-}
-
-#[derive(Default)]
-/// Molecule templates for building-block molecules.
-struct Templates {
-    /// Common lipid types, e.g. as derived from Amber's `lipids21.lib`, but perhaps not exclusively.
-    /// These are loaded at init; there will be one of each type.
-    pub lipid: Vec<MoleculeLipid>,
-    // pub dna: Vec<MoleculeNucleicAcid>,
-    // pub rna: Vec<MoleculeNucleicAcid>,
-    pub dna: HashMap<String, TemplateData>,
-    pub rna: HashMap<String, TemplateData>,
-    // todo: A/R
-    pub amino_acid: Vec<MoleculeSmall>,
 }
 
 fn main() {

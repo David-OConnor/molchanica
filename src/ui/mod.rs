@@ -17,7 +17,7 @@ use na_seq::{AaIdent, Element};
 use popups::load_popups;
 
 use crate::{
-    CamSnapshot, MsaaSetting, OperatingMode, ResColoring, cli,
+    cli,
     cli::autocomplete_cli,
     download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
     drawing::color_viridis,
@@ -27,7 +27,7 @@ use crate::{
     molecules::{MolGenericRef, MolIdent},
     render::set_flashlight,
     selection::{Selection, ViewSelLevel},
-    state::State,
+    state::{CamSnapshot, MsaaSetting, OperatingMode, ResColoring, State},
     ui::{
         cam::{cam_controls, cam_snapshots},
         misc::section_box,
@@ -388,7 +388,7 @@ fn add_aa_seq(selection: &mut Selection, seq_text: &str, ui: &mut Ui, redraw: &m
 
     // This grey ensures that the whole viridis display range is clear, e.g. the purple
     // parse isn't blocked by our dark background.
-    egui::Frame::none()
+    egui::Frame::new()
         // .fill(Color32::from_rgb(200, 200, 200))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

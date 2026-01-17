@@ -21,7 +21,6 @@ use na_seq::{
 };
 
 use crate::{
-    OperatingMode,
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView, atom_color,
         bond_entities, draw_mol, draw_peptide,
@@ -34,7 +33,7 @@ use crate::{
         ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, set_flashlight, set_static_light,
     },
     selection::{Selection, ViewSelLevel},
-    state::{State, StateUi},
+    state::{OperatingMode, State, StateUi},
     util::find_neighbor_posit,
 };
 

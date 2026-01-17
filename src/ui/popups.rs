@@ -351,7 +351,7 @@ pub(in crate::ui) fn load_popups(
                             let score_thresh = 60.;
                             let size_diff_thresh = 0.4;
 
-                            let mut result = screen_by_alignment(
+                            let result = screen_by_alignment(
                                 &template,
                                 &mols,
                                 score_thresh,
