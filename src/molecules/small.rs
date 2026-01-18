@@ -588,7 +588,6 @@ impl MoleculeSmall {
 
         // todo: This may be a good place to popular pharmacokinetics in general.
         let sol = sol_infer::infer_solubility(self);
-        println!("\n\nInferred solubility: {sol:?}\n\n");
         if let Ok(s) = sol {
             self.pharmacokinetics = Some(Pharmacokinetics {
                 solubility_water: s,

@@ -64,7 +64,7 @@ impl AqSolInfer {
         };
         let mut global_raw = features_from_molecule(char)?;
 
-        println!("INFERENCE CALCULATED FEATURES: {:?}", global_raw); // <--- Add this
+        // println!("INFERENCE CALCULATED FEATURES: {:?}", global_raw); // <--- Add this
 
         self.scaler.apply_in_place(&mut global_raw);
 

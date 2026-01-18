@@ -72,7 +72,9 @@ impl AqSolModelConfig {
         AqSolModel {
             gnn_proj: LinearConfig::new(self.atom_input_dim, self.gnn_hidden_dim).init(device),
             global_fc: LinearConfig::new(self.global_input_dim, self.mlp_hidden_dim).init(device),
-            head: LinearConfig::new(self.gnn_hidden_dim + self.mlp_hidden_dim, 1).init(device),
+            // todo: For now with no graph
+            // head: LinearConfig::new(self.gnn_hidden_dim + self.mlp_hidden_dim, 1).init(device),
+            head: LinearConfig::new(self.mlp_hidden_dim, 1).init(device),
         }
     }
 }
@@ -102,19 +104,24 @@ impl<B: Backend> AqSolModel<B> {
         // --- Graph Branch ---
         // 1. Aggregation: A * X (Sum neighbors)
         let agg = adj.matmul(nodes);
+
         // 2. Projection: (A*X)W
         let graph_h = activation::relu(self.gnn_proj.forward(agg));
+
         // 3. Masking: Zero out padding atoms so they don't contribute to sum
         let graph_h = graph_h * mask;
+
         // 4. Pooling: Sum over atoms -> [Batch, GnnHidden]
         // let graph_embedding = graph_h.sum_dim(1).squeeze(1);
-        let graph_embedding = graph_h.sum_dim(1).flatten(0, 1);
+        // let graph_embedding = graph_h.sum_dim(1).flatten(0, 1);
 
         // --- Global Branch ---
         let global_embedding = activation::relu(self.global_fc.forward(globals));
 
         // --- Fusion ---
-        let combined = Tensor::cat(vec![graph_embedding, global_embedding], 1);
+        // let combined = Tensor::cat(vec![graph_embedding, global_embedding], 1);
+        // todo temp removed the graph.
+        let combined = Tensor::cat(vec![global_embedding], 1);
 
         // --- Readout ---
         self.head.forward(combined)
@@ -253,37 +260,75 @@ pub fn pad_graph_data(
 pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let num_atoms = mol.common.atoms.len();
 
+    // 1. Node Features (Unchanged)
     let mut node_feats = Vec::new();
     for atom in &mol.common.atoms {
         let mut f = vec![0.0; ATOM_FEATURE_DIM];
+        // Ensure this match is IDENTICAL to your training expectations
         let idx = match atom.element {
-            /*...*/ _ => 9,
-        }; // keep your match
+            Hydrogen => 0,
+            Carbon => 1,
+            Nitrogen => 2,
+            Oxygen => 3,
+            Fluorine => 4,
+            Phosphorus => 5,
+            Sulfur => 6,
+            Chlorine => 7,
+            Bromine => 8,
+            _ => 9,
+        };
         f[idx] = 1.0;
         node_feats.extend(f);
     }
 
-    // Build the Adjacency Matrix (NORMALIZED) ---
-    let mut adj = vec![0.0; num_atoms * num_atoms];
+    // 2. Build Raw Adjacency (Force Symmetry)
+    // We use a flat vector to represent the matrix temporarily
+    let mut raw_adj = vec![0.0; num_atoms * num_atoms];
+    // Also track degree for normalization
+    let mut degrees = vec![0.0; num_atoms];
 
     for (i, neighbors) in mol.common.adjacency_list.iter().enumerate() {
-        // Degree = neighbors + self-loop
-        let degree = (neighbors.len() as f32) + 1.0;
-
-        // Simple Average Rule: weight = 1.0 / degree
-        // (Alternative: Kipf & Welling use 1 / sqrt(deg_i * deg_j))
-        let norm = 1.0 / degree;
-
         for &n in neighbors {
-            adj[i * num_atoms + n] = norm;
+            // Force Symmetry: If i connects to n, set both [i,n] and [n,i]
+            if i < num_atoms && n < num_atoms {
+                raw_adj[i * num_atoms + n] = 1.0;
+                raw_adj[n * num_atoms + i] = 1.0;
+            }
         }
-        // Self loop
-        adj[i * num_atoms + i] = norm;
+        // Self-loops are added in the normalization step typically,
+        // but let's add them explicitly to the raw matrix first for clarity
+        raw_adj[i * num_atoms + i] = 1.0;
     }
 
-    // 4. Mask (Same as before)
+    // 3. Recalculate Degrees (inclusive of self-loops)
+    for i in 0..num_atoms {
+        let mut d = 0.0;
+        for j in 0..num_atoms {
+            if raw_adj[i * num_atoms + j] > 0.0 {
+                d += 1.0;
+            }
+        }
+        degrees[i] = d;
+    }
+
+    // 4. Apply Symmetric Normalization: D^-0.5 * A * D^-0.5
+    // Entry[i][j] = Entry[i][j] / sqrt(deg[i] * deg[j])
+    let mut final_adj = vec![0.0; num_atoms * num_atoms];
+    for i in 0..num_atoms {
+        for j in 0..num_atoms {
+            if raw_adj[i * num_atoms + j] > 0.0 {
+                let d_i = degrees[i];
+                let d_j = degrees[j];
+
+                let v: f32 = (d_i * d_j);
+                let norm_factor = v.sqrt();
+                final_adj[i * num_atoms + j] = 1.0 / norm_factor;
+            }
+        }
+    }
+
     let mask = vec![1.0; num_atoms];
-    (node_feats, adj, mask)
+    (node_feats, final_adj, mask)
 }
 
 fn fit_scaler(train: &[Sample]) -> StandardScaler {

@@ -2,6 +2,7 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::molecules::MolIdent;
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
     label,
@@ -132,6 +133,7 @@ fn mol_picker_one(
         } else {
             Color32::GRAY
         };
+
         label!(ui, char.to_string(), color);
     }
 }
@@ -355,6 +357,12 @@ fn manip_toolbar(
                     _ => unimplemented!(),
                 }
             }
+
+            if ui.button("Details")
+                .on_hover_text("Toggle the details display of the active molecule.")
+                .clicked() {
+                state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
+            }
         }
     });
 }
@@ -372,7 +380,7 @@ pub(in crate::ui) fn sidebar(
     let out = egui::SidePanel::left("sidebar")
         .resizable(true) // let user drag the width
         .default_width(140.0)
-        .width_range(60.0..=420.0)
+        .width_range(60.0..=800.0)
         .show(ctx, |ui| {
             ui.label("Molecules opened");
 
@@ -452,13 +460,24 @@ pub(in crate::ui) fn sidebar(
 
             // todo: UI flag to show or hide this.
             if state.ui.ui_vis.mol_char {
+                let mut toggled = false; // Avoid double borrow.
                 if let Some(m) = &state.active_mol() {
+                    // ui.horizontal(|ui| {
                     if let MolGenericRef::Small(mol) = m {
+                        if ui
+                            .button(RichText::new("Close details").color(Color32::LIGHT_GRAY))
+                            .clicked()
+                        {
+                            toggled = true;
+                        }
                         mol_char_disp(mol, ui);
                     }
+                    // });
+                }
+                if toggled {
+                    state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
                 }
             }
-            // });
         });
 
     engine_updates.ui_reserved_px.0 = out.response.rect.width();
@@ -485,8 +504,26 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     // todo: Small font?
     for ident in &mol.idents {
         ui.horizontal(|ui| {
-            label!(ui, format!("{}:", ident.label()), Color32::GRAY);
-            label!(ui, ident.ident_innner(), Color32::WHITE);
+            // Wrap long names, like InChi etc.
+            ui.horizontal_wrapped(|ui| {
+                label!(ui, format!("{}:", ident.label()), Color32::GRAY);
+
+                let mut ident_txt = RichText::new(ident.ident_innner()).color(Color32::WHITE);
+
+                // These are longer idents.
+                if matches!(
+                    ident,
+                    MolIdent::InchIKey(_)
+                        | MolIdent::InchI(_)
+                        | MolIdent::Smiles(_)
+                        | MolIdent::IupacName(_)
+                ) {
+                    let font = egui::FontId::proportional(10.0);
+                    ident_txt = ident_txt.font(font);
+                }
+
+                ui.label(ident_txt);
+            });
         });
     }
 
