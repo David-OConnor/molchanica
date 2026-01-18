@@ -11,6 +11,7 @@ use std::{io, time::Instant};
 use bio_files::{DensityMap, MapHeader, UnitCell, cif_sf::CifStructureFactors};
 #[cfg(feature = "cuda")]
 use cudarc::driver::{CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
+use dynamics::ComputationDevice;
 use ewald::fft3d_c2r;
 use graphics::{EngineUpdates, EntityUpdate, Mesh, Scene, Vertex};
 #[cfg(feature = "cuda")]
@@ -22,10 +23,7 @@ use mcubes::{MarchingCubes, MeshSide};
 use rayon::prelude::*;
 use rustfft::{FftPlanner, num_complex::Complex};
 
-use crate::{
-    ComputationDevice, drawing::draw_density_surface, render::MESH_DENSITY_SURFACE, state::State,
-    util,
-};
+use crate::{drawing::draw_density_surface, render::MESH_DENSITY_SURFACE, state::State, util};
 
 pub const DENSITY_CELL_MARGIN: f64 = 3.0;
 

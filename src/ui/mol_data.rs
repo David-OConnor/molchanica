@@ -8,6 +8,7 @@ use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
+    cam::move_cam_to_active_mol,
     download_mols, drawing,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI},
     label,
@@ -17,10 +18,7 @@ use crate::{
     },
     selection::Selection,
     state::State,
-    ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, cam::move_cam_to_active_mol,
-        mol_descrip,
-    },
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, mol_descrip},
     util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
 

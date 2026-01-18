@@ -9,6 +9,7 @@ use na_seq::{
 };
 
 use crate::{
+    cam::cam_reset_controls,
     drawing::MoleculeView,
     mol_editor,
     mol_editor::{
@@ -23,7 +24,6 @@ use crate::{
     state::{State, StateUi},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
-        cam::cam_reset_controls,
         md::energy_disp,
         misc,
         misc::{active_color, section_box},

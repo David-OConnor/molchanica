@@ -33,7 +33,7 @@ mod util;
 mod cli;
 mod reflection;
 
-mod cam_misc;
+pub mod cam;
 mod drawing_wrappers;
 mod drug_design;
 mod md;
@@ -56,9 +56,8 @@ mod viridis_lut;
 
 #[cfg(feature = "cuda")]
 use std::sync::Arc;
-use std::{fmt::Display, process::Command, time::Instant};
+use std::{process::Command, time::Instant};
 
-use bincode::{Decode, Encode};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
 use dynamics::{ComputationDevice, Integrator, SimBoxInit, params::FfParamSet};
@@ -66,49 +65,6 @@ use molecules::{MolType, lipid::load_lipid_templates, nucleic_acid::load_na_temp
 use state::State;
 
 use crate::{render::render, util::handle_err};
-
-// Note: If you haven't generated this file yet when compiling (e.g. from a freshly-cloned repo),
-// make an edit to one of the CUDA files (e.g. add a newline), then run, to create this file.
-#[cfg(feature = "cuda")]
-const PTX: &str = include_str!("../molchanica.ptx");
-
-// todo: Eventually, implement a system that automatically checks for changes, and don't
-// todo save to disk if there are no changes.
-// For now, we check for differences between to_save and to_save prev, and write to disk
-// if they're not equal.
-const PREFS_SAVE_INTERVAL: u64 = 20; // seconds
-
-/// The MdModule is owned by `dynamics::ComputationDevice`.
-#[cfg(feature = "cuda")]
-struct CudaFunctions {
-    /// For processing as part of loading electron density data
-    pub reflections: Arc<CudaFunction>,
-}
-
-// /// This wraps `dyanmics::ComputationDevice`. It's a bit awkard, but for now
-// /// allows Dynamics to own ComputationDev with the MD model. We add our additional
-// /// models here. Note: The CudaStream is owned by the inner `dynamics::ComputationDevice`.
-// enum ComputationDevOuter {
-//     Cpu,
-//     #[cfg(feature = "cuda")]
-//     Gpu((ComputationDevice, Arc<CudaModule>>)),
-// }
-
-/// Flags to accomplish things that must be done somewhere with access to `Scene`.
-#[derive(Default)]
-struct SceneFlags {
-    /// Secondary structure
-    pub update_ss_mesh: bool,
-    /// Solvent-accessible surface.
-    pub update_sas_mesh: bool,
-    pub update_sas_coloring: bool,
-    pub ss_mesh_created: bool,
-    pub sas_mesh_created: bool,
-    pub make_density_iso_mesh: bool,
-    pub clear_density_drawing: bool,
-    pub new_density_loaded: bool,
-    pub new_mol_loaded: bool,
-}
 
 fn main() {
     #[cfg(not(feature = "cuda"))]

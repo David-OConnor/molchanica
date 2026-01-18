@@ -126,8 +126,7 @@ pub(in crate::ui) fn lipid_section(
             if ui.button("+").clicked() {
                 // Place in front of the camera.
                 let center = scene.camera.position
-                    + scene.camera.orientation.rotate_vec(FWD_VEC)
-                        * crate::cam_misc::MOVE_TO_CAM_DIST;
+                    + scene.camera.orientation.rotate_vec(FWD_VEC) * crate::cam::MOVE_TO_CAM_DIST;
 
                 state.lipids.extend(make_bacterial_lipids(
                     state.to_save.lipid.mol_count as usize,

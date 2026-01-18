@@ -21,7 +21,7 @@ use lin_alg::{
 use na_seq::{AaIdent, Element};
 
 use crate::{
-    PREFS_SAVE_INTERVAL, cam_misc,
+    cam,
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
         color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
@@ -32,7 +32,7 @@ use crate::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, MoleculePeptide,
         Residue, aa_color, small::MoleculeSmall,
     },
-    prefs::OpenType,
+    prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
     render::{Color, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, set_flashlight},
     ribbon_mesh::build_cartoon_mesh,
@@ -742,7 +742,7 @@ pub fn handle_scene_flags(
     if state.volatile.flags.new_mol_loaded {
         state.volatile.flags.new_mol_loaded = false;
 
-        cam_misc::reset_camera(state, scene, engine_updates, FWD_VEC);
+        cam::reset_camera(state, scene, engine_updates, FWD_VEC);
 
         set_flashlight(scene);
         engine_updates.lighting = true;
@@ -1177,7 +1177,7 @@ pub fn get_computation_device() -> (ComputationDevice, Option<CudaFunction>) {
             let ctx = CudaContext::new(0).unwrap();
             let stream = ctx.default_stream();
 
-            let module_reflections = ctx.load_module(Ptx::from_src(crate::PTX));
+            let module_reflections = ctx.load_module(Ptx::from_src(PTX));
 
             match module_reflections {
                 Ok(m) => {
@@ -1417,3 +1417,8 @@ pub fn rotate_atoms_about_point(atoms: &mut [Atom], pivot: Vec3, rotator: Quater
         a.posit = pivot + rotator.rotate_vec(rel);
     }
 }
+
+// Note: If you haven't generated this file yet when compiling (e.g. from a freshly-cloned repo),
+// make an edit to one of the CUDA files (e.g. add a newline), then run, to create this file.
+#[cfg(feature = "cuda")]
+pub const PTX: &str = include_str!("../molchanica.ptx");

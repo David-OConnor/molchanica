@@ -3,7 +3,7 @@ use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    cam_misc::move_mol_to_cam,
+    cam::{move_cam_to_mol, move_mol_to_cam},
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
@@ -11,7 +11,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, cam::move_cam_to_mol,
+        COLOR_INACTIVE, ROW_SPACING,
     },
     util::{close_mol, handle_err, orbit_center},
 };

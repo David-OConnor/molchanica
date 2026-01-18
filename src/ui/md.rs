@@ -7,14 +7,15 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
+    cam::move_cam_to_active_mol,
     drawing::EntityClass,
     file_io::save_trajectory,
     label,
     md::{launch_md, launch_md_energy_computation, post_run_cleanup},
     state::State,
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE,
-        cam::move_cam_to_active_mol, flag_btn, misc, num_field,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, flag_btn, misc,
+        num_field,
     },
     util::{clear_cli_out, handle_err, handle_success},
 };

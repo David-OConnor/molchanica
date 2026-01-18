@@ -18,7 +18,7 @@ use na_seq::{AminoAcid, Element};
 use regex::Regex;
 
 use crate::{
-    cam_misc::{cam_look_at, reset_camera},
+    cam::{cam_look_at, reset_camera},
     download_mols,
     molecules::AtomRole,
     render::set_flashlight,

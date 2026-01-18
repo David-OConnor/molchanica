@@ -9,7 +9,7 @@ use na_seq::{AaIdent, Element};
 use rand::Rng;
 
 use crate::{
-    cam_misc::move_mol_to_cam,
+    cam::move_mol_to_cam,
     download_mols,
     drawing::draw_peptide,
     drawing_wrappers,

@@ -9,16 +9,14 @@ use graphics::{
 use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
+    cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
     docking::DockingSite,
     drawing,
     drawing::BOND_RADIUS_BASE,
     drawing_wrappers, inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::State,
-    ui::{
-        cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
-        ui_handler,
-    },
+    ui::ui_handler,
 };
 
 pub type Color = (f32, f32, f32);

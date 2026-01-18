@@ -4,7 +4,7 @@ use egui::Ui;
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
-    cam_misc::reset_camera,
+    cam::reset_camera,
     drawing::draw_peptide,
     drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     mol_editor,

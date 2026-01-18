@@ -3,14 +3,13 @@ use std::{fs, io, path::Path, time::Instant};
 use bio_files::{AtomGeneric, BondGeneric};
 use burn::{
     backend::NdArray,
-    config::Config,
     module::Module,
-    record::{FullPrecisionSettings, NamedMpkFileRecorder, Recorder},
+    record::{FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
+use crate::pharmacokinetics::sol_train::features_from_molecule;
 use crate::{
-    mol_characterization::MolCharacterization,
     molecules::small::MoleculeSmall,
     pharmacokinetics::sol_train::{
         AQ_SOL_FEATURE_DIM, ATOM_FEATURE_DIM, AqSolModel, AqSolModelConfig, MAX_ATOMS,
@@ -70,16 +69,13 @@ impl AqSolInfer {
         self.scaler.apply_in_place(&mut global_raw);
 
         // 2. Calculate Graph Features
-        // Convert MoleculeSmall atoms to AtomGeneric for the shared function
-        let atoms_gen: Vec<AtomGeneric> = mol.common.atoms.iter().map(|a| a.to_generic()).collect();
-        let bonds_gen: Vec<BondGeneric> = mol.common.bonds.iter().map(|a| a.to_generic()).collect();
 
-        let num_atoms = atoms_gen.len();
+        let num_atoms = mol.common.atoms.len();
         if num_atoms == 0 {
             return Ok(0.0); // Or handle error
         }
 
-        let (node_vec, adj_vec, _) = mol_to_graph_data(&atoms_gen, &bonds_gen);
+        let (node_vec, adj_vec, _) = mol_to_graph_data(&mol);
         let (padded_nodes, padded_adj, padded_mask) =
             pad_graph_data(&node_vec, &adj_vec, num_atoms);
 
@@ -120,33 +116,4 @@ impl AqSolInfer {
 
 pub fn infer_solubility(mol: &MoleculeSmall) -> io::Result<f32> {
     AqSolInfer::load()?.infer(mol)
-}
-
-/// This must match the fields in `sol_train::csv_to_featuers`.
-/// This contains features from the CSV only; it doesn't have atom or bond data.
-pub fn features_from_molecule(c: &MolCharacterization) -> io::Result<[f32; AQ_SOL_FEATURE_DIM]> {
-    Ok([
-        c.mol_weight,
-        c.log_p,
-        c.molar_refractivity,
-        c.num_heavy_atoms as f32,
-        c.h_bond_acceptor.len() as f32,
-        c.h_bond_donor.len() as f32,
-        c.num_hetero_atoms as f32,
-        // c.halogen.len() as f32,
-        c.rotatable_bonds.len() as f32,
-        c.num_valence_elecs as f32,
-        c.num_rings_aromatic as f32,
-        c.num_rings_saturated as f32,
-        c.num_rings_aliphatic as f32,
-        c.rings.len() as f32,
-        // c.psa_topo,
-        // c.asa_topo,
-        // c.volume,
-        // Use the non-geometric TPSA and ASA values; they're more similar to the training data.
-        c.tpsa_ertl,
-        // c.asa_labute,
-        // c.balaban_j,
-        // c.bertz_ct,
-    ])
 }

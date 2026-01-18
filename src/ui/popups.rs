@@ -4,6 +4,7 @@ use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
+    cam::move_cam_to_mol,
     download_mols::load_atom_coords_rcsb,
     label,
     mol_alignment::run_alignment,
@@ -11,10 +12,7 @@ use crate::{
     mol_screening::screen_by_alignment,
     molecules::MolGenericRef,
     state::State,
-    ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        cam::move_cam_to_mol,
-    },
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
     util::handle_err,
 };
 

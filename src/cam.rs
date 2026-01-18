@@ -1,10 +1,6 @@
-//! Various controls for moving the cam, moving things to the cam etc.
-
-use graphics::{Camera, EngineUpdates, FWD_VEC, Scene};
-use lin_alg::{
-    f32::{Quaternion, Vec3},
-    f64::Vec3 as Vec3F64,
-};
+use egui::Ui;
+use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
+use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
     molecules::{
@@ -14,8 +10,139 @@ use crate::{
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
     selection::Selection,
     state::{State, StateUi},
-    ui::cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
 };
+
+// This control the clip planes in the camera frustum.
+pub const RENDER_DIST_NEAR: f32 = 0.2;
+pub const RENDER_DIST_FAR: f32 = 1_000.;
+
+// These are Å multiplied by 10. Affects the user-setting near property.
+// Near sets the camera frustum's near property.
+pub const VIEW_DEPTH_NEAR_MIN: u16 = 2;
+pub const VIEW_DEPTH_NEAR_MAX: u16 = 300;
+
+// Distance between start and end of the fade. A smaller distance is a more aggressive fade.
+pub const FOG_HALF_DEPTH: u16 = 40;
+
+// The range to start fading distance objects, and when the fade is complete.
+pub const FOG_DIST_DEFAULT: u16 = 70;
+
+// Affects the user-setting far property.
+// Sets the fog center point in its fade.
+pub const FOG_DIST_MIN: u16 = 1;
+pub const FOG_DIST_MAX: u16 = 120;
+
+pub fn calc_fog_dists(dist: u16) -> (f32, f32) {
+    // Clamp.
+    let min = if dist > FOG_HALF_DEPTH {
+        dist - FOG_HALF_DEPTH
+    } else {
+        0
+    };
+
+    (min as f32, (dist + FOG_HALF_DEPTH) as f32)
+}
+
+pub fn set_fog_dist(cam: &mut Camera, dist: u16) {
+    let (fog_start, fog_end) = if dist == FOG_DIST_MAX {
+        (0., 0.) // No fog will render.
+    } else {
+        let val = dist;
+        calc_fog_dists(val)
+    };
+
+    cam.fog_start = fog_start;
+    cam.fog_end = fog_end;
+}
+
+pub fn cam_reset_controls(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    engine_updates: &mut EngineUpdates,
+    changed: &mut bool,
+) {
+    ui.label("Cam:");
+
+    // Preset buttons
+    if ui
+        .button("Front")
+        .on_hover_text("Reset the camera to look at the \"front\" of the molecule. (Y axis)")
+        .clicked()
+    {
+        reset_camera(state, scene, engine_updates, FWD_VEC);
+        *changed = true;
+    }
+
+    if ui
+        .button("Top")
+        .on_hover_text("Reset the camera to look at the \"top\" of the molecule. (Z axis)")
+        .clicked()
+    {
+        reset_camera(state, scene, engine_updates, -UP_VEC);
+        *changed = true;
+    }
+
+    if ui
+        .button("Left")
+        .on_hover_text("Reset the camera to look at the \"left\" of the molecule. (X axis)")
+        .clicked()
+    {
+        reset_camera(state, scene, engine_updates, RIGHT_VEC);
+        *changed = true;
+    }
+}
+
+pub fn move_cam_to_mol(
+    mol: &MoleculeCommon,
+    cam_snapshot: &mut Option<usize>,
+    scene: &mut Scene,
+    look_to_beyond: lin_alg::f64::Vec3,
+    engine_updates: &mut EngineUpdates,
+) {
+    // todo: Cache centroid.
+    let mol_pos: Vec3 = mol.centroid().into();
+    let ctr: Vec3 = look_to_beyond.into();
+
+    cam_look_at_outside(&mut scene.camera, mol_pos, ctr, MOVE_CAM_TO_MOL_DIST);
+
+    engine_updates.camera = true;
+
+    set_flashlight(scene);
+    engine_updates.lighting = true;
+
+    // todo: We likely need to set this too?
+    // state.volatile.orbit_center = Some((MolType::Peptide, 0));
+    if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
+        *center = mol.centroid().into();
+    }
+
+    *cam_snapshot = None;
+}
+
+// There are borrow-error reasons we have this separate wrapper, to prevent a double-borrow on state.
+pub fn move_cam_to_active_mol(
+    state: &mut State,
+    scene: &mut Scene,
+    look_to_beyond: lin_alg::f64::Vec3,
+    engine_updates: &mut EngineUpdates,
+) {
+    // This avoids a double borrow.
+    let mut cam_ss = state.ui.cam_snapshot;
+    let Some(mol) = &mut state.active_mol() else {
+        return;
+    };
+
+    move_cam_to_mol(
+        mol.common(),
+        &mut cam_ss,
+        scene,
+        look_to_beyond,
+        engine_updates,
+    );
+
+    state.ui.cam_snapshot = cam_ss;
+}
 
 const MOVE_TO_TARGET_DIST: f32 = 15.;
 pub const MOVE_CAM_TO_MOL_DIST: f32 = 30.;
@@ -23,7 +150,7 @@ pub const MOVE_TO_CAM_DIST: f32 = 20.;
 
 /// Move the camera to look at a point of interest. Takes the starting location into account.
 /// todo: Smooth interpolated zoom.
-pub fn cam_look_at(cam: &mut Camera, target: Vec3F64) {
+pub fn cam_look_at(cam: &mut Camera, target: lin_alg::f64::Vec3) {
     let tgt: Vec3 = target.into();
     let diff = tgt - cam.position;
     let dir = diff.to_normalized();

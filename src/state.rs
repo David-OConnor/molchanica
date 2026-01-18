@@ -27,7 +27,7 @@ use lin_alg::{
 };
 
 use crate::{
-    SceneFlags,
+    cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
     file_io::FileDialogs,
     mol_alignment::StateAlignment,
@@ -42,7 +42,6 @@ use crate::{
     orca::StateOrca,
     prefs::ToSave,
     selection::{Selection, ViewSelLevel},
-    ui::cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
 };
 
 pub struct State {
@@ -624,4 +623,20 @@ pub struct Templates {
     pub rna: HashMap<String, TemplateData>,
     // todo: A/R
     pub amino_acid: Vec<MoleculeSmall>,
+}
+
+/// Flags to accomplish things that must be done somewhere with access to `Scene`.
+#[derive(Default)]
+pub struct SceneFlags {
+    /// Secondary structure
+    pub update_ss_mesh: bool,
+    /// Solvent-accessible surface.
+    pub update_sas_mesh: bool,
+    pub update_sas_coloring: bool,
+    pub ss_mesh_created: bool,
+    pub sas_mesh_created: bool,
+    pub make_density_iso_mesh: bool,
+    pub clear_density_drawing: bool,
+    pub new_density_loaded: bool,
+    pub new_mol_loaded: bool,
 }

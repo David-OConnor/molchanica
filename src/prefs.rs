@@ -395,3 +395,9 @@ impl State {
         self.update_from_prefs();
     }
 }
+
+// todo: Eventually, implement a system that automatically checks for changes, and don't
+// todo save to disk if there are no changes.
+// For now, we check for differences between to_save and to_save prev, and write to disk
+// if they're not equal.
+pub const PREFS_SAVE_INTERVAL: u64 = 20; // seconds

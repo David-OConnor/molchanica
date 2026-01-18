@@ -4,6 +4,10 @@
 
 use std::{fs, io, path::Path, time::Instant};
 
+use crate::mol_characterization::MolCharacterization;
+use crate::molecules::small::MoleculeSmall;
+
+use crate::molecules::{Atom, Bond};
 use bio_files::{AtomGeneric, BondGeneric, Sdf};
 use burn::{
     backend::{Autodiff, NdArray, Wgpu},
@@ -32,16 +36,11 @@ use burn::{
 use na_seq::Element::*;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
-
-// use molchanica::molecules;
-
-// Todo: Problem importing from Molchanica, but we'd like to use these characteristics.
-// use crate::{mol_characterization::MolCharacterization, molecules::small::MoleculeSmall};
 // ==============================================================================================
 // 1. CONSTANTS & CONFIGURATION
 // ==============================================================================================
 
-pub const AQ_SOL_FEATURE_DIM: usize = 14; // Update this A/R as you add or remove features.
+pub const AQ_SOL_FEATURE_DIM: usize = 19; // Update this A/R as you add or remove features.
 
 pub const ATOM_FEATURE_DIM: usize = 10; // One-hot encoding dimension
 pub const MAX_ATOMS: usize = 60; // Max atoms for padding
@@ -251,27 +250,11 @@ pub fn pad_graph_data(
 
 /// Helper: Converts raw Atoms and Bonds into Flat vectors for Tensors.
 /// Used by both Training and Inference.
-pub fn mol_to_graph_data(
-    atoms: &[AtomGeneric],
-    bonds: &[BondGeneric],
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let num_atoms = atoms.len();
+pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let num_atoms = mol.common.atoms.len();
 
-    // 1. Build Adjacency List (Same as before)
-    let mut adj_list = vec![Vec::new(); num_atoms];
-    for bond in bonds {
-        let a1 = (bond.atom_0_sn as usize).saturating_sub(1);
-        let a2 = (bond.atom_1_sn as usize).saturating_sub(1);
-        if a1 < num_atoms && a2 < num_atoms {
-            adj_list[a1].push(a2);
-            adj_list[a2].push(a1);
-        }
-    }
-
-    // 2. Build Node Features (Same as before)
     let mut node_feats = Vec::new();
-    for atom in atoms {
-        // ... (Keep your existing One-hot logic here) ...
+    for atom in &mol.common.atoms {
         let mut f = vec![0.0; ATOM_FEATURE_DIM];
         let idx = match atom.element {
             /*...*/ _ => 9,
@@ -280,10 +263,10 @@ pub fn mol_to_graph_data(
         node_feats.extend(f);
     }
 
-    // --- 3. Build Adjacency Matrix (NORMALIZED) ---
+    // Build the Adjacency Matrix (NORMALIZED) ---
     let mut adj = vec![0.0; num_atoms * num_atoms];
 
-    for (i, neighbors) in adj_list.iter().enumerate() {
+    for (i, neighbors) in mol.common.adjacency_list.iter().enumerate() {
         // Degree = neighbors + self-loop
         let degree = (neighbors.len() as f32) + 1.0;
 
@@ -362,32 +345,6 @@ impl InferenceStep for AqSolModel<ValidBackend> {
     }
 }
 
-/// This must match the fields in `sol_infer::features_from_molecule`.
-/// This contains features from the CSV only; it doesn't have atom or bond data.
-fn csv_to_features(row: &[String]) -> [f32; AQ_SOL_FEATURE_DIM] {
-    [
-        row[9].parse().unwrap_or(0.0),  // MolWt
-        row[10].parse().unwrap_or(0.0), // MolLogP
-        row[11].parse().unwrap_or(0.0), // MolMR
-        row[12].parse().unwrap_or(0.0), // HeavyAtomCount
-        row[13].parse().unwrap_or(0.0), // NumHAcceptors
-        row[14].parse().unwrap_or(0.0), // NumHDonors
-        row[15].parse().unwrap_or(0.0), // NumHeteroatoms
-        row[16].parse().unwrap_or(0.0), // NumRotatableBonds
-        row[17].parse().unwrap_or(0.0), // NumValenceElectrons
-        row[18].parse().unwrap_or(0.0), // NumAromaticRings
-        row[19].parse().unwrap_or(0.0), // NumSaturatedRings
-        row[20].parse().unwrap_or(0.0), // NumAliphaticRings
-        row[21].parse().unwrap_or(0.0), // RingCount
-        row[22].parse().unwrap_or(0.0), // TPSA
-                                        // ASA is not matching, although I'm not sure why.
-                                        // row[23].parse().unwrap_or(0.0), // LabuteASA
-                                        // Balaban J and BertCT: We are unable to accurate calculate them, so skip for ML.
-                                        // row[24].parse().unwrap_or(0.0), // BalabanJ
-                                        // row[25].parse().unwrap_or(0.0), // BertzCT
-    ]
-}
-
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -448,55 +405,47 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
 
         let cols: Vec<String> = split_csv_line(line);
 
-        // for col in &cols {
-        //     println!("-col: {col}");
-        // }
-
         let filename = &cols[0];
-        let features_property = csv_to_features(&cols);
 
         let solubility: f32 = cols[5].parse().unwrap();
 
         let sdf_path = sdf_folder.join(format!("{filename}.sdf"));
 
-        // println!("Loading SDF at path {sdf_path:?}"); //  todo temp
-        let sdf = match Sdf::load(&sdf_path) {
-            Ok(s) => s,
-            Err(e) => {
-                println!("Error loading SDF at path {sdf_path:?}: {:?}", e);
-                continue;
-            }
+        let mol: MoleculeSmall = {
+            let sdf = match Sdf::load(&sdf_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    println!("Error loading SDF at path {sdf_path:?}: {:?}", e);
+                    continue;
+                }
+            };
+            sdf.clone().try_into()?
         };
 
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
-        // todo: Unable to import from molchanica.
-        // let features_property = {
-        //     let mol: MoleculeSmall = sdf.clone().try_into()?;
-        //     let char = MolCharacterization::new(&mol.common);
-        //     features_from_molecule(&char)?
-        // };
+        let features_property = {
+            let char = MolCharacterization::new(&mol.common);
+            features_from_molecule(&char)?
+        };
 
-        let atoms = sdf.atoms.clone();
-        let bonds = sdf.bonds.clone();
-
-        if bonds.is_empty() && atoms.len() > 20 {
+        if mol.common.bonds.is_empty() && mol.common.atoms.len() > 20 {
             println!("\n\nNo bonds found in SDF at path (Likely you RMed them) {sdf_path:?}\n\n");
         }
 
-        if bonds.is_empty() {
+        if mol.common.bonds.is_empty() {
             eprintln!("No bonds found in SDF at path {sdf_path:?}. Skipping.");
             continue;
         }
 
         // ---------------------------------------------------
 
-        let num_atoms = atoms.len();
+        let num_atoms = mol.common.atoms.len();
         if num_atoms == 0 || num_atoms > MAX_ATOMS {
             continue;
         }
 
-        let (features_node, adj_list, _) = mol_to_graph_data(&atoms, &bonds);
+        let (features_node, adj_list, _) = mol_to_graph_data(&mol);
 
         samples.push(Sample {
             features_property,
@@ -601,4 +550,37 @@ pub fn main() {
         "Training complete in {:?} s. Saved model to {MODEL_FILE}",
         elapsed
     );
+}
+
+/// Extract features from a molecule that are relevant for inferring solubility. We use this
+/// in both training and inference workflows. This does not need to correspond to the AqSolDb
+/// CSV, but we are using its fields as a guideline.
+pub fn features_from_molecule(c: &MolCharacterization) -> io::Result<[f32; AQ_SOL_FEATURE_DIM]> {
+    Ok([
+        c.num_atoms as f32,
+        c.num_bonds as f32,
+        c.mol_weight,
+        c.num_heavy_atoms as f32,
+        c.h_bond_acceptor.len() as f32,
+        c.h_bond_donor.len() as f32,
+        c.num_hetero_atoms as f32,
+        c.halogen.len() as f32,
+        c.rotatable_bonds.len() as f32,
+        // tood: Functional group counts too
+        c.num_valence_elecs as f32,
+        c.num_rings_aromatic as f32,
+        c.num_rings_saturated as f32,
+        c.num_rings_aliphatic as f32,
+        c.rings.len() as f32,
+        c.log_p,
+        c.molar_refractivity,
+        c.psa_topo,
+        c.asa_topo,
+        c.volume,
+        // Use the non-geometric TPSA and ASA values; they're more similar to the training data.
+        // c.tpsa_ertl,
+        // c.asa_labute,
+        // c.balaban_j,
+        // c.bertz_ct,
+    ])
 }
