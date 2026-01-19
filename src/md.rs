@@ -13,7 +13,7 @@ use dynamics::{
     compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
-use lin_alg::f64::Vec3;
+use lin_alg::f64::{Vec3, X_VEC, Y_VEC, Z_VEC};
 
 use crate::{
     drawing::{draw_peptide, draw_water},
@@ -195,6 +195,7 @@ pub fn build_dynamics(
     mut peptide_only_near_lig: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
     fast_init: bool,
+    copies: usize,
 ) -> Result<MdState, ParamError> {
     println!("Setting up dynamics...");
 
@@ -226,7 +227,7 @@ pub fn build_dynamics(
             }
         };
 
-        mols.push(MolDynamics {
+        let mol = MolDynamics {
             ff_mol_type: *ff_mol_type,
             atoms: atoms_gen,
             atom_posits: Some(mol.atom_posits.clone()),
@@ -236,7 +237,34 @@ pub fn build_dynamics(
             static_: false,
             bonded_only: false,
             mol_specific_params: msp,
-        });
+        };
+
+        let mut mol_copy = None;
+        if copies > 1 {
+            mol_copy = Some(mol.clone());
+
+            // todo: Adjust the mol's position A/R.
+        }
+
+        mols.push(mol);
+
+        if copies > 1 {
+            let offset_dirs = [X_VEC, -X_VEC, Y_VEC - Y_VEC, Z_VEC, -Z_VEC];
+            // todo: Dedicated fn for this?
+            let offset_amt = 10.; // todo: Should depend on the mol.
+            for i in 0..copies - 1 {
+                let mut mol_extra = mol_copy.clone().unwrap();
+
+                let offset = offset_dirs[i % 6] * offset_amt;
+                for atom in &mut mol_extra.atoms {
+                    atom.posit += offset;
+                }
+                // todo: Sort out how to do this position properly. Grid?
+
+                // todo: Similar algorithm to how you set up water molecules; same idea.
+                mols.push(mol_extra);
+            }
+        }
     }
 
     if let Some(p) = peptide {

@@ -40,6 +40,11 @@ pub struct MoleculeCommon {
     pub filename: String,
     pub selected_for_md: bool,
     pub entity_i_range: Option<(usize, usize)>,
+    // todo: Consider if we should move this to MoleculeSmall etc.
+    // todo: This index only/always applies to small molecules.
+    /// We have instantiated multiple copies of a molecule for MD simulations.
+    /// If Some, that is the index of the parent.
+    pub copy_for_md: Option<usize>,
 }
 
 impl Default for MoleculeCommon {
@@ -57,6 +62,7 @@ impl Default for MoleculeCommon {
             filename: String::new(),
             selected_for_md: false,
             entity_i_range: None,
+            copy_for_md: None,
         }
     }
 }

@@ -585,15 +585,7 @@ impl MoleculeSmall {
 
         // todo: We may wish to run this after updating params from PubChem, but this is fine for now,
         // todo, or in general if you get everything you need Hi-fi from calculations.
-
-        // todo: This may be a good place to popular pharmacokinetics in general.
-        let sol = sol_infer::infer_solubility(self);
-        if let Ok(s) = sol {
-            self.pharmacokinetics = Some(Pharmacokinetics {
-                solubility_water: s,
-                ..Default::default()
-            })
-        }
+        self.pharmacokinetics = Some(Pharmacokinetics::new(self));
     }
 
     pub fn update_idents_and_char_from_pubchem(&mut self, props: &pubchem::Properties) {

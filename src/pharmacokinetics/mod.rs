@@ -19,20 +19,6 @@ fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
-fn estimate_tpsa(ch: &MolCharacterization) -> f32 {
-    // Very rough: hetero atoms + HBA/HBD drive PSA up.
-    let o = ch.oxygen.len() as f32;
-    let n = ch.nitrogen.len() as f32;
-    let s = ch.sulfur.len() as f32;
-    let p = ch.phosphorus.len() as f32;
-    let hba = ch.h_bond_acceptor.len() as f32;
-    let hbd = ch.h_bond_donor.len() as f32;
-
-    // Ballpark contributions; clamp to a sane range.
-    let v: f32 = 17.0 * o + 12.0 * n + 25.0 * s + 13.0 * p + 1.5 * hba + 2.0 * hbd;
-    v.clamp(0.0, 300.0)
-}
-
 /// Estimates of how the molecule, in drug form, acts in the human body.
 /// https://en.wikipedia.org/wiki/Pharmacokinetics
 #[derive(Clone, Debug, Default)]
@@ -84,14 +70,6 @@ impl Pharmacokinetics {
         // If it looks appreciably ionized, water solubility tends to go up and BBB tends to go down.
         let ionized = sigmoid((abs_net_charge - 0.25) * 6.0); // 0..1
         let ion_penalty = 1.0 - ionized;
-
-        // Water solubility (0..1): prefer lower logP, higher polarity, lower MW; boost if ionized.
-        let solubility_water = clamp01(
-            0.55 * sigmoid((1.0 - log_p) * 1.2)
-                + 0.30 * sigmoid((140.0 - tpsa) / 35.0)
-                + 0.15 * sigmoid((550.0 - mw) / 140.0)
-                + 0.25 * ionized,
-        );
 
         // Lipid solubility (0..1): prefer moderate/high logP, not too polar.
         let solubility_lipid = clamp01(
@@ -152,6 +130,8 @@ impl Pharmacokinetics {
             t_half_hours * 3600.0
         };
 
+        let solubility_water = sol_infer::infer_solubility(mol).unwrap();
+
         // ADME-ish scalars (0..1), stitched from the above.
         let liberation = solubility_water;
         let absorption = clamp01(liberation * 0.65 + gut_wall * 0.55);
@@ -179,7 +159,7 @@ impl Pharmacokinetics {
             half_life_blood_stream,
             breakdown_products: Vec::new(),
             liberation,
-            absorption: absorption,
+            absorption,
             distribution,
             metabolism,
             excretion,

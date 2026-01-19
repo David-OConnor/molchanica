@@ -2,13 +2,12 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::molecules::MolIdent;
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
-    molecules::{MolGenericRef, MolType, common::MoleculeCommon, small::MoleculeSmall},
+    molecules::{MolGenericRef, MolIdent, MolType, common::MoleculeCommon, small::MoleculeSmall},
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
@@ -462,17 +461,15 @@ pub(in crate::ui) fn sidebar(
             if state.ui.ui_vis.mol_char {
                 let mut toggled = false; // Avoid double borrow.
                 if let Some(m) = &state.active_mol() {
-                    // ui.horizontal(|ui| {
                     if let MolGenericRef::Small(mol) = m {
                         if ui
-                            .button(RichText::new("Close details").color(Color32::LIGHT_GRAY))
+                            .button(RichText::new("Close details").color(Color32::LIGHT_RED))
                             .clicked()
                         {
                             toggled = true;
                         }
                         mol_char_disp(mol, ui);
                     }
-                    // });
                 }
                 if toggled {
                     state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;

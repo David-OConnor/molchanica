@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+"""
+This script downloads molecules from the AqSolDb `data_curated.csv` from PubChem, storing
+them in the same folder. The AqSolDb IDs are the filenames stored.
+"""
+
 import argparse
 import csv
 import os

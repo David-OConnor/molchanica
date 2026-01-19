@@ -214,6 +214,8 @@ pub fn md_setup(
             let num_steps_prev = state.to_save.num_md_steps;
             num_field(&mut state.to_save.num_md_steps, "Steps:", 50, ui);
 
+            num_field(&mut state.to_save.num_md_copies, "Copies:", 32, ui);
+
             if state.to_save.num_md_steps != num_steps_prev {
                 state.volatile.md_runtime = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
             }

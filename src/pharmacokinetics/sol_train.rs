@@ -4,10 +4,6 @@
 
 use std::{fs, io, path::Path, time::Instant};
 
-use crate::mol_characterization::MolCharacterization;
-use crate::molecules::small::MoleculeSmall;
-
-use crate::molecules::{Atom, Bond};
 use bio_files::{AtomGeneric, BondGeneric, Sdf};
 use burn::{
     backend::{Autodiff, NdArray, Wgpu},
@@ -36,6 +32,11 @@ use burn::{
 use na_seq::Element::*;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    mol_characterization::MolCharacterization,
+    molecules::{Atom, Bond, small::MoleculeSmall},
+};
 // ==============================================================================================
 // 1. CONSTANTS & CONFIGURATION
 // ==============================================================================================

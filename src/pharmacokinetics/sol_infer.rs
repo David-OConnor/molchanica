@@ -8,13 +8,12 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
-use crate::pharmacokinetics::sol_train::features_from_molecule;
 use crate::{
     molecules::small::MoleculeSmall,
     pharmacokinetics::sol_train::{
         AQ_SOL_FEATURE_DIM, ATOM_FEATURE_DIM, AqSolModel, AqSolModelConfig, MAX_ATOMS,
-        MODEL_CFG_FILE, MODEL_DIR, MODEL_FILE, SCALER_FILE, StandardScaler, mol_to_graph_data,
-        pad_graph_data,
+        MODEL_CFG_FILE, MODEL_DIR, MODEL_FILE, SCALER_FILE, StandardScaler, features_from_molecule,
+        mol_to_graph_data, pad_graph_data,
     },
 };
 
