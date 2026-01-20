@@ -31,7 +31,7 @@ use crate::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
-    pharmacokinetics::{Pharmacokinetics, sol_infer},
+    pharmacokinetics::{Pharmacokinetics, infer},
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å

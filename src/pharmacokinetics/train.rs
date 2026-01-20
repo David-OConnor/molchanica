@@ -1,6 +1,10 @@
 #![allow(unused)] // Required to prevent false positives.
 
-//! To run: `cargo r --release --features train-sol --bin train_sol`
+//! Entry point for training. (Sort of; via a thin wrapper in `/src/infer`
+//! We use this for Therapeutic Data Commons data, and originally, AqSolDb. (Which is one data
+//! set in TDC)
+
+//! To run: `cargo r --release --features train --bin train`
 
 use std::{fs, io, path::Path, time::Instant};
 
@@ -41,36 +45,41 @@ use crate::{
 // 1. CONSTANTS & CONFIGURATION
 // ==============================================================================================
 
-pub const AQ_SOL_FEATURE_DIM: usize = 19; // Update this A/R as you add or remove features.
+pub const FEAT_DIM_PARAM: usize = 19; // Update this A/R as you add or remove features.
 
-pub const ATOM_FEATURE_DIM: usize = 10; // One-hot encoding dimension
+pub const FEAT_DIM_ATOMS: usize = 10; // One-hot encoding dimension
 pub const MAX_ATOMS: usize = 60; // Max atoms for padding
 
 pub const MODEL_CFG_FILE: &str = "qsol_model_config.json";
+
 // Extension handled automatically
-// pub const MODEL_FILE: &str = "aqsol_model.mpk";
 pub const MODEL_FILE: &str = "aqsol_model";
 pub const SCALER_FILE: &str = "aqsol_scaler.json";
 
 pub const MODEL_DIR: &str = "ml_models/aqsol";
-const AQ_SOL_DB_CSV_PATH: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDB/results/data_curated.csv";
-const AQ_SOL_DB_SDF_PATH: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDb_mols";
+// const SDF_PATH_AQ_SOL_DB: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDb_mols";
+// const CSV_PATH_AQ_SOL_DB: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDB/results/data_curated.csv";
+
+const SDF_PATH_BB: &str = "C:/Users/the_a/Desktop/bio_misc/tdc_data/mols_bbb_martins";
+const CSV_PATH_BB: &str = "C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins.csv";
+
+const TGT_COL_TDC: usize = 2;
 
 type TrainBackend = Autodiff<NdArray>;
 // type TrainBackend = Wgpu<f32, i32>; // todo?
 type ValidBackend = NdArray;
 
 #[derive(Config, Debug)]
-pub struct AqSolModelConfig {
+pub struct ModelConfig {
     pub global_input_dim: usize,
     pub atom_input_dim: usize,
     pub gnn_hidden_dim: usize,
     pub mlp_hidden_dim: usize,
 }
 
-impl AqSolModelConfig {
-    pub fn init<B: Backend>(&self, device: &B::Device) -> AqSolModel<B> {
-        AqSolModel {
+impl ModelConfig {
+    pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
+        Model {
             gnn_proj: LinearConfig::new(self.atom_input_dim, self.gnn_hidden_dim).init(device),
             global_fc: LinearConfig::new(self.global_input_dim, self.mlp_hidden_dim).init(device),
             // todo: For now with no graph
@@ -85,7 +94,7 @@ impl AqSolModelConfig {
 // ==============================================================================================
 
 #[derive(Module, Debug)]
-pub struct AqSolModel<B: Backend> {
+pub struct Model<B: Backend> {
     /// Graph Branch: Simple projection (GCN-like)
     gnn_proj: Linear<B>,
     /// Global Branch: MLP for CSV features
@@ -94,7 +103,7 @@ pub struct AqSolModel<B: Backend> {
     head: Linear<B>,
 }
 
-impl<B: Backend> AqSolModel<B> {
+impl<B: Backend> Model<B> {
     pub fn forward(
         &self,
         nodes: Tensor<B, 3>,   // [Batch, MaxAtoms, AtomDim]
@@ -136,7 +145,7 @@ impl<B: Backend> AqSolModel<B> {
 #[derive(Clone, Debug)]
 pub struct Sample {
     /// From computed properties of the molecule.
-    pub features_property: [f32; AQ_SOL_FEATURE_DIM],
+    pub features_property: [f32; FEAT_DIM_PARAM],
     /// From the atom/bond graph
     pub features_node: Vec<f32>,
     pub adj_list: Vec<f32>,
@@ -145,7 +154,7 @@ pub struct Sample {
 }
 
 #[derive(Clone, Debug)]
-pub struct AqSolBatch<B: Backend> {
+pub struct Batch<B: Backend> {
     pub nodes: Tensor<B, 3>,
     pub adj: Tensor<B, 3>,
     pub mask: Tensor<B, 3>,
@@ -154,12 +163,12 @@ pub struct AqSolBatch<B: Backend> {
 }
 
 #[derive(Clone)]
-pub struct AqSolBatcher {
+pub struct Batcher_ {
     pub scaler: StandardScaler,
 }
 
-impl<B: Backend> Batcher<B, Sample, AqSolBatch<B>> for AqSolBatcher {
-    fn batch(&self, items: Vec<Sample>, device: &B::Device) -> AqSolBatch<B> {
+impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
+    fn batch(&self, items: Vec<Sample>, device: &B::Device) -> Batch<B> {
         let batch_size = items.len();
 
         let mut batch_nodes = Vec::new();
@@ -182,13 +191,13 @@ impl<B: Backend> Batcher<B, Sample, AqSolBatch<B>> for AqSolBatcher {
             batch_mask.extend(p_mask);
         }
 
-        let nodes = TensorData::new(batch_nodes, [batch_size, MAX_ATOMS, ATOM_FEATURE_DIM]);
+        let nodes = TensorData::new(batch_nodes, [batch_size, MAX_ATOMS, FEAT_DIM_ATOMS]);
         let adj = TensorData::new(batch_adj, [batch_size, MAX_ATOMS, MAX_ATOMS]);
         let mask = TensorData::new(batch_mask, [batch_size, MAX_ATOMS, 1]);
-        let globals = TensorData::new(batch_globals, [batch_size, AQ_SOL_FEATURE_DIM]);
+        let globals = TensorData::new(batch_globals, [batch_size, FEAT_DIM_PARAM]);
         let y = TensorData::new(batch_y, [batch_size, 1]);
 
-        AqSolBatch {
+        Batch {
             nodes: Tensor::from_data(nodes, device),
             adj: Tensor::from_data(adj, device),
             mask: Tensor::from_data(mask, device),
@@ -209,8 +218,8 @@ pub struct StandardScaler {
 }
 
 impl StandardScaler {
-    pub fn apply_in_place(&self, x: &mut [f32; AQ_SOL_FEATURE_DIM]) {
-        for i in 0..AQ_SOL_FEATURE_DIM {
+    pub fn apply_in_place(&self, x: &mut [f32; FEAT_DIM_PARAM]) {
+        for i in 0..FEAT_DIM_PARAM {
             let s = if self.std[i].abs() < 1e-9 {
                 1.0
             } else {
@@ -231,9 +240,9 @@ pub fn pad_graph_data(
     let n = num_atoms.min(MAX_ATOMS);
 
     // 1. Nodes: Copy n, pad rest
-    let mut p_nodes = Vec::with_capacity(MAX_ATOMS * ATOM_FEATURE_DIM);
-    p_nodes.extend_from_slice(&raw_nodes[0..n * ATOM_FEATURE_DIM]);
-    p_nodes.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * ATOM_FEATURE_DIM));
+    let mut p_nodes = Vec::with_capacity(MAX_ATOMS * FEAT_DIM_ATOMS);
+    p_nodes.extend_from_slice(&raw_nodes[0..n * FEAT_DIM_ATOMS]);
+    p_nodes.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * FEAT_DIM_ATOMS));
 
     // 2. Mask: 1.0 for atoms, 0.0 for pad
     let mut p_mask = Vec::with_capacity(MAX_ATOMS);
@@ -264,7 +273,7 @@ pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) 
     // 1. Node Features (Unchanged)
     let mut node_feats = Vec::new();
     for atom in &mol.common.atoms {
-        let mut f = vec![0.0; ATOM_FEATURE_DIM];
+        let mut f = vec![0.0; FEAT_DIM_ATOMS];
         // Ensure this match is IDENTICAL to your training expectations
         let idx = match atom.element {
             Hydrogen => 0,
@@ -334,11 +343,11 @@ pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) 
 
 fn fit_scaler(train: &[Sample]) -> StandardScaler {
     let n = train.len().max(1) as f32;
-    let mut mean = vec![0.0; AQ_SOL_FEATURE_DIM];
-    let mut var = vec![0.0; AQ_SOL_FEATURE_DIM];
+    let mut mean = vec![0.0; FEAT_DIM_PARAM];
+    let mut var = vec![0.0; FEAT_DIM_PARAM];
 
     for s in train {
-        for i in 0..AQ_SOL_FEATURE_DIM {
+        for i in 0..FEAT_DIM_PARAM {
             mean[i] += s.features_property[i];
         }
     }
@@ -347,7 +356,7 @@ fn fit_scaler(train: &[Sample]) -> StandardScaler {
     }
 
     for s in train {
-        for i in 0..AQ_SOL_FEATURE_DIM {
+        for i in 0..FEAT_DIM_PARAM {
             let d = s.features_property[i] - mean[i];
             var[i] += d * d;
         }
@@ -360,8 +369,8 @@ fn fit_scaler(train: &[Sample]) -> StandardScaler {
 // 5. TRAINING IMPLEMENTATION
 // ==============================================================================================
 
-impl TrainStep for AqSolModel<TrainBackend> {
-    type Input = AqSolBatch<TrainBackend>;
+impl TrainStep for Model<TrainBackend> {
+    type Input = Batch<TrainBackend>;
     type Output = RegressionOutput<TrainBackend>;
 
     fn step(&self, batch: Self::Input) -> TrainOutput<Self::Output> {
@@ -378,8 +387,8 @@ impl TrainStep for AqSolModel<TrainBackend> {
     }
 }
 
-impl InferenceStep for AqSolModel<ValidBackend> {
-    type Input = AqSolBatch<ValidBackend>;
+impl InferenceStep for Model<ValidBackend> {
+    type Input = Batch<ValidBackend>;
     type Output = RegressionOutput<ValidBackend>;
 
     fn step(&self, batch: Self::Input) -> Self::Output {
@@ -437,13 +446,13 @@ fn split_csv_line(line: &str) -> Vec<String> {
     out
 }
 
-fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
+fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<Vec<Sample>> {
     let mut samples = Vec::new();
 
     let csv_data = fs::read_to_string(csv_path)?;
 
     // Skip the header.
-    for line in csv_data.lines().skip(1) {
+    for (i, line) in csv_data.lines().skip(1).enumerate() {
         let line = line.trim_end_matches('\r');
         if line.is_empty() {
             continue;
@@ -451,11 +460,14 @@ fn read_data(csv_path: &Path, sdf_folder: &Path) -> io::Result<Vec<Sample>> {
 
         let cols: Vec<String> = split_csv_line(line);
 
-        let filename = &cols[0];
+        // We determine which file to open based on our SDF-download script's convention,
+        // using the CSV filename, and row index (0-based, skipping header).
+        // let filename = &cols[0];
+        let filename = csv_path.file_stem().unwrap().to_str().unwrap();
 
-        let solubility: f32 = cols[5].parse().unwrap();
+        let solubility: f32 = cols[tgt_col].parse().unwrap();
 
-        let sdf_path = sdf_folder.join(format!("{filename}.sdf"));
+        let sdf_path = sdf_folder.join(format!("{filename}_{i}.sdf"));
 
         let mol: MoleculeSmall = {
             let sdf = match Sdf::load(&sdf_path) {
@@ -518,7 +530,7 @@ pub fn main() {
 
     // Data loading
     let mut data_csv_sdf =
-        read_data(Path::new(AQ_SOL_DB_CSV_PATH), Path::new(AQ_SOL_DB_SDF_PATH)).unwrap();
+        read_data(Path::new(CSV_PATH_AQ_SOL_DB), Path::new(SDF_PATH_AQ_SOL_DB)).unwrap();
 
     println!("Sample len: {}", data_csv_sdf.len());
 
@@ -533,22 +545,22 @@ pub fn main() {
     let device = Default::default();
 
     // 2. Data Loaders
-    let train_loader = DataLoaderBuilder::new(AqSolBatcher {
+    let train_loader = DataLoaderBuilder::new(Batcher_ {
         scaler: scaler.clone(),
     })
     .batch_size(128)
     .shuffle(42)
     .build(InMemDataset::new(train_raw.to_vec()));
 
-    let valid_loader = DataLoaderBuilder::new(AqSolBatcher {
+    let valid_loader = DataLoaderBuilder::new(Batcher_ {
         scaler: scaler.clone(),
     })
     .batch_size(128)
     .build(InMemDataset::new(valid_raw.to_vec()));
 
-    let model_cfg = AqSolModelConfig {
-        global_input_dim: AQ_SOL_FEATURE_DIM,
-        atom_input_dim: ATOM_FEATURE_DIM,
+    let model_cfg = ModelConfig {
+        global_input_dim: FEAT_DIM_PARAM,
+        atom_input_dim: FEAT_DIM_ATOMS,
         gnn_hidden_dim: 64,
         mlp_hidden_dim: 128,
     };
@@ -598,10 +610,9 @@ pub fn main() {
     );
 }
 
-/// Extract features from a molecule that are relevant for inferring solubility. We use this
-/// in both training and inference workflows. This does not need to correspond to the AqSolDb
-/// CSV, but we are using its fields as a guideline.
-pub fn features_from_molecule(c: &MolCharacterization) -> io::Result<[f32; AQ_SOL_FEATURE_DIM]> {
+/// Extract features from a molecule that are relevant for inferring the target parameter. We use this
+/// in both training and inference workflows.
+pub fn features_from_molecule(c: &MolCharacterization) -> io::Result<[f32; FEAT_DIM_PARAM]> {
     Ok([
         c.num_atoms as f32,
         c.num_bonds as f32,

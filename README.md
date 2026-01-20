@@ -229,9 +229,14 @@ it with the Windows release, and the linux install script optionally installs it
 
 Can import Map files directly, and save load density to Map format.
 
+## Pharmacokinetics
+
+Uses neural networks to infer pharmacokinetic properties of arbitrary small molecules,
+using [Therapeutic Data Commons](https://tdcommons.ai/) data.
+
 ## PyMol-like Command line interface
 
-molchanica supports a very limited subset of PyMol's CLI interface. Supported commands:
+Molchanica supports a very limited subset of PyMol's CLI interface. Supported commands:
 
 ![Solvent accessible surface mesh](screenshots/surface_mesh_transparent.png)
 

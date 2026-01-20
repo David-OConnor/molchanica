@@ -8,9 +8,9 @@
 //!
 //! [TDC ADME](https://tdcommons.ai/single_pred_tasks/adme/)
 
-pub mod sol_infer;
-pub mod sol_train; // Pub to allow access from the training entry point.
+pub mod infer;
 mod solubility;
+pub mod train; // Pub to allow access from the training entry point.
 
 use crate::{mol_characterization::MolCharacterization, molecules::small::MoleculeSmall};
 
@@ -63,19 +63,20 @@ pub struct Pharmacokinetics {
 
 impl Pharmacokinetics {
     pub fn new(mol: &MoleculeSmall) -> Self {
-        let ch = match mol.characterization.as_ref() {
-            Some(ch) => ch,
-            None => return Self::default(),
-        };
-
-        let solubility_water = sol_infer::infer_solubility(mol).unwrap();
+        let solubility_water = infer::infer_solubility(mol).unwrap();
+        let blood_brain_barrier = infer::infer_bbb(mol).unwrap();
 
         let adme = Adme {
             solubility_water,
+            blood_brain_barrier,
             ..Default::default()
         };
 
-        Self { adme }
+        let toxicity = Toxicity {
+            ..Default::default()
+        };
+
+        Self { adme, toxicity }
     }
 }
 

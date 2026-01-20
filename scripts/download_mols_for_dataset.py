@@ -1,20 +1,22 @@
-"""
-This script downloads molecules from the AqSolDb `data_curated.csv` or Therapeutic Data Commons molecules
-from PubChem, storing them in a folder. For AqSolDb, the IDs are the filenames stored.
-
-For TDC, filenames are by index, starting at 0.
-
-
-Example running:
-`python download_mols_for_dataset.py --csv /set1.csv --out /sdf_out_set1
-"""
+# """
+# This script downloads molecules from the AqSolDb `data_curated.csv` or Therapeutic Data Commons molecules
+# from PubChem, storing them in a folder. For AqSolDb, the IDs are the filenames stored.
+#
+# For TDC, filenames are by index, starting at 0.
+#
+#
+# Example running:
+# `python download_mols_for_dataset.py --csv /set1.csv --out /sdf_out_set1
+#
+# Or for our current use:
+# `python .\download_mols_for_dataset.py --csv C:\Users\the_a\Desktop\bio_misc\tdc_data\caco2_wang.csv --out C:\Users\the_a\Desktop\bio_misc\tdc_data\mols_caco2_wang`
+# """
 
 import argparse
 import csv
 import os
 import time
 import urllib.parse
-from typing import Optional
 
 import requests
 
@@ -25,40 +27,34 @@ AQ_SOL_SMILES_COL = 4
 
 TDC_SMILES_COL = 1
 
-SLEEP_BETWEEN_MOLS = 0.2 # Seconds.
+# PubCHem requests no more than 5 per second. We pad this.
+SLEEP_BETWEEN_MOLS = 0.22 # Seconds.
 
 
-def sdf_url_from_smiles(ident: str) -> str:
-    """We use Smiles generally, as both TDC and AqSolDb use this. TDC also has common name.
-    AqSolDb has Inchi, InchiKey, and common nam.e"""
-    # PubChem PUG REST: /compound/smiles/<SMILES>/SDF?record_type=3d
-    # SMILES must be URL-encoded because it often contains characters like #, +, /, =, etc.
-    encoded = urllib.parse.quote(ident, safe="")
-    return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded}/SDF?record_type=3d"
-    # return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/{encoded}/SDF?record_type=3d"
+# def sdf_url_from_smiles(ident: str) -> str:
+#     """We use Smiles generally, as both TDC and AqSolDb use this. TDC also has common name.
+#     AqSolDb has Inchi, InchiKey, and common nam.e"""
+#     # PubChem PUG REST: /compound/smiles/<SMILES>/SDF?record_type=3d
+#     # SMILES must be URL-encoded because it often contains characters like #, +, /, =, etc.
+#     encoded = urllib.parse.quote(ident, safe="")
+#     return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded}/SDF?record_type=3d"
+#     # return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/{encoded}/SDF?record_type=3d"
 
 
 def download_sdf(ident: str, timeout_s: float) -> str:
-    url = sdf_url_from_smiles(ident)
+    base = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/SDF"
 
-    resp = requests.get(
-        url,
-        headers={"User-Agent": "aqsoldb-pubchem-sdf-downloader/1.0"},
-        timeout=timeout_s,
-    )
+    headers = {"User-Agent": "aqsoldb-pubchem-sdf-downloader/1.0"}
+
+    params = {"smiles": ident, "record_type": "3d"}
+    resp = requests.get(base, params=params, headers=headers, timeout=timeout_s)
 
     # If PubChem has no 3D conformer, fall back to 2D.
     if resp.status_code == 404:
-        url_2d = url.replace("3d", "2d")
-        resp = requests.get(
-            url_2d,
-            headers={"User-Agent": "aqsoldb-pubchem-sdf-downloader/1.0"},
-            timeout=timeout_s,
-        )
+        params["record_type"] = "2d"
+        resp = requests.get(base, params=params, headers=headers, timeout=timeout_s)
 
     resp.raise_for_status()
-
-    # PubChem SDF should be UTF-8/ASCII; if requests couldn't confidently detect it, fall back.
     resp.encoding = resp.encoding or "utf-8"
     try:
         return resp.text

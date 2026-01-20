@@ -6,10 +6,9 @@ edition = "2024"
 
 # For training our solubility
 [[bin]]
-name = "train_sol"
-#path = "src/pharmacokinetics/sol_train.rs"
-path = "src/sol_train_entry.rs"
-required-features = ["train-sol"]
+name = "train"
+path = "src/train_entry.rs"
+required-features = ["train"]
 
 
 [dependencies]
@@ -91,7 +90,7 @@ default = ["cuda"]
 #cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/vkfft", "ewald/vkfft"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
-train-sol = []
+train = []
 
 
 [profile.release]

@@ -1,6 +1,5 @@
 use std::{fs, io, path::Path, time::Instant};
 
-use bio_files::{AtomGeneric, BondGeneric};
 use burn::{
     backend::NdArray,
     module::Module,
@@ -10,29 +9,29 @@ use burn::{
 
 use crate::{
     molecules::small::MoleculeSmall,
-    pharmacokinetics::sol_train::{
-        AQ_SOL_FEATURE_DIM, ATOM_FEATURE_DIM, AqSolModel, AqSolModelConfig, MAX_ATOMS,
-        MODEL_CFG_FILE, MODEL_DIR, MODEL_FILE, SCALER_FILE, StandardScaler, features_from_molecule,
-        mol_to_graph_data, pad_graph_data,
+    pharmacokinetics::train::{
+        FEAT_DIM_ATOMS, FEAT_DIM_PARAM, MAX_ATOMS, MODEL_CFG_FILE, MODEL_DIR, MODEL_FILE, Model,
+        ModelConfig, SCALER_FILE, StandardScaler, features_from_molecule, mol_to_graph_data,
+        pad_graph_data,
     },
 };
 
 type InferBackend = NdArray;
 
-pub struct AqSolInfer {
-    model: AqSolModel<InferBackend>,
+pub struct Infer {
+    model: Model<InferBackend>,
     scaler: StandardScaler,
     device: <InferBackend as Backend>::Device,
 }
 
-impl AqSolInfer {
+impl Infer {
     pub fn load() -> io::Result<Self> {
         let model_dir = Path::new(MODEL_DIR);
 
         let cfg_bytes = fs::read(model_dir.join(MODEL_CFG_FILE))?;
         let scaler_bytes = fs::read(model_dir.join(SCALER_FILE))?;
 
-        let config: AqSolModelConfig = serde_json::from_slice(&cfg_bytes)?;
+        let config: ModelConfig = serde_json::from_slice(&cfg_bytes)?;
         let scaler: StandardScaler = serde_json::from_slice(&scaler_bytes)?;
 
         let device = Default::default();
@@ -51,14 +50,14 @@ impl AqSolInfer {
     }
 
     pub fn infer(&self, mol: &MoleculeSmall) -> io::Result<f32> {
-        println!("Starting solubility inference...");
+        println!("Startinginference...");
         let start = Instant::now();
 
         // 1. Calculate Global Features
         let Some(char) = &mol.characterization else {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Missing molecule characterization; can't infer solubility",
+                "Missing molecule characterization; can't infer.",
             ));
         };
         let mut global_raw = features_from_molecule(char)?;
@@ -81,11 +80,11 @@ impl AqSolInfer {
         // 4. Create Tensors
         // Note: Batch size is 1
         let t_globals = Tensor::<InferBackend, 2>::from_data(
-            TensorData::new(global_raw.to_vec(), [1, AQ_SOL_FEATURE_DIM]),
+            TensorData::new(global_raw.to_vec(), [1, FEAT_DIM_PARAM]),
             &self.device,
         );
         let t_nodes = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(padded_nodes, [1, MAX_ATOMS, ATOM_FEATURE_DIM]),
+            TensorData::new(padded_nodes, [1, MAX_ATOMS, FEAT_DIM_ATOMS]),
             &self.device,
         );
         let t_adj = Tensor::<InferBackend, 3>::from_data(
@@ -114,5 +113,9 @@ impl AqSolInfer {
 }
 
 pub fn infer_solubility(mol: &MoleculeSmall) -> io::Result<f32> {
-    AqSolInfer::load()?.infer(mol)
+    Infer::load()?.infer(mol)
+}
+
+pub fn infer_bbb(mol: &MoleculeSmall) -> io::Result<f32> {
+    Infer::load()?.infer(mol)
 }
