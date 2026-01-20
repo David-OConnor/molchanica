@@ -4,5 +4,5 @@
 use molchanica::pharmacokinetics::train;
 
 fn main() {
-    sol_train::main();
+    train::main();
 }

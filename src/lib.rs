@@ -1,5 +1,5 @@
 // This feature-gate prevents having to specify `--bin molchanica` when running normally.
-#![cfg(feature = "train-sol")]
+#![cfg(feature = "train")]
 
 //! Experimenting with giving the ML training access to Molecule related  data
 //!

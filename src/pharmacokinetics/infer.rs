@@ -1,4 +1,7 @@
-use std::{fs, io, path::Path, time::Instant};
+//! ML inference, e.g. for Therapeutic properties. Shares the model and relevant
+//! properties with `train.rs`.
+
+use std::{fs, io, time::Instant};
 
 use burn::{
     backend::NdArray,
@@ -7,12 +10,12 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
+use crate::pharmacokinetics::train::model_paths;
 use crate::{
     molecules::small::MoleculeSmall,
     pharmacokinetics::train::{
-        FEAT_DIM_ATOMS, FEAT_DIM_PARAM, MAX_ATOMS, MODEL_CFG_FILE, MODEL_DIR, MODEL_FILE, Model,
-        ModelConfig, SCALER_FILE, StandardScaler, features_from_molecule, mol_to_graph_data,
-        pad_graph_data,
+        FEAT_DIM_ATOMS, MAX_ATOMS, Model, ModelConfig, StandardScaler, mol_to_graph_data,
+        pad_graph_data, param_feats_from_mol,
     },
 };
 
@@ -25,11 +28,12 @@ pub struct Infer {
 }
 
 impl Infer {
-    pub fn load() -> io::Result<Self> {
-        let model_dir = Path::new(MODEL_DIR);
+    pub fn load(target_name: &str) -> io::Result<Self> {
+        let (model_path, scaler_path, cfg_path) = model_paths(target_name);
 
-        let cfg_bytes = fs::read(model_dir.join(MODEL_CFG_FILE))?;
-        let scaler_bytes = fs::read(model_dir.join(SCALER_FILE))?;
+        // Model extension is inferred automatically.
+        let cfg_bytes = fs::read(&cfg_path)?;
+        let scaler_bytes = fs::read(scaler_path)?;
 
         let config: ModelConfig = serde_json::from_slice(&cfg_bytes)?;
         let scaler: StandardScaler = serde_json::from_slice(&scaler_bytes)?;
@@ -39,7 +43,7 @@ impl Infer {
 
         let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
         model = model
-            .load_file(model_dir.join(MODEL_FILE), &recorder, &device)
+            .load_file(model_path, &recorder, &device)
             .map_err(|e| io::Error::other(e))?;
 
         Ok(Self {
@@ -49,25 +53,16 @@ impl Infer {
         })
     }
 
-    pub fn infer(&self, mol: &MoleculeSmall) -> io::Result<f32> {
-        println!("Startinginference...");
+    pub fn infer(&self, mol: &MoleculeSmall, mut feat_params: Vec<f32>) -> io::Result<f32> {
+        println!("Starting inference...");
         let start = Instant::now();
 
-        // 1. Calculate Global Features
-        let Some(char) = &mol.characterization else {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Missing molecule characterization; can't infer.",
-            ));
-        };
-        let mut global_raw = features_from_molecule(char)?;
+        // Feature parameters are from inferred properties of molecules, e.g.
+        // data in our `MolCharacterization` struct.
+        let n_feat_params = feat_params.len();
+        self.scaler.apply_in_place(&mut feat_params);
 
-        // println!("INFERENCE CALCULATED FEATURES: {:?}", global_raw); // <--- Add this
-
-        self.scaler.apply_in_place(&mut global_raw);
-
-        // 2. Calculate Graph Features
-
+        // Calculate graph features; these are related to atoms and bonds.
         let num_atoms = mol.common.atoms.len();
         if num_atoms == 0 {
             return Ok(0.0); // Or handle error
@@ -77,10 +72,10 @@ impl Infer {
         let (padded_nodes, padded_adj, padded_mask) =
             pad_graph_data(&node_vec, &adj_vec, num_atoms);
 
-        // 4. Create Tensors
+        // Create Tensors
         // Note: Batch size is 1
         let t_globals = Tensor::<InferBackend, 2>::from_data(
-            TensorData::new(global_raw.to_vec(), [1, FEAT_DIM_PARAM]),
+            TensorData::new(feat_params, [1, n_feat_params]),
             &self.device,
         );
         let t_nodes = Tensor::<InferBackend, 3>::from_data(
@@ -96,11 +91,9 @@ impl Infer {
             &self.device,
         );
 
-        // 5. Forward Pass
-        let y = self.model.forward(t_nodes, t_adj, t_mask, t_globals);
+        let forward_tensor = self.model.forward(t_nodes, t_adj, t_mask, t_globals);
 
-        // Extract result
-        let val = y
+        let val = forward_tensor
             .into_data()
             .to_vec::<f32>()
             .map_err(|_| io::Error::other("Tensor error"))?[0];
@@ -112,10 +105,18 @@ impl Infer {
     }
 }
 
-pub fn infer_solubility(mol: &MoleculeSmall) -> io::Result<f32> {
-    Infer::load()?.infer(mol)
+fn param_err() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Other,
+        "Missing molecule characterization; can't infer.",
+    )
 }
 
-pub fn infer_bbb(mol: &MoleculeSmall) -> io::Result<f32> {
-    Infer::load()?.infer(mol)
+/// Convenience function that may apply to many properties. Assumes a standard feature set.
+pub fn infer_general(mol: &MoleculeSmall, target_name: &str) -> io::Result<f32> {
+    let feat_params = param_feats_from_mol(mol)?;
+
+    // todo: Store models to state! Don't load from disk each time.
+    let infer = Infer::load(target_name)?;
+    infer.infer(mol, feat_params)
 }

@@ -619,13 +619,27 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         )],
     );
 
-    if let Some(pk) = &mol.pharmacokinetics {
+    if let Some(pk) = &mol.therapeutic_props {
         ui.add_space(ROW_SPACING);
         ui.separator();
-        label!(ui, "Pharmacokinetics", Color32::LIGHT_BLUE);
+        label!(ui, "Therapeutic data", Color32::LIGHT_BLUE);
+
+        label!(ui, "ADME:", Color32::GRAY);
+
+        mol_char_helper(
+            ui,
+            &[(
+                "Blood brain barrier",
+                &format!("{:.2}", pk.adme.blood_brain_barrier),
+            )],
+        );
+
         mol_char_helper(
             ui,
             &[("Sol (water)", &format!("{:.2}", pk.adme.solubility_water))],
         );
+
+        label!(ui, "Toxicity:", Color32::GRAY).on_hover_text("Of our cittyyyyyyy");
+        mol_char_helper(ui, &[("LD50", &format!("{:.2}", pk.toxicity.ld50))]);
     }
 }

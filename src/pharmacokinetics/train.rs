@@ -1,12 +1,15 @@
 #![allow(unused)] // Required to prevent false positives.
 
-//! Entry point for training. (Sort of; via a thin wrapper in `/src/infer`
-//! We use this for Therapeutic Data Commons data, and originally, AqSolDb. (Which is one data
-//! set in TDC)
+//! Entry point for training of therapeutic properties. (Via a thin wrapper in `/src/train.rs` required
+//! by Rust's system)
+//!
+//! This is tailored towards data from Therapeutic Data Commons (TDC).
 
-//! To run: `cargo r --release --features train --bin train`
-
-use std::{fs, io, path::Path, time::Instant};
+//! To run: `cargo r --release --features train --bin train --`
+//!
+//! Add these CLI params (Separated for clarity with the long paths.
+//! --csv C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins.csv`
+//! --sdf C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins
 
 use bio_files::{AtomGeneric, BondGeneric, Sdf};
 use burn::{
@@ -36,32 +39,21 @@ use burn::{
 use na_seq::Element::*;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::{env, fs, io, path::Path, time::Instant};
 
 use crate::{
     mol_characterization::MolCharacterization,
     molecules::{Atom, Bond, small::MoleculeSmall},
 };
-// ==============================================================================================
-// 1. CONSTANTS & CONFIGURATION
-// ==============================================================================================
 
-pub const FEAT_DIM_PARAM: usize = 19; // Update this A/R as you add or remove features.
-
+// todo: What should this be?
 pub const FEAT_DIM_ATOMS: usize = 10; // One-hot encoding dimension
-pub const MAX_ATOMS: usize = 60; // Max atoms for padding
 
-pub const MODEL_CFG_FILE: &str = "qsol_model_config.json";
+// todo: How should this be set up
+pub const MAX_ATOMS: usize = 100; // Max atoms for padding
 
-// Extension handled automatically
-pub const MODEL_FILE: &str = "aqsol_model";
-pub const SCALER_FILE: &str = "aqsol_scaler.json";
-
-pub const MODEL_DIR: &str = "ml_models/aqsol";
-// const SDF_PATH_AQ_SOL_DB: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDb_mols";
-// const CSV_PATH_AQ_SOL_DB: &str = "C:/Users/the_a/Desktop/bio_misc/AqSolDB/results/data_curated.csv";
-
-const SDF_PATH_BB: &str = "C:/Users/the_a/Desktop/bio_misc/tdc_data/mols_bbb_martins";
-const CSV_PATH_BB: &str = "C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins.csv";
+pub const MODEL_DIR: &str = "ml_models";
 
 const TGT_COL_TDC: usize = 2;
 
@@ -69,8 +61,21 @@ type TrainBackend = Autodiff<NdArray>;
 // type TrainBackend = Wgpu<f32, i32>; // todo?
 type ValidBackend = NdArray;
 
+/// Given a target (e.g. pharamaceutical property) name, get standardized filenames
+/// for the (model, scalar, config).
+pub(in crate::pharmacokinetics) fn model_paths(target_name: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let model_dir = Path::new(MODEL_DIR);
+
+    // Extension is implicit in the model, for Burn.
+    let model = model_dir.join(format!("{target_name}_model"));
+    let scaler = model_dir.join(format!("{target_name}_scaler.json"));
+    let cfg = model_dir.join(format!("{target_name}_model_config.json"));
+
+    (model, scaler, cfg)
+}
+
 #[derive(Config, Debug)]
-pub struct ModelConfig {
+pub(in crate::pharmacokinetics) struct ModelConfig {
     pub global_input_dim: usize,
     pub atom_input_dim: usize,
     pub gnn_hidden_dim: usize,
@@ -89,12 +94,8 @@ impl ModelConfig {
     }
 }
 
-// ==============================================================================================
-// 2. MODEL DEFINITION (HYBRID GNN + MLP)
-// ==============================================================================================
-
 #[derive(Module, Debug)]
-pub struct Model<B: Backend> {
+pub(in crate::pharmacokinetics) struct Model<B: Backend> {
     /// Graph Branch: Simple projection (GCN-like)
     gnn_proj: Linear<B>,
     /// Global Branch: MLP for CSV features
@@ -138,14 +139,11 @@ impl<B: Backend> Model<B> {
     }
 }
 
-// ==============================================================================================
-// 3. DATA STRUCTURES & BATCHER
-// ==============================================================================================
-
 #[derive(Clone, Debug)]
-pub struct Sample {
+pub(in crate::pharmacokinetics) struct Sample {
     /// From computed properties of the molecule.
-    pub features_property: [f32; FEAT_DIM_PARAM],
+    // pub features_property: [f32; FEAT_DIM_PARAM],
+    pub features_property: Vec<f32>,
     /// From the atom/bond graph
     pub features_node: Vec<f32>,
     pub adj_list: Vec<f32>,
@@ -154,7 +152,7 @@ pub struct Sample {
 }
 
 #[derive(Clone, Debug)]
-pub struct Batch<B: Backend> {
+pub(in crate::pharmacokinetics) struct Batch<B: Backend> {
     pub nodes: Tensor<B, 3>,
     pub adj: Tensor<B, 3>,
     pub mask: Tensor<B, 3>,
@@ -163,7 +161,7 @@ pub struct Batch<B: Backend> {
 }
 
 #[derive(Clone)]
-pub struct Batcher_ {
+pub(in crate::pharmacokinetics) struct Batcher_ {
     pub scaler: StandardScaler,
 }
 
@@ -176,6 +174,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let mut batch_mask = Vec::new();
         let mut batch_globals = Vec::new();
         let mut batch_y = Vec::new();
+
+        let n_feat_params = items[0].features_property.len();
 
         for mut item in items {
             // Apply Scaler
@@ -194,7 +194,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let nodes = TensorData::new(batch_nodes, [batch_size, MAX_ATOMS, FEAT_DIM_ATOMS]);
         let adj = TensorData::new(batch_adj, [batch_size, MAX_ATOMS, MAX_ATOMS]);
         let mask = TensorData::new(batch_mask, [batch_size, MAX_ATOMS, 1]);
-        let globals = TensorData::new(batch_globals, [batch_size, FEAT_DIM_PARAM]);
+        let globals = TensorData::new(batch_globals, [batch_size, n_feat_params]);
         let y = TensorData::new(batch_y, [batch_size, 1]);
 
         Batch {
@@ -218,8 +218,9 @@ pub struct StandardScaler {
 }
 
 impl StandardScaler {
-    pub fn apply_in_place(&self, x: &mut [f32; FEAT_DIM_PARAM]) {
-        for i in 0..FEAT_DIM_PARAM {
+    // pub fn apply_in_place(&self, x: &mut [f32; FEAT_DIM_PARAM]) {
+    pub fn apply_in_place(&self, x: &mut Vec<f32>) {
+        for i in 0..x.len() {
             let s = if self.std[i].abs() < 1e-9 {
                 1.0
             } else {
@@ -343,11 +344,14 @@ pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) 
 
 fn fit_scaler(train: &[Sample]) -> StandardScaler {
     let n = train.len().max(1) as f32;
-    let mut mean = vec![0.0; FEAT_DIM_PARAM];
-    let mut var = vec![0.0; FEAT_DIM_PARAM];
+
+    let num_params = train[0].features_property.len();
+
+    let mut mean = vec![0.0; num_params];
+    let mut var = vec![0.0; num_params];
 
     for s in train {
-        for i in 0..FEAT_DIM_PARAM {
+        for i in 0..num_params {
             mean[i] += s.features_property[i];
         }
     }
@@ -356,7 +360,7 @@ fn fit_scaler(train: &[Sample]) -> StandardScaler {
     }
 
     for s in train {
-        for i in 0..FEAT_DIM_PARAM {
+        for i in 0..num_params {
             let d = s.features_property[i] - mean[i];
             var[i] += d * d;
         }
@@ -364,10 +368,6 @@ fn fit_scaler(train: &[Sample]) -> StandardScaler {
     let std = var.iter().map(|v| (v / n).sqrt()).collect();
     StandardScaler { mean, std }
 }
-
-// ==============================================================================================
-// 5. TRAINING IMPLEMENTATION
-// ==============================================================================================
 
 impl TrainStep for Model<TrainBackend> {
     type Input = Batch<TrainBackend>;
@@ -467,9 +467,9 @@ fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<V
 
         let solubility: f32 = cols[tgt_col].parse().unwrap();
 
-        let sdf_path = sdf_folder.join(format!("{filename}_{i}.sdf"));
+        let sdf_path = sdf_folder.join(format!("{filename}_id_{i}.sdf"));
 
-        let mol: MoleculeSmall = {
+        let mut mol: MoleculeSmall = {
             let sdf = match Sdf::load(&sdf_path) {
                 Ok(s) => s,
                 Err(e) => {
@@ -482,13 +482,11 @@ fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<V
 
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
-        let features_property = {
-            let char = MolCharacterization::new(&mol.common);
-            features_from_molecule(&char)?
-        };
+        mol.characterization = Some(MolCharacterization::new(&mol.common));
+        let features_property = param_feats_from_mol(&mol)?;
 
         if mol.common.bonds.is_empty() && mol.common.atoms.len() > 20 {
-            println!("\n\nNo bonds found in SDF at path (Likely you RMed them) {sdf_path:?}\n\n");
+            println!("/n/nNo bonds found in SDF at path (Likely you RMed them) {sdf_path:?}/n/n");
         }
 
         if mol.common.bonds.is_empty() {
@@ -517,11 +515,70 @@ fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<V
     Ok(samples)
 }
 
-// ==============================================================================================
-// 6. PUBLIC ENTRY POINT
-// ==============================================================================================
+// Note: We can make variants of this A/R tuned to specific inference items. For now, we are using
+// a single  set of features for all targets.
+/// Extract features from a molecule that are relevant for inferring the target parameter. We use this
+/// in both training and inference workflows.
+pub fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
+    let Some(c) = &mol.characterization else {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Missing mol characterization",
+        ));
+    };
+
+    Ok(vec![
+        c.num_atoms as f32,
+        c.num_bonds as f32,
+        c.mol_weight,
+        c.num_heavy_atoms as f32,
+        c.h_bond_acceptor.len() as f32,
+        c.h_bond_donor.len() as f32,
+        c.num_hetero_atoms as f32,
+        c.halogen.len() as f32,
+        c.rotatable_bonds.len() as f32,
+        c.amines.len() as f32,
+        c.amides.len() as f32,
+        c.carbonyl.len() as f32,
+        c.hydroxyl.len() as f32,
+        c.num_valence_elecs as f32,
+        c.num_rings_aromatic as f32,
+        c.num_rings_saturated as f32,
+        c.num_rings_aliphatic as f32,
+        c.rings.len() as f32,
+        c.log_p,
+        c.molar_refractivity,
+        c.psa_topo,
+        c.asa_topo,
+        c.volume,
+        // Use the non-geometric TPSA and ASA values; they're more similar to the training data.
+        // c.tpsa_ertl,
+        // c.asa_labute,
+        // c.balaban_j,
+        // c.bertz_ct,
+    ])
+}
+
+fn cli_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.to_owned())
+}
 
 pub fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let csv_path = cli_value(&args, "--csv").unwrap();
+    let sdf_path = cli_value(&args, "--sdf").unwrap();
+    let smiles_col = cli_value(&args, "--smiles");
+    let smiles_col = cli_value(&args, "--target");
+
+    // For now at least, the target name will always be the csv filename (Without extension)
+    let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
+
+    let (model_path, scaler_path, config_path) = model_paths(target_name);
+
     let start = Instant::now();
     println!("Started training");
 
@@ -530,7 +587,7 @@ pub fn main() {
 
     // Data loading
     let mut data_csv_sdf =
-        read_data(Path::new(CSV_PATH_AQ_SOL_DB), Path::new(SDF_PATH_AQ_SOL_DB)).unwrap();
+        read_data(Path::new(&csv_path), Path::new(&sdf_path), TGT_COL_TDC).unwrap();
 
     println!("Sample len: {}", data_csv_sdf.len());
 
@@ -544,7 +601,6 @@ pub fn main() {
     // let device = <TrainBackend as Backend>::Device::default();
     let device = Default::default();
 
-    // 2. Data Loaders
     let train_loader = DataLoaderBuilder::new(Batcher_ {
         scaler: scaler.clone(),
     })
@@ -558,8 +614,10 @@ pub fn main() {
     .batch_size(128)
     .build(InMemDataset::new(valid_raw.to_vec()));
 
+    let num_params = train_raw[0].features_property.len();
+
     let model_cfg = ModelConfig {
-        global_input_dim: FEAT_DIM_PARAM,
+        global_input_dim: num_params,
         atom_input_dim: FEAT_DIM_ATOMS,
         gnn_hidden_dim: 64,
         mlp_hidden_dim: 128,
@@ -585,59 +643,22 @@ pub fn main() {
 
     // 6. Save using the result
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
-    result
-        .model
-        .save_file(model_dir.join(MODEL_FILE), &recorder)
-        .unwrap();
+    result.model.save_file(&model_path, &recorder).unwrap();
 
     //  Save the Model Config
-    let config_path = model_dir.join(MODEL_CFG_FILE);
     let config_file = fs::File::create(&config_path).expect("Could not create config file");
     serde_json::to_writer_pretty(config_file, &model_cfg).expect("Could not write config");
     println!("Saved config to {:?}", config_path);
 
     //  Save the Scaler
     // You need this for inference to know the means/stds to normalize new data.
-    let scaler_path = model_dir.join(SCALER_FILE);
     let scaler_file = fs::File::create(&scaler_path).expect("Could not create scaler file");
     serde_json::to_writer_pretty(scaler_file, &scaler).expect("Could not write scaler");
     println!("Saved scaler to {:?}", scaler_path);
 
     let elapsed = start.elapsed().as_secs();
     println!(
-        "Training complete in {:?} s. Saved model to {MODEL_FILE}",
+        "Training complete in {:?} s. Saved model to {model_path:?}",
         elapsed
     );
-}
-
-/// Extract features from a molecule that are relevant for inferring the target parameter. We use this
-/// in both training and inference workflows.
-pub fn features_from_molecule(c: &MolCharacterization) -> io::Result<[f32; FEAT_DIM_PARAM]> {
-    Ok([
-        c.num_atoms as f32,
-        c.num_bonds as f32,
-        c.mol_weight,
-        c.num_heavy_atoms as f32,
-        c.h_bond_acceptor.len() as f32,
-        c.h_bond_donor.len() as f32,
-        c.num_hetero_atoms as f32,
-        c.halogen.len() as f32,
-        c.rotatable_bonds.len() as f32,
-        // tood: Functional group counts too
-        c.num_valence_elecs as f32,
-        c.num_rings_aromatic as f32,
-        c.num_rings_saturated as f32,
-        c.num_rings_aliphatic as f32,
-        c.rings.len() as f32,
-        c.log_p,
-        c.molar_refractivity,
-        c.psa_topo,
-        c.asa_topo,
-        c.volume,
-        // Use the non-geometric TPSA and ASA values; they're more similar to the training data.
-        // c.tpsa_ertl,
-        // c.asa_labute,
-        // c.balaban_j,
-        // c.bertz_ct,
-    ])
 }

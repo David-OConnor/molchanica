@@ -31,7 +31,7 @@ use crate::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
-    pharmacokinetics::{Pharmacokinetics, infer},
+    pharmacokinetics::{TherapeuticProperties, infer},
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
@@ -55,7 +55,7 @@ pub struct MoleculeSmall {
     pub characterization: Option<MolCharacterization>,
     /// Note: These are loaded from SDF, but we use our data in MolCharacterization instead.
     pub pharmacophore_features: Vec<PharmacaphoreFeatures>,
-    pub pharmacokinetics: Option<Pharmacokinetics>,
+    pub therapeutic_props: Option<TherapeuticProperties>,
 }
 
 impl MoleculeSmall {
@@ -585,7 +585,11 @@ impl MoleculeSmall {
 
         // todo: We may wish to run this after updating params from PubChem, but this is fine for now,
         // todo, or in general if you get everything you need Hi-fi from calculations.
-        self.pharmacokinetics = Some(Pharmacokinetics::new(self));
+
+        match TherapeuticProperties::new(self) {
+            Ok(tp) => self.therapeutic_props = Some(tp),
+            Err(e) => eprintln!("Error loading therapeutic properties: {e}"),
+        }
     }
 
     pub fn update_idents_and_char_from_pubchem(&mut self, props: &pubchem::Properties) {
