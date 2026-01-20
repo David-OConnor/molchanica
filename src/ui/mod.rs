@@ -1572,7 +1572,6 @@ fn draw_smiles(v: &str, ui: &mut Ui) {
             };
 
             if ch.is_ascii_digit() {
-                println!("UHOH");
                 color = Color32::from_rgb(255, 180, 50);
             }
 

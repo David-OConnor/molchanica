@@ -1,6 +1,12 @@
 """
-This script downloads molecules from the AqSolDb `data_curated.csv` from PubChem, storing
-them in the same folder. The AqSolDb IDs are the filenames stored.
+This script downloads molecules from the AqSolDb `data_curated.csv` or Therapeutic Data Commons molecules
+from PubChem, storing them in a folder. For AqSolDb, the IDs are the filenames stored.
+
+For TDC, filenames are by index, starting at 0.
+
+
+Example running:
+`python download_mols_for_dataset.py --csv /set1.csv --out /sdf_out_set1
 """
 
 import argparse
@@ -8,27 +14,32 @@ import csv
 import os
 import time
 import urllib.parse
+from typing import Optional
 
 import requests
 
 
-ID_COL = 0
-INCHIKEY_COL = 3
-SMILES_COL = 4
+AQ_SOL_ID_COL = 0
+AQ_SOL_INCHIKEY_COL = 3
+AQ_SOL_SMILES_COL = 4
 
-OUT_PATH = "./AqSolDb_mols"
+TDC_SMILES_COL = 1
+
+SLEEP_BETWEEN_MOLS = 0.2 # Seconds.
 
 
-def sdf_url_from_smiles(smiles: str) -> str:
+def sdf_url_from_smiles(ident: str) -> str:
+    """We use Smiles generally, as both TDC and AqSolDb use this. TDC also has common name.
+    AqSolDb has Inchi, InchiKey, and common nam.e"""
     # PubChem PUG REST: /compound/smiles/<SMILES>/SDF?record_type=3d
     # SMILES must be URL-encoded because it often contains characters like #, +, /, =, etc.
-    encoded = urllib.parse.quote(smiles, safe="")
-#     return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded}/SDF?record_type=3d"
-    return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/{encoded}/SDF?record_type=3d"
+    encoded = urllib.parse.quote(ident, safe="")
+    return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded}/SDF?record_type=3d"
+    # return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/{encoded}/SDF?record_type=3d"
 
 
-def download_sdf_smiles(smiles: str, timeout_s: float) -> str:
-    url = sdf_url_from_smiles(smiles)
+def download_sdf(ident: str, timeout_s: float) -> str:
+    url = sdf_url_from_smiles(ident)
 
     resp = requests.get(
         url,
@@ -57,16 +68,17 @@ def download_sdf_smiles(smiles: str, timeout_s: float) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Download PubChem 3D SDFs for AqSolDB rows (ID + SMILES).")
-    ap.add_argument("--csv", required=True, help="Path to AqSolDB data_curated.csv")
+    ap = argparse.ArgumentParser(description="Download PubChem 3D SDFs associated with a data set.")
+    ap.add_argument("--csv", type=str, required=True, help="Path to the CSV listing mols")
     ap.add_argument("--start", type=int, default=0, help="Start row index (0-based, excluding header)")
     ap.add_argument("--end", type=int, default=None, help="End row index (exclusive, excluding header)")
-    ap.add_argument("--sleep", type=float, default=0.2, help="Seconds to sleep between requests")
-    ap.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout seconds")
-    ap.add_argument("--overwrite", action="store_true", help="Overwrite existing .sdf files")
+    ap.add_argument("--out_path", type=str, required=True, help="Folder to place the downloaded molecules")
+    ap.add_argument("--smiles_col", type=int, default=TDC_SMILES_COL)
+    ap.add_argument("--id_col", type=int, default=None)
+
     args = ap.parse_args()
 
-    os.makedirs(OUT_PATH, exist_ok=True)
+    os.makedirs(args.out_path, exist_ok=True)
 
     downloaded = 0
     skipped = 0
@@ -78,33 +90,37 @@ def main() -> int:
         if header is None:
             raise SystemExit("CSV appears empty.")
 
-        for idx, row in enumerate(rdr):
-            if idx < args.start:
+        for i, row in enumerate(rdr):
+            if i < args.start:
                 continue
-            if args.end is not None and idx >= args.end:
+            if args.end is not None and i >= args.end:
                 break
 
-            if len(row) <= max(ID_COL, SMILES_COL):
+            if len(row) <= args.smiles_col:
                 failed += 1
                 continue
 
-            mol_id = row[ID_COL].strip()
-            inchikey = row[INCHIKEY_COL].strip()
-            smiles = row[SMILES_COL].strip()
+            if args.id_col is None:
+                dataset_stem = os.path.splitext(os.path.basename(args.csv))[0]
+                mol_id = f"{dataset_stem}_id_{i + args.start}"
+            else:
+                mol_id = row[args.id_col].strip()
+
+            # inchikey = row[AQ_SOL_INCHIKEY_COL].strip() # Unused for now, e.g. TDC CSVs don't have this.
+            smiles = row[args.smiles_col].strip()
 
             if not mol_id or not smiles:
                 skipped += 1
                 continue
 
-            out_path = os.path.join(OUT_PATH, f"{mol_id}.sdf")
+            out_path = os.path.join(args.out_path, f"{mol_id}.sdf")
 
-            if (not args.overwrite) and os.path.exists(out_path):
+            if os.path.exists(out_path):
                 skipped += 1
                 continue
 
             try:
-#                 sdf_text = download_sdf_smiles(smiles, timeout_s=args.timeout)
-                sdf_text = download_sdf_smiles(inchikey, timeout_s=args.timeout)
+                sdf_text = download_sdf(smiles, timeout_s=10)
                 with open(out_path, "w", encoding="utf-8", newline="\n") as out_f:
                     out_f.write(sdf_text)
 
@@ -119,8 +135,8 @@ def main() -> int:
                 print(f"Failed (Req exception): {mol_id}")
                 failed += 1
 
-            if args.sleep > 0:
-                time.sleep(args.sleep)
+            if SLEEP_BETWEEN_MOLS > 0:
+                time.sleep(SLEEP_BETWEEN_MOLS)
 
     print(f"Downloaded: {downloaded}")
     print(f"Skipped:    {skipped}")

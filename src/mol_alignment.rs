@@ -284,6 +284,7 @@ fn run_md(
         None,
         &mut HashSet::new(),
         false,
+        state.to_save.num_md_copies,
     )?;
 
     let mut bonds_q_by_atom = Vec::with_capacity(mol_query.atoms.len());

@@ -122,6 +122,7 @@ pub fn build_and_run_dynamics(
     peptide_only_near_lig: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
     md_local: &mut MdStateLocal,
+    md_copies: usize,
 ) -> Result<MdState, ParamError> {
     let md_state = build_dynamics(
         dev,
@@ -134,6 +135,7 @@ pub fn build_and_run_dynamics(
         peptide_only_near_lig,
         pep_atom_set,
         false,
+        md_copies,
     )?;
 
     md_local.start = Some(Instant::now());
@@ -248,14 +250,16 @@ pub fn build_dynamics(
 
         mols.push(mol);
 
-        if copies > 1 {
+        if copies > 1 && *ff_mol_type == FfMolType::SmallOrganic {
             let offset_dirs = [X_VEC, -X_VEC, Y_VEC - Y_VEC, Z_VEC, -Z_VEC];
             // todo: Dedicated fn for this?
             let offset_amt = 10.; // todo: Should depend on the mol.
+            // todo: This produces atoms in a plus configuration; not a grid! Sloppy proxy..\
+            let mut amt_i = 1; // Used to scale the distance.
             for i in 0..copies - 1 {
                 let mut mol_extra = mol_copy.clone().unwrap();
 
-                let offset = offset_dirs[i % 6] * offset_amt;
+                let offset = offset_dirs[i % 6] * offset_amt * (amt_i + 1) as f64;
                 for atom in &mut mol_extra.atoms {
                     atom.posit += offset;
                 }
@@ -263,6 +267,10 @@ pub fn build_dynamics(
 
                 // todo: Similar algorithm to how you set up water molecules; same idea.
                 mols.push(mol_extra);
+
+                if i != 0 && i.is_multiple_of(6) {
+                    amt_i += 1;
+                }
             }
         }
     }
@@ -590,6 +598,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             near_lig_thresh,
             &mut state.volatile.md_peptide_selected,
             &mut state.volatile.md_local,
+            state.to_save.num_md_copies,
         ) {
             Ok(md) => {
                 state.mol_dynamics = Some(md);
@@ -608,6 +617,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             near_lig_thresh,
             &mut state.volatile.md_peptide_selected,
             fast_init,
+            state.to_save.num_md_copies,
         ) {
             Ok(md) => {
                 state.mol_dynamics = Some(md);

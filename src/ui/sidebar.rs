@@ -625,7 +625,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         label!(ui, "Pharmacokinetics", Color32::LIGHT_BLUE);
         mol_char_helper(
             ui,
-            &[("Sol (water)", &format!("{:.2}", pk.solubility_water))],
+            &[("Sol (water)", &format!("{:.2}", pk.adme.solubility_water))],
         );
     }
 }
