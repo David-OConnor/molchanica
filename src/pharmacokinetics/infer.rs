@@ -1,15 +1,6 @@
 //! ML inference, e.g. for Therapeutic properties. Shares the model and relevant
 //! properties with `train.rs`.
 
-use std::{fs, io, time::Instant};
-
-use burn::{
-    backend::NdArray,
-    module::Module,
-    record::{FullPrecisionSettings, NamedMpkFileRecorder},
-    tensor::{Tensor, TensorData, backend::Backend},
-};
-
 use crate::pharmacokinetics::train::model_paths;
 use crate::{
     molecules::small::MoleculeSmall,
@@ -18,7 +9,19 @@ use crate::{
         pad_graph_data, param_feats_from_mol,
     },
 };
+use std::collections::HashMap;
+use std::{fs, io, time::Instant};
+// use burn::backend::Cuda;
+use burn::backend::NdArray;
+use burn::{
+    module::Module,
+    record::{FullPrecisionSettings, NamedMpkFileRecorder},
+    tensor::{Tensor, TensorData, backend::Backend},
+};
 
+// CPU (i.e.NdArray) seems to be much faster for inference.
+// type InferBackend = Cuda;
+// type InferBackend = Wgpu;
 type InferBackend = NdArray;
 
 pub struct Infer {
@@ -105,18 +108,23 @@ impl Infer {
     }
 }
 
-fn param_err() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::Other,
-        "Missing molecule characterization; can't infer.",
-    )
-}
-
 /// Convenience function that may apply to many properties. Assumes a standard feature set.
-pub fn infer_general(mol: &MoleculeSmall, target_name: &str) -> io::Result<f32> {
+/// We cache any loaded models.
+pub fn infer_general(
+    mol: &MoleculeSmall,
+    target_name: &str,
+    models: &mut HashMap<String, Infer>,
+) -> io::Result<f32> {
     let feat_params = param_feats_from_mol(mol)?;
 
-    // todo: Store models to state! Don't load from disk each time.
-    let infer = Infer::load(target_name)?;
+    let infer = match models.get_mut(target_name) {
+        Some(inf) => inf,
+        None => {
+            let infer = Infer::load(target_name)?;
+            models.insert(target_name.to_string(), infer);
+            models.get_mut(target_name).unwrap()
+        }
+    };
+
     infer.infer(mol, feat_params)
 }

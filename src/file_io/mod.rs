@@ -661,6 +661,7 @@ impl State {
                         &self.volatile.active_mol,
                         &self.to_save.pubchem_properties_map,
                         &mut self.volatile.pubchem_properties_avail,
+                        &mut self.volatile.inference_models,
                     );
                 } else {
                     handle_err(

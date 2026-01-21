@@ -12,8 +12,9 @@ pub mod infer;
 mod solubility;
 pub mod train; // Pub to allow access from the training entry point.
 
-use crate::pharmacokinetics::infer::infer_general;
+use crate::pharmacokinetics::infer::{Infer, infer_general};
 use crate::{mol_characterization::MolCharacterization, molecules::small::MoleculeSmall};
+use std::collections::HashMap;
 use std::io;
 
 /// Absorption, distribution, metabolism, and excretion (ADME) properties.
@@ -64,35 +65,23 @@ pub struct TherapeuticProperties {
     pub toxicity: Toxicity,
 }
 
-//     /// TDC.Pgp_Broccatelli
-//     pub pgp: f32,
-//     /// Bioavailability_Ma
-//     pub oral_bioavailablity: f32,
-//     /// TDC.Lipophilicity_AstraZeneca. log-ratio.
-//     pub lipophilicity: f32,
-//     /// AqSolDB, or TDC.Solubility_AqSolDB. log mol/L
-//     /// LogS, where S is the aqueous solubility.
-//     pub solubility_water: f32,
-//     /// TDC.BBB_Martins
-//     pub blood_brain_barrier: f32,
-//     /// TDC.PPBR_AZ. % binding value.
-//     pub plasma_protein_binding_rate: f32,
 impl TherapeuticProperties {
-    pub fn new(mol: &MoleculeSmall) -> io::Result<Self> {
+    pub fn new(mol: &MoleculeSmall, models: &mut HashMap<String, Infer>) -> io::Result<Self> {
+        // The target names here must match the CSV names, as downloaded from TDC.
         let adme = Adme {
-            intestinal_permeability: infer_general(mol, "caco2_wang")?,
-            // intestinal_absorption: infer_general(mol, "hia_hou")?,
-            // pgp: infer_general(mol, "pgp_broccatelli")?,
-            // oral_bioavailablity: infer_general(mol, "bioavailability_ma")?,
-            // lipophilicity: infer_general(mol, "lipophilicity_astrazeneca")?,
-            // solubility_water: infer_general(mol, "solubility_aqsoldb")?,
-            // blood_brain_barrier: infer_general(mol, "bbb_martins")?,
-            // plasma_protein_binding_rate: infer_general(mol, "ppbr_az")?,
+            // intestinal_permeability: infer_general(mol, "caco2_wang", models)?,
+            // intestinal_absorption: infer_general(mol, "hia_hou", models)?,
+            // pgp: infer_general(mol, "pgp_broccatelli", models)?,
+            // oral_bioavailablity: infer_general(mol, "bioavailability_ma", models)?,
+            // lipophilicity: infer_general(mol, "lipophilicity_astrazeneca", models)?,
+            // solubility_water: infer_general(mol, "solubility_aqsoldb", models)?,
+            blood_brain_barrier: infer_general(mol, "bbb_martins", models)?,
+            // plasma_protein_binding_rate: infer_general(mol, "ppbr_az", models)?,
             ..Default::default()
         };
 
         let toxicity = Toxicity {
-            ld50: infer_general(mol, "ld50_zhu")?,
+            ld50: infer_general(mol, "ld50_zhu", models)?,
             ..Default::default()
         };
 

@@ -24,6 +24,7 @@ use dynamics::{
 };
 use na_seq::Element;
 
+use crate::pharmacokinetics::infer::Infer;
 use crate::{
     // docking::{DockingSite, Pose},
     mol_characterization::MolCharacterization,
@@ -500,6 +501,7 @@ impl MoleculeSmall {
         pubchem_properties_avail: &mut Option<
             Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>,
         >,
+        models: &mut HashMap<String, Infer>,
     ) {
         if let Some((_, i)) = active_mol {
             let offset = LIGAND_ABS_POSIT_OFFSET * (*i as f64);
@@ -586,7 +588,7 @@ impl MoleculeSmall {
         // todo: We may wish to run this after updating params from PubChem, but this is fine for now,
         // todo, or in general if you get everything you need Hi-fi from calculations.
 
-        match TherapeuticProperties::new(self) {
+        match TherapeuticProperties::new(self, models) {
             Ok(tp) => self.therapeutic_props = Some(tp),
             Err(e) => eprintln!("Error loading therapeutic properties: {e}"),
         }

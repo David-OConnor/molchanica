@@ -26,6 +26,7 @@ use lin_alg::{
     f64::Vec3 as Vec3F64,
 };
 
+use crate::pharmacokinetics::infer::Infer;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -273,6 +274,8 @@ pub struct StateVolatile {
     /// determine if a given atom is near the surface.
     protein_sfc_mesh_coarse: Vec<Vec<f32>>,
     pub alignment: StateAlignment,
+    /// Key: target name, corresponding to TDC CSVs.
+    pub inference_models: HashMap<String, Infer>,
 }
 
 impl Default for StateVolatile {
@@ -302,6 +305,7 @@ impl Default for StateVolatile {
             orca_avail: Default::default(),
             protein_sfc_mesh_coarse: Default::default(),
             alignment: Default::default(),
+            inference_models: Default::default(),
         }
     }
 }

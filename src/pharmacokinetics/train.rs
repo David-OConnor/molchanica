@@ -13,7 +13,6 @@
 
 use bio_files::{AtomGeneric, BondGeneric, Sdf};
 use burn::{
-    backend::{Autodiff, NdArray, Wgpu},
     config::Config,
     data::{
         dataloader::{DataLoaderBuilder, batcher::Batcher},
@@ -36,16 +35,19 @@ use burn::{
         TrainOutput, TrainStep, TrainingStrategy, metric::LossMetric,
     },
 };
-use na_seq::Element::*;
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::{env, fs, io, path::Path, time::Instant};
 
 use crate::{
     mol_characterization::MolCharacterization,
     molecules::{Atom, Bond, small::MoleculeSmall},
 };
+use burn::backend::Autodiff;
+#[cfg(feature = "train")]
+use burn::backend::{Wgpu, wgpu::WgpuDevice};
+use na_seq::Element::*;
+use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::{env, fs, io, path::Path, time::Instant};
 
 // todo: What should this be?
 pub const FEAT_DIM_ATOMS: usize = 10; // One-hot encoding dimension
@@ -57,9 +59,10 @@ pub const MODEL_DIR: &str = "ml_models";
 
 const TGT_COL_TDC: usize = 2;
 
-type TrainBackend = Autodiff<NdArray>;
-// type TrainBackend = Wgpu<f32, i32>; // todo?
-type ValidBackend = NdArray;
+#[cfg(feature = "train")]
+type TrainBackend = Autodiff<Wgpu>;
+#[cfg(feature = "train")]
+type ValidBackend = Wgpu;
 
 /// Given a target (e.g. pharamaceutical property) name, get standardized filenames
 /// for the (model, scalar, config).
@@ -84,11 +87,17 @@ pub(in crate::pharmacokinetics) struct ModelConfig {
 
 impl ModelConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
+        let dim_h = self.mlp_hidden_dim;
         Model {
-            gnn_proj: LinearConfig::new(self.atom_input_dim, self.gnn_hidden_dim).init(device),
-            global_fc: LinearConfig::new(self.global_input_dim, self.mlp_hidden_dim).init(device),
-            // todo: For now with no graph
-            // head: LinearConfig::new(self.gnn_hidden_dim + self.mlp_hidden_dim, 1).init(device),
+            atom_graph_proj: LinearConfig::new(self.atom_input_dim, self.gnn_hidden_dim)
+                .init(device),
+
+            // 3-Layer Deep MLP
+            params_fc1: LinearConfig::new(self.global_input_dim, dim_h).init(device),
+            params_fc2: LinearConfig::new(dim_h, dim_h).init(device),
+            params_fc3: LinearConfig::new(dim_h, dim_h).init(device),
+
+            // Final projection.
             head: LinearConfig::new(self.mlp_hidden_dim, 1).init(device),
         }
     }
@@ -97,45 +106,38 @@ impl ModelConfig {
 #[derive(Module, Debug)]
 pub(in crate::pharmacokinetics) struct Model<B: Backend> {
     /// Graph Branch: Simple projection (GCN-like)
-    gnn_proj: Linear<B>,
-    /// Global Branch: MLP for CSV features
-    global_fc: Linear<B>,
-    /// Joint Branch: Combine (Graph Sum + Global) -> Output
+    atom_graph_proj: Linear<B>,
+    /// Parameter features. 3 layers.
+    params_fc1: Linear<B>, // Input -> Hidden 1
+    params_fc2: Linear<B>, // Hidden 1 -> Hidden 2
+    params_fc3: Linear<B>, // Hidden 2 -> Hidden 3
+    /// Joint Branch
     head: Linear<B>,
 }
 
 impl<B: Backend> Model<B> {
     pub fn forward(
         &self,
-        nodes: Tensor<B, 3>,   // [Batch, MaxAtoms, AtomDim]
-        adj: Tensor<B, 3>,     // [Batch, MaxAtoms, MaxAtoms]
-        mask: Tensor<B, 3>,    // [Batch, MaxAtoms, 1]
-        globals: Tensor<B, 2>, // [Batch, GlobalDim]
+        nodes: Tensor<B, 3>,  // [Batch, MaxAtoms, AtomDim]
+        adj: Tensor<B, 3>,    // [Batch, MaxAtoms, MaxAtoms]
+        mask: Tensor<B, 3>,   // [Batch, MaxAtoms, 1]
+        params: Tensor<B, 2>, // [Batch, GlobalDim]
     ) -> Tensor<B, 2> {
-        // --- Graph Branch ---
-        // 1. Aggregation: A * X (Sum neighbors)
-        let agg = adj.matmul(nodes);
+        // --- Deep MLP Forward Pass ---
 
-        // 2. Projection: (A*X)W
-        let graph_h = activation::relu(self.gnn_proj.forward(agg));
+        // Layer 1
+        let x = self.params_fc1.forward(params);
+        let x = activation::relu(x);
 
-        // 3. Masking: Zero out padding atoms so they don't contribute to sum
-        let graph_h = graph_h * mask;
+        // Layer 2 (The "Interaction" Layer)
+        let x = self.params_fc2.forward(x);
+        let x = activation::relu(x); // Crucial: Non-linearity between layers
 
-        // 4. Pooling: Sum over atoms -> [Batch, GnnHidden]
-        // let graph_embedding = graph_h.sum_dim(1).squeeze(1);
-        // let graph_embedding = graph_h.sum_dim(1).flatten(0, 1);
+        // Layer 3
+        let x = self.params_fc3.forward(x);
+        let x = activation::relu(x);
 
-        // --- Global Branch ---
-        let global_embedding = activation::relu(self.global_fc.forward(globals));
-
-        // --- Fusion ---
-        // let combined = Tensor::cat(vec![graph_embedding, global_embedding], 1);
-        // todo temp removed the graph.
-        let combined = Tensor::cat(vec![global_embedding], 1);
-
-        // --- Readout ---
-        self.head.forward(combined)
+        self.head.forward(x)
     }
 }
 
@@ -369,6 +371,7 @@ fn fit_scaler(train: &[Sample]) -> StandardScaler {
     StandardScaler { mean, std }
 }
 
+#[cfg(feature = "train")]
 impl TrainStep for Model<TrainBackend> {
     type Input = Batch<TrainBackend>;
     type Output = RegressionOutput<TrainBackend>;
@@ -387,6 +390,7 @@ impl TrainStep for Model<TrainBackend> {
     }
 }
 
+#[cfg(feature = "train")]
 impl InferenceStep for Model<ValidBackend> {
     type Input = Batch<ValidBackend>;
     type Output = RegressionOutput<ValidBackend>;
@@ -400,72 +404,32 @@ impl InferenceStep for Model<ValidBackend> {
     }
 }
 
-fn split_csv_line(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_quotes = false;
-
-    let bytes = line.as_bytes();
-    let mut i = 0;
-
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => {
-                if in_quotes {
-                    if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
-                        cur.push('"');
-                        i += 2;
-                        continue;
-                    } else {
-                        in_quotes = false;
-                        i += 1;
-                        continue;
-                    }
-                } else {
-                    in_quotes = true;
-                    i += 1;
-                    continue;
-                }
-            }
-            b',' => {
-                if !in_quotes {
-                    out.push(cur);
-                    cur = String::new();
-                    i += 1;
-                    continue;
-                }
-            }
-            _ => {}
-        }
-
-        cur.push(bytes[i] as char);
-        i += 1;
-    }
-
-    out.push(cur);
-    out
-}
-
+#[cfg(feature = "train")]
 fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<Vec<Sample>> {
     let mut samples = Vec::new();
+    let file = fs::File::open(csv_path)?;
+    let mut rdr = csv::Reader::from_reader(file);
 
     let csv_data = fs::read_to_string(csv_path)?;
 
-    // Skip the header.
-    for (i, line) in csv_data.lines().skip(1).enumerate() {
-        let line = line.trim_end_matches('\r');
-        if line.is_empty() {
-            continue;
-        }
+    // Iterate over records (automatically handles quotes and headers)
+    for (i, result) in rdr.records().enumerate() {
+        let record = result?;
 
-        let cols: Vec<String> = split_csv_line(line);
+        // Robust float parsing
+        let target_str = &record[tgt_col];
+        let target: f32 = match target_str.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                // If we can't parse the target (e.g. "NaN"), skip this sample
+                continue;
+            }
+        };
 
         // We determine which file to open based on our SDF-download script's convention,
         // using the CSV filename, and row index (0-based, skipping header).
         // let filename = &cols[0];
         let filename = csv_path.file_stem().unwrap().to_str().unwrap();
-
-        let solubility: f32 = cols[tgt_col].parse().unwrap();
 
         let sdf_path = sdf_folder.join(format!("{filename}_id_{i}.sdf"));
 
@@ -508,7 +472,7 @@ fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<V
             features_node,
             adj_list,
             num_atoms,
-            target: solubility,
+            target,
         });
     }
 
@@ -527,11 +491,41 @@ pub fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
         ));
     };
 
+    // Helper to compress large ranges (Log1p)
+    // We use abs() to handle potential negative LogP inputs safely if you apply it there,
+    // though usually we only apply this to Counts and Weights.
+    let ln = |x: f32| (x + 1.0).ln();
+
+    // We are generally apply ln to values that can be "large".
+
     Ok(vec![
-        c.num_atoms as f32,
-        c.num_bonds as f32,
-        c.mol_weight,
-        c.num_heavy_atoms as f32,
+        // c.num_atoms as f32,
+        // c.num_bonds as f32,
+        // c.mol_weight,
+        // c.num_heavy_atoms as f32,
+        // c.h_bond_acceptor.len() as f32,
+        // c.h_bond_donor.len() as f32,
+        // c.num_hetero_atoms as f32,
+        // c.halogen.len() as f32,
+        // c.rotatable_bonds.len() as f32,
+        // c.amines.len() as f32,
+        // c.amides.len() as f32,
+        // c.carbonyl.len() as f32,
+        // c.hydroxyl.len() as f32,
+        // c.num_valence_elecs as f32,
+        // c.num_rings_aromatic as f32,
+        // c.num_rings_saturated as f32,
+        // c.num_rings_aliphatic as f32,
+        // c.rings.len() as f32,
+        // c.log_p,
+        // c.molar_refractivity,
+        // c.psa_topo,
+        // c.asa_topo,
+        // c.volume,
+        ln(c.num_atoms as f32),
+        ln(c.num_bonds as f32),
+        ln(c.mol_weight),
+        ln(c.num_heavy_atoms as f32),
         c.h_bond_acceptor.len() as f32,
         c.h_bond_donor.len() as f32,
         c.num_hetero_atoms as f32,
@@ -548,14 +542,9 @@ pub fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
         c.rings.len() as f32,
         c.log_p,
         c.molar_refractivity,
-        c.psa_topo,
-        c.asa_topo,
-        c.volume,
-        // Use the non-geometric TPSA and ASA values; they're more similar to the training data.
-        // c.tpsa_ertl,
-        // c.asa_labute,
-        // c.balaban_j,
-        // c.bertz_ct,
+        ln(c.psa_topo),
+        ln(c.asa_topo),
+        ln(c.volume),
     ])
 }
 
@@ -566,6 +555,7 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
         .map(|s| s.to_owned())
 }
 
+#[cfg(feature = "train")]
 pub fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -599,7 +589,15 @@ pub fn main() {
 
     let scaler = fit_scaler(train_raw);
     // let device = <TrainBackend as Backend>::Device::default();
+    // #[cfg(feature = "train")]
+    // let device = WgpuDevice::DefaultDevice;
+    // #[cfg(not(feature = "train"))]
+    // let device = WgpuDevice::DefaultDevice;
+    // // let device = CudaDevice::default();
+
     let device = Default::default();
+
+    // burn_wgpu::init_setup::<burn_wgpu::graphics::Dx12>(&device, RuntimeOptions::default());
 
     let train_loader = DataLoaderBuilder::new(Batcher_ {
         scaler: scaler.clone(),
