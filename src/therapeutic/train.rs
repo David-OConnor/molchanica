@@ -5,14 +5,22 @@
 //!
 //! This is tailored towards data from Therapeutic Data Commons (TDC).
 
-//! To run: `cargo r --release --features train --bin train --`
+//! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins.csv`
 //!
-//! Add these CLI params (Separated for clarity with the long paths.
-//! --csv C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins.csv`
-//! --sdf C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins
+//! Add the `tgt` param if training on a single file.
+//! --tgt bbb_martins`
 
-use bio_files::{AtomGeneric, BondGeneric, Sdf};
+use std::{
+    env, fs, io,
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
+use bio_files::{AtomGeneric, BondGeneric, BondType, Sdf};
+#[cfg(feature = "train")]
+use burn::backend::{Wgpu, wgpu::WgpuDevice};
 use burn::{
+    backend::Autodiff,
     config::Config,
     data::{
         dataloader::{DataLoaderBuilder, batcher::Batcher},
@@ -21,7 +29,7 @@ use burn::{
     lr_scheduler::constant::ConstantLr,
     module::Module,
     nn::{
-        Linear, LinearConfig,
+        LayerNorm, LayerNormConfig, Linear, LinearConfig,
         loss::{MseLoss, Reduction},
     },
     optim::AdamConfig,
@@ -35,29 +43,24 @@ use burn::{
         TrainOutput, TrainStep, TrainingStrategy, metric::LossMetric,
     },
 };
+use na_seq::Element::*;
+use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     mol_characterization::MolCharacterization,
     molecules::{Atom, Bond, small::MoleculeSmall},
 };
-use burn::backend::Autodiff;
-#[cfg(feature = "train")]
-use burn::backend::{Wgpu, wgpu::WgpuDevice};
-use na_seq::Element::*;
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::{env, fs, io, path::Path, time::Instant};
 
 // todo: What should this be?
-pub const FEAT_DIM_ATOMS: usize = 10; // One-hot encoding dimension
+pub(in crate::therapeutic) const FEAT_DIM_ATOMS: usize = 11; // One-hot encoding dimension
 
 // todo: How should this be set up
-pub const MAX_ATOMS: usize = 100; // Max atoms for padding
+pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for padding
 
-pub const MODEL_DIR: &str = "ml_models";
+pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models";
 
-const TGT_COL_TDC: usize = 2;
+pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
 #[cfg(feature = "train")]
 type TrainBackend = Autodiff<Wgpu>;
@@ -66,7 +69,7 @@ type ValidBackend = Wgpu;
 
 /// Given a target (e.g. pharamaceutical property) name, get standardized filenames
 /// for the (model, scalar, config).
-pub(in crate::pharmacokinetics) fn model_paths(target_name: &str) -> (PathBuf, PathBuf, PathBuf) {
+pub(in crate::therapeutic) fn model_paths(target_name: &str) -> (PathBuf, PathBuf, PathBuf) {
     let model_dir = Path::new(MODEL_DIR);
 
     // Extension is implicit in the model, for Burn.
@@ -78,7 +81,7 @@ pub(in crate::pharmacokinetics) fn model_paths(target_name: &str) -> (PathBuf, P
 }
 
 #[derive(Config, Debug)]
-pub(in crate::pharmacokinetics) struct ModelConfig {
+pub(in crate::therapeutic) struct ModelConfig {
     pub global_input_dim: usize,
     pub atom_input_dim: usize,
     pub gnn_hidden_dim: usize,
@@ -88,29 +91,39 @@ pub(in crate::pharmacokinetics) struct ModelConfig {
 impl ModelConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
         let dim_h = self.mlp_hidden_dim;
-        Model {
-            atom_graph_proj: LinearConfig::new(self.atom_input_dim, self.gnn_hidden_dim)
-                .init(device),
+        let dim_gnn = self.gnn_hidden_dim;
+        let combined_dim = self.mlp_hidden_dim + self.gnn_hidden_dim;
 
-            // 3-Layer Deep MLP
+        Model {
+            // Layer 1: Input (AtomDim) -> Hidden
+            gnn1: LinearConfig::new(self.atom_input_dim, dim_gnn).init(device),
+            // Layer 2: Hidden -> Hidden
+            gnn2: LinearConfig::new(dim_gnn, dim_gnn).init(device),
+            // Layer 3: Hidden -> Hidden
+            gnn3: LinearConfig::new(dim_gnn, dim_gnn).init(device),
+
+            // MLP layers (Keep as is)
             params_fc1: LinearConfig::new(self.global_input_dim, dim_h).init(device),
             params_fc2: LinearConfig::new(dim_h, dim_h).init(device),
             params_fc3: LinearConfig::new(dim_h, dim_h).init(device),
 
-            // Final projection.
-            head: LinearConfig::new(self.mlp_hidden_dim, 1).init(device),
+            fusion_norm: LayerNormConfig::new(combined_dim).init(device),
+            head: LinearConfig::new(combined_dim, 1).init(device),
         }
     }
 }
 
 #[derive(Module, Debug)]
-pub(in crate::pharmacokinetics) struct Model<B: Backend> {
-    /// Graph Branch: Simple projection (GCN-like)
-    atom_graph_proj: Linear<B>,
+pub(in crate::therapeutic) struct Model<B: Backend> {
+    gnn1: Linear<B>,
+    gnn2: Linear<B>,
+    gnn3: Linear<B>,
+
     /// Parameter features. 3 layers.
     params_fc1: Linear<B>, // Input -> Hidden 1
     params_fc2: Linear<B>, // Hidden 1 -> Hidden 2
     params_fc3: Linear<B>, // Hidden 2 -> Hidden 3
+    fusion_norm: LayerNorm<B>,
     /// Joint Branch
     head: Linear<B>,
 }
@@ -123,26 +136,47 @@ impl<B: Backend> Model<B> {
         mask: Tensor<B, 3>,   // [Batch, MaxAtoms, 1]
         params: Tensor<B, 2>, // [Batch, GlobalDim]
     ) -> Tensor<B, 2> {
-        // --- Deep MLP Forward Pass ---
+        // --- Graph Branch (3-Hop Message Passing) ---
 
-        // Layer 1
-        let x = self.params_fc1.forward(params);
-        let x = activation::relu(x);
+        // HOP 1: Look at neighbors
+        // [Batch, Atoms, AtomDim] -> [Batch, Atoms, GnnDim]
+        let agg1 = adj.clone().matmul(nodes);
+        let x_gnn = activation::relu(self.gnn1.forward(agg1));
+        let x_gnn = x_gnn * mask.clone(); // Mask after every step to keep padding zero
 
-        // Layer 2 (The "Interaction" Layer)
-        let x = self.params_fc2.forward(x);
-        let x = activation::relu(x); // Crucial: Non-linearity between layers
+        // HOP 2: Look at neighbors of neighbors
+        // [Batch, Atoms, GnnDim] -> [Batch, Atoms, GnnDim]
+        let agg2 = adj.clone().matmul(x_gnn);
+        let x_gnn = activation::relu(self.gnn2.forward(agg2));
+        let x_gnn = x_gnn * mask.clone();
 
-        // Layer 3
-        let x = self.params_fc3.forward(x);
-        let x = activation::relu(x);
+        // HOP 3: Look at neighbors of neighbors of neighbors
+        let agg3 = adj.matmul(x_gnn);
+        let x_gnn = activation::relu(self.gnn3.forward(agg3));
+        let x_gnn = x_gnn * mask.clone();
 
-        self.head.forward(x)
+        // Pooling (Masked Mean)
+        // Now 'x_gnn' contains rich structural info, not just local atoms.
+        let graph_sum = x_gnn.sum_dim(1);
+        let atom_counts = mask.sum_dim(1);
+        let graph_mean = graph_sum / (atom_counts + 1e-6);
+        let graph_embedding = graph_mean.flatten(1, 2);
+
+        // --- MLP Branch (Unchanged) ---
+        let x_mlp = activation::relu(self.params_fc1.forward(params));
+        let x_mlp = activation::relu(self.params_fc2.forward(x_mlp));
+        let scalar_embedding = activation::relu(self.params_fc3.forward(x_mlp));
+
+        // --- Fusion (Unchanged) ---
+        let combined = Tensor::cat(vec![graph_embedding, scalar_embedding], 1);
+        let combined = self.fusion_norm.forward(combined);
+
+        self.head.forward(combined)
     }
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::pharmacokinetics) struct Sample {
+pub(in crate::therapeutic) struct Sample {
     /// From computed properties of the molecule.
     // pub features_property: [f32; FEAT_DIM_PARAM],
     pub features_property: Vec<f32>,
@@ -154,7 +188,7 @@ pub(in crate::pharmacokinetics) struct Sample {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::pharmacokinetics) struct Batch<B: Backend> {
+pub(in crate::therapeutic) struct Batch<B: Backend> {
     pub nodes: Tensor<B, 3>,
     pub adj: Tensor<B, 3>,
     pub mask: Tensor<B, 3>,
@@ -163,7 +197,7 @@ pub(in crate::pharmacokinetics) struct Batch<B: Backend> {
 }
 
 #[derive(Clone)]
-pub(in crate::pharmacokinetics) struct Batcher_ {
+pub(in crate::therapeutic) struct Batcher_ {
     pub scaler: StandardScaler,
 }
 
@@ -183,7 +217,9 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             // Apply Scaler
             self.scaler.apply_in_place(&mut item.features_property);
             batch_globals.extend_from_slice(&item.features_property);
-            batch_y.push(item.target);
+
+            let norm_y = self.scaler.normalize_target(item.target);
+            batch_y.push(norm_y);
 
             let (p_nodes, p_adj, p_mask) =
                 pad_graph_data(&item.features_node, &item.adj_list, item.num_atoms);
@@ -217,10 +253,23 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
 pub struct StandardScaler {
     pub mean: Vec<f32>,
     pub std: Vec<f32>,
+    pub y_mean: f32,
+    pub y_std: f32,
 }
 
 impl StandardScaler {
-    // pub fn apply_in_place(&self, x: &mut [f32; FEAT_DIM_PARAM]) {
+    pub fn normalize_target(&self, y: f32) -> f32 {
+        if self.y_std.abs() < 1e-9 {
+            y - self.y_mean
+        } else {
+            (y - self.y_mean) / self.y_std
+        }
+    }
+
+    pub fn denormalize_target(&self, y_norm: f32) -> f32 {
+        y_norm * self.y_std + self.y_mean
+    }
+
     pub fn apply_in_place(&self, x: &mut Vec<f32>) {
         for i in 0..x.len() {
             let s = if self.std[i].abs() < 1e-9 {
@@ -273,11 +322,15 @@ pub fn pad_graph_data(
 pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let num_atoms = mol.common.atoms.len();
 
-    // 1. Node Features (Unchanged)
+    // --- 1. Node Features (Elements + Degree) ---
+    // KEEP THIS: It helps distinguish terminal atoms vs central atoms
     let mut node_feats = Vec::new();
-    for atom in &mol.common.atoms {
+    let degrees: Vec<usize> = mol.common.adjacency_list.iter().map(|n| n.len()).collect();
+
+    for (i, atom) in mol.common.atoms.iter().enumerate() {
+        // Make sure your FEAT_DIM_ATOMS is set to 11 in constants!
         let mut f = vec![0.0; FEAT_DIM_ATOMS];
-        // Ensure this match is IDENTICAL to your training expectations
+
         let idx = match atom.element {
             Hydrogen => 0,
             Carbon => 1,
@@ -291,29 +344,31 @@ pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) 
             _ => 9,
         };
         f[idx] = 1.0;
+
+        // Degree Feature: Normalized roughly to 0-1 range (div by 6)
+        f[10] = degrees[i] as f32 * 0.16;
+
         node_feats.extend(f);
     }
 
-    // 2. Build Raw Adjacency (Force Symmetry)
-    // We use a flat vector to represent the matrix temporarily
+    // --- 2. Binary Adjacency (REVERTED) ---
+    // We go back to 0.0 or 1.0. This stabilizes the GCN math.
     let mut raw_adj = vec![0.0; num_atoms * num_atoms];
-    // Also track degree for normalization
-    let mut degrees = vec![0.0; num_atoms];
 
     for (i, neighbors) in mol.common.adjacency_list.iter().enumerate() {
         for &n in neighbors {
-            // Force Symmetry: If i connects to n, set both [i,n] and [n,i]
             if i < num_atoms && n < num_atoms {
                 raw_adj[i * num_atoms + n] = 1.0;
                 raw_adj[n * num_atoms + i] = 1.0;
             }
         }
-        // Self-loops are added in the normalization step typically,
-        // but let's add them explicitly to the raw matrix first for clarity
+        // Self-loops
         raw_adj[i * num_atoms + i] = 1.0;
     }
 
-    // 3. Recalculate Degrees (inclusive of self-loops)
+    // --- 3. Symmetric Normalization ---
+    // Now this works correctly because weights are uniform
+    let mut degrees_vec = vec![0.0; num_atoms];
     for i in 0..num_atoms {
         let mut d = 0.0;
         for j in 0..num_atoms {
@@ -321,21 +376,16 @@ pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) 
                 d += 1.0;
             }
         }
-        degrees[i] = d;
+        degrees_vec[i] = d;
     }
 
-    // 4. Apply Symmetric Normalization: D^-0.5 * A * D^-0.5
-    // Entry[i][j] = Entry[i][j] / sqrt(deg[i] * deg[j])
     let mut final_adj = vec![0.0; num_atoms * num_atoms];
     for i in 0..num_atoms {
         for j in 0..num_atoms {
             if raw_adj[i * num_atoms + j] > 0.0 {
-                let d_i = degrees[i];
-                let d_j = degrees[j];
-
-                let v: f32 = (d_i * d_j);
-                let norm_factor = v.sqrt();
-                final_adj[i * num_atoms + j] = 1.0 / norm_factor;
+                let d_i: f32 = degrees_vec[i];
+                let d_j = degrees_vec[j];
+                final_adj[i * num_atoms + j] = 1.0 / (d_i * d_j).sqrt();
             }
         }
     }
@@ -367,8 +417,28 @@ fn fit_scaler(train: &[Sample]) -> StandardScaler {
             var[i] += d * d;
         }
     }
+
+    let mut y_sum = 0.0;
+    for s in train {
+        y_sum += s.target;
+    }
+    let y_mean = y_sum / n;
+
+    let mut y_var = 0.0;
+    for s in train {
+        let diff = s.target - y_mean;
+        y_var += diff * diff;
+    }
+    let y_std = (y_var / n).sqrt();
+
     let std = var.iter().map(|v| (v / n).sqrt()).collect();
-    StandardScaler { mean, std }
+
+    StandardScaler {
+        mean,
+        std,
+        y_mean,
+        y_std,
+    }
 }
 
 #[cfg(feature = "train")]
@@ -404,17 +474,22 @@ impl InferenceStep for Model<ValidBackend> {
     }
 }
 
-#[cfg(feature = "train")]
-fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<Vec<Sample>> {
-    let mut samples = Vec::new();
-    let file = fs::File::open(csv_path)?;
-    let mut rdr = csv::Reader::from_reader(file);
+/// Can be used for training or eval.
+pub(in crate::therapeutic) fn load_training_data(
+    csv_path: &Path,
+    sdf_path: &Path,
+    tgt_col: usize,
+) -> io::Result<Vec<(MoleculeSmall, f32)>> {
+    let csv_file = fs::File::open(csv_path)?;
+    let mut rdr = csv::Reader::from_reader(csv_file);
 
     let csv_data = fs::read_to_string(csv_path)?;
 
+    let mut result = Vec::new();
+
     // Iterate over records (automatically handles quotes and headers)
-    for (i, result) in rdr.records().enumerate() {
-        let record = result?;
+    for (i, record) in rdr.records().enumerate() {
+        let record = record?;
 
         // Robust float parsing
         let target_str = &record[tgt_col];
@@ -431,7 +506,7 @@ fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<V
         // let filename = &cols[0];
         let filename = csv_path.file_stem().unwrap().to_str().unwrap();
 
-        let sdf_path = sdf_folder.join(format!("{filename}_id_{i}.sdf"));
+        let sdf_path = sdf_path.join(format!("{filename}_id_{i}.sdf"));
 
         let mut mol: MoleculeSmall = {
             let sdf = match Sdf::load(&sdf_path) {
@@ -447,7 +522,23 @@ fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<V
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
         mol.characterization = Some(MolCharacterization::new(&mol.common));
-        let features_property = param_feats_from_mol(&mol)?;
+
+        result.push((mol, target));
+    }
+
+    Ok(result)
+}
+
+#[cfg(feature = "train")]
+fn read_data(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<Vec<Sample>> {
+    let mut samples = Vec::new();
+
+    let loaded = load_training_data(csv_path, sdf_path, tgt_col)?;
+    for (mol, target) in loaded {
+        let feat_params = param_feats_from_mol(&mol)?;
+
+        // println!("Feat params: {:?}", feat_params);
+        // panic!("");
 
         if mol.common.bonds.is_empty() && mol.common.atoms.len() > 20 {
             println!("/n/nNo bonds found in SDF at path (Likely you RMed them) {sdf_path:?}/n/n");
@@ -468,7 +559,7 @@ fn read_data(csv_path: &Path, sdf_folder: &Path, tgt_col: usize) -> io::Result<V
         let (features_node, adj_list, _) = mol_to_graph_data(&mol);
 
         samples.push(Sample {
-            features_property,
+            features_property: feat_params,
             features_node,
             adj_list,
             num_atoms,
@@ -545,6 +636,7 @@ pub fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
         ln(c.psa_topo),
         ln(c.asa_topo),
         ln(c.volume),
+        ln(c.wiener_index.unwrap_or(0) as f32),
     ])
 }
 
@@ -555,15 +647,7 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
         .map(|s| s.to_owned())
 }
 
-#[cfg(feature = "train")]
-pub fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    let csv_path = cli_value(&args, "--csv").unwrap();
-    let sdf_path = cli_value(&args, "--sdf").unwrap();
-    let smiles_col = cli_value(&args, "--smiles");
-    let smiles_col = cli_value(&args, "--target");
-
+fn train(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<()> {
     // For now at least, the target name will always be the csv filename (Without extension)
     let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
 
@@ -573,11 +657,10 @@ pub fn main() {
     println!("Started training");
 
     let model_dir = Path::new(MODEL_DIR);
-    fs::create_dir_all(model_dir).unwrap();
+    fs::create_dir_all(model_dir)?;
 
     // Data loading
-    let mut data_csv_sdf =
-        read_data(Path::new(&csv_path), Path::new(&sdf_path), TGT_COL_TDC).unwrap();
+    let mut data_csv_sdf = read_data(Path::new(&csv_path), Path::new(&sdf_path), tgt_col)?;
 
     println!("Sample len: {}", data_csv_sdf.len());
 
@@ -659,4 +742,50 @@ pub fn main() {
         "Training complete in {:?} s. Saved model to {model_path:?}",
         elapsed
     );
+
+    Ok(())
+}
+
+#[cfg(feature = "train")]
+pub fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    // let csv_path = cli_value(&args, "--csv").unwrap();
+    // let sdf_path = cli_value(&args, "--sdf").unwrap();
+
+    // Assumption: In this path is both A: a CSV for each param we wish to train and B: a corresponding
+    // folder filled with SDF files for each of these.
+    let path = cli_value(&args, "--path").unwrap();
+
+    // Allow passing a single target name, vs the whole folder.
+    let target = cli_value(&args, "--tgt");
+
+    for entry in fs::read_dir(&path).unwrap() {
+        let entry = entry.unwrap();
+        let file_path = entry.path();
+
+        if !file_path.is_file() {
+            continue;
+        }
+
+        if file_path.extension().and_then(|s| s.to_str()) != Some("csv") {
+            continue;
+        }
+
+        let parent = file_path.parent().unwrap_or(Path::new("."));
+        let stem = match file_path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        if let Some(tgt) = &target {
+            if stem != tgt {
+                continue;
+            }
+        }
+
+        let sdf_path = parent.join(stem);
+
+        train(&file_path, &sdf_path, TGT_COL_TDC).unwrap();
+    }
 }

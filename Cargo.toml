@@ -43,7 +43,11 @@ rand = "0.9.2"
 regex = "1.12.2"
 chrono = "0.4.42"
 serde = { version = "1.0.228", features = ["derive"] }
-csv = { version = "1.4.0", optional = true }
+
+# Ideally don't include it in the main bin, but we currently haven't settled on how to eval, so
+# this may be OK for now.
+#csv = { version = "1.4.0", optional = true }
+csv = { version = "1.4.0" }
 
 # Note: Burn v20 only supports cudarc with dynamic-loading. And we get a "cuda_runtime.h" error with it.
 # And using WGPU allows us to use this on PCs that have non-nvidia GPUs.
@@ -88,7 +92,8 @@ default = ["cuda"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
 # We use GPU for training only.
-train = ["burn/wgpu", "csv"]
+#train = ["burn/wgpu", "csv"]
+train = ["burn/wgpu"]
 
 
 [profile.release]

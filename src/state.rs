@@ -26,7 +26,6 @@ use lin_alg::{
     f64::Vec3 as Vec3F64,
 };
 
-use crate::pharmacokinetics::infer::Infer;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -43,6 +42,7 @@ use crate::{
     orca::StateOrca,
     prefs::ToSave,
     selection::{Selection, ViewSelLevel},
+    therapeutic::infer::Infer,
 };
 
 pub struct State {

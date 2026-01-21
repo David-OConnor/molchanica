@@ -44,7 +44,6 @@ mod mol_manip;
 mod mol_screening;
 mod molecules;
 mod orca;
-mod pharmacokinetics;
 mod pharmacophore;
 mod selection;
 mod smiles;
@@ -52,11 +51,12 @@ mod state;
 mod tautomers;
 #[cfg(test)]
 mod tests;
+mod therapeutic;
 mod viridis_lut;
 
 #[cfg(feature = "cuda")]
 use std::sync::Arc;
-use std::{process::Command, time::Instant};
+use std::{collections::HashMap, path::Path, process::Command, time::Instant};
 
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
@@ -64,7 +64,7 @@ use dynamics::{ComputationDevice, Integrator, SimBoxInit, params::FfParamSet};
 use molecules::{MolType, lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
-use crate::{render::render, util::handle_err};
+use crate::{render::render, therapeutic::infer::Infer, util::handle_err};
 
 fn main() {
     #[cfg(not(feature = "cuda"))]
@@ -203,6 +203,21 @@ fn main() {
             state.volatile.orca_avail = true;
         }
     };
+
+    // todo: For now
+    for tgt in ["bbb_martins", "ld50_zhu"] {
+        let metrics = therapeutic::model_eval::eval(
+            tgt,
+            Path::new(&format!(
+                "C:/Users/the_a/Desktop/bio_misc/tdc_data/{tgt}.csv"
+            )),
+            Path::new(&format!("C:/Users/the_a/Desktop/bio_misc/tdc_data/{tgt}")),
+            300,
+            &mut state.volatile.inference_models,
+        )
+        .unwrap();
+        println!("Metrics {tgt}: {metrics:?}");
+    }
 
     render(state);
 }

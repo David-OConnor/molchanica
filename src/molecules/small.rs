@@ -24,7 +24,7 @@ use dynamics::{
 };
 use na_seq::Element;
 
-use crate::pharmacokinetics::infer::Infer;
+use crate::therapeutic::infer::Infer;
 use crate::{
     // docking::{DockingSite, Pose},
     mol_characterization::MolCharacterization,
@@ -32,7 +32,7 @@ use crate::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
-    pharmacokinetics::{TherapeuticProperties, infer},
+    therapeutic::{TherapeuticProperties, infer},
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
@@ -644,9 +644,9 @@ impl MoleculeSmall {
                 char.log_p, props.log_p, char.tpsa_ertl, props.total_polar_surface_area
             );
 
-            char.log_p = props.log_p;
+            char.log_p_pubchem = Some(props.log_p);
             char.tpsa_ertl = props.total_polar_surface_area;
-            char.volume = props.volume;
+            char.volume_pubchem = Some(props.volume);
             char.complexity = Some(props.complexity);
         }
     }

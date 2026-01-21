@@ -7,15 +7,22 @@
 //! [PK-DB](https://pk-db.com/) [Paper, 2020](https://academic.oup.com/nar/article/49/D1/D1358/5957165?login=false)
 //!
 //! [TDC ADME](https://tdcommons.ai/single_pred_tasks/adme/)
+//!
+//! todo: [Look up QUPKAKE?](https://pubs.acs.org/doi/10.1021/acs.jctc.4c00328)
 
 pub mod infer;
+pub mod model_eval;
 mod solubility;
-pub mod train; // Pub to allow access from the training entry point.
+pub mod train;
+// Pub to allow access from the training entry point.
 
-use crate::pharmacokinetics::infer::{Infer, infer_general};
-use crate::{mol_characterization::MolCharacterization, molecules::small::MoleculeSmall};
-use std::collections::HashMap;
-use std::io;
+use std::{collections::HashMap, io};
+
+use crate::{
+    mol_characterization::MolCharacterization,
+    molecules::small::MoleculeSmall,
+    therapeutic::infer::{Infer, infer_general},
+};
 
 /// Absorption, distribution, metabolism, and excretion (ADME) properties.
 /// I believe this is broadly synonymous with Pharmacokinetics.

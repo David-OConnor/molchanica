@@ -9,7 +9,7 @@ use std::{
 
 use bio_files::BondType;
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
-use na_seq::Element::*;
+use na_seq::{Element, Element::*};
 
 use crate::{
     molecules::{Atom, Bond, common::MoleculeCommon, rotatable_bonds::RotatableBond},
@@ -81,7 +81,10 @@ pub struct MolCharacterization {
     pub psa_topo: f32,
     /// The (calculated) log10 of the partition coefficient P between octanol and water for the
     /// neutral compound. Higher logP generally means more hydrophobic/lipophilic.
+    /// This version is internally calculated; this is relevant for the purposes of ML training,
+    /// even if we use the pubchem val elsewhere.
     pub log_p: f32,
+    pub log_p_pubchem: Option<f32>,
     /// A measure related to the molecule’s polarizability and volume (often derived alongside logP
     /// in fragment methods like Wildman–Crippen). Higher MR usually means “bigger/more polarizable.”
     pub molar_refractivity: f32,
@@ -99,8 +102,14 @@ pub struct MolCharacterization {
     /// We load volume and complexity from PubChem's API currently.
     /// Analytic volume of the first diverse conformer (default conformer) for a compound.
     pub volume: f32,
+    /// Note: We currently display PubChem vol, but our internal calc is very similar to it.
+    pub volume_pubchem: Option<f32>,
     /// The molecular complexity rating of a compound, computed using the Bertz/Hendrickson/Ihlenfeldt formula.
     pub complexity: Option<f32>,
+    /// a topological index of a molecule, defined as the sum of the lengths of the shortest paths
+    /// between all pairs of vertices in the chemical graph representing the non-hydrogen atoms
+    /// in the molecule
+    pub wiener_index: Option<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -541,6 +550,8 @@ impl MolCharacterization {
             - (3.27 * hetero_ct)
             + 5.92; // Intercept
 
+        let wiener_index = wiener_index(mol);
+
         Self {
             num_atoms,
             num_bonds,
@@ -586,6 +597,7 @@ impl MolCharacterization {
             tpsa_ertl,
             psa_topo,
             log_p: calc_log_p,
+            log_p_pubchem: None,
             molar_refractivity: mol_refractivity,
             num_valence_elecs,
             asa_labute,
@@ -593,7 +605,9 @@ impl MolCharacterization {
             balaban_j,
             bertz_ct,
             volume,
+            volume_pubchem: None,
             complexity: None,
+            wiener_index,
         }
     }
 }
@@ -1837,4 +1851,60 @@ pub fn bertz_ct(mol: &MoleculeCommon, cutoff: usize) -> f64 {
     }
 
     calculate_entropies(&connection_dict, &atom_type_dict, num_atoms)
+}
+
+/// Excludes hydrogens.
+
+fn wiener_index(mol: &MoleculeCommon) -> Option<u32> {
+    let n = mol.atoms.len();
+    if mol.adjacency_list.len() != n {
+        return None;
+    }
+
+    let heavy: Vec<usize> = (0..n)
+        .filter(|&i| mol.atoms[i].element != Hydrogen)
+        .collect();
+
+    if heavy.len() < 2 {
+        return Some(0);
+    }
+
+    let mut total: u32 = 0;
+
+    let mut dist: Vec<i32> = vec![-1; n];
+    let mut q: VecDeque<usize> = VecDeque::new();
+
+    for (si, &start) in heavy.iter().enumerate() {
+        dist.fill(-1);
+        dist[start] = 0;
+        q.clear();
+        q.push_back(start);
+
+        while let Some(u) = q.pop_front() {
+            let du = dist[u];
+
+            for &v in &mol.adjacency_list[u] {
+                if v >= n {
+                    return None;
+                }
+                if mol.atoms[v].element == Hydrogen {
+                    continue;
+                }
+                if dist[v] < 0 {
+                    dist[v] = du + 1;
+                    q.push_back(v);
+                }
+            }
+        }
+
+        for &end in &heavy[(si + 1)..] {
+            let d = dist[end];
+            if d < 0 {
+                return None;
+            }
+            total += d as u32;
+        }
+    }
+
+    Some(total)
 }

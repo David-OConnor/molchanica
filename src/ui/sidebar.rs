@@ -583,22 +583,30 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         ],
     );
 
+    let vol = match char.volume_pubchem {
+        Some(v) => v,
+        None => char.volume,
+    };
     mol_char_helper(
         ui,
         &[
             ("ASA (Labute)", &format!("{:.2}", char.asa_labute)),
             ("ASA (Geom)", &format!("{:.2}", char.asa_topo)),
-            ("Volume", &format!("{:.2}", char.volume)),
+            ("Volume", &format!("{:.2}", vol)),
         ],
     );
 
     // Computed properties
     ui.add_space(ROW_SPACING);
 
+    let log_p = match char.log_p_pubchem {
+        Some(v) => v,
+        None => char.log_p,
+    };
     mol_char_helper(
         ui,
         &[
-            ("LogP", &format!("{:.2}", char.log_p)),
+            ("LogP", &format!("{:.2}", log_p)),
             ("Mol Refrac", &format!("{:.2}", char.molar_refractivity)),
         ],
     );
@@ -616,6 +624,14 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         &[(
             "Complexity",
             &format!("{:.2}", char.complexity.unwrap_or(0.0)),
+        )],
+    );
+
+    mol_char_helper(
+        ui,
+        &[(
+            "Wiener index",
+            &format!("{}", char.wiener_index.unwrap_or(0)),
         )],
     );
 

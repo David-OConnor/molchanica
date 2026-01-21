@@ -1,5 +1,6 @@
 // This feature-gate prevents having to specify `--bin molchanica` when running normally.
 #![cfg(feature = "train")]
+#![recursion_limit = "256"] // todo: Troubleshooting a strange error with the  WGPU backend.
 
 //! Experimenting with giving the ML training access to Molecule related  data
 //!
@@ -26,7 +27,6 @@ pub mod mol_manip;
 pub mod mol_screening;
 pub mod molecules;
 pub mod orca;
-pub mod pharmacokinetics;
 pub mod pharmacophore;
 pub mod prefs;
 pub mod reflection;
@@ -37,6 +37,7 @@ pub mod selection;
 pub mod smiles;
 pub mod state;
 pub mod tautomers;
+pub mod therapeutic;
 pub mod ui;
 pub mod util;
 pub mod viridis_lut;
