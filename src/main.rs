@@ -205,7 +205,7 @@ fn main() {
     };
 
     // todo: For now
-    for tgt in ["bbb_martins", "ld50_zhu"] {
+    for tgt in ["bbb_martins", "ld50_zhu", "solubility_aqsoldb", "herg"] {
         let metrics = therapeutic::model_eval::eval(
             tgt,
             Path::new(&format!(

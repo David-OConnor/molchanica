@@ -2,6 +2,7 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::therapeutic::{Adme, Toxicity};
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
     label,
@@ -480,7 +481,7 @@ pub(in crate::ui) fn sidebar(
     engine_updates.ui_reserved_px.0 = out.response.rect.width();
 }
 
-fn mol_char_helper(ui: &mut Ui, items: &[(&str, &str)]) {
+fn char_item(ui: &mut Ui, items: &[(&str, &str)]) {
     ui.horizontal(|ui| {
         for (i, (name, v)) in items.iter().enumerate() {
             label!(ui, format!("{name}:"), Color32::GRAY);
@@ -526,7 +527,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
 
     ui.add_space(ROW_SPACING);
     // Basics
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("Atoms", &char.num_atoms.to_string()),
@@ -536,12 +537,12 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         ],
     );
 
-    mol_char_helper(ui, &[("Weight", &format!("{:.2}", char.mol_weight))]);
+    char_item(ui, &[("Weight", &format!("{:.2}", char.mol_weight))]);
 
     ui.add_space(ROW_SPACING);
     // Functional groups
 
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("Rings Ar", &char.num_rings_aromatic.to_string()),
@@ -551,7 +552,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     );
 
     // todo: Rings
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("Amine", &char.amines.len().to_string()),
@@ -563,7 +564,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
 
     ui.add_space(ROW_SPACING);
     // Misc properties
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("H bond donor:", &char.h_bond_donor.len().to_string()),
@@ -575,7 +576,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     // Geometry
     // ui.add_space(ROW_SPACING);
 
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("TPSA (Ertl)", &format!("{:.2}", char.tpsa_ertl)),
@@ -587,7 +588,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         Some(v) => v,
         None => char.volume,
     };
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("ASA (Labute)", &format!("{:.2}", char.asa_labute)),
@@ -603,7 +604,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         Some(v) => v,
         None => char.log_p,
     };
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("LogP", &format!("{:.2}", log_p)),
@@ -611,7 +612,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         ],
     );
 
-    mol_char_helper(
+    char_item(
         ui,
         &[
             ("Balaban J", &format!("{:.2}", char.balaban_j)),
@@ -619,7 +620,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         ],
     );
 
-    mol_char_helper(
+    char_item(
         ui,
         &[(
             "Complexity",
@@ -627,7 +628,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         )],
     );
 
-    mol_char_helper(
+    char_item(
         ui,
         &[(
             "Wiener index",
@@ -635,27 +636,119 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         )],
     );
 
-    if let Some(pk) = &mol.therapeutic_props {
+    if let Some(ther) = &mol.therapeutic_props {
         ui.add_space(ROW_SPACING);
         ui.separator();
         label!(ui, "Therapeutic data", Color32::LIGHT_BLUE);
 
-        label!(ui, "ADME:", Color32::GRAY);
-
-        mol_char_helper(
-            ui,
-            &[(
-                "Blood brain barrier",
-                &format!("{:.2}", pk.adme.blood_brain_barrier),
-            )],
-        );
-
-        mol_char_helper(
-            ui,
-            &[("Sol (water)", &format!("{:.2}", pk.adme.solubility_water))],
-        );
-
-        label!(ui, "Toxicity:", Color32::GRAY).on_hover_text("Of our cittyyyyyyy");
-        mol_char_helper(ui, &[("LD50", &format!("{:.2}", pk.toxicity.ld50))]);
+        adme_disp(&ther.adme, ui);
+        tox_disp(&ther.toxicity, ui);
     }
+}
+
+fn adme_disp(adme: &Adme, ui: &mut Ui) {
+    label!(ui, "ADME:", Color32::GRAY);
+
+    // Absorption
+    char_item(
+        ui,
+        &[(
+            "Intestinal permability",
+            &format!("{:.2}", adme.intestinal_permeability),
+        )],
+    );
+    char_item(
+        ui,
+        &[(
+            "Intestinal absorption",
+            &format!("{:.2}", adme.intestinal_absorption),
+        )],
+    );
+    char_item(ui, &[("pgp", &format!("{:.2}", adme.pgp))]);
+    char_item(
+        ui,
+        &[(
+            "Oral_bioavailability",
+            &format!("{:.2}", adme.oral_bioavailablity),
+        )],
+    );
+    char_item(
+        ui,
+        &[("Lipophilicity", &format!("{:.2}", adme.lipophilicity))],
+    );
+    char_item(
+        ui,
+        &[("Solubility water", &format!("{:.2}", adme.solubility_water))],
+    );
+    char_item(
+        ui,
+        &[(
+            "Membrane permeability",
+            &format!("{:.2}", adme.membrane_permeability),
+        )],
+    );
+    char_item(
+        ui,
+        &[(
+            "Hydration free Energy",
+            &format!("{:.2}", adme.hydration_free_energy),
+        )],
+    );
+
+    // Distribution
+    char_item(
+        ui,
+        &[(
+            "blood_brain_barrier",
+            &format!("{:.2}", adme.blood_brain_barrier),
+        )],
+    );
+    char_item(
+        ui,
+        &[(
+            "plasma protein binding",
+            &format!("{:.2}", adme.plasma_protein_binding_rate),
+        )],
+    );
+    char_item(ui, &[("VDSS", &format!("{:.2}", adme.vdss))]);
+
+    // Metabolism
+    char_item(
+        ui,
+        &[(
+            "CYP P450 2C19 inhibition",
+            &format!("{:.2}", adme.cyp_2c19_inhibition),
+        )],
+    );
+    char_item(
+        ui,
+        &[(
+            "CYP P450 2D6 inhibition",
+            &format!("{:.2}", adme.cyp_2d6_inhibition),
+        )],
+    );
+
+    // Excretion
+    char_item(ui, &[("Half Life", &format!("{:.2}", adme.half_life))]);
+    char_item(ui, &[("Clearance", &format!("{:.2}", adme.clearance))]);
+}
+
+fn tox_disp(tox: &Toxicity, ui: &mut Ui) {
+    label!(ui, "Toxicity:", Color32::GRAY).on_hover_text("Of our cittyyyyyyy");
+
+    char_item(ui, &[("LD50", &format!("{:.2}", tox.ld50))]);
+    char_item(ui, &[("hERG", &format!("{:.2}", tox.ether_a_go_go))]);
+    char_item(ui, &[("Mutagenicity", &format!("{:.2}", tox.mutagencity))]);
+    char_item(
+        ui,
+        &[(
+            "Liver injury",
+            &format!("{:.2}", tox.drug_induced_liver_injury),
+        )],
+    );
+    char_item(
+        ui,
+        &[("Skin reaction", &format!("{:.2}", tox.skin_reaction))],
+    );
+    char_item(ui, &[("Carcinogen", &format!("{:.2}", tox.carcinogen))]);
 }

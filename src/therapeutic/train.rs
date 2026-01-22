@@ -512,7 +512,9 @@ pub(in crate::therapeutic) fn load_training_data(
             let sdf = match Sdf::load(&sdf_path) {
                 Ok(s) => s,
                 Err(e) => {
-                    println!("Error loading SDF at path {sdf_path:?}: {:?}", e);
+                    // We accept that some SDF files are missing from not being able
+                    // to download them from PubChem.
+                    // println!("Error loading SDF at path {sdf_path:?}: {:?}", e);
                     continue;
                 }
             };
@@ -647,6 +649,7 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
         .map(|s| s.to_owned())
 }
 
+#[cfg(feature = "train")]
 fn train(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<()> {
     // For now at least, the target name will always be the csv filename (Without extension)
     let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();

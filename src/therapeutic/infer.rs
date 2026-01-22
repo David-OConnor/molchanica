@@ -56,7 +56,6 @@ impl Infer {
     }
 
     pub fn infer(&self, mol: &MoleculeSmall, mut feat_params: Vec<f32>) -> io::Result<f32> {
-        println!("Starting inference...");
         let start = Instant::now();
 
         // println!("Feat params: {:?}", feat_params);
