@@ -2,7 +2,6 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::therapeutic::{Adme, Toxicity};
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
     label,
@@ -10,6 +9,7 @@ use crate::{
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolIdent, MolType, common::MoleculeCommon, small::MoleculeSmall},
     state::State,
+    therapeutic::{Adme, Toxicity},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING,

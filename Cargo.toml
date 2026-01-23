@@ -44,10 +44,7 @@ regex = "1.12.2"
 chrono = "0.4.42"
 serde = { version = "1.0.228", features = ["derive"] }
 
-# Ideally don't include it in the main bin, but we currently haven't settled on how to eval, so
-# this may be OK for now.
-#csv = { version = "1.4.0", optional = true }
-csv = { version = "1.4.0" }
+csv = { version = "1.4.0", optional = true }  # Tran only
 
 # Note: Burn v20 only supports cudarc with dynamic-loading. And we get a "cuda_runtime.h" error with it.
 # And using WGPU allows us to use this on PCs that have non-nvidia GPUs.
@@ -57,7 +54,7 @@ serde_json = "1.0.145"  # For [de]serializing ML model configs and scalers.
 
 # Note: This section must be at the bottom; applies to all elements below it.
 #[target.'cfg(not(target_os = "windows"))'.dependencies]
-cudarc = { version = "0.18.1", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
+cudarc = { version = "0.19.0", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
 #cudarc = { version = "0.18.1", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking", "cuda-13000"], optional = true }
 # Note: The non-cuda one seems to work on a non-nvidia Win with dynamic-linking.
 #[target.'cfg(target_os = "windows")'.dependencies]
@@ -70,7 +67,7 @@ cudarc = { version = "0.18.1", default-features = false, features = ["std", "dri
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
 #graphics = { path = "../../graphics" }
-#lin_alg = { path = "../../lin_alg" }
+lin_alg = { path = "../../lin_alg" }
 na_seq = { path = "../na_seq" }
 bio_apis = { path = "../bio_apis" }
 #mcubes = { path = "../mcubes" }
@@ -92,8 +89,8 @@ default = ["cuda"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
 # We use GPU for training only.
-#train = ["burn/wgpu", "csv"]
-train = ["burn/wgpu"]
+train = ["burn/wgpu", "csv"]
+#train = ["burn/wgpu"]
 
 
 [profile.release]

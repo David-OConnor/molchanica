@@ -47,6 +47,8 @@ use na_seq::Element::*;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "train")]
+use crate::therapeutic::model_eval::eval;
 use crate::{
     mol_characterization::MolCharacterization,
     molecules::{Atom, Bond, small::MoleculeSmall},
@@ -250,7 +252,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
 // ==============================================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StandardScaler {
+pub(in crate::therapeutic) struct StandardScaler {
     pub mean: Vec<f32>,
     pub std: Vec<f32>,
     pub y_mean: f32,
@@ -284,7 +286,7 @@ impl StandardScaler {
 
 /// Helper: Pads a single graph to MAX_ATOMS.
 /// Returns (PaddedNodes, PaddedAdj, PaddedMask) as flat vectors.
-pub fn pad_graph_data(
+pub(in crate::therapeutic) fn pad_graph_data(
     raw_nodes: &[f32],
     raw_adj: &[f32],
     num_atoms: usize,
@@ -319,7 +321,9 @@ pub fn pad_graph_data(
 
 /// Helper: Converts raw Atoms and Bonds into Flat vectors for Tensors.
 /// Used by both Training and Inference.
-pub fn mol_to_graph_data(mol: &MoleculeSmall) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+pub(in crate::therapeutic) fn mol_to_graph_data(
+    mol: &MoleculeSmall,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let num_atoms = mol.common.atoms.len();
 
     // --- 1. Node Features (Elements + Degree) ---
@@ -474,11 +478,14 @@ impl InferenceStep for Model<ValidBackend> {
     }
 }
 
+#[cfg(feature = "train")]
 /// Can be used for training or eval.
 pub(in crate::therapeutic) fn load_training_data(
     csv_path: &Path,
     sdf_path: &Path,
     tgt_col: usize,
+    // Optionally filter to only certain indices. This is useful in test/train splits for evaluation.
+    indices: Option<&[usize]>,
 ) -> io::Result<Vec<(MoleculeSmall, f32)>> {
     let csv_file = fs::File::open(csv_path)?;
     let mut rdr = csv::Reader::from_reader(csv_file);
@@ -489,6 +496,12 @@ pub(in crate::therapeutic) fn load_training_data(
 
     // Iterate over records (automatically handles quotes and headers)
     for (i, record) in rdr.records().enumerate() {
+        if let Some(ind) = indices {
+            if !ind.contains(&i) {
+                continue;
+            }
+        }
+
         let record = record?;
 
         // Robust float parsing
@@ -531,11 +544,18 @@ pub(in crate::therapeutic) fn load_training_data(
     Ok(result)
 }
 
+/// For training: Load CSV and SDF molecule data for a training set.
+/// If doing a train/test split (e.g. for eval), set indices to the training ones.
 #[cfg(feature = "train")]
-fn read_data(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<Vec<Sample>> {
+fn read_data(
+    csv_path: &Path,
+    sdf_path: &Path,
+    tgt_col: usize,
+    indices: Option<&[usize]>,
+) -> io::Result<Vec<Sample>> {
     let mut samples = Vec::new();
 
-    let loaded = load_training_data(csv_path, sdf_path, tgt_col)?;
+    let loaded = load_training_data(csv_path, sdf_path, tgt_col, indices)?;
     for (mol, target) in loaded {
         let feat_params = param_feats_from_mol(&mol)?;
 
@@ -576,7 +596,7 @@ fn read_data(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<Vec
 // a single  set of features for all targets.
 /// Extract features from a molecule that are relevant for inferring the target parameter. We use this
 /// in both training and inference workflows.
-pub fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
+pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
     let Some(c) = &mol.characterization else {
         return Err(io::Error::new(
             io::ErrorKind::Other,
@@ -642,6 +662,10 @@ pub fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
     ])
 }
 
+fn cli_has_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|a| a == flag)
+}
+
 fn cli_value(args: &[String], flag: &str) -> Option<String> {
     args.iter()
         .position(|a| a == flag)
@@ -650,20 +674,30 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
 }
 
 #[cfg(feature = "train")]
-fn train(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<()> {
+fn train(
+    csv_path: &Path,
+    sdf_path: &Path,
+    tgt_col: usize,
+    training_indices: Option<&[usize]>,
+) -> io::Result<()> {
     // For now at least, the target name will always be the csv filename (Without extension)
     let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
 
     let (model_path, scaler_path, config_path) = model_paths(target_name);
 
     let start = Instant::now();
-    println!("Started training");
+    println!("Started training on {csv_path:?}");
 
     let model_dir = Path::new(MODEL_DIR);
     fs::create_dir_all(model_dir)?;
 
     // Data loading
-    let mut data_csv_sdf = read_data(Path::new(&csv_path), Path::new(&sdf_path), tgt_col)?;
+    let mut data_csv_sdf = read_data(
+        Path::new(&csv_path),
+        Path::new(&sdf_path),
+        tgt_col,
+        training_indices,
+    )?;
 
     println!("Sample len: {}", data_csv_sdf.len());
 
@@ -750,6 +784,56 @@ fn train(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<()> {
 }
 
 #[cfg(feature = "train")]
+/// Separate from `main` so we can call this from the executable, or eval.
+/// Helper for `train` that can iterate through all data sets in a dir, and generates
+/// file and SDF paths.
+pub(in crate::therapeutic) fn train_on_path(
+    path: &Path,
+    target: Option<String>,
+    training_indices: Option<&[usize]>,
+    eval_: bool,
+) {
+    for entry in fs::read_dir(&path).unwrap() {
+        let entry = entry.unwrap();
+        let csv_path = entry.path();
+
+        if !csv_path.is_file() {
+            continue;
+        }
+
+        if csv_path.extension().and_then(|s| s.to_str()) != Some("csv") {
+            continue;
+        }
+
+        let parent = csv_path.parent().unwrap_or(Path::new("."));
+        let stem = match csv_path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        if let Some(tgt) = &target {
+            if stem != tgt {
+                println!("Aborting due to off-tgt");
+                continue;
+            }
+        }
+        println!("Not off tgt: {:?}", csv_path);
+
+        let sdf_path = parent.join(stem);
+
+        if eval_ {
+            if let Err(e) = eval(&csv_path, &sdf_path, TGT_COL_TDC) {
+                eprintln!("Error evaluating {csv_path:?}: {e}");
+            }
+        } else {
+            if let Err(e) = train(&csv_path, &sdf_path, TGT_COL_TDC, training_indices) {
+                eprintln!("Error training {csv_path:?}: {e}");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "train")]
 pub fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -763,32 +847,7 @@ pub fn main() {
     // Allow passing a single target name, vs the whole folder.
     let target = cli_value(&args, "--tgt");
 
-    for entry in fs::read_dir(&path).unwrap() {
-        let entry = entry.unwrap();
-        let file_path = entry.path();
+    let eval_ = cli_has_flag(&args, "--eval");
 
-        if !file_path.is_file() {
-            continue;
-        }
-
-        if file_path.extension().and_then(|s| s.to_str()) != Some("csv") {
-            continue;
-        }
-
-        let parent = file_path.parent().unwrap_or(Path::new("."));
-        let stem = match file_path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s,
-            None => continue,
-        };
-
-        if let Some(tgt) = &target {
-            if stem != tgt {
-                continue;
-            }
-        }
-
-        let sdf_path = parent.join(stem);
-
-        train(&file_path, &sdf_path, TGT_COL_TDC).unwrap();
-    }
+    train_on_path(Path::new(&path), target, None, eval_);
 }

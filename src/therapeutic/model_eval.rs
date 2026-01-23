@@ -1,14 +1,23 @@
-//! Evaluate the performance of a model.
+//! Evaluate the performance of a model.'
+//!
+//! [TDC scaffold split](https://tdcommons.ai/functions/data_split/):
+//!
+//! Example getting indices (or SMILES?) of the train/test split usinb the recommended
+//! TDC Python functions. (Note: TDC may not be Windows compatible.)
+//!
+//! See `scripts/train_test_split.py` for an example of how to use this.
+//!
+//! You can run the eval fns directly, or call the `train` executable with the `--eval` param:
+//! `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data --eval`
 
-use std::{collections::HashMap, fs, io, path::Path, time::Instant};
-
-use bio_files::Sdf;
+use std::{collections::HashMap, io, path::Path, time::Instant};
 
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
-        infer::{Infer, infer_general},
-        train::{TGT_COL_TDC, load_training_data},
+        infer::infer_general,
+        train::{load_training_data, train_on_path},
+        train_test_split_indices::TrainTestSplit,
     },
 };
 
@@ -18,7 +27,7 @@ pub struct EvalMetrics {
     /// Mean squared error.
     pub mse: f32,
     /// Root-Mean Squared error
-    pub rmsd: f32,
+    pub rmse: f32,
     /// Mean Absolute Error
     pub mae: f32,
     /// Coefficient of determination.
@@ -35,12 +44,13 @@ fn run_infer(
     // This format matches how we load.
     data: &[(MoleculeSmall, f32)],
     target_name: &str,
-    models: &mut HashMap<String, Infer>,
 ) -> io::Result<Vec<f32>> {
     let mut result = Vec::with_capacity(data.len());
 
+    // Models here is a cache, so we don't have to load the model for each test item.
+    let mut models = HashMap::new();
     for (mol, _) in data {
-        result.push(infer_general(mol, target_name, models)?);
+        result.push(infer_general(mol, target_name, &mut models)?);
     }
 
     Ok(result)
@@ -124,42 +134,50 @@ fn spearman_corr(xs: &[f32], ys: &[f32]) -> f32 {
     pearson_corr(&rx, &ry)
 }
 
-pub fn eval(
-    target_name: &str,
-    csv_path: &Path,
-    sdf_path: &Path,
-    limit: usize,
-    models: &mut HashMap<String, Infer>,
-) -> io::Result<EvalMetrics> {
+pub fn eval(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<EvalMetrics> {
     let start = Instant::now();
     println!("Gathering ML metrics");
 
-    let tgt_col = TGT_COL_TDC;
+    let target_name = match csv_path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s,
+        None => return Err(io::Error::new(io::ErrorKind::Other, "Invalid CSV path")),
+    };
 
-    let mut loaded = load_training_data(csv_path, sdf_path, tgt_col)?;
-    if limit != 0 && loaded.len() > limit {
-        loaded.truncate(limit);
-    }
+    let tts = TrainTestSplit::new(target_name);
 
-    let inferred = run_infer(&loaded, target_name, models)?;
+    // todo: Hard-coded for now.
+    let path = Path::new("C:/Users/the_a/Desktop/bio_misc/tdc_data");
+
+    // Set up training data using this train/test split. (Values otherwise might be
+    // from the full set, which will overfit)
+    println!("\nTraining on the test set of len {}...\n", tts.train.len());
+
+    // todo: ideally we would store these models somewhere separate from our main ones,
+    // todo, but this is OK for now.
+    train_on_path(path, Some(target_name.to_owned()), Some(&tts.train), true);
+
+    println!(
+        "\nTraining complete. Loading target data and performing inference on set of len {}...\n",
+        tts.test.len()
+    );
+
+    let mut loaded = load_training_data(csv_path, sdf_path, tgt_col, Some(&tts.test))?;
+
+    let inferred = run_infer(&loaded, target_name)?;
     let tgts = loaded.iter().map(|(_, tgt)| *tgt).collect::<Vec<_>>();
 
     if tgts.len() != inferred.len() || tgts.is_empty() {
-        // todo: No...
-        return Ok(EvalMetrics {
-            mse: f32::NAN,
-            rmsd: f32::NAN,
-            mae: f32::NAN,
-            r2: f32::NAN,
-            pearson: f32::NAN,
-            spearman: f32::NAN,
-        });
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Inferred length mismatch",
+        ));
     }
 
-    let n = tgts.len() as f32;
+    let n = tgts.len() as f64;
 
-    let mut se_sum = 0.;
-    let mut ae_sum = 0.;
+    // Accumulate as f64
+    let mut se_sum = 0.0f64;
+    let mut ae_sum = 0.0f64;
 
     for i in 0..tgts.len() {
         // todo: FOr now.
@@ -167,7 +185,7 @@ pub fn eval(
             println!("Expected: {}, Inferred: {}", tgts[i], inferred[i]);
         }
 
-        let err = inferred[i] - tgts[i];
+        let err = (inferred[i] - tgts[i]) as f64;
         se_sum += err * err;
         ae_sum += err.abs();
     }
@@ -177,21 +195,21 @@ pub fn eval(
     let mae = ae_sum / n;
 
     let y_mean = mean(&tgts);
-    let mut ss_res = 0.0f32;
-    let mut ss_tot = 0.0f32;
+    let mut ss_res = 0.0f64;
+    let mut ss_tot = 0.0f64;
 
     for i in 0..tgts.len() {
-        let y = tgts[i];
-        let yhat = inferred[i];
+        let y = tgts[i] as f64;
+        let yhat = inferred[i] as f64;
         let r = y - yhat;
         ss_res += r * r;
 
-        let d = y - y_mean;
+        let d = y - y_mean as f64;
         ss_tot += d * d;
     }
 
     let r2 = if ss_tot == 0.0 || !ss_tot.is_finite() {
-        f32::NAN
+        f64::NAN
     } else {
         1.0 - (ss_res / ss_tot)
     };
@@ -203,10 +221,10 @@ pub fn eval(
     println!("ML metrics gathered in {:?}", elapsed);
 
     Ok(EvalMetrics {
-        mse,
-        rmsd,
-        mae,
-        r2,
+        mse: mse as f32,
+        rmse: rmsd as f32,
+        mae: mae as f32,
+        r2: r2 as f32,
         pearson,
         spearman,
     })
