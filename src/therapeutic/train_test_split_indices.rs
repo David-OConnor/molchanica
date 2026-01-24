@@ -3,22 +3,21 @@
 ///
 /// To generate these, run the `train_test_split.py` script in the `scripts` folder, then copy
 /// the stdout results into this file.
-use std::io;
+use crate::therapeutic::DatasetTdc;
 
 /// Indices, from original data set.
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct TrainTestSplit {
-    pub name: String,
+    pub dataset: DatasetTdc,
     pub train: Vec<usize>,
     pub test: Vec<usize>,
 }
 
 impl TrainTestSplit {
-    // caco2_wang Train indices:
-    pub fn new(name: &str) -> Self {
-        match name {
-            "caco2_wang" => Self {
-                name: name.to_string(),
+    pub fn new(dataset: DatasetTdc) -> Self {
+        match dataset {
+            DatasetTdc::Caco2Wang => Self {
+                dataset,
                 train: vec![
                     389, 390, 518, 521, 396, 143, 656, 657, 658, 659, 278, 791, 25, 26, 798, 799,
                     800, 35, 36, 167, 168, 428, 177, 51, 821, 822, 826, 720, 81, 601, 346, 347,
@@ -75,8 +74,8 @@ impl TrainTestSplit {
                     898, 670, 309, 117, 723, 140, 235, 214, 239, 263, 725, 17, 122, 555, 634,
                 ],
             },
-            "hia_hou" => Self {
-                name: name.to_string(),
+            DatasetTdc::HiaHou => Self {
+                dataset,
                 train: vec![
                     0, 522, 395, 141, 525, 401, 146, 147, 20, 529, 151, 153, 286, 416, 162, 164,
                     293, 420, 549, 550, 41, 297, 298, 299, 173, 301, 177, 182, 310, 313, 314, 316,
@@ -115,8 +114,8 @@ impl TrainTestSplit {
                     570, 13, 67, 490,
                 ],
             },
-            "pampa_ncats" => Self {
-                name: name.to_string(),
+            DatasetTdc::PampaNcats => Self {
+                dataset,
                 train: vec![
                     521, 848, 1431, 67, 694, 54, 132, 1626, 643, 1078, 1915, 1380, 1901, 145, 482,
                     822, 1155, 939, 234, 529, 434, 232, 853, 2011, 2007, 1530, 1463, 461, 1512,
@@ -251,8 +250,8 @@ impl TrainTestSplit {
                     252, 353, 565, 620, 720, 56, 273, 1929,
                 ],
             },
-            "bioavailability_ma" => Self {
-                name: name.to_string(),
+            DatasetTdc::BioavailabilityMa => Self {
+                dataset,
                 train: vec![
                     1, 515, 517, 262, 275, 148, 155, 156, 413, 414, 415, 36, 552, 426, 299, 428,
                     301, 46, 53, 566, 55, 443, 316, 572, 197, 198, 454, 75, 460, 77, 205, 591, 80,
@@ -294,8 +293,8 @@ impl TrainTestSplit {
                     159, 380, 634, 492, 141, 62, 546, 86, 145, 163, 182, 553, 13, 68, 464,
                 ],
             },
-            "lipophilicity_astrazeneca" => Self {
-                name: name.to_string(),
+            DatasetTdc::LipophilicityAstrazeneca => Self {
+                dataset,
                 train: vec![
                     3816, 1019, 144, 3262, 2462, 1036, 3009, 4, 2594, 3387, 1704, 4025, 3066, 2525,
                     3399, 1480, 1738, 3896, 384, 2658, 4160, 617, 2967, 3609, 3546, 3710, 3735,
@@ -582,8 +581,8 @@ impl TrainTestSplit {
                     547,
                 ],
             },
-            "solubility_aqsoldb" => Self {
-                name: name.to_string(),
+            DatasetTdc::SolubilityAqsoldb => Self {
+                dataset,
                 train: vec![
                     2, 5, 10, 11, 14, 16, 18, 24, 8217, 26, 31, 36, 37, 40, 55, 56, 57, 72, 93,
                     105, 111, 113, 8314, 123, 8321, 134, 137, 142, 148, 150, 8351, 8360, 8362, 173,
@@ -1271,8 +1270,8 @@ impl TrainTestSplit {
                     2614, 2267, 7717, 7782, 9960, 7754, 7757, 7770, 7773, 121,
                 ],
             },
-            "pgp_broccatelli" => Self {
-                name: name.to_string(),
+            DatasetTdc::PgpBroccatelli => Self {
+                dataset,
                 train: vec![
                     769, 515, 510, 135, 392, 393, 777, 511, 15, 1168, 18, 276, 406, 1174, 280, 793,
                     1150, 156, 157, 1181, 1126, 293, 168, 169, 42, 47, 177, 305, 307, 1208, 60,
@@ -1350,8 +1349,8 @@ impl TrainTestSplit {
                     925, 139, 196, 321, 322, 363, 415, 36, 149, 1176,
                 ],
             },
-            "clearance_hepatocyte_az" => Self {
-                name: name.to_string(),
+            DatasetTdc::ClearanceHepatocyteAz => Self {
+                dataset,
                 train: vec![
                     687, 917, 43, 36, 1046, 337, 483, 436, 519, 174, 338, 659, 1173, 360, 476, 217,
                     890, 446, 1133, 680, 292, 887, 214, 810, 262, 662, 501, 192, 929, 291, 518,
@@ -1429,8 +1428,8 @@ impl TrainTestSplit {
                     821, 1107, 117, 162, 705, 285, 315, 382, 361, 28, 130, 653, 1028, 1044,
                 ],
             },
-            "bbb_martins" => Self {
-                name: name.to_string(),
+            DatasetTdc::BbbMartins => Self {
+                dataset,
                 train: vec![
                     1, 1032, 1036, 525, 1549, 530, 21, 1045, 1049, 1054, 1055, 1060, 41, 43, 559,
                     51, 54, 576, 577, 578, 1603, 582, 1094, 588, 1617, 91, 97, 98, 1124, 1644,
@@ -1565,8 +1564,8 @@ impl TrainTestSplit {
                     1433, 28, 333, 352,
                 ],
             },
-            "ld50_zhu" => Self {
-                name: name.to_string(),
+            DatasetTdc::Ld50Zhu => Self {
+                dataset,
                 train: vec![
                     4, 6, 30, 35, 37, 55, 56, 68, 80, 141, 148, 165, 166, 168, 169, 170, 171, 172,
                     173, 174, 179, 187, 188, 189, 192, 197, 200, 201, 203, 204, 211, 218, 219, 220,
@@ -2073,8 +2072,8 @@ impl TrainTestSplit {
                     3684, 6340, 7036, 5486, 2290, 2332, 6909, 2544, 3044, 6785, 2178, 100, 3149,
                 ],
             },
-            "ames" => Self {
-                name: name.to_string(),
+            DatasetTdc::Ames => Self {
+                dataset,
                 train: vec![
                     6145, 6146, 4100, 2053, 6151, 4107, 13, 2066, 2068, 2069, 2070, 2071, 2072,
                     2073, 4118, 2075, 4120, 6165, 6172, 6176, 4130, 35, 2084, 2086, 4134, 4136,
@@ -2577,8 +2576,8 @@ impl TrainTestSplit {
                     4346, 6868, 87,
                 ],
             },
-            "carcinogens_lagunin" => Self {
-                name: name.to_string(),
+            DatasetTdc::CarcinogensLagunin => Self {
+                dataset,
                 train: vec![
                     256, 1, 264, 265, 12, 275, 156, 32, 35, 37, 50, 52, 181, 184, 73, 202, 85, 220,
                     97, 228, 244, 0, 135, 137, 11, 13, 269, 15, 16, 24, 27, 28, 42, 43, 45, 46,
@@ -2600,8 +2599,8 @@ impl TrainTestSplit {
                     66, 91, 96, 114, 107, 9,
                 ],
             },
-            "dili" => Self {
-                name: name.to_string(),
+            DatasetTdc::Dili => Self {
+                dataset,
                 train: vec![
                     2, 3, 4, 259, 8, 136, 266, 12, 268, 142, 399, 272, 146, 408, 25, 281, 29, 35,
                     420, 37, 165, 168, 298, 171, 299, 307, 183, 312, 60, 191, 198, 202, 458, 206,
@@ -2634,8 +2633,8 @@ impl TrainTestSplit {
                     73, 131, 132, 32, 104, 33, 344, 69, 432, 80, 114, 180, 194, 217, 27,
                 ],
             },
-            skin_reaction => Self {
-                name: name.to_string(),
+            DatasetTdc::SkinReaction => Self {
+                dataset,
                 train: vec![
                     6, 9, 22, 24, 32, 36, 40, 43, 45, 50, 53, 55, 57, 67, 69, 70, 75, 80, 86, 87,
                     96, 99, 100, 101, 104, 113, 117, 119, 120, 122, 124, 127, 128, 129, 130, 137,
@@ -2664,8 +2663,8 @@ impl TrainTestSplit {
                     389, 266, 394, 20, 399, 26, 298, 300, 42, 47, 58, 307, 292, 5,
                 ],
             },
-            "herg" => Self {
-                name: name.to_string(),
+            DatasetTdc::Herg => Self {
+                dataset,
                 train: vec![
                     540, 480, 553, 346, 87, 117, 636, 536, 195, 124, 102, 270, 475, 390, 375, 90,
                     199, 256, 589, 309, 356, 440, 83, 613, 37, 312, 518, 443, 393, 343, 65, 282,
@@ -2709,12 +2708,11 @@ impl TrainTestSplit {
                     335, 71, 516,
                 ],
             },
-            "" => Self {
-                name: name.to_string(),
-                train: vec![],
-                test: vec![],
-            },
-
+            // _ => Self {
+            //     dataset,
+            //     train: vec![],
+            //     test: vec![],
+            // },
             _ => unimplemented!(),
         }
     }

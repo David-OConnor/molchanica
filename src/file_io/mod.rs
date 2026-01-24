@@ -655,7 +655,7 @@ impl State {
                 }
 
                 if let Some(p) = &self.ff_param_set.small_mol {
-                    mol.update_ff_related(&mut self.mol_specific_params, p);
+                    mol.update_ff_related(&mut self.mol_specific_params, p, false);
 
                     mol.update_aux(
                         &self.volatile.active_mol,

@@ -24,7 +24,7 @@ use dynamics::{
 };
 use na_seq::Element;
 
-use crate::therapeutic::infer::Infer;
+use crate::therapeutic::{DatasetTdc, infer::Infer};
 use crate::{
     // docking::{DockingSite, Pose},
     mol_characterization::MolCharacterization,
@@ -501,7 +501,7 @@ impl MoleculeSmall {
         pubchem_properties_avail: &mut Option<
             Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>,
         >,
-        models: &mut HashMap<String, Infer>,
+        models: &mut HashMap<DatasetTdc, Infer>,
     ) {
         if let Some((_, i)) = active_mol {
             let offset = LIGAND_ABS_POSIT_OFFSET * (*i as f64);
@@ -653,10 +653,14 @@ impl MoleculeSmall {
 
     /// Update partial charges, FF types, and mol-specific params.
     /// Note: Perhaps we restructure? Not all of these need access to state.
+    ///
+    /// We currently skip mol-specific params for ML training, where we need FF type
+    /// and partial charge, but not them.
     pub fn update_ff_related(
         &mut self,
         mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
         gaff2: &ForceFieldParams,
+        skip_mol_specific: bool,
     ) {
         self.ff_params_loaded = true;
         for atom in &self.common.atoms {
@@ -673,7 +677,7 @@ impl MoleculeSmall {
             self.frcmod_loaded = true;
         }
 
-        println!("Inferring parameter data...");
+        // println!("Inferring FF parameter data...");
         // Note: There is an all-in-one `update_small_mol_params` fn we can use as well; it's
         // easier to use nominally, but this approach works better for our this-project Atom and bond types,
         // and loaded flags.
@@ -718,7 +722,7 @@ impl MoleculeSmall {
             self.ff_params_loaded = true;
         }
 
-        if !self.frcmod_loaded {
+        if !self.frcmod_loaded && !skip_mol_specific {
             let mol_specific_params =
                 match assign_missing_params(&atoms_gen, &self.common.adjacency_list, gaff2) {
                     Ok(v) => v,
@@ -744,6 +748,6 @@ impl MoleculeSmall {
             mol_specific_param_set.insert(self.common.ident.to_owned(), mol_specific_params);
             self.frcmod_loaded = true;
         }
-        println!("Inference complete.");
+        // println!("Inference complete.");
     }
 }

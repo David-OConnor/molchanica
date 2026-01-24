@@ -412,7 +412,7 @@ impl MolEditorState {
         // Update this immediately, as we may take advantage of FF types when adjusting geometry,
         // and it may be useful to view them.
         if let Some(p) = &param_set.small_mol {
-            self.mol.update_ff_related(&mut msp, p);
+            self.mol.update_ff_related(&mut msp, p, false);
         } else {
             eprintln!("Error: Unable to update a molecule's params due to missing GAFF2.");
         }

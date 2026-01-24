@@ -42,7 +42,7 @@ use crate::{
     orca::StateOrca,
     prefs::ToSave,
     selection::{Selection, ViewSelLevel},
-    therapeutic::infer::Infer,
+    therapeutic::{DatasetTdc, infer::Infer},
 };
 
 pub struct State {
@@ -275,7 +275,7 @@ pub struct StateVolatile {
     protein_sfc_mesh_coarse: Vec<Vec<f32>>,
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
-    pub inference_models: HashMap<String, Infer>,
+    pub inference_models: HashMap<DatasetTdc, Infer>,
 }
 
 impl Default for StateVolatile {

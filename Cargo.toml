@@ -89,8 +89,7 @@ default = ["cuda"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
 # We use GPU for training only.
-train = ["burn/wgpu", "csv"]
-#train = ["burn/wgpu"]
+train = ["burn/wgpu", "burn/tui", "csv"]
 
 
 [profile.release]

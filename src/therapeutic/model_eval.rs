@@ -9,12 +9,17 @@
 //!
 //! You can run the eval fns directly, or call the `train` executable with the `--eval` param:
 //! `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data --eval`
+//!
+//! Add a `--tgt herg` etc flag to spsecify a single target, vs every data file in the directory.
 
-use std::{collections::HashMap, io, path::Path, time::Instant};
+use std::{collections::HashMap, fmt::Display, io, path::Path, str::FromStr, time::Instant};
+
+use bio_files::md_params::ForceFieldParams;
 
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
+        DatasetTdc,
         infer::infer_general,
         train::{load_training_data, train_on_path},
         train_test_split_indices::TrainTestSplit,
@@ -39,18 +44,27 @@ pub struct EvalMetrics {
     // todo More A/R
 }
 
+impl Display for EvalMetrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "\nEval metrics:\n- MSE: {:.3}\n- RMSE: {:.3}\n- MAE: {:.3}\n- R²: {:.3}\n- Pearson: {:.3}\n- Spearman: {:.3}\n",
+            self.mse, self.rmse, self.mae, self.r2, self.pearson, self.spearman
+        )
+    }
+}
+
 fn run_infer(
-    // mols: &[MoleculeSmall],
     // This format matches how we load.
     data: &[(MoleculeSmall, f32)],
-    target_name: &str,
+    data_set: DatasetTdc,
 ) -> io::Result<Vec<f32>> {
     let mut result = Vec::with_capacity(data.len());
 
     // Models here is a cache, so we don't have to load the model for each test item.
     let mut models = HashMap::new();
     for (mol, _) in data {
-        result.push(infer_general(mol, target_name, &mut models)?);
+        result.push(infer_general(mol, data_set, &mut models)?);
     }
 
     Ok(result)
@@ -134,7 +148,13 @@ fn spearman_corr(xs: &[f32], ys: &[f32]) -> f32 {
     pearson_corr(&rx, &ry)
 }
 
-pub fn eval(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<EvalMetrics> {
+pub fn eval(
+    csv_path: &Path,
+    sdf_path: &Path,
+    tgt_col: usize,
+    mol_specific_params: &mut HashMap<String, ForceFieldParams>,
+    gaff2: &ForceFieldParams,
+) -> io::Result<EvalMetrics> {
     let start = Instant::now();
     println!("Gathering ML metrics");
 
@@ -143,7 +163,8 @@ pub fn eval(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<Eval
         None => return Err(io::Error::new(io::ErrorKind::Other, "Invalid CSV path")),
     };
 
-    let tts = TrainTestSplit::new(target_name);
+    let dataset = DatasetTdc::from_str(target_name)?;
+    let tts = TrainTestSplit::new(dataset);
 
     // todo: Hard-coded for now.
     let path = Path::new("C:/Users/the_a/Desktop/bio_misc/tdc_data");
@@ -152,18 +173,26 @@ pub fn eval(csv_path: &Path, sdf_path: &Path, tgt_col: usize) -> io::Result<Eval
     // from the full set, which will overfit)
     println!("\nTraining on the test set of len {}...\n", tts.train.len());
 
-    // todo: ideally we would store these models somewhere separate from our main ones,
-    // todo, but this is OK for now.
-    train_on_path(path, Some(target_name.to_owned()), Some(&tts.train), true);
+    // Note: For now at least, we use the same TTS for training, and evaluation. This means
+    // that we are not training on the full set. I'm unclear on how the "Validation" used in the training
+    // affects this.
+    train_on_path(path, Some(dataset), false, mol_specific_params, gaff2);
+
+    let loaded = load_training_data(
+        csv_path,
+        sdf_path,
+        tgt_col,
+        Some(&tts.test),
+        mol_specific_params,
+        gaff2,
+    )?;
 
     println!(
-        "\nTraining complete. Loading target data and performing inference on set of len {}...\n",
-        tts.test.len()
+        "\nTraining complete. Loading test data and performing inference on set of len {}...\n",
+        loaded.len()
     );
 
-    let mut loaded = load_training_data(csv_path, sdf_path, tgt_col, Some(&tts.test))?;
-
-    let inferred = run_infer(&loaded, target_name)?;
+    let inferred = run_infer(&loaded, dataset)?;
     let tgts = loaded.iter().map(|(_, tgt)| *tgt).collect::<Vec<_>>();
 
     if tgts.len() != inferred.len() || tgts.is_empty() {

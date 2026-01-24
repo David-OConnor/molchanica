@@ -13,9 +13,12 @@ use burn::{
 
 use crate::{
     molecules::small::MoleculeSmall,
-    therapeutic::train::{
-        FEAT_DIM_ATOMS, MAX_ATOMS, Model, ModelConfig, StandardScaler, model_paths,
-        mol_to_graph_data, pad_graph_data, param_feats_from_mol,
+    therapeutic::{
+        DatasetTdc,
+        train::{
+            FEAT_DIM_ATOMS, MAX_ATOMS, Model, ModelConfig, StandardScaler, model_paths,
+            mol_to_graph_data, pad_graph_data, param_feats_from_mol,
+        },
     },
 };
 
@@ -30,8 +33,8 @@ pub struct Infer {
 }
 
 impl Infer {
-    pub fn load(target_name: &str) -> io::Result<Self> {
-        let (model_path, scaler_path, cfg_path) = model_paths(target_name);
+    pub fn load(data_set: DatasetTdc) -> io::Result<Self> {
+        let (model_path, scaler_path, cfg_path) = model_paths(data_set);
 
         // Model extension is inferred automatically.
         let cfg_bytes = fs::read(&cfg_path)?;
@@ -72,7 +75,7 @@ impl Infer {
             return Ok(0.0); // Or handle error
         }
 
-        let (node_vec, adj_vec, _) = mol_to_graph_data(&mol);
+        let (node_vec, adj_vec, _) = mol_to_graph_data(&mol)?;
         let (padded_nodes, padded_adj, padded_mask) =
             pad_graph_data(&node_vec, &adj_vec, num_atoms);
 
@@ -111,7 +114,7 @@ impl Infer {
         let real_val = self.scaler.denormalize_target(val);
 
         let elapsed = start.elapsed();
-        println!("Inference complete in {:?}", elapsed);
+        // println!("Inference complete in {:?}", elapsed);
 
         Ok(real_val)
     }
@@ -121,17 +124,17 @@ impl Infer {
 /// We cache any loaded models.
 pub fn infer_general(
     mol: &MoleculeSmall,
-    target_name: &str,
-    models: &mut HashMap<String, Infer>,
+    dataset: DatasetTdc,
+    models: &mut HashMap<DatasetTdc, Infer>,
 ) -> io::Result<f32> {
     let feat_params = param_feats_from_mol(mol)?;
 
-    let infer = match models.get_mut(target_name) {
+    let infer = match models.get_mut(&dataset) {
         Some(inf) => inf,
         None => {
-            let infer = Infer::load(target_name)?;
-            models.insert(target_name.to_string(), infer);
-            models.get_mut(target_name).unwrap()
+            let infer = Infer::load(dataset)?;
+            models.insert(dataset, infer);
+            models.get_mut(&dataset).unwrap()
         }
     };
 
