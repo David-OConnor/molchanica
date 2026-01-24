@@ -16,12 +16,13 @@ use std::{collections::HashMap, fmt::Display, io, path::Path, str::FromStr, time
 
 use bio_files::md_params::ForceFieldParams;
 
+use crate::therapeutic::train::TGT_COL_TDC;
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
         infer::infer_general,
-        train::{load_training_data, train_on_path},
+        train::{load_training_data, train_inner},
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -206,8 +207,8 @@ fn auroc(scores: &[f32], labels: &[f32]) -> f32 {
 }
 
 pub fn eval(
-    csv_path: &Path,
-    sdf_path: &Path,
+    data_path: &Path,
+    dataset: DatasetTdc,
     tgt_col: usize,
     mol_specific_params: &mut HashMap<String, ForceFieldParams>,
     gaff2: &ForceFieldParams,
@@ -215,42 +216,59 @@ pub fn eval(
     let start = Instant::now();
     println!("Gathering ML metrics");
 
-    let target_name = match csv_path.file_stem().and_then(|s| s.to_str()) {
-        Some(s) => s,
-        None => return Err(io::Error::new(io::ErrorKind::Other, "Invalid CSV path")),
-    };
+    let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
 
-    let dataset = DatasetTdc::from_str(target_name)?;
     let tts = TrainTestSplit::new(dataset);
-
-    // todo: Hard-coded for now.
-    let path = Path::new("C:/Users/the_a/Desktop/bio_misc/tdc_data");
 
     // Set up training data using this train/test split. (Values otherwise might be
     // from the full set, which will overfit)
     println!("\nTraining on the test set of len {}...\n", tts.train.len());
 
-    // Note: For now at least, we use the same TTS for training, and evaluation. This means
-    // that we are not training on the full set. I'm unclear on how the "Validation" used in the training
-    // affects this.
-    train_on_path(path, Some(dataset), false, mol_specific_params, gaff2);
+    let data_train = load_training_data(
+        &csv_path,
+        &mol_path,
+        tgt_col,
+        Some(&tts.train),
+        mol_specific_params,
+        gaff2,
+    )?;
 
-    let loaded = load_training_data(
-        csv_path,
-        sdf_path,
+    let data_test = load_training_data(
+        &csv_path,
+        &mol_path,
         tgt_col,
         Some(&tts.test),
         mol_specific_params,
         gaff2,
     )?;
 
+    // Note: For now at least, we use the same TTS for training, and evaluation. This means
+    // that we are not training on the full set. I'm unclear on how the "Validation" used in the training
+    // affects this.
+
+    // // todo: Fix this.
+    // match eval(
+    //     path,
+    //     dataset,
+    //     TGT_COL_TDC,
+    //     mol_specific_params,
+    //     gaff2,
+    // ) {
+    //     Ok(ev) => {
+    //         println!("Eval for {dataset}: {ev}");
+    //     }
+    //     Err(e) => {
+    //         eprintln!("Error evaluating {csv_path:?}: {e}");
+    //     }
+    // }
+
     println!(
         "\nTraining complete. Loading test data and performing inference on set of len {}...\n",
-        loaded.len()
+        data_test.len()
     );
 
-    let inferred = run_infer(&loaded, dataset)?;
-    let tgts = loaded.iter().map(|(_, tgt)| *tgt).collect::<Vec<_>>();
+    let inferred = run_infer(&data_test, dataset)?;
+    let tgts = data_test.iter().map(|(_, tgt)| *tgt).collect::<Vec<_>>();
 
     if tgts.len() != inferred.len() || tgts.is_empty() {
         return Err(io::Error::new(

@@ -79,9 +79,12 @@ pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for paddin
 pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models";
 pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
+// Increasing layers may or may not improve model performance. It will slow down inference and training.
+const NUM_GNN_LAYERS: usize = 6;
+const NUM_MLP_LAYERS: usize = 6;
 // It seems that low or no dropout significantly improves results, but perhaps it makes the
 // model more likely to overfit, and makes it less general?
-const DROPOUT: f64 = 0.1; // 0.2? 0.3?
+const DROPOUT: f64 = 0.1;
 
 #[cfg(feature = "train")]
 type TrainBackend = Autodiff<Wgpu>;
@@ -111,29 +114,13 @@ pub(in crate::therapeutic) struct ModelConfig {
 
 impl ModelConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
-        let dim_h = self.mlp_hidden_dim;
         let dim_gnn = self.gnn_hidden_dim;
+        let dim_mlp = self.mlp_hidden_dim;
         let combined_dim = self.mlp_hidden_dim + self.gnn_hidden_dim;
 
         Model {
-            num_gnn_layers: 6,
-            num_param_layers: 6,
-            //
-            gnn1: LinearConfig::new(self.atom_input_dim, dim_gnn).init(device),
-            gnn2: LinearConfig::new(dim_gnn, dim_gnn).init(device),
-            gnn3: LinearConfig::new(dim_gnn, dim_gnn).init(device),
-            gnn4: LinearConfig::new(dim_gnn, dim_gnn).init(device),
-            gnn5: LinearConfig::new(dim_gnn, dim_gnn).init(device),
-            gnn6: LinearConfig::new(dim_gnn, dim_gnn).init(device),
-
-            // MLP layers (Keep as is)
-            mlp1: LinearConfig::new(self.global_input_dim, dim_h).init(device),
-            mlp2: LinearConfig::new(dim_h, dim_h).init(device),
-            mlp3: LinearConfig::new(dim_h, dim_h).init(device),
-            mlp4: LinearConfig::new(dim_h, dim_h).init(device),
-            mlp5: LinearConfig::new(dim_h, dim_h).init(device),
-            mlp6: LinearConfig::new(dim_h, dim_h).init(device),
-
+            gnn_layers: vec![LinearConfig::new(dim_gnn, dim_gnn).init(device); NUM_GNN_LAYERS],
+            mlp_layers: vec![LinearConfig::new(dim_mlp, dim_mlp).init(device); NUM_MLP_LAYERS],
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
             dropout: DropoutConfig::new(DROPOUT).init(),
@@ -143,24 +130,10 @@ impl ModelConfig {
 
 #[derive(Module, Debug)]
 pub(in crate::therapeutic) struct Model<B: Backend> {
-    num_gnn_layers: usize,
-    num_param_layers: usize,
-    /// GNN layers: Broadly graph and per-atom data. Some or all of these layers can be used depending
-    /// on the number of layers configured under `num_gnn_layers`.
-    gnn1: Linear<B>,
-    gnn2: Linear<B>,
-    gnn3: Linear<B>,
-    gnn4: Linear<B>,
-    gnn5: Linear<B>,
-    gnn6: Linear<B>,
+    /// GNN layers: Broadly graph and per-atom data.
+    gnn_layers: Vec<Linear<B>>,
     /// Parameter features. These are for molecule-level parameters. (Atom count, weight, volume, PSA etc)
-    mlp1: Linear<B>,
-    mlp2: Linear<B>,
-    mlp3: Linear<B>,
-    mlp4: Linear<B>,
-    mlp5: Linear<B>,
-    mlp6: Linear<B>,
-
+    mlp_layers: Vec<Linear<B>>,
     fusion_norm: LayerNorm<B>,
     /// Joint Branch
     head: Linear<B>,
@@ -169,29 +142,6 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
 }
 
 impl<B: Backend> Model<B> {
-    fn get_gnn(&self, layer_num: usize) -> &Linear<B> {
-        match layer_num {
-            1 => &self.gnn1,
-            2 => &self.gnn2,
-            3 => &self.gnn3,
-            4 => &self.gnn4,
-            5 => &self.gnn5,
-            6 => &self.gnn5,
-            _ => unimplemented!("We don't have enough layer fields for this yet."),
-        }
-    }
-    fn get_mlp(&self, layer_num: usize) -> &Linear<B> {
-        match layer_num {
-            1 => &self.mlp1,
-            2 => &self.mlp2,
-            3 => &self.mlp3,
-            4 => &self.mlp4,
-            5 => &self.mlp5,
-            6 => &self.mlp6,
-            _ => unimplemented!("We don't have enough layer fields for this yet."),
-        }
-    }
-
     /// Make a single middle GNN layer. (Use for the atom and bond graph)
     /// This can be used to construct any GNN layer.
     fn make_gnn_layer(
@@ -229,34 +179,31 @@ impl<B: Backend> Model<B> {
         // The GNN layer: This relates to the bond graph, and per-atom features.
         let mut gnn_prev = nodes.clone();
 
-        for layer_num in 1..self.num_gnn_layers + 1 {
-            let dropout = layer_num != self.num_gnn_layers;
-            let first_layer = layer_num == 1;
+        for (i, layer) in self.gnn_layers.iter().enumerate() {
+            let dropout = i != self.gnn_layers.len() - 1;
+            let first_layer = i == 0;
 
-            gnn_prev = self.make_gnn_layer(
-                &adj,
-                &mask,
-                gnn_prev,
-                self.get_gnn(layer_num),
-                dropout,
-                first_layer,
-            );
+            gnn_prev = self.make_gnn_layer(&adj, &mask, gnn_prev, layer, dropout, first_layer);
         }
 
         // Pooling
         let graph_sum = gnn_prev.sum_dim(1);
         let atom_counts = mask.sum_dim(1);
         let graph_mean = graph_sum / (atom_counts + 1e-6);
+
+        // todo: QC this.
         let graph_embedding = graph_mean.flatten(1, 2);
 
         // The MLP layers: These uses numerical parameters characteristic of the whole molecule.
         let mut mlp_prev = params;
-        for layer in 1..self.num_param_layers + 1 {
-            let x_mlp = activation::relu(self.get_mlp(layer).forward(mlp_prev.clone()));
+        for (i, layer) in self.mlp_layers.iter().enumerate() {
+            let x_mlp = activation::relu(layer.forward(mlp_prev.clone()));
 
             // Skip dropout on the final layer.
-            if layer != self.num_param_layers {
+            if i != self.mlp_layers.len() - 1 {
                 mlp_prev = self.dropout.forward(x_mlp);
+            } else {
+                mlp_prev = x_mlp;
             }
         }
 
@@ -631,7 +578,8 @@ impl InferenceStep for Model<ValidBackend> {
 }
 
 #[cfg(feature = "train")]
-/// Can be used for training or eval.
+/// Loads molecules from SDF files in a folder, and target data from a CSV. Used in both training and
+/// evaluation workflows.
 pub(in crate::therapeutic) fn load_training_data(
     csv_path: &Path,
     sdf_path: &Path,
@@ -721,6 +669,7 @@ fn read_data(
         mol_specific_param_set,
         gaff2,
     )?;
+
     for (mol, target) in loaded {
         let feat_params = param_feats_from_mol(&mol)?;
 
@@ -841,15 +790,16 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
 
 #[cfg(feature = "train")]
 fn train(
-    csv_path: &Path,
-    sdf_path: &Path,
+    data_path: &Path,
+    dataset: DatasetTdc,
     tgt_col: usize,
     mol_specific_params: &mut HashMap<String, ForceFieldParams>,
     gaff2: &ForceFieldParams,
 ) -> io::Result<()> {
+    let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
+
     // For now at least, the target name will always be the csv filename (Without extension)
     let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
-    let dataset = DatasetTdc::from_str(target_name)?;
 
     let (model_path, scaler_path, config_path) = model_paths(dataset);
 
@@ -859,10 +809,9 @@ fn train(
     let model_dir = Path::new(MODEL_DIR);
     fs::create_dir_all(model_dir)?;
 
-    // Data loading
     let mut data = read_data(
         Path::new(&csv_path),
-        Path::new(&sdf_path),
+        Path::new(&mol_path),
         tgt_col,
         None,
         mol_specific_params,
@@ -974,81 +923,13 @@ fn train(
 }
 
 #[cfg(feature = "train")]
-/// Separate from `main` so we can call this from the executable, or eval.
-/// Helper for `train` that can iterate through all data sets in a dir, and generates
-/// file and SDF paths.
-pub(in crate::therapeutic) fn train_on_path(
-    path: &Path,
-    dataset: Option<DatasetTdc>,
-    eval_: bool,
-    mol_specific_params: &mut HashMap<String, ForceFieldParams>,
-    gaff2: &ForceFieldParams,
-) {
-    for entry in fs::read_dir(&path).unwrap() {
-        let entry = entry.unwrap();
-        let csv_path = entry.path();
-
-        if !csv_path.is_file() {
-            continue;
-        }
-
-        if csv_path.extension().and_then(|s| s.to_str()) != Some("csv") {
-            continue;
-        }
-
-        let parent = csv_path.parent().unwrap_or(Path::new("."));
-        let stem = match csv_path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s,
-            None => continue,
-        };
-
-        if let Some(ds) = &dataset {
-            if stem != ds.name() {
-                continue;
-            }
-        }
-        let sdf_path = parent.join(stem);
-
-        if eval_ {
-            match eval(
-                &csv_path,
-                &sdf_path,
-                TGT_COL_TDC,
-                mol_specific_params,
-                gaff2,
-            ) {
-                Ok(ev) => {
-                    println!("Eval for {stem}: {ev}");
-                }
-                Err(e) => {
-                    eprintln!("Error evaluating {csv_path:?}: {e}");
-                }
-            }
-        } else {
-            if let Err(e) = train(
-                &csv_path,
-                &sdf_path,
-                TGT_COL_TDC,
-                mol_specific_params,
-                gaff2,
-            ) {
-                eprintln!("Error training {csv_path:?}: {e}");
-                eprintln!("Error training {csv_path:?}: {e}");
-            }
-        }
-    }
-}
-
-#[cfg(feature = "train")]
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-
-    // let csv_path = cli_value(&args, "--csv").unwrap();
-    // let sdf_path = cli_value(&args, "--sdf").unwrap();
 
     // Assumption: In this path is both A: a CSV for each param we wish to train and B: a corresponding
     // folder filled with SDF files for each of these.
     let path = cli_value(&args, "--path").unwrap();
+    let data_path = Path::new(&path);
 
     // Allow passing a single target name, vs the whole folder.
     let target = cli_value(&args, "--tgt");
@@ -1058,16 +939,25 @@ pub fn main() {
     let gaff2 = FfParamSet::new_amber().unwrap().small_mol.unwrap();
     let mol_specific_params = &mut HashMap::new();
 
-    let dataset = match target {
-        Some(t) => Some(DatasetTdc::from_str(&t).unwrap()),
-        None => None,
+    let datasets = match target {
+        Some(t) => vec![DatasetTdc::from_str(&t).unwrap()],
+        None => DatasetTdc::all(),
     };
 
-    train_on_path(
-        Path::new(&path),
-        dataset,
-        eval_,
-        mol_specific_params,
-        &gaff2,
-    );
+    for dataset in datasets {
+        if eval_ {
+            match eval(data_path, dataset, TGT_COL_TDC, mol_specific_params, &gaff2) {
+                Ok(ev) => {
+                    println!("Eval for {dataset}: {ev}");
+                }
+                Err(e) => {
+                    eprintln!("Error evaluating {dataset}: {e}");
+                }
+            }
+        } else {
+            if let Err(e) = train(data_path, dataset, TGT_COL_TDC, mol_specific_params, &gaff2) {
+                eprintln!("Error training {dataset}: {e}");
+            }
+        }
+    }
 }

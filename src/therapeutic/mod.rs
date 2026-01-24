@@ -23,9 +23,9 @@ mod mol_gen;
 mod train_test_split_indices;
 // Pub to allow access from the training entry point.
 
-use std::{collections::HashMap, fmt::Display, io, io::ErrorKind, str::FromStr};
-
 use serde_json::error::Category::Data;
+use std::path::{Path, PathBuf};
+use std::{collections::HashMap, fmt::Display, io, io::ErrorKind, str::FromStr};
 
 use crate::{
     molecules::small::MoleculeSmall,
@@ -83,6 +83,57 @@ impl DatasetTdc {
             Self::VdssLombardo => "vdss_lombardo",
         }
         .to_string()
+    }
+
+    /// Returns (csv file path, mols (SDF) folder)
+    fn csv_mol_paths(self, path: &Path) -> io::Result<(PathBuf, PathBuf)> {
+        let name = self.name();
+
+        let csv = path.join(format!("{name}.csv"));
+
+        let mols = path.join(name);
+
+        if !csv.is_file() {
+            return Err(io::Error::new(ErrorKind::NotFound, "CSV file not found"));
+        }
+
+        if csv.extension().and_then(|s| s.to_str()) != Some("csv") {
+            return Err(io::Error::new(ErrorKind::NotFound, "CSV file not found"));
+        }
+
+        if !mols.is_dir() {
+            return Err(io::Error::new(ErrorKind::NotFound, "Mols folder not found"));
+        }
+
+        Ok((csv, mols))
+    }
+
+    fn all() -> Vec<Self> {
+        // todo: Update A/R
+        use DatasetTdc::*;
+        vec![
+            Ames,
+            BbbMartins,
+            BioavailabilityMa,
+            Caco2Wang,
+            CarcinogensLagunin,
+            ClearanceHepatocyteAz,
+            Cyp2c19Veith,
+            Cyp2d6Veith,
+            Dili,
+            HalfLifeObach,
+            Herg,
+            HiaHou,
+            HydrationfreeenergyFreesolv,
+            Ld50Zhu,
+            LipophilicityAstrazeneca,
+            PampaNcats,
+            PgpBroccatelli,
+            PpbrAz,
+            SkinReaction,
+            SolubilityAqsoldb,
+            VdssLombardo,
+        ]
     }
 }
 
