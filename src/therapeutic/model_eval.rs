@@ -16,13 +16,12 @@ use std::{collections::HashMap, fmt::Display, io, path::Path, str::FromStr, time
 
 use bio_files::md_params::ForceFieldParams;
 
-use crate::therapeutic::train::TGT_COL_TDC;
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
         infer::infer_general,
-        train::{load_training_data, train_inner},
+        train::{TGT_COL_TDC, load_training_data, train},
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -44,17 +43,22 @@ pub struct EvalMetrics {
     pub spearman: f32,
     /// Area under the receiver operating characteristic. Used by TDC to score
     /// binary classifiers.
-    pub auroc: f32,
-    // todo More A/R
+    pub auroc: Option<f32>,
 }
 
 impl Display for EvalMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "\nEval metrics:\n- MSE: {:.3}\n- RMSE: {:.3}\n- MAE: {:.3}\n- R²: {:.3}\n- Pearson: {:.3}\n- Spearman: {:.3}\n- Auroc: {:.3}\n",
-            self.mse, self.rmse, self.mae, self.r2, self.pearson, self.spearman, self.auroc
-        )
+            "\nEval metrics:\n- MSE: {:.3}\n- RMSE: {:.3}\n- MAE: {:.3}\n- R²: {:.3}\n- Pearson: {:.3}\n- Spearman: {:.3}\n",
+            self.mse, self.rmse, self.mae, self.r2, self.pearson, self.spearman,
+        )?;
+
+        if let Some(v) = &self.auroc {
+            write!(f, "- Auroc: {:.3}\n", v)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -206,6 +210,8 @@ fn auroc(scores: &[f32], labels: &[f32]) -> f32 {
     }
 }
 
+/// Runs training, then evaluates the model using the test set.
+#[cfg(feature = "train")]
 pub fn eval(
     data_path: &Path,
     dataset: DatasetTdc,
@@ -218,57 +224,39 @@ pub fn eval(
 
     let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
 
-    let tts = TrainTestSplit::new(dataset);
-
     // Set up training data using this train/test split. (Values otherwise might be
     // from the full set, which will overfit)
+
+    let tts = TrainTestSplit::new(dataset);
     println!("\nTraining on the test set of len {}...\n", tts.train.len());
 
-    let data_train = load_training_data(
+    // todo: Note. We are double-loading training tdata.
+    // todo: Fix this, but it's minor.
+    let data = load_training_data(
         &csv_path,
         &mol_path,
         tgt_col,
-        Some(&tts.train),
+        &tts,
         mol_specific_params,
         gaff2,
     )?;
 
-    let data_test = load_training_data(
-        &csv_path,
-        &mol_path,
-        tgt_col,
-        Some(&tts.test),
-        mol_specific_params,
-        gaff2,
-    )?;
-
+    // Note: This assumes the TTS logic is the same in our training pipeline. (it is for now)
     // Note: For now at least, we use the same TTS for training, and evaluation. This means
     // that we are not training on the full set. I'm unclear on how the "Validation" used in the training
     // affects this.
 
-    // // todo: Fix this.
-    // match eval(
-    //     path,
-    //     dataset,
-    //     TGT_COL_TDC,
-    //     mol_specific_params,
-    //     gaff2,
-    // ) {
-    //     Ok(ev) => {
-    //         println!("Eval for {dataset}: {ev}");
-    //     }
-    //     Err(e) => {
-    //         eprintln!("Error evaluating {csv_path:?}: {e}");
-    //     }
-    // }
+    if let Err(e) = train(data_path, dataset, TGT_COL_TDC, mol_specific_params, &gaff2) {
+        eprintln!("Error training {dataset}: {e}");
+    }
 
     println!(
         "\nTraining complete. Loading test data and performing inference on set of len {}...\n",
-        data_test.len()
+        tts.test.len()
     );
 
-    let inferred = run_infer(&data_test, dataset)?;
-    let tgts = data_test.iter().map(|(_, tgt)| *tgt).collect::<Vec<_>>();
+    let inferred = run_infer(&data.test, dataset)?;
+    let tgts = data.test.iter().map(|(_, tgt)| *tgt).collect::<Vec<_>>();
 
     if tgts.len() != inferred.len() || tgts.is_empty() {
         return Err(io::Error::new(
@@ -320,10 +308,15 @@ pub fn eval(
 
     let pearson = pearson_corr(&inferred, &tgts);
     let spearman = spearman_corr(&inferred, &tgts);
-    let auroc = auroc(&inferred, &tgts);
 
     let elapsed = start.elapsed();
     println!("ML metrics gathered in {:?}", elapsed);
+
+    let auroc = if is_binary_01_labels(&tgts) {
+        Some(auroc(&inferred, &tgts))
+    } else {
+        None
+    };
 
     Ok(EvalMetrics {
         mse: mse as f32,

@@ -23,9 +23,16 @@ mod mol_gen;
 mod train_test_split_indices;
 // Pub to allow access from the training entry point.
 
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    io,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
 use serde_json::error::Category::Data;
-use std::path::{Path, PathBuf};
-use std::{collections::HashMap, fmt::Display, io, io::ErrorKind, str::FromStr};
 
 use crate::{
     molecules::small::MoleculeSmall,

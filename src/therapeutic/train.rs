@@ -11,7 +11,7 @@
 //! --tgt bbb_martins`
 
 use std::{
-    collections::{HashMap, hash_map::DefaultHasher},
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
     env, fs,
     hash::{Hash, Hasher},
     io,
@@ -118,9 +118,31 @@ impl ModelConfig {
         let dim_mlp = self.mlp_hidden_dim;
         let combined_dim = self.mlp_hidden_dim + self.gnn_hidden_dim;
 
+        // GNN
+        let mut gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
+        for layer_i in 0..NUM_GNN_LAYERS {
+            let (in_dim, out_dim) = if layer_i == 0 {
+                (self.atom_input_dim, dim_gnn)
+            } else {
+                (dim_gnn, dim_gnn)
+            };
+            gnn_layers.push(LinearConfig::new(in_dim, out_dim).init(device));
+        }
+
+        // MLP
+        let mut mlp_layers = Vec::with_capacity(NUM_MLP_LAYERS);
+        for layer_i in 0..NUM_MLP_LAYERS {
+            let (in_dim, out_dim) = if layer_i == 0 {
+                (self.global_input_dim, dim_mlp)
+            } else {
+                (dim_mlp, dim_mlp)
+            };
+            mlp_layers.push(LinearConfig::new(in_dim, out_dim).init(device));
+        }
+
         Model {
-            gnn_layers: vec![LinearConfig::new(dim_gnn, dim_gnn).init(device); NUM_GNN_LAYERS],
-            mlp_layers: vec![LinearConfig::new(dim_mlp, dim_mlp).init(device); NUM_MLP_LAYERS],
+            gnn_layers,
+            mlp_layers,
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
             dropout: DropoutConfig::new(DROPOUT).init(),
@@ -192,7 +214,14 @@ impl<B: Backend> Model<B> {
         let graph_mean = graph_sum / (atom_counts + 1e-6);
 
         // todo: QC this.
-        let graph_embedding = graph_mean.flatten(1, 2);
+        // let graph_embedding = graph_mean.flatten(1, 2);
+        // let graph_embedding = graph_mean;
+        // let graph_embedding =
+        //     graph_mean.reshape([graph_mean.dims()[0], self.gnn_layers[0].out_features()]);
+
+        // Graph_mean is Tensor<B, 3> with shape [B, 1, D]
+        let [b, _one, d] = graph_mean.dims();
+        let graph_embedding = graph_mean.reshape([b, d]); // Tensor<B, 2> [B, D]
 
         // The MLP layers: These uses numerical parameters characteristic of the whole molecule.
         let mut mlp_prev = params;
@@ -207,7 +236,8 @@ impl<B: Backend> Model<B> {
             }
         }
 
-        let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1);
+        // let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1);
+        let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1); // both Tensor<B,2>oth Tensor<B,2>
         let combined = self.fusion_norm.forward(combined);
 
         self.head.forward(combined)
@@ -577,33 +607,44 @@ impl InferenceStep for Model<ValidBackend> {
     }
 }
 
+/// Each field is the molecule, and target value.
+#[derive(Clone, Debug, Default)]
+pub(in crate::therapeutic) struct TrainingData {
+    pub train: Vec<(MoleculeSmall, f32)>,
+    pub test: Vec<(MoleculeSmall, f32)>,
+}
+
+// impl TrainingData {
+//     pub fn new(train: Vec<(MoleculeSmall, f32)>, test: Vec<(MoleculeSmall, f32)>) -> Self {
+//         Self { train, test }
+//     }
+// }
+
 #[cfg(feature = "train")]
 /// Loads molecules from SDF files in a folder, and target data from a CSV. Used in both training and
 /// evaluation workflows.
+///
+/// We run this split while loading, upstream of skipping molecules for any reason.
+/// This ensures the indices remain correct after skipping molecules.
 pub(in crate::therapeutic) fn load_training_data(
     csv_path: &Path,
     sdf_path: &Path,
     tgt_col: usize,
-    // Optionally filter to only certain indices. This is useful in test/train splits for evaluation.
-    indices: Option<&[usize]>,
+    tts: &TrainTestSplit,
     mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
     gaff2: &ForceFieldParams,
-) -> io::Result<Vec<(MoleculeSmall, f32)>> {
+) -> io::Result<TrainingData> {
     let csv_file = fs::File::open(csv_path)?;
     let mut rdr = csv::Reader::from_reader(csv_file);
 
-    let csv_data = fs::read_to_string(csv_path)?;
+    let mut result = TrainingData::default();
 
-    let mut result = Vec::new();
+    // These Hash sets improve speed over  using the tts variables directly. (Double-nested loop)
+    let train_set: HashSet<usize> = tts.train.iter().copied().collect();
+    let test_set: HashSet<usize> = tts.test.iter().copied().collect();
 
     // Iterate over records (automatically handles quotes and headers)
     for (i, record) in rdr.records().enumerate() {
-        if let Some(ind) = indices {
-            if !ind.contains(&i) {
-                continue;
-            }
-        }
-
         let record = record?;
 
         // Robust float parsing
@@ -642,65 +683,76 @@ pub(in crate::therapeutic) fn load_training_data(
         // instead of those in the CSV; it may be more consistent.
         mol.characterization = Some(MolCharacterization::new(&mol.common));
 
-        result.push((mol, target));
+        if train_set.contains(&i) {
+            result.train.push((mol, target));
+        } else if test_set.contains(&i) {
+            result.test.push((mol, target));
+        } else {
+            eprintln!("Warning: Record {i} not present in the train/test split for set {filename}");
+        }
     }
 
     Ok(result)
 }
 
 /// For training: Load CSV and SDF molecule data for a training set.
-/// If doing a train/test split (e.g. for eval), set indices to the training ones.
+/// Returns (train, test)
 #[cfg(feature = "train")]
 fn read_data(
     csv_path: &Path,
     sdf_path: &Path,
     tgt_col: usize,
-    indices: Option<&[usize]>,
+    tts: &TrainTestSplit,
     mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
     gaff2: &ForceFieldParams,
-) -> io::Result<Vec<Sample>> {
-    let mut samples = Vec::new();
-
+) -> io::Result<(Vec<Sample>, Vec<Sample>)> {
     let loaded = load_training_data(
         csv_path,
         sdf_path,
         tgt_col,
-        indices,
+        tts,
         mol_specific_param_set,
         gaff2,
     )?;
 
-    for (mol, target) in loaded {
-        let feat_params = param_feats_from_mol(&mol)?;
+    let mut result_train = Vec::new();
+    let mut result_test = Vec::new();
 
-        if mol.common.bonds.is_empty() && mol.common.atoms.len() > 20 {
-            println!("/n/nNo bonds found in SDF at path (Likely you RMed them) {sdf_path:?}/n/n");
+    for (result_set, data) in [
+        (&mut result_train, &loaded.train),
+        (&mut result_test, &loaded.test),
+    ] {
+        for (mol, target) in data {
+            let feat_params = param_feats_from_mol(&mol)?;
+
+            if mol.common.bonds.is_empty() && mol.common.atoms.len() > 20 {
+                println!(
+                    "/n/nNo bonds found in SDF at path (Likely you RMed them) {sdf_path:?}/n/n"
+                );
+            }
+
+            if mol.common.bonds.is_empty() {
+                eprintln!("No bonds found in SDF at path {sdf_path:?}. Skipping.");
+                continue;
+            }
+
+            let num_atoms = mol.common.atoms.len();
+            if num_atoms == 0 || num_atoms > MAX_ATOMS {
+                continue;
+            }
+
+            let (features_node, adj_list, _) = mol_to_graph_data(&mol)?;
+
+            result_set.push(Sample {
+                features_property: feat_params,
+                features_node,
+                adj_list,
+                num_atoms,
+                target: *target,
+            });
         }
-
-        if mol.common.bonds.is_empty() {
-            eprintln!("No bonds found in SDF at path {sdf_path:?}. Skipping.");
-            continue;
-        }
-
-        // ---------------------------------------------------
-
-        let num_atoms = mol.common.atoms.len();
-        if num_atoms == 0 || num_atoms > MAX_ATOMS {
-            continue;
-        }
-
-        let (features_node, adj_list, _) = mol_to_graph_data(&mol)?;
-
-        samples.push(Sample {
-            features_property: feat_params,
-            features_node,
-            adj_list,
-            num_atoms,
-            target,
-        });
     }
-
-    Ok(samples)
+    Ok((result_train, result_test))
 }
 
 // Note: We can make variants of this A/R tuned to specific inference items. For now, we are using
@@ -789,7 +841,7 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
 }
 
 #[cfg(feature = "train")]
-fn train(
+pub(in crate::therapeutic) fn train(
     data_path: &Path,
     dataset: DatasetTdc,
     tgt_col: usize,
@@ -809,53 +861,16 @@ fn train(
     let model_dir = Path::new(MODEL_DIR);
     fs::create_dir_all(model_dir)?;
 
-    let mut data = read_data(
+    let tts = TrainTestSplit::new(dataset);
+
+    let (data_train, data_valid) = read_data(
         Path::new(&csv_path),
         Path::new(&mol_path),
         tgt_col,
-        None,
+        &tts,
         mol_specific_params,
         &gaff2,
     )?;
-
-    let data_len = data.len();
-
-    let num_params = data[0].features_property.len();
-
-    let (data_train, data_validation) = {
-        let tts = TrainTestSplit::new(dataset);
-        let mut data_tr = Vec::with_capacity(tts.train.len());
-        let mut data_v = Vec::with_capacity(tts.test.len());
-
-        for (i, v) in data.into_iter().enumerate() {
-            if tts.train.contains(&i) {
-                data_tr.push(v);
-            } else if tts.test.contains(&i) {
-                data_v.push(v);
-            } else {
-                eprintln!(
-                    "Warning: Invalid split. Train len: {}, Test len: {} total: {}. missing: {}",
-                    tts.train.len(),
-                    tts.test.len(),
-                    data_len,
-                    data_len - (tts.train.len() + tts.test.len()),
-                );
-                // todo Hmmm. What could be causing the mismatch?
-                // return Err(io::Error::new(
-                //     ErrorKind::Other,
-                //     format!(
-                //         "Invalid split. Train len: {}, Test len: {} total: {}. missing: {}",
-                //         tts.train.len(),
-                //         tts.test.len(),
-                //         data_len,
-                //         data_len - (tts.train.len() + tts.test.len()),
-                //     ),
-                // ));
-            }
-        }
-
-        (data_tr, data_v)
-    };
 
     println!("Training on : {} samples", data_train.len());
 
@@ -869,14 +884,16 @@ fn train(
     })
     .batch_size(128)
     .shuffle(42)
-    .build(InMemDataset::new(data_train));
+    .build(InMemDataset::new(data_train.clone()));
 
     let valid_loader = DataLoaderBuilder::new(Batcher_ {
         scaler: scaler.clone(),
     })
     .batch_size(128)
-    .build(InMemDataset::new(data_validation.to_vec()));
+    .build(InMemDataset::new(data_valid.to_vec()));
 
+    // Training
+    let num_params = data_train[0].features_property.len();
     let model_cfg = ModelConfig {
         global_input_dim: num_params,
         atom_input_dim: FEAT_DIM_ATOMS,
@@ -948,7 +965,7 @@ pub fn main() {
         if eval_ {
             match eval(data_path, dataset, TGT_COL_TDC, mol_specific_params, &gaff2) {
                 Ok(ev) => {
-                    println!("Eval for {dataset}: {ev}");
+                    println!("Eval results for {dataset}: {ev}");
                 }
                 Err(e) => {
                     eprintln!("Error evaluating {dataset}: {e}");
