@@ -41,6 +41,9 @@ pub struct EvalMetrics {
     pub pearson: f32,
     /// Spearman correlation coefficient.
     pub spearman: f32,
+    /// Area under the receiver operating characteristic. Used by TDC to score
+    /// binary classifiers.
+    pub auroc: f32,
     // todo More A/R
 }
 
@@ -48,8 +51,8 @@ impl Display for EvalMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "\nEval metrics:\n- MSE: {:.3}\n- RMSE: {:.3}\n- MAE: {:.3}\n- R²: {:.3}\n- Pearson: {:.3}\n- Spearman: {:.3}\n",
-            self.mse, self.rmse, self.mae, self.r2, self.pearson, self.spearman
+            "\nEval metrics:\n- MSE: {:.3}\n- RMSE: {:.3}\n- MAE: {:.3}\n- R²: {:.3}\n- Pearson: {:.3}\n- Spearman: {:.3}\n- Auroc: {:.3}\n",
+            self.mse, self.rmse, self.mae, self.r2, self.pearson, self.spearman, self.auroc
         )
     }
 }
@@ -146,6 +149,60 @@ fn spearman_corr(xs: &[f32], ys: &[f32]) -> f32 {
     let rx = ranks_average_ties(xs);
     let ry = ranks_average_ties(ys);
     pearson_corr(&rx, &ry)
+}
+
+fn is_binary_01_labels(xs: &[f32]) -> bool {
+    // Accept exactly 0/1 plus tiny float noise.
+    const EPS: f32 = 1e-6;
+    xs.iter()
+        .all(|&y| (y - 0.0).abs() <= EPS || (y - 1.0).abs() <= EPS)
+}
+
+/// AUROC via rank-sum (equivalent to Mann–Whitney U).
+/// `labels` is expected to be binary 0.0/1.0 (we treat >0.5 as positive).
+fn auroc(scores: &[f32], labels: &[f32]) -> f32 {
+    if scores.len() != labels.len() || scores.len() < 2 {
+        return f32::NAN;
+    }
+
+    let mut n_pos: usize = 0;
+    let mut n_neg: usize = 0;
+
+    for &y in labels {
+        if y > 0.5 {
+            n_pos += 1;
+        } else {
+            n_neg += 1;
+        }
+    }
+
+    // AUROC undefined if only one class present.
+    if n_pos == 0 || n_neg == 0 {
+        return f32::NAN;
+    }
+
+    // Average ranks for ties; ranks are 1..=n (ascending by score).
+    let ranks = ranks_average_ties(scores);
+
+    let mut rank_sum_pos = 0.0f64;
+    for i in 0..labels.len() {
+        if labels[i] > 0.5 {
+            rank_sum_pos += ranks[i] as f64;
+        }
+    }
+
+    let n_pos_f = n_pos as f64;
+    let n_neg_f = n_neg as f64;
+
+    // AUC = (sum_ranks_pos - n_pos*(n_pos+1)/2) / (n_pos*n_neg)
+    let u_pos = rank_sum_pos - (n_pos_f * (n_pos_f + 1.0) * 0.5);
+    let auc = u_pos / (n_pos_f * n_neg_f);
+
+    if auc.is_finite() {
+        auc as f32
+    } else {
+        f32::NAN
+    }
 }
 
 pub fn eval(
@@ -245,6 +302,7 @@ pub fn eval(
 
     let pearson = pearson_corr(&inferred, &tgts);
     let spearman = spearman_corr(&inferred, &tgts);
+    let auroc = auroc(&inferred, &tgts);
 
     let elapsed = start.elapsed();
     println!("ML metrics gathered in {:?}", elapsed);
@@ -256,5 +314,6 @@ pub fn eval(
         r2: r2 as f32,
         pearson,
         spearman,
+        auroc,
     })
 }

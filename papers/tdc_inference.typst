@@ -1,0 +1,90 @@
+
+= Introduction
+We have trained a machine-learning algorithm on all Therapeutic Data Commons (TDC) single-molecule data sets, and present our results. Given a small organic molecule's atom and bond data, it estimates ADME and toxicity properties. We perform training, inference, and evaluation the Molchanica application. The models each use 51393 parameters; this is very low compared to many models, and is associated with fast inference; this is useful in case of screening large numbers of molecules.
+
+= Results summary
+We have used the train-test split division and scoring metrics recommended by TDC. We generated this split using the PyTDC library, and for each dataset, used the split recommended by TDC. This consistency simplifies interpreting performance of our model in comparison to others which use the same datasets.
+
+= Model description
+
+Our model implements a hybrid Graph Neural Network (GNN) and Multi-Layer Perceptron (MLP) architecture designed for Quantitative Structure-Property Relationship (QSPR) modeling. The system is engineered to regress emperical data, e.g. from TDC. The model combines both topological graph data from the molecule with computed properties that characterize the molecule as a whole.
+
+The GNN branch processes the molecule's topology using a Graph Convolutional Network (GCN) approach. Atoms are treated as nodes initialized with one-hot encoded elemental identity and degree connectivity, while bonds define the edges. The network utilizes a symmetric normalized adjacency matrix to perform three hops of message passing (graph convolution), allowing the model to aggregate local chemical environments into node embeddings. This branch concludes with a global average pooling layer (masked mean) to generate a translation-invariant latent structural embedding of the molecule.
+
+The MLP branch encodes a vector of global molecular descriptors—including LogP, Topological Polar Surface Area (TPSA), molecular weight, and ring counts—which are pre-processed via log-transformation and Z-score normalization (StandardScaler). The latent representations from the GNN and MLP branches are concatenated, stabilized via layer normalization, and passed through a final dense head to predict the scalar biological property.
+
+Training is performed using a separate binary compiled from Molchanica's code base. We train on a GPU using Burn's WGPU or Cuda backends. Inference performed on the CPU execution using the NdArray backend, and takes \<1ms per molecule, per property on typical PC hardare. (GPU takes longer for these properties, as they're relatively simple to compute, and therefore I/O limited).
+
+== Scaling and normalization
+( todo)
+
+
+= Evaluation metrics
+We compute the following evaluation metrics:
+
+- Mean squared error (MS)
+- Root-mean squared error (RMSE)
+- Mean absolute error (MAE) - TDC leaderboard metric continuous targets
+- Pearson correlation coefficient
+- Spearman correlation coefficient
+- Area under the receiver operating characteristic (AUROC) - TDC leaderboard metric for binary targets
+
+
+
+= Per-atom properties used to train the GNN
+
+We infer partial charge using a separate  neural net, trained on the Amber Geostd set of 30,000 small molecules. These are computed as AM1-BCC charges.
+
+We determine Amber Forcefield name by analyzing the molecular structure of each atom, in a process similar to that used by Amber's Antechamber software. This includes its element, the elements of neighboring atoms, and membership in rings and functional groups. We map to Amber Forcefield name using the Antechamber definitoin files `PARMCHK.DAT` and `ATCOR.DAT`.
+
+- Element
+- Partial charge
+- Atom name
+- Amber ForceField name
+
+
+= Molecule parameters used to train the model
+
+- The molecule's bond graph and elements
+- Atom count
+- Bond count
+- Molecular weight
+- Number of heavy atoms
+- Number of Hydrogen bond acceptors
+- Number of Hydrogen bond conodrs
+- Number of hetero (non-hydrogen) atoms
+- Number of Halogen atoms
+- Number of rotatatable bonds
+- Number of Amine groups
+- Number of Amide groups
+- Number of Carbonyl groups
+- Number of Carboxyl groups
+- Number of valence electrons
+- Number of aromatic rings
+- Number of saturated rings
+- Number of aliphatic rings
+- LogP
+- Molar refractivity
+- Polarizable surface area, calculated using topology
+- Molecule volume, calculated using topology
+- Wiener index
+
+
+= Results
+Below is a description of our results (See the _Metrics_ section), organized by data set. The bolded metric is the one TDC uses for its leaderboard by data set
+
+= bbb_martins
+---
+- *MSE: *
+- AUCOR:
+
+
+= Generalizability
+We require additional data to ensure that. Many TDC data sets have fewer than 1,000 data points, which may not be sufficient to generalize well.
+
+
+= Components that drove results
+
+We believe the following are the components of our model which drove the highest degree of success, absolutely, and relative to other models.
+
+More work is required to properly assess and quantify how each of these and others affect the success of our model.

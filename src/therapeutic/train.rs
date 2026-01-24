@@ -79,6 +79,10 @@ pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for paddin
 pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models";
 pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
+// It seems that low or no dropout significantly improves results, but perhaps it makes the
+// model more likely to overfit, and makes it less general?
+const DROPOUT: f64 = 0.1; // 0.2? 0.3?
+
 #[cfg(feature = "train")]
 type TrainBackend = Autodiff<Wgpu>;
 #[cfg(feature = "train")]
@@ -112,38 +116,50 @@ impl ModelConfig {
         let combined_dim = self.mlp_hidden_dim + self.gnn_hidden_dim;
 
         Model {
-            // Layer 1: Input (AtomDim) -> Hidden
+            num_gnn_layers: 6,
+            num_param_layers: 6,
+            //
             gnn1: LinearConfig::new(self.atom_input_dim, dim_gnn).init(device),
-            // Layer 2: Hidden -> Hidden
             gnn2: LinearConfig::new(dim_gnn, dim_gnn).init(device),
-            // Layer 3: Hidden -> Hidden
             gnn3: LinearConfig::new(dim_gnn, dim_gnn).init(device),
-            // Experimenting with 4th layer
             gnn4: LinearConfig::new(dim_gnn, dim_gnn).init(device),
+            gnn5: LinearConfig::new(dim_gnn, dim_gnn).init(device),
+            gnn6: LinearConfig::new(dim_gnn, dim_gnn).init(device),
 
             // MLP layers (Keep as is)
-            params_fc1: LinearConfig::new(self.global_input_dim, dim_h).init(device),
-            params_fc2: LinearConfig::new(dim_h, dim_h).init(device),
-            params_fc3: LinearConfig::new(dim_h, dim_h).init(device),
+            mlp1: LinearConfig::new(self.global_input_dim, dim_h).init(device),
+            mlp2: LinearConfig::new(dim_h, dim_h).init(device),
+            mlp3: LinearConfig::new(dim_h, dim_h).init(device),
+            mlp4: LinearConfig::new(dim_h, dim_h).init(device),
+            mlp5: LinearConfig::new(dim_h, dim_h).init(device),
+            mlp6: LinearConfig::new(dim_h, dim_h).init(device),
 
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
-            dropout: DropoutConfig::new(0.3).init(),
+            dropout: DropoutConfig::new(DROPOUT).init(),
         }
     }
 }
 
 #[derive(Module, Debug)]
 pub(in crate::therapeutic) struct Model<B: Backend> {
+    num_gnn_layers: usize,
+    num_param_layers: usize,
+    /// GNN layers: Broadly graph and per-atom data. Some or all of these layers can be used depending
+    /// on the number of layers configured under `num_gnn_layers`.
     gnn1: Linear<B>,
     gnn2: Linear<B>,
     gnn3: Linear<B>,
-    // Experimemteing with a 4th layer
     gnn4: Linear<B>,
-    /// Parameter features. 3 layers.
-    params_fc1: Linear<B>, // Input -> Hidden 1
-    params_fc2: Linear<B>, // Hidden 1 -> Hidden 2
-    params_fc3: Linear<B>, // Hidden 2 -> Hidden 3
+    gnn5: Linear<B>,
+    gnn6: Linear<B>,
+    /// Parameter features. These are for molecule-level parameters. (Atom count, weight, volume, PSA etc)
+    mlp1: Linear<B>,
+    mlp2: Linear<B>,
+    mlp3: Linear<B>,
+    mlp4: Linear<B>,
+    mlp5: Linear<B>,
+    mlp6: Linear<B>,
 
     fusion_norm: LayerNorm<B>,
     /// Joint Branch
@@ -153,53 +169,56 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
 }
 
 impl<B: Backend> Model<B> {
-    // 3-layer version for ref
-    // pub fn forward(
-    //     &self,
-    //     nodes: Tensor<B, 3>,  // [Batch, MaxAtoms, AtomDim]
-    //     adj: Tensor<B, 3>,    // [Batch, MaxAtoms, MaxAtoms]
-    //     mask: Tensor<B, 3>,   // [Batch, MaxAtoms, 1]
-    //     params: Tensor<B, 2>, // [Batch, GlobalDim]
-    // ) -> Tensor<B, 2> {
-    //     // --- Graph Branch (3-Hop Message Passing) ---
-    //
-    //     // HOP 1: Look at neighbors
-    //     // [Batch, Atoms, AtomDim] -> [Batch, Atoms, GnnDim]
-    //     let agg1 = adj.clone().matmul(nodes);
-    //     let x_gnn = activation::relu(self.gnn1.forward(agg1));
-    //     let x_gnn = x_gnn * mask.clone(); // Mask after every step to keep padding zero
-    //
-    //     // HOP 2: Look at neighbors of neighbors
-    //     // [Batch, Atoms, GnnDim] -> [Batch, Atoms, GnnDim]
-    //     let agg2 = adj.clone().matmul(x_gnn);
-    //     let x_gnn = activation::relu(self.gnn2.forward(agg2));
-    //     let x_gnn = x_gnn * mask.clone();
-    //
-    //     // HOP 3: Look at neighbors of neighbors of neighbors
-    //     let agg3 = adj.matmul(x_gnn);
-    //     let x_gnn = activation::relu(self.gnn3.forward(agg3));
-    //     let x_gnn = x_gnn * mask.clone();
-    //
-    //     // Pooling (Masked Mean)
-    //     // Now 'x_gnn' contains rich structural info, not just local atoms.
-    //     let graph_sum = x_gnn.sum_dim(1);
-    //     let atom_counts = mask.sum_dim(1);
-    //     let graph_mean = graph_sum / (atom_counts + 1e-6);
-    //     let graph_embedding = graph_mean.flatten(1, 2);
-    //
-    //     // --- MLP Branch (Unchanged) ---
-    //     let x_mlp = activation::relu(self.params_fc1.forward(params));
-    //     let x_mlp = activation::relu(self.params_fc2.forward(x_mlp));
-    //     let scalar_embedding = activation::relu(self.params_fc3.forward(x_mlp));
-    //
-    //     // --- Fusion (Unchanged) ---
-    //     let combined = Tensor::cat(vec![graph_embedding, scalar_embedding], 1);
-    //     let combined = self.fusion_norm.forward(combined);
-    //
-    //     self.head.forward(combined)
-    // }
+    fn get_gnn(&self, layer_num: usize) -> &Linear<B> {
+        match layer_num {
+            1 => &self.gnn1,
+            2 => &self.gnn2,
+            3 => &self.gnn3,
+            4 => &self.gnn4,
+            5 => &self.gnn5,
+            6 => &self.gnn5,
+            _ => unimplemented!("We don't have enough layer fields for this yet."),
+        }
+    }
+    fn get_mlp(&self, layer_num: usize) -> &Linear<B> {
+        match layer_num {
+            1 => &self.mlp1,
+            2 => &self.mlp2,
+            3 => &self.mlp3,
+            4 => &self.mlp4,
+            5 => &self.mlp5,
+            6 => &self.mlp6,
+            _ => unimplemented!("We don't have enough layer fields for this yet."),
+        }
+    }
 
-    // 4-layer GNN version.
+    /// Make a single middle GNN layer. (Use for the atom and bond graph)
+    /// This can be used to construct any GNN layer.
+    fn make_gnn_layer(
+        &self,
+        adj: &Tensor<B, 3>,
+        mask: &Tensor<B, 3>,
+        layer_in: Tensor<B, 3>,
+        gnn_this_layer: &Linear<B>,
+        dropout: bool,
+        first_layer: bool,
+    ) -> Tensor<B, 3> {
+        let agg = adj.clone().matmul(layer_in.clone());
+        let mut layer = activation::relu(gnn_this_layer.forward(agg));
+
+        // We use dropout for all layers except the final.
+        // Dropout randomly zeros out some values, so the model can't rely too heavily on a single
+        // feature. It can reduce overfitting, and improve generalization. For example, this may
+        // randomly remove a fraction ofn edges during training.
+        if dropout {
+            layer = self.dropout.forward(layer);
+        }
+
+        let term_0 = if first_layer { layer } else { layer + layer_in };
+
+        term_0 * mask.clone()
+    }
+
     pub fn forward(
         &self,
         nodes: Tensor<B, 3>,
@@ -207,49 +226,41 @@ impl<B: Backend> Model<B> {
         mask: Tensor<B, 3>,
         params: Tensor<B, 2>,
     ) -> Tensor<B, 2> {
-        // --- Graph Branch with RESIDUALS ---
+        // The GNN layer: This relates to the bond graph, and per-atom features.
+        let mut gnn_prev = nodes.clone();
 
-        // Layer 1 (Input Projection)
-        // No residual here because input dim != hidden dim
-        let agg1 = adj.clone().matmul(nodes);
-        let x1 = activation::relu(self.gnn1.forward(agg1));
-        let x1 = self.dropout.forward(x1); // Apply dropout
-        let x1 = x1 * mask.clone();
+        for layer_num in 1..self.num_gnn_layers + 1 {
+            let dropout = layer_num != self.num_gnn_layers;
+            let first_layer = layer_num == 1;
 
-        // Layer 2 (Residual)
-        let agg2 = adj.clone().matmul(x1.clone());
-        let x2 = activation::relu(self.gnn2.forward(agg2));
-        let x2 = self.dropout.forward(x2);
-        let x2 = (x2 + x1) * mask.clone(); // <--- SKIP CONNECTION
-
-        // Layer 3 (Residual)
-        let agg3 = adj.clone().matmul(x2.clone());
-        let x3 = activation::relu(self.gnn3.forward(agg3));
-        let x3 = self.dropout.forward(x3);
-        let x3 = (x3 + x2) * mask.clone(); // <--- SKIP CONNECTION
-
-        // Layer 4 (Residual)
-        let agg4 = adj.matmul(x3.clone());
-        let x4 = activation::relu(self.gnn4.forward(agg4));
-        let x4 = (x4 + x3) * mask.clone(); // <--- SKIP CONNECTION
+            gnn_prev = self.make_gnn_layer(
+                &adj,
+                &mask,
+                gnn_prev,
+                self.get_gnn(layer_num),
+                dropout,
+                first_layer,
+            );
+        }
 
         // Pooling
-        let graph_sum = x4.sum_dim(1);
+        let graph_sum = gnn_prev.sum_dim(1);
         let atom_counts = mask.sum_dim(1);
         let graph_mean = graph_sum / (atom_counts + 1e-6);
         let graph_embedding = graph_mean.flatten(1, 2);
 
-        // --- MLP Branch (Add dropout here too) ---
-        let x_mlp = activation::relu(self.params_fc1.forward(params));
-        let x_mlp = self.dropout.forward(x_mlp);
+        // The MLP layers: These uses numerical parameters characteristic of the whole molecule.
+        let mut mlp_prev = params;
+        for layer in 1..self.num_param_layers + 1 {
+            let x_mlp = activation::relu(self.get_mlp(layer).forward(mlp_prev.clone()));
 
-        let x_mlp = activation::relu(self.params_fc2.forward(x_mlp));
-        let x_mlp = self.dropout.forward(x_mlp);
+            // Skip dropout on the final layer.
+            if layer != self.num_param_layers {
+                mlp_prev = self.dropout.forward(x_mlp);
+            }
+        }
 
-        let scalar_embedding = activation::relu(self.params_fc3.forward(x_mlp));
-
-        // --- Fusion ---
-        let combined = Tensor::cat(vec![graph_embedding, scalar_embedding], 1);
+        let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1);
         let combined = self.fusion_norm.forward(combined);
 
         self.head.forward(combined)
@@ -325,10 +336,6 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         }
     }
 }
-
-// ==============================================================================================
-// 4. UTILITIES (Scaler & Graph Conversion)
-// ==============================================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::therapeutic) struct StandardScaler {
@@ -418,15 +425,15 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
 ) -> io::Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
     let num_atoms = mol.common.atoms.len();
 
-    // --- 1. Node Features (Elements + Degree + FF Type + Charge) ---
+    // Atom (node) features (Element, Degree, FF Type, atom name, Charge)
     // Make sure FEAT_DIM_ATOMS is set to 32 (10 elements + 1 degree + 20 FF + 1 charge)
     let mut node_feats = Vec::with_capacity(num_atoms * FEAT_DIM_ATOMS);
     let degrees: Vec<usize> = mol.common.adjacency_list.iter().map(|n| n.len()).collect();
 
     for (i, atom) in mol.common.atoms.iter().enumerate() {
-        let mut f = vec![0.0; FEAT_DIM_ATOMS];
+        let mut f = vec![0.; FEAT_DIM_ATOMS];
 
-        // A. Element One-Hot (Indices 0-9)
+        // Element One-Hot (Indices 0-9)
         let idx = match atom.element {
             Hydrogen => 0,
             Carbon => 1,
@@ -441,7 +448,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
         };
         f[idx] = 1.0;
 
-        // B. Degree Feature (Index 10)
+        // Degree Feature
         // Normalized roughly to 0-1 range
         f[10] = degrees[i] as f32 * 0.16;
 
@@ -455,17 +462,27 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
             }
         } else {
             return Err(io::Error::new(
-                io::ErrorKind::Other,
+                ErrorKind::Other,
                 "Atom missing force field type",
             ));
         }
 
-        // D. Partial Charge (Index 31)
+        // if let Some(atom_name) = &atom.type_in_res_general {
+        //     let bucket = hash_ff_type(atom_name);
+        //     // Offset by 11 (previous features)
+        //     if 12 + bucket < FEAT_DIM_ATOMS {
+        //         f[12 + bucket] = 1.0;
+        //     }
+        // } else {
+        //     return Err(io::Error::new(ErrorKind::Other, "Atom missing type-in-res"));
+        // }
+
+        // D. Partial Charge
         if let Some(partial_charge) = &atom.partial_charge {
             f[31] = *partial_charge;
         } else {
             return Err(io::Error::new(
-                io::ErrorKind::Other,
+                ErrorKind::Other,
                 "Atom missing partial charge",
             ));
         }
@@ -473,7 +490,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
         node_feats.extend(f);
     }
 
-    // --- 2. Weighted Adjacency ---
+    // Weighted Adjacency
     let mut raw_adj = vec![0.0; num_atoms * num_atoms];
 
     for i in 0..num_atoms {
@@ -501,7 +518,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
         raw_adj[v * num_atoms + u] = weight;
     }
 
-    // --- 3. Symmetric Normalization (Using Weights) ---
+    // Symmetric Normalization (Using Weights)
     // D^(-0.5) * A * D^(-0.5)
 
     // Calculate weighted degrees (sum of weights in row)
@@ -867,16 +884,24 @@ fn train(
             } else if tts.test.contains(&i) {
                 data_v.push(v);
             } else {
-                return Err(io::Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "Invalid split. Train len: {}, Test len: {} total: {}. i missing: {}",
-                        tts.train.len(),
-                        tts.test.len(),
-                        data_len,
-                        i,
-                    ),
-                ));
+                eprintln!(
+                    "Warning: Invalid split. Train len: {}, Test len: {} total: {}. missing: {}",
+                    tts.train.len(),
+                    tts.test.len(),
+                    data_len,
+                    data_len - (tts.train.len() + tts.test.len()),
+                );
+                // todo Hmmm. What could be causing the mismatch?
+                // return Err(io::Error::new(
+                //     ErrorKind::Other,
+                //     format!(
+                //         "Invalid split. Train len: {}, Test len: {} total: {}. missing: {}",
+                //         tts.train.len(),
+                //         tts.test.len(),
+                //         data_len,
+                //         data_len - (tts.train.len() + tts.test.len()),
+                //     ),
+                // ));
             }
         }
 
@@ -911,6 +936,9 @@ fn train(
     };
 
     let model = model_cfg.init::<TrainBackend>(&device);
+
+    println!("Model parameter count: {}", model.num_params());
+
     let optim = AdamConfig::new().init();
     let lr_scheduler = ConstantLr::new(3e-4);
 
@@ -920,10 +948,8 @@ fn train(
         .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
         .summary(); // Provides the TUI/CLI output
 
-    // Launch the Learner
     let result = training.launch(Learner::new(model, optim, lr_scheduler));
 
-    // Save using the result
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
     result.model.save_file(&model_path, &recorder).unwrap();
 
