@@ -12,7 +12,7 @@
 //!
 //! Add a `--tgt herg` etc flag to spsecify a single target, vs every data file in the directory.
 
-use std::{collections::HashMap, fmt::Display, io, path::Path, str::FromStr, time::Instant};
+use std::{collections::HashMap, fmt::Display, io, path::Path, time::Instant};
 
 use bio_files::md_params::ForceFieldParams;
 
@@ -239,6 +239,7 @@ pub fn eval(
         &tts,
         mol_specific_params,
         gaff2,
+        true,
     )?;
 
     // Note: This assumes the TTS logic is the same in our training pipeline. (it is for now)

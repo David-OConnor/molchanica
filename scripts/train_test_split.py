@@ -77,6 +77,15 @@ sets = [
 #     ("dili", True),
 #     ("skin_reaction", True),
 #     ("herg", True),
+    ("hydrationfreeenergy_freesolv", False),
+    ("vdss_lombardo", False),
+    ("ppbr_az", False),
+    ("cyp2c19_veith", False),
+    ("cyp2d6_veith", False),
+    ("cyp1a2_veith", False),
+    ("cyp2c9_veith", False),
+    ("cyp3a4_veith", False),
+    ("half_life_obach", False),
 ]
 
 for name, tox in sets:

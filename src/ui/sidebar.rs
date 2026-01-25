@@ -727,6 +727,29 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
             &format!("{:.2}", adme.cyp_2d6_inhibition),
         )],
     );
+    char_item(
+        ui,
+        &[(
+            "CYP P450 3A4 inhibition",
+            &format!("{:.2}", adme.cyp_3a4_inhibition),
+        )],
+    );
+
+    char_item(
+        ui,
+        &[(
+            "CYP P450 1A2 inhibition",
+            &format!("{:.2}", adme.cyp_1a2_inhibition),
+        )],
+    );
+
+    char_item(
+        ui,
+        &[(
+            "CYP P450 2C9 inhibition",
+            &format!("{:.2}", adme.cyp_2c9_inhibition),
+        )],
+    );
 
     // Excretion
     char_item(ui, &[("Half Life", &format!("{:.2}", adme.half_life))]);

@@ -81,10 +81,11 @@ pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
 // Increasing layers may or may not improve model performance. It will slow down inference and training.
 const NUM_GNN_LAYERS: usize = 6;
-const NUM_MLP_LAYERS: usize = 6;
+const NUM_MLP_LAYERS: usize = 3;
 // It seems that low or no dropout significantly improves results, but perhaps it makes the
-// model more likely to overfit, and makes it less general?
-const DROPOUT: f64 = 0.1;
+// model more likely to overfit, and makes it less general? Maybe 0.1 or disabled.
+// Perhaps skip dropout due to our small TDC data sets.
+const DROPOUT: f64 = 0.0;
 
 #[cfg(feature = "train")]
 type TrainBackend = Autodiff<Wgpu>;
@@ -226,13 +227,11 @@ impl<B: Backend> Model<B> {
         // The MLP layers: These uses numerical parameters characteristic of the whole molecule.
         let mut mlp_prev = params;
         for (i, layer) in self.mlp_layers.iter().enumerate() {
-            let x_mlp = activation::relu(layer.forward(mlp_prev.clone()));
+            mlp_prev = activation::relu(layer.forward(mlp_prev.clone()));
 
             // Skip dropout on the final layer.
             if i != self.mlp_layers.len() - 1 {
-                mlp_prev = self.dropout.forward(x_mlp);
-            } else {
-                mlp_prev = x_mlp;
+                mlp_prev = self.dropout.forward(mlp_prev);
             }
         }
 
@@ -362,12 +361,12 @@ pub(in crate::therapeutic) fn pad_graph_data(
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let n = num_atoms.min(MAX_ATOMS);
 
-    // 1. Nodes: Copy n, pad rest
+    // Nodes: Copy n, pad rest
     let mut p_nodes = Vec::with_capacity(MAX_ATOMS * FEAT_DIM_ATOMS);
     p_nodes.extend_from_slice(&raw_nodes[0..n * FEAT_DIM_ATOMS]);
     p_nodes.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * FEAT_DIM_ATOMS));
 
-    // 2. Mask: 1.0 for atoms, 0.0 for pad
+    // Mask: 1.0 for atoms, 0.0 for pad
     let mut p_mask = Vec::with_capacity(MAX_ATOMS);
     p_mask.extend(std::iter::repeat(1.0).take(n));
     p_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
@@ -405,7 +404,6 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
     // Atom (node) features (Element, Degree, FF Type, atom name, Charge)
     // Make sure FEAT_DIM_ATOMS is set to 32 (10 elements + 1 degree + 20 FF + 1 charge)
     let mut node_feats = Vec::with_capacity(num_atoms * FEAT_DIM_ATOMS);
-    let degrees: Vec<usize> = mol.common.adjacency_list.iter().map(|n| n.len()).collect();
 
     for (i, atom) in mol.common.atoms.iter().enumerate() {
         let mut f = vec![0.; FEAT_DIM_ATOMS];
@@ -425,11 +423,12 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
         };
         f[idx] = 1.0;
 
-        // Degree Feature
-        // Normalized roughly to 0-1 range
-        f[10] = degrees[i] as f32 * 0.16;
+        f[10] = {
+            let degrees: Vec<usize> = mol.common.adjacency_list.iter().map(|n| n.len()).collect();
+            degrees[i] as f32 / 6. // Normalized roughly to 0-1 range
+        };
 
-        // C. Force Field Type Hashed One-Hot (Indices 11-30)
+        // Force Field Type Hashed One-Hot (Indices 11-30)
         // We handle missing FF types gracefully, though ideally your data has them.
         if let Some(ff_type) = &atom.force_field_type {
             let bucket = hash_ff_type(ff_type);
@@ -454,7 +453,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
         //     return Err(io::Error::new(ErrorKind::Other, "Atom missing type-in-res"));
         // }
 
-        // D. Partial Charge
+        // Partial Charge
         if let Some(partial_charge) = &atom.partial_charge {
             f[31] = *partial_charge;
         } else {
@@ -515,7 +514,8 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
             if val > 0.0 {
                 let d_i: f32 = degrees_vec[i];
                 let d_j = degrees_vec[j];
-                // Avoid division by zero if a node is somehow isolated (though self-loop prevents this)
+
+                // Avoid division by zero if a node is somehow isolated
                 final_adj[i * num_atoms + j] = val / (d_i * d_j).sqrt();
             }
         }
@@ -633,6 +633,7 @@ pub(in crate::therapeutic) fn load_training_data(
     tts: &TrainTestSplit,
     mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
     gaff2: &ForceFieldParams,
+    test_only: bool,
 ) -> io::Result<TrainingData> {
     let csv_file = fs::File::open(csv_path)?;
     let mut rdr = csv::Reader::from_reader(csv_file);
@@ -645,6 +646,10 @@ pub(in crate::therapeutic) fn load_training_data(
 
     // Iterate over records (automatically handles quotes and headers)
     for (i, record) in rdr.records().enumerate() {
+        if test_only && !test_set.contains(&i) {
+            continue;
+        }
+
         let record = record?;
 
         // Robust float parsing
@@ -713,6 +718,7 @@ fn read_data(
         tts,
         mol_specific_param_set,
         gaff2,
+        false,
     )?;
 
     let mut result_train = Vec::new();
@@ -775,37 +781,10 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
     // We are generally apply ln to values that can be "large".
 
     Ok(vec![
-        c.num_atoms as f32,
-        c.num_bonds as f32,
-        c.mol_weight,
-        c.num_heavy_atoms as f32,
-        c.h_bond_acceptor.len() as f32,
-        c.h_bond_donor.len() as f32,
-        c.num_hetero_atoms as f32,
-        c.halogen.len() as f32,
-        c.rotatable_bonds.len() as f32,
-        c.amines.len() as f32,
-        c.amides.len() as f32,
-        c.carbonyl.len() as f32,
-        c.hydroxyl.len() as f32,
-        c.num_valence_elecs as f32,
-        c.num_rings_aromatic as f32,
-        c.num_rings_saturated as f32,
-        c.num_rings_aliphatic as f32,
-        c.rings.len() as f32,
-        c.log_p,
-        c.molar_refractivity,
-        c.psa_topo,
-        c.asa_topo,
-        c.volume,
-        c.wiener_index.unwrap_or(0) as f32,
-        //
-        // ----
-        //
-        // ln(c.num_atoms as f32),
-        // ln(c.num_bonds as f32),
-        // ln(c.mol_weight),
-        // ln(c.num_heavy_atoms as f32),
+        // c.num_atoms as f32,
+        // c.num_bonds as f32,
+        // c.mol_weight,
+        // c.num_heavy_atoms as f32,
         // c.h_bond_acceptor.len() as f32,
         // c.h_bond_donor.len() as f32,
         // c.num_hetero_atoms as f32,
@@ -822,10 +801,37 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         // c.rings.len() as f32,
         // c.log_p,
         // c.molar_refractivity,
-        // ln(c.psa_topo),
-        // ln(c.asa_topo),
-        // ln(c.volume),
-        // ln(c.wiener_index.unwrap_or(0) as f32),
+        // c.psa_topo,
+        // c.asa_topo,
+        // c.volume,
+        // c.wiener_index.unwrap_or(0) as f32,
+        //
+        // ----
+        //
+        ln(c.num_atoms as f32),
+        ln(c.num_bonds as f32),
+        ln(c.mol_weight),
+        ln(c.num_heavy_atoms as f32),
+        c.h_bond_acceptor.len() as f32,
+        c.h_bond_donor.len() as f32,
+        c.num_hetero_atoms as f32,
+        c.halogen.len() as f32,
+        c.rotatable_bonds.len() as f32,
+        c.amines.len() as f32,
+        c.amides.len() as f32,
+        c.carbonyl.len() as f32,
+        c.hydroxyl.len() as f32,
+        c.num_valence_elecs as f32,
+        c.num_rings_aromatic as f32,
+        c.num_rings_saturated as f32,
+        c.num_rings_aliphatic as f32,
+        c.rings.len() as f32,
+        c.log_p,
+        c.molar_refractivity,
+        ln(c.psa_topo),
+        ln(c.asa_topo),
+        ln(c.volume),
+        ln(c.wiener_index.unwrap_or(0) as f32),
     ])
 }
 
