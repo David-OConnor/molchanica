@@ -48,7 +48,9 @@ csv = { version = "1.4.0", optional = true }  # Tran only
 
 # Note: Burn v20 only supports cudarc with dynamic-loading. And we get a "cuda_runtime.h" error with it.
 # And using WGPU allows us to use this on PCs that have non-nvidia GPUs.
-burn = { version = "0.20.0", features = ["std", "train", "ndarray", "fusion", "autotune"], default-features = false }
+#burn = { version = "0.20.0", features = ["std", "train", "fusion", "autotune"], default-features = false }
+burn = { version = "0.20.0", features = ["std", "train", "fusion", "autotune"], default-features = false }
+burn-cpu = "0.20.1"
 
 serde_json = "1.0.145"  # For [de]serializing ML model configs and scalers.
 

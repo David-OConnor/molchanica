@@ -22,9 +22,15 @@ Training is performed using a separate binary compiled from Molchanica's code ba
 = Evaluation metrics
 We compute the following evaluation metrics:
 
-- Mean squared error (MS)
-- Root-mean squared error (RMSE)
-- Mean absolute error (MAE) - TDC leaderboard metric continuous targets
+=== Mean squared error (MS)
+$ "MSE" = 1/n sum_(i=1)^n (Y_i - hat(Y)_i)^2 $
+
+=== Root-mean squared deviation (RMSD)
+$ "RMSE" = sqrt("MSE") $
+
+=== Mean absolute error (MAE) - TDC leaderboard metric continuous targets
+$ "MAE" = (sum_(i=1)^n |Y_i - hat(Y)_i|) 1/n $
+
 - Pearson correlation coefficient
 - Spearman correlation coefficient
 - Area under the receiver operating characteristic (AUROC) - TDC leaderboard metric for binary targets
@@ -33,7 +39,7 @@ We compute the following evaluation metrics:
 
 = Per-atom properties used to train the GNN
 
-We infer partial charge using a separate  neural net, trained on the Amber Geostd set of 30,000 small molecules. These are computed as AM1-BCC charges.
+We infer partial charge using a separate  neural net, trained on the Amber GeoStd set of 30,000 small molecules. These are computed as AM1-BCC charges.
 
 We determine Amber Forcefield name by analyzing the molecular structure of each atom, in a process similar to that used by Amber's Antechamber software. This includes its element, the elements of neighboring atoms, and membership in rings and functional groups. We map to Amber Forcefield name using the Antechamber definitoin files `PARMCHK.DAT` and `ATCOR.DAT`.
 
@@ -68,6 +74,20 @@ We determine Amber Forcefield name by analyzing the molecular structure of each 
 - Polarizable surface area, calculated using topology
 - Molecule volume, calculated using topology
 - Wiener index
+
+
+= Preparation
+
+Prior to running our algorithm, we set up training data as follows: We downloaded all TDC Single-Instance Prediction data sets in CSV format from the Harvard Dataverse. These each contain 3 columns:
+
+- *Drug ID*: This varies by data set, but is often its common name, and sometimes contains a file extension
+- *Drug*: SMILES representation
+- *Standard*: The target parameter
+
+We wrote a Python script that downloads SDF files for each molecule in each dataset, using its HTTP API, querying by the SMILES data present in each dataset record. We used a rate limit on these queries to not exceed PubChem's policy. We downloaded 3D SDF files when available, and 2D when not.
+
+These CSV files, each paired with a set of SDF files, comprises the input data we used to train and validate our models.
+
 
 
 = Results

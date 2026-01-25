@@ -31,8 +31,8 @@ use crate::{
 pub struct EvalMetrics {
     /// Mean squared error.
     pub mse: f32,
-    /// Root-Mean Squared error
-    pub rmse: f32,
+    /// Root-Mean Squared deviation
+    pub rmsd: f32,
     /// Mean Absolute Error
     pub mae: f32,
     /// Coefficient of determination.
@@ -50,8 +50,8 @@ impl Display for EvalMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "\nEval metrics:\n- MSE: {:.3}\n- RMSE: {:.3}\n- MAE: {:.3}\n- R²: {:.3}\n- Pearson: {:.3}\n- Spearman: {:.3}\n",
-            self.mse, self.rmse, self.mae, self.r2, self.pearson, self.spearman,
+            "\nEval metrics:\n- MSE: {:.3}\n- RMSD: {:.3}\n- MAE: {:.3}\n- R²: {:.3}\n- Pearson: {:.3}\n- Spearman: {:.3}\n",
+            self.mse, self.rmsd, self.mae, self.r2, self.pearson, self.spearman,
         )?;
 
         if let Some(v) = &self.auroc {
@@ -321,7 +321,7 @@ pub fn eval(
 
     Ok(EvalMetrics {
         mse: mse as f32,
-        rmse: rmsd as f32,
+        rmsd: rmsd as f32,
         mae: mae as f32,
         r2: r2 as f32,
         pearson,
