@@ -14,7 +14,7 @@ use crate::{
         },
     },
 };
-// use burn::backend::NdArray;
+use burn::backend::NdArray;
 use burn::prelude::Int;
 use burn::{
     module::Module,
@@ -23,10 +23,11 @@ use burn::{
 };
 use burn_cpu::Cpu;
 
+// todo: Stack overflow with Burn CPU
 // CPU (i.e.NdArray) seems to be much faster for inference than GPU.
 // type InferBackend = Wgpu;
-// type InferBackend = NdArray;
-type InferBackend = Cpu;
+type InferBackend = NdArray;
+// type InferBackend = Cpu;
 
 pub struct Infer {
     model: Model<InferBackend>,

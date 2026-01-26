@@ -3,7 +3,7 @@
 We have trained a machine-learning algorithm on all Therapeutic Data Commons (TDC) single-molecule data sets, and present our results. Given a small organic molecule's atom and bond data, it estimates ADME and toxicity properties. We perform training, inference, and evaluation the Molchanica application. The models each use 51393 parameters; this is very low compared to many models, and is associated with fast inference; this is useful in case of screening large numbers of molecules.
 
 = Results summary
-We have used the train-test split division and scoring metrics recommended by TDC. We generated this split using the PyTDC library, and for each dataset, used the split recommended by TDC. This consistency simplifies interpreting performance of our model in comparison to others which use the same datasets.
+We have used the train-validation-test split division and scoring metrics recommended by TDC. We generated this split using the PyTDC library, and for each dataset, used the split recommended by TDC. This consistency simplifies interpreting performance of our model in comparison to others which use the same datasets. We use the _train_ and _validation_ records when training, and the _test_ ones for our metrics.
 
 = Model description
 

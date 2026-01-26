@@ -483,58 +483,60 @@ fn hash_ff_type(ff_type: &str) -> usize {
     (s.finish() as usize) % FF_BUCKETS
 }
 
-// todo: Experimental!
+/// These are numerical properties of individual atoms. Partial charge, FF type etc.
 fn atom_geom_scalars(atoms: &[Atom], adj: &[Vec<usize>]) -> Vec<(f32, f32)> {
     let n = atoms.len().max(1);
 
-    let mut cx = 0.0f32;
-    let mut cy = 0.0f32;
-    let mut cz = 0.0f32;
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    let mut cz = 0.0;
 
     for a in atoms {
-        cx += a.posit.x as f32;
-        cy += a.posit.y as f32;
-        cz += a.posit.z as f32;
+        cx += a.posit.x;
+        cy += a.posit.y;
+        cz += a.posit.z;
     }
 
-    let inv_n = 1.0 / (n as f32);
+    let inv_n = 1.0 / (n as f64);
     cx *= inv_n;
     cy *= inv_n;
     cz *= inv_n;
 
     // Scale by RMS radius to keep numbers ~O(1)
-    let mut r2_sum = 0.0f32;
+    let mut r2_sum = 0.0f64;
     for a in atoms {
-        let dx = a.posit.x as f32 - cx;
-        let dy = a.posit.y as f32 - cy;
-        let dz = a.posit.z as f32 - cz;
+        let dx = a.posit.x - cx;
+        let dy = a.posit.y - cy;
+        let dz = a.posit.z - cz;
         r2_sum += dx * dx + dy * dy + dz * dz;
     }
+
     let rms = (r2_sum * inv_n).sqrt().max(1e-6);
 
     let mut out = Vec::with_capacity(atoms.len());
 
     for (i, a) in atoms.iter().enumerate() {
-        let dx = (a.posit.x as f32 - cx) / rms;
-        let dy = (a.posit.y as f32 - cy) / rms;
-        let dz = (a.posit.z as f32 - cz) / rms;
+        let dx = (a.posit.x - cx) / rms;
+        let dy = (a.posit.y - cy) / rms;
+        let dz = (a.posit.z - cz) / rms;
 
         let r = (dx * dx + dy * dy + dz * dz).sqrt(); // invariant
 
-        // mean neighbor distance (raw Å-ish; you can also divide by rms)
-        let mut sum = 0.0f32;
-        let mut cnt = 0.0f32;
+        // Mean neighbor distance
+        let mut dist_sum = 0.0_f64;
+        let mut count = 0_u32;
         for &j in adj.get(i).unwrap_or(&Vec::new()).iter() {
             let b = &atoms[j];
-            let ddx = (a.posit.x - b.posit.x) as f32;
-            let ddy = (a.posit.y - b.posit.y) as f32;
-            let ddz = (a.posit.z - b.posit.z) as f32;
-            sum += (ddx * ddx + ddy * ddy + ddz * ddz).sqrt();
-            cnt += 1.0;
+            dist_sum += (a.posit - b.posit).magnitude();
+            count += 1;
         }
-        let mean_nb_dist = if cnt > 0.0 { sum / cnt } else { 0.0 };
+        let mean_nb_dist = if count > 0 {
+            dist_sum as f32 / count as f32
+        } else {
+            0.0
+        };
 
-        out.push((r, mean_nb_dist));
+        out.push((r as f32, mean_nb_dist));
     }
 
     out
@@ -584,7 +586,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
         return Err(io::Error::new(ErrorKind::Other, "Molecule has 0 atoms"));
     }
 
-    // --- 1. NODE FEATURES (Indices & Scalars) ---
+    // Node features (Indices and Scalars)
     let mut elem_indices = Vec::with_capacity(num_atoms);
     let mut ff_indices = Vec::with_capacity(num_atoms);
     let mut scalars = Vec::with_capacity(num_atoms * 2);
@@ -604,7 +606,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
         scalars.push(mean_nb_dist);
     }
 
-    // --- 2. EDGE FEATURES (Weighted Adjacency) ---
+    // Edge features (Weighted Adjacency)
     let mut raw_adj = vec![0.0; num_atoms * num_atoms];
     // Self loops
     for i in 0..num_atoms {
@@ -764,6 +766,7 @@ impl InferenceStep for Model<ValidBackend> {
 #[derive(Clone, Debug, Default)]
 pub(in crate::therapeutic) struct TrainingData {
     pub train: Vec<(MoleculeSmall, f32)>,
+    pub validation: Vec<(MoleculeSmall, f32)>,
     pub test: Vec<(MoleculeSmall, f32)>,
 }
 
@@ -795,10 +798,14 @@ pub(in crate::therapeutic) fn load_training_data(
 
     // These Hash sets improve speed over  using the tts variables directly. (Double-nested loop)
     let train_set: HashSet<usize> = tts.train.iter().copied().collect();
+    let validation_set: HashSet<usize> = tts.validation.iter().copied().collect();
     let test_set: HashSet<usize> = tts.test.iter().copied().collect();
 
+    let mut record_count = 0;
     // Iterate over records (automatically handles quotes and headers)
     for (i, record) in rdr.records().enumerate() {
+        record_count += 1;
+
         if test_only && !test_set.contains(&i) {
             continue;
         }
@@ -843,12 +850,19 @@ pub(in crate::therapeutic) fn load_training_data(
 
         if train_set.contains(&i) {
             result.train.push((mol, target));
+        } else if validation_set.contains(&i) {
+            result.validation.push((mol, target));
         } else if test_set.contains(&i) {
             result.test.push((mol, target));
         } else {
             eprintln!("Warning: Record {i} not present in the train/test split for set {filename}");
         }
     }
+
+    assert_eq!(
+        record_count,
+        tts.train.len() + tts.validation.len() + tts.test.len()
+    );
 
     Ok(result)
 }
@@ -879,7 +893,7 @@ fn read_data(
 
     for (result_set, data) in [
         (&mut result_train, &loaded.train),
-        (&mut result_test, &loaded.test),
+        (&mut result_test, &loaded.validation),
     ] {
         for (mol, target) in data {
             let feat_params = param_feats_from_mol(&mol)?;
@@ -889,21 +903,26 @@ fn read_data(
                 continue;
             }
 
-            // FIXED: Destructuring the new return tuple
             let (elem_ids, ff_ids, scalars, adj_list, num_atoms) = match mol_to_graph_data(&mol) {
                 Ok(res) => res,
-                Err(_) => continue, // Skip malformed molecules
+                Err(e) => {
+                    eprintln!("Error getting graph data: {:?}", e);
+                    continue;
+                }
             };
 
-            if num_atoms == 0 || num_atoms > MAX_ATOMS {
+            // if num_atoms == 0 || num_atoms > MAX_ATOMS {
+            //     continue;
+            // }
+            if num_atoms == 0 {
                 continue;
             }
 
             result_set.push(Sample {
                 features_property: feat_params,
-                elem_ids, // Defined now
-                ff_ids,   // Defined now
-                scalars,  // Defined now
+                elem_ids,
+                ff_ids,
+                scalars,
                 adj_list,
                 num_atoms,
                 target: *target,
@@ -931,6 +950,7 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
     let ln = |x: f32| (x + 1.0).ln();
 
     // We are generally apply ln to values that can be "large".
+    // Note: We do seem to get better results using ln values.
 
     Ok(vec![
         // c.num_atoms as f32,
@@ -984,6 +1004,7 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         ln(c.asa_topo),
         ln(c.volume),
         ln(c.wiener_index.unwrap_or(0) as f32),
+        c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
     ])
 }
 
