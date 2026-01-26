@@ -3,25 +3,22 @@
 
 use std::{collections::HashMap, fs, io, time::Instant};
 
-use crate::therapeutic::train::pad_adj_and_mask;
+use burn::{
+    backend::NdArray,
+    module::Module,
+    prelude::Int,
+    record::{FullPrecisionSettings, NamedMpkFileRecorder},
+    tensor::{Tensor, TensorData, backend::Backend},
+};
+
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
-        train::{
-            MAX_ATOMS, Model, ModelConfig, StandardScaler, model_paths, mol_to_graph_data,
-            param_feats_from_mol,
-        },
+        gnn::{mol_to_graph_data, pad_adj_and_mask},
+        train::{MAX_ATOMS, Model, ModelConfig, StandardScaler, model_paths, param_feats_from_mol},
     },
 };
-use burn::backend::NdArray;
-use burn::prelude::Int;
-use burn::{
-    module::Module,
-    record::{FullPrecisionSettings, NamedMpkFileRecorder},
-    tensor::{Tensor, TensorData, backend::Backend},
-};
-use burn_cpu::Cpu;
 
 // todo: Stack overflow with Burn CPU
 // CPU (i.e.NdArray) seems to be much faster for inference than GPU.
@@ -47,6 +44,11 @@ impl Infer {
         let scaler: StandardScaler = serde_json::from_slice(&scaler_bytes)?;
 
         let device = Default::default();
+
+        // Prevent randomness in results.
+        const SEED: u64 = 42;
+        InferBackend::seed(&device, SEED);
+
         let mut model = config.init::<InferBackend>(&device);
 
         let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();

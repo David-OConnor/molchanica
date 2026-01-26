@@ -7,25 +7,23 @@
 
 //! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins.csv`
 //!
-//! Add the `tgt` param if training on a single file.
+//! Add the `tgt` param if training on a single file. Can be a single target, or multiple.
 //! --tgt bbb_martins`
 
 use std::{
-    collections::{HashMap, HashSet, hash_map::DefaultHasher},
+    collections::{HashMap, HashSet},
     env, fs,
     hash::{Hash, Hasher},
     io,
-    io::{ErrorKind, Write},
+    io::Write,
     path::{Path, PathBuf},
     str::FromStr,
     time::Instant,
 };
 
-use bio_files::{AtomGeneric, BondGeneric, BondType, Sdf, md_params::ForceFieldParams};
+use bio_files::{Sdf, md_params::ForceFieldParams};
 #[cfg(feature = "train")]
-use burn::backend::{Wgpu, wgpu::WgpuDevice};
-use burn::nn::{Embedding, EmbeddingConfig};
-use burn::prelude::Int;
+use burn::backend::Wgpu;
 use burn::{
     backend::Autodiff,
     config::Config,
@@ -36,37 +34,33 @@ use burn::{
     lr_scheduler::constant::ConstantLr,
     module::Module,
     nn::{
-        Dropout, DropoutConfig, LayerNorm, LayerNormConfig, Linear, LinearConfig,
+        Dropout, DropoutConfig, Embedding, EmbeddingConfig, LayerNorm, LayerNormConfig, Linear,
+        LinearConfig,
         loss::{MseLoss, Reduction},
     },
     optim::AdamConfig,
-    record::{CompactRecorder, FullPrecisionSettings, NamedMpkFileRecorder},
+    prelude::Int,
+    record::{FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{
         Tensor, TensorData, activation,
         backend::{AutodiffBackend, Backend},
     },
     train::{
-        ClassificationOutput, InferenceStep, Learner, LearnerSummary, RegressionOutput,
-        SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
-        metric::{LossMetric, MetricDefinition},
-        renderer::{
-            EvaluationName, EvaluationProgress, MetricState, MetricsRenderer,
-            MetricsRendererEvaluation, MetricsRendererTraining, TrainingProgress,
-        },
+        InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput, TrainStep,
+        TrainingStrategy, metric::LossMetric,
     },
 };
 use dynamics::params::FfParamSet;
 use na_seq::Element::*;
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
-use crate::molecules::build_adjacency_list;
 #[cfg(feature = "train")]
 use crate::therapeutic::model_eval::eval;
 use crate::{
     mol_characterization::MolCharacterization,
-    molecules::{Atom, Bond, MolType, small::MoleculeSmall},
-    therapeutic::{DatasetTdc, train_test_split_indices::TrainTestSplit},
+    molecules::small::MoleculeSmall,
+    therapeutic::{DatasetTdc, gnn, train_test_split_indices::TrainTestSplit},
 };
 
 // Number of buckets for Force Field types (hashing trick)
@@ -84,7 +78,7 @@ pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
 // Note: Excluding H or not appears not to make any notable difference at first;
 // Experiment with this more later.
-const EXCLUDE_HYDROGEN: bool = true;
+pub(in crate::therapeutic) const EXCLUDE_HYDROGEN: bool = true;
 
 // Increasing layers may or may not improve model performance. It will slow down inference and training.
 const NUM_GNN_LAYERS: usize = 3;
@@ -94,7 +88,7 @@ const NUM_MLP_LAYERS: usize = 3;
 // Perhaps skip dropout due to our small TDC data sets.
 const DROPOUT: Option<f64> = None;
 
-const BOND_SIGMA_SQ: f32 = 3.3; // Å. Try 1.5 - 2.2 for sigma, (Square it)
+pub(in crate::therapeutic) const BOND_SIGMA_SQ: f32 = 3.3; // Å. Try 1.5 - 2.2 for sigma, (Square it)
 
 #[cfg(feature = "train")]
 type TrainBackend = Autodiff<Wgpu>;
@@ -112,36 +106,6 @@ pub(in crate::therapeutic) fn model_paths(data_set: DatasetTdc) -> (PathBuf, Pat
     let cfg = model_dir.join(format!("{data_set}_model_config.json"));
 
     (model, scaler, cfg)
-}
-
-fn vocab_lookup_element(el: na_seq::Element) -> i32 {
-    // 0 is reserved for Padding in the Batcher, so we start at 1.
-    match el {
-        Hydrogen => 1,
-        Carbon => 2,
-        Nitrogen => 3,
-        Oxygen => 4,
-        Fluorine => 5,
-        Phosphorus => 6,
-        Sulfur => 7,
-        Chlorine => 8,
-        Bromine => 9,
-        Iodine => 10,
-        _ => 11, // "Other" bucket
-    }
-}
-
-fn vocab_lookup_ff(ff: Option<&String>) -> i32 {
-    // 0 is Padding.
-    match ff {
-        Some(s) => {
-            // Hash to range [1..20]
-            let mut h = DefaultHasher::new();
-            s.hash(&mut h);
-            ((h.finish() % (FF_BUCKETS as u64)) + 1) as i32
-        }
-        None => (FF_BUCKETS as i32) + 1, // Unknown bucket
-    }
 }
 
 #[derive(Config, Debug)]
@@ -278,12 +242,6 @@ impl<B: Backend> Model<B> {
         let atom_counts = mask.sum_dim(1);
         let graph_mean = graph_sum / (atom_counts + 1e-6);
 
-        // todo: QC this.
-        // let graph_embedding = graph_mean.flatten(1, 2);
-        // let graph_embedding = graph_mean;
-        // let graph_embedding =
-        //     graph_mean.reshape([graph_mean.dims()[0], self.gnn_layers[0].out_features()]);
-
         // Graph_mean is Tensor<B, 3> with shape [B, 1, D]
         let [b, _one, d] = graph_mean.dims();
         let graph_embedding = graph_mean.reshape([b, d]); // Tensor<B, 2> [B, D]
@@ -317,7 +275,6 @@ pub(in crate::therapeutic) struct Sample {
     pub scalars: Vec<f32>,  // Charge, Degree
 
     /// From the atom/bond graph
-    // pub features_node: Vec<f32>,
     pub adj_list: Vec<f32>,
     pub num_atoms: usize,
     pub target: f32,
@@ -327,9 +284,9 @@ pub(in crate::therapeutic) struct Sample {
 pub(in crate::therapeutic) struct Batch<B: Backend> {
     pub elem_ids: Tensor<B, 2, Int>,
     pub ff_ids: Tensor<B, 2, Int>,
+    /// Atom-specific properties, e.g. partial charge.
     pub scalars: Tensor<B, 3>,
-    // pub nodes: Tensor<B, 3>,
-    pub adj: Tensor<B, 3>,
+    pub adj_list: Tensor<B, 3>,
     pub mask: Tensor<B, 3>,
     pub globals: Tensor<B, 2>,
     pub targets: Tensor<B, 2>,
@@ -383,7 +340,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
 
             // -- Adj & Mask (Float) --
             // FIXED: Using new helper function
-            let (p_adj, p_mask) = pad_adj_and_mask(&item.adj_list, item.num_atoms);
+            let (p_adj, p_mask) = gnn::pad_adj_and_mask(&item.adj_list, item.num_atoms);
             batch_adj.extend(p_adj);
             batch_mask.extend(p_mask);
         }
@@ -400,7 +357,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             elem_ids: Tensor::from_data(elem_ids, device),
             ff_ids: Tensor::from_data(ff_ids, device),
             scalars: Tensor::from_data(scalars, device),
-            adj: Tensor::from_data(adj, device),
+            adj_list: Tensor::from_data(adj, device),
             mask: Tensor::from_data(mask, device),
             globals: Tensor::from_data(globals, device),
             targets: Tensor::from_data(y, device),
@@ -447,272 +404,6 @@ impl StandardScaler {
     }
 }
 
-/// Helper: Pads a single graph to MAX_ATOMS.
-/// Returns (PaddedNodes, PaddedAdj, PaddedMask) as flat vectors.
-pub(in crate::therapeutic) fn pad_adj_and_mask(
-    raw_adj: &[f32],
-    num_atoms: usize,
-) -> (Vec<f32>, Vec<f32>) {
-    let n = num_atoms.min(MAX_ATOMS);
-
-    // 1. Mask: 1.0 for atoms, 0.0 for pad
-    let mut p_mask = Vec::with_capacity(MAX_ATOMS);
-    p_mask.extend(std::iter::repeat(1.0).take(n));
-    p_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
-
-    // 2. Adj: Reconstruct row-by-row to handle 2D padding
-    let mut p_adj = Vec::with_capacity(MAX_ATOMS * MAX_ATOMS);
-    for r in 0..n {
-        let row_start = r * num_atoms; // Input is flat [num_atoms * num_atoms]
-        // Copy valid columns
-        p_adj.extend_from_slice(&raw_adj[row_start..row_start + n]);
-        // Pad columns (right side of matrix)
-        p_adj.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
-    }
-    // Pad rows (bottom of matrix)
-    let remaining_rows = MAX_ATOMS - n;
-    p_adj.extend(std::iter::repeat(0.0).take(remaining_rows * MAX_ATOMS));
-
-    (p_adj, p_mask)
-}
-
-/// Helper to deterministically map a string to a bucket index [0..FF_BUCKETS)
-fn hash_ff_type(ff_type: &str) -> usize {
-    let mut s = DefaultHasher::new();
-    ff_type.hash(&mut s);
-    (s.finish() as usize) % FF_BUCKETS
-}
-
-/// These are numerical properties of individual atoms. Partial charge, FF type etc.
-fn atom_geom_scalars(atoms: &[Atom], adj: &[Vec<usize>]) -> Vec<(f32, f32)> {
-    let n = atoms.len().max(1);
-
-    let mut cx = 0.0;
-    let mut cy = 0.0;
-    let mut cz = 0.0;
-
-    for a in atoms {
-        cx += a.posit.x;
-        cy += a.posit.y;
-        cz += a.posit.z;
-    }
-
-    let inv_n = 1.0 / (n as f64);
-    cx *= inv_n;
-    cy *= inv_n;
-    cz *= inv_n;
-
-    // Scale by RMS radius to keep numbers ~O(1)
-    let mut r2_sum = 0.0f64;
-    for a in atoms {
-        let dx = a.posit.x - cx;
-        let dy = a.posit.y - cy;
-        let dz = a.posit.z - cz;
-        r2_sum += dx * dx + dy * dy + dz * dz;
-    }
-
-    let rms = (r2_sum * inv_n).sqrt().max(1e-6);
-
-    let mut out = Vec::with_capacity(atoms.len());
-
-    for (i, a) in atoms.iter().enumerate() {
-        let dx = (a.posit.x - cx) / rms;
-        let dy = (a.posit.y - cy) / rms;
-        let dz = (a.posit.z - cz) / rms;
-
-        let r = (dx * dx + dy * dy + dz * dz).sqrt(); // invariant
-
-        // Mean neighbor distance
-        let mut dist_sum = 0.0_f64;
-        let mut count = 0_u32;
-        for &j in adj.get(i).unwrap_or(&Vec::new()).iter() {
-            let b = &atoms[j];
-            dist_sum += (a.posit - b.posit).magnitude();
-            count += 1;
-        }
-        let mean_nb_dist = if count > 0 {
-            dist_sum as f32 / count as f32
-        } else {
-            0.0
-        };
-
-        out.push((r as f32, mean_nb_dist));
-    }
-
-    out
-}
-
-/// Helper: Converts raw Atoms and Bonds into Flat vectors for Tensors.
-/// Used by both Training and Inference.
-pub(in crate::therapeutic) fn mol_to_graph_data(
-    mol: &MoleculeSmall,
-) -> io::Result<(Vec<i32>, Vec<i32>, Vec<f32>, Vec<f32>, usize)> {
-    let (atoms, bonds, adj) = if EXCLUDE_HYDROGEN {
-        let a: Vec<_> = mol
-            .common
-            .atoms
-            .iter()
-            .filter(|a| a.element != Hydrogen)
-            .cloned()
-            .collect();
-        let sns: Vec<_> = a.iter().map(|a| a.serial_number).collect();
-        let mut sn_to_new = HashMap::with_capacity(a.len());
-        for (new_i, a) in a.iter().enumerate() {
-            sn_to_new.insert(a.serial_number, new_i);
-        }
-
-        let mut bonds_ = Vec::new();
-        for b in mol.common.bonds.iter() {
-            if let (Some(&u), Some(&v)) = (sn_to_new.get(&b.atom_0_sn), sn_to_new.get(&b.atom_1_sn))
-            {
-                let mut b2 = b.clone();
-                b2.atom_0 = u;
-                b2.atom_1 = v;
-                bonds_.push(b2);
-            }
-        }
-        let adj = build_adjacency_list(&bonds_, a.len());
-        (a, bonds_, adj)
-    } else {
-        (
-            mol.common.atoms.clone(),
-            mol.common.bonds.clone(),
-            mol.common.adjacency_list.clone(),
-        )
-    };
-
-    let num_atoms = atoms.len();
-    if num_atoms == 0 {
-        return Err(io::Error::new(ErrorKind::Other, "Molecule has 0 atoms"));
-    }
-
-    // Node features (Indices and Scalars)
-    let mut elem_indices = Vec::with_capacity(num_atoms);
-    let mut ff_indices = Vec::with_capacity(num_atoms);
-    let mut scalars = Vec::with_capacity(num_atoms * 2);
-
-    let geom = atom_geom_scalars(&atoms, &adj);
-
-    for (i, atom) in atoms.iter().enumerate() {
-        elem_indices.push(vocab_lookup_element(atom.element));
-        ff_indices.push(vocab_lookup_ff(atom.force_field_type.as_ref()));
-
-        let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
-        scalars.push(degree as f32 / 6.0);
-        scalars.push(atom.partial_charge.unwrap_or(0.0));
-
-        let (r, mean_nb_dist) = geom[i];
-        scalars.push(r);
-        scalars.push(mean_nb_dist);
-    }
-
-    // Edge features (Weighted Adjacency)
-    let mut raw_adj = vec![0.0; num_atoms * num_atoms];
-    // Self loops
-    for i in 0..num_atoms {
-        raw_adj[i * num_atoms + i] = 1.0;
-    }
-
-    for bond in &bonds {
-        let u = bond.atom_0;
-        let v = bond.atom_1;
-        if u >= num_atoms || v >= num_atoms {
-            continue;
-        }
-
-        // Euclidean Distance
-        let p1 = atoms[u].posit;
-        let p2 = atoms[v].posit;
-        let dist =
-            ((p1.x - p2.x).powi(2) + (p1.y - p2.y).powi(2) + (p1.z - p2.z).powi(2)).sqrt() as f32;
-
-        let bond_strength = match bond.bond_type {
-            BondType::Single => 1.0,
-            BondType::Double => 2.0,
-            BondType::Triple => 3.0,
-            BondType::Aromatic => 1.5,
-            _ => 1.0,
-        };
-
-        let k = (-(dist.powi(2)) / (2.0 * BOND_SIGMA_SQ)).exp();
-        let weight = bond_strength * k;
-
-        raw_adj[u * num_atoms + v] = weight;
-        raw_adj[v * num_atoms + u] = weight;
-    }
-
-    // Symmetric Normalization: D^(-0.5) * A * D^(-0.5)
-    let mut degrees_vec = vec![0.0; num_atoms];
-    for i in 0..num_atoms {
-        let mut d = 0.0;
-        for j in 0..num_atoms {
-            d += raw_adj[i * num_atoms + j];
-        }
-        degrees_vec[i] = d;
-    }
-
-    let mut final_adj = vec![0.0; num_atoms * num_atoms];
-    for i in 0..num_atoms {
-        for j in 0..num_atoms {
-            let val = raw_adj[i * num_atoms + j];
-            if val > 0.0 {
-                let d_i = degrees_vec[i].max(1e-8);
-                let d_j = degrees_vec[j].max(1e-8);
-                final_adj[i * num_atoms + j] = val / (d_i * d_j).sqrt();
-            }
-        }
-    }
-
-    Ok((elem_indices, ff_indices, scalars, final_adj, num_atoms))
-}
-
-fn fit_scaler(train: &[Sample]) -> StandardScaler {
-    let n = train.len().max(1) as f32;
-
-    let num_params = train[0].features_property.len();
-
-    let mut mean = vec![0.0; num_params];
-    let mut var = vec![0.0; num_params];
-
-    for s in train {
-        for i in 0..num_params {
-            mean[i] += s.features_property[i];
-        }
-    }
-    for m in &mut mean {
-        *m /= n;
-    }
-
-    for s in train {
-        for i in 0..num_params {
-            let d = s.features_property[i] - mean[i];
-            var[i] += d * d;
-        }
-    }
-
-    let mut y_sum = 0.0;
-    for s in train {
-        y_sum += s.target;
-    }
-    let y_mean = y_sum / n;
-
-    let mut y_var = 0.0;
-    for s in train {
-        let diff = s.target - y_mean;
-        y_var += diff * diff;
-    }
-    let y_std = (y_var / n).sqrt();
-
-    let std = var.iter().map(|v| (v / n).sqrt()).collect();
-
-    StandardScaler {
-        mean,
-        std,
-        y_mean,
-        y_std,
-    }
-}
-
 #[cfg(feature = "train")]
 impl TrainStep for Model<TrainBackend> {
     type Input = Batch<TrainBackend>;
@@ -723,7 +414,7 @@ impl TrainStep for Model<TrainBackend> {
             batch.elem_ids,
             batch.ff_ids,
             batch.scalars,
-            batch.adj,
+            batch.adj_list,
             batch.mask,
             batch.globals,
         );
@@ -751,7 +442,7 @@ impl InferenceStep for Model<ValidBackend> {
             batch.elem_ids,
             batch.ff_ids,
             batch.scalars,
-            batch.adj,
+            batch.adj_list,
             batch.mask,
             batch.globals,
         );
@@ -769,12 +460,6 @@ pub(in crate::therapeutic) struct TrainingData {
     pub validation: Vec<(MoleculeSmall, f32)>,
     pub test: Vec<(MoleculeSmall, f32)>,
 }
-
-// impl TrainingData {
-//     pub fn new(train: Vec<(MoleculeSmall, f32)>, test: Vec<(MoleculeSmall, f32)>) -> Self {
-//         Self { train, test }
-//     }
-// }
 
 #[cfg(feature = "train")]
 /// Loads molecules from SDF files in a folder, and target data from a CSV. Used in both training and
@@ -903,13 +588,14 @@ fn read_data(
                 continue;
             }
 
-            let (elem_ids, ff_ids, scalars, adj_list, num_atoms) = match mol_to_graph_data(&mol) {
-                Ok(res) => res,
-                Err(e) => {
-                    eprintln!("Error getting graph data: {:?}", e);
-                    continue;
-                }
-            };
+            let (elem_ids, ff_ids, scalars, adj_list, num_atoms) =
+                match gnn::mol_to_graph_data(&mol) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        eprintln!("Error getting graph data: {:?}", e);
+                        continue;
+                    }
+                };
 
             // if num_atoms == 0 || num_atoms > MAX_ATOMS {
             //     continue;
@@ -949,8 +635,31 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
     // though usually we only apply this to Counts and Weights.
     let ln = |x: f32| (x + 1.0).ln();
 
+    // ----
+
     // We are generally apply ln to values that can be "large".
     // Note: We do seem to get better results using ln values.
+
+    // todo: Many of these are suspect.
+
+    // Ring count: Pos
+    // Function groups: Pos
+    // Valence: Neg
+    // c.rings.len() as f32 * 6. / c.num_atoms as f32: Pos
+    // Ring count: Pos
+    // Wiener index: Neg impact
+    // Mol weight: neg impact
+    // Num bonds: Positive impact
+    // Rot bond count: Positive impact
+    // ln(c.psa_topo / c.asa_topo): Pos
+    // psa topo: Pos
+    // SAS topo: Big pos
+    // Num heavy: pos
+    // Het: Pos
+    // Halogen: Pos
+    // Volume: Pos (big)
+
+    // -----
 
     Ok(vec![
         // c.num_atoms as f32,
@@ -966,7 +675,7 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         // c.amides.len() as f32,
         // c.carbonyl.len() as f32,
         // c.hydroxyl.len() as f32,
-        // c.num_valence_elecs as f32,
+        // // c.num_valence_elecs as f32,
         // c.num_rings_aromatic as f32,
         // c.num_rings_saturated as f32,
         // c.num_rings_aliphatic as f32,
@@ -982,7 +691,7 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         //
         ln(c.num_atoms as f32),
         ln(c.num_bonds as f32),
-        ln(c.mol_weight),
+        // ln(c.mol_weight),
         ln(c.num_heavy_atoms as f32),
         c.h_bond_acceptor.len() as f32,
         c.h_bond_donor.len() as f32,
@@ -993,18 +702,19 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         c.amides.len() as f32,
         c.carbonyl.len() as f32,
         c.hydroxyl.len() as f32,
-        c.num_valence_elecs as f32,
-        c.num_rings_aromatic as f32,
-        c.num_rings_saturated as f32,
-        c.num_rings_aliphatic as f32,
+        // c.num_valence_elecs as f32,
+        // c.num_rings_aromatic as f32,
+        // c.num_rings_saturated as f32,
+        // c.num_rings_aliphatic as f32,
         c.rings.len() as f32,
         c.log_p,
         c.molar_refractivity,
         ln(c.psa_topo),
         ln(c.asa_topo),
         ln(c.volume),
-        ln(c.wiener_index.unwrap_or(0) as f32),
+        // ln(c.wiener_index.unwrap_or(0) as f32),
         c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
+        ln(c.psa_topo / c.asa_topo),
     ])
 }
 
@@ -1053,8 +763,13 @@ pub(in crate::therapeutic) fn train(
 
     println!("Training on : {} samples", data_train.len());
 
-    let scaler = fit_scaler(&data_train);
+    let scaler = gnn::fit_scaler(&data_train);
     let device = Default::default();
+
+    // This seeding prevents random behavior.
+    const SEED: u64 = 42;
+    TrainBackend::seed(&device, SEED);
+    ValidBackend::seed(&device, SEED);
 
     // burn_wgpu::init_setup::<burn_wgpu::graphics::Dx12>(&device, RuntimeOptions::default());
 
@@ -1139,7 +854,10 @@ pub fn main() {
     let mol_specific_params = &mut HashMap::new();
 
     let datasets = match target {
-        Some(t) => vec![DatasetTdc::from_str(&t).unwrap()],
+        Some(t) => t
+            .split_whitespace()
+            .map(|set| DatasetTdc::from_str(&t).unwrap())
+            .collect(),
         None => DatasetTdc::all(),
     };
 

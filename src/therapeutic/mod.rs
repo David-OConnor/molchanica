@@ -1,6 +1,6 @@
 //! Measures properties of the molecules in the human body; relevant to drug development.
 //!
-//! Potential data sources and other resources
+//! Potential data sources and other resources.
 //! [Therapeutics Data Commons](https://tdcommons.ai/) [Arxiv from 2021](https://arxiv.org/pdf/2102.09548)
 //! [TDC download without PyTDC](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi%3A10.7910%2FDVN%2F21LKWG&utm_source=chatgpt.com)
 //! [Aqueous Solubility Data Curation](https://github.com/mcsorkun/AqSolDB) [Paper, 2019](https://www.nature.com/articles/s41597-019-0151-1)
@@ -9,13 +9,15 @@
 //! [TDC ADME](https://tdcommons.ai/single_pred_tasks/adme/)
 //!
 //! todo: [Look up QUPKAKE?](https://pubs.acs.org/doi/10.1021/acs.jctc.4c00328)
+//!
+//! [Qauntum descriptors](https://pubs.rsc.org/en/content/articlelanding/2026/dd/d5dd00411j)
 
 pub mod infer;
 
 mod solubility;
 pub mod train;
 
-// todo: Eval feature?
+mod gnn;
 #[cfg(feature = "train")]
 pub mod model_eval;
 mod mol_gen;
