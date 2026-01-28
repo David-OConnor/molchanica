@@ -1006,6 +1006,7 @@ fn labute_asa_proxy(mol: &MoleculeCommon) -> f32 {
     total as f32
 }
 
+#[allow(non_camel_case_types)]
 /// todo: Make a self-contained module for this, and othe rthings that use this nomenclature? (e.g. logP and MR?)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TpsaAtomType {

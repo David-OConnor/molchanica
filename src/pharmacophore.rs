@@ -33,6 +33,8 @@ pub struct Pharmacophore {
 }
 
 impl Pharmacophore {
+    pub fn create(mols: &[MoleculeSmall]) -> Vec<Self> {}
+
     /// Return (indices passed, atom posits, score).
     pub fn filter_ligs(mols: &[MoleculeSmall]) -> Vec<(usize, Vec<Vec3>, f32)> {
         Vec::new()

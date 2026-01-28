@@ -24,6 +24,8 @@ mod mol_gen;
 mod train_test_split_indices;
 // Pub to allow access from the training entry point.
 
+use bio_files::md_params::ForceFieldParams;
+use serde_json::error::Category::Data;
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -32,8 +34,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-
-use serde_json::error::Category::Data;
 
 use crate::{
     molecules::small::MoleculeSmall,
@@ -286,40 +286,55 @@ pub struct TherapeuticProperties {
 }
 
 impl TherapeuticProperties {
-    pub fn new(mol: &MoleculeSmall, models: &mut HashMap<DatasetTdc, Infer>) -> io::Result<Self> {
+    pub fn new(
+        mol: &MoleculeSmall,
+        models: &mut HashMap<DatasetTdc, Infer>,
+        ff_params: &ForceFieldParams,
+    ) -> io::Result<Self> {
         // The target names here must match the CSV names, as downloaded from TDC.
         let adme = Adme {
-            intestinal_permeability: infer_general(mol, DatasetTdc::Caco2Wang, models)?,
-            intestinal_absorption: infer_general(mol, DatasetTdc::HiaHou, models)?,
-            pgp: infer_general(mol, DatasetTdc::PgpBroccatelli, models)?,
-            oral_bioavailablity: infer_general(mol, DatasetTdc::BioavailabilityMa, models)?,
-            lipophilicity: infer_general(mol, DatasetTdc::LipophilicityAstrazeneca, models)?,
-            solubility_water: infer_general(mol, DatasetTdc::SolubilityAqsoldb, models)?,
-            blood_brain_barrier: infer_general(mol, DatasetTdc::BbbMartins, models)?,
-            plasma_protein_binding_rate: infer_general(mol, DatasetTdc::PpbrAz, models)?,
-            membrane_permeability: infer_general(mol, DatasetTdc::PampaNcats, models)?,
+            intestinal_permeability: infer_general(mol, DatasetTdc::Caco2Wang, models, ff_params)?,
+            intestinal_absorption: infer_general(mol, DatasetTdc::HiaHou, models, ff_params)?,
+            pgp: infer_general(mol, DatasetTdc::PgpBroccatelli, models, ff_params)?,
+            oral_bioavailablity: infer_general(
+                mol,
+                DatasetTdc::BioavailabilityMa,
+                models,
+                ff_params,
+            )?,
+            lipophilicity: infer_general(
+                mol,
+                DatasetTdc::LipophilicityAstrazeneca,
+                models,
+                ff_params,
+            )?,
+            solubility_water: infer_general(mol, DatasetTdc::SolubilityAqsoldb, models, ff_params)?,
+            blood_brain_barrier: infer_general(mol, DatasetTdc::BbbMartins, models, ff_params)?,
+            plasma_protein_binding_rate: infer_general(mol, DatasetTdc::PpbrAz, models, ff_params)?,
+            membrane_permeability: infer_general(mol, DatasetTdc::PampaNcats, models, ff_params)?,
             hydration_free_energy: infer_general(
                 mol,
                 DatasetTdc::HydrationfreeenergyFreesolv,
                 models,
+                ff_params,
             )?,
-            vdss: infer_general(mol, DatasetTdc::VdssLombardo, models)?,
-            cyp_2c19_inhibition: infer_general(mol, DatasetTdc::Cyp2c19Veith, models)?,
-            cyp_2d6_inhibition: infer_general(mol, DatasetTdc::Cyp2d6Veith, models)?,
-            cyp_3a4_inhibition: infer_general(mol, DatasetTdc::Cyp3a4Veith, models)?,
-            cyp_1a2_inhibition: infer_general(mol, DatasetTdc::Cyp1a2Veith, models)?,
-            cyp_2c9_inhibition: infer_general(mol, DatasetTdc::Cyp2c9Veith, models)?,
-            half_life: infer_general(mol, DatasetTdc::HalfLifeObach, models)?,
-            clearance: infer_general(mol, DatasetTdc::ClearanceHepatocyteAz, models)?,
+            vdss: infer_general(mol, DatasetTdc::VdssLombardo, models, ff_params)?,
+            cyp_2c19_inhibition: infer_general(mol, DatasetTdc::Cyp2c19Veith, models, ff_params)?,
+            cyp_2d6_inhibition: infer_general(mol, DatasetTdc::Cyp2d6Veith, models, ff_params)?,
+            cyp_3a4_inhibition: infer_general(mol, DatasetTdc::Cyp3a4Veith, models, ff_params)?,
+            cyp_1a2_inhibition: infer_general(mol, DatasetTdc::Cyp1a2Veith, models, ff_params)?,
+            cyp_2c9_inhibition: infer_general(mol, DatasetTdc::Cyp2c9Veith, models, ff_params)?,
+            half_life: infer_general(mol, DatasetTdc::HalfLifeObach, models, ff_params)?,
+            clearance: infer_general(mol, DatasetTdc::ClearanceHepatocyteAz, models, ff_params)?,
         };
 
         let toxicity = Toxicity {
-            ld50: infer_general(mol, DatasetTdc::Ld50Zhu, models)?,
-            ether_a_go_go: infer_general(mol, DatasetTdc::Herg, models)?,
-            mutagencity: infer_general(mol, DatasetTdc::Ames, models)?,
-            drug_induced_liver_injury: infer_general(mol, DatasetTdc::Dili, models)?,
-            skin_reaction: infer_general(mol, DatasetTdc::SkinReaction, models)?,
-            carcinogen: infer_general(mol, DatasetTdc::CarcinogensLagunin, models)?,
+            ld50: infer_general(mol, DatasetTdc::Ld50Zhu, models, ff_params)?,
+            ether_a_go_go: infer_general(mol, DatasetTdc::Herg, models, ff_params)?,
+            mutagencity: infer_general(mol, DatasetTdc::Ames, models, ff_params)?,
+            drug_induced_liver_injury: infer_general(mol, DatasetTdc::Dili, models, ff_params)?,
+            skin_reaction: infer_general(mol, DatasetTdc::SkinReaction, models, ff_params)?,
+            carcinogen: infer_general(mol, DatasetTdc::CarcinogensLagunin, models, ff_params)?,
         };
 
         Ok(Self {

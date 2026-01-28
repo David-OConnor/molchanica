@@ -9,23 +9,43 @@ use std::{
 };
 
 use bio_files::BondType;
+use bio_files::md_params::ForceFieldParams;
 use na_seq::Element::{
     Bromine, Carbon, Chlorine, Fluorine, Hydrogen, Iodine, Nitrogen, Oxygen, Phosphorus, Sulfur,
 };
 
 use crate::{
     molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
-    therapeutic::{
-        train,
-        train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS, MAX_ATOMS, Sample, StandardScaler},
+    therapeutic::train::{
+        BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS, MAX_ATOMS, Sample, StandardScaler,
     },
 };
+
+// Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring
+pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
+
+// Scaled/modified proxies for r_0, k_b
+pub(in crate::therapeutic) const PER_EDGE_FEATS: usize = 2;
+
+const DR_SCALE: f32 = 0.15;
+const KB_REF: f32 = 300.0;
+
+#[derive(Clone, Debug)]
+pub(in crate::therapeutic) struct GraphData {
+    pub elem_indices: Vec<i32>,
+    pub ff_indices: Vec<i32>,
+    pub scalars: Vec<f32>,
+    pub adj: Vec<f32>,
+    pub edge_feats: Vec<f32>,
+    pub num_atoms: usize,
+}
 
 /// Helper: Converts raw Atoms and Bonds into Flat vectors for Tensors.
 /// Used by both Training and Inference.
 pub(in crate::therapeutic) fn mol_to_graph_data(
     mol: &MoleculeSmall,
-) -> io::Result<(Vec<i32>, Vec<i32>, Vec<f32>, Vec<f32>, usize)> {
+    ff_params: &ForceFieldParams,
+) -> io::Result<GraphData> {
     let (atoms, bonds, adj) = if EXCLUDE_HYDROGEN {
         let a: Vec<_> = mol
             .common
@@ -34,7 +54,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
             .filter(|a| a.element != Hydrogen)
             .cloned()
             .collect();
-        let sns: Vec<_> = a.iter().map(|a| a.serial_number).collect();
+
         let mut sn_to_new = HashMap::with_capacity(a.len());
         for (new_i, a) in a.iter().enumerate() {
             sn_to_new.insert(a.serial_number, new_i);
@@ -68,16 +88,13 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
     // Node features (Indices and Scalars)
     let mut elem_indices = Vec::with_capacity(num_atoms);
     let mut ff_indices = Vec::with_capacity(num_atoms);
-    let mut scalars = Vec::with_capacity(num_atoms * 2);
+
+    let mut scalars = Vec::with_capacity(num_atoms * PER_ATOM_SCALARS);
 
     let geom = atom_geom_scalars(&atoms, &adj);
 
     for (i, atom) in atoms.iter().enumerate() {
         elem_indices.push(vocab_lookup_element(atom.element));
-
-        println!("ATOM tir: {:?}", atom.type_in_res_general);
-
-        // ff_indices.push(0);
         ff_indices.push(vocab_lookup_ff(atom.force_field_type.as_ref()));
 
         let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
@@ -85,32 +102,75 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
 
         // Note: Including partial charge and FF type appears to be beneficial.
         scalars.push(atom.partial_charge.unwrap_or(0.0));
-        // scalars.push(0.);
+
+        // if let Some(lj_data) = ff_params
+        //     .lennard_jones
+        //     .get(atom.force_field_type.as_ref().unwrap())
+        // {
+        //     scalars.push(lj_data.sigma);
+        //     scalars.push(lj_data.eps);
+        // } else {
+        //     eprintln!("Missing LJ for FF type {:?}", atom.force_field_type);
+        //
+        //     scalars.push(0.);
+        //     scalars.push(0.);
+        // }
+
+        // scalars.push(ff_params.lennard_jones[atom.force_field_type.as_ref().unwrap()].sigma);
+        // scalars.push(ff_params.lennard_jones[atom.force_field_type.as_ref().unwrap()].eps);
 
         let (r, mean_nb_dist) = geom[i];
         scalars.push(r);
         scalars.push(mean_nb_dist);
+
+        let Some(char) = &mol.characterization else {
+            eprintln!("Missing char");
+            return Err(io::Error::new(ErrorKind::Other, "Missing characterization"));
+        };
+
+        let h_bond_acc = if char.h_bond_acceptor.contains(&i) {
+            1.
+        } else {
+            0.
+        };
+        let h_bond_donor = if char.h_bond_donor.contains(&i) {
+            1.
+        } else {
+            0.
+        };
+        scalars.push(h_bond_acc);
+        scalars.push(h_bond_donor);
+
+        let mut in_aromatic_ring = 0.;
+        for ring in &char.rings {
+            if ring.atoms.contains(&i) {
+                in_aromatic_ring = 1.;
+                break;
+            }
+        }
+
+        scalars.push(in_aromatic_ring);
     }
 
     // Edge features (Weighted Adjacency)
-    let mut raw_adj = vec![0.0; num_atoms * num_atoms];
+    let n_atoms_sq = num_atoms.pow(2);
+    let mut adj_list = vec![0.; n_atoms_sq];
+    let mut edge_feats = vec![0.; n_atoms_sq * PER_EDGE_FEATS];
+
+    let edge_feats_i =
+        |i: usize, j: usize, k: usize, n: usize| -> usize { (i * n + j) * PER_EDGE_FEATS + k };
+
     // Self loops
     for i in 0..num_atoms {
-        raw_adj[i * num_atoms + i] = 1.0;
+        adj_list[i * num_atoms + i] = 1.0;
     }
 
     for bond in &bonds {
-        let u = bond.atom_0;
-        let v = bond.atom_1;
-        if u >= num_atoms || v >= num_atoms {
+        let a0 = bond.atom_0;
+        let a1 = bond.atom_1;
+        if a0 >= num_atoms || a1 >= num_atoms {
             continue;
         }
-
-        // Euclidean Distance
-        let p1 = atoms[u].posit;
-        let p2 = atoms[v].posit;
-        let dist =
-            ((p1.x - p2.x).powi(2) + (p1.y - p2.y).powi(2) + (p1.z - p2.z).powi(2)).sqrt() as f32;
 
         let bond_strength = match bond.bond_type {
             BondType::Single => 1.0,
@@ -120,11 +180,62 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
             _ => 1.0,
         };
 
-        let k = (-(dist.powi(2)) / (2.0 * BOND_SIGMA_SQ)).exp();
+        // todo: Lennard Jones?
+
+        let p1 = atoms[a0].posit;
+        let p2 = atoms[a1].posit;
+        let dist_sq = (p1 - p2).magnitude_squared() as f32;
+        let dist = dist_sq.sqrt();
+
+        {
+            let ff0 = atoms[a0].force_field_type.clone().unwrap();
+            let ff1 = atoms[a0].force_field_type.clone().unwrap();
+            let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
+
+            let bond_stretching = if let Some(v) = bond_stretching {
+                v
+            } else {
+                // A coarse fallback.
+                let mut safe_fallback = ("cc".to_owned(), "n".to_owned());
+
+                if (&ff0 == "cc" && ff1.starts_with("n")) || (&ff1 == "cc" && ff0.starts_with("n"))
+                {
+                    safe_fallback = ("cc".to_owned(), "n4".to_owned());
+                } else if (&ff0 == "cg" && ff1.starts_with("c"))
+                    || (&ff1 == "cg" && ff0.starts_with("c"))
+                {
+                    safe_fallback = ("cg".to_owned(), "cg".to_owned());
+                } else if atoms[0].element == Carbon && atoms[1].element == Carbon {
+                    safe_fallback = ("cc".to_owned(), "cc".to_owned());
+                    eprintln!(
+                        "Missing bond stretching for bond {bond:?}. \nAtoms {ff0} | {ff1}\n. Using a substitute.",
+                    );
+                } else if atoms[0].element == Nitrogen && atoms[1].element == Nitrogen {
+                    safe_fallback = ("n".to_owned(), "n".to_owned());
+
+                    eprintln!(
+                        "Missing bond stretching for bond {bond:?}. \nAtoms {ff0} | {ff1}\n. Using a substitute.",
+                    );
+                }
+
+                ff_params.get_bond(&safe_fallback, false).unwrap()
+            };
+
+            let dr_norm = ((dist - bond_stretching.r_0) / DR_SCALE).clamp(-5.0, 5.0);
+            let log_kb = (bond_stretching.k_b / KB_REF).ln_1p();
+
+            edge_feats[edge_feats_i(a0, a1, 0, num_atoms)] = dr_norm;
+            edge_feats[edge_feats_i(a0, a1, 1, num_atoms)] = log_kb;
+
+            edge_feats[edge_feats_i(a1, a0, 0, num_atoms)] = dr_norm;
+            edge_feats[edge_feats_i(a1, a0, 1, num_atoms)] = log_kb;
+        }
+
+        let k = (-dist_sq / (2.0 * BOND_SIGMA_SQ)).exp();
         let weight = bond_strength * k;
 
-        raw_adj[u * num_atoms + v] = weight;
-        raw_adj[v * num_atoms + u] = weight;
+        adj_list[a0 * num_atoms + a1] = weight;
+        adj_list[a1 * num_atoms + a0] = weight;
     }
 
     // Symmetric Normalization: D^(-0.5) * A * D^(-0.5)
@@ -132,24 +243,19 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
     for i in 0..num_atoms {
         let mut d = 0.0;
         for j in 0..num_atoms {
-            d += raw_adj[i * num_atoms + j];
+            d += adj_list[i * num_atoms + j];
         }
         degrees_vec[i] = d;
     }
 
-    let mut final_adj = vec![0.0; num_atoms * num_atoms];
-    for i in 0..num_atoms {
-        for j in 0..num_atoms {
-            let val = raw_adj[i * num_atoms + j];
-            if val > 0.0 {
-                let d_i = degrees_vec[i].max(1e-8);
-                let d_j = degrees_vec[j].max(1e-8);
-                final_adj[i * num_atoms + j] = val / (d_i * d_j).sqrt();
-            }
-        }
-    }
-
-    Ok((elem_indices, ff_indices, scalars, final_adj, num_atoms))
+    Ok(GraphData {
+        elem_indices,
+        ff_indices,
+        scalars,
+        adj: adj_list,
+        edge_feats,
+        num_atoms,
+    })
 }
 
 /// These are numerical properties of individual atoms. Partial charge, FF type etc.
@@ -266,12 +372,12 @@ pub(in crate::therapeutic) fn pad_adj_and_mask(
 ) -> (Vec<f32>, Vec<f32>) {
     let n = num_atoms.min(MAX_ATOMS);
 
-    // 1. Mask: 1.0 for atoms, 0.0 for pad
+    // Mask: 1.0 for atoms, 0.0 for pad
     let mut p_mask = Vec::with_capacity(MAX_ATOMS);
     p_mask.extend(std::iter::repeat(1.0).take(n));
     p_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
 
-    // 2. Adj: Reconstruct row-by-row to handle 2D padding
+    //Adj: Reconstruct row-by-row to handle 2D padding
     let mut p_adj = Vec::with_capacity(MAX_ATOMS * MAX_ATOMS);
     for r in 0..n {
         let row_start = r * num_atoms; // Input is flat [num_atoms * num_atoms]
@@ -285,6 +391,26 @@ pub(in crate::therapeutic) fn pad_adj_and_mask(
     p_adj.extend(std::iter::repeat(0.0).take(remaining_rows * MAX_ATOMS));
 
     (p_adj, p_mask)
+}
+
+pub(in crate::therapeutic) fn pad_edge_feats(
+    edge_feats: &[f32], // [num_atoms*num_atoms*PER_EDGE_FEATS]
+    num_atoms: usize,
+) -> Vec<f32> {
+    let n = num_atoms.min(MAX_ATOMS);
+
+    let mut out = vec![0.0f32; MAX_ATOMS.pow(2) * PER_EDGE_FEATS];
+
+    for i in 0..n {
+        for j in 0..n {
+            let src_base = (i * num_atoms + j) * PER_EDGE_FEATS;
+            let dst_base = (i * MAX_ATOMS + j) * PER_EDGE_FEATS;
+            out[dst_base..dst_base + PER_EDGE_FEATS]
+                .copy_from_slice(&edge_feats[src_base..src_base + PER_EDGE_FEATS]);
+        }
+    }
+
+    out
 }
 
 fn vocab_lookup_ff(ff: Option<&String>) -> i32 {

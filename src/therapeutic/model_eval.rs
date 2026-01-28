@@ -66,13 +66,14 @@ fn run_infer(
     // This format matches how we load.
     data: &[(MoleculeSmall, f32)],
     data_set: DatasetTdc,
+    ff_params: &ForceFieldParams,
 ) -> io::Result<Vec<f32>> {
     let mut result = Vec::with_capacity(data.len());
 
     // Models here is a cache, so we don't have to load the model for each test item.
     let mut models = HashMap::new();
     for (mol, _) in data {
-        result.push(infer_general(mol, data_set, &mut models)?);
+        result.push(infer_general(mol, data_set, &mut models, ff_params)?);
     }
 
     Ok(result)
@@ -217,7 +218,7 @@ pub fn eval(
     dataset: DatasetTdc,
     tgt_col: usize,
     mol_specific_params: &mut HashMap<String, ForceFieldParams>,
-    gaff2: &ForceFieldParams,
+    ff_params: &ForceFieldParams,
 ) -> io::Result<EvalMetrics> {
     let start = Instant::now();
     println!("Gathering ML metrics");
@@ -238,7 +239,7 @@ pub fn eval(
         tgt_col,
         &tts,
         mol_specific_params,
-        gaff2,
+        ff_params,
         true,
     )?;
 
@@ -247,7 +248,13 @@ pub fn eval(
     // that we are not training on the full set. I'm unclear on how the "Validation" used in the training
     // affects this.
 
-    if let Err(e) = train(data_path, dataset, TGT_COL_TDC, mol_specific_params, &gaff2) {
+    if let Err(e) = train(
+        data_path,
+        dataset,
+        TGT_COL_TDC,
+        mol_specific_params,
+        ff_params,
+    ) {
         eprintln!("Error training {dataset}: {e}");
     }
 
@@ -256,7 +263,7 @@ pub fn eval(
         tts.test.len()
     );
 
-    let inferred = run_infer(&data.test, dataset)?;
+    let inferred = run_infer(&data.test, dataset, ff_params)?;
     let tgts = data.test.iter().map(|(_, tgt)| *tgt).collect::<Vec<_>>();
 
     if tgts.len() != inferred.len() || tgts.is_empty() {

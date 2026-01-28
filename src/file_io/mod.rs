@@ -662,6 +662,7 @@ impl State {
                         &self.to_save.pubchem_properties_map,
                         &mut self.volatile.pubchem_properties_avail,
                         &mut self.volatile.inference_models,
+                        self.ff_param_set.small_mol.as_ref().unwrap(),
                     );
                 } else {
                     handle_err(

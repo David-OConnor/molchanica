@@ -1,8 +1,7 @@
 //! ML inference, e.g. for Therapeutic properties. Shares the model and relevant
 //! properties with `train.rs`.
 
-use std::{collections::HashMap, fs, io, time::Instant};
-
+use bio_files::md_params::ForceFieldParams;
 use burn::{
     backend::NdArray,
     module::Module,
@@ -10,7 +9,9 @@ use burn::{
     record::{FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{Tensor, TensorData, backend::Backend},
 };
+use std::{collections::HashMap, fs, io, time::Instant};
 
+use crate::therapeutic::gnn::{PER_EDGE_FEATS, pad_edge_feats};
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
@@ -63,7 +64,12 @@ impl Infer {
         })
     }
 
-    pub fn infer(&self, mol: &MoleculeSmall, mut feat_params: Vec<f32>) -> io::Result<f32> {
+    pub fn infer(
+        &self,
+        mol: &MoleculeSmall,
+        mut feat_params: Vec<f32>,
+        ff_params: &ForceFieldParams,
+    ) -> io::Result<f32> {
         let start = Instant::now();
 
         // 1. Prepare Globals
@@ -71,34 +77,36 @@ impl Infer {
         self.scaler.apply_in_place(&mut feat_params);
 
         // 2. Extract Graph Data (New Return Signature)
-        let (elem_ids, ff_ids, scalars, adj_vec, num_atoms) = mol_to_graph_data(&mol)?;
+        let graph = mol_to_graph_data(&mol, ff_params)?;
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
+        let num_atoms = graph.num_atoms;
         let n = num_atoms.min(MAX_ATOMS);
 
         // -- Pad Indices (Int) --
-        let mut p_elem_ids = Vec::with_capacity(MAX_ATOMS);
-        p_elem_ids.extend_from_slice(&elem_ids[0..n]);
-        p_elem_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
+        let mut p_el_ids = Vec::with_capacity(MAX_ATOMS);
+        p_el_ids.extend_from_slice(&graph.elem_indices[0..n]);
+        p_el_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
 
         let mut p_ff_ids = Vec::with_capacity(MAX_ATOMS);
-        p_ff_ids.extend_from_slice(&ff_ids[0..n]);
+        p_ff_ids.extend_from_slice(&graph.ff_indices[0..n]);
         p_ff_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
 
         // -- Pad Scalars (Float) --
         // Calculate dimensionality (should be 2: charge + degree)
         let n_scalars_per_atom = if num_atoms > 0 {
-            scalars.len() / num_atoms
+            graph.scalars.len() / num_atoms
         } else {
             2
         };
         let mut p_scalars = Vec::with_capacity(MAX_ATOMS * n_scalars_per_atom);
-        p_scalars.extend_from_slice(&scalars[0..n * n_scalars_per_atom]);
+        p_scalars.extend_from_slice(&graph.scalars[0..n * n_scalars_per_atom]);
         p_scalars.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * n_scalars_per_atom));
 
         // -- Pad Adj & Mask (Float) --
         // Use the helper from train.rs
-        let (padded_adj, padded_mask) = pad_adj_and_mask(&adj_vec, num_atoms);
+        let (padded_adj, padded_mask) = pad_adj_and_mask(&graph.adj, num_atoms);
+        let p_edge_feats = pad_edge_feats(&graph.edge_feats, num_atoms);
 
         // 4. Create Tensors
         let t_param_feats = Tensor::<InferBackend, 2>::from_data(
@@ -108,7 +116,7 @@ impl Infer {
 
         // Int Tensors for Embeddings
         let t_elem_ids = Tensor::<InferBackend, 2, Int>::from_data(
-            TensorData::new(p_elem_ids, [1, MAX_ATOMS]),
+            TensorData::new(p_el_ids, [1, MAX_ATOMS]),
             &self.device,
         );
 
@@ -128,6 +136,11 @@ impl Infer {
             &self.device,
         );
 
+        let t_edge_feats = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(p_edge_feats, [1, MAX_ATOMS, MAX_ATOMS, PER_EDGE_FEATS]),
+            &self.device,
+        );
+
         let t_mask = Tensor::<InferBackend, 3>::from_data(
             TensorData::new(padded_mask, [1, MAX_ATOMS, 1]),
             &self.device,
@@ -139,6 +152,7 @@ impl Infer {
             t_ff_ids,
             t_scalars,
             t_adj,
+            t_edge_feats,
             t_mask,
             t_param_feats,
         );
@@ -160,6 +174,7 @@ pub fn infer_general(
     mol: &MoleculeSmall,
     dataset: DatasetTdc,
     models: &mut HashMap<DatasetTdc, Infer>,
+    ff_params: &ForceFieldParams,
 ) -> io::Result<f32> {
     let feat_params = param_feats_from_mol(mol)?;
 
@@ -172,5 +187,5 @@ pub fn infer_general(
         }
     };
 
-    infer.infer(mol, feat_params)
+    infer.infer(mol, feat_params, ff_params)
 }

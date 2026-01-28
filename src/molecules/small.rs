@@ -18,6 +18,7 @@ use bio_files::{
     ChargeType, Mol2, MolType, Pdbqt, PharmacaphoreFeatures, Sdf, Xyz, create_bonds,
     md_params::{ForceFieldParams, ForceFieldParamsVec},
 };
+use dynamics::params::FfParamSet;
 use dynamics::{
     param_inference::{AmberDefSet, assign_missing_params, find_ff_types},
     partial_charge_inference::infer_charge,
@@ -26,13 +27,12 @@ use na_seq::Element;
 
 use crate::therapeutic::{DatasetTdc, infer::Infer};
 use crate::{
-    // docking::{DockingSite, Pose},
     mol_characterization::MolCharacterization,
     molecules::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
-    therapeutic::{TherapeuticProperties, infer},
+    therapeutic::TherapeuticProperties,
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
@@ -502,6 +502,7 @@ impl MoleculeSmall {
             Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>,
         >,
         models: &mut HashMap<DatasetTdc, Infer>,
+        ff_params: &ForceFieldParams,
     ) {
         if let Some((_, i)) = active_mol {
             let offset = LIGAND_ABS_POSIT_OFFSET * (*i as f64);
@@ -529,14 +530,12 @@ impl MoleculeSmall {
                     let (tx, rx) = mpsc::channel(); // one-shot channel
                     let ident_for_thread = ident.clone();
 
-                    // todo: Follow-up on and/or update this. E.g. you should no longer be getting smiles
-                    // todo for a pubchem ID, but instead
                     match ident {
                         MolIdent::PubChem(_) => {
                             println!("\nLoading PubChem properties for {ident:?} over HTTP...");
 
                             thread::spawn(move || {
-                                // part of our borrow-checker workaround
+                                // Part of our borrow-checker workaround
                                 let cid: u32 = ident_for_thread.ident_innner().parse().unwrap();
 
                                 println!(
@@ -588,7 +587,7 @@ impl MoleculeSmall {
         // todo: We may wish to run this after updating params from PubChem, but this is fine for now,
         // todo, or in general if you get everything you need Hi-fi from calculations.
 
-        match TherapeuticProperties::new(self, models) {
+        match TherapeuticProperties::new(self, models, ff_params) {
             Ok(tp) => self.therapeutic_props = Some(tp),
             Err(e) => eprintln!("Error loading therapeutic properties: {e}"),
         }

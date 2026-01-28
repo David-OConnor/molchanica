@@ -55,6 +55,7 @@ use na_seq::Element::*;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
+use crate::therapeutic::gnn::{GraphData, PER_ATOM_SCALARS, PER_EDGE_FEATS};
 #[cfg(feature = "train")]
 use crate::therapeutic::model_eval::eval;
 use crate::{
@@ -120,9 +121,60 @@ pub(in crate::therapeutic) struct ModelConfig {
     pub embedding_dim: usize,
     /// E.g. 2, one for charge; one for degree, one for R, one for mean_nb_dist
     pub n_node_scalars: usize,
+    pub edge_feat_dim: usize,
 }
 
 impl ModelConfig {
+    // pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
+    //     let dim_gnn = self.gnn_hidden_dim;
+    //     let dim_mlp = self.mlp_hidden_dim;
+    //     let combined_dim = self.mlp_hidden_dim + self.gnn_hidden_dim;
+    //
+    //     let emb_elem = EmbeddingConfig::new(self.vocab_size_elem, self.embedding_dim).init(device);
+    //     let emb_ff = EmbeddingConfig::new(self.vocab_size_ff, self.embedding_dim).init(device);
+    //
+    //     // The input to the GNN is now: embedding_dim + embedding_dim + scalar_features (degree, charge)
+    //     let gnn_input_dim = self.embedding_dim * 2 + self.n_node_scalars;
+    //
+    //     let edge_encoder = LinearConfig::new(self.edge_feat_dim, dim_gnn).init(device);
+    //
+    //     // GNN
+    //     let mut gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
+    //     for layer_i in 0..NUM_GNN_LAYERS {
+    //         let (in_dim, out_dim) = if layer_i == 0 {
+    //             (gnn_input_dim, dim_gnn)
+    //         } else {
+    //             (dim_gnn, dim_gnn)
+    //         };
+    //         gnn_layers.push(LinearConfig::new(in_dim, out_dim).init(device));
+    //     }
+    //
+    //     let edge_proj = LinearConfig::new(self.edge_feat_dim, 1).init(device);
+    //
+    //     // MLP
+    //     let mut mlp_layers = Vec::with_capacity(NUM_MLP_LAYERS);
+    //     for layer_i in 0..NUM_MLP_LAYERS {
+    //         let (in_dim, out_dim) = if layer_i == 0 {
+    //             (self.global_input_dim, dim_mlp)
+    //         } else {
+    //             (dim_mlp, dim_mlp)
+    //         };
+    //         mlp_layers.push(LinearConfig::new(in_dim, out_dim).init(device));
+    //     }
+    //
+    //     Model {
+    //         emb_elem,
+    //         emb_ff,
+    //         edge_encoder,
+    //         gnn_layers,
+    //         edge_proj,
+    //         mlp_layers,
+    //         fusion_norm: LayerNormConfig::new(combined_dim).init(device),
+    //         head: LinearConfig::new(combined_dim, 1).init(device),
+    //         dropout: DropoutConfig::new(DROPOUT.unwrap_or_default()).init(),
+    //     }
+    // }
+
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
@@ -131,21 +183,23 @@ impl ModelConfig {
         let emb_elem = EmbeddingConfig::new(self.vocab_size_elem, self.embedding_dim).init(device);
         let emb_ff = EmbeddingConfig::new(self.vocab_size_ff, self.embedding_dim).init(device);
 
-        // The input to the GNN is now: embedding_dim + embedding_dim + scalar_features (degree, charge)
         let gnn_input_dim = self.embedding_dim * 2 + self.n_node_scalars;
 
-        // GNN
+        // [NEW] Project Nodes to match Hidden Dim (so we can add Edges to them)
+        let node_encoder = LinearConfig::new(gnn_input_dim, dim_gnn).init(device);
+
+        // [UNCHANGED] Project Edges to match Hidden Dim
+        let edge_encoder = LinearConfig::new(self.edge_feat_dim, dim_gnn).init(device);
+
+        // [CHANGED] All GNN layers now operate on dim_gnn -> dim_gnn
         let mut gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
-        for layer_i in 0..NUM_GNN_LAYERS {
-            let (in_dim, out_dim) = if layer_i == 0 {
-                (gnn_input_dim, dim_gnn)
-            } else {
-                (dim_gnn, dim_gnn)
-            };
-            gnn_layers.push(LinearConfig::new(in_dim, out_dim).init(device));
+        for _ in 0..NUM_GNN_LAYERS {
+            gnn_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
 
-        // MLP
+        let edge_proj = LinearConfig::new(self.edge_feat_dim, 1).init(device);
+
+        // ... MLP Layers (Unchanged) ...
         let mut mlp_layers = Vec::with_capacity(NUM_MLP_LAYERS);
         for layer_i in 0..NUM_MLP_LAYERS {
             let (in_dim, out_dim) = if layer_i == 0 {
@@ -159,7 +213,10 @@ impl ModelConfig {
         Model {
             emb_elem,
             emb_ff,
+            node_encoder, // Add to struct
+            edge_encoder,
             gnn_layers,
+            edge_proj,
             mlp_layers,
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
@@ -172,8 +229,11 @@ impl ModelConfig {
 pub(in crate::therapeutic) struct Model<B: Backend> {
     emb_elem: Embedding<B>,
     emb_ff: Embedding<B>,
+    node_encoder: Linear<B>,
+    edge_encoder: Linear<B>,
     /// GNN layers: Broadly graph and per-atom data.
     gnn_layers: Vec<Linear<B>>,
+    edge_proj: Linear<B>,
     /// Parameter features. These are for molecule-level parameters. (Atom count, weight, volume, PSA etc)
     mlp_layers: Vec<Linear<B>>,
     fusion_norm: LayerNorm<B>,
@@ -185,80 +245,103 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
 
 impl<B: Backend> Model<B> {
     /// Make a single middle GNN layer. (Use for the atom and bond graph)
-    /// This can be used to construct any GNN layer.
+    /// GINE-style Layer:
+    /// Aggregates neighbors, injecting edge features into the message.
     fn make_gnn_layer(
         &self,
-        adj: &Tensor<B, 3>,
-        mask: &Tensor<B, 3>,
-        layer_in: Tensor<B, 3>,
-        gnn_this_layer: &Linear<B>,
+        adj_weighted: &Tensor<B, 3>, // [Batch, N, N]
+        mask: &Tensor<B, 3>,         // [Batch, N, 1]
+        nodes: Tensor<B, 3>,         // [Batch, N, D_in]
+        edge_emb: &Tensor<B, 4>,     // [Batch, N, N, D_hidden]
+        gnn_linear: &Linear<B>,      // The update layer
         dropout: bool,
-        first_layer: bool,
     ) -> Tensor<B, 3> {
-        let agg = adj.clone().matmul(layer_in.clone());
-        let mut layer = activation::relu(gnn_this_layer.forward(agg));
+        // 1. Broadcast Nodes to Neighbors: [B, N, D] -> [B, 1, N, D]
+        let nodes_j = nodes.clone().unsqueeze_dim(1);
 
-        // We use dropout for all layers except the final.
-        // Dropout randomly zeros out some values, so the model can't rely too heavily on a single
-        // feature. It can reduce overfitting, and improve generalization. For example, this may
-        // randomly remove a fraction ofn edges during training.
+        // 2. Combine Node + Edge (GINE): [B, 1, N, D] + [B, N, N, D] -> [B, N, N, D]
+        let message = activation::relu(nodes_j + edge_emb.clone());
+
+        // 3. Aggregate: message * weights -> Sum(dim 2)
+        let weights = adj_weighted.clone().unsqueeze_dim(3); // [B, N, N, 1]
+
+        // sum_dim(2) produces [B, N, 1, D].
+        // flatten(2, 3) merges the last two dims -> [B, N, D]
+        let agg = (message * weights).sum_dim(2).flatten(2, 3);
+
+        let mut layer_out = gnn_linear.forward(agg);
+
         if dropout && DROPOUT.is_some() {
-            layer = self.dropout.forward(layer);
+            layer_out = self.dropout.forward(layer_out);
         }
 
-        let term_0 = if first_layer { layer } else { layer + layer_in };
+        // 5. Residual Connection
+        // If dims match (usually true except first layer), add residual.
+        let out = if nodes.dims()[2] == layer_out.dims()[2] {
+            layer_out + nodes
+        } else {
+            layer_out
+        };
 
-        term_0 * mask.clone()
+        out * mask.clone()
     }
 
     pub fn forward(
         &self,
-        elem_ids: Tensor<B, 2, Int>, // [Batch, MaxAtoms]
-        ff_ids: Tensor<B, 2, Int>,   // [Batch, MaxAtoms]
-        scalars: Tensor<B, 3>,       // [Batch, MaxAtoms, NumScalars] (Charge, Degree)
+        // These indexes are for mapping string values to integers for use in the model.
+        elem_idx: Tensor<B, 2, Int>,
+        ff_idx: Tensor<B, 2, Int>,
+        scalars: Tensor<B, 3>,
         adj: Tensor<B, 3>,
+        edge_feats: Tensor<B, 4>,
         mask: Tensor<B, 3>,
         params: Tensor<B, 2>,
     ) -> Tensor<B, 2> {
-        // Lookup Embeddings
-        let x_elem = self.emb_elem.forward(elem_ids); // [Batch, MaxAtoms, EmbDim]
-        let x_ff = self.emb_ff.forward(ff_ids); // [Batch, MaxAtoms, EmbDim]
+        let [b, n, _n2, f] = edge_feats.dims();
 
-        // Concatenate embeddings with scalar features (Charge, Degree)
-        let nodes = Tensor::cat(vec![x_elem, x_ff, scalars], 2);
+        // 1. Edge Gating
+        let ef_flat = edge_feats.clone().reshape([b * n * n, f]);
+        let gate_flat = activation::sigmoid(self.edge_proj.forward(ef_flat.clone()));
+        let gate = gate_flat.reshape([b, n, n]);
+        let adj_eff = adj * gate;
 
-        // The GNN layer: This relates to the bond graph, and per-atom features.
+        // Edge Embedding
+        let edge_emb_flat = self.edge_encoder.forward(ef_flat);
+
+        // Get d_hidden dynamically. `Linear` struct does not have public `d_output`.
+        let [_, d_hidden] = edge_emb_flat.dims();
+        let edge_emb = edge_emb_flat.reshape([b, n, n, d_hidden]);
+
+        // 3. Prepare Nodes
+        let x_elem = self.emb_elem.forward(elem_idx);
+        let x_ff = self.emb_ff.forward(ff_idx);
+        let raw_nodes = Tensor::cat(vec![x_elem, x_ff, scalars], 2);
+
+        // Project Nodes to Hidden Dim
+        let nodes = self.node_encoder.forward(raw_nodes);
+
         let mut gnn_prev = nodes;
 
         for (i, layer) in self.gnn_layers.iter().enumerate() {
             let dropout = i != self.gnn_layers.len() - 1;
-            let first_layer = i == 0;
-
-            gnn_prev = self.make_gnn_layer(&adj, &mask, gnn_prev, layer, dropout, first_layer);
+            gnn_prev = self.make_gnn_layer(&adj_eff, &mask, gnn_prev, &edge_emb, layer, dropout);
         }
 
-        // Pooling
         let graph_sum = gnn_prev.sum_dim(1);
         let atom_counts = mask.sum_dim(1);
         let graph_mean = graph_sum / (atom_counts + 1e-6);
+        let [b_g, _one, d] = graph_mean.dims();
+        let graph_embedding = graph_mean.reshape([b_g, d]);
 
-        // Graph_mean is Tensor<B, 3> with shape [B, 1, D]
-        let [b, _one, d] = graph_mean.dims();
-        let graph_embedding = graph_mean.reshape([b, d]); // Tensor<B, 2> [B, D]
-
-        // The MLP layers: These uses numerical parameters characteristic of the whole molecule.
         let mut mlp_prev = params;
         for (i, layer) in self.mlp_layers.iter().enumerate() {
             mlp_prev = activation::relu(layer.forward(mlp_prev.clone()));
-
-            // Skip dropout on the final layer.
             if i != self.mlp_layers.len() - 1 && DROPOUT.is_some() {
                 mlp_prev = self.dropout.forward(mlp_prev);
             }
         }
 
-        // let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1);
-        let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1); // both Tensor<B,2>oth Tensor<B,2>
+        let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1);
         let combined = self.fusion_norm.forward(combined);
 
         self.head.forward(combined)
@@ -269,26 +352,20 @@ impl<B: Backend> Model<B> {
 pub(in crate::therapeutic) struct Sample {
     /// From computed properties of the molecule.
     pub features_property: Vec<f32>,
-
-    pub elem_ids: Vec<i32>, // Ints for Embedding
-    pub ff_ids: Vec<i32>,   // Ints for Embedding
-    pub scalars: Vec<f32>,  // Charge, Degree
-
-    /// From the atom/bond graph
-    pub adj_list: Vec<f32>,
-    pub num_atoms: usize,
+    pub graph: GraphData,
     pub target: f32,
 }
 
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct Batch<B: Backend> {
-    pub elem_ids: Tensor<B, 2, Int>,
-    pub ff_ids: Tensor<B, 2, Int>,
+    pub el_indices: Tensor<B, 2, Int>,
+    pub ff_indices: Tensor<B, 2, Int>,
     /// Atom-specific properties, e.g. partial charge.
     pub scalars: Tensor<B, 3>,
     pub adj_list: Tensor<B, 3>,
+    pub edge_feats: Tensor<B, 4>,
     pub mask: Tensor<B, 3>,
-    pub globals: Tensor<B, 2>,
+    pub mol_params: Tensor<B, 2>,
     pub targets: Tensor<B, 2>,
 }
 
@@ -305,61 +382,67 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let mut batch_ff_ids = Vec::new();
         let mut batch_scalars = Vec::new();
         let mut batch_adj = Vec::new();
+        let mut batch_edge_feats = Vec::new();
         let mut batch_mask = Vec::new();
         let mut batch_globals = Vec::new();
         let mut batch_y = Vec::new();
 
         let n_feat_params = items[0].features_property.len();
+
         // Calculate num scalars per atom based on first item
-        let n_scalars_per_atom = if items[0].num_atoms > 0 {
-            items[0].scalars.len() / items[0].num_atoms
+        let n_scalars_per_atom = if items[0].graph.num_atoms > 0 {
+            items[0].graph.scalars.len() / items[0].graph.num_atoms
         } else {
             2
         };
 
         for mut item in items {
-            // 1. Globals & Target
+            // Mol parameters, and the target value.
             self.scaler.apply_in_place(&mut item.features_property);
             batch_globals.extend_from_slice(&item.features_property);
             batch_y.push(self.scaler.normalize_target(item.target));
 
-            // 2. Pad & Extend Graph Data
-            let n = item.num_atoms.min(MAX_ATOMS);
+            // Pad and Extend Graph Data
+            let n = item.graph.num_atoms.min(MAX_ATOMS);
 
-            // -- Elem IDs (Int) --
-            batch_elem_ids.extend_from_slice(&item.elem_ids[0..n]);
+            batch_elem_ids.extend_from_slice(&item.graph.elem_indices[0..n]);
             batch_elem_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
 
-            // -- FF IDs (Int) --
-            batch_ff_ids.extend_from_slice(&item.ff_ids[0..n]);
+            batch_ff_ids.extend_from_slice(&item.graph.ff_indices[0..n]);
             batch_ff_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
 
-            // -- Scalars (Float) --
-            batch_scalars.extend_from_slice(&item.scalars[0..n * n_scalars_per_atom]);
+            batch_scalars.extend_from_slice(&item.graph.scalars[0..n * n_scalars_per_atom]);
             batch_scalars.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * n_scalars_per_atom));
 
-            // -- Adj & Mask (Float) --
-            // FIXED: Using new helper function
-            let (p_adj, p_mask) = gnn::pad_adj_and_mask(&item.adj_list, item.num_atoms);
+            // Adjacency list and  mask
+            let (p_adj, p_mask) = gnn::pad_adj_and_mask(&item.graph.adj, item.graph.num_atoms);
             batch_adj.extend(p_adj);
             batch_mask.extend(p_mask);
+
+            let p_edge = gnn::pad_edge_feats(&item.graph.edge_feats, item.graph.num_atoms);
+            batch_edge_feats.extend(p_edge);
         }
 
         let elem_ids = TensorData::new(batch_elem_ids, [batch_size, MAX_ATOMS]);
         let ff_ids = TensorData::new(batch_ff_ids, [batch_size, MAX_ATOMS]);
         let scalars = TensorData::new(batch_scalars, [batch_size, MAX_ATOMS, n_scalars_per_atom]);
         let adj = TensorData::new(batch_adj, [batch_size, MAX_ATOMS, MAX_ATOMS]);
+        let edge_feats = TensorData::new(
+            batch_edge_feats,
+            [batch_size, MAX_ATOMS, MAX_ATOMS, PER_EDGE_FEATS],
+        );
         let mask = TensorData::new(batch_mask, [batch_size, MAX_ATOMS, 1]);
         let globals = TensorData::new(batch_globals, [batch_size, n_feat_params]);
         let y = TensorData::new(batch_y, [batch_size, 1]);
 
         Batch {
-            elem_ids: Tensor::from_data(elem_ids, device),
-            ff_ids: Tensor::from_data(ff_ids, device),
+            el_indices: Tensor::from_data(elem_ids, device),
+            ff_indices: Tensor::from_data(ff_ids, device),
             scalars: Tensor::from_data(scalars, device),
             adj_list: Tensor::from_data(adj, device),
+            edge_feats: Tensor::from_data(edge_feats, device),
             mask: Tensor::from_data(mask, device),
-            globals: Tensor::from_data(globals, device),
+            mol_params: Tensor::from_data(globals, device),
             targets: Tensor::from_data(y, device),
         }
     }
@@ -411,12 +494,13 @@ impl TrainStep for Model<TrainBackend> {
 
     fn step(&self, batch: Self::Input) -> TrainOutput<Self::Output> {
         let pred = self.forward(
-            batch.elem_ids,
-            batch.ff_ids,
+            batch.el_indices,
+            batch.ff_indices,
             batch.scalars,
             batch.adj_list,
+            batch.edge_feats,
             batch.mask,
-            batch.globals,
+            batch.mol_params,
         );
 
         let loss = MseLoss::new().forward(pred.clone(), batch.targets.clone(), Reduction::Mean);
@@ -439,12 +523,13 @@ impl InferenceStep for Model<ValidBackend> {
     fn step(&self, batch: Self::Input) -> Self::Output {
         // This is exactly what your ValidStep does
         let pred = self.forward(
-            batch.elem_ids,
-            batch.ff_ids,
+            batch.el_indices,
+            batch.ff_indices,
             batch.scalars,
             batch.adj_list,
+            batch.edge_feats,
             batch.mask,
-            batch.globals,
+            batch.mol_params,
         );
 
         let loss = MseLoss::new().forward(pred.clone(), batch.targets.clone(), Reduction::Mean);
@@ -473,7 +558,7 @@ pub(in crate::therapeutic) fn load_training_data(
     tgt_col: usize,
     tts: &TrainTestSplit,
     mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
-    gaff2: &ForceFieldParams,
+    ff_params: &ForceFieldParams,
     test_only: bool,
 ) -> io::Result<TrainingData> {
     let csv_file = fs::File::open(csv_path)?;
@@ -527,7 +612,10 @@ pub(in crate::therapeutic) fn load_training_data(
             sdf.clone().try_into()?
         };
 
-        mol.update_ff_related(mol_specific_param_set, gaff2, true);
+        // Note: We are skipping populating mol-specific parameters. These are generally dihedrals,
+        // but less commonly valence angles.
+        // We are starting with bond-stretching params only in our model.
+        mol.update_ff_related(mol_specific_param_set, ff_params, true);
 
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
@@ -561,7 +649,7 @@ fn read_data(
     tgt_col: usize,
     tts: &TrainTestSplit,
     mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
-    gaff2: &ForceFieldParams,
+    ff_params: &ForceFieldParams,
 ) -> io::Result<(Vec<Sample>, Vec<Sample>)> {
     let loaded = load_training_data(
         csv_path,
@@ -569,7 +657,7 @@ fn read_data(
         tgt_col,
         tts,
         mol_specific_param_set,
-        gaff2,
+        ff_params,
         false,
     )?;
 
@@ -588,29 +676,24 @@ fn read_data(
                 continue;
             }
 
-            let (elem_ids, ff_ids, scalars, adj_list, num_atoms) =
-                match gnn::mol_to_graph_data(&mol) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        eprintln!("Error getting graph data: {:?}", e);
-                        continue;
-                    }
-                };
+            let graph = match gnn::mol_to_graph_data(&mol, ff_params) {
+                Ok(res) => res,
+                Err(e) => {
+                    eprintln!("Error getting graph data: {:?}", e);
+                    continue;
+                }
+            };
 
             // if num_atoms == 0 || num_atoms > MAX_ATOMS {
             //     continue;
             // }
-            if num_atoms == 0 {
+            if graph.num_atoms == 0 {
                 continue;
             }
 
             result_set.push(Sample {
                 features_property: feat_params,
-                elem_ids,
-                ff_ids,
-                scalars,
-                adj_list,
-                num_atoms,
+                graph,
                 target: *target,
             });
         }
@@ -795,7 +878,8 @@ pub(in crate::therapeutic) fn train(
         vocab_size_elem: 12,           // matches vocab_lookup_element max + 1
         vocab_size_ff: FF_BUCKETS + 2, // 0 pad + 1..FF_BUCKETS + unknown.
         embedding_dim: 16,             // Tune this (8, 16, 32)
-        n_node_scalars: 4,
+        n_node_scalars: PER_ATOM_SCALARS,
+        edge_feat_dim: PER_EDGE_FEATS,
     };
 
     let model = model_cfg.init::<TrainBackend>(&device);
@@ -850,7 +934,7 @@ pub fn main() {
     let eval_ = cli_has_flag(&args, "--eval");
 
     // Load force field data, which we need for FF type and partial charge.
-    let gaff2 = FfParamSet::new_amber().unwrap().small_mol.unwrap();
+    let ff_params = FfParamSet::new_amber().unwrap().small_mol.unwrap();
     let mol_specific_params = &mut HashMap::new();
 
     let datasets = match target {
@@ -863,7 +947,13 @@ pub fn main() {
 
     for dataset in datasets {
         if eval_ {
-            match eval(data_path, dataset, TGT_COL_TDC, mol_specific_params, &gaff2) {
+            match eval(
+                data_path,
+                dataset,
+                TGT_COL_TDC,
+                mol_specific_params,
+                &ff_params,
+            ) {
                 Ok(ev) => {
                     println!("Eval results for {dataset}: {ev}");
                 }
@@ -872,7 +962,13 @@ pub fn main() {
                 }
             }
         } else {
-            if let Err(e) = train(data_path, dataset, TGT_COL_TDC, mol_specific_params, &gaff2) {
+            if let Err(e) = train(
+                data_path,
+                dataset,
+                TGT_COL_TDC,
+                mol_specific_params,
+                &ff_params,
+            ) {
                 eprintln!("Error training {dataset}: {e}");
             }
         }
