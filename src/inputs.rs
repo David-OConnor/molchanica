@@ -13,8 +13,8 @@ use na_seq::Element::Carbon;
 use crate::{
     cam::{FOG_DIST_MIN, move_cam_to_sel, set_fog_dist},
     drawing,
-    drawing::EntityClass,
-    drawing_wrappers, mol_editor,
+    drawing::{EntityClass, wrappers},
+    mol_editor,
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
     mol_manip::ManipMode,
@@ -553,7 +553,7 @@ pub fn event_dev_handler(
 
     if redraw_lig {
         match state_.volatile.operating_mode {
-            OperatingMode::Primary => drawing_wrappers::draw_all_ligs(state_, scene),
+            OperatingMode::Primary => wrappers::draw_all_ligs(state_, scene),
 
             OperatingMode::MolEditor => mol_editor::redraw(
                 &mut scene.entities,
@@ -568,12 +568,12 @@ pub fn event_dev_handler(
     }
 
     if redraw_na && state_.volatile.operating_mode == OperatingMode::Primary {
-        drawing_wrappers::draw_all_nucleic_acids(state_, scene);
+        wrappers::draw_all_nucleic_acids(state_, scene);
         updates.entities = EntityUpdate::All;
     }
 
     if redraw_lipid && state_.volatile.operating_mode == OperatingMode::Primary {
-        drawing_wrappers::draw_all_lipids(state_, scene);
+        wrappers::draw_all_lipids(state_, scene);
         updates.entities = EntityUpdate::All;
     }
 
@@ -698,11 +698,11 @@ fn plot_ray() {
 //         //
 //         // if mol_i >= state_.lipids.len() {
 //         //     eprintln!("Uhoh: Index error on in-place redraw");
-//         //     drawing_wrappers::draw_all_lipids(state_, scene);
+//         //     wrappers::draw_all_lipids(state_, scene);
 //         //     return updates;
 //         // }
 //         //
-//         // drawing_wrappers::update_single_lipid_inplace(mol_i, state_, scene);
+//         // wrappers::update_single_lipid_inplace(mol_i, state_, scene);
 //         //
 //         // let mol = &mut state_.lipids[mol_i];
 //         // updates.entities = match mol.common.entity_i_range {
@@ -727,33 +727,33 @@ fn redraw_inplace_helper(
 
     let mol = match mol_type {
         MolType::Ligand => {
-            drawing_wrappers::update_single_ligand_inplace(mol_i, state, scene);
+            wrappers::update_single_ligand_inplace(mol_i, state, scene);
 
             if mol_i >= state.ligands.len() {
                 eprintln!("{err}");
-                drawing_wrappers::draw_all_ligs(state, scene);
+                wrappers::draw_all_ligs(state, scene);
                 return;
             }
 
             &mut state.ligands[mol_i].common
         }
         MolType::NucleicAcid => {
-            drawing_wrappers::update_single_nucleic_acid_inplace(mol_i, state, scene);
+            wrappers::update_single_nucleic_acid_inplace(mol_i, state, scene);
 
             if mol_i >= state.nucleic_acids.len() {
                 eprintln!("{err}");
-                drawing_wrappers::draw_all_nucleic_acids(state, scene);
+                wrappers::draw_all_nucleic_acids(state, scene);
                 return;
             }
 
             &mut state.nucleic_acids[mol_i].common
         }
         MolType::Lipid => {
-            drawing_wrappers::update_single_lipid_inplace(mol_i, state, scene);
+            wrappers::update_single_lipid_inplace(mol_i, state, scene);
 
             if mol_i >= state.lipids.len() {
                 eprintln!("{err}");
-                drawing_wrappers::draw_all_lipids(state, scene);
+                wrappers::draw_all_lipids(state, scene);
                 return;
             }
 

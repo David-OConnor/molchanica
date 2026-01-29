@@ -5,8 +5,10 @@ use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
     cam::reset_camera,
-    drawing::draw_peptide,
-    drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+    drawing::{
+        draw_peptide,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+    },
     mol_editor,
     molecules::{MoleculeGeneric, small::MoleculeSmall},
     render::{set_flashlight, set_static_light},

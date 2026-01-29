@@ -10,9 +10,10 @@ use rand::Rng;
 
 use crate::{
     cam::move_mol_to_cam,
-    download_mols,
-    drawing::draw_peptide,
-    drawing_wrappers,
+    drawing::{
+        draw_peptide,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+    },
     md::launch_md,
     molecules::{
         MolGenericTrait, MolType, MoleculeGeneric, MoleculePeptide, common::MoleculeCommon,
@@ -24,6 +25,8 @@ use crate::{
     state::State,
     util::{handle_err, handle_success},
 };
+
+pub mod download_mols;
 
 // When opening molecules deconflict; don't allow a mol to be closer than this to another.
 const MOL_MIN_DIST_OPEN: f64 = 12.;
@@ -699,7 +702,7 @@ impl State {
 
                 // Make sure to draw *after* loaded into state.
                 if let Some(ref mut s) = scene {
-                    drawing_wrappers::draw_all_ligs(self, s);
+                    draw_all_ligs(self, s);
                 }
             }
             MoleculeGeneric::NucleicAcid(mut mol) => {
@@ -713,7 +716,7 @@ impl State {
                 self.nucleic_acids.push(mol);
 
                 if let Some(ref mut s) = scene {
-                    drawing_wrappers::draw_all_nucleic_acids(self, s);
+                    draw_all_nucleic_acids(self, s);
                 }
 
                 engine_updates.entities = EntityUpdate::Classes(vec![entity_class]);
@@ -729,7 +732,7 @@ impl State {
                 self.lipids.push(mol);
 
                 if let Some(ref mut s) = scene {
-                    drawing_wrappers::draw_all_lipids(self, s);
+                    draw_all_lipids(self, s);
                 }
             }
         }

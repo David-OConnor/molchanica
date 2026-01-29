@@ -14,6 +14,7 @@ use lin_alg::{
 use na_seq::Element;
 
 use crate::{
+    drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
     molecules::{
         Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
@@ -29,9 +30,12 @@ use crate::{
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, ResColoring, State, StateUi},
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center, res_color},
-    viridis_lut::VIRIDIS,
 };
 // const LIGAND_COLOR_ANCHOR: Color = (1., 0., 1.);
+
+pub mod ribbon_mesh;
+mod viridis_lut;
+pub mod wrappers;
 
 const COLOR_MOL_MOVING: Color = (1., 1., 1.);
 const COLOR_MOL_ROTATE: Color = (0.65, 1., 0.65);

@@ -6,8 +6,10 @@ use na_seq::seq_from_str;
 
 use crate::{
     docking::dock,
-    drawing::EntityClass,
-    drawing_wrappers::{draw_all_lipids, draw_all_nucleic_acids},
+    drawing::{
+        EntityClass,
+        wrappers::{draw_all_lipids, draw_all_nucleic_acids},
+    },
     molecules::{
         MolGenericRef,
         lipid::{LipidShape, make_bacterial_lipids},

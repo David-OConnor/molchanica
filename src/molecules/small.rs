@@ -18,21 +18,20 @@ use bio_files::{
     ChargeType, Mol2, MolType, Pdbqt, PharmacaphoreFeatures, Sdf, Xyz, create_bonds,
     md_params::{ForceFieldParams, ForceFieldParamsVec},
 };
-use dynamics::params::FfParamSet;
 use dynamics::{
     param_inference::{AmberDefSet, assign_missing_params, find_ff_types},
+    params::FfParamSet,
     partial_charge_inference::infer_charge,
 };
 use na_seq::Element;
 
-use crate::therapeutic::{DatasetTdc, infer::Infer};
 use crate::{
     mol_characterization::MolCharacterization,
     molecules::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
-    therapeutic::TherapeuticProperties,
+    therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer},
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å

@@ -14,6 +14,7 @@
 
 pub mod infer;
 
+mod pharmacophore;
 mod solubility;
 pub mod train;
 
@@ -24,8 +25,6 @@ mod mol_gen;
 mod train_test_split_indices;
 // Pub to allow access from the training entry point.
 
-use bio_files::md_params::ForceFieldParams;
-use serde_json::error::Category::Data;
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -34,6 +33,9 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+
+use bio_files::md_params::ForceFieldParams;
+use serde_json::error::Category::Data;
 
 use crate::{
     molecules::small::MoleculeSmall,

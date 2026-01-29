@@ -5,8 +5,10 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 
 use crate::{
-    drawing::{draw_peptide, draw_water},
-    drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+    drawing::{
+        draw_peptide, draw_water,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+    },
     md::change_snapshot,
     state::State,
     ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING},

@@ -18,14 +18,12 @@
 
 mod bond_inference;
 mod docking;
-mod download_mols;
 mod drawing;
 mod file_io;
 mod forces;
 mod inputs;
 mod prefs;
 mod render;
-mod ribbon_mesh;
 mod sa_surface;
 mod ui;
 mod util;
@@ -34,7 +32,6 @@ mod cli;
 mod reflection;
 
 pub mod cam;
-mod drawing_wrappers;
 mod drug_design;
 mod md;
 mod mol_alignment;
@@ -44,7 +41,6 @@ mod mol_manip;
 mod mol_screening;
 mod molecules;
 mod orca;
-mod pharmacophore;
 mod selection;
 mod smiles;
 mod state;
@@ -52,7 +48,6 @@ mod tautomers;
 #[cfg(test)]
 mod tests;
 mod therapeutic;
-mod viridis_lut;
 
 #[cfg(feature = "cuda")]
 use std::sync::Arc;

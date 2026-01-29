@@ -38,6 +38,9 @@ Cargo.lock
 /mol_models
 /ml_models
 
+# ORCA input files
+*.inp
+
 # Our prefs format.
 *.dae
 ## New below; old above

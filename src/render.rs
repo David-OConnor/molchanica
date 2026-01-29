@@ -12,8 +12,8 @@ use crate::{
     cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
     docking::DockingSite,
     drawing,
-    drawing::BOND_RADIUS_BASE,
-    drawing_wrappers, inputs,
+    drawing::{BOND_RADIUS_BASE, wrappers},
+    inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::State,
     ui::ui_handler,
@@ -203,7 +203,7 @@ pub fn render(mut state: State) {
     };
 
     drawing::draw_peptide(&mut state, &mut scene);
-    drawing_wrappers::draw_all_ligs(&mut state, &mut scene);
+    wrappers::draw_all_ligs(&mut state, &mut scene);
 
     set_flashlight(&mut scene);
 

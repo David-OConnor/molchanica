@@ -5,7 +5,7 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     cam::move_cam_to_mol,
-    download_mols::load_atom_coords_rcsb,
+    file_io::download_mols::load_atom_coords_rcsb,
     label,
     mol_alignment::run_alignment,
     mol_screening,

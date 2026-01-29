@@ -24,8 +24,8 @@ use crate::{
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView, atom_color,
         bond_entities, draw_mol, draw_peptide,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
-    drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     md::change_snapshot_helper,
     mol_manip::ManipMode,
     molecules::{Atom, Bond, MolGenericRef, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},

@@ -9,8 +9,9 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     cam::move_cam_to_active_mol,
-    download_mols, drawing,
+    drawing,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI},
+    file_io::download_mols,
     label,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,

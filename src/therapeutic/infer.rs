@@ -1,6 +1,8 @@
 //! ML inference, e.g. for Therapeutic properties. Shares the model and relevant
 //! properties with `train.rs`.
 
+use std::{collections::HashMap, fs, io, time::Instant};
+
 use bio_files::md_params::ForceFieldParams;
 use burn::{
     backend::NdArray,
@@ -9,14 +11,12 @@ use burn::{
     record::{FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{Tensor, TensorData, backend::Backend},
 };
-use std::{collections::HashMap, fs, io, time::Instant};
 
-use crate::therapeutic::gnn::{PER_EDGE_FEATS, pad_edge_feats};
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
-        gnn::{mol_to_graph_data, pad_adj_and_mask},
+        gnn::{PER_EDGE_FEATS, mol_to_graph_data, pad_adj_and_mask, pad_edge_feats},
         train::{MAX_ATOMS, Model, ModelConfig, StandardScaler, model_paths, param_feats_from_mol},
     },
 };

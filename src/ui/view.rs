@@ -4,8 +4,8 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use crate::{
     drawing::{
         EntityClass, MoleculeView, draw_density_point_cloud, draw_density_surface, draw_water,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
-    drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     molecules::MolType,
     state::State,
     ui::{

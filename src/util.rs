@@ -25,8 +25,9 @@ use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
         color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
+        ribbon_mesh::build_cartoon_mesh,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
-    drawing_wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     mol_manip::ManipMode,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, MoleculePeptide,
@@ -35,7 +36,6 @@ use crate::{
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
     render::{Color, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, set_flashlight},
-    ribbon_mesh::build_cartoon_mesh,
     sa_surface,
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
     selection::{Selection, ViewSelLevel},

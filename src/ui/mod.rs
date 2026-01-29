@@ -25,9 +25,11 @@ use crate::{
     },
     cli,
     cli::autocomplete_cli,
-    download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
     drawing::color_viridis,
-    file_io::gemmi_path,
+    file_io::{
+        download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
+        gemmi_path,
+    },
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     mol_editor::enter_edit_mode,
     molecules::{MolGenericRef, MolIdent},

@@ -8,8 +8,7 @@ use std::{
     io::ErrorKind,
 };
 
-use bio_files::BondType;
-use bio_files::md_params::ForceFieldParams;
+use bio_files::{BondType, md_params::ForceFieldParams};
 use na_seq::Element::{
     Bromine, Carbon, Chlorine, Fluorine, Hydrogen, Iodine, Nitrogen, Oxygen, Phosphorus, Sulfur,
 };
@@ -21,7 +20,7 @@ use crate::{
     },
 };
 
-// Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring
+// Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring,
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
 
 // Scaled/modified proxies for r_0, k_b

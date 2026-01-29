@@ -55,13 +55,16 @@ use na_seq::Element::*;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
-use crate::therapeutic::gnn::{GraphData, PER_ATOM_SCALARS, PER_EDGE_FEATS};
 #[cfg(feature = "train")]
 use crate::therapeutic::model_eval::eval;
 use crate::{
     mol_characterization::MolCharacterization,
     molecules::small::MoleculeSmall,
-    therapeutic::{DatasetTdc, gnn, train_test_split_indices::TrainTestSplit},
+    therapeutic::{
+        DatasetTdc, gnn,
+        gnn::{GraphData, PER_ATOM_SCALARS, PER_EDGE_FEATS},
+        train_test_split_indices::TrainTestSplit,
+    },
 };
 
 // Number of buckets for Force Field types (hashing trick)
@@ -102,6 +105,7 @@ pub(in crate::therapeutic) fn model_paths(data_set: DatasetTdc) -> (PathBuf, Pat
     let model_dir = Path::new(MODEL_DIR);
 
     // Extension is implicit in the model, for Burn.
+    // todo: Include bytes.
     let model = model_dir.join(format!("{data_set}_model"));
     let scaler = model_dir.join(format!("{data_set}_scaler.json"));
     let cfg = model_dir.join(format!("{data_set}_model_config.json"));
