@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! Gets a cartoon mesh for secondary structure.
 
 use std::f32::consts::TAU;

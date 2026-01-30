@@ -15,9 +15,7 @@ use na_seq::Element::{
 
 use crate::{
     molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
-    therapeutic::train::{
-        BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS, MAX_ATOMS, Sample, StandardScaler,
-    },
+    therapeutic::train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS, MAX_ATOMS},
 };
 
 // Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring,
@@ -314,53 +312,6 @@ fn atom_geom_scalars(atoms: &[Atom], adj: &[Vec<usize>]) -> Vec<(f32, f32)> {
     }
 
     out
-}
-
-pub fn fit_scaler(train: &[Sample]) -> StandardScaler {
-    let n = train.len().max(1) as f32;
-
-    let num_params = train[0].features_property.len();
-
-    let mut mean = vec![0.0; num_params];
-    let mut var = vec![0.0; num_params];
-
-    for s in train {
-        for i in 0..num_params {
-            mean[i] += s.features_property[i];
-        }
-    }
-    for m in &mut mean {
-        *m /= n;
-    }
-
-    for s in train {
-        for i in 0..num_params {
-            let d = s.features_property[i] - mean[i];
-            var[i] += d * d;
-        }
-    }
-
-    let mut y_sum = 0.0;
-    for s in train {
-        y_sum += s.target;
-    }
-    let y_mean = y_sum / n;
-
-    let mut y_var = 0.0;
-    for s in train {
-        let diff = s.target - y_mean;
-        y_var += diff * diff;
-    }
-    let y_std = (y_var / n).sqrt();
-
-    let std = var.iter().map(|v| (v / n).sqrt()).collect();
-
-    StandardScaler {
-        mean,
-        std,
-        y_mean,
-        y_std,
-    }
 }
 
 /// Helper: Pads a single graph to MAX_ATOMS.

@@ -4,16 +4,16 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::{Display, Formatter},
-    time::Instant,
 };
 
 use bio_files::BondType;
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
-use na_seq::{Element, Element::*};
+use na_seq::Element::*;
 
+use crate::sa_surface::SOLVENT_RAD;
 use crate::{
     molecules::{Atom, Bond, common::MoleculeCommon, rotatable_bonds::RotatableBond},
-    sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    sa_surface::make_sas_mesh,
 };
 
 /// Describes a small molecule by features practical for description and characterization.
@@ -62,6 +62,9 @@ pub struct MolCharacterization {
     pub imine_like_n: Vec<usize>,
     /// C atom bound to O.
     pub carbonyl: Vec<usize>,
+    pub carboxylate: Vec<usize>,
+    pub sulfonamide: Vec<usize>,
+    pub sulfonimide: Vec<usize>,
     /// O atom index.
     pub hydroxyl: Vec<usize>,
     pub h_bond_donor: Vec<usize>,
@@ -110,6 +113,7 @@ pub struct MolCharacterization {
     /// between all pairs of vertices in the chemical graph representing the non-hydrogen atoms
     /// in the molecule
     pub wiener_index: Option<u32>,
+    pub greasiness: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -182,6 +186,9 @@ impl Display for MolCharacterization {
 
         count_disp(&mut v, self.carbonyl.len(), "carbonyl");
         count_disp(&mut v, self.hydroxyl.len(), "hydroxyl");
+        count_disp(&mut v, self.carboxylate.len(), "carboxylate");
+        count_disp(&mut v, self.sulfonamide.len(), "sulfonamide");
+        count_disp(&mut v, self.sulfonimide.len(), "sulfonimide");
 
         count_disp(&mut v, self.sulfur.len(), "S");
         count_disp(&mut v, self.phosphorus.len(), "P");
@@ -197,34 +204,6 @@ impl Display for MolCharacterization {
 
 impl MolCharacterization {
     pub fn new(mol: &MoleculeCommon) -> Self {
-        fn bfs_reachable_ignoring_edge(
-            adj: &[Vec<usize>],
-            start: usize,
-            goal: usize,
-            ignore: (usize, usize),
-        ) -> bool {
-            let mut q = VecDeque::new();
-            let mut seen = vec![false; adj.len()];
-            seen[start] = true;
-            q.push_back(start);
-
-            while let Some(u) = q.pop_front() {
-                if u == goal {
-                    return true;
-                }
-                for &v in &adj[u] {
-                    if edge_key(u, v) == ignore {
-                        continue;
-                    }
-                    if !seen[v] {
-                        seen[v] = true;
-                        q.push_back(v);
-                    }
-                }
-            }
-            false
-        }
-
         let num_atoms = mol.atoms.len();
         let num_bonds = mol.bonds.len();
 
@@ -338,6 +317,10 @@ impl MolCharacterization {
         let mut hydroxyl = Vec::new();
         let mut amines = Vec::new();
         let mut amides = Vec::new();
+        let mut carboxylate = Vec::new();
+        let mut sulfonamide = Vec::new();
+        let mut sulfonimide = Vec::new();
+
         let mut pyridine_like_aromatic_n = Vec::new();
         let mut pyrrole_like_nh = Vec::new();
         let mut imine_like_n = Vec::new();
@@ -411,11 +394,103 @@ impl MolCharacterization {
             false
         };
 
+        let sulfur_is_sulfonyl = |s: usize| -> bool {
+            if mol.atoms[s].element != Sulfur {
+                return false;
+            }
+            let mut o_dbl = 0usize;
+            for &n in &adj[s] {
+                if mol.atoms[n].element == Oxygen && is_double_bond(s, n) {
+                    o_dbl += 1;
+                }
+            }
+            o_dbl >= 2
+        };
+
+        // N single-bonded to a sulfonyl sulfur: R-S(=O)2-N...
+        let nitrogen_is_sulfonamide = |n_i: usize| -> bool {
+            if mol.atoms[n_i].element != Nitrogen {
+                return false;
+            }
+            for &nbr in &adj[n_i] {
+                if mol.atoms[nbr].element == Sulfur
+                    && is_single_non_arom(n_i, nbr)
+                    && sulfur_is_sulfonyl(nbr)
+                {
+                    return true;
+                }
+            }
+            false
+        };
+
+        // Sulfonimide-like: N single-bonded to TWO sulfonyl sulfurs:
+        // ...S(=O)2-N-S(=O)2...
+        let nitrogen_is_sulfonimide = |n_i: usize| -> bool {
+            if mol.atoms[n_i].element != Nitrogen {
+                return false;
+            }
+            let mut sulfonyl_s = 0usize;
+            for &nbr in &adj[n_i] {
+                if mol.atoms[nbr].element == Sulfur
+                    && is_single_non_arom(n_i, nbr)
+                    && sulfur_is_sulfonyl(nbr)
+                {
+                    sulfonyl_s += 1;
+                    if sulfonyl_s >= 2 {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+
+        // Carboxylate/acid carbon (C of -C(=O)-O(H or -)), excluding esters:
+        // Require:
+        //   - one O double-bonded to C
+        //   - one O single-bonded to C
+        //   - that single-bonded O is NOT bonded to any other carbon besides this C
+        let carbon_is_carboxylate = |c: usize| -> bool {
+            if mol.atoms[c].element != Carbon {
+                return false;
+            }
+
+            let mut has_dbl_o = false;
+            let mut has_valid_single_o = false;
+
+            for &o in &adj[c] {
+                if mol.atoms[o].element != Oxygen {
+                    continue;
+                }
+
+                if is_double_bond(c, o) {
+                    has_dbl_o = true;
+                    continue;
+                }
+
+                if is_single_non_arom(c, o) {
+                    // exclude esters: single O must not be bonded to another carbon (other than c)
+                    let bonded_to_other_carbon = adj[o].iter().any(|&x| {
+                        x != c && mol.atoms[x].element == Carbon && is_single_non_arom(o, x)
+                    });
+
+                    if !bonded_to_other_carbon {
+                        has_valid_single_o = true;
+                    }
+                }
+            }
+
+            has_dbl_o && has_valid_single_o
+        };
+
         for i in 0..num_atoms {
             let el = mol.atoms[i].element;
 
             if el == Carbon && carbon_has_double_bonded_oxygen(i) {
                 carbonyl.push(i);
+
+                if carbon_is_carboxylate(i) {
+                    carboxylate.push(i);
+                }
             }
 
             if el == Oxygen {
@@ -426,31 +501,37 @@ impl MolCharacterization {
             }
 
             if el == Nitrogen {
-                let amide = nitrogen_is_amide(i);
-                if amide {
-                    amides.push(i);
+                if nitrogen_is_sulfonimide(i) {
+                    sulfonimide.push(i);
+                } else if nitrogen_is_sulfonamide(i) {
+                    sulfonamide.push(i);
                 } else {
-                    let in_aromatic_ring = aromatic_atoms.contains(&i);
-                    let has_h = adj[i].iter().any(|&j| mol.atoms[j].element == Hydrogen);
+                    let amide = nitrogen_is_amide(i);
+                    if amide {
+                        amides.push(i);
+                    } else {
+                        let in_aromatic_ring = aromatic_atoms.contains(&i);
+                        let has_h = adj[i].iter().any(|&j| mol.atoms[j].element == Hydrogen);
 
-                    let has_c_single = adj[i]
-                        .iter()
-                        .any(|&j| mol.atoms[j].element == Carbon && is_single_non_arom(i, j));
+                        let has_c_single = adj[i]
+                            .iter()
+                            .any(|&j| mol.atoms[j].element == Carbon && is_single_non_arom(i, j));
 
-                    let has_c_double = adj[i]
-                        .iter()
-                        .any(|&j| mol.atoms[j].element == Carbon && is_double_bond(i, j));
+                        let has_c_double = adj[i]
+                            .iter()
+                            .any(|&j| mol.atoms[j].element == Carbon && is_double_bond(i, j));
 
-                    if in_aromatic_ring {
-                        if has_h {
-                            pyrrole_like_nh.push(i);
-                        } else {
-                            pyridine_like_aromatic_n.push(i);
+                        if in_aromatic_ring {
+                            if has_h {
+                                pyrrole_like_nh.push(i);
+                            } else {
+                                pyridine_like_aromatic_n.push(i);
+                            }
+                        } else if has_c_double {
+                            imine_like_n.push(i);
+                        } else if has_c_single {
+                            amines.push(i);
                         }
-                    } else if has_c_double {
-                        imine_like_n.push(i);
-                    } else if has_c_single {
-                        amines.push(i);
                     }
                 }
             }
@@ -467,7 +548,7 @@ impl MolCharacterization {
 
             let acceptor = match el {
                 Oxygen => !oxygen_is_carboxylic_oh(i),
-                Nitrogen => !nitrogen_is_amide(i),
+                Nitrogen => !nitrogen_is_amide(i) && !nitrogen_is_sulfonamide(i),
                 Sulfur => true,
                 _ => false,
             };
@@ -552,6 +633,8 @@ impl MolCharacterization {
 
         let wiener_index = wiener_index(mol);
 
+        let greasiness = greasiness_asa_proxy(mol, &bond_type_by_edge);
+
         Self {
             num_atoms,
             num_bonds,
@@ -584,6 +667,9 @@ impl MolCharacterization {
             imine_like_n,
             carbonyl,
             hydroxyl,
+            carboxylate,
+            sulfonamide,
+            sulfonimide,
 
             h_bond_donor,
             h_bond_acceptor,
@@ -608,6 +694,7 @@ impl MolCharacterization {
             volume_pubchem: None,
             complexity: None,
             wiener_index,
+            greasiness,
         }
     }
 }
@@ -1394,8 +1481,6 @@ fn tpsa_topo(mol: &MoleculeCommon) -> (f32, f32, f32) {
     // count it towards the TPSA.
     let dist_sq_thresh_tpsa = 1.5f32.powi(2); // todo
 
-    let start = Instant::now();
-
     let mut atoms = Vec::with_capacity(mol.atoms.len());
     for atom in &mol.atoms {
         atoms.push((atom.posit.into(), atom.element.vdw_radius()));
@@ -1437,7 +1522,7 @@ fn tpsa_topo(mol: &MoleculeCommon) -> (f32, f32, f32) {
             }
             _ => false,
         })
-        .map(|(i, a)| a)
+        .map(|(_, a)| a)
         .collect();
 
     // todo: Scale the area based on dist?
@@ -1469,9 +1554,6 @@ fn tpsa_topo(mol: &MoleculeCommon) -> (f32, f32, f32) {
             }
         }
     }
-
-    let elapsed = start.elapsed().as_millis();
-    // println!("TPSA (topo) computation took {} ms", elapsed);
 
     (tpsa, asa, vol)
 }
@@ -1908,4 +1990,102 @@ fn wiener_index(mol: &MoleculeCommon) -> Option<u32> {
     }
 
     Some(total)
+}
+
+fn greasiness_asa_proxy(
+    mol: &MoleculeCommon,
+    bond_type_by_edge: &HashMap<(usize, usize), BondType>,
+) -> f32 {
+    let n = mol.atoms.len();
+    if n == 0 {
+        return 0.0;
+    }
+
+    // todo: Update to use your topologicial ASA.
+
+    let four_pi = 4.0 * std::f64::consts::PI;
+    let two_pi = 2.0 * std::f64::consts::PI;
+
+    // Treat ASA with a solvent probe (consistent with typical SASA usage).
+    let probe = SOLVENT_RAD as f64;
+
+    let mut total_asa = 0.0f64;
+    let mut hydrophobic_asa = 0.0f64;
+
+    for i in 0..n {
+        let ri = mol.atoms[i].element.vdw_radius() as f64 + probe;
+        let mut area_i = four_pi * ri * ri;
+
+        for &j in &mol.adjacency_list[i] {
+            let rj = mol.atoms[j].element.vdw_radius() as f64 + probe;
+            let d = (mol.atoms[i].posit - mol.atoms[j].posit).magnitude();
+            if d <= 0.0 || d >= ri + rj {
+                continue;
+            }
+
+            // i fully buried by j
+            if d <= (rj - ri).abs() && rj >= ri {
+                area_i = 0.0;
+                break;
+            }
+
+            // Plane offset from center i along i->j axis:
+            // x = (d^2 - rj^2 + ri^2) / (2d)
+            let x = (d * d - rj * rj + ri * ri) / (2.0 * d);
+            let hi = (ri - x).clamp(0.0, 2.0 * ri);
+
+            // Covered spherical cap area on i: 2π r h
+            let cap = two_pi * ri * hi;
+            area_i -= cap;
+        }
+
+        if area_i <= 0.0 {
+            continue;
+        }
+
+        total_asa += area_i;
+
+        if atom_is_hydrophobic(mol, i, bond_type_by_edge) {
+            hydrophobic_asa += area_i;
+        }
+    }
+
+    if total_asa <= 0.0 {
+        0.0
+    } else {
+        (hydrophobic_asa / total_asa) as f32
+    }
+}
+
+/// Used for greasiness.
+fn atom_is_hydrophobic(
+    mol: &MoleculeCommon,
+    i: usize,
+    bond_type_by_edge: &HashMap<(usize, usize), BondType>,
+) -> bool {
+    match mol.atoms[i].element {
+        Carbon => true,
+        Fluorine | Chlorine | Bromine | Iodine => true,
+
+        // Sulfur is often "less polar" unless it's in strongly polar motifs (e.g. sulfoxide/sulfone).
+        // This is a cheap heuristic: if S has a double bond to O, treat as polar.
+        Sulfur => {
+            for &j in &mol.adjacency_list[i] {
+                if mol.atoms[j].element != Oxygen {
+                    continue;
+                }
+                if bond_type_by_edge
+                    .get(&edge_key(i, j))
+                    .copied()
+                    .unwrap_or(BondType::Single)
+                    == BondType::Double
+                {
+                    return false;
+                }
+            }
+            true
+        }
+
+        _ => false,
+    }
 }

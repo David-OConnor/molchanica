@@ -14,7 +14,7 @@
 
 pub mod infer;
 
-mod pharmacophore;
+pub mod pharmacophore;
 mod solubility;
 pub mod train;
 
@@ -35,8 +35,8 @@ use std::{
 };
 
 use bio_files::md_params::ForceFieldParams;
-use serde_json::error::Category::Data;
 
+use crate::therapeutic::train::{MODEL_DIR, MODEL_INCLUDE};
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::infer::{Infer, infer_general},
@@ -124,6 +124,7 @@ impl DatasetTdc {
         Ok((csv, mols))
     }
 
+    #[cfg(feature = "train")]
     fn all() -> Vec<Self> {
         // todo: Update A/R
         use DatasetTdc::*;
@@ -153,6 +154,44 @@ impl DatasetTdc {
             SolubilityAqsoldb,
             VdssLombardo,
         ]
+    }
+
+    /// Fet standardized filenames for the (model, scalar, config). Used in training.
+    pub(in crate::therapeutic) fn model_paths(self) -> (PathBuf, PathBuf, PathBuf) {
+        let model_dir = Path::new(MODEL_DIR);
+
+        // Extension is implicit in the model, for Burn.
+        // todo: Include bytes.
+        let model = model_dir.join(format!("{self}_model"));
+        let scaler = model_dir.join(format!("{self}_scaler.json"));
+        let cfg = model_dir.join(format!("{self}_model_config.json"));
+
+        (model, scaler, cfg)
+    }
+
+    /// Fet the models, embedded in the executable. Used in inference.
+    pub(in crate::therapeutic) fn data(
+        self,
+    ) -> io::Result<(&'static [u8], &'static [u8], &'static [u8])> {
+        let model_name = format!("{self}_model.mpk");
+        let scaler_name = format!("{self}_scaler.json");
+        let cfg_name = format!("{self}_model_config.json");
+
+        let load = |name| match MODEL_INCLUDE.get_file(name) {
+            Some(v) => Ok(v.contents()),
+            None => {
+                return Err(io::Error::new(
+                    ErrorKind::NotFound,
+                    format!("Missing embedded file: {name}"),
+                ));
+            }
+        };
+
+        let model = load(&model_name)?;
+        let scaler = load(&scaler_name)?;
+        let cfg = load(&cfg_name)?;
+
+        Ok((model, scaler, cfg))
     }
 }
 
@@ -293,50 +332,38 @@ impl TherapeuticProperties {
         models: &mut HashMap<DatasetTdc, Infer>,
         ff_params: &ForceFieldParams,
     ) -> io::Result<Self> {
+        // Code cleaner
+        let mut infer = |dataset| infer_general(mol, dataset, models, ff_params, false);
+
         // The target names here must match the CSV names, as downloaded from TDC.
         let adme = Adme {
-            intestinal_permeability: infer_general(mol, DatasetTdc::Caco2Wang, models, ff_params)?,
-            intestinal_absorption: infer_general(mol, DatasetTdc::HiaHou, models, ff_params)?,
-            pgp: infer_general(mol, DatasetTdc::PgpBroccatelli, models, ff_params)?,
-            oral_bioavailablity: infer_general(
-                mol,
-                DatasetTdc::BioavailabilityMa,
-                models,
-                ff_params,
-            )?,
-            lipophilicity: infer_general(
-                mol,
-                DatasetTdc::LipophilicityAstrazeneca,
-                models,
-                ff_params,
-            )?,
-            solubility_water: infer_general(mol, DatasetTdc::SolubilityAqsoldb, models, ff_params)?,
-            blood_brain_barrier: infer_general(mol, DatasetTdc::BbbMartins, models, ff_params)?,
-            plasma_protein_binding_rate: infer_general(mol, DatasetTdc::PpbrAz, models, ff_params)?,
-            membrane_permeability: infer_general(mol, DatasetTdc::PampaNcats, models, ff_params)?,
-            hydration_free_energy: infer_general(
-                mol,
-                DatasetTdc::HydrationfreeenergyFreesolv,
-                models,
-                ff_params,
-            )?,
-            vdss: infer_general(mol, DatasetTdc::VdssLombardo, models, ff_params)?,
-            cyp_2c19_inhibition: infer_general(mol, DatasetTdc::Cyp2c19Veith, models, ff_params)?,
-            cyp_2d6_inhibition: infer_general(mol, DatasetTdc::Cyp2d6Veith, models, ff_params)?,
-            cyp_3a4_inhibition: infer_general(mol, DatasetTdc::Cyp3a4Veith, models, ff_params)?,
-            cyp_1a2_inhibition: infer_general(mol, DatasetTdc::Cyp1a2Veith, models, ff_params)?,
-            cyp_2c9_inhibition: infer_general(mol, DatasetTdc::Cyp2c9Veith, models, ff_params)?,
-            half_life: infer_general(mol, DatasetTdc::HalfLifeObach, models, ff_params)?,
-            clearance: infer_general(mol, DatasetTdc::ClearanceHepatocyteAz, models, ff_params)?,
+            intestinal_permeability: infer(DatasetTdc::Caco2Wang)?,
+            intestinal_absorption: infer(DatasetTdc::HiaHou)?,
+            pgp: infer(DatasetTdc::PgpBroccatelli)?,
+            oral_bioavailablity: infer(DatasetTdc::BioavailabilityMa)?,
+            lipophilicity: infer(DatasetTdc::LipophilicityAstrazeneca)?,
+            solubility_water: infer(DatasetTdc::SolubilityAqsoldb)?,
+            blood_brain_barrier: infer(DatasetTdc::BbbMartins)?,
+            plasma_protein_binding_rate: infer(DatasetTdc::PpbrAz)?,
+            membrane_permeability: infer(DatasetTdc::PampaNcats)?,
+            hydration_free_energy: infer(DatasetTdc::HydrationfreeenergyFreesolv)?,
+            vdss: infer(DatasetTdc::VdssLombardo)?,
+            cyp_2c19_inhibition: infer(DatasetTdc::Cyp2c19Veith)?,
+            cyp_2d6_inhibition: infer(DatasetTdc::Cyp2d6Veith)?,
+            cyp_3a4_inhibition: infer(DatasetTdc::Cyp3a4Veith)?,
+            cyp_1a2_inhibition: infer(DatasetTdc::Cyp1a2Veith)?,
+            cyp_2c9_inhibition: infer(DatasetTdc::Cyp2c9Veith)?,
+            half_life: infer(DatasetTdc::HalfLifeObach)?,
+            clearance: infer(DatasetTdc::ClearanceHepatocyteAz)?,
         };
 
         let toxicity = Toxicity {
-            ld50: infer_general(mol, DatasetTdc::Ld50Zhu, models, ff_params)?,
-            ether_a_go_go: infer_general(mol, DatasetTdc::Herg, models, ff_params)?,
-            mutagencity: infer_general(mol, DatasetTdc::Ames, models, ff_params)?,
-            drug_induced_liver_injury: infer_general(mol, DatasetTdc::Dili, models, ff_params)?,
-            skin_reaction: infer_general(mol, DatasetTdc::SkinReaction, models, ff_params)?,
-            carcinogen: infer_general(mol, DatasetTdc::CarcinogensLagunin, models, ff_params)?,
+            ld50: infer(DatasetTdc::Ld50Zhu)?,
+            ether_a_go_go: infer(DatasetTdc::Herg)?,
+            mutagencity: infer(DatasetTdc::Ames)?,
+            drug_induced_liver_injury: infer(DatasetTdc::Dili)?,
+            skin_reaction: infer(DatasetTdc::SkinReaction)?,
+            carcinogen: infer(DatasetTdc::CarcinogensLagunin)?,
         };
 
         Ok(Self {

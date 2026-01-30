@@ -235,7 +235,7 @@ pub struct PerMolToSave {
 }
 
 impl PerMolToSave {
-    pub fn from_state(state: &State, on_init: bool) -> Self {
+    pub fn from_state(state: &State) -> Self {
         let mut chain_vis = Vec::new();
         let mut rcsb_data = None;
         let mut rcsb_files_avail = None;
@@ -249,8 +249,8 @@ impl PerMolToSave {
 
         let docking_site = Default::default();
 
-        let mut lig_posit = Vec3::new_zero();
-        let mut lig_atom_positions = Vec::new();
+        let lig_posit = Vec3::new_zero();
+        let lig_atom_positions = Vec::new();
 
         // todo: Hmm. No longer needed? Never worked?
         // if let Some(mol) = state.active_mol() {
@@ -313,7 +313,7 @@ impl State {
         }
 
         if let Some(mol) = &self.peptide {
-            let data = PerMolToSave::from_state(self, on_init);
+            let data = PerMolToSave::from_state(self);
 
             self.to_save.per_mol.insert(mol.common.ident.clone(), data);
         }

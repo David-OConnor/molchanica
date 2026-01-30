@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! Can create lipids: Common ones by name, and ones built to specification. We load molecule data
 //! from templates in Amber's `Lipid21.dat`, and can combine the head and tail groups provided there
 //! as required, for example to create phospholipids.

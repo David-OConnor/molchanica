@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! For displaying electron density as measured by crytalography and Cryo-EM reflection data. From precomputed
 //! data, or Miller indices.
 
@@ -356,7 +358,7 @@ impl DensityRect {
         let step_vecs_2: Vec3F32 = step_vecs.2.into();
         let origin_f32: Vec3F32 = self.origin_cart.into();
 
-        let data_gpu = stream.memcpy_stod(&self.data).unwrap();
+        let data_gpu = stream.clone_htod(&self.data).unwrap();
 
         let dist_thresh = dist_thresh as f32;
 
@@ -386,7 +388,7 @@ impl DensityRect {
 
         // todo: Consider dtoh; passing to an existing vec instead of re-allocating?
         let coords = vec3s_from_dev(stream, &coords_gpu);
-        let densities = stream.memcpy_dtov(&densities_gpu).unwrap();
+        let densities = stream.clone_dtoh(&densities_gpu).unwrap();
 
         let mut result = Vec::with_capacity(n);
         for i in 0..n {

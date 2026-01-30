@@ -43,11 +43,11 @@ const TWIST: f64 = 34.0_f64.to_radians();
 // Used for aligning bases with each other. These are distances between the heavy atoms; not the H.
 // These are all div2. First listed name is for first listed NT. I.e. A: N1 to T: N3.
 const H_BOND_AT_N1_N3_DIV2: f64 = 2.85 / 2.;
-const H_BOND_AT_N6_O4_DIV2: f64 = 2.81 / 2.;
+// const H_BOND_AT_N6_O4_DIV2: f64 = 2.81 / 2.;
 // todo: Update these A/R
 const H_BOND_CG_N3_N1_DIV2: f64 = 2.83 / 2.;
-const H_BOND_CG_N4_O6_DIV2: f64 = 2.71 / 2.;
-const H_BOND_CG_O2_N2_DIV2: f64 = 2.82 / 2.;
+// const H_BOND_CG_N4_O6_DIV2: f64 = 2.71 / 2.;
+// const H_BOND_CG_O2_N2_DIV2: f64 = 2.82 / 2.;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)]
 pub enum NucleicAcidType {
@@ -86,7 +86,7 @@ impl Display for Strands {
 }
 
 /// Returns an arbitrary nucleotide combination that codes for the AA in question.
-fn nts_from_aa(aa: AminoAcid) -> [Nucleotide; 3] {
+fn _nts_from_aa(aa: AminoAcid) -> [Nucleotide; 3] {
     match aa {
         AminoAcid::Arg => [A, G, G],
         AminoAcid::His => [C, A, C],

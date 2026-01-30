@@ -16,7 +16,7 @@ use std::{
     hash::{Hash, Hasher},
     io,
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
     str::FromStr,
     time::Instant,
 };
@@ -51,6 +51,7 @@ use burn::{
     },
 };
 use dynamics::params::FfParamSet;
+use include_dir::{Dir, include_dir};
 use na_seq::Element::*;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -58,7 +59,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "train")]
 use crate::therapeutic::model_eval::eval;
 use crate::{
-    mol_characterization::MolCharacterization,
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc, gnn,
@@ -77,7 +77,14 @@ pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 // todo: How should this be set up
 pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for padding
 
-pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models";
+pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
+
+// We see the validation and training dirs separate from model_dir so `include_dir` doesn't place
+// them in the executable.
+pub(in crate::therapeutic) const TRAIN_VALID_DIR: &str = "ml_models";
+pub(in crate::therapeutic) static MODEL_INCLUDE: Dir =
+    include_dir!("$CARGO_MANIFEST_DIR/ml_models/models");
+
 pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
 // Note: Excluding H or not appears not to make any notable difference at first;
@@ -98,20 +105,6 @@ pub(in crate::therapeutic) const BOND_SIGMA_SQ: f32 = 3.3; // Å. Try 1.5 - 2.2 
 type TrainBackend = Autodiff<Wgpu>;
 #[cfg(feature = "train")]
 type ValidBackend = Wgpu;
-
-/// Given a target (e.g. pharamaceutical property) name, get standardized filenames
-/// for the (model, scalar, config).
-pub(in crate::therapeutic) fn model_paths(data_set: DatasetTdc) -> (PathBuf, PathBuf, PathBuf) {
-    let model_dir = Path::new(MODEL_DIR);
-
-    // Extension is implicit in the model, for Burn.
-    // todo: Include bytes.
-    let model = model_dir.join(format!("{data_set}_model"));
-    let scaler = model_dir.join(format!("{data_set}_scaler.json"));
-    let cfg = model_dir.join(format!("{data_set}_model_config.json"));
-
-    (model, scaler, cfg)
-}
 
 #[derive(Config, Debug)]
 pub(in crate::therapeutic) struct ModelConfig {
@@ -623,7 +616,7 @@ pub(in crate::therapeutic) fn load_training_data(
 
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
-        mol.characterization = Some(MolCharacterization::new(&mol.common));
+        mol.update_characterization();
 
         if train_set.contains(&i) {
             result.train.push((mol, target));
@@ -789,6 +782,9 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         c.amides.len() as f32,
         c.carbonyl.len() as f32,
         c.hydroxyl.len() as f32,
+        c.carboxylate.len() as f32,
+        c.sulfonamide.len() as f32,
+        c.sulfonimide.len() as f32,
         // c.num_valence_elecs as f32,
         // c.num_rings_aromatic as f32,
         // c.num_rings_saturated as f32,
@@ -802,6 +798,7 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         // ln(c.wiener_index.unwrap_or(0) as f32),
         c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
         ln(c.psa_topo / c.asa_topo),
+        // ln(c.greasiness),
     ])
 }
 
@@ -829,13 +826,14 @@ pub(in crate::therapeutic) fn train(
     // For now at least, the target name will always be the csv filename (Without extension)
     let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
 
-    let (model_path, scaler_path, config_path) = model_paths(dataset);
+    let (model_path, scaler_path, config_path) = dataset.model_paths();
 
     let start = Instant::now();
     println!("Started training on {csv_path:?}");
 
-    let model_dir = Path::new(MODEL_DIR);
-    fs::create_dir_all(model_dir)?;
+    // let model_dir = Path::new(MODEL_DIR);
+    let model_dir_train_val = Path::new(TRAIN_VALID_DIR);
+    fs::create_dir_all(model_dir_train_val)?;
 
     let tts = TrainTestSplit::new(dataset);
 
@@ -850,7 +848,7 @@ pub(in crate::therapeutic) fn train(
 
     println!("Training on : {} samples", data_train.len());
 
-    let scaler = gnn::fit_scaler(&data_train);
+    let scaler = fit_scaler(&data_train);
     let device = Default::default();
 
     // This seeding prevents random behavior.
@@ -893,11 +891,15 @@ pub(in crate::therapeutic) fn train(
     let optim = AdamConfig::new().init();
     let lr_scheduler = ConstantLr::new(3e-4);
 
-    let training = SupervisedTraining::new(model_dir.to_str().unwrap(), train_loader, valid_loader)
-        .metrics((LossMetric::new(),)) // Note the tuple format for metrics
-        .num_epochs(80)
-        .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
-        .summary(); // Provides the TUI/CLI output
+    let training = SupervisedTraining::new(
+        model_dir_train_val.to_str().unwrap(),
+        train_loader,
+        valid_loader,
+    )
+    .metrics((LossMetric::new(),)) // Note the tuple format for metrics
+    .num_epochs(80)
+    .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
+    .summary(); // Provides the TUI/CLI output
 
     let result = training.launch(Learner::new(model, optim, lr_scheduler));
 
@@ -976,5 +978,52 @@ pub fn main() {
                 eprintln!("Error training {dataset}: {e}");
             }
         }
+    }
+}
+
+fn fit_scaler(train: &[Sample]) -> StandardScaler {
+    let n = train.len().max(1) as f32;
+
+    let num_params = train[0].features_property.len();
+
+    let mut mean = vec![0.0; num_params];
+    let mut var = vec![0.0; num_params];
+
+    for s in train {
+        for i in 0..num_params {
+            mean[i] += s.features_property[i];
+        }
+    }
+    for m in &mut mean {
+        *m /= n;
+    }
+
+    for s in train {
+        for i in 0..num_params {
+            let d = s.features_property[i] - mean[i];
+            var[i] += d * d;
+        }
+    }
+
+    let mut y_sum = 0.0;
+    for s in train {
+        y_sum += s.target;
+    }
+    let y_mean = y_sum / n;
+
+    let mut y_var = 0.0;
+    for s in train {
+        let diff = s.target - y_mean;
+        y_var += diff * diff;
+    }
+    let y_std = (y_var / n).sqrt();
+
+    let std = var.iter().map(|v| (v / n).sqrt()).collect();
+
+    StandardScaler {
+        mean,
+        std,
+        y_mean,
+        y_std,
     }
 }

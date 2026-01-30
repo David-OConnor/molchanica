@@ -9,7 +9,6 @@ use std::{
 };
 
 use lin_alg::f64::{Quaternion, Vec3};
-use na_seq::Element::*;
 
 // Used by the mol editor, and alignment.
 pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);

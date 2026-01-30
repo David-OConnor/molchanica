@@ -48,7 +48,7 @@ impl State {
             .unwrap_or_default()
         {
             // The cif branch here also handles 2fo-fc mmCIF files.
-            "sdf" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" | "xyz" => {
+            "sdf" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" => {
                 self.open_mol_from_file(path, scene, engine_updates)?
             }
             "prmtop" => {
@@ -229,7 +229,6 @@ impl State {
     /// An electron density map file, e.g. a .map file.
     pub fn open_map(&mut self, path: &Path) -> io::Result<()> {
         let dm = DensityMap::load(path)?;
-        let ident = String::new(); // todo: Set this up.
         self.load_density(dm);
 
         self.update_history(path, OpenType::Map);
@@ -381,11 +380,6 @@ impl State {
                 // We don't allow editing the protein files yet, so save the raw CIF.
                 if let Some(data) = &mut self.cif_pdb_raw {
                     fs::write(path, data)?;
-
-                    let ident = match &self.peptide {
-                        Some(mol) => mol.common.ident.clone(),
-                        None => String::new(),
-                    };
 
                     // self.to_save.last_peptide_opened = Some(path.to_owned());
                     // self.update_history(path, OpenType::Peptide, &ident);
@@ -609,7 +603,7 @@ impl State {
     /// between different molecule types.
     pub fn load_mol_to_state(
         &mut self,
-        mut mol: MoleculeGeneric,
+        mol: MoleculeGeneric,
         mut scene: Option<&mut Scene>,
         engine_updates: &mut EngineUpdates,
         path: Option<&Path>,
@@ -617,9 +611,6 @@ impl State {
         let mol_type = mol.mol_type();
         let entity_class = mol_type.entity_type() as u32;
         let open_type = mol_type.to_open_type();
-
-        let mut centroid = Vec3::new_zero();
-        let mut ident = String::new();
 
         // The pre-push index.
         let mol_i = match mol_type {
@@ -630,7 +621,7 @@ impl State {
             MolType::Water => unreachable!(),
         };
 
-        match mol {
+        let (ident, centroid) = match mol {
             MoleculeGeneric::Peptide(m) => {
                 self.volatile.aa_seq_text = String::with_capacity(m.common.atoms.len());
                 for aa in &m.aa_seq {
@@ -644,13 +635,15 @@ impl State {
 
                 self.volatile.flags.clear_density_drawing = true;
 
-                centroid = m.center;
-                ident = m.common.ident.clone();
+                let centroid = m.center;
+                let ident = m.common.ident.clone();
                 self.peptide = Some(m);
 
                 if let Some(ref mut s) = scene {
                     draw_peptide(self, s);
                 }
+
+                (ident, centroid)
             }
             MoleculeGeneric::Ligand(mut mol) => {
                 if let Some(ref mut s) = scene {
@@ -675,28 +668,25 @@ impl State {
                     )
                 }
 
-                if let Some(ref mut s) = scene {
-                    let centroid = mol.common.centroid();
-                    // If there is already a molecule here, offset.
-                    // todo: Apply this logic to other mol types A/R
-                    for mol_other in &self.ligands {
-                        if (mol_other.common.centroid() - centroid).magnitude() < MOL_MIN_DIST_OPEN
-                        {
-                            let mut rng = rand::rng();
-                            let dir =
-                                Vec3::new(rng.random(), rng.random(), rng.random()).to_normalized();
+                let centroid = mol.common.centroid();
+                // If there is already a molecule here, offset.
+                // todo: Apply this logic to other mol types A/R
+                for mol_other in &self.ligands {
+                    if (mol_other.common.centroid() - centroid).magnitude() < MOL_MIN_DIST_OPEN {
+                        let mut rng = rand::rng();
+                        let dir =
+                            Vec3::new(rng.random(), rng.random(), rng.random()).to_normalized();
 
-                            let pos_new = centroid + dir * MOL_MIN_DIST_OPEN;
+                        let pos_new = centroid + dir * MOL_MIN_DIST_OPEN;
 
-                            mol.common.move_to(pos_new);
-                            // Note: No further safeguard in this case.
-                            break;
-                        }
+                        mol.common.move_to(pos_new);
+                        // Note: No further safeguard in this case.
+                        break;
                     }
                 }
 
-                centroid = mol.common.centroid();
-                ident = mol.common.ident.clone();
+                let centroid = mol.common.centroid();
+                let ident = mol.common.ident.clone();
 
                 self.ligands.push(mol);
 
@@ -704,14 +694,16 @@ impl State {
                 if let Some(ref mut s) = scene {
                     draw_all_ligs(self, s);
                 }
+
+                (ident, centroid)
             }
             MoleculeGeneric::NucleicAcid(mut mol) => {
                 if let Some(ref mut s) = scene {
                     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
                 }
 
-                centroid = mol.common.centroid();
-                ident = mol.common.ident.clone();
+                let centroid = mol.common.centroid();
+                let ident = mol.common.ident.clone();
 
                 self.nucleic_acids.push(mol);
 
@@ -720,22 +712,26 @@ impl State {
                 }
 
                 engine_updates.entities = EntityUpdate::Classes(vec![entity_class]);
+
+                (ident, centroid)
             }
             MoleculeGeneric::Lipid(mut mol) => {
                 if let Some(ref mut s) = scene {
                     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
                 }
 
-                centroid = mol.common.centroid();
-                ident = mol.common.ident.clone();
+                let centroid = mol.common.centroid();
+                let ident = mol.common.ident.clone();
 
                 self.lipids.push(mol);
 
                 if let Some(ref mut s) = scene {
                     draw_all_lipids(self, s);
                 }
+
+                (ident, centroid)
             }
-        }
+        };
 
         engine_updates.entities = EntityUpdate::Classes(vec![entity_class]);
 

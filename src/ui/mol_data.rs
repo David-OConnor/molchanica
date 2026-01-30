@@ -727,7 +727,7 @@ pub(in crate::ui) fn display_mol_data(
                                 );
                             }
 
-                            Err(e) => {
+                            Err(_) => {
                                 handle_err(
                                     &mut state.ui,
                                     "Problem finding similar molecules on PubChem".to_owned(),
@@ -838,7 +838,7 @@ pub(in crate::ui) fn display_mol_data(
                                 match pubchem::load_associated_structures(cid) {
                                     Ok(data) => {
                                         // todo: Put back! Borrow issue.
-                                        // l.associated_structures = data;
+                                        // mol.common().associated_structures = data;
                                         state.ui.popup.show_associated_structures = true;
                                     }
                                     Err(_) => handle_err(
@@ -873,13 +873,7 @@ pub(in crate::ui) fn display_mol_data(
 }
 
 /// Display metadata stored for a given molecule.
-pub(super) fn metadata_disp(
-    mol_type: MolType,
-    i: usize,
-    state: &mut State,
-    ui: &mut Ui,
-    engine_updates: &mut EngineUpdates,
-) {
+pub(super) fn metadata_disp(mol_type: MolType, i: usize, state: &mut State, ui: &mut Ui) {
     let popup_id = ui.make_persistent_id("metadata_popup");
 
     let mol = match mol_type {

@@ -11,7 +11,6 @@ use bio_files::{Mol2, Sdf};
 
 use crate::{
     mol_alignment::{RING_ALIGN_ROT_COUNT_QUICK, make_initial_alignment},
-    mol_characterization::MolCharacterization,
     molecules::small::MoleculeSmall,
 };
 
@@ -102,7 +101,7 @@ pub fn load_mols(path: &Path) -> io::Result<Vec<MoleculeSmall>> {
             };
 
             // This is fast, and [partly] used in our screening workflows.
-            mol.characterization = Some(MolCharacterization::new(&mol.common));
+            mol.update_characterization();
 
             result.push(mol);
         }

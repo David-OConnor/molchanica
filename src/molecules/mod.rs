@@ -39,7 +39,6 @@ use dynamics::{
 };
 use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
-use rayon::prelude::*;
 use small::MoleculeSmall;
 
 use crate::{

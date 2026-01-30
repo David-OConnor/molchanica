@@ -212,13 +212,14 @@ pub fn handle_cmd(
         return Ok("Complete".to_owned());
     }
 
+    #[allow(unused)]
     if let Some(caps) = re_remove.captures(&input) {
         let item = &caps[1].to_lowercase();
 
         // todo: To match PyMol, this should be much more robust. Removing chains, residues etc.
         // todo: A lot of these just hide, not remove... Should remove probably.
 
-        return Ok("Remove is temproarily disabled".to_owned());
+        return Ok("Remove is temporarily disabled".to_owned());
 
         // todo uhoh: When you remove atoms, their indices in the vec get screwed up! You may need to use
         // todo a unique id!

@@ -5,14 +5,14 @@ use dynamics::find_planar_posit;
 use lin_alg::f64::{Quaternion, Vec3, X_VEC, Z_VEC};
 use na_seq::{
     AtomTypeInRes,
-    Element::{self, Carbon, Hydrogen, Nitrogen, Oxygen},
+    Element::{self, Carbon, Nitrogen, Oxygen},
 };
 
 use crate::molecules::{Atom, Bond};
 
 const BOND_LEN_AROMATIC: f64 = 1.39;
-const BOND_LEN_PENT_SAT: f64 = 1.53; // C-C single bonds
-const BOND_LEN_PENT_UNSAT: f64 = 1.53; // A C=C in the ring
+// const BOND_LEN_PENT_SAT: f64 = 1.53; // C-C single bonds
+// const BOND_LEN_PENT_UNSAT: f64 = 1.53; // A C=C in the ring
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Template {
@@ -133,7 +133,7 @@ fn amide_group(
     start_i: usize,
 ) -> (Vec<Atom>, Vec<Bond>) {
     const LEN: f64 = 1.37;
-    let mut posits = vec![Vec3::new_zero(), Vec3::new(LEN, 0., 0.)];
+    let posits = vec![Vec3::new_zero(), Vec3::new(LEN, 0., 0.)];
 
     let r_group_local = -X_VEC;
 

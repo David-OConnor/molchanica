@@ -20,7 +20,6 @@ use bio_files::{
 };
 use dynamics::{
     param_inference::{AmberDefSet, assign_missing_params, find_ff_types},
-    params::FfParamSet,
     partial_charge_inference::infer_charge,
 };
 use na_seq::Element;
@@ -31,7 +30,7 @@ use crate::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
-    therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer},
+    therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer, pharmacophore::Pharmacophore},
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
@@ -55,6 +54,7 @@ pub struct MoleculeSmall {
     pub characterization: Option<MolCharacterization>,
     /// Note: These are loaded from SDF, but we use our data in MolCharacterization instead.
     pub pharmacophore_features: Vec<PharmacaphoreFeatures>,
+    pub pharmacophore: Option<Pharmacophore>,
     pub therapeutic_props: Option<TherapeuticProperties>,
 }
 
@@ -100,6 +100,10 @@ impl MoleculeSmall {
             idents,
             ..Default::default()
         }
+    }
+
+    pub fn update_characterization(&mut self) {
+        self.characterization = Some(MolCharacterization::new(&self.common))
     }
 }
 
@@ -510,7 +514,7 @@ impl MoleculeSmall {
             }
         }
 
-        self.characterization = Some(MolCharacterization::new(&self.common));
+        self.update_characterization();
 
         // Load PubChem properties from either our prefs file, or online. If online,
         // launch this in a separate thread.

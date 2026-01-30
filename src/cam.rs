@@ -187,16 +187,17 @@ pub fn reset_camera(
     engine_updates: &mut EngineUpdates,
     look_vec: Vec3, // unit vector the cam is pointing to.
 ) {
-    let mut center = Vec3::new_zero();
     let mut size = 8.; // E.g. for small organic molecules.
 
-    if let Some(mol) = &state.peptide {
+    let center = if let Some(mol) = &state.peptide {
         // We cache center and size, due to the potential large number of molecules.
-        center = mol.center.into();
+        let center = mol.center.into();
         size = mol.size;
+
+        center
     } else {
         if let Some(mol) = state.active_mol() {
-            center = mol.common().centroid().into();
+            mol.common().centroid().into()
             // Leaving size at its default for now.
         } else {
             let mut n = 0;
@@ -212,10 +213,11 @@ pub fn reset_camera(
                 n += 1;
             }
             centroid /= n as f32;
-            center = centroid;
             size = 40.; // A broad view.
+
+            centroid
         }
-    }
+    };
 
     let dist_fm_center = size + CAM_INIT_OFFSET;
 

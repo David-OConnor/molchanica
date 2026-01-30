@@ -16,9 +16,7 @@ use na_seq::Element;
 use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
-    molecules::{
-        Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
-    },
+    molecules::{Atom, AtomRole, Chain, MolGenericRef, MolType, MoleculePeptide, Residue},
     reflection::DensityPt,
     render::{
         ATOM_SHININESS, BACKGROUND_COLOR, BALL_RADIUS_WATER_H, BALL_RADIUS_WATER_O,
@@ -1197,15 +1195,15 @@ pub fn draw_mol(
             // to the selected atom). If in bond sel mode, we color the bond between two atoms below.
 
             match &ui.selection {
-                Selection::BondLig((mol_i, bond_i))
-                | Selection::BondNucleicAcid((mol_i, bond_i))
-                | Selection::BondLipid((mol_i, bond_i)) => {
+                Selection::BondLig((_mol_i, bond_i))
+                | Selection::BondNucleicAcid((_mol_i, bond_i))
+                | Selection::BondLipid((_mol_i, bond_i)) => {
                     if *bond_i == i_bond {
                         color_0 = COLOR_SELECTED;
                         color_1 = COLOR_SELECTED;
                     }
                 }
-                Selection::BondsLig((mol_i, bonds_i)) => {
+                Selection::BondsLig((_mol_i, bonds_i)) => {
                     if bonds_i.contains(&i_bond) {
                         color_0 = COLOR_SELECTED;
                         color_1 = COLOR_SELECTED;
@@ -1523,7 +1521,7 @@ pub fn filter_pep_atoms_by_dist<'a>(
         }
     }
 
-    for (i_atom, atom) in mol.atoms.iter().enumerate() {
+    for (i_atom, _atom) in mol.atoms.iter().enumerate() {
         let posit = mol.atom_posits[i_atom];
 
         if ui.show_near_sel_only {

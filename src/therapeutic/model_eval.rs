@@ -73,7 +73,7 @@ fn run_infer(
     // Models here is a cache, so we don't have to load the model for each test item.
     let mut models = HashMap::new();
     for (mol, _) in data {
-        result.push(infer_general(mol, data_set, &mut models, ff_params)?);
+        result.push(infer_general(mol, data_set, &mut models, ff_params, true)?);
     }
 
     Ok(result)
@@ -137,7 +137,7 @@ fn ranks_average_ties(xs: &[f32]) -> Vec<f32> {
 
         let end = i; // exclusive
         let start_rank = (start as f32) + 1.0;
-        let end_rank = (end as f32);
+        let end_rank = end as f32;
         let avg_rank = (start_rank + end_rank) * 0.5;
 
         for j in start..end {
@@ -212,7 +212,6 @@ fn auroc(scores: &[f32], labels: &[f32]) -> f32 {
 }
 
 /// Runs training, then evaluates the model using the test set.
-#[cfg(feature = "train")]
 pub fn eval(
     data_path: &Path,
     dataset: DatasetTdc,

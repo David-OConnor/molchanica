@@ -238,6 +238,7 @@ pub(in crate::ui) fn na_section(
     });
 }
 
+#[allow(unused)]
 /// Add and manage amino acids
 pub(in crate::ui) fn aa_section(
     state: &mut State,

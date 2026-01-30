@@ -5,10 +5,7 @@
 use std::fmt::Display;
 
 use bio_files::orca::{
-    GeomOptThresh, OrcaInput, Task,
-    basis_sets::BasisSetCategory,
-    dynamics::{Dynamics, DynamicsOutput},
-    geom::Geom,
+    GeomOptThresh, OrcaInput, basis_sets::BasisSetCategory, dynamics::DynamicsOutput,
 };
 use dynamics::snapshot::Snapshot;
 

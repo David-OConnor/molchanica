@@ -422,14 +422,7 @@ fn add_aa_seq(selection: &mut Selection, seq_text: &str, ui: &mut Ui, redraw: &m
         });
 }
 
-pub fn view_sel_selector(
-    state: &mut State,
-    redraw: &mut bool,
-    ui: &mut Ui,
-    include_res: bool,
-    meshes: &mut [Mesh],
-    engine_updates: &mut EngineUpdates,
-) {
+pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, include_res: bool) {
     let help_text = "(Hotkeys:  ;  and  '  )";
     ui.label("View/Select:").on_hover_text(help_text);
     let prev_view = state.ui.view_sel_level;
@@ -512,7 +505,7 @@ pub fn view_sel_selector(
                 state.ui.atom_color_by_charge = !state.ui.atom_color_by_charge;
                 state.ui.view_sel_level = ViewSelLevel::Atom;
 
-                if let Some(mol) = &state.peptide {
+                if state.peptide.is_some() {
                     state.volatile.flags.update_sas_coloring = true;
                 }
 
@@ -535,9 +528,7 @@ pub fn view_sel_selector(
                 });
 
             if state.ui.res_coloring != prev {
-                // state.ui.view_sel_level = ViewSelLevel::Residue;
-
-                if let Some(mol) = &state.peptide {
+                if state.peptide.is_some() {
                     state.volatile.flags.update_sas_coloring = true;
                 }
                 *redraw = true;
@@ -626,17 +617,11 @@ pub fn view_sel_selector(
 //     }
 // }
 
-fn selection_section(
-    state: &mut State,
-    redraw: &mut bool,
-    ui: &mut Ui,
-    meshes: &mut [Mesh],
-    engine_updates: &mut EngineUpdates,
-) {
+fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
     // todo: DRY with view.
     ui.horizontal_wrapped(|ui| {
         section_box().show(ui, |ui| {
-            view_sel_selector(state, redraw, ui, true, meshes, engine_updates);
+            view_sel_selector(state, redraw, ui, true);
 
             let help = "Hide all protein atoms not near the selected atom or bond";
             ui.label("Near sel:").on_hover_text(help);
@@ -1027,7 +1012,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         if state.volatile.operating_mode == OperatingMode::MolEditor {
             mol_editor::editor(state, scene, &mut engine_updates, ui);
 
-            if let Err(e) = update_file_dialogs(state, scene, ui, &mut false, &mut false, &mut engine_updates) {
+            if let Err(e) = update_file_dialogs(state, scene, ui, &mut engine_updates) {
                 handle_err(&mut state.ui, format!("Problem saving file: {e:?}"));
             }
 
@@ -1057,7 +1042,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         }
 
         if let Some((mol_type, i)) = state.ui.popup.metadata {
-            metadata_disp(mol_type, i, state, ui, &mut engine_updates);
+            metadata_disp(mol_type, i, state, ui);
         }
 
         // -----------
@@ -1401,7 +1386,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         // mol_characterization(state, ui);
 
         let redraw_prev = redraw_peptide;
-        selection_section(state, &mut redraw_peptide, ui, &mut scene.meshes, &mut engine_updates);
+        selection_section(state, &mut redraw_peptide, ui);
         // todo: Kludge
         if redraw_peptide && !redraw_prev {
             redraw_lig = true;
@@ -1432,7 +1417,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             md_setup(state, scene, &mut engine_updates, ui);
         }
         if state.ui.ui_vis.orca {
-            orca_input(state, scene, &mut engine_updates, &mut redraw_lig, ui);
+            orca_input(state, &mut redraw_lig, ui);
         }
 
         // if state.ui.show_docking_tools {
@@ -1500,7 +1485,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             }
         }
 
-        if let Err(e) = update_file_dialogs(state, scene, ui, &mut redraw_peptide, &mut reset_cam, &mut engine_updates) {
+        if let Err(e) = update_file_dialogs(state, scene, ui, &mut engine_updates) {
             handle_err(&mut state.ui, format!("Problem saving file: {e:?}"));
         }
 

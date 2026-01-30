@@ -38,7 +38,7 @@ pub const MESH_SPHERE_LOWRES: usize = 3;
 pub const MESH_SPHERE_MEDRES: usize = 4;
 pub const MESH_DOCKING_BOX: usize = 5;
 pub const MESH_SOLVENT_SURFACE: usize = 6; // Van Der Waals surface.
-pub const MESH_DOCKING_SURFACE: usize = 7;
+// pub const MESH_DOCKING_SURFACE: usize = 7;
 pub const MESH_DENSITY_SURFACE: usize = 8;
 pub const MESH_SECONDARY_STRUCTURE: usize = 9;
 
@@ -50,14 +50,14 @@ pub const BALL_RADIUS_WATER_H: f32 = 0.06;
 pub const WATER_BOND_THICKNESS: f32 = 0.1;
 pub const WATER_OPACITY: f32 = 1.;
 
-pub const SHELL_OPACITY: f32 = 0.01;
+// pub const SHELL_OPACITY: f32 = 0.01;
 
 // From the farthest molecule.
 pub const CAM_INIT_OFFSET: f32 = 10.;
 
 // A higher value will result in a less-dramatic brightness change with distance.
 const FLASHLIGHT_OFFSET: f32 = 10.;
-const FLASHLIGHT_FOV: f32 = TAU / 16.;
+// const FLASHLIGHT_FOV: f32 = TAU / 16.;
 pub const OUTSIDE_LIGHTING_OFFSET: f32 = 900.;
 pub const DOCKING_LIGHT_INTENSITY: f32 = 0.3;
 
@@ -85,7 +85,7 @@ pub fn set_static_light(scene: &mut Scene, center: Vec3, size: f32) {
 }
 
 /// Set lighting based on the docking location.
-pub fn set_docking_light(scene: &mut Scene, docking_init: Option<&DockingSite>) {
+pub fn _set_docking_light(scene: &mut Scene, docking_init: Option<&DockingSite>) {
     let light = &mut scene.lighting.point_lights[2];
 
     match docking_init {

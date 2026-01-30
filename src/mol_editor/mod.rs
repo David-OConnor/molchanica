@@ -131,10 +131,6 @@ impl MolEditorState {
     /// A simplified variant of our primary `open_molecule` function.
     pub fn open_molecule(
         &mut self,
-        dev: &ComputationDevice,
-        param_set: &FfParamSet,
-        mol_specific_params: &HashMap<String, ForceFieldParams>,
-        md_cfg: &MdConfig,
         path: &Path,
         scene: &mut Scene,
         engine_updates: &mut EngineUpdates,
@@ -282,14 +278,6 @@ impl MolEditorState {
         set_flashlight(scene);
         engine_updates.entities = EntityUpdate::All;
         engine_updates.lighting = true;
-    }
-
-    pub fn save_mol2(&self, path: &Path) -> io::Result<()> {
-        Ok(())
-    }
-
-    pub fn save_sdf(&self, path: &Path) -> io::Result<()> {
-        Ok(())
     }
 
     fn move_to_origin(&mut self) {

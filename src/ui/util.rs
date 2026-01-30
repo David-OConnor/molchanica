@@ -22,8 +22,6 @@ pub fn update_file_dialogs(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
-    redraw_peptide: &mut bool,
-    reset_cam: &mut bool,
     engine_updates: &mut EngineUpdates,
 ) -> io::Result<()> {
     let ctx = ui.ctx();
@@ -36,10 +34,6 @@ pub fn update_file_dialogs(
         if let Err(e) = match state.volatile.operating_mode {
             OperatingMode::Primary => state.open_file(path, Some(scene), engine_updates),
             OperatingMode::MolEditor => state.mol_editor.open_molecule(
-                &state.dev,
-                &state.ff_param_set,
-                &state.mol_specific_params,
-                &state.to_save.md_config,
                 path,
                 scene,
                 engine_updates,

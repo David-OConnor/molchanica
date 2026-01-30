@@ -559,6 +559,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
             ("Amide", &char.amides.len().to_string()),
             ("Carbonyl", &char.carbonyl.len().to_string()),
             ("Hydroxyl", &char.hydroxyl.len().to_string()),
+            // other FGs like sulfur ones and carboxylate?
         ],
     );
 
@@ -581,6 +582,7 @@ fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         &[
             ("TPSA (Ertl)", &format!("{:.2}", char.tpsa_ertl)),
             ("PSA (Geom)", &format!("{:.2}", char.psa_topo)),
+            ("Greasiness", &format!("{:.2}", char.greasiness)),
         ],
     );
 

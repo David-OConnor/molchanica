@@ -387,7 +387,7 @@ pub fn event_dev_handler(
                     Code(KeyCode::Tab) => {
                         // todo: This is DRY/mostly C+P from the add atom button.
                         if state_.volatile.operating_mode == OperatingMode::MolEditor {
-                            let (mol_i, atom_sel_i) = match &state_.ui.selection {
+                            let (_mol_i, atom_sel_i) = match &state_.ui.selection {
                                 Selection::AtomLig((mol_i, i)) => (*mol_i, *i),
                                 Selection::AtomsLig((mol_i, i)) => {
                                     // todo: How should we handle this?
@@ -411,8 +411,9 @@ pub fn event_dev_handler(
                                 &mut scene.input_settings.control_scheme,
                                 state_.volatile.mol_manip.mode,
                             );
+                            state_.mol_editor.mol.update_characterization();
 
-                            mol_editor::sync_md(state_);
+                            sync_md(state_);
                         }
                     }
                     _ => (),

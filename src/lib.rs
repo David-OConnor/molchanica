@@ -25,7 +25,6 @@ pub mod mol_manip;
 pub mod mol_screening;
 pub mod molecules;
 pub mod orca;
-pub mod pharmacophore;
 pub mod prefs;
 pub mod reflection;
 pub mod render;

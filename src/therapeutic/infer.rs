@@ -3,22 +3,23 @@
 
 use std::{collections::HashMap, fs, io, time::Instant};
 
+use crate::{
+    molecules::small::MoleculeSmall,
+    therapeutic::{
+        DatasetTdc,
+        gnn::{PER_EDGE_FEATS, mol_to_graph_data, pad_adj_and_mask, pad_edge_feats},
+        train::{MAX_ATOMS, Model, ModelConfig, StandardScaler, param_feats_from_mol},
+    },
+};
 use bio_files::md_params::ForceFieldParams;
+use burn::backend::ndarray::NdArrayDevice;
+use burn::record::{NamedMpkBytesRecorder, Recorder};
 use burn::{
     backend::NdArray,
     module::Module,
     prelude::Int,
     record::{FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{Tensor, TensorData, backend::Backend},
-};
-
-use crate::{
-    molecules::small::MoleculeSmall,
-    therapeutic::{
-        DatasetTdc,
-        gnn::{PER_EDGE_FEATS, mol_to_graph_data, pad_adj_and_mask, pad_edge_feats},
-        train::{MAX_ATOMS, Model, ModelConfig, StandardScaler, model_paths, param_feats_from_mol},
-    },
 };
 
 // todo: Stack overflow with Burn CPU
@@ -34,13 +35,8 @@ pub struct Infer {
 }
 
 impl Infer {
-    pub fn load(data_set: DatasetTdc) -> io::Result<Self> {
-        let (model_path, scaler_path, cfg_path) = model_paths(data_set);
-
-        // Model extension is inferred automatically.
-        let cfg_bytes = fs::read(&cfg_path)?;
-        let scaler_bytes = fs::read(scaler_path)?;
-
+    /// Helper used by both loading approaches.
+    fn load(cfg_bytes: &[u8], scaler_bytes: &[u8]) -> io::Result<(Self, NdArrayDevice)> {
         let config: ModelConfig = serde_json::from_slice(&cfg_bytes)?;
         let scaler: StandardScaler = serde_json::from_slice(&scaler_bytes)?;
 
@@ -50,18 +46,54 @@ impl Infer {
         const SEED: u64 = 42;
         InferBackend::seed(&device, SEED);
 
-        let mut model = config.init::<InferBackend>(&device);
+        let model = config.init::<InferBackend>(&device);
+
+        Ok((
+            Self {
+                model,
+                scaler,
+                device,
+            },
+            device,
+        ))
+    }
+
+    /// Load the model and related data from file. Use this for the training and eval executable. Since we
+    /// evaluate from the same run as training, the training  data does not get embedded there, so
+    /// we load from disk.
+    pub fn load_from_file(data_set: DatasetTdc) -> io::Result<Self> {
+        let (model_path, scaler_path, cfg_path) = data_set.model_paths();
+
+        let scaler_bytes = fs::read(scaler_path)?;
+        let cfg_bytes = fs::read(&cfg_path)?;
+
+        let (mut model, device) = Self::load(&cfg_bytes, &scaler_bytes)?;
 
         let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
-        model = model
+        model.model = model
+            .model
             .load_file(model_path, &recorder, &device)
             .map_err(|e| io::Error::other(e))?;
 
-        Ok(Self {
-            model,
-            scaler,
-            device,
-        })
+        Ok(model)
+    }
+
+    /// Load the model from our include_bytes, i.e. part of the binary. Use this for inference, i.e.
+    /// for the main application
+    pub fn load_from_embedded(data_set: DatasetTdc) -> io::Result<Self> {
+        let (model_bytes, scaler_bytes, cfg_bytes) = data_set.data()?;
+
+        let (mut model, device) = Self::load(&cfg_bytes, &scaler_bytes)?;
+
+        let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::new();
+
+        let record: <Model<InferBackend> as Module<InferBackend>>::Record = recorder
+            .load(model_bytes.to_vec(), &device)
+            .map_err(io::Error::other)?;
+
+        model.model = model.model.load_record(record);
+
+        Ok(model)
     }
 
     pub fn infer(
@@ -170,18 +202,28 @@ impl Infer {
 
 /// Convenience function that may apply to many properties. Assumes a standard feature set.
 /// We cache any loaded models.
+///
+/// For normal application use: Load from the embedded models. For train/eval pipelines, load
+/// from file.
 pub fn infer_general(
     mol: &MoleculeSmall,
     dataset: DatasetTdc,
     models: &mut HashMap<DatasetTdc, Infer>,
     ff_params: &ForceFieldParams,
+    load_from_file: bool,
 ) -> io::Result<f32> {
     let feat_params = param_feats_from_mol(mol)?;
 
     let infer = match models.get_mut(&dataset) {
         Some(inf) => inf,
         None => {
-            let infer = Infer::load(dataset)?;
+            // let infer =
+            let infer = if load_from_file {
+                Infer::load_from_file(dataset)?
+            } else {
+                Infer::load_from_embedded(dataset)?
+            };
+
             models.insert(dataset, infer);
             models.get_mut(&dataset).unwrap()
         }

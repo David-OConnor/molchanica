@@ -436,7 +436,6 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                         return Vec3F32::new_zero();
                     }
 
-                    let mut ctr = Vec3F32::new_zero();
                     let bond = &mol.common.bonds[*i_bond];
 
                     let bond_ctr: Vec3F32 = ((mol.common.atom_posits[bond.atom_0]

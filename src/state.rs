@@ -26,6 +26,7 @@ use lin_alg::{
     f64::Vec3 as Vec3F64,
 };
 
+use crate::therapeutic::pharmacophore::PharmacophoreFeatureType;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -376,6 +377,7 @@ pub struct StateUi {
     pub color_surface_mesh: bool,
     /// Color ligands by molecule, to contrast.
     pub color_by_mol: bool,
+    pub pharmacaphore_type: PharmacophoreFeatureType,
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]

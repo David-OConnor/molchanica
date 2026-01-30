@@ -97,7 +97,7 @@ impl PoseAlignment {
         }
         let anchor = mol.atom_posits[self.anchor_atom_i];
 
-        let mut result: Vec<_> = mol
+        let result: Vec<_> = mol
             .atoms
             .par_iter()
             .map(|atom| {
@@ -307,6 +307,7 @@ fn run_md(
         bonds_t_by_atom.push(bonds);
     }
 
+    #[allow(unused_assignments)]
     let mut forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
     println!("Running MD for alignment...");
 
@@ -323,7 +324,7 @@ fn run_md(
 
         // We update the synthetic query atoms, as they're what's maintaining position and velocity
         // during the simulation.
-        for (i_q, atom_q_dyn) in md.atoms.iter_mut().enumerate() {
+        for (i_q, _atom_q_dyn) in md.atoms.iter_mut().enumerate() {
             let atom_q = &mol_q_md.atoms[i_q];
 
             // Apply our synthetic potential, drawing it to the template.
@@ -873,7 +874,6 @@ fn smoothstep01(t: f32) -> f32 {
 /// to 0. When distance is more than ~2Å or so, force should gradually ramp to 0. There should be a
 /// *sweet spot* where force is at a maximum; for example, 0.5Å. At this maximum, we should return 1.
 fn scale_force_w_dist(dist: f32, r_peak: f32, r_max_: f32) -> f32 {
-    const R_MAX_DEFAULT: f32 = 2.0;
     let r_max = r_max_.max(r_peak * 1.5); // ensure r_max > r_peak
 
     if dist >= r_max {
@@ -913,7 +913,7 @@ fn force_synthetic(
     // If the charge diff is closer than this, attract. If farther, repel.
     const THRESH_Q: f32 = 0.06;
 
-    const COEFF_ATOM_NAME: f32 = 0.5;
+    // const COEFF_ATOM_NAME: f32 = 0.5;
     const COEFF_FF_TYPE: f32 = 0.3;
     const COEFF_BONDS: f32 = 0.5;
 
@@ -922,7 +922,7 @@ fn force_synthetic(
     const THRESH_DIST: f32 = 2.5; //  Å
     const THRESH_DIST_DOUBLED: f32 = THRESH_DIST * 2.;
 
-    const THRESH_DIST_SQ: f32 = THRESH_DIST * THRESH_DIST;
+    // const THRESH_DIST_SQ: f32 = THRESH_DIST * THRESH_DIST;
     const THRESH_DIST_SQ_DOUBLED: f32 = THRESH_DIST_DOUBLED * THRESH_DIST_DOUBLED;
 
     // Experimenting with ramping force by dist

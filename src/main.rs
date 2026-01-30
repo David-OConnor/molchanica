@@ -49,17 +49,13 @@ mod tautomers;
 mod tests;
 mod therapeutic;
 
-#[cfg(feature = "cuda")]
-use std::sync::Arc;
-use std::{collections::HashMap, path::Path, process::Command, time::Instant};
+use std::{process::Command, time::Instant};
 
-#[cfg(feature = "cuda")]
-use cudarc::driver::CudaFunction;
-use dynamics::{ComputationDevice, Integrator, SimBoxInit, params::FfParamSet};
+use dynamics::{Integrator, SimBoxInit, params::FfParamSet};
 use molecules::{MolType, lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
-use crate::{render::render, therapeutic::infer::Infer, util::handle_err};
+use crate::{render::render, util::handle_err};
 
 fn main() {
     #[cfg(not(feature = "cuda"))]

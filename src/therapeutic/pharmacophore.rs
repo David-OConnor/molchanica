@@ -2,8 +2,9 @@
 //! then using these features to query databases for ligands that may fit.
 
 use lin_alg::f64::Vec3;
+use std::fmt::Display;
 
-use crate::molecules::{HydrogenBond, small::MoleculeSmall};
+use crate::molecules::small::MoleculeSmall;
 // #[derive(Debug)]
 // pub enum PharmacophoreFeature {
 //     Hydrophobic(<(i8)>),
@@ -11,25 +12,95 @@ use crate::molecules::{HydrogenBond, small::MoleculeSmall};
 //     Aromatic(i8),
 // }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
+#[derive(Debug, Clone, Copy, PartialEq, Default)] // Default is for the UI
 pub enum PharmacophoreFeatureType {
     Hydrophobic,
     Hydrophilic,
     Aromatic,
+    #[default]
+    Acceptor,
+    AcceptorProjected,
+    Donor,
+    DonorProjected,
+    HeavyAtom,
+    Hydrophobe,
+    Ring,
+    RingNonPlanar,
+    RingPlanarProjected,
+    Purine,
+    Pyrimidine,
+    Adenine,
+    Cytosine,
+    Guanine,
+    Thymine,
+    Uracil,
+    Deoxyribose,
+    Ribose,
+    ExitVector,
+    Halogen,
+    Bromine,
 }
 
-#[derive(Debug)]
+impl PharmacophoreFeatureType {
+    pub fn all() -> Vec<Self> {
+        use PharmacophoreFeatureType::*;
+        vec![
+            Hydrophobic,
+            Hydrophilic,
+            Aromatic,
+            Acceptor,
+            AcceptorProjected,
+            Donor,
+            DonorProjected,
+            HeavyAtom,
+            Hydrophobe,
+            Ring,
+            RingNonPlanar,
+            RingPlanarProjected,
+            Purine,
+            Pyrimidine,
+            Adenine,
+            Cytosine,
+            Guanine,
+            Thymine,
+            Uracil,
+            Deoxyribose,
+            Ribose,
+            ExitVector,
+            Halogen,
+        ]
+    }
+}
+
+impl Display for PharmacophoreFeatureType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // todo: Placeholder
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Position {
+    /// Relative to what? Atom 0?
+    Posit(Vec3),
+    /// Index in molecule.
+    Atom(usize),
+}
+
+#[derive(Clone, Debug)]
 pub struct PharmacophoreFeature {
-    feature_type: PharmacophoreFeatureType,
-    posit: Vec3,
-    strength: f32,
+    pub feature_type: PharmacophoreFeatureType,
+    pub posit: Position,
+    pub strength: f32,
+    pub tolerance: f32, // Default 1.0
+    pub radius: f32,    // Default 1.0
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Pharmacophore {
     pub pocket_vol: f32,
     pub features: Vec<PharmacophoreFeature>,
-    hydrogen_bonds: Vec<HydrogenBond>,
 }
 
 impl Pharmacophore {

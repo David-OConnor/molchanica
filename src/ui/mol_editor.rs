@@ -8,10 +8,11 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
+use crate::therapeutic::pharmacophore::PharmacophoreFeatureType;
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
-    mol_editor,
+    label, mol_editor,
     mol_editor::{
         add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
         exit_edit_mode, sync_md,
@@ -172,8 +173,6 @@ pub(in crate::ui) fn editor(
             if state.ui.mol_view != prev_view {
                 redraw = true;
             }
-
-            // view_sel_selector(state, &mut redraw, ui, false);
         });
 
         section_box().show(ui, |ui| {
@@ -384,7 +383,8 @@ pub(in crate::ui) fn editor(
         }
     });
 
-    // ui.horizontal_wrapped(|ui| {
+    pharmacophore_tools(state, scene, ui, engine_updates, &mut redraw);
+
     ui.horizontal(|ui| {
         for ident in &state.mol_editor.mol.idents {
             if let MolIdent::Smiles(smiles) = ident {
@@ -506,6 +506,30 @@ fn bond_edit_tools(
     }
 }
 
+fn pharmacophore_tools(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    engine_updates: &mut EngineUpdates,
+    redraw: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        label!(ui, "Pharmacophore: ", Color32::WHITE);
+
+        if ComboBox::from_id_salt(11123)
+            .width(120.)
+            .selected_text(state.ui.pharmacaphore_type.to_string())
+            .show_ui(ui, |ui| {
+                for v in PharmacophoreFeatureType::all() {
+                    ui.selectable_value(&mut state.ui.pharmacaphore_type, v, v.to_string());
+                }
+            })
+            .response
+            .changed()
+        {}
+    });
+}
+
 fn edit_tools(
     state: &mut State,
     scene: &mut Scene,
@@ -597,6 +621,8 @@ fn edit_tools(
                         &mut scene.input_settings.control_scheme,
                         state.volatile.mol_manip.mode,
                     );
+
+                    state.mol_editor.mol.update_characterization();
                 }
                 rebuild_md = true;
             }

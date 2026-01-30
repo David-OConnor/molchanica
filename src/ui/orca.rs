@@ -7,7 +7,6 @@ use bio_files::orca::{
     method::Method,
 };
 use egui::{Color32, ComboBox, RichText, Ui};
-use graphics::{EngineUpdates, Scene};
 
 use crate::{
     label, orca,
@@ -43,13 +42,7 @@ fn keyword_toggle(
     }
 }
 
-pub(in crate::ui) fn orca_input(
-    state: &mut State,
-    scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
-    redraw: &mut bool,
-    ui: &mut Ui,
-) {
+pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
     misc::section_box().show(ui, |ui| {
         ui.horizontal(|ui| {
             if state.volatile.orca_avail {

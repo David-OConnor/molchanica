@@ -1,3 +1,5 @@
+#![allow(unused)] // Avoids warnings in the main executable.
+
 /// Contains hard-coded train/test split values from the TDC datasets. Uses the PyTDC python
 /// library, using the TDC recommend split methods.
 ///
