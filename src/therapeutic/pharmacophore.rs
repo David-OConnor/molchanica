@@ -97,7 +97,19 @@ pub struct PharmacophoreFeature {
     pub radius: f32,    // Default 1.0
 }
 
-#[derive(Clone, Debug)]
+impl Default for PharmacophoreFeature {
+    fn default() -> Self {
+        Self {
+            feature_type: PharmacophoreFeatureType::default(),
+            posit: Position::Atom(0), // todo?
+            strength: 1.0,            // todo?
+            tolerance: 1.0,
+            radius: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Pharmacophore {
     pub pocket_vol: f32,
     pub features: Vec<PharmacophoreFeature>,

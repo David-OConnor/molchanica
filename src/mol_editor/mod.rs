@@ -419,6 +419,8 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     state.mol_editor.md_state = None;
     state.ui.view_sel_level = ViewSelLevel::Atom;
 
+    state.ui.ui_vis.mol_char = false;
+
     // This stays false under several conditions.
     let mut mol_loaded = false;
 

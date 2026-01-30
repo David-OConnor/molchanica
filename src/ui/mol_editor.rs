@@ -8,7 +8,8 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
-use crate::therapeutic::pharmacophore::PharmacophoreFeatureType;
+use crate::therapeutic::pharmacophore;
+use crate::therapeutic::pharmacophore::{PharmacophoreFeature, PharmacophoreFeatureType};
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
@@ -516,17 +517,32 @@ fn pharmacophore_tools(
     ui.horizontal(|ui| {
         label!(ui, "Pharmacophore: ", Color32::WHITE);
 
-        if ComboBox::from_id_salt(11123)
+        ComboBox::from_id_salt(11123)
             .width(120.)
             .selected_text(state.ui.pharmacaphore_type.to_string())
             .show_ui(ui, |ui| {
                 for v in PharmacophoreFeatureType::all() {
                     ui.selectable_value(&mut state.ui.pharmacaphore_type, v, v.to_string());
                 }
-            })
-            .response
-            .changed()
-        {}
+            });
+
+        if let Selection::AtomLig((mol_i, atom_i)) = &state.ui.selection {
+            if ui
+                .button(RichText::new("Add pharmacophore").color(COLOR_ACTION))
+                .clicked()
+            {
+                state
+                    .mol_editor
+                    .mol
+                    .pharmacophore
+                    .features
+                    .push(PharmacophoreFeature {
+                        feature_type: state.ui.pharmacaphore_type,
+                        posit: pharmacophore::Position::Atom(*atom_i),
+                        ..Default::default()
+                    })
+            }
+        }
     });
 }
 

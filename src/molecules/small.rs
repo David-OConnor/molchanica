@@ -54,7 +54,7 @@ pub struct MoleculeSmall {
     pub characterization: Option<MolCharacterization>,
     /// Note: These are loaded from SDF, but we use our data in MolCharacterization instead.
     pub pharmacophore_features: Vec<PharmacaphoreFeatures>,
-    pub pharmacophore: Option<Pharmacophore>,
+    pub pharmacophore: Pharmacophore,
     pub therapeutic_props: Option<TherapeuticProperties>,
 }
 
