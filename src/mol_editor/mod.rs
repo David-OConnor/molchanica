@@ -525,7 +525,7 @@ pub fn redraw(
     manip_mode: ManipMode,
     num_ligs: usize,
 ) {
-    entities.clear();
+    entities.retain(|e| e.class != EntityClass::Ligand as u32);
 
     entities.extend(draw_mol(
         MolGenericRef::Small(mol),

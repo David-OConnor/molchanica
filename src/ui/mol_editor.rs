@@ -548,8 +548,6 @@ fn pharmacophore_tools(
                 .pharmacaphore_type
                 .hint_sites(char, &mol.common.atoms);
 
-            println!("HINT SITES: {:?}", hint_sites);
-
             drawing::draw_pharmacophore_hint_sites(
                 &mut scene.entities,
                 &hint_sites,
@@ -563,6 +561,27 @@ fn pharmacophore_tools(
                 .button(RichText::new("Add pharmacophore").color(COLOR_ACTION))
                 .clicked()
             {
+                let mol = &state.mol_editor.mol;
+
+                // Ideally the user clicks a ring hint etc. Workaround for now.
+                let posit = if state.ui.pharmacaphore_type == PharmacophoreFeatureType::Aromatic {
+                    // todo: Move this logic (if you keep it)
+                    // todo: DOn't unwrap
+                    let mut val = None;
+                    for ring in &mol.characterization.as_ref().unwrap().rings {
+                        if ring.atoms.contains(&atom_i) {
+                            val = Some(&ring.atoms);
+                            break;
+                        }
+                    }
+                    match val {
+                        Some(v) => pharmacophore::Position::Atoms(v.to_owned()),
+                        None => pharmacophore::Position::Atom(*atom_i),
+                    }
+                } else {
+                    pharmacophore::Position::Atom(*atom_i)
+                };
+
                 state
                     .mol_editor
                     .mol
@@ -570,7 +589,7 @@ fn pharmacophore_tools(
                     .features
                     .push(PharmacophoreFeature {
                         feature_type: state.ui.pharmacaphore_type,
-                        posit: pharmacophore::Position::Atom(*atom_i),
+                        posit,
                         ..Default::default()
                     });
 

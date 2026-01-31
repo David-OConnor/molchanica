@@ -14,6 +14,7 @@ use lin_alg::{
 };
 use na_seq::Element;
 
+use crate::render::RADIUS_PHARMACOPHORE;
 use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
@@ -940,18 +941,6 @@ pub fn draw_mol(
     // todo with the transparent surface; workaround to not draw the cube here.
     if ui.show_docking_tools && ui.mol_view != MoleculeView::Surface {
         // Add a visual indicator for the docking site.
-
-        // scene.entities.push(Entity {
-        //     class: EntityType::DockingSite as u32,
-        //     // todo: High-res spheres are blocking bonds inside them. Likely engine problem.
-        //     mesh: MESH_DOCKING_SITE,
-        //     position: lig.docking_site.site_center.into(),
-        //     scale: lig.docking_site.site_radius as f32,
-        //     color: COLOR_DOCKING_BOX,
-        //     opacity: DOCKING_SITE_OPACITY,
-        //     shinyness: ATOM_SHININESS,
-        //     ..Default::default()
-        // });
     }
 
     let sel = if ui.selection.is_bond() {
@@ -965,10 +954,6 @@ pub fn draw_mol(
         MoleculeView::BallAndStick | MoleculeView::SpaceFill
     ) {
         for (i_atom, atom) in mol.common().atoms.iter().enumerate() {
-            // if mode == OperatingMode::Primary && ui.mol_view == MoleculeView::SpaceFill {
-            //     break;
-            // }
-
             if ui.visibility.hide_hydrogen && atom.element == Element::Hydrogen {
                 continue;
             }
@@ -2176,13 +2161,11 @@ fn draw_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
     let mut res = Vec::new();
 
     for feat in &mol.pharmacophore.features {
-        let radius = 1.; // todo: A/R
-
         let mut ent = Entity::new(
             MESH_PHARMACOPHORE,
             feat.posit.instantaneous(&mol.common).into(),
             Quaternion::new_identity(),
-            radius,
+            RADIUS_PHARMACOPHORE, // todo A/R
             feat.feature_type.color(),
             ATOM_SHININESS,
         );
@@ -2210,7 +2193,7 @@ pub fn draw_pharmacophore_hint_sites(
             (*hint_site).into(),
             Quaternion::new_identity(),
             RADIUS_PHARMACOPHORE_HINT,
-            (1., 0.4, 0.4), // Red
+            (1., 0.1, 0.1), // Red
             ATOM_SHININESS,
         );
 

@@ -54,6 +54,7 @@ pub const WATER_BOND_THICKNESS: f32 = 0.1;
 pub const WATER_OPACITY: f32 = 1.;
 pub const PHARMACOPHORE_OPACITY: f32 = 0.3;
 pub const RADIUS_PHARMACOPHORE_HINT: f32 = 0.25;
+pub const RADIUS_PHARMACOPHORE: f32 = 0.5; // General / temp
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 

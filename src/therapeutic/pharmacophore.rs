@@ -132,12 +132,12 @@ impl PharmacophoreFeatureType {
         use PharmacophoreFeatureType::*;
 
         match self {
-            Hydrophobic => (1., 0., 0.),
+            Hydrophobic => (0., 0.8, 0.),
             Hydrophilic => (1., 1., 1.),
-            Aromatic => (1., 0., 1.),
-            Acceptor => (1., 1., 0.),
+            Aromatic => (0.4, 0.1, 0.8),
+            Acceptor => (1., 0.5, 0.2),
             AcceptorProjected => (0., 1., 0.),
-            Donor => (0., 0., 1.),
+            Donor => (1., 1., 1.),
             DonorProjected => (1., 1., 1.),
             _ => (1., 0., 0.), // todo
         }
