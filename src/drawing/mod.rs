@@ -6,9 +6,10 @@ use std::{fmt, fmt::Display, io, io::ErrorKind, str::FromStr, sync::OnceLock};
 use bincode::{Decode, Encode};
 use bio_files::{BondType, ResidueType};
 use egui::{Color32, FontFamily};
-use graphics::{ControlScheme, Entity, Scene, TextOverlay, UP_VEC};
+use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOverlay, UP_VEC};
 use lin_alg::{
     f32::{Quaternion, Vec3},
+    f64::Vec3 as Vec3F64,
     map_linear,
 };
 use na_seq::Element;
@@ -16,17 +17,22 @@ use na_seq::Element;
 use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
-    molecules::{Atom, AtomRole, Chain, MolGenericRef, MolType, MoleculePeptide, Residue},
+    molecules::{
+        Atom, AtomRole, Chain, MolGenericRef, MolType, MoleculePeptide, Residue,
+        small::MoleculeSmall,
+    },
     reflection::DensityPt,
     render::{
         ATOM_SHININESS, BACKGROUND_COLOR, BALL_RADIUS_WATER_H, BALL_RADIUS_WATER_O,
         BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, BODY_SHINYNESS, Color, MESH_BOND, MESH_CUBE,
         MESH_DENSITY_SURFACE, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, MESH_SPHERE_HIGHRES,
-        MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES, WATER_BOND_THICKNESS, WATER_OPACITY,
+        MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES, PHARMACOPHORE_OPACITY, RADIUS_PHARMACOPHORE_HINT,
+        WATER_BOND_THICKNESS, WATER_OPACITY,
     },
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, ResColoring, State, StateUi},
+    therapeutic::pharmacophore,
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center, res_color},
 };
 // const LIGAND_COLOR_ANCHOR: Color = (1., 0., 1.);
@@ -118,6 +124,7 @@ pub const MESH_BALL_STICK_SPHERE: usize = MESH_SPHERE_MEDRES;
 pub const MESH_SPACEFILL_SPHERE: usize = MESH_SPHERE_HIGHRES;
 pub const MESH_WATER_SPHERE: usize = MESH_SPHERE_MEDRES;
 pub const MESH_BOND_CAP: usize = MESH_SPHERE_LOWRES;
+pub const MESH_PHARMACOPHORE: usize = MESH_SPHERE_HIGHRES;
 
 // This should ideally be high res, but we experience anomolies on viewing items inside it, while
 // the cam is outside.
@@ -208,6 +215,9 @@ fn text_overlay_bonds(
 
 /// We use the Entity's class field to determine which graphics-engine entities to retain and remove.
 /// This affects both local drawing logic, and engine-level entity setup.
+///
+/// The numerical values here are arbitrary, and can be changed at any time; they're just
+/// so the engine has a unique identifier for each without knowing about application-specific types.
 #[derive(Clone, Copy, PartialEq)]
 #[repr(u32)]
 pub enum EntityClass {
@@ -222,7 +232,8 @@ pub enum EntityClass {
     SaSurfaceDots = 8,
     DockingSite = 9,
     WaterModel = 10,
-    Other = 11,
+    PharmacophoreHint = 11,
+    Other = 12,
 }
 
 // todo: For ligands that are flexible, highlight the fleixble bonds in a bright color.
@@ -915,8 +926,6 @@ pub fn draw_mol(
 ) -> Vec<Entity> {
     let mut result = Vec::new();
 
-    // println!("SEL: {:?}", ui.selection);
-
     if !mol.common().visible {
         return result;
     }
@@ -1270,6 +1279,10 @@ pub fn draw_mol(
                 mol_active, // todo
                 ui,
             );
+        }
+
+        if let MolGenericRef::Small(m) = &mol {
+            result.extend(draw_pharmacophore(m));
         }
 
         result.extend(entities);
@@ -2155,4 +2168,55 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
     if scene.entities.len() != initial_ent_count {
         clear_mol_entity_indices(state, None);
     }
+}
+
+/// Note: We currently have this combined with the same call time and entity class as other
+/// small mols.
+fn draw_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
+    let mut res = Vec::new();
+
+    for feat in &mol.pharmacophore.features {
+        let radius = 1.; // todo: A/R
+
+        let mut ent = Entity::new(
+            MESH_PHARMACOPHORE,
+            feat.posit.instantaneous(&mol.common).into(),
+            Quaternion::new_identity(),
+            radius,
+            feat.feature_type.color(),
+            ATOM_SHININESS,
+        );
+
+        ent.opacity = PHARMACOPHORE_OPACITY;
+        ent.class = EntityClass::Ligand as u32; // todo: A/R
+        res.push(ent);
+    }
+
+    res
+}
+
+/// Display likely locations to place this category of pharmacophore based on
+/// characteristics of the molecule.
+pub fn draw_pharmacophore_hint_sites(
+    entities: &mut Vec<Entity>,
+    hint_sites: &[Vec3F64],
+    engine_updates: &mut EngineUpdates,
+) {
+    entities.retain(|ent| ent.class != EntityClass::PharmacophoreHint as u32);
+
+    for hint_site in hint_sites {
+        let mut ent = Entity::new(
+            MESH_PHARMACOPHORE,
+            (*hint_site).into(),
+            Quaternion::new_identity(),
+            RADIUS_PHARMACOPHORE_HINT,
+            (1., 0.4, 0.4), // Red
+            ATOM_SHININESS,
+        );
+
+        ent.opacity = PHARMACOPHORE_OPACITY;
+        ent.class = EntityClass::PharmacophoreHint as u32;
+        entities.push(ent);
+    }
+    engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::PharmacophoreHint as u32]);
 }

@@ -36,10 +36,12 @@ use std::{
 
 use bio_files::md_params::ForceFieldParams;
 
-use crate::therapeutic::train::{MODEL_DIR, MODEL_INCLUDE};
 use crate::{
     molecules::small::MoleculeSmall,
-    therapeutic::infer::{Infer, infer_general},
+    therapeutic::{
+        infer::{Infer, infer_general},
+        train::{MODEL_DIR, MODEL_INCLUDE},
+    },
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]

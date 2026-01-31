@@ -35,13 +35,14 @@ pub enum TaskType {
 
 impl TaskType {
     pub fn help_text(self) -> String {
+        use TaskType::*;
         match self {
-            Self::SinglePoint => "Compute the single-point energy of this molecule.",
-            Self::GeometryOptimization => "Compute optimal geometry, and apply this to this molecule's atoms.",
-            Self::MbisCharges =>                             "Compute and assign MBIS partial charges for this molecule. This is an accurate QM method, but is very \
+            SinglePoint => "Compute the single-point energy of this molecule.",
+            GeometryOptimization => "Compute optimal geometry, and apply this to this molecule's atoms.",
+            MbisCharges =>                             "Compute and assign MBIS partial charges for this molecule. This is an accurate QM method, but is very \
                             slow; it may take 10 minutes or longer for a small organic molecule. This replaces any existing partial \
                             charges on this molecule.",
-            Self::MolDynamics =>                             "Run MD using ORCA. This is much slower than our normal MD system, but \
+            MolDynamics =>                             "Run MD using ORCA. This is much slower than our normal MD system, but \
                              more accurate Uses settings from the MD section of the UI as well, including number of steps,\
                              dt, and temperature.",
         }.to_string()
@@ -50,11 +51,13 @@ impl TaskType {
 
 impl Display for TaskType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TaskType::*;
+
         let v = match self {
-            Self::SinglePoint => "Single pt energy",
-            Self::GeometryOptimization => "Optimize geom",
-            Self::MbisCharges => "MBIS charges",
-            Self::MolDynamics => "Mol dynamics",
+            SinglePoint => "Single pt energy",
+            GeometryOptimization => "Optimize geom",
+            MbisCharges => "MBIS charges",
+            MolDynamics => "Mol dynamics",
         };
 
         write!(f, "{v}")

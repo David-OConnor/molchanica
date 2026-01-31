@@ -26,6 +26,8 @@ const WINDOW_SIZE_X: f32 = 1_600.;
 const WINDOW_SIZE_Y: f32 = 1_200.;
 pub const BACKGROUND_COLOR: Color = (0., 0., 0.);
 
+// todo: These consts should probably be in the drawing module.
+
 // todo: Shinyness broken?
 pub const ATOM_SHININESS: f32 = 0.9;
 pub const BODY_SHINYNESS: f32 = 0.9;
@@ -48,7 +50,10 @@ pub const BALL_STICK_RADIUS_H: f32 = 0.1;
 pub const BALL_RADIUS_WATER_O: f32 = 0.09;
 pub const BALL_RADIUS_WATER_H: f32 = 0.06;
 pub const WATER_BOND_THICKNESS: f32 = 0.1;
+
 pub const WATER_OPACITY: f32 = 1.;
+pub const PHARMACOPHORE_OPACITY: f32 = 0.3;
+pub const RADIUS_PHARMACOPHORE_HINT: f32 = 0.25;
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 

@@ -87,28 +87,29 @@ impl Display for Strands {
 
 /// Returns an arbitrary nucleotide combination that codes for the AA in question.
 fn _nts_from_aa(aa: AminoAcid) -> [Nucleotide; 3] {
+    use AminoAcid::*;
     match aa {
-        AminoAcid::Arg => [A, G, G],
-        AminoAcid::His => [C, A, C],
-        AminoAcid::Lys => [A, A, G],
-        AminoAcid::Asp => [G, A, C],
-        AminoAcid::Glu => [G, A, G],
-        AminoAcid::Ser => [T, C, A],
-        AminoAcid::Thr => [A, C, A],
-        AminoAcid::Asn => [A, A, C],
-        AminoAcid::Gln => [C, A, G],
-        AminoAcid::Cys => [T, G, C],
-        AminoAcid::Sec => [A, A, A], // todo temp. Find it.,
-        AminoAcid::Gly => [G, G, A],
-        AminoAcid::Pro => [C, C, A],
-        AminoAcid::Ala => [G, C, A],
-        AminoAcid::Val => [G, T, A],
-        AminoAcid::Ile => [A, T, A],
-        AminoAcid::Leu => [C, T, A],
-        AminoAcid::Met => [A, T, G],
-        AminoAcid::Phe => [T, T, C],
-        AminoAcid::Tyr => [T, A, C],
-        AminoAcid::Trp => [T, G, G],
+        Arg => [A, G, G],
+        His => [C, A, C],
+        Lys => [A, A, G],
+        Asp => [G, A, C],
+        Glu => [G, A, G],
+        Ser => [T, C, A],
+        Thr => [A, C, A],
+        Asn => [A, A, C],
+        Gln => [C, A, G],
+        Cys => [T, G, C],
+        Sec => [A, A, A], // todo temp. Find it.,
+        Gly => [G, G, A],
+        Pro => [C, C, A],
+        Ala => [G, C, A],
+        Val => [G, T, A],
+        Ile => [A, T, A],
+        Leu => [C, T, A],
+        Met => [A, T, G],
+        Phe => [T, T, C],
+        Tyr => [T, A, C],
+        Trp => [T, G, G],
     }
 }
 
@@ -183,7 +184,7 @@ fn align_bases(
 ) -> Vec<Vec3> {
     let nt_comp = nt.complement();
 
-    let (mut atoms_base_comp, bonds_base_comp) = base_from_template(templ_comp, nt_comp, na_type);
+    let (mut atoms_base_comp, _bonds_base_comp) = base_from_template(templ_comp, nt_comp, na_type);
 
     // An arbitrary anchor.
     // let n1 = template.find_atom_by_name("N1").unwrap();
@@ -253,7 +254,7 @@ fn build_strands(
     // We use these to create bonds between backbone segments of adjacent NTs. The o3' from
     // the previous NT joins to the P of the next.
     let mut prev_strand_a_o3p_sn = 0;
-    let mut prev_strand_b_o3p_sn = 0;
+    let mut _prev_strand_b_o3p_sn = 0;
 
     for (i_nt, &nt) in seq.iter().enumerate() {
         let is_first = i_nt == 0;
@@ -571,8 +572,7 @@ impl MoleculeNucleicAcid {
             NucleicAcidType::Rna => templates_rna,
         };
 
-        let (atoms, bonds, mut residues) =
-            build_strands(seq, na_type, posit_5p, templates, strands)?;
+        let (atoms, bonds, residues) = build_strands(seq, na_type, posit_5p, templates, strands)?;
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -626,9 +626,20 @@ impl MoleculeNucleicAcid {
     ) -> io::Result<Self> {
         let mut seq = Vec::with_capacity(&peptide.residues.len() * 3);
         for res in &peptide.residues {
-            seq.push(A);
-            seq.push(A);
-            seq.push(A);
+            let ResidueType::AminoAcid(aa) = res.res_type else {
+                continue;
+            };
+
+            // We have chosen an arbitrary codon combination for each AA. (i.e. many AAs have multiple ones)
+            let codons = &aa.codons()[0];
+
+            for codon in codons {
+                seq.push(*codon);
+            }
+            // Len 2 means a wildcard for the third; we have chosen one arbitrarily.
+            if codons.len() == 2 {
+                seq.push(A);
+            }
         }
 
         Self::from_seq(

@@ -142,7 +142,7 @@ fn main() {
         let posit = state.to_save.per_mol[&mol.common.ident]
             .docking_site
             .site_center;
-        state.update_docking_site(posit);
+        // state.update_docking_site(posit);
     }
 
     // todo: Consider if you want this default, and if you also want to add default Lipids etc.

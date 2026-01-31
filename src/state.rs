@@ -26,7 +26,6 @@ use lin_alg::{
     f64::Vec3 as Vec3F64,
 };
 
-use crate::therapeutic::pharmacophore::PharmacophoreFeatureType;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -43,7 +42,7 @@ use crate::{
     orca::StateOrca,
     prefs::ToSave,
     selection::{Selection, ViewSelLevel},
-    therapeutic::{DatasetTdc, infer::Infer},
+    therapeutic::{DatasetTdc, infer::Infer, pharmacophore::PharmacophoreFeatureType},
 };
 
 pub struct State {
@@ -132,17 +131,17 @@ impl State {
     //     }))
     // }
 
-    pub fn update_docking_site(&mut self, posit: Vec3F64) {
-        // if let Some(lig) = &mut self.ligand {
-        //     if let Some(data) = &mut lig.lig_data {
-        //         data.docking_site.site_center = posit;
-        //
-        //         self.ui.docking_site_x = posit.x.to_string();
-        //         self.ui.docking_site_y = posit.y.to_string();
-        //         self.ui.docking_site_z = posit.z.to_string();
-        //     }
-        // }
-    }
+    // pub fn update_docking_site(&mut self, posit: Vec3F64) {
+    //     // if let Some(lig) = &mut self.ligand {
+    //     //     if let Some(data) = &mut lig.lig_data {
+    //     //         data.docking_site.site_center = posit;
+    //     //
+    //     //         self.ui.docking_site_x = posit.x.to_string();
+    //     //         self.ui.docking_site_y = posit.y.to_string();
+    //     //         self.ui.docking_site_z = posit.z.to_string();
+    //     //     }
+    //     // }
+    // }
 
     /// Helper
     pub fn active_mol(&self) -> Option<MolGenericRef<'_>> {
@@ -578,6 +577,7 @@ pub struct UiVisibility {
     pub dynamics: bool,
     pub orca: bool,
     pub mol_char: bool,
+    pub pharmacophore_list: bool,
 }
 
 impl Default for UiVisibility {
@@ -592,6 +592,7 @@ impl Default for UiVisibility {
             dynamics: true,
             orca: false,
             mol_char: true, // todo: For now.
+            pharmacophore_list: false,
         }
     }
 }

@@ -10,10 +10,9 @@ use bio_files::BondType;
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
 use na_seq::Element::*;
 
-use crate::sa_surface::SOLVENT_RAD;
 use crate::{
     molecules::{Atom, Bond, common::MoleculeCommon, rotatable_bonds::RotatableBond},
-    sa_surface::make_sas_mesh,
+    sa_surface::{SOLVENT_RAD, make_sas_mesh},
 };
 
 /// Describes a small molecule by features practical for description and characterization.

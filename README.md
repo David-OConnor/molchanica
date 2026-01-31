@@ -5,22 +5,24 @@
 [Home page](https://www.athanorlab.com/molchanica)
 [Documentation](https://www.athanorlab.com/docs)
 
-## Goal: The easiest to use structural biology tool
+[Molchanica](https://www.athanorlab.com/molchanica) is molecule editing, visualization, and dynamics tool with a focus
+on a smooth user experience. It combines functionality found
+in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/),
+and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over both time and space. Any
+molecule you open or build can move using molecular dynamics. We are actively adding work-flow specific functionality;
+for example, molecular docking, and tools for working with LNPs.
 
-For viewing and exploring proteins and small molecules. View atom positions, bonds, solvent-accessible-surfaces, and
-electron density. Perform and visualize molecular dynamics using built-in [Amber](https://ambermd.org/) parameters.
+Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on
+pharmacophores, machine-learning from empirical binding data and more. It automatically estimates ADME and toxicity
+parameters.
 
-Blends functionality similar
-to [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/),
-and [Avogadro](https://avogadro.cc/).
+We hope that Molchanica is intuitive enough that formal documentation isn't required; installing, running, opening, and
+viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI. This
+documentation is a supplement that experimental process: It describes each feature. It may highlight features you didn't
+know existed, clarify how to use a given feature, and show assumptions and implementations used.
 
-Designed to be as easy to use, and fast as possible. Has tight integration with online databases
-including [RSCB PDB](https://www.rcsb.org/),
-[Pubchem](https://pubchem.ncbi.nlm.nih.gov/), [drugbank](https://go.drugbank.com/), [PDBe](https://www.ebi.ac.uk/pdbe/),
-and [LMSD](https://www.lipidmaps.org/databases/lmsd/overview). Uses parallel computing to accelerate calculations. (GPU,
-SIMD, and thread pools.)
-
-Includes drug-design features.
+For advanced topics like molecular docking, it provides instructions for achieving the best results. Use the menu on the
+left to navigate these documentation pages.
 
 ## Installation
 
@@ -55,6 +57,8 @@ and either installing the CUDA toolkit, or disabling CUDA.
 - Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed).
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
   and more.
+- Screen molecules based on binding affinity and desired properties
+- Pharmacophore based modeling and screening
 
 ## Molecule types supported for viewing and dynamics
 

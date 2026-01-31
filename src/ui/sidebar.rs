@@ -9,7 +9,7 @@ use crate::{
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolIdent, MolType, common::MoleculeCommon, small::MoleculeSmall},
     state::State,
-    therapeutic::{Adme, Toxicity},
+    therapeutic::{Adme, Toxicity, pharmacophore::Pharmacophore},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING,
@@ -135,6 +135,42 @@ fn mol_picker_one(
         };
 
         label!(ui, char.to_string(), color);
+    }
+}
+
+/// Allows viewing and selecting each pharmacophore feature from a tabular etc display. I.e.,
+/// to supplement positional renderings.
+fn pharmacophore_list(pharmacophore: &mut Pharmacophore, vis_flag: &mut bool, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        label!(ui, "Pharmacophores", Color32::GRAY);
+        if ui
+            .button(RichText::new("Close").color(Color32::LIGHT_RED))
+            .clicked()
+        {
+            *vis_flag = false;
+        }
+    });
+    ui.separator();
+
+    let mut remove = None;
+    for (i, feat) in pharmacophore.features.iter().enumerate() {
+        let descrip = format!("{feat}");
+
+        ui.horizontal(|ui| {
+            label!(ui, descrip, Color32::WHITE);
+
+            ui.add_space(COL_SPACING);
+            if ui
+                .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        });
+    }
+
+    if let Some(i) = remove {
+        pharmacophore.features.remove(i);
     }
 }
 
@@ -457,6 +493,23 @@ pub(in crate::ui) fn sidebar(
                 redraw_na,
                 engine_updates,
             );
+
+            if state.ui.ui_vis.pharmacophore_list {
+                // todo: Make this work eventually when out of hte mol editor.
+
+                // if let Some(mol) = &state.active_mol() {
+                // if let Some(mol) = &state.mol_editor.mol {
+                let mol = &mut state.mol_editor.mol;
+                let mut closed = false;
+                // if let MolGenericRef::Small(mol) = mol {
+                pharmacophore_list(&mut mol.pharmacophore, &mut closed, ui);
+                // }
+                if closed {
+                    // Broken out to avoid double borrow.
+                    state.ui.ui_vis.pharmacophore_list = false;
+                }
+                // }
+            }
 
             // todo: UI flag to show or hide this.
             if state.ui.ui_vis.mol_char {

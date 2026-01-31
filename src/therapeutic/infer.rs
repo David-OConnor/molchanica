@@ -3,6 +3,15 @@
 
 use std::{collections::HashMap, fs, io, time::Instant};
 
+use bio_files::md_params::ForceFieldParams;
+use burn::{
+    backend::{NdArray, ndarray::NdArrayDevice},
+    module::Module,
+    prelude::Int,
+    record::{FullPrecisionSettings, NamedMpkBytesRecorder, NamedMpkFileRecorder, Recorder},
+    tensor::{Tensor, TensorData, backend::Backend},
+};
+
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
@@ -10,16 +19,6 @@ use crate::{
         gnn::{PER_EDGE_FEATS, mol_to_graph_data, pad_adj_and_mask, pad_edge_feats},
         train::{MAX_ATOMS, Model, ModelConfig, StandardScaler, param_feats_from_mol},
     },
-};
-use bio_files::md_params::ForceFieldParams;
-use burn::backend::ndarray::NdArrayDevice;
-use burn::record::{NamedMpkBytesRecorder, Recorder};
-use burn::{
-    backend::NdArray,
-    module::Module,
-    prelude::Int,
-    record::{FullPrecisionSettings, NamedMpkFileRecorder},
-    tensor::{Tensor, TensorData, backend::Backend},
 };
 
 // todo: Stack overflow with Burn CPU

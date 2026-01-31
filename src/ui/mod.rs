@@ -1060,6 +1060,10 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 state.ui.popup.show_settings = !state.ui.popup.show_settings;
             }
 
+            if ui.button(RichText::new("Editor").color(COLOR_HIGHLIGHT)).clicked() {
+                enter_edit_mode(state, scene, &mut engine_updates);
+            }
+
             let metadata_loaded = false; // avoids borrow error.
 
             {
@@ -1349,17 +1353,13 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             }
         });
 
-        let mut close_active_mol = false; // to avoid borrow error.
+        let close_active_mol = false; // to avoid borrow error.
 
         ui.horizontal(|ui| {
             // Show the picker, at least.
             if !state.ligands.is_empty() || !state.lipids.is_empty() || !state.nucleic_acids.is_empty() {
                 // display_mol_data(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut redraw_na, &mut redraw_lipid, &mut close_active_mol, &mut engine_updates);
                 display_mol_data(state, ui);
-            }
-
-            if ui.button(RichText::new("Mol editor").color(COLOR_HIGHLIGHT)).clicked() {
-                enter_edit_mode(state, scene, &mut engine_updates);
             }
 
             if state.ligands.len() >= 2 &&ui.button("Align")

@@ -9,6 +9,8 @@
 // - [BindingDB](https://www.bindingdb.org/rwd/bind/chemsearch/marvin/Download.jsp)
 // - [ChEMBL](https://chembl.gitbook.io/chembl-interface-documentation/downloads)
 //
+// - [ZINC](https://zinc.docking.org/)
+//
 // Pocket-based:
 // - [BioLiP2](https://www.aideepmed.com/BioLiP/download.html)
 // - [sc-PDB](https://drugdesign.unistra.fr/scPDB/)

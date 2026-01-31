@@ -70,33 +70,36 @@ pub enum MolType {
 
 impl MolType {
     pub fn to_open_type(self) -> OpenType {
+        use MolType::*;
         match self {
-            Self::Peptide => OpenType::Peptide,
-            Self::Ligand => OpenType::Ligand,
-            Self::NucleicAcid => OpenType::NucleicAcid,
-            Self::Lipid => OpenType::Lipid,
-            Self::Water => panic!("Can't convert water to open type"),
+            Peptide => OpenType::Peptide,
+            Ligand => OpenType::Ligand,
+            NucleicAcid => OpenType::NucleicAcid,
+            Lipid => OpenType::Lipid,
+            Water => panic!("Can't convert water to open type"),
         }
     }
 
     pub fn entity_type(&self) -> EntityClass {
+        use MolType::*;
         match self {
-            Self::Peptide => EntityClass::Protein,
-            Self::Ligand => EntityClass::Ligand,
-            Self::NucleicAcid => EntityClass::NucleicAcid,
-            Self::Lipid => EntityClass::Lipid,
-            Self::Water => EntityClass::Protein, // todo for now
+            Peptide => EntityClass::Protein,
+            Ligand => EntityClass::Ligand,
+            NucleicAcid => EntityClass::NucleicAcid,
+            Lipid => EntityClass::Lipid,
+            Water => EntityClass::Protein, // todo for now
         }
     }
 
     pub fn color(self) -> (u8, u8, u8) {
+        use MolType::*;
         match self {
             // todo: Update A/R
-            Self::Peptide => (0, 255, 255),
-            Self::Ligand => (0, 255, 0),
-            Self::NucleicAcid => (255, 255, 0),
-            Self::Lipid => (255, 0, 255),
-            Self::Water => (0, 0, 0),
+            Peptide => (0, 255, 255),
+            Ligand => (0, 255, 0),
+            NucleicAcid => (255, 255, 0),
+            Lipid => (255, 0, 255),
+            Water => (0, 0, 0),
         }
     }
 }
@@ -111,29 +114,32 @@ pub enum MoleculeGeneric {
 
 impl MoleculeGeneric {
     pub fn common(&self) -> &MoleculeCommon {
+        use MoleculeGeneric::*;
         match self {
-            Self::Peptide(m) => &m.common,
-            Self::Ligand(m) => &m.common,
-            Self::NucleicAcid(m) => &m.common,
-            Self::Lipid(m) => &m.common,
+            Peptide(m) => &m.common,
+            Ligand(m) => &m.common,
+            NucleicAcid(m) => &m.common,
+            Lipid(m) => &m.common,
         }
     }
 
     pub fn common_mut(&mut self) -> &mut MoleculeCommon {
+        use MoleculeGeneric::*;
         match self {
-            Self::Peptide(m) => &mut m.common,
-            Self::Ligand(m) => &mut m.common,
-            Self::NucleicAcid(m) => &mut m.common,
-            Self::Lipid(m) => &mut m.common,
+            Peptide(m) => &mut m.common,
+            Ligand(m) => &mut m.common,
+            NucleicAcid(m) => &mut m.common,
+            Lipid(m) => &mut m.common,
         }
     }
 
     pub fn mol_type(&self) -> MolType {
+        use MoleculeGeneric::*;
         match self {
-            Self::Peptide(_) => MolType::Peptide,
-            Self::Ligand(_) => MolType::Ligand,
-            Self::NucleicAcid(_) => MolType::NucleicAcid,
-            Self::Lipid(_) => MolType::Lipid,
+            Peptide(_) => MolType::Peptide,
+            Ligand(_) => MolType::Ligand,
+            NucleicAcid(_) => MolType::NucleicAcid,
+            Lipid(_) => MolType::Lipid,
         }
     }
 }
@@ -149,20 +155,22 @@ pub enum MolGenericRef<'a> {
 
 impl<'a> MolGenericRef<'a> {
     pub fn common(&self) -> &MoleculeCommon {
+        use MolGenericRef::*;
         match self {
-            Self::Peptide(m) => &m.common,
-            Self::Small(m) => &m.common,
-            Self::NucleicAcid(m) => &m.common,
-            Self::Lipid(m) => &m.common,
+            Peptide(m) => &m.common,
+            Small(m) => &m.common,
+            NucleicAcid(m) => &m.common,
+            Lipid(m) => &m.common,
         }
     }
 
     pub fn mol_type(&self) -> MolType {
+        use MolGenericRef::*;
         match self {
-            Self::Peptide(_) => MolType::Peptide,
-            Self::Small(_) => MolType::Ligand,
-            Self::NucleicAcid(_) => MolType::NucleicAcid,
-            Self::Lipid(_) => MolType::Lipid,
+            Peptide(_) => MolType::Peptide,
+            Small(_) => MolType::Ligand,
+            NucleicAcid(_) => MolType::NucleicAcid,
+            Lipid(_) => MolType::Lipid,
         }
     }
 
@@ -208,29 +216,32 @@ pub enum MolGenericRefMut<'a> {
 
 impl<'a> MolGenericRefMut<'a> {
     pub fn common_mut(&mut self) -> &mut MoleculeCommon {
+        use MolGenericRefMut::*;
         match self {
-            Self::Peptide(m) => &mut m.common,
-            Self::Small(m) => &mut m.common,
-            Self::NucleicAcid(m) => &mut m.common,
-            Self::Lipid(m) => &mut m.common,
+            Peptide(m) => &mut m.common,
+            Small(m) => &mut m.common,
+            NucleicAcid(m) => &mut m.common,
+            Lipid(m) => &mut m.common,
         }
     }
 
     pub fn common(&self) -> &MoleculeCommon {
+        use MolGenericRefMut::*;
         match self {
-            Self::Peptide(m) => &m.common,
-            Self::Small(m) => &m.common,
-            Self::NucleicAcid(m) => &m.common,
-            Self::Lipid(m) => &m.common,
+            Peptide(m) => &m.common,
+            Small(m) => &m.common,
+            NucleicAcid(m) => &m.common,
+            Lipid(m) => &m.common,
         }
     }
 
     pub fn mol_type(&self) -> MolType {
+        use MolGenericRefMut::*;
         match self {
-            Self::Peptide(_) => MolType::Peptide,
-            Self::Small(_) => MolType::Ligand,
-            Self::NucleicAcid(_) => MolType::NucleicAcid,
-            Self::Lipid(_) => MolType::Lipid,
+            Peptide(_) => MolType::Peptide,
+            Small(_) => MolType::Ligand,
+            NucleicAcid(_) => MolType::NucleicAcid,
+            Lipid(_) => MolType::Lipid,
         }
     }
 

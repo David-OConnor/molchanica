@@ -421,7 +421,7 @@ pub fn align(
         .unwrap()
         .rotatable_bonds
     {
-        let bond = &mol_template.common.bonds[bond_rot.bond_i];
+        let _bond = &mol_template.common.bonds[bond_rot.bond_i];
         let downstream_t = &bond_rot.downstream_from_a1;
 
         // let downstream_t = find_downstream_atoms(
@@ -983,7 +983,7 @@ fn force_synthetic(
     };
 
     // If the bond count is the same, attractive. If different, slightly repulsive, depending on teh difference.
-    let f_bonds = {
+    let _f_bonds = {
         let mut bond_count_t = 0.;
         for bond in bonds_t {
             bond_count_t += bond.bond_type.order();
