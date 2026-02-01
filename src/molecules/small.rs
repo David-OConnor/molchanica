@@ -15,13 +15,14 @@ use bio_apis::{
     pubchem::{ProteinStructure, StructureSearchNamespace},
 };
 use bio_files::{
-    ChargeType, Mol2, MolType, Pdbqt, PharmacaphoreFeatures, Sdf, Xyz, create_bonds,
+    ChargeType, Mol2, MolType, Pdbqt, PharmacophoreFeatureGeneric, Sdf, Xyz, create_bonds,
     md_params::{ForceFieldParams, ForceFieldParamsVec},
 };
 use dynamics::{
     param_inference::{AmberDefSet, assign_missing_params, find_ff_types},
     partial_charge_inference::infer_charge,
 };
+use lin_alg::f64::Vec3;
 use na_seq::Element;
 
 use crate::{
@@ -30,7 +31,11 @@ use crate::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
         common::MoleculeCommon,
     },
-    therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer, pharmacophore::Pharmacophore},
+    therapeutic::{
+        DatasetTdc, TherapeuticProperties,
+        infer::Infer,
+        pharmacophore::{Pharmacophore, PharmacophoreFeature},
+    },
 };
 
 const LIGAND_ABS_POSIT_OFFSET: f64 = 15.; // Å
@@ -52,8 +57,6 @@ pub struct MoleculeSmall {
     // /// A cache for display as required. This is a text representation of a molecular formula.
     // pub smiles: Option<String>,
     pub characterization: Option<MolCharacterization>,
-    /// Note: These are loaded from SDF, but we use our data in MolCharacterization instead.
-    pub pharmacophore_features: Vec<PharmacaphoreFeatures>,
     pub pharmacophore: Pharmacophore,
     pub therapeutic_props: Option<TherapeuticProperties>,
 }
@@ -149,7 +152,14 @@ impl TryFrom<Mol2> for MoleculeSmall {
 
         // Note: We don't compute bonds here; we assume they're included in the molecule format.
         // Handle path after; not supported by TryFrom.
-        Ok(Self::new(m.ident, atoms, bonds, m.metadata.clone(), None))
+
+        let mut result = Self::new(m.ident, atoms, bonds, m.metadata.clone(), None);
+        result.pharmacophore = pharmacophore_from_biofiles(
+            &m.pharmacophore_features,
+            &result.common.atoms,
+            &result.common.ident,
+        )?;
+        Ok(result)
     }
 }
 
@@ -175,7 +185,12 @@ impl TryFrom<Sdf> for MoleculeSmall {
 
         // Handle path and state-specific items after; not supported by TryFrom.
         let mut result = Self::new(m.ident, atoms, bonds, m.metadata.clone(), None);
-        result.pharmacophore_features = m.pharmacophore_features;
+
+        result.pharmacophore = pharmacophore_from_biofiles(
+            &m.pharmacophore_features,
+            &result.common.atoms,
+            &result.common.ident,
+        )?;
         Ok(result)
     }
 }
@@ -248,12 +263,14 @@ impl MoleculeSmall {
 
         Mol2 {
             ident: self.common.ident.clone(),
+            atoms,
+            bonds,
             metadata: self.common.metadata.clone(),
             mol_type: MolType::Small,
             charge_type: ChargeType::None,
+            pharmacophore_features: pharmacophore_to_biofiles(&self.pharmacophore)
+                .unwrap_or_default(),
             comment: None,
-            atoms,
-            bonds,
         }
     }
 
@@ -285,7 +302,8 @@ impl MoleculeSmall {
             bonds,
             chains: Vec::new(),
             residues: Vec::new(),
-            pharmacophore_features: self.pharmacophore_features.clone(),
+            pharmacophore_features: pharmacophore_to_biofiles(&self.pharmacophore)
+                .unwrap_or_default(),
         }
     }
 
@@ -752,4 +770,64 @@ impl MoleculeSmall {
         }
         // println!("Inference complete.");
     }
+}
+
+/// Convert the bio_files SDF-based Pharmacophore layout to our own.
+fn pharmacophore_from_biofiles(
+    feats: &[PharmacophoreFeatureGeneric],
+    atoms: &[Atom],
+    ident: &str,
+) -> io::Result<Pharmacophore> {
+    let def = PharmacophoreFeature::default(); // For default vals.
+
+    let mut features = Vec::with_capacity(feats.len());
+
+    for feat in feats {
+        // Average position, if multiple atoms.
+        let mut posit = Vec3::new_zero();
+        for a in feat.atom_sns.iter() {
+            let i = *a as usize - 1;
+            if i >= atoms.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Pharmacophore index out of bounds",
+                ));
+            }
+
+            posit += atoms[i].posit;
+        }
+        posit /= feat.atom_sns.len() as f64;
+
+        features.push(PharmacophoreFeature {
+            feature_type: feat.type_.clone().into(),
+            posit,
+            ..def.clone()
+        });
+    }
+
+    Ok(Pharmacophore {
+        name: ident.to_string(),
+        pocket_vol: 0.,
+        features,
+    })
+}
+
+fn pharmacophore_to_biofiles(ph: &Pharmacophore) -> io::Result<Vec<PharmacophoreFeatureGeneric>> {
+    let mut result = Vec::new();
+
+    for feat in &ph.features {
+        let Some(atom_i) = feat.atom_i else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Pharmacophore feature missing atom index",
+            ));
+        };
+
+        result.push(PharmacophoreFeatureGeneric {
+            atom_sns: vec![atom_i as u32 + 1],
+            type_: feat.feature_type.to_generic(),
+        });
+    }
+
+    Ok(result)
 }

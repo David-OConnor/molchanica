@@ -42,7 +42,11 @@ use crate::{
     orca::StateOrca,
     prefs::ToSave,
     selection::{Selection, ViewSelLevel},
-    therapeutic::{DatasetTdc, infer::Infer, pharmacophore::PharmacophoreFeatureType},
+    therapeutic::{
+        DatasetTdc,
+        infer::Infer,
+        pharmacophore::{Pharmacophore, PharmacophoreFeatType},
+    },
 };
 
 pub struct State {
@@ -54,6 +58,7 @@ pub struct State {
     pub ligands: Vec<MoleculeSmall>,
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
     pub lipids: Vec<MoleculeLipid>,
+    pub pharmacophores: Vec<Pharmacophore>,
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
     pub to_save: ToSave,
@@ -92,6 +97,7 @@ impl Default for State {
             ligands: Default::default(),
             nucleic_acids: Default::default(),
             lipids: Default::default(),
+            pharmacophores: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),
             to_save_prev: Default::default(),
@@ -376,7 +382,7 @@ pub struct StateUi {
     pub color_surface_mesh: bool,
     /// Color ligands by molecule, to contrast.
     pub color_by_mol: bool,
-    pub pharmacaphore_type: PharmacophoreFeatureType,
+    pub pharmacaphore_type: PharmacophoreFeatType,
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]

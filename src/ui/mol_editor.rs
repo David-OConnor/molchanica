@@ -1,5 +1,4 @@
-use std::io;
-use std::sync::atomic::Ordering;
+use std::{io, sync::atomic::Ordering};
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
@@ -11,7 +10,6 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
-use crate::therapeutic::pharmacophore::add_pharmacophore;
 use crate::{
     cam::cam_reset_controls,
     drawing,
@@ -32,7 +30,7 @@ use crate::{
     state::{State, StateUi},
     therapeutic::{
         pharmacophore,
-        pharmacophore::{PharmacophoreFeature, PharmacophoreFeatureType},
+        pharmacophore::{PharmacophoreFeatType, PharmacophoreFeature, add_pharmacophore},
     },
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
@@ -293,7 +291,6 @@ pub(in crate::ui) fn editor(
         if ui.button("Relax")
             .on_hover_text("Relax geometry; adjust atom positions to minimize energy.")
             .clicked() {
-
             if state.mol_editor.md_state.is_none() {
                 match mol_editor::build_dynamics(
                     &state.dev,
@@ -303,7 +300,7 @@ pub(in crate::ui) fn editor(
                 ) {
                     Ok(md) => {
                         state.mol_editor.md_state = Some(md);
-                    },
+                    }
                     Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
                 }
             }
@@ -331,19 +328,18 @@ pub(in crate::ui) fn editor(
             exit_edit_mode(state, scene, engine_updates);
         }
 
-        if let Some(mol_i) = state.volatile.mol_editing {
+        if let Some(mol_i) = state.volatile.mol_editing && mol_i < state.ligands.len() {
             if ui
                 .button(RichText::new("Exit / update").color(Color32::LIGHT_RED))
                 .on_hover_text("Exit the molecule editor, and update the loaded molecule with changes made.")
                 .clicked()
             {
                 state.mol_editor.mol.common.reassign_sns();
-
-                // Load the edited molecule back into the state.
-                state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
-                state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
-                state.ligands[mol_i].common.build_adjacency_list();
-                state.ligands[mol_i].common.reset_posits();
+                    // Load the edited molecule back into the state.
+                    state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
+                    state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
+                    state.ligands[mol_i].common.build_adjacency_list();
+                    state.ligands[mol_i].common.reset_posits();
 
                 exit_edit_mode(state, scene, engine_updates);
             }
@@ -533,7 +529,7 @@ fn pharmacophore_tools(
             .width(120.)
             .selected_text(state.ui.pharmacaphore_type.to_string())
             .show_ui(ui, |ui| {
-                for v in PharmacophoreFeatureType::all() {
+                for v in PharmacophoreFeatType::all() {
                     ui.selectable_value(&mut state.ui.pharmacaphore_type, v, v.to_string());
                 }
             });
@@ -549,7 +545,7 @@ fn pharmacophore_tools(
             let hint_sites = state
                 .ui
                 .pharmacaphore_type
-                .hint_sites(char, &mol.common.atoms);
+                .hint_sites(char, &mol.common.atom_posits);
 
             drawing::draw_pharmacophore_hint_sites(
                 &mut scene.entities,
@@ -563,11 +559,15 @@ fn pharmacophore_tools(
                 .button(RichText::new("Add pharmacophore").color(COLOR_ACTION))
                 .clicked()
             {
-                add_pharmacophore(
+                if add_pharmacophore(
                     &mut state.mol_editor.mol,
                     state.ui.pharmacaphore_type,
                     *atom_i,
-                );
+                )
+                .is_err()
+                {
+                    eprintln!("Error adding pharmacophore feature.");
+                };
 
                 *redraw = true;
             }

@@ -784,8 +784,8 @@ fn align_from_rings(
     // Align the rings in plane, and position.
     for ring_t in rings_t {
         for ring_m in rings_q {
-            let ring_t_center = ring_t.center(&mol_template.common.atoms);
-            let ring_m_center = ring_m.center(&mol_query.common.atoms);
+            let ring_t_center = ring_t.center(&mol_template.common.atom_posits);
+            let ring_m_center = ring_m.center(&mol_query.common.atom_posits);
 
             // Try both orientations of the ring plane relative alignment.
             for ring_norm_sign in [-1., 1.] {

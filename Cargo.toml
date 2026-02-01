@@ -20,9 +20,9 @@ egui-file-dialog = "0.12.0" #  For file dialogs.
 egui_plot = "0.34.0"  # For Rama plots
 
 lin_alg = { version = "1.3.13", features = ["encode"] }
-na_seq = "0.3.13"
+na_seq = "0.3.14"
 bio_apis = { version = "0.2.4", features = ["encode"] }
-bio_files = "0.4.3"
+bio_files = "0.4.4"
 mcubes = "0.1.7"
 #dynamics = { version = "0.1.5", features = ["encode"] }
 dynamics = { path = "../dynamics", features = ["encode"] }

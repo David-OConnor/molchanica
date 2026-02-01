@@ -135,10 +135,10 @@ pub struct Ring {
 }
 
 impl Ring {
-    pub fn center(&self, atoms: &[Atom]) -> Vec3 {
+    pub fn center(&self, atom_posits: &[Vec3]) -> Vec3 {
         let mut sum = Vec3::new_zero();
         for i in &self.atoms {
-            sum += atoms[*i].posit;
+            sum += atom_posits[*i];
         }
 
         sum / self.atoms.len() as f64

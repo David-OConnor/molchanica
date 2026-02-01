@@ -2162,7 +2162,8 @@ fn draw_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
     for feat in &mol.pharmacophore.features {
         let mut ent = Entity::new(
             MESH_PHARMACOPHORE,
-            feat.posit.instantaneous(&mol.common).into(),
+            // feat.posit.absolute(&mol.common.atom_posits).into(),
+            feat.posit.into(),
             Quaternion::new_identity(),
             feat.feature_type.disp_radius(),
             feat.feature_type.color(),
