@@ -276,7 +276,7 @@ pub struct PharmacophoreFeature {
     // pub posit: Position,
     pub posit: Vec3,
     /// Used when associating with a specific atom.
-    pub atom_i: Option<usize>,
+    pub atom_i: Option<Vec<usize>>,
     pub strength: f32,
     pub tolerance: f32,
     // pub radius: f32,
@@ -488,7 +488,7 @@ pub fn add_pharmacophore(
     mol.pharmacophore.features.push(PharmacophoreFeature {
         feature_type: feat_type,
         posit,
-        atom_i: Some(atom_i),
+        atom_i: Some(vec![atom_i]),
         ..Default::default()
     });
 

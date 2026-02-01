@@ -128,17 +128,6 @@ impl MolGenericTrait for MoleculeSmall {
     }
 }
 
-/// This data is related specifically to docking.
-#[derive(Debug, Clone, Default)]
-// todo: It appears we use nothing in this struct!
-pub struct Ligand {
-    pub _anchor_atom: usize, // Index.
-    /// Note: We may deprecate this in favor of our Amber MD-based approach to flexibility.
-    pub _flexible_bonds: Vec<usize>, // Index
-                             // pub _pose: Pose,
-                             // pub _docking_site: DockingSite,
-}
-
 impl TryFrom<Mol2> for MoleculeSmall {
     type Error = io::Error;
     fn try_from(m: Mol2) -> Result<Self, Self::Error> {
@@ -159,6 +148,7 @@ impl TryFrom<Mol2> for MoleculeSmall {
             &result.common.atoms,
             &result.common.ident,
         )?;
+
         Ok(result)
     }
 }
@@ -191,6 +181,7 @@ impl TryFrom<Sdf> for MoleculeSmall {
             &result.common.atoms,
             &result.common.ident,
         )?;
+
         Ok(result)
     }
 }
@@ -543,7 +534,6 @@ impl MoleculeSmall {
                 Some(props) => {
                     println!("Loaded Properties for {ident:?} from our local DB.");
 
-                    // todo: Break this etc out into a separate function A/R to update based on properties
                     self.update_idents_and_char_from_pubchem(props);
                     break;
                 }
@@ -785,6 +775,8 @@ fn pharmacophore_from_biofiles(
     for feat in feats {
         // Average position, if multiple atoms.
         let mut posit = Vec3::new_zero();
+        let mut atom_i = Vec::with_capacity(feat.atom_sns.len());
+
         for a in feat.atom_sns.iter() {
             let i = *a as usize - 1;
             if i >= atoms.len() {
@@ -795,12 +787,20 @@ fn pharmacophore_from_biofiles(
             }
 
             posit += atoms[i].posit;
+            atom_i.push(i);
         }
         posit /= feat.atom_sns.len() as f64;
+
+        let atom_i = if !atom_i.is_empty() {
+            Some(atom_i)
+        } else {
+            None
+        };
 
         features.push(PharmacophoreFeature {
             feature_type: feat.type_.clone().into(),
             posit,
+            atom_i,
             ..def.clone()
         });
     }
@@ -816,15 +816,17 @@ fn pharmacophore_to_biofiles(ph: &Pharmacophore) -> io::Result<Vec<Pharmacophore
     let mut result = Vec::new();
 
     for feat in &ph.features {
-        let Some(atom_i) = feat.atom_i else {
+        let Some(atom_i) = &feat.atom_i else {
+            eprintln!("Pharmacophore feature missing atom index");
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Pharmacophore feature missing atom index",
             ));
         };
 
+        let atom_sns = atom_i.iter().map(|i| *i as u32 + 1).collect();
         result.push(PharmacophoreFeatureGeneric {
-            atom_sns: vec![atom_i as u32 + 1],
+            atom_sns,
             type_: feat.feature_type.to_generic(),
         });
     }
