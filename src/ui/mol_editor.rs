@@ -1,7 +1,9 @@
+use std::io;
 use std::sync::atomic::Ordering;
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
+use egui_file_dialog::FileDialog;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
 use lin_alg::f32::{Quaternion, Vec3};
 use na_seq::{
@@ -9,6 +11,7 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
+use crate::therapeutic::pharmacophore::add_pharmacophore;
 use crate::{
     cam::cam_reset_controls,
     drawing,
@@ -553,7 +556,6 @@ fn pharmacophore_tools(
                 &hint_sites,
                 engine_updates,
             );
-            // *redraw = true;
         }
 
         if let Selection::AtomLig((_mol_i, atom_i)) = &state.ui.selection {
@@ -561,39 +563,33 @@ fn pharmacophore_tools(
                 .button(RichText::new("Add pharmacophore").color(COLOR_ACTION))
                 .clicked()
             {
-                let mol = &state.mol_editor.mol;
+                add_pharmacophore(
+                    &mut state.mol_editor.mol,
+                    state.ui.pharmacaphore_type,
+                    *atom_i,
+                );
 
-                // Ideally the user clicks a ring hint etc. Workaround for now.
-                let posit = if state.ui.pharmacaphore_type == PharmacophoreFeatureType::Aromatic {
-                    // todo: Move this logic (if you keep it)
-                    // todo: DOn't unwrap
-                    let mut val = None;
-                    for ring in &mol.characterization.as_ref().unwrap().rings {
-                        if ring.atoms.contains(&atom_i) {
-                            val = Some(&ring.atoms);
-                            break;
-                        }
-                    }
-                    match val {
-                        Some(v) => pharmacophore::Position::Atoms(v.to_owned()),
-                        None => pharmacophore::Position::Atom(*atom_i),
-                    }
-                } else {
-                    pharmacophore::Position::Atom(*atom_i)
-                };
+                *redraw = true;
+            }
+        }
 
-                state
+        if !state.mol_editor.mol.pharmacophore.features.is_empty() {
+            if ui
+                .button(RichText::new("Save"))
+                .on_hover_text("Save the pharmacophore to a file.")
+                .clicked()
+            {
+                let name = &state.mol_editor.mol.common.ident;
+
+                if state
                     .mol_editor
                     .mol
                     .pharmacophore
-                    .features
-                    .push(PharmacophoreFeature {
-                        feature_type: state.ui.pharmacaphore_type,
-                        posit,
-                        ..Default::default()
-                    });
-
-                *redraw = true;
+                    .save(&mut state.volatile.dialogs.save, name)
+                    .is_err()
+                {
+                    handle_err(&mut state.ui, "Problem saving the pharmacophore".to_owned());
+                }
             }
         }
     });

@@ -68,6 +68,8 @@ pub struct MolCharacterization {
     pub hydroxyl: Vec<usize>,
     pub h_bond_donor: Vec<usize>,
     pub h_bond_acceptor: Vec<usize>,
+    /// E.g. in a carbon chain, a methyl etc.
+    pub hydrophobic_carbon: Vec<usize>,
     /// These charges are None if we are missing any partial charges.
     pub net_partial_charge: Option<f32>,
     pub abs_partial_charge_sum: Option<f32>,
@@ -326,6 +328,7 @@ impl MolCharacterization {
 
         let mut h_bond_donor = Vec::new();
         let mut h_bond_acceptor = Vec::new();
+        let mut hydrophobic_carbon = Vec::new();
 
         let is_double_bond = |a: usize, b: usize| -> bool {
             bond_type_by_edge
@@ -489,6 +492,19 @@ impl MolCharacterization {
 
                 if carbon_is_carboxylate(i) {
                     carboxylate.push(i);
+                }
+            } else if el == Carbon {
+                // todo: THis is a rough heuristic. Improve.
+                let neighbor_els: Vec<_> = adj[i].iter().map(|&n| mol.atoms[n].element).collect();
+
+                let mut h_or_c_count = 0;
+                for &ne in &neighbor_els {
+                    if matches!(ne, Hydrogen | Carbon) {
+                        h_or_c_count += 1;
+                    }
+                }
+                if h_or_c_count == 4 {
+                    hydrophobic_carbon.push(i);
                 }
             }
 
@@ -672,6 +688,7 @@ impl MolCharacterization {
 
             h_bond_donor,
             h_bond_acceptor,
+            hydrophobic_carbon,
 
             net_partial_charge,
             abs_partial_charge_sum,

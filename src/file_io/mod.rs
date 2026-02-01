@@ -870,13 +870,10 @@ impl Default for FileDialogs {
             .add_file_filter_extensions("Density", vec!["map", "mtz", "cif"])
             .add_file_filter_extensions("Mol dynamics", vec!["frcmod", "dat", "lib", "prmtop"])
             //
-            .add_file_filter_extensions(
-                "Molecule (small)",
-                vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
-            )
             .add_file_filter_extensions("DCD (trajectory)", vec!["dcd"])
             .add_file_filter_extensions("XTC (trajectory)", vec!["xtc"])
             .add_file_filter_extensions("MDT (trajectory)", vec!["mdt"])
+            .add_file_filter_extensions("PMP (Phormacophore)", vec!["pmp"])
             //
             .add_save_extension("Protein (CIF)", "cif")
             .add_save_extension("Mol2", "mol2")
@@ -888,7 +885,8 @@ impl Default for FileDialogs {
             .add_save_extension("Prmtop", "prmtop")
             .add_save_extension("DCD", "dcd")
             .add_save_extension("XTC", "xtc")
-            .add_save_extension("MDT", "mdt"); // Our own trajectory format
+            .add_save_extension("MDT", "mdt") // Our own trajectory format
+            .add_save_extension("Phormacophore", "pmp"); // Our own phormacophore format
 
         let load = FileDialog::with_config(cfg_all.clone()).default_file_filter("All");
         let save = FileDialog::with_config(cfg_all).default_save_extension("Protein");

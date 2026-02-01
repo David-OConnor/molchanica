@@ -680,11 +680,6 @@ pub fn save(state: &mut State, path: &Path) -> io::Result<()> {
         _ => unimplemented!(),
     }
 
-    // todo: A/R
-    // state.update_history(path, OpenType::Ligand);
-    // // Save the open history.
-    // state.update_save_prefs(false);
-
     Ok(())
 }
 

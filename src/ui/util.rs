@@ -52,7 +52,20 @@ pub fn update_file_dialogs(
     if let Some(path) = &state.volatile.dialogs.save.take_picked() {
         match state.volatile.operating_mode {
             OperatingMode::Primary => state.save(path)?,
-            OperatingMode::MolEditor => mol_editor::save(state, path)?,
+            OperatingMode::MolEditor => {
+                let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
+                let extension = binding;
+
+                if extension == "pmp" {
+                    if let Err(e) =
+                        graphics::app_utils::save(path, &state.mol_editor.mol.pharmacophore)
+                    {
+                        handle_err(&mut state.ui, e.to_string());
+                    };
+                } else {
+                    mol_editor::save(state, path)?
+                }
+            }
             OperatingMode::ProteinEditor => (),
         }
     }

@@ -14,7 +14,6 @@ use lin_alg::{
 };
 use na_seq::Element;
 
-use crate::render::RADIUS_PHARMACOPHORE;
 use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
@@ -2165,7 +2164,7 @@ fn draw_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
             MESH_PHARMACOPHORE,
             feat.posit.instantaneous(&mol.common).into(),
             Quaternion::new_identity(),
-            RADIUS_PHARMACOPHORE, // todo A/R
+            feat.feature_type.disp_radius(),
             feat.feature_type.color(),
             ATOM_SHININESS,
         );

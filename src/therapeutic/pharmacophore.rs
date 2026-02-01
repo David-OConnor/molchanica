@@ -3,15 +3,17 @@
 //!
 //! https://www.eyesopen.com/rocs
 
-use std::fmt::Display;
-
-use lin_alg::f64::Vec3;
-
+use crate::therapeutic::pharmacophore;
 use crate::{
     mol_characterization::{MolCharacterization, RingType},
     molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
     render::Color,
 };
+use bincode::{Decode, Encode};
+use egui_file_dialog::FileDialog;
+use lin_alg::f64::Vec3;
+use std::fmt::Display;
+use std::io;
 
 #[derive(Clone, Debug)]
 pub struct Pocket {
@@ -21,33 +23,32 @@ pub struct Pocket {
 }
 
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
-#[derive(Debug, Clone, Copy, PartialEq, Default)] // Default is for the UI
+#[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)] // Default is for the UI
 pub enum PharmacophoreFeatureType {
     Hydrophobic,
     Hydrophilic,
     Aromatic,
     #[default]
     Acceptor,
-    AcceptorProjected,
+    // AcceptorProjected,
     Donor,
-    DonorProjected,
-    HeavyAtom,
-    Hydrophobe,
-    Ring,
-    RingNonPlanar,
-    RingPlanarProjected,
-    Purine,
-    Pyrimidine,
-    Adenine,
-    Cytosine,
-    Guanine,
-    Thymine,
-    Uracil,
-    Deoxyribose,
-    Ribose,
-    ExitVector,
-    Halogen,
-    Bromine,
+    // DonorProjected,
+    // HeavyAtom,
+    // Ring,
+    // RingNonPlanar,
+    // RingPlanarProjected,
+    // Purine,
+    // Pyrimidine,
+    // Adenine,
+    // Cytosine,
+    // Guanine,
+    // Thymine,
+    // Uracil,
+    // Deoxyribose,
+    // Ribose,
+    // ExitVector,
+    // Halogen,
+    // Bromine,
 }
 
 impl PharmacophoreFeatureType {
@@ -59,25 +60,24 @@ impl PharmacophoreFeatureType {
             /// Has significance in Pi bonding, e.g. stacked rings.
             Aromatic,
             Acceptor,
-            AcceptorProjected,
+            // AcceptorProjected,
             Donor,
-            DonorProjected,
-            HeavyAtom,
-            Hydrophobe,
-            Ring,
-            RingNonPlanar,
-            RingPlanarProjected,
-            Purine,
-            Pyrimidine,
-            Adenine,
-            Cytosine,
-            Guanine,
-            Thymine,
-            Uracil,
-            Deoxyribose,
-            Ribose,
-            ExitVector,
-            Halogen,
+            // DonorProjected,
+            // HeavyAtom,
+            // Ring,
+            // RingNonPlanar,
+            // RingPlanarProjected,
+            // Purine,
+            // Pyrimidine,
+            // Adenine,
+            // Cytosine,
+            // Guanine,
+            // Thymine,
+            // Uracil,
+            // Deoxyribose,
+            // Ribose,
+            // ExitVector,
+            // Halogen,
         ]
     }
 
@@ -100,21 +100,38 @@ impl PharmacophoreFeatureType {
             }
             Donor => {
                 let mut sites = Vec::new();
-                for donor in &char.h_bond_donor {
-                    sites.push(atoms[*donor].posit);
+                for v in &char.h_bond_donor {
+                    sites.push(atoms[*v].posit);
                 }
 
                 sites
             }
             Acceptor => {
                 let mut sites = Vec::new();
-                for acceptor in &char.h_bond_acceptor {
-                    sites.push(atoms[*acceptor].posit);
+                for v in &char.h_bond_acceptor {
+                    sites.push(atoms[*v].posit);
+                }
+
+                sites
+            }
+            Hydrophobic => {
+                let mut sites = Vec::new();
+                for v in &char.hydrophobic_carbon {
+                    sites.push(atoms[*v].posit);
                 }
 
                 sites
             }
             _ => Vec::new(),
+        }
+    }
+
+    pub fn disp_radius(self) -> f32 {
+        use PharmacophoreFeatureType::*;
+        match self {
+            Aromatic => 1.5,    // I.e. encompassing the ring visually.
+            Hydrophobic => 1.0, // todo: Likkely depends on the region.
+            _ => 0.6,
         }
     }
 }
@@ -134,17 +151,17 @@ impl PharmacophoreFeatureType {
         match self {
             Hydrophobic => (0., 0.8, 0.),
             Hydrophilic => (1., 1., 1.),
-            Aromatic => (0.4, 0.1, 0.8),
+            Aromatic => (0.4, 0.1, 0.8), // todo: Green?
             Acceptor => (1., 0.5, 0.2),
-            AcceptorProjected => (0., 1., 0.),
-            Donor => (1., 1., 1.),
-            DonorProjected => (1., 1., 1.),
+            // AcceptorProjected => (0., 1., 0.),
+            Donor => (1., 1., 1.), // todo: Red?
+            // DonorProjected => (1., 1., 1.),
             _ => (1., 0., 0.), // todo
         }
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Encode, Decode)]
 pub enum Position {
     /// Relative to what? Atom 0 of a target ligand? A reference atom in the pocket?
     Posit(Vec3),
@@ -171,21 +188,21 @@ impl Position {
 }
 
 /// A simple harmonic oscillator representing the pharmacophore.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct Oscillator {
     pub k_b: f32,
     pub max_displacement: f32,
     pub orientation: Vec3,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub enum Motion {
     Oscillator(Oscillator),
     /// A, C; one or more overlapping gaussians.
     Gaussian(Vec<(f32, f32)>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct PharmacophoreFeature {
     pub feature_type: PharmacophoreFeatureType,
     pub posit: Position,
@@ -218,7 +235,7 @@ impl Display for PharmacophoreFeature {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Encode, Decode)]
 pub struct Pharmacophore {
     pub pocket_vol: f32,
     pub features: Vec<PharmacophoreFeature>,
@@ -246,4 +263,53 @@ impl Pharmacophore {
     pub fn score(&self, mol: &MoleculeSmall) -> f32 {
         0.0
     }
+
+    /// Save to disk.
+    pub fn save(&self, dialog: &mut FileDialog, name_default: &str) -> io::Result<()> {
+        let fname_default = {
+            let ext_default = "pmp"; // A custom format
+
+            format!("{name_default}.{ext_default}")
+        };
+
+        dialog.config_mut().default_file_name = fname_default.to_string();
+        dialog.config_mut().default_file_filter = Some("PMP (Phormacophore)".to_owned());
+
+        dialog.save_file();
+
+        Ok(())
+    }
+}
+
+/// Handles adding the feature, the entity etc.
+pub fn add_pharmacophore(
+    mol: &mut MoleculeSmall,
+    feat_type: PharmacophoreFeatureType,
+    atom_i: usize,
+) {
+    // Ideally the user clicks a ring hint etc. Workaround for now.
+    let posit = if feat_type == PharmacophoreFeatureType::Aromatic {
+        // todo: Move this logic (if you keep it)
+        // todo: DOn't unwrap
+
+        let mut val = None;
+        for ring in &mol.characterization.as_ref().unwrap().rings {
+            if ring.atoms.contains(&atom_i) {
+                val = Some(&ring.atoms);
+                break;
+            }
+        }
+        match val {
+            Some(v) => Position::Atoms(v.to_owned()),
+            None => Position::Atom(atom_i),
+        }
+    } else {
+        Position::Atom(atom_i)
+    };
+
+    mol.pharmacophore.features.push(PharmacophoreFeature {
+        feature_type: feat_type,
+        posit,
+        ..Default::default()
+    });
 }

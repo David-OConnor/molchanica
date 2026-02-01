@@ -4,7 +4,7 @@ use std::f32::consts::TAU;
 
 use graphics::{
     Camera, EngineUpdates, GraphicsSettings, InputSettings, Lighting, Mesh, PointLight, RIGHT_VEC,
-    Scene, ScrollBehavior, UiLayout, UiSettings,
+    Scene, ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings,
 };
 use lin_alg::f32::{Quaternion, Vec3};
 
@@ -54,7 +54,6 @@ pub const WATER_BOND_THICKNESS: f32 = 0.1;
 pub const WATER_OPACITY: f32 = 1.;
 pub const PHARMACOPHORE_OPACITY: f32 = 0.3;
 pub const RADIUS_PHARMACOPHORE_HINT: f32 = 0.25;
-pub const RADIUS_PHARMACOPHORE: f32 = 0.5; // General / temp
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 
@@ -201,10 +200,12 @@ pub fn render(mut state: State) {
         background_color: BACKGROUND_COLOR,
         window_size: (WINDOW_SIZE_X, WINDOW_SIZE_Y),
         window_title: WINDOW_TITLE.to_owned(),
+        ..Default::default()
     };
 
     let ui_settings = UiSettings {
-        layout: UiLayout::Top,
+        layout_sides: UiLayoutSides::Left,
+        layout_top_bottom: UiLayoutTopBottom::Top,
         icon_path: Some("resources/icon.png".to_owned()),
     };
 
