@@ -149,10 +149,6 @@ impl Ring {
 fn count_disp(v: &mut String, count: usize, name: &str) {
     if count > 0 {
         *v += &format!(", {} {name}", count);
-        // For plurals.
-        // if count >= 2 {
-        //     *v += "s";
-        // }
     }
 }
 

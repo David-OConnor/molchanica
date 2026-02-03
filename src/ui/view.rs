@@ -209,6 +209,16 @@ pub fn view_settings(
                 *redraw_lipid = true;
             }
 
+            if !(state.ligands.is_empty() && state.pharmacophores.is_empty()) {
+                toggle_btn_inv(
+                    &mut state.ui.visibility.hide_pharmacophore,
+                    "Phar",
+                    "Show or hide pharmacophores",
+                    ui,
+                    redraw_lig,
+                );
+            }
+
             // vis_check(&mut state.ui.visibility.dim_peptide, "Dim peptide", ui, redraw);
 
             if state.peptide.is_some() {

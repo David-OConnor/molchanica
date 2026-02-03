@@ -258,6 +258,7 @@ pub struct StateVolatile {
     pub mol_manip: MolManip,
     /// For restoring after temprarily disabling mouse look.
     pub control_scheme_prev: ControlScheme,
+    pub orbit_center_prev: Option<(MolType, usize)>,
     /// We maintain a set of atom indices of peptides that are used in MD. This for example, might
     /// exclude hetero atoms and atoms not near a docking site. (mol i, atom i)
     pub md_peptide_selected: HashSet<(usize, usize)>,
@@ -301,6 +302,7 @@ impl Default for StateVolatile {
             active_mol: Default::default(),
             mol_manip: Default::default(),
             control_scheme_prev: Default::default(),
+            orbit_center_prev: Default::default(),
             md_peptide_selected: Default::default(),
             key_modifiers: Default::default(),
             operating_mode: Default::default(),
@@ -382,6 +384,7 @@ pub struct StateUi {
     pub color_surface_mesh: bool,
     /// Color ligands by molecule, to contrast.
     pub color_by_mol: bool,
+    // todo: Dedicated pharmacophore sub-state A/R.
     pub pharmacaphore_type: PharmacophoreFeatType,
 }
 
@@ -396,6 +399,7 @@ pub struct Visibility {
     pub hide_nucleic_acids: bool,
     pub hide_lipids: bool,
     pub hide_hydrogen: bool,
+    pub hide_pharmacophore: bool,
     pub hide_h_bonds: bool,
     pub dim_peptide: bool,
     pub hide_density_point_cloud: bool,
@@ -418,6 +422,7 @@ impl Default for Visibility {
             hide_nucleic_acids: false,
             hide_lipids: false,
             hide_hydrogen: true,
+            hide_pharmacophore: true,
             hide_h_bonds: false,
             dim_peptide: false,
             hide_density_point_cloud: false,
@@ -432,7 +437,7 @@ impl Default for Visibility {
 }
 
 /// Defines which UI popups are displayed.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PopupState {
     pub show_get_geostd: bool,
     pub show_associated_structures: bool,
@@ -444,6 +449,7 @@ pub struct PopupState {
     pub metadata: Option<(MolType, usize)>,
     pub alignment: bool,
     pub alignment_screening: bool,
+    pub pharmacophore_boolean: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]

@@ -34,7 +34,7 @@ use crate::{
     },
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, State, StateUi},
-    util::find_neighbor_posit,
+    util::{find_neighbor_posit, orbit_center},
 };
 
 pub const INIT_CAM_DIST: f32 = 20.;
@@ -449,6 +449,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     }
 
     state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
+    state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
 
     // Reset positions to be around the origin.
     state.mol_editor.move_to_origin();
@@ -503,6 +504,8 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut
     state.volatile.mol_manip.mode = ManipMode::None;
 
     scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
+    state.volatile.orbit_center = state.volatile.orbit_center_prev;
+
     scene.camera = state.volatile.primary_mode_cam.clone();
 
     // Load all primary molecules into the engine.
@@ -525,7 +528,9 @@ pub fn redraw(
     manip_mode: ManipMode,
     num_ligs: usize,
 ) {
-    entities.retain(|e| e.class != EntityClass::Ligand as u32);
+    entities.retain(|e| {
+        e.class != EntityClass::Ligand as u32 && e.class != EntityClass::Pharmacophore as u32
+    });
 
     entities.extend(draw_mol(
         MolGenericRef::Small(mol),

@@ -39,11 +39,9 @@ fn helper_b(
     ent_i_start: usize,
     mol_type: MolType,
 ) {
-    if entities.len() == initial_ent_count {
-        for (i, ent) in scene.entities[ent_i_start..ent_i_start + initial_ent_count]
-            .iter_mut()
-            .enumerate()
-        {
+    let end = ent_i_start + initial_ent_count;
+    if entities.len() == initial_ent_count && end <= scene.entities.len() {
+        for (i, ent) in scene.entities[ent_i_start..end].iter_mut().enumerate() {
             // This must include all fields which have changed.
             ent.position = entities[i].position;
             ent.orientation = entities[i].orientation;
@@ -62,9 +60,12 @@ fn helper_b(
 }
 
 pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
-    // draw_all_mol_of_type(state, scene, &mut state.ligands, MolType::ligand, state.ui.visibility.hide_ligands);
     let class = EntityClass::Ligand as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
+
+    // scene
+    //     .entities
+    //     .retain(|ent| ent.class != EntityClass::Pharmacophore as u32);
 
     if state.ui.visibility.hide_ligand {
         return;
@@ -275,6 +276,11 @@ fn update_inplace_inner(
             ents_updated.len(),
             ent_i_end - ent_i_start
         );
+        return;
+    }
+
+    if ent_i_end > scene.entities.len() {
+        eprintln!("Error: Entity count out of bonds: {ent_i_end}",);
         return;
     }
 

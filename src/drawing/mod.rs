@@ -18,7 +18,7 @@ use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
     molecules::{
-        Atom, AtomRole, Chain, MolGenericRef, MolType, MoleculePeptide, Residue,
+        Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
         small::MoleculeSmall,
     },
     reflection::DensityPt,
@@ -232,13 +232,14 @@ pub enum EntityClass {
     SaSurfaceDots = 8,
     DockingSite = 9,
     WaterModel = 10,
-    PharmacophoreHint = 11,
-    Other = 12,
+    Pharmacophore = 11,
+    PharmacophoreHint = 12,
+    Other = 99,
 }
 
 // todo: For ligands that are flexible, highlight the fleixble bonds in a bright color.
 
-fn blend_color(color_0: Color, color_1: Color, portion: f32) -> Color {
+pub fn blend_color(color_0: Color, color_1: Color, portion: f32) -> Color {
     (
         map_linear(portion, (0., 1.), (color_0.0, color_1.0)),
         map_linear(portion, (0., 1.), (color_0.1, color_1.1)),
@@ -1265,8 +1266,10 @@ pub fn draw_mol(
             );
         }
 
-        if let MolGenericRef::Small(m) = &mol {
-            result.extend(draw_pharmacophore(m));
+        if let MolGenericRef::Small(m) = &mol
+            && (!ui.visibility.hide_pharmacophore || mode == OperatingMode::MolEditor)
+        {
+            result.extend(draw_mol_pharmacophore(m));
         }
 
         result.extend(entities);
@@ -2156,14 +2159,18 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
 
 /// Note: We currently have this combined with the same call time and entity class as other
 /// small mols.
-fn draw_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
+fn draw_mol_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
     let mut res = Vec::new();
 
     for feat in &mol.pharmacophore.features {
+        let posit: Vec3 = feat
+            .posit_from_atoms(&mol.common.atom_posits)
+            .unwrap_or(feat.posit)
+            .into();
+
         let mut ent = Entity::new(
             MESH_PHARMACOPHORE,
-            // feat.posit.absolute(&mol.common.atom_posits).into(),
-            feat.posit.into(),
+            posit,
             Quaternion::new_identity(),
             feat.feature_type.disp_radius(),
             feat.feature_type.color(),
@@ -2171,7 +2178,8 @@ fn draw_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
         );
 
         ent.opacity = PHARMACOPHORE_OPACITY;
-        ent.class = EntityClass::Ligand as u32; // todo: A/R
+        // ent.class = EntityClass::Pharmacophore as u32;
+        ent.class = EntityClass::Ligand as u32;
         res.push(ent);
     }
 

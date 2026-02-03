@@ -5,6 +5,8 @@ in sets and nested deep. Unpack and flatten.
 Run with cli_args of the zinc "H" folder names.
 
 This  is set up for the Curl download format; other formats use different packing.
+
+Run with the  `-h_folders argument`
 """
 
 import argparse

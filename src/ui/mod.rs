@@ -5,16 +5,16 @@ use std::{
 };
 
 use bio_apis::{pubchem::find_cids_from_search, rcsb};
-use bio_files::{DensityMap, ResidueType, density_from_2fo_fc_rcsb_gemmi};
+use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
-    Align, Color32, ComboBox, Context, Key, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText,
-    Slider, TextEdit, TextFormat, TextStyle, TopBottomPanel, Ui, text::LayoutJob,
+    Color32, ComboBox, Context, Key, RichText, Slider, TextEdit, TextFormat, TextStyle,
+    TopBottomPanel, Ui, text::LayoutJob,
 };
-use graphics::{ControlScheme, EngineUpdates, Mesh, Scene};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f32::Vec3;
 use md::md_setup;
 use mol_data::display_mol_data;
-use na_seq::{AaIdent, Element};
+use na_seq::Element;
 use popups::load_popups;
 
 use crate::{
@@ -30,21 +30,21 @@ use crate::{
         download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
         gemmi_path,
     },
-    inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     mol_editor::enter_edit_mode,
     molecules::{MolGenericRef, MolIdent},
     render::set_flashlight,
     selection::{Selection, ViewSelLevel},
-    state::{CamSnapshot, MsaaSetting, OperatingMode, ResColoring, State},
+    state::{CamSnapshot, OperatingMode, ResColoring, State},
     ui::{
         misc::section_box,
-        mol_data::{display_mol_data_peptide, metadata_disp},
+        mol_data::{display_mol_data_peptide, metadata},
         mol_type_tools::mol_type_toolbars,
         orca::orca_input,
-        rama_plot::plot_rama,
-        recent_files::recent_files,
         sidebar::sidebar,
-        util::{handle_redraw, init_with_scene, open_lig_from_input, update_file_dialogs},
+        util::{
+            color_egui_from_f32, handle_redraw, init_with_scene, open_lig_from_input,
+            update_file_dialogs,
+        },
         view::{ui_section_vis, view_settings},
     },
     util::{
@@ -53,12 +53,14 @@ use crate::{
     },
 };
 
+mod char_adme;
 mod md;
 pub mod misc;
 mod mol_data;
 mod mol_editor;
 mod mol_type_tools;
 mod orca;
+mod pharmacophore;
 mod popups;
 mod rama_plot;
 mod recent_files;
@@ -753,219 +755,6 @@ fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {
     }
 }
 
-fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
-    let popup_id = ui.make_persistent_id("settings_popup");
-    Popup::new(
-        popup_id,
-        ui.ctx().clone(),
-        PopupAnchor::Position(Pos2::new(60., 60.)),
-        ui.layer_id(),
-    )
-    .align(RectAlign::TOP)
-    .open(true)
-    .gap(4.0)
-    .show(|ui| {
-        ui.horizontal(|ui| {
-            ui.heading("Settings");
-            ui.add_space(COL_SPACING);
-            // todo: Make this consistent with your other controls.
-            ui.label("MSAA (Restart the program to take effect):");
-
-            let msaa_prev = state.to_save.msaa;
-            ComboBox::from_id_salt(10)
-                .width(40.)
-                .selected_text(state.to_save.msaa.to_str())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut state.to_save.msaa,
-                        MsaaSetting::None,
-                        MsaaSetting::None.to_str(),
-                    );
-                    ui.selectable_value(
-                        &mut state.to_save.msaa,
-                        MsaaSetting::Four,
-                        MsaaSetting::Four.to_str(),
-                    );
-                });
-
-            if state.to_save.msaa != msaa_prev {
-                state.update_save_prefs(false);
-            }
-
-            ui.add_space(COL_SPACING);
-            ui.label("Cam move speed:");
-            if ui
-                .add(TextEdit::singleline(&mut state.ui.movement_speed_input).desired_width(32.))
-                .changed()
-            {
-                if let Ok(v) = &mut state.ui.movement_speed_input.parse::<u8>() {
-                    state.to_save.movement_speed = *v;
-                    scene.input_settings.move_sens = *v as f32;
-
-                    state.update_save_prefs(false);
-                } else {
-                    // reset
-                    state.ui.movement_speed_input = state.to_save.movement_speed.to_string();
-                }
-            }
-
-            ui.add_space(COL_SPACING / 2.);
-            ui.label("Cam rot sensitivity:");
-            if ui
-                .add(TextEdit::singleline(&mut state.ui.rotation_sens_input).desired_width(32.))
-                .changed()
-            {
-                if let Ok(v) = &mut state.ui.rotation_sens_input.parse::<u8>() {
-                    state.to_save.rotation_sens = *v;
-                    scene.input_settings.rotate_sens = *v as f32 / 100.;
-
-                    state.update_save_prefs(false);
-                } else {
-                    // reset
-                    state.ui.rotation_sens_input = state.to_save.rotation_sens.to_string();
-                }
-            }
-
-            ui.add_space(COL_SPACING);
-            ui.label("Mol scroll move speed:").on_hover_text(
-                "When using the scroll wheel to move molecules, this controls how fast they move.",
-            );
-            if ui
-                .add(TextEdit::singleline(&mut state.ui.mol_move_sens_input).desired_width(32.))
-                .changed()
-            {
-                if let Ok(v) = &mut state.ui.mol_move_sens_input.parse::<u8>() {
-                    state.to_save.mol_move_sens = *v;
-                    state.update_save_prefs(false);
-                } else {
-                    // reset
-                    state.ui.mol_move_sens_input = state.to_save.mol_move_sens.to_string();
-                }
-            }
-
-            ui.add_space(COL_SPACING / 2.);
-            if ui.button("Reset sensitivities").clicked() {
-                state.to_save.movement_speed = MOVEMENT_SENS as u8;
-                state.ui.movement_speed_input = state.to_save.movement_speed.to_string();
-                scene.input_settings.move_sens = MOVEMENT_SENS;
-
-                state.to_save.rotation_sens = (ROTATE_SENS * 100.) as u8;
-                state.ui.rotation_sens_input = state.to_save.rotation_sens.to_string();
-                scene.input_settings.rotate_sens = ROTATE_SENS;
-
-                state.to_save.mol_move_sens = (SENS_MOL_MOVE_SCROLL * 1_000.) as u8;
-                state.ui.mol_move_sens_input = state.to_save.mol_move_sens.to_string();
-
-                state.update_save_prefs(false);
-            }
-        });
-
-        ui.add_space(ROW_SPACING);
-
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            state.ui.popup.show_settings = false;
-        }
-    });
-}
-
-fn residue_selector(state: &mut State, scene: &mut Scene, ui: &mut Ui, redraw: &mut bool) {
-    let popup_id = ui.make_persistent_id("res_popup");
-    Popup::new(
-        popup_id,
-        ui.ctx().clone(),
-        PopupAnchor::Position(Pos2::new(60., 60.)),
-        ui.layer_id(),
-    )
-    .align(RectAlign::TOP)
-    .open(true)
-    .width(1_000.)
-    .gap(4.0)
-    .show(|ui| {
-        ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
-            if ui
-                .button(RichText::new("Close").color(Color32::LIGHT_RED))
-                .clicked()
-            {
-                state.ui.popup.residue_selector = false;
-                state.ui.chain_to_pick_res = None;
-            }
-        });
-        ui.add_space(ROW_SPACING);
-        // This is a bit fuzzy, as the size varies by residue name (Not always 1 for non-AAs), and index digits.
-
-        let mut update_arc_center = false;
-
-        if let Some(mol) = &state.peptide {
-            if let Some(chain_i) = state.ui.chain_to_pick_res {
-                if chain_i >= mol.chains.len() {
-                    return;
-                }
-                let chain = &mol.chains[chain_i];
-
-                ui.add_space(ROW_SPACING);
-
-                // todo: Wrap not working in popup?
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-
-                    for (i, res) in mol.residues.iter().enumerate() {
-                        if i > 800 {
-                            break; // todo: Temp workaround to display blocking
-                        }
-                        // For now, peptide residues only.
-                        if let ResidueType::Water = res.res_type {
-                            continue;
-                        }
-
-                        // Only let the user select residue from the selected chain. This should keep
-                        // it more organized, and keep UI space used down.
-                        if !chain.residues.contains(&i) {
-                            continue;
-                        }
-
-                        let name = match &res.res_type {
-                            ResidueType::AminoAcid(aa) => aa.to_str(AaIdent::OneLetter),
-                            ResidueType::Water => "Water".to_owned(),
-                            ResidueType::Other(name) => name.clone(),
-                        };
-
-                        let mut color = Color32::GRAY;
-                        if let Selection::Residue(sel_i) = state.ui.selection {
-                            if sel_i == i {
-                                color = COLOR_ACTIVE;
-                            }
-                        }
-                        if ui
-                            .button(
-                                RichText::new(format!("{} {name}", res.serial_number))
-                                    .size(10.)
-                                    .color(color),
-                            )
-                            .clicked()
-                        {
-                            state.ui.view_sel_level = ViewSelLevel::Residue;
-                            state.ui.selection = Selection::Residue(i);
-
-                            update_arc_center = true; // Avoids borrow error.
-
-                            *redraw = true;
-                        }
-                    }
-                });
-            }
-        }
-
-        if update_arc_center {
-            if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
-                *center = orbit_center(state);
-            }
-        }
-    });
-}
-
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> EngineUpdates {
@@ -1017,35 +806,13 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             }
 
             state.mol_editor.md_step(&state.dev, &mut scene.entities, &state.ui,
-                                     &mut engine_updates, state.volatile.mol_manip.mode,);
+                                     &mut engine_updates, state.volatile.mol_manip.mode, );
+
+            load_popups(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut reset_cam, &mut engine_updates);
+
             return;
         }
 
-        // Launch popups as required ----------
-        if state.ui.popup.show_settings {
-            settings(state, scene, ui);
-        }
-
-        if state.ui.popup.residue_selector {
-            // todo: Show hide based on AaCategory? i.e. residue.amino_acid.category(). Hydrophilic, acidic etc.
-            residue_selector(state, scene, ui, &mut redraw_peptide);
-        }
-
-        if state.ui.popup.recent_files {
-            recent_files(state, scene, ui, &mut engine_updates);
-        }
-
-        if state.ui.popup.rama_plot {
-            if let Some(mol) = &state.peptide {
-                plot_rama(&mol.residues, &mol.common.ident, ui, &mut state.ui.popup.rama_plot);
-            }
-        }
-
-        if let Some((mol_type, i)) = state.ui.popup.metadata {
-            metadata_disp(mol_type, i, state, ui);
-        }
-
-        // -----------
 
         ui.horizontal(|ui| {
             let color_settings = if state.ui.popup.show_settings {
@@ -1291,7 +1058,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         }
                     }
                 }
-            } else if state.ui.db_input.len() >= 5 && !inp_lower.starts_with("pdb_")&& !inp_lower.starts_with("db") {
+            } else if state.ui.db_input.len() >= 5 && !inp_lower.starts_with("pdb_") && !inp_lower.starts_with("db") {
                 let button_clicked = ui.button("Search PubChem").clicked();
                 if button_clicked || enter_pressed {
                     let cids = find_cids_from_search(&state.ui.db_input.trim(), false);
@@ -1362,7 +1129,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 display_mol_data(state, ui);
             }
 
-            if state.ligands.len() >= 2 &&ui.button("Align")
+            if state.ligands.len() >= 2 && ui.button("Align")
                 .on_hover_text("Perform flexible alignment on two opened small molecules. This button opens a \
                 window which lets you configure and run this alignment, then view the resulting 3D conformations,\
                 and similarity metrics.")
@@ -1374,10 +1141,9 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 }
             }
 
-            if  ui.button("Alignment screen")
+            if ui.button("Alignment screen")
                 .on_hover_text("Perform a fast small molecule alignment screening from all \
                 files in a selected folder").clicked() {
-
                 state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
             }
         });
@@ -1439,7 +1205,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         if state.ui.ui_vis.smiles {
             if let Some(mol) = &state.active_mol() &&
                 let MolGenericRef::Small(m) = mol {
-
                 for ident in &m.idents {
                     if let MolIdent::Smiles(smiles) = ident {
                         draw_smiles(smiles, ui);
@@ -1551,8 +1316,7 @@ fn draw_smiles(v: &str, ui: &mut Ui) {
                     if e == Element::Nitrogen {
                         Color32::from_rgb(110, 110, 255)
                     } else {
-                        let (r, g, b) = e.color();
-                        Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8)
+                        color_egui_from_f32(e.color())
                     }
                 }
                 _ => Color32::GRAY,
@@ -1709,7 +1473,7 @@ pub(crate) fn cam_controls(
                 ui.add(Slider::new(
                     &mut state.ui.view_depth.1,
                     FOG_DIST_MIN..=FOG_DIST_MAX,
-                )).on_hover_text(hover_text)    ;
+                )).on_hover_text(hover_text);
 
                 if state.ui.view_depth != depth_prev {
                     // Interpret the slider being at min or max position to mean (effectively) unlimited.

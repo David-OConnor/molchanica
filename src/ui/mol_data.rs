@@ -19,7 +19,7 @@ use crate::{
     },
     selection::Selection,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, mol_descrip},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, mol_descrip, popups},
     util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
 
@@ -873,9 +873,7 @@ pub(in crate::ui) fn display_mol_data(
 }
 
 /// Display metadata stored for a given molecule.
-pub(super) fn metadata_disp(mol_type: MolType, i: usize, state: &mut State, ui: &mut Ui) {
-    let popup_id = ui.make_persistent_id("metadata_popup");
-
+pub(super) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui: &mut Ui) {
     let mol = match mol_type {
         MolType::Peptide => {
             if state.peptide.is_none() {
@@ -904,37 +902,5 @@ pub(super) fn metadata_disp(mol_type: MolType, i: usize, state: &mut State, ui: 
         _ => return,
     };
 
-    Popup::new(
-        popup_id,
-        ui.ctx().clone(),
-        PopupAnchor::Position(Pos2::new(60., 60.)),
-        ui.layer_id(),
-    )
-    .align(RectAlign::TOP)
-    .open(true)
-    .gap(4.0)
-    .show(|ui| {
-        ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
-            if ui
-                .button(RichText::new("Close").color(Color32::LIGHT_RED))
-                .clicked()
-            {
-                state.ui.popup.metadata = None;
-            }
-        });
-
-        ui.heading(RichText::new(format!("Metadata for {}", mol.ident)).color(Color32::WHITE));
-        ui.add_space(ROW_SPACING);
-
-        ScrollArea::vertical()
-            .min_scrolled_height(800.0)
-            .show(ui, |ui| {
-                for (k, v) in mol.metadata.iter() {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("{k}: ")));
-                        label!(ui, v.to_string(), Color32::WHITE);
-                    });
-                }
-            });
-    });
+    popups::metadata_popup(&mut state.ui.popup, mol, ui);
 }

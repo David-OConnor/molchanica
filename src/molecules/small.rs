@@ -807,8 +807,8 @@ fn pharmacophore_from_biofiles(
 
     Ok(Pharmacophore {
         name: ident.to_string(),
-        pocket_vol: 0.,
         features,
+        ..Default::default()
     })
 }
 

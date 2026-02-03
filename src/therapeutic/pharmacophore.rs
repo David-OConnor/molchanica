@@ -3,11 +3,12 @@
 //!
 //! https://www.eyesopen.com/rocs
 
-use std::{fmt::Display, io, io::ErrorKind};
+use std::{collections::HashMap, fmt::Display, io, io::ErrorKind};
 
 use bincode::{Decode, Encode};
 use bio_files::PharmacophoreTypeGeneric;
 use egui_file_dialog::FileDialog;
+use graphics::Mesh;
 use lin_alg::f64::Vec3;
 
 use crate::{
@@ -27,18 +28,19 @@ pub struct Pocket {
 }
 
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
-#[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)] // Default is for the UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode, Hash, PartialOrd, Ord)] // Default is for the UI
 pub enum PharmacophoreFeatType {
     Hydrophobic,
     Hydrophilic,
     Aromatic,
     #[default]
     Acceptor,
-    // AcceptorProjected,
+    AcceptorProjected,
     Donor,
     Cation,
     Anion,
-    // DonorProjected,
+    /// Directional.
+    DonorProjected,
     // HeavyAtom,
     // Ring,
     // RingNonPlanar,
@@ -66,12 +68,14 @@ impl PharmacophoreFeatType {
             /// Has significance in Pi bonding, e.g. stacked rings.
             Aromatic,
             Acceptor,
-            // AcceptorProjected,
+            AcceptorProjected, // Directional
             Donor,
             Cation,
             Anion,
-            // DonorProjected,
+            DonorProjected, // Directional
             // HeavyAtom,
+            // PlanarAtom,
+            // NCNPlus,
             // Ring,
             // RingNonPlanar,
             // RingPlanarProjected,
@@ -86,6 +90,14 @@ impl PharmacophoreFeatType {
             // Ribose,
             // ExitVector,
             // Halogen,
+            // PiRingCenter,
+            // AromaticOrPiRingNormal
+            // MetalLigator,
+            // MetalLigatorProjection
+            // Link source
+            // Link projection
+            // VolumeConstraint,
+
         ]
     }
 
@@ -138,7 +150,8 @@ impl PharmacophoreFeatType {
     pub fn disp_radius(self) -> f32 {
         use PharmacophoreFeatType::*;
         match self {
-            Aromatic => 1.5,    // I.e. encompassing the ring visually.
+            // Fits inside the drawn ring bonds.
+            Aromatic => 1.05,
             Hydrophobic => 1.0, // todo: Likkely depends on the region.
             _ => 0.6,
         }
@@ -166,8 +179,8 @@ impl PharmacophoreFeatType {
             Hydrophobic => PharmacophoreTypeGeneric::Acceptor,
             Hydrophilic => PharmacophoreTypeGeneric::Hydrophobic,
             Aromatic => PharmacophoreTypeGeneric::Aromatic,
-            Acceptor => PharmacophoreTypeGeneric::Acceptor,
-            Donor => PharmacophoreTypeGeneric::Donor,
+            Acceptor | AcceptorProjected => PharmacophoreTypeGeneric::Acceptor,
+            Donor | DonorProjected => PharmacophoreTypeGeneric::Donor,
             Cation => PharmacophoreTypeGeneric::Cation,
             Anion => PharmacophoreTypeGeneric::Anion,
         }
@@ -270,30 +283,53 @@ pub enum Motion {
     Gaussian(Vec<(f32, f32)>),
 }
 
+// /// Simple; only allow for a second one.
+// #[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
+// pub enum FeatureAdditional {
+//     And(PharmacophoreFeatType),
+//     Or(PharmacophoreFeatType),
+//     Not(PharmacophoreFeatType),
+// }
+
+/// Relates two features, e.g. colocated ones.
+#[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
+pub enum FeatureRelation {
+    And((usize, usize)),
+    Or((usize, usize)),
+    // Not(PharmacophoreFeatType),
+}
+
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct PharmacophoreFeature {
     pub feature_type: PharmacophoreFeatType,
-    // pub posit: Position,
+    // pub feature_type_additional: FeatureAdditional,
     pub posit: Vec3,
+    // Note: For these projections, we can't easily add them as an inner value of FeatureType,
+    // without adding a way to hash and sort them for certain uses.
+    pub posit_projected: Option<Vec3>,
     /// Used when associating with a specific atom.
     pub atom_i: Option<Vec<usize>>,
+    pub atom_i_projected: Option<usize>,
     pub strength: f32,
     pub tolerance: f32,
     // pub radius: f32,
     pub oscillation: Option<Motion>,
+    pub ui_selected: bool,
 }
 
 impl Default for PharmacophoreFeature {
     fn default() -> Self {
         Self {
             feature_type: PharmacophoreFeatType::default(),
-            // posit: Position::Atom(0), // todo?
             posit: Vec3::new_zero(),
+            posit_projected: None,
             atom_i: None,
+            atom_i_projected: None,
             strength: 1.0, // todo?
             tolerance: 1.0,
             // radius: 1.0,
             oscillation: None,
+            ui_selected: false,
         }
     }
 }
@@ -308,11 +344,56 @@ impl Display for PharmacophoreFeature {
     }
 }
 
+impl PharmacophoreFeature {
+    /// Get the absolute position from atoms, if available.
+    /// If multiple atoms, e.g. a ring, get the center.
+    pub fn posit_from_atoms(&self, atom_posits: &[Vec3]) -> Option<Vec3> {
+        let Some(atom_i) = &self.atom_i else {
+            return None;
+        };
+
+        let mut result = Vec3::new_zero();
+        for i in atom_i {
+            if *i >= atom_posits.len() {
+                eprintln!("Error: Atom index out of bounds when getting pharmacophore posit");
+                return None;
+            }
+
+            result += atom_posits[*i];
+        }
+
+        Some(result / atom_i.len() as f64)
+    }
+}
+
+/// Generally the area taken up by protein atoms in the pocket + their VDW radius.
+///
+/// Note: We could take various approaches including voxels, spheres,  gaussians etc.
+/// Our goal is to represent a 3D space accurately, with fast determiniation if a point is
+/// inside or outside the volume. We must be also be able to generate these easily from atom coordinates
+/// in a protein.
+///
+/// We use meshes for visualization, but not membership determination, and we don't serialize these.
+/// todo: Manual encode/decode, without serializing the meshes. Generate the mesh from the primary representation
+/// the first time we display it in the UI.
+#[derive(Clone, Debug, Default, Encode, Decode)]
+pub struct ExcludedVolume {
+    // todo: Actual data
+    pub mesh: Option<Mesh>,
+}
+
+impl ExcludedVolume {
+    pub fn inside(&self, point: Vec3) -> bool {
+        false // todo
+    }
+}
+
 #[derive(Clone, Debug, Default, Encode, Decode)]
 pub struct Pharmacophore {
     pub name: String,
-    pub pocket_vol: f32,
     pub features: Vec<PharmacophoreFeature>,
+    pub feature_relations: Vec<FeatureRelation>,
+    pub excluded_volume: Option<ExcludedVolume>,
 }
 
 impl Pharmacophore {
@@ -416,17 +497,6 @@ impl Pharmacophore {
             score *= match_frac / 0.4;
         }
 
-        // Optional: pocket volume penalty (soft).
-        if self.pocket_vol > 0.0 && char.volume > 0.0 {
-            let ratio = (char.volume / self.pocket_vol) as f64;
-            if ratio > 1.0 {
-                // Soft penalty that ramps as ligand exceeds pocket.
-                let x = ratio - 1.0;
-                let penalty = (-(2.0 * x * x)).exp() as f32;
-                score *= penalty;
-            }
-        }
-
         score.clamp(0.0, 1.0)
     }
 
@@ -445,6 +515,24 @@ impl Pharmacophore {
 
         Ok(())
     }
+
+    /// Terse
+    pub fn summary(&self) -> String {
+        let mut feat_counts = HashMap::new();
+        for feat in &self.features {
+            *feat_counts.entry(feat.feature_type).or_insert(0) += 1;
+        }
+
+        let mut items: Vec<_> = feat_counts.into_iter().collect();
+        items.sort_by(|(a_ft, _), (b_ft, _)| a_ft.cmp(b_ft));
+
+        let mut res = String::new();
+        for (ft, count) in items {
+            res += &format!("{ft}: {count} ");
+        }
+
+        res
+    }
 }
 
 /// Handles adding the feature, the entity etc.
@@ -454,7 +542,7 @@ pub fn add_pharmacophore(
     atom_i: usize,
 ) -> io::Result<()> {
     // Ideally the user clicks a ring hint etc. Workaround for now.
-    let posit = if feat_type == PharmacophoreFeatType::Aromatic {
+    let posit = if feat_type == Aromatic {
         // todo: Move this logic (if you keep it)
         // todo: DOn't unwrap
 

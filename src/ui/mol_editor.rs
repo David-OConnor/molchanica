@@ -1,10 +1,8 @@
-use std::{io, sync::atomic::Ordering};
+use std::sync::atomic::Ordering;
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
-use egui_file_dialog::FileDialog;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
-use lin_alg::f32::{Quaternion, Vec3};
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
@@ -12,10 +10,7 @@ use na_seq::{
 
 use crate::{
     cam::cam_reset_controls,
-    drawing,
-    drawing::{EntityClass, MESH_PHARMACOPHORE, MoleculeView},
-    label,
-    mol_characterization::RingType,
+    drawing::MoleculeView,
     mol_editor,
     mol_editor::{
         add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
@@ -25,19 +20,16 @@ use crate::{
     mol_manip,
     mol_manip::ManipMode,
     molecules::{Bond, MolIdent, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
-    render::{ATOM_SHININESS, PHARMACOPHORE_OPACITY, RADIUS_PHARMACOPHORE_HINT},
     selection::{Selection, ViewSelLevel},
     state::{State, StateUi},
-    therapeutic::{
-        pharmacophore,
-        pharmacophore::{PharmacophoreFeatType, PharmacophoreFeature, add_pharmacophore},
-    },
+    ui,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
         md::energy_disp,
         misc,
         misc::{active_color, section_box},
         mol_data::selected_data,
+        util::color_egui_from_f32,
     },
     util::handle_err,
 };
@@ -68,16 +60,11 @@ fn change_el_button(
     rebuild_md: &mut bool,
     manip_mode: ManipMode,
 ) {
-    let (r, g, b) = el.color();
-    let r = (r * 255.) as u8;
-    let g = (g * 255.) as u8;
-    let b = (b * 255.) as u8;
-
     // N's default blue is too dark against the button's background.
     let color = if el == Nitrogen {
         Color32::from_rgb(130, 130, 255)
     } else {
-        Color32::from_rgb(r, g, b)
+        color_egui_from_f32(el.color())
     };
 
     if ui
@@ -390,7 +377,7 @@ pub(in crate::ui) fn editor(
         }
     });
 
-    pharmacophore_tools(state, scene, ui, engine_updates, &mut redraw);
+    ui::pharmacophore::pharmacophore_edit_tools(state, scene, ui, engine_updates, &mut redraw);
 
     ui.horizontal(|ui| {
         for ident in &state.mol_editor.mol.idents {
@@ -511,88 +498,6 @@ fn bond_edit_tools(
         *rebuild_md = true;
         *rebuild_ff_params = true;
     }
-}
-
-// todo: New module for ui pharmacophore.
-fn pharmacophore_tools(
-    state: &mut State,
-    scene: &mut Scene,
-    ui: &mut Ui,
-    engine_updates: &mut EngineUpdates,
-    redraw: &mut bool,
-) {
-    ui.horizontal(|ui| {
-        label!(ui, "Pharmacophore: ", Color32::WHITE);
-
-        let prev = state.ui.pharmacaphore_type;
-        ComboBox::from_id_salt(11123)
-            .width(120.)
-            .selected_text(state.ui.pharmacaphore_type.to_string())
-            .show_ui(ui, |ui| {
-                for v in PharmacophoreFeatType::all() {
-                    ui.selectable_value(&mut state.ui.pharmacaphore_type, v, v.to_string());
-                }
-            });
-
-        if state.ui.pharmacaphore_type != prev {
-            let mol = &state.mol_editor.mol;
-
-            let Some(char) = &mol.characterization else {
-                eprintln!("Missing char on mol editor when changing pharmacophore type.");
-                return;
-            };
-
-            let hint_sites = state
-                .ui
-                .pharmacaphore_type
-                .hint_sites(char, &mol.common.atom_posits);
-
-            drawing::draw_pharmacophore_hint_sites(
-                &mut scene.entities,
-                &hint_sites,
-                engine_updates,
-            );
-        }
-
-        if let Selection::AtomLig((_mol_i, atom_i)) = &state.ui.selection {
-            if ui
-                .button(RichText::new("Add pharmacophore").color(COLOR_ACTION))
-                .clicked()
-            {
-                if add_pharmacophore(
-                    &mut state.mol_editor.mol,
-                    state.ui.pharmacaphore_type,
-                    *atom_i,
-                )
-                .is_err()
-                {
-                    eprintln!("Error adding pharmacophore feature.");
-                };
-
-                *redraw = true;
-            }
-        }
-
-        if !state.mol_editor.mol.pharmacophore.features.is_empty() {
-            if ui
-                .button(RichText::new("Save"))
-                .on_hover_text("Save the pharmacophore to a file.")
-                .clicked()
-            {
-                let name = &state.mol_editor.mol.common.ident;
-
-                if state
-                    .mol_editor
-                    .mol
-                    .pharmacophore
-                    .save(&mut state.volatile.dialogs.save, name)
-                    .is_err()
-                {
-                    handle_err(&mut state.ui, "Problem saving the pharmacophore".to_owned());
-                }
-            }
-        }
-    });
 }
 
 fn edit_tools(

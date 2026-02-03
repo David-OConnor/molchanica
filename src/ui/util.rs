@@ -1,6 +1,6 @@
 use std::io;
 
-use egui::Ui;
+use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     },
     mol_editor,
     molecules::{MoleculeGeneric, small::MoleculeSmall},
-    render::{set_flashlight, set_static_light},
+    render::{Color, set_flashlight, set_static_light},
     state::{OperatingMode, State},
     ui::set_window_title,
     util::{handle_err, reset_orbit_center},
@@ -176,4 +176,9 @@ macro_rules! label {
     ($ui:expr, $text:expr, $color:expr) => {
         $ui.label(egui::RichText::new($text).color($color))
     };
+}
+
+pub fn color_egui_from_f32(c: Color) -> Color32 {
+    let (r, g, b) = c;
+    Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8)
 }
