@@ -8,7 +8,8 @@ use std::{
 
 use bincode::{
     BorrowDecode, Decode, Encode,
-    de::BorrowDecoder,
+    de::{BorrowDecoder, Decoder},
+    enc::Encoder,
     error::{DecodeError, EncodeError},
 };
 use bio_apis::{
@@ -78,7 +79,7 @@ pub struct OpenHistory {
 
 // Manual bincode impls
 impl Encode for OpenHistory {
-    fn encode<E: bincode::enc::Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         // Store timestamp as i64 (seconds since Unix epoch)
         let ts = self.timestamp.timestamp();
         ts.encode(encoder)?;
@@ -93,7 +94,7 @@ impl Encode for OpenHistory {
 }
 
 impl<T> Decode<T> for OpenHistory {
-    fn decode<D: bincode::de::Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
+    fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
         let ts = i64::decode(decoder)?;
         let path = PathBuf::decode(decoder)?;
         let type_ = OpenType::decode(decoder)?;

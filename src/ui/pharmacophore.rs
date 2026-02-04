@@ -1,19 +1,22 @@
+use std::{collections::HashMap, path::Path};
+
 use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
-use std::collections::HashMap;
-use std::path::Path;
 
-use crate::drawing::blend_color;
-use crate::therapeutic::pharmacophore::PharmacophoreFeature;
-use crate::ui::util::color_egui_from_f32;
 use crate::{
-    drawing, label,
+    drawing,
+    drawing::blend_color,
+    label,
     selection::Selection,
     state::{PopupState, State},
     therapeutic::pharmacophore::{
-        FeatureRelation, Pharmacophore, PharmacophoreFeatType, add_pharmacophore,
+        FeatureRelation, Pharmacophore, PharmacophoreFeatType, PharmacophoreFeature,
+        add_pharmacophore,
     },
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
+        util::color_egui_from_f32,
+    },
     util::{handle_err, make_egui_color},
 };
 
@@ -111,20 +114,23 @@ pub(in crate::ui) fn pharmacophore_boolean_window(state: &mut State, ui: &mut Ui
 
     boolean_list(
         &state.mol_editor.mol.pharmacophore.features,
-        &state.mol_editor.mol.pharmacophore.feature_relations,
+        &mut state.mol_editor.mol.pharmacophore.feature_relations,
         ui,
     );
 }
 
 /// Show all boolean relations (*Or* logic etc)
-fn boolean_list(feats: &[PharmacophoreFeature], relations: &[FeatureRelation], ui: &mut Ui) {
+fn boolean_list(feats: &[PharmacophoreFeature], relations: &mut Vec<FeatureRelation>, ui: &mut Ui) {
     if relations.is_empty() {
         return;
     }
 
+    ui.separator();
+    ui.add_space(ROW_SPACING);
     ui.label(RichText::new("Relations:").color(Color32::GRAY));
 
-    for rel in relations {
+    let mut rel_removed = None;
+    for (i_rel, rel) in relations.iter().enumerate() {
         ui.horizontal(|ui| {
             match rel {
                 FeatureRelation::Or(pair) => {
@@ -141,10 +147,22 @@ fn boolean_list(feats: &[PharmacophoreFeature], relations: &[FeatureRelation], u
 
                         label!(ui, &format!("{}: {}", i + 1, feats[i].feature_type), color);
                     }
+
+                    if ui
+                        .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                        .clicked()
+                    {
+                        println!("{rel:?}");
+                        rel_removed = Some(i_rel);
+                    }
                 }
                 _ => {}
             }
         });
+    }
+
+    if let Some(i) = rel_removed {
+        relations.remove(i);
     }
 }
 
@@ -205,7 +223,7 @@ pub(in crate::ui) fn pharmacophore_list(
 
     boolean_list(
         &pharmacophore.features,
-        &pharmacophore.feature_relations,
+        &mut pharmacophore.feature_relations,
         ui,
     );
 

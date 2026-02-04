@@ -325,6 +325,8 @@ pub(in crate::ui) fn editor(
                     // Load the edited molecule back into the state.
                     state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
                     state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
+                    state.ligands[mol_i].pharmacophore = state.mol_editor.mol.pharmacophore.clone();
+
                     state.ligands[mol_i].common.build_adjacency_list();
                     state.ligands[mol_i].common.reset_posits();
 

@@ -2,7 +2,6 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::ui::pharmacophore;
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
     label,
@@ -13,7 +12,7 @@ use crate::{
     therapeutic::pharmacophore::Pharmacophore,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, char_adme,
+        COLOR_INACTIVE, ROW_SPACING, char_adme, pharmacophore,
     },
     util::{close_mol, handle_err, orbit_center},
 };

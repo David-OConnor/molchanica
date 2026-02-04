@@ -45,7 +45,7 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         infer::Infer,
-        pharmacophore::{Pharmacophore, PharmacophoreFeatType},
+        pharmacophore::{Pharmacophore, PharmacophoreFeatType, Pocket},
     },
 };
 
@@ -59,6 +59,8 @@ pub struct State {
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
     pub lipids: Vec<MoleculeLipid>,
     pub pharmacophores: Vec<Pharmacophore>,
+    // todo: A starting point for pocket.
+    pub pockets: Vec<Pocket>,
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
     pub to_save: ToSave,
@@ -98,6 +100,7 @@ impl Default for State {
             nucleic_acids: Default::default(),
             lipids: Default::default(),
             pharmacophores: Default::default(),
+            pockets: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),
             to_save_prev: Default::default(),

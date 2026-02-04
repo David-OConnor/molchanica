@@ -7,6 +7,7 @@ use std::{collections::HashMap, time::Instant};
 use graphics::{EngineUpdates, Mesh, Vertex};
 use lin_alg::f32::{Vec3, Vec3 as Vec3F32};
 use mcubes::{MarchingCubes, MeshSide};
+use na_seq::Element::Hydrogen;
 
 use crate::{
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, SAS_ISO_OPACITY, color_viridis_float},
@@ -226,8 +227,10 @@ fn cell_key(p: Vec3F32, cell_size: f32) -> (i32, i32, i32) {
     )
 }
 
-// todo: This needs some work.
-/// We use this to apply coloring to SAS meshes based on the atoms and residues near them.
+/// We use this to apply coloring to SAS meshes based on the atoms and residues near them. Can color
+/// by residue position, atom element, or partial charage.
+///
+/// In the case of element-based coloring, we omit Hydrogens.
 pub fn update_sas_mesh_coloring(
     mol: &MoleculePeptide,
     state_ui: &StateUi,
@@ -318,8 +321,15 @@ pub fn update_sas_mesh_coloring(
                 for dz in -1..=1 {
                     if let Some(cands) = atom_grid.get(&(cx + dx, cy + dy, cz + dz)) {
                         for &i in cands {
-                            let ap: Vec3F32 = mol.common.atoms[i].posit.into();
+                            let atom = &mol.common.atoms[i];
+                            if atom.element == Hydrogen {
+                                continue;
+                            }
+
+                            // let ap: Vec3F32 = atom.posit.into();
+                            let ap: Vec3F32 = mol.common.atom_posits[i].into();
                             let dist = (ap - vp).magnitude_squared();
+
                             if dist < closest_atom_dist {
                                 closest_atom_dist = dist;
                                 closest_atom = Some(i);
@@ -344,9 +354,10 @@ pub fn update_sas_mesh_coloring(
         }
 
         if let Some(i) = closest_atom {
+            let atom = &mol.common.atoms[i];
+
             let (r, g, b, a) = match state_ui.view_sel_level {
                 ViewSelLevel::Residue => {
-                    let atom = &mol.common.atoms[i];
                     let aa_count = 40; // todo temp!!
                     let res = &mol.residues[atom.residue.unwrap()];
                     let (r, g, b) = res_color(res, state_ui.res_coloring, atom.residue, aa_count);
@@ -362,7 +373,9 @@ pub fn update_sas_mesh_coloring(
                             (0., 0., 0., 0)
                         }
                     } else {
-                        (0., 0., 0., 0)
+                        let (r, g, b) = atom.element.color();
+                        // (0., 0., 0., 0)
+                        (r, g, b, opacity)
                     }
                 }
             };
