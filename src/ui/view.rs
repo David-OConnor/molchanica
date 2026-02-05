@@ -102,6 +102,16 @@ pub fn view_settings(
                 }
             }
 
+            if !state.pockets.is_empty() {
+                toggle_btn_inv(
+                    &mut state.ui.visibility.hide_pockets,
+                    "Pockets",
+                    "Show or hide explicitly-added protein pockets for screening, docking, etc",
+                    ui,
+                    redraw_peptide,
+                );
+            }
+
             let hide_hydrogen_prev = state.ui.visibility.hide_hydrogen;
             toggle_btn_inv(
                 &mut state.ui.visibility.hide_hydrogen,

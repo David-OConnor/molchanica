@@ -241,6 +241,7 @@ pub fn handle_mol_manip_in_out(
                     }
                     MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
                     MolType::Lipid => &mut state.lipids[mol_i].common,
+                    MolType::Pocket => &mut state.pockets[mol_i].common,
                     MolType::Water => return,
                 },
                 OperatingMode::MolEditor => &mut state.mol_editor.mol.common,

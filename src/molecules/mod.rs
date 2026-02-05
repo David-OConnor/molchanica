@@ -66,6 +66,7 @@ pub enum MolType {
     Ligand,
     NucleicAcid,
     Lipid,
+    Pocket,
     Water,
 }
 
@@ -77,6 +78,7 @@ impl MolType {
             Ligand => OpenType::Ligand,
             NucleicAcid => OpenType::NucleicAcid,
             Lipid => OpenType::Lipid,
+            Pocket => OpenType::Pocket,
             Water => panic!("Can't convert water to open type"),
         }
     }
@@ -88,6 +90,7 @@ impl MolType {
             Ligand => EntityClass::Ligand,
             NucleicAcid => EntityClass::NucleicAcid,
             Lipid => EntityClass::Lipid,
+            Pocket => EntityClass::Pocket,
             Water => EntityClass::Protein, // todo for now
         }
     }
@@ -100,6 +103,7 @@ impl MolType {
             Ligand => (0, 255, 0),
             NucleicAcid => (255, 255, 0),
             Lipid => (255, 0, 255),
+            Pocket => (255, 255, 255),
             Water => (0, 0, 0),
         }
     }

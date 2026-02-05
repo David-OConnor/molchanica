@@ -35,6 +35,14 @@ pub const MESH_PROBE_RADIUS: f32 = 1.0;
 // over whole proteins.
 pub const POCKET_MESH_PRECISION: f32 = 0.5;
 
+// Smaller cells reduce false candidates; bigger cells reduce grid size,
+// and therefor make screening cheaper.
+const CELL_SIZE_SPHERE: f32 = 0.5;
+
+// 0.3 - 0.5 Angstroms is usually sufficient precision for screening.
+// Smaller = more memory, smoother boundaries.
+const VOXEL_RESOLUTION: f64 = 0.5;
+
 /// For excluded volume.
 #[derive(Clone, Copy, Debug, Default, Encode, Decode)]
 pub struct Sphere {
@@ -47,7 +55,7 @@ pub struct Sphere {
 pub struct Pocket {
     /// Contains atoms around the pocket only.
     /// todo: Should this include enough atoms to perform basic MD, or just cover the surface?
-    pub mol: MoleculeCommon,
+    pub common: MoleculeCommon,
     pub surface_mesh: Mesh,
     // todo: This excluded volume is duplicated with the pharmacophore. I think
     // todo having both here is fine for now, and we will settle out hwo the
@@ -95,7 +103,7 @@ impl Pocket {
         let volume = PocketVolume::new(&mol);
 
         Self {
-            mol,
+            common: mol,
             surface_mesh,
             volume,
         }
@@ -103,7 +111,7 @@ impl Pocket {
 
     pub fn save_sdf(&self, path: &Path) -> io::Result<()> {
         MoleculeSmall {
-            common: self.mol.clone(),
+            common: self.common.clone(),
             ..Default::default()
         }
         .to_sdf()
@@ -112,7 +120,7 @@ impl Pocket {
 
     pub fn save_mol2(&self, path: &Path) -> io::Result<()> {
         MoleculeSmall {
-            common: self.mol.clone(),
+            common: self.common.clone(),
             ..Default::default()
         }
         .to_mol2()
@@ -144,12 +152,148 @@ impl Pocket {
         let surface_mesh = make_mesh(&mol.common.atoms);
 
         Ok(Self {
-            mol: mol.common,
+            common: mol.common,
             surface_mesh,
             volume: Default::default(),
         })
     }
     // todo: mmCIF saving as well? Note that the input for these is generally mmCIF.
+}
+
+/// For a voxel-based approach.
+///
+/// todo: Should this be something more like Barnes Hut, where you use various-sized  voxels?
+///  e.g. big ones that take up most of the middle, then smaller ones  towards the edges.
+#[derive(Clone, Debug, Default, Encode, Decode)]
+pub struct PocketGrid {
+    pub origin: Vec3,
+    pub dims: (usize, usize, usize),
+    pub resolution: f64,
+    /// Linearized 3D grid. true = occupied (clash), false = free.
+    /// You could use a BitVec crate to save 8x memory here, but Vec<bool> is faster/simpler.
+    pub data: Vec<bool>,
+}
+
+impl PocketGrid {
+    /// Create a grid from a list of spheres.
+    /// This is the "expensive" step you only do once per protein pocket.
+    pub fn new(spheres: &[Sphere]) -> Self {
+        if spheres.is_empty() {
+            return Self::default();
+        }
+
+        // 1. Calculate Bounds
+        let mut min = Vec3::new(f64::MAX, f64::MAX, f64::MAX);
+        let mut max = Vec3::new(f64::MIN, f64::MIN, f64::MIN);
+        let padding = 2.0; // Extra padding to catch sphere edges
+
+        for s in spheres {
+            let r = s.radius as f64;
+            min = min.min(s.center - Vec3::splat(r));
+            max = max.max(s.center + Vec3::splat(r));
+        }
+
+        // Pad the grid slightly so we don't panic on edges
+        min -= Vec3::splat(padding);
+        max += Vec3::splat(padding);
+
+        let size = max - min;
+        let dim_x = (size.x / VOXEL_RESOLUTION).ceil() as usize;
+        let dim_y = (size.y / VOXEL_RESOLUTION).ceil() as usize;
+        let dim_z = (size.z / VOXEL_RESOLUTION).ceil() as usize;
+
+        let total_voxels = dim_x * dim_y * dim_z;
+        let mut data = vec![false; total_voxels];
+
+        let inv_res = 1.0 / VOXEL_RESOLUTION;
+
+        // 2. Rasterize Spheres into Grid
+        // Instead of checking every voxel against every sphere, we only check
+        // voxels inside the bounding box of each sphere.
+        for s in spheres {
+            let r = s.radius as f64;
+            let r_sq = r * r;
+
+            // Determine sphere bounds in grid coordinates
+            let s_min = (s.center - Vec3::splat(r) - min) * inv_res;
+            let s_max = (s.center + Vec3::splat(r) - min) * inv_res;
+
+            let start_x = s_min.x.floor().max(0.0) as usize;
+            let end_x = s_max.x.ceil().min(dim_x as f64) as usize;
+
+            let start_y = s_min.y.floor().max(0.0) as usize;
+            let end_y = s_max.y.ceil().min(dim_y as f64) as usize;
+
+            let start_z = s_min.z.floor().max(0.0) as usize;
+            let end_z = s_max.z.ceil().min(dim_z as f64) as usize;
+
+            for z in start_z..end_z {
+                for y in start_y..end_y {
+                    for x in start_x..end_x {
+                        let idx = x + y * dim_x + z * dim_x * dim_y;
+
+                        // Optimization: If already marked, skip math
+                        if data[idx] {
+                            continue;
+                        }
+
+                        // Calculate center of this voxel in world space
+                        let voxel_pos = min
+                            + Vec3::new(
+                                x as f64 * VOXEL_RESOLUTION,
+                                y as f64 * VOXEL_RESOLUTION,
+                                z as f64 * VOXEL_RESOLUTION,
+                            );
+
+                        if (voxel_pos - s.center).magnitude_squared() <= r_sq {
+                            data[idx] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        println!(
+            "Generated PocketGrid: {}x{}x{} voxels.",
+            dim_x, dim_y, dim_z
+        );
+
+        Self {
+            origin: min,
+            dims: (dim_x, dim_y, dim_z),
+            resolution: VOXEL_RESOLUTION,
+            data,
+        }
+    }
+
+    /// O(1) check for collision.
+    pub fn is_clashing(&self, point: Vec3) -> bool {
+        let local = point - self.origin;
+
+        // Negative checks (outside grid bounds = safe/empty space?)
+        // Assuming the pocket is "solid" atoms and outside is "void".
+        if local.x < 0.0 || local.y < 0.0 || local.z < 0.0 {
+            return false;
+        }
+
+        let inv_res = 1.0 / self.resolution;
+        let x = (local.x * inv_res) as usize;
+        let y = (local.y * inv_res) as usize;
+        let z = (local.z * inv_res) as usize;
+
+        let (dx, dy, dz) = self.dims;
+
+        if x >= dx || y >= dy || z >= dz {
+            return false;
+        }
+
+        // Linear index
+        let idx = x + y * dx + z * dx * dy;
+
+        // Use get in case logic fails, or unsafe get_unchecked for max speed
+        // if you are confident in bounds checks above.
+        self.data[idx]
+    }
 }
 
 /// Generally the area taken up by protein atoms in the pocket + their VDW radius.
@@ -164,7 +308,10 @@ impl Pocket {
 /// the first time we display it in the UI.
 #[derive(Clone, Debug, Default)]
 pub struct PocketVolume {
+    // todo: You likely won't keep both spheres and voxels.
+    // Spheres are likely more accurate, while voxels are faster for checking for overlap.
     pub spheres: Vec<Sphere>,
+    pub voxel_grid: PocketGrid,
     /// Hash grid acceleration: map cell -> indices into spheres.
     /// Cell size is chosen when building from the pocket.
     pub cell_size: f32,
@@ -188,11 +335,13 @@ impl Encode for PocketVolume {
 impl<Context> Decode<Context> for PocketVolume {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let spheres = Vec::<Sphere>::decode(decoder)?;
+        let voxel_grid = PocketGrid::decode(decoder)?;
         let cell_size = f32::decode(decoder)?;
         let grid = HashMap::<(i32, i32, i32), Vec<u32>>::decode(decoder)?;
 
         Ok(Self {
             spheres,
+            voxel_grid,
             cell_size,
             grid,
             // mesh: None,
@@ -207,6 +356,7 @@ impl<'de, Context> BorrowDecode<'de, Context> for PocketVolume {
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let spheres = <Vec<Sphere> as BorrowDecode<'de, Context>>::borrow_decode(decoder)?;
+        let voxel_grid = <PocketGrid as BorrowDecode<'de, Context>>::borrow_decode(decoder)?;
         let cell_size = <f32 as BorrowDecode<'de, Context>>::borrow_decode(decoder)?;
         let grid =
             <HashMap<(i32, i32, i32), Vec<u32>> as BorrowDecode<'de, Context>>::borrow_decode(
@@ -215,6 +365,7 @@ impl<'de, Context> BorrowDecode<'de, Context> for PocketVolume {
 
         Ok(Self {
             spheres,
+            voxel_grid,
             cell_size,
             grid,
             // mesh: None,
@@ -226,12 +377,12 @@ impl<'de, Context> BorrowDecode<'de, Context> for PocketVolume {
 impl PocketVolume {
     /// atoms_pocket is just from the atoms in the vicinity of the pocket. i.e,
     /// a subset of the protein.
-    pub fn new(atoms_pocket: &MoleculeCommon) -> Self {
-        let mut spheres = Vec::with_capacity(atoms_pocket.atoms.len());
+    pub fn new(mol_pocket: &MoleculeCommon) -> Self {
+        let mut spheres = Vec::with_capacity(mol_pocket.atoms.len());
         let mut max_r = 0.;
 
-        for (i, a) in atoms_pocket.atoms.iter().enumerate() {
-            let center = atoms_pocket.atom_posits[i];
+        for (i, a) in mol_pocket.atoms.iter().enumerate() {
+            let center = mol_pocket.atom_posits[i];
             let r = a.element.vdw_radius() + PROBE_RADIUS_EXCLUDED_VOL;
             if r > max_r {
                 max_r = r;
@@ -239,9 +390,8 @@ impl PocketVolume {
             spheres.push(Sphere { center, radius: r });
         }
 
-        // Conservative: smaller cells reduce false candidates; bigger cells reduce grid size.
         // max_r is a decent default for "few spheres per cell".
-        let cell_size = max_r.max(1.0);
+        let cell_size = max_r.max(CELL_SIZE_SPHERE);
 
         let mut grid: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
         for (i, s) in spheres.iter().enumerate() {
@@ -249,15 +399,31 @@ impl PocketVolume {
             grid.entry(c).or_default().push(i as u32);
         }
 
+        // todo: Why does this take spheres? Is that ok, or should it take atoms directly?
+        let pocket_grid = PocketGrid::new(&spheres);
+
+        println!(
+            "Created {} pocket spheres from {} atoms.",
+            spheres.len(),
+            mol_pocket.atoms.len()
+        );
+
         Self {
             spheres,
+            voxel_grid: pocket_grid,
             cell_size,
             grid,
             // mesh: None,
         }
     }
 
+    /// Uses the voxel approach.
     pub fn inside(&self, point: Vec3) -> bool {
+        self.voxel_grid.is_clashing(point)
+    }
+
+    // todo: Benchmark and parallelize this. Rayon, GPU etc.
+    pub fn inside_spheres(&self, point: Vec3) -> bool {
         if self.spheres.is_empty() {
             return false;
         }

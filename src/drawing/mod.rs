@@ -2219,20 +2219,20 @@ pub fn draw_pocket(entities: &mut Vec<Entity>, pocket: &Pocket, hydrogen_bonds: 
 
     // todo: For now, drawing the spheres we use to compute exclusion.
     // todo: Likely not useful to the user, but useful for validating our approach and debugging.
-    // for sphere in &pocket.volume.spheres {
-    //     let mut ent = Entity::new(
-    //         MESH_SPHERE_HIGHRES,
-    //         sphere.center.into(),
-    //         Quaternion::new_identity(),
-    //         sphere.radius,
-    //         (1., 0.1, 0.1),
-    //         ATOM_SHININESS,
-    //     );
-    //
-    //     // ent.opacity = PHARMACOPHORE_OPACITY;
-    //     ent.class = EntityClass::Pocket as u32;
-    //     entities.push(ent);
-    // }
+    for sphere in &pocket.volume.spheres {
+        let mut ent = Entity::new(
+            MESH_SPHERE_HIGHRES,
+            sphere.center.into(),
+            Quaternion::new_identity(),
+            sphere.radius,
+            (1., 0.1, 0.1),
+            ATOM_SHININESS,
+        );
+
+        // ent.opacity = PHARMACOPHORE_OPACITY;
+        ent.class = EntityClass::Pocket as u32;
+        entities.push(ent);
+    }
 
     // Draw the surface mesh; pre-computed.
     let mut ent = Entity::new(
@@ -2240,7 +2240,7 @@ pub fn draw_pocket(entities: &mut Vec<Entity>, pocket: &Pocket, hydrogen_bonds: 
         Vec3::new_zero(), // todo temp?
         Quaternion::new_identity(),
         1.,
-        (0.3, 0.3, 0.1),
+        (0.3, 0.4, 0.5),
         ATOM_SHININESS,
     );
 

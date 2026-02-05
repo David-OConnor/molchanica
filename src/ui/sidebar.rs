@@ -66,14 +66,16 @@ fn mol_picker_one(
                 COLOR_INACTIVE
             };
 
-            if ui
-                .button(RichText::new("MD").color(color_md))
-                .on_hover_text(
-                    "Select or deselect this molecule for molecular dynamics simulation.",
-                )
-                .clicked()
-            {
-                mol.selected_for_md = !mol.selected_for_md;
+            if mol_type != MolType::Pocket {
+                if ui
+                    .button(RichText::new("MD").color(color_md))
+                    .on_hover_text(
+                        "Select or deselect this molecule for molecular dynamics simulation.",
+                    )
+                    .clicked()
+                {
+                    mol.selected_for_md = !mol.selected_for_md;
+                }
             }
 
             let color_vis = if mol.visible {
@@ -236,6 +238,27 @@ fn mol_picker(
             &None,
             None,
             MolType::NucleicAcid,
+            scene,
+            ui,
+            engine_updates,
+            redraw_na,
+            &mut recenter_orbit,
+            &mut close,
+            &mut state.ui.cam_snapshot,
+            pep_center,
+        );
+    }
+
+    for (i_mol, mol) in state.pockets.iter_mut().enumerate() {
+        // todo: Characterization, e.g. by dna seq?
+        mol_picker_one(
+            &mut state.volatile.active_mol,
+            &mut state.volatile.orbit_center,
+            i_mol,
+            &mut mol.common,
+            &None,
+            None,
+            MolType::Pocket,
             scene,
             ui,
             engine_updates,

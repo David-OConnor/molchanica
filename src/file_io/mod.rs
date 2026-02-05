@@ -546,6 +546,7 @@ impl State {
                         }
                     }
                 }
+                OpenType::Pocket => unimplemented!(), // todo
                 OpenType::Map => {
                     if let Err(e) = self.open_file(&history.path, None, &mut Default::default()) {
                         handle_err(&mut self.ui, e.to_string());
@@ -618,6 +619,7 @@ impl State {
             MolType::Ligand => self.ligands.len(),
             MolType::NucleicAcid => self.nucleic_acids.len(),
             MolType::Lipid => self.lipids.len(),
+            MolType::Pocket => self.pockets.len(),
             MolType::Water => unreachable!(),
         };
 

@@ -20,6 +20,7 @@ use lin_alg::{
 };
 use na_seq::{AaIdent, Element};
 
+use crate::drawing::draw_pocket;
 use crate::{
     cam,
     drawing::{
@@ -499,6 +500,11 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     return state.lipids[i].common.centroid().into();
                 }
             }
+            MolType::Pocket => {
+                if i < state.pockets.len() {
+                    return state.pockets[i].common.centroid().into();
+                }
+            }
             MolType::Water => (),
         }
     }
@@ -696,6 +702,24 @@ pub fn close_mol(
             }
 
             draw_all_lipids(state, scene);
+        }
+        MolType::Pocket => {
+            if i >= state.pockets.len() {
+                eprintln!("Error: Invalid pocket index");
+                return;
+            }
+
+            state.pockets.remove(i);
+
+            if state.pockets.is_empty() {
+                state.volatile.active_mol = None;
+            } else {
+                state.volatile.active_mol = Some((MolType::Pocket, state.pockets.len() - 1));
+            }
+
+            for pocket in &state.pockets {
+                draw_pocket(&mut scene.entities, pocket, &[]);
+            }
         }
         MolType::Water => (),
     }
