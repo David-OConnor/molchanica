@@ -28,6 +28,9 @@ use lin_alg::f64::Vec3;
 pub const PROBE_RADIUS_EXCLUDED_VOL: f32 = 0.8;
 pub const POCKET_DIST_THRESH_DEFAULT: f64 = 11.;
 
+// Larger values result in a smoother mesh.
+pub const MESH_PROBE_RADIUS: f32 = 1.0;
+
 // Lower is more expensive, but this pocket is relatively small compared to ones we display
 // over whole proteins.
 pub const POCKET_MESH_PRECISION: f32 = 0.5;
@@ -63,6 +66,11 @@ impl Pocket {
             .atoms
             .iter()
             .filter(|a| {
+                if a.hetero {
+                    // E.g. ligands included with a mmCIF file, or water molecules.
+                    return false;
+                }
+
                 let dist_sq = (a.posit - center).magnitude_squared();
                 dist_sq < dist_thresh_sq
             })
@@ -223,10 +231,6 @@ impl PocketVolume {
         let mut max_r = 0.;
 
         for (i, a) in atoms_pocket.atoms.iter().enumerate() {
-            if a.hetero {
-                continue;
-            }
-
             let center = atoms_pocket.atom_posits[i];
             let r = a.element.vdw_radius() + PROBE_RADIUS_EXCLUDED_VOL;
             if r > max_r {
@@ -333,9 +337,5 @@ fn make_mesh(atoms: &[Atom]) -> Mesh {
         .map(|a| (a.posit.into(), a.element.vdw_radius()))
         .collect();
 
-    make_sas_mesh(
-        &atoms_for_mesh,
-        PROBE_RADIUS_EXCLUDED_VOL,
-        POCKET_MESH_PRECISION,
-    )
+    make_sas_mesh(&atoms_for_mesh, MESH_PROBE_RADIUS, POCKET_MESH_PRECISION)
 }

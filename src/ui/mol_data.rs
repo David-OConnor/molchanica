@@ -8,6 +8,7 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::molecules::pocket::POCKET_DIST_THRESH_DEFAULT;
+use crate::render::MESH_POCKET;
 use crate::{
     cam::move_cam_to_active_mol,
     drawing,
@@ -636,7 +637,10 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 let posit = mol.common.atoms[sel_i].posit;
                 let pocket = Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, &format!("{} atom {sel_i}", mol.common.ident));
 
+                scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
                 draw_pocket(&mut scene.entities, &pocket, &[]); // todo: For now.[]
+
+                engine_updates.meshes = true;
                 engine_updates.entities = EntityUpdate::All; // todo temp
 
                 state.pockets.push(pocket);

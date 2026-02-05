@@ -147,8 +147,8 @@ pub fn render(mut state: State) {
             Mesh::new_sphere(1., 2), // med-res sphere
             Mesh::new_box(1., 1., 1.),
             Mesh::new_box(1., 1., 1.), // Placeholder for VDW/SA surface; populated later.
-            Mesh::new_box(1., 1., 1.), // Placeholder for docking site sufrace; populated later.
-            Mesh::new_box(1., 1., 1.), // Placeholder for density sufrace; populated later.
+            Mesh::new_box(1., 1., 1.), // Placeholder for docking site surface; populated later.
+            Mesh::new_box(1., 1., 1.), // Placeholder for density surface; populated later.
             Mesh::new_box(1., 1., 1.), // Placeholder for secondary structure surface; populated later.
             // todo: Support rendering multiple pockets?
             Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.

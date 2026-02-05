@@ -14,6 +14,7 @@ use lin_alg::{
 };
 use na_seq::Element;
 
+use crate::render::MESH_POCKET;
 use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
@@ -105,6 +106,7 @@ const DIMMED_PEPTIDE_AMT: f32 = 0.92; // Higher value means more dim.
 
 pub const DENSITY_ISO_OPACITY: f32 = 0.5;
 pub const SAS_ISO_OPACITY: f32 = 0.75;
+pub const POCKET_SURFACE_OPACITY: f32 = 0.85;
 
 // These min/maxes are based on possible values of `aa.hydropathicity()`.
 pub const HYDROPHOBICITY_MIN: f32 = -4.5;
@@ -124,7 +126,6 @@ pub const MESH_BALL_STICK_SPHERE: usize = MESH_SPHERE_MEDRES;
 pub const MESH_SPACEFILL_SPHERE: usize = MESH_SPHERE_HIGHRES;
 pub const MESH_WATER_SPHERE: usize = MESH_SPHERE_MEDRES;
 pub const MESH_BOND_CAP: usize = MESH_SPHERE_LOWRES;
-pub const MESH_PHARMACOPHORE: usize = MESH_SPHERE_HIGHRES;
 
 // This should ideally be high res, but we experience anomolies on viewing items inside it, while
 // the cam is outside.
@@ -2170,7 +2171,7 @@ fn draw_mol_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
             .into();
 
         let mut ent = Entity::new(
-            MESH_PHARMACOPHORE,
+            MESH_SPHERE_HIGHRES,
             posit,
             Quaternion::new_identity(),
             feat.feature_type.disp_radius(),
@@ -2198,7 +2199,7 @@ pub fn draw_pharmacophore_hint_sites(
 
     for hint_site in hint_sites {
         let mut ent = Entity::new(
-            MESH_PHARMACOPHORE,
+            MESH_SPHERE_HIGHRES,
             (*hint_site).into(),
             Quaternion::new_identity(),
             RADIUS_PHARMACOPHORE_HINT,
@@ -2216,21 +2217,34 @@ pub fn draw_pharmacophore_hint_sites(
 pub fn draw_pocket(entities: &mut Vec<Entity>, pocket: &Pocket, hydrogen_bonds: &[HydrogenBond]) {
     entities.retain(|ent| ent.class != EntityClass::Pocket as u32);
 
-    println!("Sphers: {:?}", pocket.volume.spheres);
+    // todo: For now, drawing the spheres we use to compute exclusion.
+    // todo: Likely not useful to the user, but useful for validating our approach and debugging.
+    // for sphere in &pocket.volume.spheres {
+    //     let mut ent = Entity::new(
+    //         MESH_SPHERE_HIGHRES,
+    //         sphere.center.into(),
+    //         Quaternion::new_identity(),
+    //         sphere.radius,
+    //         (1., 0.1, 0.1),
+    //         ATOM_SHININESS,
+    //     );
+    //
+    //     // ent.opacity = PHARMACOPHORE_OPACITY;
+    //     ent.class = EntityClass::Pocket as u32;
+    //     entities.push(ent);
+    // }
 
-    // todo: For now, drawing spheres. Useful to debug
-    for sphere in &pocket.volume.spheres {
-        let mut ent = Entity::new(
-            MESH_PHARMACOPHORE,
-            sphere.center.into(),
-            Quaternion::new_identity(),
-            sphere.radius,
-            (1., 0.1, 0.1),
-            ATOM_SHININESS,
-        );
+    // Draw the surface mesh; pre-computed.
+    let mut ent = Entity::new(
+        MESH_POCKET,
+        Vec3::new_zero(), // todo temp?
+        Quaternion::new_identity(),
+        1.,
+        (0.3, 0.3, 0.1),
+        ATOM_SHININESS,
+    );
 
-        // ent.opacity = PHARMACOPHORE_OPACITY;
-        ent.class = EntityClass::Pocket as u32;
-        entities.push(ent);
-    }
+    ent.class = EntityClass::Pocket as u32;
+    ent.opacity = POCKET_SURFACE_OPACITY;
+    entities.push(ent);
 }
