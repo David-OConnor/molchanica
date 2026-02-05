@@ -3,23 +3,25 @@
 use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
 use bio_files::{ResidueType, md_params::ForceFieldParams};
 use dynamics::params::FfParamSet;
-use egui::{Align, Color32, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText, ScrollArea, Ui};
-use graphics::{EngineUpdates, Scene};
+use egui::{Color32, RichText, Ui};
+use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::molecules::pocket::POCKET_DIST_THRESH_DEFAULT;
 use crate::{
     cam::move_cam_to_active_mol,
     drawing,
-    drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI},
+    drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, draw_pocket},
     file_io::download_mols,
     label,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
-        lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
+        lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, pocket::Pocket,
+        small::MoleculeSmall,
     },
     selection::Selection,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, mol_descrip, popups},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, mol_descrip, popups},
     util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
 
@@ -463,7 +465,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                     } else {
                         Some(&pep.residues[sel_i])
                     }
-                },
+                }
                 _ => None,
             };
 
@@ -622,6 +624,25 @@ pub(in crate::ui) fn display_mol_data_peptide(
                     }
                 }
             });
+        }
+
+        // todo: Temp location
+        if let Selection::AtomPeptide(sel_i) = state.ui.selection {
+            if ui.button(RichText::new("Pocket").color(COLOR_ACTION))
+                .on_hover_text("Create a pocket around the selected atom. For screening, docking, pharmacophores etc.")
+                .clicked() {
+
+                // todo: Rel or abs?
+                let posit = mol.common.atoms[sel_i].posit;
+                let pocket = Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, &format!("{} atom {sel_i}", mol.common.ident));
+
+                draw_pocket(&mut scene.entities, &pocket, &[]); // todo: For now.[]
+                engine_updates.entities = EntityUpdate::All; // todo temp
+
+                state.pockets.push(pocket);
+
+
+            }
         }
     }
 

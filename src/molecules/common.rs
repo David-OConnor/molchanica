@@ -4,6 +4,7 @@
 
 use std::{
     collections::HashMap,
+    io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU32, Ordering},
 };
@@ -275,5 +276,20 @@ impl MoleculeCommon {
             assert_eq!(bond.atom_0_sn, self.atoms[bond.atom_0].serial_number);
             assert_eq!(bond.atom_1_sn, self.atoms[bond.atom_1].serial_number);
         }
+    }
+}
+
+/// Given stable atom serial numbers, reassign bond indices to match. Useful, for example, after
+/// filtering a set of atoms and  bonds.
+pub fn reassign_bond_indices(bonds: &mut [Bond], atoms: &[Atom]) {
+    let sn_to_new_i: HashMap<_, _> = atoms
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.serial_number, i)) // use usize if your bond fields are usize
+        .collect();
+
+    for b in bonds {
+        b.atom_0 = sn_to_new_i[&b.atom_0_sn];
+        b.atom_1 = sn_to_new_i[&b.atom_1_sn];
     }
 }

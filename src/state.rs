@@ -21,10 +21,7 @@ use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
 use cudarc::driver::CudaFunction;
 use dynamics::{ComputationDevice, MdState, params::FfParamSet};
 use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
-use lin_alg::{
-    f32::{Quaternion, Vec3},
-    f64::Vec3 as Vec3F64,
-};
+use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
@@ -37,6 +34,7 @@ use crate::{
         MolGenericRef, MolGenericRefMut, MolIdent, MolType, MoleculePeptide,
         lipid::{LipidShape, MoleculeLipid},
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
+        pocket::Pocket,
         small::MoleculeSmall,
     },
     orca::StateOrca,
@@ -45,7 +43,7 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         infer::Infer,
-        pharmacophore::{Pharmacophore, PharmacophoreFeatType, Pocket},
+        pharmacophore::{Pharmacophore, PharmacophoreFeatType},
     },
 };
 

@@ -43,6 +43,7 @@ pub const MESH_SOLVENT_SURFACE: usize = 6; // Van Der Waals surface.
 // pub const MESH_DOCKING_SURFACE: usize = 7;
 pub const MESH_DENSITY_SURFACE: usize = 8;
 pub const MESH_SECONDARY_STRUCTURE: usize = 9;
+pub const MESH_POCKET: usize = 10;
 
 pub const BALL_STICK_RADIUS: f32 = 0.3;
 pub const BALL_STICK_RADIUS_H: f32 = 0.1;
@@ -149,6 +150,8 @@ pub fn render(mut state: State) {
             Mesh::new_box(1., 1., 1.), // Placeholder for docking site sufrace; populated later.
             Mesh::new_box(1., 1., 1.), // Placeholder for density sufrace; populated later.
             Mesh::new_box(1., 1., 1.), // Placeholder for secondary structure surface; populated later.
+            // todo: Support rendering multiple pockets?
+            Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.
         ],
         entities: Vec::new(),
         gaussians: Vec::new(),

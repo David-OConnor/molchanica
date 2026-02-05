@@ -7,6 +7,7 @@
 pub mod common;
 pub mod lipid;
 pub mod nucleic_acid;
+pub mod pocket;
 pub mod rotatable_bonds;
 pub mod small;
 
@@ -600,9 +601,19 @@ impl Bond {
 
 #[derive(Debug, Clone)]
 pub struct HydrogenBond {
-    /// All three atoms are indexes.
+    /// All three atoms are atom indexes.
     pub donor: usize,
     pub acceptor: usize,
+    pub hydrogen: usize,
+}
+
+/// A bond between two molecules.
+#[derive(Debug, Clone)]
+pub struct HydrogenBondTwoMols {
+    /// Donor and acceptor atoms are (mol, atom) indexes. hydrogen is an atom index, of the
+    /// donor molecule.
+    pub donor: (usize, usize),
+    pub acceptor: (usize, usize),
     pub hydrogen: usize,
 }
 

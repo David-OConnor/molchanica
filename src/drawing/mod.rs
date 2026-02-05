@@ -18,8 +18,8 @@ use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
     molecules::{
-        Atom, AtomRole, Chain, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
-        small::MoleculeSmall,
+        Atom, AtomRole, Chain, HydrogenBond, MolGenericRef, MolGenericTrait, MolType,
+        MoleculePeptide, Residue, pocket::Pocket, small::MoleculeSmall,
     },
     reflection::DensityPt,
     render::{
@@ -234,6 +234,7 @@ pub enum EntityClass {
     WaterModel = 10,
     Pharmacophore = 11,
     PharmacophoreHint = 12,
+    Pocket = 13,
     Other = 99,
 }
 
@@ -2210,4 +2211,26 @@ pub fn draw_pharmacophore_hint_sites(
         entities.push(ent);
     }
     engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::PharmacophoreHint as u32]);
+}
+
+pub fn draw_pocket(entities: &mut Vec<Entity>, pocket: &Pocket, hydrogen_bonds: &[HydrogenBond]) {
+    entities.retain(|ent| ent.class != EntityClass::Pocket as u32);
+
+    println!("Sphers: {:?}", pocket.volume.spheres);
+
+    // todo: For now, drawing spheres. Useful to debug
+    for sphere in &pocket.volume.spheres {
+        let mut ent = Entity::new(
+            MESH_PHARMACOPHORE,
+            sphere.center.into(),
+            Quaternion::new_identity(),
+            sphere.radius,
+            (1., 0.1, 0.1),
+            ATOM_SHININESS,
+        );
+
+        // ent.opacity = PHARMACOPHORE_OPACITY;
+        ent.class = EntityClass::Pocket as u32;
+        entities.push(ent);
+    }
 }
