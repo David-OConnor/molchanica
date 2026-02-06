@@ -428,6 +428,7 @@ pub(in crate::ui) fn editor(
         std::slice::from_ref(&&mol),
         &[],
         &[],
+        &[],
         &state.ui.selection,
         ui,
     );

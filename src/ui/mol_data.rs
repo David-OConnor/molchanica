@@ -185,6 +185,7 @@ pub(in crate::ui) fn selected_data(
     ligands: &[MoleculeSmall],
     nucleic_acids: &[MoleculeNucleicAcid],
     lipids: &[MoleculeLipid],
+    pockets: &[Pocket],
     selection: &Selection,
     ui: &mut Ui,
 ) {
@@ -285,6 +286,22 @@ pub(in crate::ui) fn selected_data(
                 let posit = mol.common.atom_posits[*atom_i];
 
                 disp_atom_data(atom, &mol.residues, Some(posit), ui, true, true);
+            }
+            // todo DRY
+            Selection::AtomPocket((mol_i, atom_i)) => {
+                if *mol_i >= pockets.len() {
+                    return;
+                }
+                let mol = &pockets[*mol_i];
+
+                if *atom_i >= mol.common.atoms.len() {
+                    return;
+                }
+
+                let atom = &mol.common.atoms[*atom_i];
+                let posit = mol.common.atom_posits[*atom_i];
+
+                disp_atom_data(atom, &[], Some(posit), ui, true, true);
             }
             Selection::Residue(sel_i) => {
                 if let Some(mol) = &state.peptide {

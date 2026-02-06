@@ -719,6 +719,7 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                         &state.ligands,
                         &state.nucleic_acids,
                         &state.lipids,
+                        &state.pockets,
                         &state.ui.selection,
                         ui,
                     );

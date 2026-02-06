@@ -372,7 +372,13 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 }
                 return state.lipids[*i_mol].common.atom_posits[*i_atom].into();
             }
-
+            Selection::AtomPocket((i_mol, i_atom)) => {
+                if *i_atom >= state.pockets.len() {
+                    eprintln!("Error: Invalid pocket index for orbit center");
+                    return Vec3F32::new_zero();
+                }
+                return state.pockets[*i_mol].common.atom_posits[*i_atom].into();
+            }
             Selection::Residue(i) => {
                 if let Some(mol) = &state.peptide {
                     match mol.residues.get(*i) {
