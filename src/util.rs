@@ -20,12 +20,11 @@ use lin_alg::{
 };
 use na_seq::{AaIdent, Element};
 
-use crate::drawing::draw_pocket;
 use crate::{
     cam,
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
+        color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide, draw_pocket,
         ribbon_mesh::build_cartoon_mesh,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
@@ -718,7 +717,7 @@ pub fn close_mol(
             }
 
             for pocket in &state.pockets {
-                draw_pocket(&mut scene.entities, pocket, &[]);
+                draw_pocket(&mut scene.entities, pocket, &[], &state.ui.visibility);
             }
         }
         MolType::Water => (),

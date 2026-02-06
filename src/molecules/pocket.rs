@@ -7,12 +7,6 @@ use std::{
     path::Path,
 };
 
-use crate::molecules::{
-    Atom, MoleculePeptide,
-    common::{MoleculeCommon, reassign_bond_indices},
-    small::MoleculeSmall,
-};
-use crate::sa_surface::make_sas_mesh;
 use bincode::{
     BorrowDecode, Decode, Encode,
     de::{BorrowDecoder, Decoder},
@@ -22,6 +16,15 @@ use bincode::{
 use bio_files::{Mol2, Sdf};
 use graphics::Mesh;
 use lin_alg::f64::Vec3;
+
+use crate::{
+    molecules::{
+        Atom, MoleculePeptide,
+        common::{MoleculeCommon, reassign_bond_indices},
+        small::MoleculeSmall,
+    },
+    sa_surface::make_sas_mesh,
+};
 
 // A larger probe radius will make the pocket tighter and coarser. Tune this to be realistic.
 // Note that this is added to VDW radius.

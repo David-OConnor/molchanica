@@ -4,6 +4,7 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
+    drawing::COLOR_SELECTED,
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
@@ -482,7 +483,35 @@ pub(in crate::ui) fn sidebar(
             //     .min_scrolled_height(600.0)
             //     .show(ui, |ui| {
             // todo: Function or macro to reduce this DRY.
-            if state.volatile.operating_mode != OperatingMode::MolEditor {
+
+            if state.volatile.operating_mode == OperatingMode::MolEditor {
+                ui.label("Pockets");
+
+                for (mol_i, pocket) in state.pockets.iter().enumerate() {
+                    let selected = state.mol_editor.pocket == Some(mol_i);
+
+                    let color = if selected {
+                        COLOR_ACTIVE
+                    } else {
+                        COLOR_INACTIVE
+                    };
+
+                    if ui
+                        .button(RichText::new(&pocket.common.ident).color(color))
+                        .on_hover_text(
+                            "Display this pocket, and optionally use it as part of \
+                        a pharmacophore, e.g. its excluded volume..",
+                        )
+                        .clicked()
+                    {
+                        if selected {
+                            state.mol_editor.pocket = None;
+                        } else {
+                            state.mol_editor.pocket = Some(mol_i);
+                        }
+                    }
+                }
+            } else {
                 mol_picker(
                     state,
                     scene,

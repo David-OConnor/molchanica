@@ -14,7 +14,6 @@ use lin_alg::{
 };
 use na_seq::Element;
 
-use crate::render::MESH_POCKET;
 use crate::{
     drawing::viridis_lut::VIRIDIS,
     mol_manip::ManipMode,
@@ -26,13 +25,13 @@ use crate::{
     render::{
         ATOM_SHININESS, BACKGROUND_COLOR, BALL_RADIUS_WATER_H, BALL_RADIUS_WATER_O,
         BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, BODY_SHINYNESS, Color, MESH_BOND, MESH_CUBE,
-        MESH_DENSITY_SURFACE, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, MESH_SPHERE_HIGHRES,
-        MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES, PHARMACOPHORE_OPACITY, RADIUS_PHARMACOPHORE_HINT,
-        WATER_BOND_THICKNESS, WATER_OPACITY,
+        MESH_DENSITY_SURFACE, MESH_POCKET, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE,
+        MESH_SPHERE_HIGHRES, MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES, PHARMACOPHORE_OPACITY,
+        RADIUS_PHARMACOPHORE_HINT, WATER_BOND_THICKNESS, WATER_OPACITY,
     },
     sa_surface::{SOLVENT_RAD, make_sas_mesh},
     selection::{Selection, ViewSelLevel},
-    state::{OperatingMode, ResColoring, State, StateUi},
+    state::{OperatingMode, ResColoring, State, StateUi, Visibility},
     therapeutic::pharmacophore,
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center, res_color},
 };
@@ -2214,8 +2213,17 @@ pub fn draw_pharmacophore_hint_sites(
     engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::PharmacophoreHint as u32]);
 }
 
-pub fn draw_pocket(entities: &mut Vec<Entity>, pocket: &Pocket, hydrogen_bonds: &[HydrogenBond]) {
+pub fn draw_pocket(
+    entities: &mut Vec<Entity>,
+    pocket: &Pocket,
+    hydrogen_bonds: &[HydrogenBond],
+    visibility: &Visibility,
+) {
     entities.retain(|ent| ent.class != EntityClass::Pocket as u32);
+
+    if visibility.hide_pockets {
+        return;
+    }
 
     // todo: For now, drawing the spheres we use to compute exclusion.
     // todo: Likely not useful to the user, but useful for validating our approach and debugging.

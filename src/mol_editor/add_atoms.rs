@@ -337,7 +337,7 @@ pub fn add_atom(
             ..Default::default()
         };
 
-        redraw(entities, &mol_wrapper, ui, manip_mode, 0);
+        redraw(entities, &mol_wrapper, None, ui, manip_mode, 0);
     }
 
     let atoms_to_add = bonds_avail(i_par, mol, el_parent);
@@ -487,11 +487,6 @@ pub fn populate_hydrogens_on_atom(
     let el = mol.atoms[i].element;
 
     let h_to_add = bonds_avail(i, mol, el);
-
-    println!(
-        "\n Atom {} H to add: {h_to_add}",
-        mol.atoms[i].serial_number
-    );
 
     // let bonds_remaining = bonds_avail.saturating_sub(adj.len());
 

@@ -95,7 +95,7 @@ fn change_el_button(
             );
         }
 
-        mol_editor::redraw(entities, mol, state_ui, manip_mode, 0);
+        mol_editor::redraw(entities, mol, None, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
 
         *redraw = true;
@@ -439,9 +439,16 @@ pub(in crate::ui) fn editor(
     }
 
     if redraw {
+        let pocket = if let Some(i) = &state.mol_editor.pocket {
+            Some(&state.pockets[*i])
+        } else {
+            None
+        };
+
         mol_editor::redraw(
             &mut scene.entities,
             &state.mol_editor.mol,
+            pocket,
             &state.ui,
             state.volatile.mol_manip.mode,
             0,
@@ -628,9 +635,17 @@ fn edit_tools(
                         // `add_atom` handles individual redrawing, but here we need something, or the previous
                         // atom will still show as the selected color.
                         // todo better. (todo: More specific than this redraw all?)
+
+                        let pocket = if let Some(i) = &state.mol_editor.pocket {
+                            Some(&state.pockets[*i])
+                        } else {
+                            None
+                        };
+
                         mol_editor::redraw(
                             &mut scene.entities,
                             &state.mol_editor.mol,
+                            pocket,
                             &state.ui,
                             state.volatile.mol_manip.mode,
                             0,

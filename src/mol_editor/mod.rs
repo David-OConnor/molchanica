@@ -23,17 +23,20 @@ use na_seq::{
 use crate::{
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView, atom_color,
-        bond_entities, draw_mol, draw_peptide,
+        bond_entities, draw_mol, draw_peptide, draw_pocket,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     md::change_snapshot_helper,
     mol_manip::ManipMode,
-    molecules::{Atom, Bond, MolGenericRef, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
+    molecules::{
+        Atom, Bond, MolGenericRef, MolType, common::NEXT_ATOM_SN, pocket::Pocket,
+        small::MoleculeSmall,
+    },
     render::{
         ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, set_flashlight, set_static_light,
     },
     selection::{Selection, ViewSelLevel},
-    state::{OperatingMode, State, StateUi},
+    state::{OperatingMode, State, StateUi, Visibility},
     util::{find_neighbor_posit, orbit_center},
 };
 
@@ -64,6 +67,8 @@ pub struct MolEditorState {
     pub md_rebuild_required: bool,
     /// Bond index.
     pub rotatable_bonds: Vec<usize>,
+    /// Index of state.pockets.
+    pub pocket: Option<usize>,
 }
 
 impl Default for MolEditorState {
@@ -80,6 +85,7 @@ impl Default for MolEditorState {
             snap: Default::default(),
             md_rebuild_required: Default::default(),
             rotatable_bonds: Default::default(),
+            pocket: None,
         }
     }
 }
@@ -273,7 +279,15 @@ impl MolEditorState {
 
         // Clear all entities for non-editor molecules. And render the initial relaxation
         // from building dynamics.
-        redraw(&mut scene.entities, &self.mol, state_ui, manip_mode, 0);
+
+        redraw(
+            &mut scene.entities,
+            &self.mol,
+            None,
+            state_ui,
+            manip_mode,
+            0,
+        );
 
         set_flashlight(scene);
         engine_updates.entities = EntityUpdate::All;
@@ -314,7 +328,7 @@ impl MolEditorState {
 
         self.md_state.as_mut().unwrap().snapshots = Vec::new();
 
-        redraw(entities, &self.mol, state_ui, manip_mode, 0);
+        redraw(entities, &self.mol, None, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -332,7 +346,7 @@ impl MolEditorState {
             self.mol.common.atom_posits[i] = atom.posit.into();
         }
 
-        redraw(entities, &self.mol, state_ui, manip_mode, 0);
+        redraw(entities, &self.mol, None, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -468,6 +482,11 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     scene.camera.position = Vec3F32::new(0., 0., -INIT_CAM_DIST);
     scene.camera.orientation = QuaternionF32::new_identity();
 
+    // Un-render proteins, NAs, lipids etc.
+    scene
+        .entities
+        .retain(|e| e.class == EntityClass::Ligand as u32);
+
     state.volatile.mol_manip.mode = ManipMode::None;
 
     // Set to a view supported by the editor.
@@ -479,10 +498,17 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
         state.ui.mol_view = MoleculeView::BallAndStick
     }
 
+    let pocket = if let Some(i) = &state.mol_editor.pocket {
+        Some(&state.pockets[*i])
+    } else {
+        None
+    };
+
     // Clear all entities for non-editor molecules.
     redraw(
         &mut scene.entities,
         &state.mol_editor.mol,
+        pocket,
         &state.ui,
         state.volatile.mol_manip.mode,
         0,
@@ -524,13 +550,19 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut
 pub fn redraw(
     entities: &mut Vec<Entity>,
     mol: &MoleculeSmall,
+    // todo: Loading pocket from state into this is proving messy.
+    // todo: SOrt out how you will handle it; maybe a local pocket copy in the
+    // todo editor instead of an index.
+    pocket: Option<&Pocket>,
     ui: &StateUi,
     manip_mode: ManipMode,
     num_ligs: usize,
 ) {
-    entities.retain(|e| {
-        e.class != EntityClass::Ligand as u32 && e.class != EntityClass::Pharmacophore as u32
-    });
+    // entities.retain(|e| {
+    //     e.class != EntityClass::Ligand as u32 && e.class != EntityClass::Pharmacophore as u32&&
+    // });
+
+    *entities = Vec::new();
 
     entities.extend(draw_mol(
         MolGenericRef::Small(mol),
@@ -541,6 +573,11 @@ pub fn redraw(
         OperatingMode::MolEditor,
         num_ligs,
     ));
+
+    if let Some(p) = pocket {
+        let hydrogen_bonds = Vec::new(); // todo: A/R
+        draw_pocket(entities, p, &hydrogen_bonds, &Visibility::default());
+    }
 }
 
 /// Tailored function to prevent having to redraw the whole mol.
