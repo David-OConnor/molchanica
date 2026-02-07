@@ -15,7 +15,7 @@ use crate::{
     mol_manip::ManipMode,
     molecules::{Atom, AtomRole, Bond, Chain, MolType, Residue, common::MoleculeCommon},
     state::{State, StateUi},
-    util::orbit_center,
+    util::{RedrawFlags, orbit_center},
 };
 
 #[derive(Clone, PartialEq, Debug, Default, Encode, Decode)]
@@ -42,13 +42,18 @@ pub enum Selection {
     BondsLig((usize, Vec<usize>)),
     BondNucleicAcid((usize, usize)),
     BondLipid((usize, usize)),
+    BondPocket((usize, usize)),
 }
 
 impl Selection {
     pub fn is_bond(&self) -> bool {
         matches!(
             self,
-            Self::BondPeptide(_) | Self::BondLig(_) | Self::BondNucleicAcid(_) | Self::BondLipid(_)
+            Self::BondPeptide(_)
+                | Self::BondLig(_)
+                | Self::BondNucleicAcid(_)
+                | Self::BondLipid(_)
+                | Self::BondPocket(_)
         )
     }
 }
@@ -331,7 +336,8 @@ pub fn find_selected_atom_or_bond(
                     }
                     MolType::NucleicAcid => Selection::BondNucleicAcid(indices),
                     MolType::Lipid => Selection::BondLipid(indices),
-                    _ => unreachable!(),
+                    MolType::Pocket => Selection::BondPocket(indices),
+                    MolType::Water => unimplemented!(),
                 }
             } else {
                 match nearest.mol_type {
@@ -537,6 +543,10 @@ fn nearest_in_group(
 
     for (i_mol, i_atom_bond) in items.iter() {
         let posit: Vec3F32 = if bond_mode {
+            if *i_mol >= bonds.len() {
+                eprintln!("Error: bond mode but i_mol >= bonds.len()");
+            }
+
             let bond = &bonds[*i_mol][*i_atom_bond];
             let atom_0 = &atoms[*i_mol][bond.atom_0];
             let atom_1 = &atoms[*i_mol][bond.atom_1];
@@ -719,10 +729,7 @@ pub fn points_along_ray_bond_peptide(
 pub(crate) fn handle_selection_attempt(
     state: &mut State,
     scene: &mut Scene,
-    redraw_protein: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
+    redraw: &mut RedrawFlags,
 ) {
     let Some(cursor) = state.ui.cursor_pos else {
         return;
@@ -933,10 +940,7 @@ pub(crate) fn handle_selection_attempt(
         *center = orbit_center(state);
     }
 
-    *redraw_protein = true;
-    *redraw_lig = true;
-    *redraw_na = true;
-    *redraw_lipid = true;
+    redraw.set_all();
 }
 
 /// A stripped-down version, for the mol editor. See notes there where applicable.
@@ -945,6 +949,7 @@ pub(crate) fn handle_selection_attempt(
 pub fn handle_selection_attempt_mol_editor(
     state: &mut State,
     scene: &mut Scene,
+    // redraw: &mut RedrawFlags,
     redraw: &mut bool,
 ) {
     // todo: Allow a sel mode in the Primary mode that lets you pick either atoms or bonds, like this.
@@ -1082,10 +1087,7 @@ pub fn handle_selection_attempt_mol_editor(
         &mut state.volatile,
         &mut state.to_save.save_flag,
         scene,
-        &mut false,
         redraw,
-        &mut false,
-        &mut false,
         &mut rebuild_md,
         manip_mode_new,
         &state.ui.selection,
@@ -1094,7 +1096,7 @@ pub fn handle_selection_attempt_mol_editor(
         sync_md(state);
     }
 
-    *redraw = true;
+    redraw.ligand = true;
 }
 
 /// Handles logic regarding selection changes updating multi-atom lists, or reverting

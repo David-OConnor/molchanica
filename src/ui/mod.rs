@@ -48,8 +48,8 @@ use crate::{
         view::{ui_section_vis, view_settings},
     },
     util::{
-        check_prefs_save, close_mol, close_peptide, cycle_selected, handle_err, handle_scene_flags,
-        handle_success, handle_thread_rx, orbit_center, select_from_search,
+        RedrawFlags, check_prefs_save, close_mol, close_peptide, cycle_selected, handle_err,
+        handle_scene_flags, handle_success, handle_thread_rx, orbit_center, select_from_search,
     },
 };
 
@@ -213,10 +213,7 @@ fn draw_cli(
     state: &mut State,
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
-    redraw_pep: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
+    redraw: &mut RedrawFlags,
     reset_cam: &mut bool,
     ui: &mut Ui,
 ) {
@@ -286,7 +283,8 @@ fn draw_cli(
         if (button_clicked || enter_pressed) && state.ui.cmd_line_input.len() >= 2 {
             // todo: Error color
             state.ui.cmd_line_output =
-                match cli::handle_cmd(state, scene, engine_updates, redraw_pep, reset_cam) {
+                match cli::handle_cmd(state, scene, engine_updates, &mut redraw.peptide, reset_cam)
+                {
                     Ok(out) => {
                         state.ui.cmd_line_out_is_err = false;
                         out
@@ -304,27 +302,11 @@ fn draw_cli(
         }
 
         ui.add_space(COL_SPACING);
-        residue_search(
-            state,
-            scene,
-            redraw_pep,
-            redraw_lig,
-            redraw_na,
-            redraw_lipid,
-            ui,
-        );
+        residue_search(state, scene, redraw, ui);
     });
 }
 
-fn residue_search(
-    state: &mut State,
-    scene: &mut Scene,
-    redraw_pep: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
-    ui: &mut Ui,
-) {
+fn residue_search(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags, ui: &mut Ui) {
     let (btn_text_p, btn_text_n, search_text) = match state.ui.view_sel_level {
         ViewSelLevel::Atom => ("Prev atom", "Next atom", "Find atom:"),
         ViewSelLevel::Residue => ("Prev AA", "Next AA", "Find res:"),
@@ -337,7 +319,7 @@ fn residue_search(
         .changed()
     {
         select_from_search(state);
-        *redraw_pep = true;
+        redraw.peptide = true;
     }
 
     if state.peptide.is_some() || !state.ligands.is_empty() {
@@ -350,11 +332,12 @@ fn residue_search(
 
             match state.ui.selection {
                 Selection::AtomPeptide(_) | Selection::Residue(_) | Selection::BondPeptide(_) => {
-                    *redraw_pep = true
+                    redraw.peptide = true
                 }
-                Selection::AtomLig(_) | Selection::BondLig(_) => *redraw_lig = true,
-                Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => *redraw_na = true,
-                Selection::AtomLipid(_) | Selection::BondLipid(_) => *redraw_lipid = true,
+                Selection::AtomLig(_) | Selection::BondLig(_) => redraw.ligand = true,
+                Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => redraw.na = true,
+                Selection::AtomLipid(_) | Selection::BondLipid(_) => redraw.lipid = true,
+                Selection::AtomPocket(_) | Selection::BondPocket(_) => redraw.pocket = true,
                 _ => (),
             }
         }
@@ -368,10 +351,11 @@ fn residue_search(
             cycle_selected(state, scene, false);
 
             match state.ui.selection {
-                Selection::AtomPeptide(_) | Selection::Residue(_) => *redraw_pep = true,
-                Selection::AtomLig(_) => *redraw_lig = true,
-                Selection::AtomNucleicAcid(_) => *redraw_na = true,
-                Selection::AtomLipid(_) => *redraw_lipid = true,
+                Selection::AtomPeptide(_) | Selection::Residue(_) => redraw.peptide = true,
+                Selection::AtomLig(_) | Selection::BondLig(_) => redraw.ligand = true,
+                Selection::AtomNucleicAcid(_) => redraw.na = true,
+                Selection::AtomLipid(_) => redraw.lipid = true,
+                Selection::AtomPocket(_) | Selection::BondPocket(_) => redraw.pocket = true,
                 _ => (),
             }
         }
@@ -769,25 +753,14 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
     // style.visuals.widgets.noninteractive.bg_fill = COLOR_POPUP;
     // ctx.set_style(style);
 
-    let mut redraw_peptide = false;
-    let mut redraw_lig = false;
-    let mut redraw_na = false;
-    let mut redraw_lipid = false;
+    let mut redraw = RedrawFlags::default();
+
     let mut reset_cam = false;
 
     // For getting DT for certain buttons when held. Does not seem to be the same as the 3D render DT.
     let start = Instant::now();
 
-    sidebar(
-        state,
-        scene,
-        &mut redraw_peptide,
-        &mut redraw_lig,
-        &mut redraw_lipid,
-        &mut redraw_na,
-        &mut engine_updates,
-        ctx,
-    );
+    sidebar(state, scene, &mut redraw, &mut engine_updates, ctx);
 
     let out_main_panel = TopBottomPanel::top("0").show(ctx, |ui| {
         ui.spacing_mut().slider_width = 120.;
@@ -809,7 +782,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             state.mol_editor.md_step(&state.dev, &mut scene.entities, &state.ui,
                                      &mut engine_updates, state.volatile.mol_manip.mode, );
 
-            load_popups(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut reset_cam, &mut engine_updates);
+            load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut engine_updates);
 
             return;
         }
@@ -836,7 +809,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
             {
                 let mut close = false;
-                display_mol_data_peptide(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut close, &mut engine_updates);
+                display_mol_data_peptide(state, scene, ui, &mut redraw.peptide, &mut redraw.ligand, &mut close, &mut engine_updates);
 
                 if close {
                     close_peptide(state, scene, &mut engine_updates);
@@ -1011,7 +984,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         state,
                         scene,
                         &mut engine_updates,
-                        &mut redraw_peptide,
+                        &mut redraw.peptide,
                         &mut reset_cam,
                     );
 
@@ -1033,7 +1006,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     match load_sdf_drugbank(&state.ui.db_input) {
                         Ok(mol) => {
                             open_lig_from_input(state, mol, scene, &mut engine_updates);
-                            redraw_lig = true;
+                            redraw.ligand = true;
                             reset_cam = true;
                         }
                         Err(e) => {
@@ -1050,7 +1023,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     match load_sdf_pubchem(cid) {
                         Ok(mol) => {
                             open_lig_from_input(state, mol, scene, &mut engine_updates);
-                            redraw_lig = true;
+                            redraw.ligand = true;
                             reset_cam = true;
                         }
                         Err(e) => {
@@ -1073,7 +1046,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                 match load_sdf_pubchem(c[0]) {
                                     Ok(mol) => {
                                         open_lig_from_input(state, mol, scene, &mut engine_updates);
-                                        redraw_lig = true;
+                                        redraw.ligand = true;
                                         reset_cam = true;
 
 
@@ -1111,7 +1084,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                 state,
                                 scene,
                                 &mut engine_updates,
-                                &mut redraw_peptide,
+                                &mut redraw.peptide,
                                 &mut reset_cam,
                             );
                         }
@@ -1126,7 +1099,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         ui.horizontal(|ui| {
             // Show the picker, at least.
             if !state.ligands.is_empty() || !state.lipids.is_empty() || !state.nucleic_acids.is_empty() {
-                // display_mol_data(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut redraw_na, &mut redraw_lipid, &mut close_active_mol, &mut engine_updates);
+                // display_mol_data(state, scene, ui, &mut redraw.peptide, &mut redraw.ligand, &mut redraw_na, &mut redraw_lipid, &mut close_active_mol, &mut engine_updates);
                 display_mol_data(state, ui);
             }
 
@@ -1152,13 +1125,11 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         // Todo: Move to popups  etc A/R.
         // mol_characterization(state, ui);
 
-        let redraw_prev = redraw_peptide;
-        selection_section(state, &mut redraw_peptide, ui);
+        let redraw_prev = redraw.peptide;
+        selection_section(state, &mut redraw.peptide, ui);
         // todo: Kludge
-        if redraw_peptide && !redraw_prev {
-            redraw_lig = true;
-            redraw_na = true;
-            redraw_lipid = true;
+        if redraw.peptide && !redraw_prev {
+            redraw.set_all();
         }
 
         ui.horizontal_wrapped(|ui| {
@@ -1167,7 +1138,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         });
 
         ui.horizontal(|ui| {
-            view_settings(state, scene, &mut engine_updates, &mut redraw_peptide, &mut redraw_lig, &mut redraw_na, &mut redraw_lipid, ui);
+            view_settings(state, scene, &mut engine_updates, &mut redraw, ui);
 
             ui.add_space(COL_SPACING);
 
@@ -1176,7 +1147,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             });
         });
 
-        chain_selector(state, &mut redraw_peptide, ui);
+        chain_selector(state, &mut redraw.peptide, ui);
 
         mol_type_toolbars(state, scene, &mut engine_updates, ui);
 
@@ -1184,13 +1155,13 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             md_setup(state, scene, &mut engine_updates, ui);
         }
         if state.ui.ui_vis.orca {
-            orca_input(state, &mut redraw_lig, ui);
+            orca_input(state, &mut redraw.ligand, ui);
         }
 
         // if state.ui.show_docking_tools {
         //     ui.add_space(ROW_SPACING);
         //
-        //     docking(state, scene, &mut redraw_lig, &mut engine_updates, ui);
+        //     docking(state, scene, &mut redraw.ligand, &mut engine_updates, ui);
         // }
 
         // todo: Allow switching between chains and secondary-structure features here.
@@ -1199,7 +1170,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
         if state.ui.ui_vis.aa_seq {
             if state.peptide.is_some() {
-                add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw_peptide);
+                add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw.peptide);
             }
         }
 
@@ -1219,10 +1190,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             state,
             scene,
             &mut engine_updates,
-            &mut redraw_peptide,
-            &mut redraw_lig,
-            &mut redraw_na,
-            &mut redraw_lipid,
+            &mut redraw,
             &mut reset_cam,
             ui,
         );
@@ -1241,7 +1209,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         //     // }));
         // }
 
-        load_popups(state, scene, ui, &mut redraw_peptide, &mut redraw_lig, &mut reset_cam, &mut engine_updates);
+        load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut engine_updates);
 
         // -------UI above; clean-up items (based on flags) below
 
@@ -1257,7 +1225,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
         handle_redraw(
             state,
-            scene, redraw_peptide, redraw_lig, redraw_na, redraw_lipid, reset_cam, &mut engine_updates,
+            scene, &mut redraw, reset_cam, &mut engine_updates,
         )
     });
 

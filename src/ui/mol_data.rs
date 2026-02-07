@@ -1,12 +1,6 @@
 //! Information and settings for the opened, or to-be opened molecules.
 
-use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
-use bio_files::{ResidueType, md_params::ForceFieldParams};
-use dynamics::params::FfParamSet;
-use egui::{Color32, RichText, Ui};
-use graphics::{EngineUpdates, EntityUpdate, Scene};
-use lin_alg::f64::Vec3;
-
+use crate::drawing::wrappers::draw_all_pockets;
 use crate::{
     cam::move_cam_to_active_mol,
     drawing,
@@ -26,6 +20,12 @@ use crate::{
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, mol_descrip, popups},
     util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
+use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
+use bio_files::{ResidueType, md_params::ForceFieldParams};
+use dynamics::params::FfParamSet;
+use egui::{Color32, RichText, Ui};
+use graphics::{EngineUpdates, EntityUpdate, Scene};
+use lin_alg::f64::Vec3;
 
 /// `posit_override` is for example, relative atom positions, such as a positioned ligand.
 fn disp_atom_data(
@@ -289,6 +289,7 @@ pub(in crate::ui) fn selected_data(
             }
             // todo DRY
             Selection::AtomPocket((mol_i, atom_i)) => {
+                println!("Atom pocket selected"); // todo temp
                 if *mol_i >= pockets.len() {
                     return;
                 }
@@ -408,6 +409,24 @@ pub(in crate::ui) fn selected_data(
                     bond,
                     &mol.common.atoms,
                     MolType::Lipid,
+                    &state.ff_param_set,
+                    ui,
+                );
+            }
+            Selection::BondPocket((mol_i, bond_i)) => {
+                if *mol_i >= pockets.len() {
+                    return;
+                }
+                let mol = &pockets[*mol_i];
+                if *bond_i >= mol.common.bonds.len() {
+                    return;
+                }
+
+                let bond = &mol.common.bonds[*bond_i];
+                disp_bond_data(
+                    bond,
+                    &mol.common.atoms,
+                    MolType::Pocket,
                     &state.ff_param_set,
                     ui,
                 );
@@ -656,7 +675,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 let pocket = Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, &format!("{} atom {sel_i}", mol.common.ident));
 
                 scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
-                draw_pocket(&mut scene.entities, &pocket, &[], &state.ui.visibility); // todo: For now.[]
+                draw_all_pockets(state, scene);
 
                 engine_updates.meshes = true;
                 engine_updates.entities = EntityUpdate::All; // todo temp

@@ -2214,15 +2214,17 @@ pub fn draw_pharmacophore_hint_sites(
 }
 
 pub fn draw_pocket(
-    entities: &mut Vec<Entity>,
+    // entities: &mut Vec<Entity>,
     pocket: &Pocket,
     hydrogen_bonds: &[HydrogenBond],
     visibility: &Visibility,
-) {
-    entities.retain(|ent| ent.class != EntityClass::Pocket as u32);
+    selection: &Selection,
+) -> Vec<Entity> {
+    let mut entities = Vec::new();
+    // entities.retain(|ent| ent.class != EntityClass::Pocket as u32);
 
     if visibility.hide_pockets {
-        return;
+        return entities;
     }
 
     // todo: For now, drawing the spheres we use to compute exclusion.
@@ -2242,17 +2244,27 @@ pub fn draw_pocket(
         entities.push(ent);
     }
 
+    let mut color_mesh = (0.3, 0.4, 0.5);
+    if matches!(
+        selection,
+        Selection::AtomPocket(_) | Selection::BondPocket(_)
+    ) {
+        color_mesh = COLOR_SELECTED;
+    }
+
     // Draw the surface mesh; pre-computed.
     let mut ent = Entity::new(
         MESH_POCKET,
         Vec3::new_zero(), // todo temp?
         Quaternion::new_identity(),
         1.,
-        (0.3, 0.4, 0.5),
+        color_mesh,
         ATOM_SHININESS,
     );
 
     ent.class = EntityClass::Pocket as u32;
     ent.opacity = POCKET_SURFACE_OPACITY;
     entities.push(ent);
+
+    entities
 }

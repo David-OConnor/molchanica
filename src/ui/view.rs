@@ -12,17 +12,14 @@ use crate::{
         COL_SPACING, DENS_ISO_MAX, DENS_ISO_MIN, misc,
         misc::{section_box, toggle_btn, toggle_btn_inv},
     },
-    util::clear_mol_entity_indices,
+    util::{RedrawFlags, clear_mol_entity_indices},
 };
 
 pub fn view_settings(
     state: &mut State,
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
-    redraw_peptide: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
+    redraw: &mut RedrawFlags,
     ui: &mut Ui,
 ) {
     section_box().show(ui, |ui| {
@@ -51,10 +48,7 @@ pub fn view_settings(
                 .on_hover_text(help_text);
 
             if state.ui.mol_view != prev_view {
-                *redraw_peptide = true;
-                *redraw_lig = true;
-                *redraw_na = true;
-                *redraw_lipid = true;
+redraw.set_all();
             }
 
             if state.ui.mol_view == MoleculeView::Surface {
@@ -78,14 +72,14 @@ pub fn view_settings(
                     "Peptide",
                     "Show or hide the protein/peptide",
                     ui,
-                    redraw_peptide,
+                    &mut redraw.peptide,
                 );
                 toggle_btn_inv(
                     &mut state.ui.visibility.hide_hetero,
                     "Hetero",
                     "Show or hide non-amino-acid atoms in the protein/peptide",
                     ui,
-                    redraw_peptide,
+                    &mut redraw.peptide,
                 );
 
                 ui.add_space(COL_SPACING / 2.);
@@ -97,7 +91,7 @@ pub fn view_settings(
                         "Sidechains",
                         "Show or sidechains in the protein/peptide",
                         ui,
-                        redraw_peptide,
+                        &mut redraw.peptide,
                     );
                 }
             }
@@ -108,7 +102,7 @@ pub fn view_settings(
                     "Pockets",
                     "Show or hide explicitly-added protein pockets for screening, docking, etc",
                     ui,
-                    redraw_peptide,
+                    &mut redraw.peptide,
                 );
             }
 
@@ -118,15 +112,12 @@ pub fn view_settings(
                 "H",
                 "Show or hide non-amino-acid atoms in the protein/peptide",
                 ui,
-                redraw_peptide,
+                &mut redraw.peptide,
             );
 
             // Hanndle the other redraws.
             if state.ui.visibility.hide_hydrogen != hide_hydrogen_prev {
-                // *redraw_peptide = true;
-                *redraw_lig = true;
-                *redraw_na = true;
-                *redraw_lipid = true;
+redraw.set_all();
             }
 
             // We allow toggling water now regardless of hide hetero, as it's part of our MD sim.
@@ -138,7 +129,7 @@ pub fn view_settings(
                 "Water",
                 "Show or hide water molecules",
                 ui,
-                redraw_peptide,
+                &mut redraw.peptide,
             );
 
             if !state.nucleic_acids.is_empty() {
@@ -147,7 +138,7 @@ pub fn view_settings(
                     "Nucleic acids",
                     "Show or hide nucleic acis",
                     ui,
-                    redraw_peptide,
+                    &mut redraw.peptide,
                 );
             }
             // }
@@ -201,7 +192,7 @@ pub fn view_settings(
                 "H bonds",
                 "Showh or hide Hydrogen bonds",
                 ui,
-                redraw_peptide,
+                &mut redraw.peptide,
             );
 
             let prev = state.ui.visibility.labels_atom_sn;
@@ -210,13 +201,10 @@ pub fn view_settings(
                 "Lbl",
                 "Show or hide atom serial numbers overlaid on their positions",
                 ui,
-                redraw_peptide,
+                &mut redraw.peptide,
             );
             if state.ui.visibility.labels_atom_sn != prev {
-                //todo: This isn't working; not redrawing?
-                *redraw_lig = true;
-                *redraw_na = true;
-                *redraw_lipid = true;
+                redraw.set_all();
             }
 
             if !(state.ligands.is_empty() && state.pharmacophores.is_empty()) {
@@ -225,7 +213,7 @@ pub fn view_settings(
                     "Phar",
                     "Show or hide pharmacophores",
                     ui,
-                    redraw_lig,
+                    &mut redraw.ligand,
                 );
             }
 
@@ -241,7 +229,7 @@ pub fn view_settings(
                     .clicked()
                 {
                     state.ui.visibility.dim_peptide = !state.ui.visibility.dim_peptide;
-                    *redraw_peptide = true;
+                    redraw.peptide =  true;
                 }
             }
 

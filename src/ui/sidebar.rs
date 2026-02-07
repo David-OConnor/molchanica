@@ -15,7 +15,7 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, pharmacophore,
     },
-    util::{close_mol, handle_err, orbit_center},
+    util::{RedrawFlags, close_mol, handle_err, orbit_center},
 };
 
 /// Abstracts over all molecule types. (Currently not protein though)
@@ -154,10 +154,7 @@ fn mol_picker(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
-    redraw_pep: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_lipid: &mut bool,
-    redraw_na: &mut bool,
+    redraw: &mut RedrawFlags,
     engine_updates: &mut EngineUpdates,
 ) {
     let mut recenter_orbit = false;
@@ -181,7 +178,7 @@ fn mol_picker(
             scene,
             ui,
             engine_updates,
-            redraw_pep,
+            &mut redraw.peptide,
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
@@ -201,7 +198,7 @@ fn mol_picker(
             scene,
             ui,
             engine_updates,
-            redraw_lig,
+            &mut redraw.ligand,
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
@@ -221,7 +218,7 @@ fn mol_picker(
             scene,
             ui,
             engine_updates,
-            redraw_lipid,
+            &mut redraw.lipid,
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
@@ -242,7 +239,7 @@ fn mol_picker(
             scene,
             ui,
             engine_updates,
-            redraw_na,
+            &mut redraw.na,
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
@@ -263,7 +260,7 @@ fn mol_picker(
             scene,
             ui,
             engine_updates,
-            redraw_na,
+            &mut redraw.pocket,
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
@@ -308,15 +305,7 @@ fn open_tools(state: &mut State, ui: &mut Ui) {
     }
 }
 
-fn manip_toolbar(
-    state: &mut State,
-    scene: &mut Scene,
-    redraw_pep: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_lipid: &mut bool,
-    redraw_na: &mut bool,
-    ui: &mut Ui,
-) {
+fn manip_toolbar(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let Some((active_mol_type, active_mol_i)) = state.volatile.active_mol else {
             return;
@@ -346,7 +335,7 @@ fn manip_toolbar(
                 the mouse. Scroll to move it forward and back.")
                 .clicked() {
 
-                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw_pep, redraw_lig, redraw_na, redraw_lipid,&mut false,
+                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw,&mut false,
                           ManipMode::Move((active_mol_type, active_mol_i)), &state.ui.selection,);
             }
 
@@ -354,7 +343,7 @@ fn manip_toolbar(
                 .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll.")
                 .clicked() {
 
-                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw_pep, redraw_lig,redraw_na, redraw_lipid,&mut false,
+                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene,redraw,&mut false,
                           ManipMode::Rotate((active_mol_type, active_mol_i)), &state.ui.selection,);
             }
         }
@@ -367,12 +356,7 @@ fn manip_toolbar(
             {
                 move_mol_to_cam(mol.common_mut(), &scene.camera);
 
-                match active_mol_type {
-                    MolType::Ligand => *redraw_lig = true,
-                    MolType::NucleicAcid => *redraw_na = true,
-                    MolType::Lipid => *redraw_lipid = true,
-                    _ => unimplemented!(),
-                }
+                redraw.set(active_mol_type);
             }
 
             if ui
@@ -386,12 +370,7 @@ fn manip_toolbar(
                 mol.common_mut().reset_posits();
 
                 // todo: Use the inplace move.
-                match active_mol_type {
-                    MolType::Ligand => *redraw_lig = true,
-                    MolType::NucleicAcid => *redraw_na = true,
-                    MolType::Lipid => *redraw_lipid = true,
-                    _ => unimplemented!(),
-                }
+                redraw.set(active_mol_type);
             }
 
             if ui.button("Details")
@@ -406,10 +385,7 @@ fn manip_toolbar(
 pub(in crate::ui) fn sidebar(
     state: &mut State,
     scene: &mut Scene,
-    redraw_pep: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_lipid: &mut bool,
-    redraw_na: &mut bool,
+    redraw: &mut RedrawFlags,
     engine_updates: &mut EngineUpdates,
     ctx: &Context,
 ) {
@@ -465,15 +441,7 @@ pub(in crate::ui) fn sidebar(
 
             ui.add_space(ROW_SPACING / 2.);
 
-            manip_toolbar(
-                state,
-                scene,
-                redraw_pep,
-                redraw_lig,
-                redraw_lipid,
-                redraw_na,
-                ui,
-            );
+            manip_toolbar(state, scene, redraw, ui);
 
             ui.add_space(ROW_SPACING / 2.);
             ui.separator();
@@ -512,16 +480,7 @@ pub(in crate::ui) fn sidebar(
                     }
                 }
             } else {
-                mol_picker(
-                    state,
-                    scene,
-                    ui,
-                    redraw_pep,
-                    redraw_lig,
-                    redraw_lipid,
-                    redraw_na,
-                    engine_updates,
-                );
+                mol_picker(state, scene, ui, redraw, engine_updates);
             }
 
             // todo: Still list global pharmacophores

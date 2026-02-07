@@ -13,7 +13,7 @@ use na_seq::Element::Carbon;
 use crate::{
     cam::{FOG_DIST_MIN, move_cam_to_sel, set_fog_dist},
     drawing,
-    drawing::{EntityClass, wrappers},
+    drawing::{EntityClass, draw_pocket, wrappers},
     mol_editor,
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
@@ -23,7 +23,7 @@ use crate::{
     selection,
     selection::Selection,
     state::{OperatingMode, State},
-    util::{close_mol, cycle_selected},
+    util::{RedrawFlags, close_mol, cycle_selected},
 };
 
 // These are defaults; overridden by the user A/R, and saved to prefs.
@@ -52,16 +52,9 @@ pub fn event_dev_handler(
     // This affects our app-specific commands, vs engine built-in ones. For example, hot keys
     // to change various modes.
 
-    let mut redraw_protein = false;
-    let mut redraw_lig = false;
-    let mut redraw_na = false;
-    let mut redraw_lipid = false;
-
+    let mut redraw = RedrawFlags::default();
+    let mut redraw_in_place = RedrawFlags::default();
     let mut redraw_mol_editor = false;
-
-    let mut redraw_ligs_inplace = false;
-    let mut redraw_na_inplace = false;
-    let mut redraw_lipid_inplace = false;
 
     if !state_.ui.mouse_in_window {
         return updates;
@@ -103,15 +96,7 @@ pub fn event_dev_handler(
             set_flashlight(scene);
             updates.lighting = true;
 
-            mol_manip::handle_mol_manip_in_out(
-                state_,
-                scene,
-                delta,
-                &mut redraw_protein,
-                &mut redraw_ligs_inplace,
-                &mut redraw_na_inplace,
-                &mut redraw_lipid_inplace,
-            );
+            mol_manip::handle_mol_manip_in_out(state_, scene, delta, &mut redraw_in_place);
         }
         DeviceEvent::Button { button, state } => {
             #[cfg(target_os = "linux")]
@@ -134,14 +119,7 @@ pub fn event_dev_handler(
                 match state {
                     ElementState::Pressed => match state_.volatile.operating_mode {
                         OperatingMode::Primary => {
-                            selection::handle_selection_attempt(
-                                state_,
-                                scene,
-                                &mut redraw_protein,
-                                &mut redraw_lig,
-                                &mut redraw_lipid,
-                                &mut redraw_na,
-                            );
+                            selection::handle_selection_attempt(state_, scene, &mut redraw);
                         }
                         OperatingMode::MolEditor => {
                             selection::handle_selection_attempt_mol_editor(
@@ -173,13 +151,18 @@ pub fn event_dev_handler(
                             OperatingMode::Primary => match state_.ui.selection {
                                 Selection::AtomPeptide(_)
                                 | Selection::Residue(_)
-                                | Selection::BondPeptide(_) => redraw_protein = true,
-                                Selection::AtomLig(_) | Selection::BondLig(_) => redraw_lig = true,
+                                | Selection::BondPeptide(_) => redraw.peptide = true,
+                                Selection::AtomLig(_) | Selection::BondLig(_) => {
+                                    redraw.ligand = true
+                                }
                                 Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => {
-                                    redraw_na = true
+                                    redraw.na = true
                                 }
                                 Selection::AtomLipid(_) | Selection::BondLipid(_) => {
-                                    redraw_lipid = true
+                                    redraw.lipid = true
+                                }
+                                Selection::AtomPocket(_) | Selection::BondPocket(_) => {
+                                    redraw.pocket = true
                                 }
                                 _ => (),
                             },
@@ -194,13 +177,18 @@ pub fn event_dev_handler(
                             OperatingMode::Primary => match state_.ui.selection {
                                 Selection::AtomPeptide(_)
                                 | Selection::Residue(_)
-                                | Selection::BondPeptide(_) => redraw_protein = true,
-                                Selection::AtomLig(_) | Selection::BondLig(_) => redraw_lig = true,
+                                | Selection::BondPeptide(_) => redraw.peptide = true,
+                                Selection::AtomLig(_) | Selection::BondLig(_) => {
+                                    redraw.ligand = true
+                                }
                                 Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => {
-                                    redraw_na = true
+                                    redraw.na = true
                                 }
                                 Selection::AtomLipid(_) | Selection::BondLipid(_) => {
-                                    redraw_lipid = true
+                                    redraw.lipid = true
+                                }
+                                Selection::AtomPocket(_) | Selection::BondPocket(_) => {
+                                    redraw.pocket = true
                                 }
                                 _ => (),
                             },
@@ -229,10 +217,7 @@ pub fn event_dev_handler(
                             state_.volatile.active_mol = None;
                         }
 
-                        redraw_protein = true;
-                        redraw_lig = true;
-                        redraw_na = true;
-                        redraw_lipid = true;
+                        redraw.set_all();
                     }
                     Code(KeyCode::Enter) => {
                         move_cam_to_sel(
@@ -249,10 +234,7 @@ pub fn event_dev_handler(
                         OperatingMode::Primary => {
                             state_.ui.mol_view = state_.ui.mol_view.prev();
 
-                            redraw_protein = true;
-                            redraw_lig = true;
-                            redraw_na = true;
-                            redraw_lipid = true;
+                            redraw.set_all();
                         }
                         OperatingMode::MolEditor => {
                             state_.ui.mol_view = state_.ui.mol_view.prev_editor();
@@ -264,10 +246,7 @@ pub fn event_dev_handler(
                         OperatingMode::Primary => {
                             state_.ui.mol_view = state_.ui.mol_view.next();
 
-                            redraw_protein = true;
-                            redraw_lig = true;
-                            redraw_na = true;
-                            redraw_lipid = true;
+                            redraw.set_all();
                         }
                         OperatingMode::MolEditor => {
                             state_.ui.mol_view = state_.ui.mol_view.next_editor();
@@ -279,10 +258,7 @@ pub fn event_dev_handler(
                         OperatingMode::Primary => {
                             state_.ui.view_sel_level = state_.ui.view_sel_level.prev();
 
-                            redraw_protein = true;
-                            redraw_lig = true;
-                            redraw_na = true;
-                            redraw_lipid = true;
+                            redraw.set_all();
                         }
                         OperatingMode::MolEditor => {
                             state_.ui.view_sel_level = state_.ui.view_sel_level.prev();
@@ -294,10 +270,7 @@ pub fn event_dev_handler(
                         OperatingMode::Primary => {
                             state_.ui.view_sel_level = state_.ui.view_sel_level.next();
 
-                            redraw_protein = true;
-                            redraw_lig = true;
-                            redraw_na = true;
-                            redraw_lipid = true;
+                            redraw.set_all();
                         }
                         OperatingMode::MolEditor => {
                             state_.ui.view_sel_level = state_.ui.view_sel_level.next();
@@ -311,10 +284,7 @@ pub fn event_dev_handler(
                             &mut state_.volatile,
                             &mut state_.to_save.save_flag,
                             scene,
-                            &mut redraw_protein,
-                            &mut redraw_ligs_inplace,
-                            &mut redraw_na_inplace,
-                            &mut redraw_lipid_inplace,
+                            &mut redraw,
                             &mut rebuild_md_editor,
                             ManipMode::Move((MolType::Ligand, 0)),
                             &state_.ui.selection,
@@ -346,10 +316,7 @@ pub fn event_dev_handler(
                                 &mut state_.volatile,
                                 &mut state_.to_save.save_flag,
                                 scene,
-                                &mut redraw_protein,
-                                &mut redraw_ligs_inplace,
-                                &mut redraw_na_inplace,
-                                &mut redraw_lipid_inplace,
+                                &mut redraw_in_place,
                                 &mut rebuild_md_editor,
                                 ManipMode::Rotate((mol_type, 0)),
                                 &state_.ui.selection,
@@ -513,15 +480,7 @@ pub fn event_dev_handler(
             }
 
             if state_.ui.left_click_down {
-                mol_manip::handle_mol_manip_in_plane(
-                    state_,
-                    scene,
-                    delta,
-                    &mut redraw_protein,
-                    &mut redraw_ligs_inplace,
-                    &mut redraw_na_inplace,
-                    &mut redraw_lipid_inplace,
-                );
+                mol_manip::handle_mol_manip_in_plane(state_, scene, delta, &mut redraw_in_place);
 
                 set_flashlight(scene);
                 updates.lighting = true;
@@ -545,14 +504,14 @@ pub fn event_dev_handler(
         _ => (),
     }
 
-    if redraw_protein && state_.volatile.operating_mode == OperatingMode::Primary {
+    if redraw.peptide && state_.volatile.operating_mode == OperatingMode::Primary {
         // todo:This is overkill for certain keys. Just change the color of the one[s] in question, and set update.entities = true.
         drawing::draw_peptide(state_, scene);
         updates.entities = EntityUpdate::All;
         // updates.entities.push_class(EntityClass::Peptide as u32);
     }
 
-    if redraw_lig {
+    if redraw.ligand {
         match state_.volatile.operating_mode {
             OperatingMode::Primary => wrappers::draw_all_ligs(state_, scene),
 
@@ -577,17 +536,23 @@ pub fn event_dev_handler(
         updates.entities = EntityUpdate::All;
     }
 
-    if redraw_na && state_.volatile.operating_mode == OperatingMode::Primary {
+    if redraw.na && state_.volatile.operating_mode == OperatingMode::Primary {
         wrappers::draw_all_nucleic_acids(state_, scene);
         updates.entities = EntityUpdate::All;
     }
 
-    if redraw_lipid && state_.volatile.operating_mode == OperatingMode::Primary {
+    if redraw.lipid && state_.volatile.operating_mode == OperatingMode::Primary {
         wrappers::draw_all_lipids(state_, scene);
         updates.entities = EntityUpdate::All;
     }
 
-    if redraw_ligs_inplace {
+    if redraw.pocket && state_.volatile.operating_mode == OperatingMode::Primary {
+        wrappers::draw_all_pockets(state_, scene);
+
+        updates.entities = EntityUpdate::All;
+    }
+
+    if redraw_in_place.ligand {
         match state_.volatile.operating_mode {
             OperatingMode::Primary => {
                 redraw_inplace_helper(MolType::Ligand, state_, scene, &mut updates);
@@ -613,12 +578,16 @@ pub fn event_dev_handler(
         }
     }
 
-    if redraw_na_inplace && state_.volatile.operating_mode == OperatingMode::Primary {
+    if redraw_in_place.na && state_.volatile.operating_mode == OperatingMode::Primary {
         redraw_inplace_helper(MolType::NucleicAcid, state_, scene, &mut updates);
     }
 
-    if redraw_lipid_inplace && state_.volatile.operating_mode == OperatingMode::Primary {
+    if redraw_in_place.lipid && state_.volatile.operating_mode == OperatingMode::Primary {
         redraw_inplace_helper(MolType::Lipid, state_, scene, &mut updates);
+    }
+
+    if redraw_in_place.pocket && state_.volatile.operating_mode == OperatingMode::Primary {
+        redraw_inplace_helper(MolType::Pocket, state_, scene, &mut updates);
     }
 
     if redraw_mol_editor {

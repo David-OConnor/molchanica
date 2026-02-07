@@ -3,6 +3,7 @@ use std::io;
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
+use crate::util::RedrawFlags;
 use crate::{
     cam::reset_camera,
     drawing::{
@@ -80,14 +81,11 @@ pub fn update_file_dialogs(
 pub fn handle_redraw(
     state: &mut State,
     scene: &mut Scene,
-    peptide: bool,
-    lig: bool,
-    na: bool,
-    lipid: bool,
+    redraw: &mut RedrawFlags,
     reset_cam: bool,
     engine_updates: &mut EngineUpdates,
 ) {
-    if peptide {
+    if redraw.peptide {
         draw_peptide(state, scene);
         // draw_all_ligs(state, scene); // todo: Hmm.
 
@@ -104,7 +102,7 @@ pub fn handle_redraw(
         }
     }
 
-    if lig {
+    if redraw.ligand {
         draw_all_ligs(state, scene);
 
         engine_updates.entities = EntityUpdate::All;
@@ -116,13 +114,19 @@ pub fn handle_redraw(
         }
     }
 
-    if na {
+    if redraw.na {
         draw_all_nucleic_acids(state, scene);
         engine_updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::NucleicAcid as u32);
     }
 
-    if lipid {
+    if redraw.lipid {
+        draw_all_lipids(state, scene);
+        engine_updates.entities = EntityUpdate::All;
+        // engine_updates.entities.push_class(EntityClass::Lipid as u32);
+    }
+
+    if redraw.pocket {
         draw_all_lipids(state, scene);
         engine_updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::Lipid as u32);

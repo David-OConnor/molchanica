@@ -8,6 +8,7 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
+use crate::util::RedrawFlags;
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
@@ -711,19 +712,21 @@ fn edit_tools(
                 .on_hover_text("(Hotkey: M. M or Esc to stop) Move the selected atom")
                 .clicked()
             {
+                // dummy API interaction.
+                let mut redraw_flags = RedrawFlags::default();
+                redraw_flags.ligand = *redraw;
+
                 mol_manip::set_manip(
                     &mut state.volatile,
                     &mut state.to_save.save_flag,
                     scene,
-                    redraw,
-                    &mut false,
-                    &mut false,
-                    &mut false,
+                    &mut redraw_flags,
                     &mut rebuild_md,
                     // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
                     ManipMode::Move((MolType::Ligand, selected_idxs[0])),
                     &state.ui.selection,
                 );
+                *redraw = redraw_flags.ligand;
             }
             // }
 
@@ -738,19 +741,21 @@ fn edit_tools(
                     // todo: Cache this in `MoleculeSmall`?
                     let bond = &state.mol_editor.mol.common.bonds[selected_idxs[0]];
                     if !bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
+
+                        // dummy API interaction.
+                        let mut redraw_flags = RedrawFlags::default();
+                        redraw_flags.ligand = *redraw;
                         mol_manip::set_manip(
                             &mut state.volatile,
                             &mut state.to_save.save_flag,
                             scene,
-                            &mut false,
-                            redraw,
-                            &mut false,
-                            &mut false,
+                            &mut redraw_flags,
                             &mut rebuild_md,
                             // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
                             ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
                             &state.ui.selection,
                         );
+                        *redraw = redraw_flags.ligand;
                     }
                 }
             }

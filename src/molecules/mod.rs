@@ -42,6 +42,7 @@ use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use small::MoleculeSmall;
 
+use crate::molecules::pocket::Pocket;
 use crate::{
     bond_inference::create_hydrogen_bonds,
     drawing::EntityClass,
@@ -156,6 +157,7 @@ pub enum MolGenericRef<'a> {
     Small(&'a MoleculeSmall),
     NucleicAcid(&'a MoleculeNucleicAcid),
     Lipid(&'a MoleculeLipid),
+    Pocket(&'a Pocket),
 }
 
 impl<'a> MolGenericRef<'a> {
@@ -166,6 +168,7 @@ impl<'a> MolGenericRef<'a> {
             Small(m) => &m.common,
             NucleicAcid(m) => &m.common,
             Lipid(m) => &m.common,
+            Pocket(m) => &m.common,
         }
     }
 
@@ -176,6 +179,7 @@ impl<'a> MolGenericRef<'a> {
             Small(_) => MolType::Ligand,
             NucleicAcid(_) => MolType::NucleicAcid,
             Lipid(_) => MolType::Lipid,
+            Pocket(_) => MolType::Pocket,
         }
     }
 
@@ -217,6 +221,7 @@ pub enum MolGenericRefMut<'a> {
     Small(&'a mut MoleculeSmall),
     NucleicAcid(&'a mut MoleculeNucleicAcid),
     Lipid(&'a mut MoleculeLipid),
+    Pocket(&'a mut Pocket),
 }
 
 impl<'a> MolGenericRefMut<'a> {
@@ -227,6 +232,7 @@ impl<'a> MolGenericRefMut<'a> {
             Small(m) => &mut m.common,
             NucleicAcid(m) => &mut m.common,
             Lipid(m) => &mut m.common,
+            Pocket(m) => &mut m.common,
         }
     }
 
@@ -237,6 +243,7 @@ impl<'a> MolGenericRefMut<'a> {
             Small(m) => &m.common,
             NucleicAcid(m) => &m.common,
             Lipid(m) => &m.common,
+            Pocket(m) => &m.common,
         }
     }
 
@@ -247,6 +254,7 @@ impl<'a> MolGenericRefMut<'a> {
             Small(_) => MolType::Ligand,
             NucleicAcid(_) => MolType::NucleicAcid,
             Lipid(_) => MolType::Lipid,
+            Pocket(_) => MolType::Lipid,
         }
     }
 

@@ -27,7 +27,7 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         mol_data::metadata, pharmacophore, rama_plot, recent_files, recent_files::NUM_TO_SHOW,
     },
-    util::{handle_err, orbit_center},
+    util::{RedrawFlags, handle_err, orbit_center},
 };
 
 /// Based on popup state, shows popups. This is the entry point for all popups.
@@ -35,8 +35,7 @@ pub(in crate::ui) fn load_popups(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
-    redraw_peptide: &mut bool,
-    redraw_lig: &mut bool,
+    redraw: &mut RedrawFlags,
     reset_cam: &mut bool,
     engine_updates: &mut EngineUpdates,
 ) {
@@ -48,13 +47,20 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.show_associated_structures {
         popup("assoc_structs", ui).show(|ui| {
-            associated_structures(state, scene, engine_updates, redraw_peptide, reset_cam, ui);
+            associated_structures(
+                state,
+                scene,
+                engine_updates,
+                &mut redraw.peptide,
+                reset_cam,
+                ui,
+            );
         });
     }
 
     if state.ui.popup.alignment {
         popup("alignment", ui).show(|ui| {
-            alignment(state, scene, redraw_lig, engine_updates, ui);
+            alignment(state, scene, &mut redraw.ligand, engine_updates, ui);
         });
     };
 
@@ -73,7 +79,7 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.residue_selector {
         // todo: Show hide based on AaCategory? i.e. residue.amino_acid.category(). Hydrophilic, acidic etc.
         popup("res_sel", ui).show(|ui| {
-            residue_selector(state, scene, ui, redraw_peptide);
+            residue_selector(state, scene, ui, &mut redraw.peptide);
         });
     }
 

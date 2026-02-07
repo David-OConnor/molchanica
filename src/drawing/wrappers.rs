@@ -208,6 +208,48 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
     );
 }
 
+// todo: You need to generalize your drawing code so you have less repetition, and it's more consistent.
+pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
+    // draw_all_mol_of_type(state, scene, &mut state.lipids, MolType::Lipid, state.ui.visibility.hide_lipids);
+    // return;
+
+    let class = EntityClass::Pocket as u32;
+    let (initial_ent_count, ent_i_start) = helper_a(scene, class);
+
+    if state.ui.visibility.hide_lipids {
+        return;
+    }
+
+    // Edit small molecules only; not proteins.
+    if state.volatile.operating_mode == OperatingMode::MolEditor {
+        return;
+    }
+
+    let mut entities = Vec::new();
+    for (i_mol, mol) in state.pockets.iter_mut().enumerate() {
+        let start_i_mol = ent_i_start + entities.len();
+
+        let ents_this_mol =
+            drawing::draw_pocket(mol, &[], &state.ui.visibility, &state.ui.selection);
+
+        // Note: This may already be set.
+        let end_i_mol = start_i_mol + ents_this_mol.len();
+        entities.extend(ents_this_mol);
+
+        mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
+    }
+
+    helper_b(
+        state,
+        scene,
+        entities,
+        class,
+        initial_ent_count,
+        ent_i_start,
+        MolType::Pocket,
+    );
+}
+
 pub fn draw_all_mol_of_type<T: MolGenericTrait>(
     state: &mut State,
     scene: &mut Scene,

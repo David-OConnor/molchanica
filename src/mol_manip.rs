@@ -14,6 +14,7 @@ use crate::{
     molecules::{MolType, common::MoleculeCommon},
     selection::Selection,
     state::{OperatingMode, State, StateVolatile},
+    util::RedrawFlags,
 };
 
 /// Blender-style mouse dragging of the molecule. For movement, creates a plane of the camera view,
@@ -24,10 +25,7 @@ pub fn handle_mol_manip_in_plane(
     state: &mut State,
     scene: &Scene,
     delta: (f64, f64),
-    redraw_peptide: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
+    redraw: &mut RedrawFlags,
 ) {
     if state.volatile.mol_manip.mode == ManipMode::None {
         return;
@@ -125,10 +123,11 @@ pub fn handle_mol_manip_in_plane(
                         || state.volatile.operating_mode == OperatingMode::MolEditor
                     {
                         match mol_type {
-                            MolType::Peptide => *redraw_peptide = true,
-                            MolType::Ligand => *redraw_lig = true,
-                            MolType::NucleicAcid => *redraw_na = true,
-                            MolType::Lipid => *redraw_lipid = true,
+                            MolType::Peptide => redraw.peptide = true,
+                            MolType::Ligand => redraw.ligand = true,
+                            MolType::NucleicAcid => redraw.na = true,
+                            MolType::Lipid => redraw.lipid = true,
+                            MolType::Pocket => redraw.pocket = true,
                             _ => unimplemented!(),
                         };
                     }
@@ -193,13 +192,7 @@ pub fn handle_mol_manip_in_plane(
                 if I.is_multiple_of(ratio)
                     || state.volatile.operating_mode == OperatingMode::MolEditor
                 {
-                    match mol_type {
-                        MolType::Peptide => *redraw_peptide = true,
-                        MolType::Ligand => *redraw_lig = true,
-                        MolType::NucleicAcid => *redraw_na = true,
-                        MolType::Lipid => *redraw_lipid = true,
-                        _ => unimplemented!(),
-                    };
+                    redraw.set(mol_type);
                 }
             }
         }
@@ -212,10 +205,7 @@ pub fn handle_mol_manip_in_out(
     state: &mut State,
     scene: &mut Scene,
     delta: MouseScrollDelta,
-    redraw_peptide: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
+    redraw: &mut RedrawFlags,
 ) {
     // Move the molecule forward and backwards relative to the camera on scroll.
     match state.volatile.mol_manip.mode {
@@ -247,6 +237,8 @@ pub fn handle_mol_manip_in_out(
                 OperatingMode::MolEditor => &mut state.mol_editor.mol.common,
                 OperatingMode::ProteinEditor => unimplemented!(),
             };
+
+            println!("Move: {:?}", mol_type);
 
             let scroll: f32 = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y,
@@ -332,13 +324,7 @@ pub fn handle_mol_manip_in_out(
                     }
                 }
             }
-            match mol_type {
-                MolType::Peptide => *redraw_peptide = true,
-                MolType::Ligand => *redraw_lig = true,
-                MolType::NucleicAcid => *redraw_na = true,
-                MolType::Lipid => *redraw_lipid = true,
-                _ => unimplemented!(),
-            };
+            redraw.set(mol_type);
         }
         ManipMode::Rotate((mol_type, mol_i)) => {
             let scroll: f32 = match delta {
@@ -379,13 +365,7 @@ pub fn handle_mol_manip_in_out(
             let rot = Quaternion::from_axis_angle(fwd, scroll * SENS_MOL_ROT_SCROLL);
             mol.rotate(rot.into(), None);
 
-            match mol_type {
-                MolType::Peptide => *redraw_peptide = true,
-                MolType::Ligand => *redraw_lig = true,
-                MolType::NucleicAcid => *redraw_na = true,
-                MolType::Lipid => *redraw_lipid = true,
-                _ => unimplemented!(),
-            };
+            redraw.set(mol_type);
         }
         ManipMode::None => (),
     }
@@ -396,10 +376,7 @@ pub fn set_manip(
     vol: &mut StateVolatile,
     _save_flag: &mut bool,
     scene: &mut Scene,
-    redraw_peptide: &mut bool,
-    redraw_lig: &mut bool,
-    redraw_na: &mut bool,
-    redraw_lipid: &mut bool,
+    redraw: &mut RedrawFlags,
     rebuild_md_editor: &mut bool,
     // Note: The mol itself is overwritten but this sets move/rotate,
     mode: ManipMode,
@@ -495,13 +472,7 @@ pub fn set_manip(
         ManipMode::None => unreachable!(),
     }
 
-    match mol_type_active {
-        MolType::Peptide => *redraw_peptide = true,
-        MolType::Ligand => *redraw_lig = true,
-        MolType::NucleicAcid => *redraw_na = true,
-        MolType::Lipid => *redraw_lipid = true,
-        _ => (),
-    }
+    redraw.set(mol_type_active);
 }
 
 /// Chooses the atom closest to the cursor ray as the pivot.

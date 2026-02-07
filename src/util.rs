@@ -4,22 +4,7 @@
 
 use std::time::Instant;
 
-use bio_files::ResidueType;
-#[cfg(feature = "cudarc")]
-use cudarc::{
-    driver::{CudaContext, CudaFunction},
-    nvrtc::Ptx,
-};
-#[cfg(feature = "cuda")]
-use dynamics::ComputationDevice;
-use egui::Color32;
-use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
-use lin_alg::{
-    f32::Vec3 as Vec3F32,
-    f64::{Quaternion, Vec3},
-};
-use na_seq::{AaIdent, Element};
-
+use crate::drawing::wrappers::draw_all_pockets;
 use crate::{
     cam,
     drawing::{
@@ -41,9 +26,55 @@ use crate::{
     selection::{Selection, ViewSelLevel},
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
 };
+use bio_files::ResidueType;
+#[cfg(feature = "cudarc")]
+use cudarc::{
+    driver::{CudaContext, CudaFunction},
+    nvrtc::Ptx,
+};
+#[cfg(feature = "cuda")]
+use dynamics::ComputationDevice;
+use egui::Color32;
+use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use lin_alg::{
+    f32::Vec3 as Vec3F32,
+    f64::{Quaternion, Vec3},
+};
+use na_seq::{AaIdent, Element};
 
 // todo: Move this A/R
 pub const HYDROPATHY_WINDOW_SIZE: usize = 9; // e.g. for coloring residues
+
+/// Used in places where we can redraw one or more of several molecule types.
+#[derive(Default)]
+pub struct RedrawFlags {
+    pub peptide: bool,
+    pub ligand: bool,
+    pub na: bool,
+    pub lipid: bool,
+    pub pocket: bool,
+}
+
+impl RedrawFlags {
+    pub fn set_all(&mut self) {
+        self.peptide = true;
+        self.ligand = true;
+        self.na = true;
+        self.lipid = true;
+        self.pocket = true;
+    }
+
+    pub fn set(&mut self, mol_type: MolType) {
+        match mol_type {
+            MolType::Peptide => self.peptide = true,
+            MolType::Ligand => self.ligand = true,
+            MolType::NucleicAcid => self.na = true,
+            MolType::Lipid => self.lipid = true,
+            MolType::Pocket => self.pocket = true,
+            _ => unimplemented!(),
+        }
+    }
+}
 
 pub fn mol_center_size(atoms: &[Atom]) -> (Vec3, f32) {
     let mut sum = Vec3::new_zero();
@@ -469,6 +500,14 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     / 2.)
                     .into();
             }
+            Selection::BondPocket((i_mol, i_bond)) => {
+                let mol = &state.pockets[*i_mol];
+                let bond = &mol.common.bonds[*i_bond];
+                return ((mol.common.atom_posits[bond.atom_0]
+                    + mol.common.atom_posits[bond.atom_1])
+                    / 2.)
+                    .into();
+            }
             Selection::None => {
                 if let Some(mol) = &state.peptide {
                     return mol.center.into();
@@ -722,9 +761,7 @@ pub fn close_mol(
                 state.volatile.active_mol = Some((MolType::Pocket, state.pockets.len() - 1));
             }
 
-            for pocket in &state.pockets {
-                draw_pocket(&mut scene.entities, pocket, &[], &state.ui.visibility);
-            }
+            draw_all_pockets(state, scene);
         }
         MolType::Water => (),
     }

@@ -576,7 +576,13 @@ pub fn redraw(
 
     if let Some(p) = pocket {
         let hydrogen_bonds = Vec::new(); // todo: A/R
-        draw_pocket(entities, p, &hydrogen_bonds, &Visibility::default());
+        draw_pocket(
+            entities,
+            p,
+            &hydrogen_bonds,
+            &Visibility::default(),
+            &Selection::None,
+        );
     }
 }
 
