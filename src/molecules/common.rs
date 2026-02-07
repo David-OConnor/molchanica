@@ -122,6 +122,22 @@ impl MoleculeCommon {
         self.atom_posits = self.atoms.iter().map(|a| a.posit).collect();
     }
 
+    /// Update local positions so they're centered around the origin. Useful for molecule creation
+    /// workflows.
+    pub fn center_local_posits_around_origin(&mut self) {
+        let center = {
+            let mut c = Vec3::new_zero();
+            for atom in &self.atoms {
+                c += atom.posit;
+            }
+            c / self.atom_posits.len() as f64
+        };
+
+        for atom in &mut self.atoms {
+            atom.posit -= center;
+        }
+    }
+
     /// Used for rotation and motion; the rough center of the molecule.
     pub fn centroid(&self) -> Vec3 {
         let n = self.atom_posits.len() as f64;

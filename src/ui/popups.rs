@@ -7,27 +7,33 @@ use egui::{
     Align, Color32, ComboBox, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText, ScrollArea,
     TextEdit, Ui,
 };
-use graphics::{ControlScheme, EngineUpdates, Scene};
+use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
 use crate::{
-    cam::move_cam_to_mol,
-    file_io::download_mols::load_atom_coords_rcsb,
+    cam::{move_cam_to_active_mol, move_cam_to_mol},
+    drawing::wrappers::draw_all_pockets,
+    file_io::{download_mols, download_mols::load_atom_coords_rcsb},
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
     mol_alignment::run_alignment,
     mol_screening,
     mol_screening::screen_by_alignment,
-    molecules::{MolGenericRef, MolType, common::MoleculeCommon},
+    molecules::{
+        MolGenericRef, MolType,
+        common::MoleculeCommon,
+        pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
+    },
     prefs::OpenType,
+    render::MESH_POCKET,
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         mol_data::metadata, pharmacophore, rama_plot, recent_files, recent_files::NUM_TO_SHOW,
     },
-    util::{RedrawFlags, handle_err, orbit_center},
+    util::{RedrawFlags, handle_err, handle_success, make_lig_from_res, orbit_center},
 };
 
 /// Based on popup state, shows popups. This is the entry point for all popups.
@@ -111,6 +117,12 @@ pub(in crate::ui) fn load_popups(
     if let Some((mol_type, i)) = state.ui.popup.metadata {
         popup("metadata", ui).show(|ui| {
             metadata(mol_type, i, state, ui);
+        });
+    }
+
+    if state.ui.popup.lig_pocket_creation {
+        popup("lig_pocket_creation", ui).show(|ui| {
+            lig_pocket_from_het_res(state, scene, ui, engine_updates);
         });
     }
 }
@@ -756,4 +768,173 @@ fn popup<'a>(name: &'a str, ui: &'a mut Ui) -> Popup<'a> {
     .align(RectAlign::BOTTOM_START)
     .open(true)
     .gap(4.0)
+}
+
+/// This handles creating ligands and pockets from hetero residues in protein data. This, at least
+/// from RCSB protein files, is often associated with ligands binding to the protein.
+///
+/// Note: We're currently relying on remotely downloading geostd molecules for ligand creation.
+/// todo: Update this to use something more robust, like a PubChem or RCSB API.
+// todo: Move A/R
+fn lig_pocket_from_het_res(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    engine_updates: &mut EngineUpdates,
+) {
+    let Some(mol) = &state.peptide else {
+        return;
+    };
+
+    // Provide convenience functionality for loading ligands based on hetero residues
+    // in the protein.
+    // let mut load_data = None; // Avoids dbl-borrow.
+    // let mut count_geostd_candidate = 0;
+    //
+    // for res in &mol.het_residues {
+    //     if let ResidueType::Other(name) = &res.res_type {
+    //         if name.len() == 3 {
+    //             count_geostd_candidate += 1;
+    //         }
+    //     }
+    // }
+
+    label!(
+        ui,
+        "Make ligands and pockets from het residues",
+        Color32::WHITE
+    );
+    // .on_hover_text(
+    //     "Attempt to load a ligand molecule and force field \
+    //                     params from a hetero residue included in the protein file.",
+    // );
+    ui.separator();
+    ui.add_space(ROW_SPACING);
+
+    // This mechanism prevents buttons from duplicate hetero residues, e.g.
+    // if more than one copy of a ligand is present in the data.
+    let mut residue_names = Vec::new();
+    // let mut res_to_load = None;
+
+    // Avoids a double borrow.
+    let mut create_lig_from_res = None;
+    let mut pocket_to_add = None;
+
+    for res in &mol.het_residues {
+        let name = match &res.res_type {
+            ResidueType::Other(name) => name,
+            _ => "hetero residue",
+        };
+
+        // todo: Fragile?
+        // if name.len() == 3 {
+        if residue_names.contains(&name) {
+            continue;
+        }
+        residue_names.push(name);
+
+        ui.horizontal(|ui| {
+            label!(ui, format!("{name}: "), Color32::WHITE);
+            ui.add_space(COL_SPACING / 2.);
+
+            if ui
+                .button(RichText::new("Make lig").color(COLOR_ACTION))
+                .on_hover_text("Create a ligand using molecules from this residue.")
+                .clicked()
+            {
+                create_lig_from_res = Some(res.clone());
+
+                // download_mols::load_geostd(name, &mut load_data, &mut state.ui);
+                // res_to_load = Some(res.clone()); // Clone avoids borrow error.
+            }
+
+            if ui
+                .button(RichText::new("Make pocket").color(COLOR_ACTION))
+                .on_hover_text(
+                    "Create a pocket around a hetero residue included in the protein file.",
+                )
+                .clicked()
+            {
+                let mut lig_ctr = Vec3::new_zero();
+                for atom_i in &res.atoms {
+                    // Using local coordinates; this should be independent of the user positioning the protein.
+                    if *atom_i >= mol.common.atoms.len() {
+                        eprintln!(
+                            "Error: Atom index out of bounds: {} > {}",
+                            atom_i,
+                            mol.common.atoms.len()
+                        );
+                        continue;
+                    }
+
+                    lig_ctr += mol.common.atoms[*atom_i].posit;
+                }
+
+                let ident = format!("Pocket: {name}");
+                pocket_to_add = Some(Pocket::new(
+                    mol,
+                    lig_ctr,
+                    POCKET_DIST_THRESH_DEFAULT,
+                    &ident,
+                ));
+            }
+        });
+        ui.add_space(ROW_SPACING);
+        // }
+    }
+
+    if let Some(pocket) = pocket_to_add {
+        scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
+        draw_all_pockets(state, scene);
+        state.pockets.push(pocket);
+
+        engine_updates.meshes = true;
+        engine_updates.entities = EntityUpdate::All;
+    }
+
+    if let Some(res) = &create_lig_from_res {
+        make_lig_from_res(state, res, scene, engine_updates);
+    }
+    //
+    // // Avoids dbl-borrow
+    // if let Some(data) = load_data {
+    //     handle_success(
+    //         &mut state.ui,
+    //         format!("Loaded {} from Amber Geostd", data.ident_pdbe),
+    //     );
+    //
+    //     // Crude check for success.
+    //     // let lig_count_prev = state.ligands.len();
+    //     state.load_geostd_mol_data(
+    //         &data.ident_pdbe,
+    //         true,
+    //         data.frcmod_avail,
+    //         engine_updates,
+    //         scene,
+    //     );
+    //
+    //     // Move camera to ligand; not ligand to camera, since we are generating a ligand
+    //     // that may already be docked to the protein.
+    //     // move_mol_to_cam(&mut state.ligands[i].common, &scene.camera);
+    //     if let Some(mol) = &state.peptide {
+    //         move_cam_to_active_mol(state, scene, mol.center, engine_updates);
+    //     }
+    // } else {
+    //     if let Some(res) = res_to_load {
+    //         // Use our normal "Lig from" logic.
+    //         make_lig_from_res(state, &res, scene, engine_updates);
+    //
+    //         move_cam_to_active_mol(
+    //             state,
+    //             scene,
+    //             state.ligands[0].common.centroid(),
+    //             engine_updates,
+    //         );
+    //
+    //         handle_success(
+    //             &mut state.ui,
+    //             "Unable to find FF params for this ligand; added without them".to_string(),
+    //         );
+    //     }
+    // }
 }

@@ -336,11 +336,7 @@ impl MoleculeSmall {
     /// We assume the residue is already populated with hydrogens.
     ///
     /// We reposition its atoms to be around the origin.
-    /// todo: How do we get partial charge and ff type? We normally *get* those from Amber-provided
-    /// todo Mol2 files. If we do this from an AA, it works, but it doesn't from hereo residues.
-    ///
     pub fn from_res(res: &Residue, atoms: &[Atom], bonds: &[Bond]) -> Self {
-        // todo: Handle `use_sns`.
         let mut atoms_this = Vec::with_capacity(res.atoms.len());
 
         // We use this map when rebuilding bonds.
@@ -360,15 +356,6 @@ impl MoleculeSmall {
                 ..atom.clone()
             });
         }
-
-        // todo: Consider something better like near the original spot, but spaced out from origin.
-        // Reposition atoms so they're near the origin.
-        // if !atoms_this.is_empty() {
-        //     let move_vec = atoms_this[0].posit;
-        //     for atom in &mut atoms_this {
-        //         atom.posit -= move_vec;
-        //     }
-        // }
 
         let atom_orig_i: Vec<_> = bond_map.keys().collect();
         let mut bonds_this: Vec<_> = bonds
@@ -394,6 +381,8 @@ impl MoleculeSmall {
 
         let name = res.res_type.to_string();
         let mut result = Self::new(name.clone(), atoms_this, bonds_new, HashMap::new(), None);
+
+        result.common.center_local_posits_around_origin();
 
         result.idents.push(MolIdent::PdbeAmber(name));
 

@@ -451,6 +451,7 @@ pub struct PopupState {
     pub alignment: bool,
     pub alignment_screening: bool,
     pub pharmacophore_boolean: bool,
+    pub lig_pocket_creation: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]

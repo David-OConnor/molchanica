@@ -14,16 +14,19 @@ use bincode::{
     error::{DecodeError, EncodeError},
 };
 use bio_files::{Mol2, Sdf};
-use graphics::Mesh;
+use graphics::{EngineUpdates, EntityUpdate, Mesh, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
+    drawing::wrappers::draw_all_pockets,
     molecules::{
         Atom, MoleculePeptide,
         common::{MoleculeCommon, reassign_bond_indices},
         small::MoleculeSmall,
     },
+    render::MESH_POCKET,
     sa_surface::make_sas_mesh,
+    state::State,
 };
 
 // A larger probe radius will make the pocket tighter and coarser. Tune this to be realistic.
@@ -102,8 +105,10 @@ impl Pocket {
 
         let surface_mesh = make_mesh(&atoms);
 
-        let mol = MoleculeCommon::new(ident.to_owned(), atoms, bonds, HashMap::new(), None);
+        let mut mol = MoleculeCommon::new(ident.to_owned(), atoms, bonds, HashMap::new(), None);
         let volume = PocketVolume::new(&mol);
+
+        mol.center_local_posits_around_origin();
 
         Self {
             common: mol,
@@ -507,4 +512,23 @@ fn make_mesh(atoms: &[Atom]) -> Mesh {
         .collect();
 
     make_sas_mesh(&atoms_for_mesh, MESH_PROBE_RADIUS, POCKET_MESH_PRECISION)
+}
+
+/// Wrapper that adds the pocket to state, and re-renders.
+pub fn add_pocket(
+    state: &mut State,
+    scene: &mut Scene,
+    mol: &MoleculePeptide,
+    posit: Vec3,
+    ident: &str,
+    engine_updates: &mut EngineUpdates,
+) {
+    let pocket = Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, ident);
+
+    scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
+    draw_all_pockets(state, scene);
+    state.pockets.push(pocket);
+
+    engine_updates.meshes = true;
+    engine_updates.entities = EntityUpdate::All; // todo temp
 }
