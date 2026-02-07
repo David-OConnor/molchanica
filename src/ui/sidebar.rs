@@ -456,7 +456,7 @@ pub(in crate::ui) fn sidebar(
                 ui.label("Pockets");
 
                 for (mol_i, pocket) in state.pockets.iter().enumerate() {
-                    let selected = state.mol_editor.pocket == Some(mol_i);
+                    let selected = state.mol_editor.pocket_i_in_state == Some(mol_i);
 
                     let color = if selected {
                         COLOR_ACTIVE
@@ -475,7 +475,7 @@ pub(in crate::ui) fn sidebar(
                         if selected {
                             state.mol_editor.pocket = None;
                         } else {
-                            state.mol_editor.pocket = Some(mol_i);
+                            state.mol_editor.pocket_i_in_state = Some(mol_i);
                         }
                     }
                 }

@@ -50,6 +50,11 @@ const MOL_IDENT: &str = "editor_mol";
 /// For editing small organic molecules.
 pub struct MolEditorState {
     pub mol: MoleculeSmall,
+    pub pocket: Option<Pocket>,
+    /// I.e. state.ligands[i]
+    pub mol_i_in_state: Option<usize>,
+    /// I.e. state.pockets[i]
+    pub pocket_i_in_state: Option<usize>,
     pub md_state: Option<MdState>,
     pub mol_specific_params: ForceFieldParams,
     /// Picoseconds. Combined with how often we run MD. 0.001 - 0.002 is good for preventing
@@ -67,14 +72,15 @@ pub struct MolEditorState {
     pub md_rebuild_required: bool,
     /// Bond index.
     pub rotatable_bonds: Vec<usize>,
-    /// Index of state.pockets.
-    pub pocket: Option<usize>,
 }
 
 impl Default for MolEditorState {
     fn default() -> Self {
         Self {
             mol: Default::default(),
+            pocket: Default::default(),
+            mol_i_in_state: Default::default(),
+            pocket_i_in_state: Default::default(),
             md_state: Default::default(),
             md_skip_water: true,
             mol_specific_params: Default::default(),
@@ -85,7 +91,6 @@ impl Default for MolEditorState {
             snap: Default::default(),
             md_rebuild_required: Default::default(),
             rotatable_bonds: Default::default(),
-            pocket: None,
         }
     }
 }
@@ -283,7 +288,7 @@ impl MolEditorState {
         redraw(
             &mut scene.entities,
             &self.mol,
-            None,
+            &None,
             state_ui,
             manip_mode,
             0,
@@ -328,7 +333,7 @@ impl MolEditorState {
 
         self.md_state.as_mut().unwrap().snapshots = Vec::new();
 
-        redraw(entities, &self.mol, None, state_ui, manip_mode, 0);
+        redraw(entities, &self.mol, &None, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -346,7 +351,7 @@ impl MolEditorState {
             self.mol.common.atom_posits[i] = atom.posit.into();
         }
 
-        redraw(entities, &self.mol, None, state_ui, manip_mode, 0);
+        redraw(entities, &self.mol, &None, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -454,7 +459,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
             );
             mol_loaded = true;
 
-            state.volatile.mol_editing = Some(i);
+            state.mol_editor.mol_i_in_state = Some(i);
         }
     }
 
@@ -498,17 +503,11 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
         state.ui.mol_view = MoleculeView::BallAndStick
     }
 
-    let pocket = if let Some(i) = &state.mol_editor.pocket {
-        Some(&state.pockets[*i])
-    } else {
-        None
-    };
-
     // Clear all entities for non-editor molecules.
     redraw(
         &mut scene.entities,
         &state.mol_editor.mol,
-        pocket,
+        &state.mol_editor.pocket,
         &state.ui,
         state.volatile.mol_manip.mode,
         0,
@@ -526,7 +525,9 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut
 
     state.mol_editor.md_state = None;
     state.mol_editor.md_running = false;
-    state.volatile.mol_editing = None;
+    state.mol_editor.mol_i_in_state = None;
+    state.mol_editor.pocket_i_in_state = None;
+
     state.volatile.mol_manip.mode = ManipMode::None;
 
     scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
@@ -553,7 +554,7 @@ pub fn redraw(
     // todo: Loading pocket from state into this is proving messy.
     // todo: SOrt out how you will handle it; maybe a local pocket copy in the
     // todo editor instead of an index.
-    pocket: Option<&Pocket>,
+    pocket: &Option<Pocket>,
     ui: &StateUi,
     manip_mode: ManipMode,
     num_ligs: usize,
@@ -576,13 +577,12 @@ pub fn redraw(
 
     if let Some(p) = pocket {
         let hydrogen_bonds = Vec::new(); // todo: A/R
-        draw_pocket(
-            entities,
+        entities.extend(draw_pocket(
             p,
             &hydrogen_bonds,
             &Visibility::default(),
             &Selection::None,
-        );
+        ));
     }
 }
 

@@ -3,7 +3,6 @@ use std::io;
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
-use crate::util::RedrawFlags;
 use crate::{
     cam::reset_camera,
     drawing::{
@@ -15,7 +14,7 @@ use crate::{
     render::{Color, set_flashlight, set_static_light},
     state::{OperatingMode, State},
     ui::set_window_title,
-    util::{handle_err, reset_orbit_center},
+    util::{RedrawFlags, handle_err, reset_orbit_center},
 };
 
 /// Run this each frame, after all UI elements that affect it are rendered.

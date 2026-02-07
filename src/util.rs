@@ -4,28 +4,6 @@
 
 use std::time::Instant;
 
-use crate::drawing::wrappers::draw_all_pockets;
-use crate::{
-    cam,
-    drawing::{
-        COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide, draw_pocket,
-        ribbon_mesh::build_cartoon_mesh,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
-    },
-    mol_manip::ManipMode,
-    molecules::{
-        Atom, Bond, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, MoleculePeptide,
-        Residue, aa_color, small::MoleculeSmall,
-    },
-    prefs::{OpenType, PREFS_SAVE_INTERVAL},
-    reflection,
-    render::{Color, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, set_flashlight},
-    sa_surface,
-    sa_surface::{SOLVENT_RAD, make_sas_mesh},
-    selection::{Selection, ViewSelLevel},
-    state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
-};
 use bio_files::ResidueType;
 #[cfg(feature = "cudarc")]
 use cudarc::{
@@ -41,6 +19,28 @@ use lin_alg::{
     f64::{Quaternion, Vec3},
 };
 use na_seq::{AaIdent, Element};
+
+use crate::{
+    cam,
+    drawing::{
+        COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
+        color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide, draw_pocket,
+        ribbon_mesh::build_cartoon_mesh,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
+    },
+    mol_manip::ManipMode,
+    molecules::{
+        Atom, Bond, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, MoleculePeptide,
+        Residue, aa_color, small::MoleculeSmall,
+    },
+    prefs::{OpenType, PREFS_SAVE_INTERVAL},
+    reflection,
+    render::{Color, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, set_flashlight},
+    sa_surface,
+    sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    selection::{Selection, ViewSelLevel},
+    state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
+};
 
 // todo: Move this A/R
 pub const HYDROPATHY_WINDOW_SIZE: usize = 9; // e.g. for coloring residues

@@ -516,16 +516,10 @@ pub fn event_dev_handler(
             OperatingMode::Primary => wrappers::draw_all_ligs(state_, scene),
 
             OperatingMode::MolEditor => {
-                let pocket = if let Some(i) = &state_.mol_editor.pocket {
-                    Some(&state_.pockets[*i])
-                } else {
-                    None
-                };
-
                 mol_editor::redraw(
                     &mut scene.entities,
                     &state_.mol_editor.mol,
-                    pocket,
+                    &state_.mol_editor.pocket,
                     &state_.ui,
                     state_.volatile.mol_manip.mode,
                     state_.ligands.len(),
@@ -558,16 +552,10 @@ pub fn event_dev_handler(
                 redraw_inplace_helper(MolType::Ligand, state_, scene, &mut updates);
             }
             OperatingMode::MolEditor => {
-                let pocket = if let Some(i) = &state_.mol_editor.pocket {
-                    Some(&state_.pockets[*i])
-                } else {
-                    None
-                };
-
                 mol_editor::redraw(
                     &mut scene.entities,
                     &state_.mol_editor.mol,
-                    pocket,
+                    &state_.mol_editor.pocket,
                     &state_.ui,
                     state_.volatile.mol_manip.mode,
                     state_.ligands.len(),
@@ -591,16 +579,10 @@ pub fn event_dev_handler(
     }
 
     if redraw_mol_editor {
-        let pocket = if let Some(i) = &state_.mol_editor.pocket {
-            Some(&state_.pockets[*i])
-        } else {
-            None
-        };
-
         mol_editor::redraw(
             &mut scene.entities,
             &state_.mol_editor.mol,
-            pocket,
+            &state_.mol_editor.pocket,
             &state_.ui,
             state_.volatile.mol_manip.mode,
             state_.ligands.len(),

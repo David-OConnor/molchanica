@@ -1,10 +1,19 @@
 //! Information and settings for the opened, or to-be opened molecules.
 
-use crate::drawing::wrappers::draw_all_pockets;
+use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
+use bio_files::{ResidueType, md_params::ForceFieldParams};
+use dynamics::params::FfParamSet;
+use egui::{Color32, RichText, Ui};
+use graphics::{EngineUpdates, EntityUpdate, Scene};
+use lin_alg::f64::Vec3;
+
 use crate::{
     cam::move_cam_to_active_mol,
     drawing,
-    drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, draw_pocket},
+    drawing::{
+        CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, draw_pocket,
+        wrappers::draw_all_pockets,
+    },
     file_io::download_mols,
     label,
     molecules::{
@@ -20,12 +29,6 @@ use crate::{
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, mol_descrip, popups},
     util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
-use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
-use bio_files::{ResidueType, md_params::ForceFieldParams};
-use dynamics::params::FfParamSet;
-use egui::{Color32, RichText, Ui};
-use graphics::{EngineUpdates, EntityUpdate, Scene};
-use lin_alg::f64::Vec3;
 
 /// `posit_override` is for example, relative atom positions, such as a positioned ligand.
 fn disp_atom_data(

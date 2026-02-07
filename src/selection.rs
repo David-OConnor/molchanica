@@ -1083,20 +1083,24 @@ pub fn handle_selection_attempt_mol_editor(
 
     // if let Some(mm) = manip_mode_new {
     let mut rebuild_md = false;
+    let mut redraw_flags = RedrawFlags::default();
+    redraw_flags.ligand = *redraw;
     mol_manip::set_manip(
         &mut state.volatile,
         &mut state.to_save.save_flag,
         scene,
-        redraw,
+        &mut redraw_flags,
         &mut rebuild_md,
         manip_mode_new,
         &state.ui.selection,
     );
+    *redraw = redraw_flags.ligand;
+
     if rebuild_md {
         sync_md(state);
     }
 
-    redraw.ligand = true;
+    // redraw = true;
 }
 
 /// Handles logic regarding selection changes updating multi-atom lists, or reverting

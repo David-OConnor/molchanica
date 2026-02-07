@@ -8,7 +8,6 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
-use crate::util::RedrawFlags;
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
@@ -32,7 +31,7 @@ use crate::{
         mol_data::selected_data,
         util::color_egui_from_f32,
     },
-    util::handle_err,
+    util::{RedrawFlags, handle_err},
 };
 // todo: Check DBs (with a button maybe?) to see if the molecule exists in a DB already, or if
 // todo a similar one does.
@@ -96,7 +95,7 @@ fn change_el_button(
             );
         }
 
-        mol_editor::redraw(entities, mol, None, state_ui, manip_mode, 0);
+        mol_editor::redraw(entities, mol, &None, state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
 
         *redraw = true;
@@ -316,7 +315,7 @@ pub(in crate::ui) fn editor(
             exit_edit_mode(state, scene, engine_updates);
         }
 
-        if let Some(mol_i) = state.volatile.mol_editing && mol_i < state.ligands.len() {
+        if let Some(mol_i) = state.mol_editor.mol_i_in_state && mol_i < state.ligands.len() {
             if ui
                 .button(RichText::new("Exit / update").color(Color32::LIGHT_RED))
                 .on_hover_text("Exit the molecule editor, and update the loaded molecule with changes made.")
@@ -441,16 +440,10 @@ pub(in crate::ui) fn editor(
     }
 
     if redraw {
-        let pocket = if let Some(i) = &state.mol_editor.pocket {
-            Some(&state.pockets[*i])
-        } else {
-            None
-        };
-
         mol_editor::redraw(
             &mut scene.entities,
             &state.mol_editor.mol,
-            pocket,
+            &state.mol_editor.pocket,
             &state.ui,
             state.volatile.mol_manip.mode,
             0,
@@ -637,17 +630,10 @@ fn edit_tools(
                         // `add_atom` handles individual redrawing, but here we need something, or the previous
                         // atom will still show as the selected color.
                         // todo better. (todo: More specific than this redraw all?)
-
-                        let pocket = if let Some(i) = &state.mol_editor.pocket {
-                            Some(&state.pockets[*i])
-                        } else {
-                            None
-                        };
-
                         mol_editor::redraw(
                             &mut scene.entities,
                             &state.mol_editor.mol,
-                            pocket,
+                            &state.mol_editor.pocket,
                             &state.ui,
                             state.volatile.mol_manip.mode,
                             0,

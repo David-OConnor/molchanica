@@ -42,11 +42,13 @@ use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use small::MoleculeSmall;
 
-use crate::molecules::pocket::Pocket;
 use crate::{
     bond_inference::create_hydrogen_bonds,
     drawing::EntityClass,
-    molecules::{common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid},
+    molecules::{
+        common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
+        pocket::Pocket,
+    },
     prefs::OpenType,
     reflection::{DensityPt, DensityRect, ReflectionsData},
     selection::Selection,
