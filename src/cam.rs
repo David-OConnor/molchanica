@@ -100,11 +100,31 @@ pub fn move_cam_to_mol(
     look_to_beyond: lin_alg::f64::Vec3,
     engine_updates: &mut EngineUpdates,
 ) {
-    // todo: Cache centroid.
     let mol_pos: Vec3 = mol.centroid().into();
     let ctr: Vec3 = look_to_beyond.into();
 
-    cam_look_at_outside(&mut scene.camera, mol_pos, ctr, MOVE_CAM_TO_MOL_DIST);
+    // A crude heuristic.
+    let dist = MOVE_CAM_TO_MOL_DIST * (mol.atoms.len() as f32).cbrt() / 4.;
+    // let d = {
+    //     // 1) Compute a bounding "radius" from centroid to farthest atom.
+    //     // 2) Convert that to a distance that should fit in the camera view.
+    //     let mut r_sq = 0.0f32;
+    //     for a in &mol.atoms {
+    //         let p: Vec3 = a.posit.into(); // adjust if your field name differs
+    //         let d = p - mol_pos;
+    //         r_sq = r_sq.max(d.magnitude_squared());
+    //     }
+    //     let radius = r_sq.sqrt().max(0.1); // avoid collapsing into the molecule
+    //
+    //     // If you can access a vertical FOV, use it to fit the radius in view.
+    //     // Otherwise, fall back to a simple multiple of radius.
+    //     //
+    //     // Fit rule of thumb: distance >= radius / tan(fov/2), then add padding.
+    //     let pad = 1.25;
+    //     (radius / (0.5 * scene.camera.fov_y).tan()) * pad
+    // };
+
+    cam_look_at_outside(&mut scene.camera, mol_pos, ctr, dist);
 
     engine_updates.camera = true;
 
@@ -276,7 +296,7 @@ pub fn move_cam_to_sel(
     }
 
     if !selection_found {
-        // todo: Get working; need to get active mol.
+        // // todo: Get working; need to get active mol.
         // if let Some(mol) = state.active_mol() {
         //     cam_look_at(cam, mol.common().centroid());
         // }

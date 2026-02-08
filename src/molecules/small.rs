@@ -497,7 +497,6 @@ impl MoleculeSmall {
 
     pub fn update_aux(
         &mut self,
-        active_mol: &Option<(Mt, usize)>,
         pubchem_properties_map: &HashMap<MolIdent, pubchem::Properties>,
         pubchem_properties_avail: &mut Option<
             Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>,
@@ -505,13 +504,6 @@ impl MoleculeSmall {
         models: &mut HashMap<DatasetTdc, Infer>,
         ff_params: &ForceFieldParams,
     ) {
-        if let Some((_, i)) = active_mol {
-            let offset = LIGAND_ABS_POSIT_OFFSET * (*i as f64);
-            for posit in &mut self.common.atom_posits {
-                posit.x += offset; // Arbitrary axis and direction.
-            }
-        }
-
         self.update_characterization();
 
         // Load PubChem properties from either our prefs file, or online. If online,

@@ -799,11 +799,21 @@ fn lig_pocket_from_het_res(
     //     }
     // }
 
-    label!(
-        ui,
-        "Make ligands and pockets from het residues",
-        Color32::WHITE
-    );
+    ui.horizontal(|ui| {
+        label!(
+            ui,
+            "Make ligands and pockets from het residues",
+            Color32::WHITE
+        );
+        ui.add_space(COL_SPACING / 2.);
+        if ui
+            .button(RichText::new("Close").color(Color32::LIGHT_RED))
+            .clicked()
+        {
+            state.ui.popup.lig_pocket_creation = false;
+        }
+    });
+
     // .on_hover_text(
     //     "Attempt to load a ligand molecule and force field \
     //                     params from a hetero residue included in the protein file.",

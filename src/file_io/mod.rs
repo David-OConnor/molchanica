@@ -656,7 +656,6 @@ impl State {
                     mol.update_ff_related(&mut self.mol_specific_params, p, false);
 
                     mol.update_aux(
-                        &self.volatile.active_mol,
                         &self.to_save.pubchem_properties_map,
                         &mut self.volatile.pubchem_properties_avail,
                         &mut self.volatile.inference_models,
@@ -687,7 +686,6 @@ impl State {
                     }
                 }
 
-                let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
 
                 self.ligands.push(mol);
@@ -781,12 +779,6 @@ impl State {
         // Now, save prefs: This is to save last opened. Note that anomalies happen
         // if we update the molecule here, e.g. with docking site posit.
         self.update_save_prefs_no_mol();
-
-        // if self.ligand.is_some() {
-        //     if self.get_make_docking_setup().is_none() {
-        //         eprintln!("Problem making or getting docking setup.");
-        //     }
-        // }
 
         self.volatile.flags.new_mol_loaded = true;
 
