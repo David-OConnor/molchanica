@@ -343,70 +343,93 @@ fn update_inplace_inner(
 /// We update entities, then command an instance buffer update only of these updates
 /// todo: You can go even further and do it one lig and a time, instead of all ligs.
 pub fn update_all_ligs_inplace(state: &State, scene: &mut Scene) {
-    for (i, lig) in state.ligands.iter().enumerate() {
-        let Some((ent_i_start, ent_i_end)) = lig.common.entity_i_range else {
+    for (i, mol) in state.ligands.iter().enumerate() {
+        let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
             eprintln!("Unable to update mol entities in place; missing entity indices");
             continue;
         };
 
-        let mol = MolGenericRef::Small(lig);
+        let mol = MolGenericRef::Small(mol);
         update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
     }
 }
 
 pub fn update_all_na_inplace(state: &State, scene: &mut Scene) {
-    for (i, na) in state.nucleic_acids.iter().enumerate() {
-        let Some((ent_i_start, ent_i_end)) = na.common.entity_i_range else {
+    for (i, mol) in state.nucleic_acids.iter().enumerate() {
+        let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
             eprintln!("Unable to update mol entities in place; missing entity indices");
             continue;
         };
 
-        let mol = MolGenericRef::NucleicAcid(na);
+        let mol = MolGenericRef::NucleicAcid(mol);
         update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
     }
 }
 
 pub fn update_all_lipids_inplace(state: &State, scene: &mut Scene) {
-    for (i, lipid) in state.lipids.iter().enumerate() {
-        let Some((ent_i_start, ent_i_end)) = lipid.common.entity_i_range else {
+    for (i, mol) in state.lipids.iter().enumerate() {
+        let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
             eprintln!("Unable to update mol entities in place; missing entity indices");
             continue;
         };
 
-        let mol = MolGenericRef::Lipid(lipid);
+        let mol = MolGenericRef::Lipid(mol);
+        update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
+    }
+}
+
+pub fn update_all_pockets_inplace(state: &State, scene: &mut Scene) {
+    for (i, mol) in state.pockets.iter().enumerate() {
+        let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
+            eprintln!("Unable to update mol entities in place; missing entity indices");
+            continue;
+        };
+
+        let mol = MolGenericRef::Pocket(mol);
         update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
     }
 }
 
 pub fn update_single_ligand_inplace(i: usize, state: &State, scene: &mut Scene) {
-    let ligand = &state.ligands[i];
-    let Some((ent_i_start, ent_i_end)) = ligand.common.entity_i_range else {
+    let mol = &state.ligands[i];
+    let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
         eprintln!("Unable to update mol entities in place; missing entity indices");
         return;
     };
 
-    let mol = MolGenericRef::Small(ligand);
+    let mol = MolGenericRef::Small(mol);
     update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
 }
 
 pub fn update_single_nucleic_acid_inplace(i: usize, state: &State, scene: &mut Scene) {
-    let na = &state.nucleic_acids[i];
-    let Some((ent_i_start, ent_i_end)) = na.common.entity_i_range else {
+    let mol = &state.nucleic_acids[i];
+    let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
         eprintln!("Unable to update mol entities in place; missing entity indices");
         return;
     };
 
-    let mol = MolGenericRef::NucleicAcid(na);
+    let mol = MolGenericRef::NucleicAcid(mol);
     update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
 }
 
 pub fn update_single_lipid_inplace(i: usize, state: &State, scene: &mut Scene) {
-    let lipid = &state.lipids[i];
-    let Some((ent_i_start, ent_i_end)) = lipid.common.entity_i_range else {
+    let mol = &state.lipids[i];
+    let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
         eprintln!("Unable to update mol entities in place; missing entity indices");
         return;
     };
 
-    let mol = MolGenericRef::Lipid(lipid);
+    let mol = MolGenericRef::Lipid(mol);
+    update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
+}
+
+pub fn update_single_pocket_inplace(i: usize, state: &State, scene: &mut Scene) {
+    let mol = &state.pockets[i];
+    let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
+        eprintln!("Unable to update mol entities in place; missing entity indices");
+        return;
+    };
+
+    let mol = MolGenericRef::Pocket(mol);
     update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
 }

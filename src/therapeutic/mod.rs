@@ -22,6 +22,7 @@ mod gnn;
 #[cfg(feature = "train")]
 pub mod model_eval;
 mod mol_gen;
+mod train_md;
 mod train_test_split_indices;
 // Pub to allow access from the training entry point.
 

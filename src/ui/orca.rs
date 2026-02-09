@@ -3,6 +3,7 @@ use std::{path::PathBuf, str::FromStr};
 use bio_files::orca::{
     GeomOptThresh, Keyword, OrcaInput, OrcaOutput, Task,
     basis_sets::BasisSetCategory,
+    charges::MbisChargesCfg,
     dynamics::{Dynamics, Thermostat},
     method::Method,
 };
@@ -262,12 +263,11 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
             }
 
             if run {
-
                 // Assign parameters to the input which weren't conducive to do directly in the UI.
                 state.orca.input.task = match state.orca.task_type {
                     TaskType::SinglePoint => Task::SinglePoint,
                     TaskType::GeometryOptimization => Task::GeometryOptimization((state.orca.geom_opt_thresh, None)),
-                    TaskType::MbisCharges => Task::MbisCharges,
+                    TaskType::MbisCharges => Task::MbisCharges(Default::default()),
                     TaskType::MolDynamics => Task::MolDynamics(Dynamics {
                         // Convert ps to fs.
                         timestep: state.to_save.md_dt * 1_000., // ps to fs.
@@ -296,7 +296,11 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                                 handle_success(&mut state.ui, format!("ORCA run complete"));
                             }
                             OrcaOutput::Charges(o) => {
-                                println!("Charge output: {:?}", o);
+                                // println!("Charge output: {:?}", o);
+                                // println!("Orca raw output text: \n\n{:?}\n\n\n\n", o.text);
+
+                                println!("ORCA charge generation complete. \nCharges: {:?}\n\nDipole: {:?}\n\nQuad: {:?}\n\nOcto: {:?}",
+                                         o.charges, o.dipole, o.quadrupole, o.octopole);
                                 // handle_success(&mut state.ui, format!("MBIS charges assigned for {}", mol.common().ident));
 
                                 if o.charges.len() != mol.common().atoms.len() {

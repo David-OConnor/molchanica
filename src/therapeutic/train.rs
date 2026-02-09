@@ -5,7 +5,7 @@
 //!
 //! This is tailored towards data from Therapeutic Data Commons (TDC).
 
-//! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data/bbb_martins.csv`
+//! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data`
 //!
 //! Add the `tgt` param if training on a single file. Can be a single target, or multiple.
 //! --tgt bbb_martins`
@@ -629,10 +629,15 @@ pub(in crate::therapeutic) fn load_training_data(
         }
     }
 
-    assert_eq!(
-        record_count,
-        tts.train.len() + tts.validation.len() + tts.test.len()
-    );
+    if record_count != tts.train.len() + tts.validation.len() + tts.test.len() {
+        eprintln!(
+            "\n\n Error: Train/test/split for {csv_path:?} counts do not match record count.\n\
+        records: {record_count}, \ntrain: {}\nvalid: {}\ntest:{}",
+            tts.train.len(),
+            tts.validation.len(),
+            tts.test.len()
+        );
+    }
 
     Ok(result)
 }

@@ -46,7 +46,7 @@ use crate::{
 pub const HYDROPATHY_WINDOW_SIZE: usize = 9; // e.g. for coloring residues
 
 /// Used in places where we can redraw one or more of several molecule types.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct RedrawFlags {
     pub peptide: bool,
     pub ligand: bool,

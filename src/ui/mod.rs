@@ -1007,7 +1007,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         Ok(mol) => {
                             open_lig_from_input(state, mol, scene, &mut engine_updates);
                             redraw.ligand = true;
-                            reset_cam = true;
+                            // reset_cam = true;
                         }
                         Err(e) => {
                             let msg = format!("Error loading SDF file: {e:?}");
@@ -1024,7 +1024,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         Ok(mol) => {
                             open_lig_from_input(state, mol, scene, &mut engine_updates);
                             redraw.ligand = true;
-                            reset_cam = true;
+                            // reset_cam = true;
                         }
                         Err(e) => {
                             let msg = format!("Error loading SDF file: {e:?}");
@@ -1047,7 +1047,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                     Ok(mol) => {
                                         open_lig_from_input(state, mol, scene, &mut engine_updates);
                                         redraw.ligand = true;
-                                        reset_cam = true;
+                                        // reset_cam = true;
 
 
                                         let cids_str = c

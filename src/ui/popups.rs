@@ -861,24 +861,27 @@ fn lig_pocket_from_het_res(
             if ui
                 .button(RichText::new("Make pocket").color(COLOR_ACTION))
                 .on_hover_text(
-                    "Create a pocket around a hetero residue included in the protein file.",
+                    "Create a pocket around a hetero residue included in a protein file.",
                 )
                 .clicked()
             {
-                let mut lig_ctr = Vec3::new_zero();
-                for atom_i in &res.atoms {
-                    // Using local coordinates; this should be independent of the user positioning the protein.
-                    if *atom_i >= mol.common.atoms.len() {
-                        eprintln!(
-                            "Error: Atom index out of bounds: {} > {}",
-                            atom_i,
-                            mol.common.atoms.len()
-                        );
-                        continue;
-                    }
+                let lig_ctr = {
+                    let mut ctr = Vec3::new_zero();
+                    for atom_i in &res.atoms {
+                        // Using local coordinates; this should be independent of the user positioning the protein.
+                        if *atom_i >= mol.common.atoms.len() {
+                            eprintln!(
+                                "Error: Atom index out of bounds: {} > {}",
+                                atom_i,
+                                mol.common.atoms.len()
+                            );
+                            continue;
+                        }
 
-                    lig_ctr += mol.common.atoms[*atom_i].posit;
-                }
+                        ctr += mol.common.atoms[*atom_i].posit;
+                    }
+                    ctr / res.atoms.len() as f64
+                };
 
                 let ident = format!("Pocket: {name}");
                 pocket_to_add = Some(Pocket::new(

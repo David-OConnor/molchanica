@@ -544,7 +544,11 @@ fn nearest_in_group(
     for (i_mol, i_atom_bond) in items.iter() {
         let posit: Vec3F32 = if bond_mode {
             if *i_mol >= bonds.len() {
-                eprintln!("Error: bond mode but i_mol >= bonds.len()");
+                eprintln!(
+                    "Error: bond mode but i_mol {i_mol} >= bonds.len() : {:?}",
+                    bonds
+                );
+                return;
             }
 
             let bond = &bonds[*i_mol][*i_atom_bond];
@@ -726,6 +730,23 @@ pub fn points_along_ray_bond_peptide(
     result
 }
 
+// We're updating the position to use `atom_posits` instead of the internal `Atom` posit field,
+// but this involves re-building.
+// todo: I don't like this rebuilding.
+fn get_atoms(mol: &MoleculeCommon) -> Vec<Atom> {
+    // todo: I don't like this clone!
+    mol.atoms
+        .iter()
+        .enumerate()
+        .map(|(i, a)| Atom {
+            posit: mol.atom_posits[i],
+            element: a.element,
+            residue: a.residue,
+            ..Default::default()
+        })
+        .collect()
+}
+
 pub(crate) fn handle_selection_attempt(
     state: &mut State,
     scene: &mut Scene,
@@ -744,23 +765,6 @@ pub(crate) fn handle_selection_attempt(
     selected_ray.0 += diff.to_normalized() * SEL_NEAR_PAD;
 
     // todo: Lots of DRY here!
-
-    // We're updating the position to use `atom_posits` instead of the internal `Atom` posit field,
-    // but this involves re-building.
-    // todo: I don't like this rebuilding.
-    fn get_atoms(mol: &MoleculeCommon) -> Vec<Atom> {
-        // todo: I don't like this clone!
-        mol.atoms
-            .iter()
-            .enumerate()
-            .map(|(i, a)| Atom {
-                posit: mol.atom_posits[i],
-                element: a.element,
-                residue: a.residue,
-                ..Default::default()
-            })
-            .collect()
-    }
 
     let mut lig_atoms = Vec::new();
     for mol in &state.ligands {
@@ -949,7 +953,6 @@ pub(crate) fn handle_selection_attempt(
 pub fn handle_selection_attempt_mol_editor(
     state: &mut State,
     scene: &mut Scene,
-    // redraw: &mut RedrawFlags,
     redraw: &mut bool,
 ) {
     // todo: Allow a sel mode in the Primary mode that lets you pick either atoms or bonds, like this.
@@ -1038,8 +1041,8 @@ pub fn handle_selection_attempt_mol_editor(
             &state.ui,
             &Vec::new(),
             &Vec::new(),
-            &Vec::new(),
             &[bonds],
+            &[],
             &[],
             &[],
             true,
@@ -1081,10 +1084,10 @@ pub fn handle_selection_attempt_mol_editor(
         _ => ManipMode::None,
     };
 
-    // if let Some(mm) = manip_mode_new {
     let mut rebuild_md = false;
     let mut redraw_flags = RedrawFlags::default();
     redraw_flags.ligand = *redraw;
+
     mol_manip::set_manip(
         &mut state.volatile,
         &mut state.to_save.save_flag,
@@ -1100,7 +1103,7 @@ pub fn handle_selection_attempt_mol_editor(
         sync_md(state);
     }
 
-    // redraw = true;
+    *redraw = true;
 }
 
 /// Handles logic regarding selection changes updating multi-atom lists, or reverting

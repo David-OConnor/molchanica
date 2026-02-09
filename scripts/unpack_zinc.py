@@ -6,7 +6,7 @@ Run with cli_args of the zinc "H" folder names.
 
 This  is set up for the Curl download format; other formats use different packing.
 
-Run with the  `-h_folders argument`
+Run with the  `--h_folders argument`
 """
 
 import argparse
@@ -87,7 +87,7 @@ def main() -> int:
         )
     )
     ap.add_argument(
-        "h_folders",
+        "--h_folders",
         nargs="+",
         help='One or more H folders (e.g. "H04 H05"). You can pass full paths.',
     )

@@ -701,6 +701,19 @@ fn redraw_inplace_helper(
     let err = "Uhoh: Index error on in-place redraw";
 
     let mol = match mol_type {
+        MolType::Peptide => {
+            unimplemented!()
+            // todo: A/R
+            // wrappers::update_single_peptide_inplace(mol_i, state, scene);
+            //
+            // if mol_i >= state.ligands.len() {
+            //     eprintln!("{err}");
+            //     wrappers::draw_all_ligs(state, scene);
+            //     return;
+            // }
+            //
+            // &mut state.ligands[mol_i].common
+        }
         MolType::Ligand => {
             wrappers::update_single_ligand_inplace(mol_i, state, scene);
 
@@ -734,7 +747,18 @@ fn redraw_inplace_helper(
 
             &mut state.lipids[mol_i].common
         }
-        _ => unreachable!(),
+        MolType::Pocket => {
+            wrappers::update_single_pocket_inplace(mol_i, state, scene);
+
+            if mol_i >= state.pockets.len() {
+                eprintln!("{err}");
+                wrappers::draw_all_pockets(state, scene);
+                return;
+            }
+
+            &mut state.pockets[mol_i].common
+        }
+        MolType::Water => unreachable!(),
     };
 
     updates.entities = match mol.entity_i_range {
