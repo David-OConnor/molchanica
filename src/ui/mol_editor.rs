@@ -712,6 +712,7 @@ fn edit_tools(
                     // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
                     ManipMode::Move((MolType::Ligand, selected_idxs[0])),
                     &state.ui.selection,
+                    engine_updates,
                 );
                 *redraw = redraw_flags.ligand;
             }
@@ -742,6 +743,7 @@ fn edit_tools(
                             // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
                             ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
                             &state.ui.selection,
+                            engine_updates,
                         );
                         *redraw = redraw_flags.ligand;
                     }

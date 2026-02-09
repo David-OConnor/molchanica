@@ -2,18 +2,21 @@
 //! This is for both primary mode, and the mol editor. In the latter, it
 //! can move individual atoms, and rotate parts of molecules around bonds.
 
-use graphics::{Camera, ControlScheme, FWD_VEC, RIGHT_VEC, Scene, UP_VEC, event::MouseScrollDelta};
+use graphics::{
+    Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC,
+    event::MouseScrollDelta,
+};
 use lin_alg::{
     f32::{Quaternion, Vec3},
     f64::Vec3 as Vec3F64,
 };
 use na_seq::Element;
 
-use crate::drawing::wrappers::draw_all_pockets;
-use crate::molecules::pocket::Pocket;
 use crate::{
+    drawing::wrappers::draw_all_pockets,
     inputs::{SENS_MOL_ROT_MOUSE, SENS_MOL_ROT_SCROLL},
-    molecules::{MolType, common::MoleculeCommon},
+    molecules::{MolType, common::MoleculeCommon, pocket::Pocket},
+    render::MESH_POCKET,
     selection::Selection,
     state::{OperatingMode, State, StateVolatile},
     util::RedrawFlags,
@@ -136,7 +139,6 @@ pub fn handle_mol_manip_in_plane(
                         // todo: Only regen upon exiting manip
                         if mol_type == MolType::Pocket {
                             rebuild_pocket = Some(mol_i);
-                            // state.pockets[mol_i].regen_mesh_vol();
                         }
                     }
                 }
@@ -213,7 +215,6 @@ pub fn handle_mol_manip_in_plane(
                     // todo: Only regen upon exiting manip
                     if mol_type == MolType::Pocket {
                         rebuild_pocket = Some(mol_i);
-                        // state.pockets[mol_i].regen_mesh_vol();
                     }
                 }
             }
@@ -425,6 +426,7 @@ pub fn set_manip(
     // Note: The mol itself is overwritten but this sets move/rotate,
     mode: ManipMode,
     sel: &Selection,
+    engine_updates: &mut EngineUpdates,
 ) {
     if mode == ManipMode::None {
         vol.mol_manip.mode = ManipMode::None;
@@ -517,11 +519,14 @@ pub fn set_manip(
         ManipMode::None => unreachable!(),
     }
 
-    // Once complete with manip on a pocket, rebuild the volume, respresentation.
+    // Once complete with manip on a pocket, rebuild the volume, representation.
     if let Some((mol_type, i)) = vol.active_mol
         && mol_type == MolType::Pocket
     {
         pockets[i].regen_mesh_vol();
+        scene.meshes[MESH_POCKET] = pockets[i].surface_mesh.clone();
+
+        engine_updates.meshes = true;
         redraw.pocket = true;
     }
 

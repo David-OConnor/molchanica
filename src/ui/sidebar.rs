@@ -310,7 +310,13 @@ fn open_tools(state: &mut State, ui: &mut Ui) {
     }
 }
 
-fn manip_toolbar(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags, ui: &mut Ui) {
+fn manip_toolbar(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    ui: &mut Ui,
+    engine_updates: &mut EngineUpdates,
+) {
     ui.horizontal(|ui| {
         let Some((active_mol_type, active_mol_i)) = state.volatile.active_mol else {
             return;
@@ -341,15 +347,16 @@ fn manip_toolbar(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
                 .clicked() {
 
                 set_manip(&mut state.volatile, &mut state.pockets, &mut state.to_save.save_flag, scene, redraw,&mut false,
-                          ManipMode::Move((active_mol_type, active_mol_i)), &state.ui.selection,);
+                          ManipMode::Move((active_mol_type, active_mol_i)), &state.ui.selection, engine_updates);
             }
 
             if ui.button(RichText::new("⟳").color(color_rotate))
                 .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll.")
                 .clicked() {
 
-                set_manip(&mut state.volatile, &mut state.pockets, &mut state.to_save.save_flag, scene,redraw,&mut false,
-                          ManipMode::Rotate((active_mol_type, active_mol_i)), &state.ui.selection,);
+                set_manip(&mut state.volatile, &mut state.pockets, &mut state.to_save.save_flag,
+                          scene,redraw,&mut false,
+                          ManipMode::Rotate((active_mol_type, active_mol_i)), &state.ui.selection ,engine_updates,);
             }
         }
 
@@ -446,7 +453,7 @@ pub(in crate::ui) fn sidebar(
 
             ui.add_space(ROW_SPACING / 2.);
 
-            manip_toolbar(state, scene, redraw, ui);
+            manip_toolbar(state, scene, redraw, ui, engine_updates);
 
             ui.add_space(ROW_SPACING / 2.);
             ui.separator();

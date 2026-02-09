@@ -1,8 +1,9 @@
 #![allow(unused)]
 
+use std::f64::consts::{PI, TAU};
+
 use lin_alg::f64::Vec3;
 use na_seq::Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur};
-use std::f64::consts::{PI, TAU};
 
 use crate::{
     molecules::{Atom, Bond, HydrogenBond},

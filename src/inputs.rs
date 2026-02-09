@@ -10,6 +10,7 @@ use graphics::{
 use lin_alg::f32::Vec3;
 use na_seq::Element::Carbon;
 
+use crate::render::MESH_POCKET;
 use crate::{
     cam::{FOG_DIST_MIN, move_cam_to_sel, set_fog_dist},
     drawing,
@@ -126,6 +127,7 @@ pub fn event_dev_handler(
                                 state_,
                                 scene,
                                 &mut redraw_mol_editor,
+                                &mut updates,
                             );
                         }
                         OperatingMode::ProteinEditor => (),
@@ -207,6 +209,21 @@ pub fn event_dev_handler(
                             state_.volatile.mol_manip.pivot = None;
                             scene.input_settings.control_scheme =
                                 state_.volatile.control_scheme_prev;
+
+                            // Clean up things, e.g. for moving the pocket to command its mesh
+                            // to rebuild. Note required for most other things.
+                            // c+p from set_manip to regen the pocket mesh and volume if exiting
+                            // manip through the esc key.
+                            if let Some((mol_type, i)) = state_.volatile.active_mol
+                                && mol_type == MolType::Pocket
+                            {
+                                println!("\n\n clearing manip C");
+                                state_.pockets[i].regen_mesh_vol();
+                                scene.meshes[MESH_POCKET] = state_.pockets[i].surface_mesh.clone();
+
+                                updates.meshes = true;
+                                redraw.pocket = true;
+                            }
 
                             if state_.volatile.operating_mode == OperatingMode::MolEditor {
                                 sync_md(state_);
@@ -293,9 +310,9 @@ pub fn event_dev_handler(
                             scene,
                             &mut redraw,
                             &mut rebuild_md_editor,
-                            // ManipMode::Move((MolType::Ligand, 0)),
                             ManipMode::Move((mol_type, 0)),
                             &state_.ui.selection,
+                            &mut updates,
                         );
 
                         if rebuild_md_editor {
@@ -329,6 +346,7 @@ pub fn event_dev_handler(
                                 &mut rebuild_md_editor,
                                 ManipMode::Rotate((mol_type, 0)),
                                 &state_.ui.selection,
+                                &mut updates,
                             );
                         }
 

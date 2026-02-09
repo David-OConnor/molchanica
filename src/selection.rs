@@ -4,7 +4,7 @@
 use std::{fmt, fmt::Display};
 
 use bincode::{Decode, Encode};
-use graphics::{ControlScheme, Scene};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 use na_seq::{Element, Element::Hydrogen};
 
@@ -956,6 +956,7 @@ pub fn handle_selection_attempt_mol_editor(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut bool,
+    engine_updates: &mut EngineUpdates,
 ) {
     // todo: Allow a sel mode in the Primary mode that lets you pick either atoms or bonds, like this.
 
@@ -1099,6 +1100,7 @@ pub fn handle_selection_attempt_mol_editor(
         &mut rebuild_md,
         manip_mode_new,
         &state.ui.selection,
+        engine_updates,
     );
     *redraw = redraw_flags.ligand;
 

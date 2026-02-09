@@ -14,12 +14,11 @@ use lin_alg::{
 };
 use na_seq::Element;
 
-use crate::drawing::atoms_bonds::draw_hydrogen_bond;
 use crate::{
     drawing::{
         atoms_bonds::{
             ATOM_SHININESS, BALL_RADIUS_WATER_H, BALL_RADIUS_WATER_O, BALL_STICK_RADIUS,
-            BALL_STICK_RADIUS_H, BODY_SHINYNESS, WATER_BOND_THICKNESS,
+            BALL_STICK_RADIUS_H, BODY_SHINYNESS, WATER_BOND_THICKNESS, draw_hydrogen_bond,
         },
         viridis_lut::VIRIDIS,
     },
@@ -1805,7 +1804,7 @@ pub fn draw_pocket(
         ATOM_SHININESS,
     );
 
-    ent.pivot = Some(pocket.mesh_pivot);
+    // ent.pivot = Some(pocket.mesh_pivot);
     ent.class = EntityClass::Pocket as u32;
     ent.opacity = POCKET_SURFACE_OPACITY;
 

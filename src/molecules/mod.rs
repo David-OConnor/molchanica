@@ -43,9 +43,8 @@ use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use small::MoleculeSmall;
 
-use crate::bond_inference::h_bond_strength;
 use crate::{
-    bond_inference::create_hydrogen_bonds,
+    bond_inference::{create_hydrogen_bonds, h_bond_strength},
     drawing::EntityClass,
     molecules::{
         common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
