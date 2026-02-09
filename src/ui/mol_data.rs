@@ -292,7 +292,6 @@ pub(in crate::ui) fn selected_data(
             }
             // todo DRY
             Selection::AtomPocket((mol_i, atom_i)) => {
-                println!("Atom pocket selected"); // todo temp
                 if *mol_i >= pockets.len() {
                     return;
                 }

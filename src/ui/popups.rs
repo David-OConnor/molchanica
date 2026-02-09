@@ -11,6 +11,7 @@ use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
+use crate::drawing::EntityClass;
 use crate::{
     cam::{move_cam_to_active_mol, move_cam_to_mol},
     drawing::wrappers::draw_all_pockets,
@@ -898,11 +899,13 @@ fn lig_pocket_from_het_res(
 
     if let Some(pocket) = pocket_to_add {
         scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
+
         draw_all_pockets(state, scene);
         state.pockets.push(pocket);
 
         engine_updates.meshes = true;
-        engine_updates.entities = EntityUpdate::All;
+        // todo: DOesn't seem to be working.
+        engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::Pocket as u32]);
     }
 
     if let Some(res) = &create_lig_from_res {

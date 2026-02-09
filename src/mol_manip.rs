@@ -127,14 +127,11 @@ pub fn handle_mol_manip_in_plane(
                     if I.is_multiple_of(ratio)
                         || state.volatile.operating_mode == OperatingMode::MolEditor
                     {
-                        match mol_type {
-                            MolType::Peptide => redraw.peptide = true,
-                            MolType::Ligand => redraw.ligand = true,
-                            MolType::NucleicAcid => redraw.na = true,
-                            MolType::Lipid => redraw.lipid = true,
-                            MolType::Pocket => redraw.pocket = true,
-                            _ => unimplemented!(),
-                        };
+                        redraw.set(mol_type);
+
+                        if mol_type == MolType::Pocket {
+                            state.pockets[mol_i].regen_mesh_vol();
+                        }
                     }
                 }
             }
@@ -156,7 +153,8 @@ pub fn handle_mol_manip_in_plane(
                     MolType::Ligand => &mut state.ligands[mol_i].common,
                     MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
                     MolType::Lipid => &mut state.lipids[mol_i].common,
-                    _ => unimplemented!(),
+                    MolType::Pocket => &mut state.pockets[mol_i].common,
+                    MolType::Water => unimplemented!(),
                 },
                 OperatingMode::MolEditor => &mut state.mol_editor.mol.common,
                 OperatingMode::ProteinEditor => unimplemented!(),
@@ -198,6 +196,10 @@ pub fn handle_mol_manip_in_plane(
                     || state.volatile.operating_mode == OperatingMode::MolEditor
                 {
                     redraw.set(mol_type);
+
+                    if mol_type == MolType::Pocket {
+                        state.pockets[mol_i].regen_mesh_vol();
+                    }
                 }
             }
         }
@@ -330,6 +332,9 @@ pub fn handle_mol_manip_in_out(
                 }
             }
             redraw.set(mol_type);
+            if mol_type == MolType::Pocket {
+                state.pockets[mol_i].regen_mesh_vol();
+            }
         }
         ManipMode::Rotate((mol_type, mol_i)) => {
             let scroll: f32 = match delta {
@@ -362,7 +367,8 @@ pub fn handle_mol_manip_in_out(
                 }
                 MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
                 MolType::Lipid => &mut state.lipids[mol_i].common,
-                _ => unimplemented!(),
+                MolType::Pocket => &mut state.pockets[mol_i].common,
+                MolType::Water => unimplemented!(),
             };
 
             let fwd = scene.camera.orientation.rotate_vec(FWD_VEC).to_normalized();
@@ -371,6 +377,9 @@ pub fn handle_mol_manip_in_out(
             mol.rotate(rot.into(), None);
 
             redraw.set(mol_type);
+            if mol_type == MolType::Pocket {
+                state.pockets[mol_i].regen_mesh_vol();
+            }
         }
         ManipMode::None => (),
     }

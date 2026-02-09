@@ -216,7 +216,7 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
     let class = EntityClass::Pocket as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
-    if state.ui.visibility.hide_lipids {
+    if state.ui.visibility.hide_pockets {
         return;
     }
 

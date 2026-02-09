@@ -2252,11 +2252,16 @@ pub fn draw_pocket(
         color_mesh = COLOR_SELECTED;
     }
 
+    let mesh_posit = pocket.common.atom_posits[0] - pocket.common.atoms[0].posit;
+    // let mesh_posit = pocket.common.atoms[0].posit - pocket.common.atom_posits[0];
+
     // Draw the surface mesh; pre-computed.
     let mut ent = Entity::new(
         MESH_POCKET,
-        Vec3::new_zero(), // todo temp?
-        Quaternion::new_identity(),
+        // pocket.common.atom_posits[0].into(),
+        mesh_posit.into(),
+        // Vec3::new_zero(),           // todo temp?
+        Quaternion::new_identity(), // todo
         1.,
         color_mesh,
         ATOM_SHININESS,

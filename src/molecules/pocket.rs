@@ -106,15 +106,22 @@ impl Pocket {
         let surface_mesh = make_mesh(&atoms);
 
         let mut mol = MoleculeCommon::new(ident.to_owned(), atoms, bonds, HashMap::new(), None);
-        let volume = PocketVolume::new(&mol);
-
         mol.center_local_posits_around_origin();
+
+        let volume = PocketVolume::new(&mol);
 
         Self {
             common: mol,
             surface_mesh,
             volume,
         }
+    }
+
+    /// Run this, for example, after moving the molecule. Move the atoms in the same manner
+    /// as with other molecule types, then run this to synchronize.
+    pub fn regen_mesh_vol(&mut self) {
+        self.volume = PocketVolume::new(&self.common);
+        // self.surface_mesh = make_mesh(&self.common.atoms);
     }
 
     pub fn save_sdf(&self, path: &Path) -> io::Result<()> {
@@ -387,6 +394,7 @@ impl PocketVolume {
     /// a subset of the protein.
     pub fn new(mol_pocket: &MoleculeCommon) -> Self {
         let mut spheres = Vec::with_capacity(mol_pocket.atoms.len());
+
         let mut max_r = 0.;
 
         for (i, a) in mol_pocket.atoms.iter().enumerate() {

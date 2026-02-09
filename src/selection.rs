@@ -402,7 +402,8 @@ pub fn find_selected_atom_or_bond(
                     }
                     MolType::NucleicAcid => Selection::AtomNucleicAcid(indices),
                     MolType::Lipid => Selection::AtomLipid(indices),
-                    _ => unreachable!(),
+                    MolType::Pocket => Selection::AtomPocket(indices),
+                    MolType::Water => unreachable!(),
                 }
             }
         }
@@ -424,7 +425,8 @@ pub fn find_selected_atom_or_bond(
                 MolType::Ligand => Selection::AtomLig(indices),
                 MolType::NucleicAcid => Selection::AtomNucleicAcid(indices),
                 MolType::Lipid => Selection::AtomLipid(indices),
-                _ => unreachable!(),
+                MolType::Pocket => Selection::AtomPocket(indices),
+                MolType::Water => unreachable!(),
             }
         }
     };
@@ -920,8 +922,8 @@ pub(crate) fn handle_selection_attempt(
         Selection::AtomLipid((mol_i, _)) | Selection::BondLipid((mol_i, _)) => {
             state.volatile.active_mol = Some((MolType::Lipid, mol_i));
         }
-        Selection::AtomPocket((mol_i, _)) | Selection::BondLipid((mol_i, _)) => {
-            state.volatile.active_mol = Some((MolType::Lipid, mol_i));
+        Selection::AtomPocket((mol_i, _)) | Selection::BondPocket((mol_i, _)) => {
+            state.volatile.active_mol = Some((MolType::Pocket, mol_i));
         }
         _ => (),
     }
