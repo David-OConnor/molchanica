@@ -11,10 +11,9 @@ use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
-use crate::drawing::EntityClass;
 use crate::{
     cam::{move_cam_to_active_mol, move_cam_to_mol},
-    drawing::wrappers::draw_all_pockets,
+    drawing::{EntityClass, wrappers::draw_all_pockets},
     file_io::{download_mols, download_mols::load_atom_coords_rcsb},
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
@@ -900,11 +899,10 @@ fn lig_pocket_from_het_res(
     if let Some(pocket) = pocket_to_add {
         scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
 
-        draw_all_pockets(state, scene);
         state.pockets.push(pocket);
+        draw_all_pockets(state, scene);
 
         engine_updates.meshes = true;
-        // todo: DOesn't seem to be working.
         engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::Pocket as u32]);
     }
 

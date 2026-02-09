@@ -606,7 +606,14 @@ pub(in crate::therapeutic) fn load_training_data(
                     continue;
                 }
             };
-            sdf.clone().try_into()?
+
+            match sdf.clone().try_into() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Error loading SDF; skipping mol at {sdf_path:?}: {e:?}");
+                    continue;
+                }
+            }
         };
 
         // Note: We are skipping populating mol-specific parameters. These are generally dihedrals,

@@ -9,6 +9,8 @@ use lin_alg::{
 };
 use na_seq::Element;
 
+use crate::drawing::wrappers::draw_all_pockets;
+use crate::molecules::pocket::Pocket;
 use crate::{
     inputs::{SENS_MOL_ROT_MOUSE, SENS_MOL_ROT_SCROLL},
     molecules::{MolType, common::MoleculeCommon},
@@ -38,6 +40,8 @@ pub fn handle_mol_manip_in_plane(
     let Some(cursor) = state.ui.cursor_pos else {
         return;
     };
+
+    let mut rebuild_pocket = None; // Avoids double borrow.
 
     match state.volatile.mol_manip.mode {
         ManipMode::Move((mol_type, mol_i)) => {
@@ -129,8 +133,10 @@ pub fn handle_mol_manip_in_plane(
                     {
                         redraw.set(mol_type);
 
+                        // todo: Only regen upon exiting manip
                         if mol_type == MolType::Pocket {
-                            state.pockets[mol_i].regen_mesh_vol();
+                            rebuild_pocket = Some(mol_i);
+                            // state.pockets[mol_i].regen_mesh_vol();
                         }
                     }
                 }
@@ -179,6 +185,13 @@ pub fn handle_mol_manip_in_plane(
                     let rot = rot_y * rot_x; // Note: Can swap the order for a slightly different effect.
 
                     mol.rotate(rot.into(), None);
+
+                    // Pockets: We rotate a single mesh, instead of a collection of point-based items.
+                    // Update it.
+                    if mol_type == MolType::Pocket {
+                        state.pockets[mol_i].mesh_orientation =
+                            (rot * state.pockets[mol_i].mesh_orientation).to_normalized();
+                    }
                 }
                 OperatingMode::MolEditor => {
                     // todo: X vs Y?
@@ -197,13 +210,19 @@ pub fn handle_mol_manip_in_plane(
                 {
                     redraw.set(mol_type);
 
+                    // todo: Only regen upon exiting manip
                     if mol_type == MolType::Pocket {
-                        state.pockets[mol_i].regen_mesh_vol();
+                        rebuild_pocket = Some(mol_i);
+                        // state.pockets[mol_i].regen_mesh_vol();
                     }
                 }
             }
         }
         ManipMode::None => (),
+    }
+
+    if let Some(mol_i) = rebuild_pocket {
+        state.pockets[mol_i].rebuild_spheres();
     }
 }
 
@@ -214,6 +233,8 @@ pub fn handle_mol_manip_in_out(
     delta: MouseScrollDelta,
     redraw: &mut RedrawFlags,
 ) {
+    let mut rebuild_pocket = None; // Avoids double borrow.
+
     // Move the molecule forward and backwards relative to the camera on scroll.
     match state.volatile.mol_manip.mode {
         ManipMode::Move((mol_type, mol_i)) => {
@@ -244,8 +265,6 @@ pub fn handle_mol_manip_in_out(
                 OperatingMode::MolEditor => &mut state.mol_editor.mol.common,
                 OperatingMode::ProteinEditor => unimplemented!(),
             };
-
-            println!("Move: {:?}", mol_type);
 
             let scroll: f32 = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y,
@@ -332,8 +351,9 @@ pub fn handle_mol_manip_in_out(
                 }
             }
             redraw.set(mol_type);
+            // todo: Only regen upon exiting manip
             if mol_type == MolType::Pocket {
-                state.pockets[mol_i].regen_mesh_vol();
+                rebuild_pocket = Some(mol_i);
             }
         }
         ManipMode::Rotate((mol_type, mol_i)) => {
@@ -376,18 +396,28 @@ pub fn handle_mol_manip_in_out(
             let rot = Quaternion::from_axis_angle(fwd, scroll * SENS_MOL_ROT_SCROLL);
             mol.rotate(rot.into(), None);
 
-            redraw.set(mol_type);
+            // Pockets: We rotate a single mesh, instead of a collection of point-based items.
+            // Update it.
             if mol_type == MolType::Pocket {
-                state.pockets[mol_i].regen_mesh_vol();
+                // state.pockets[mol_i].mesh_orientation =
+                //     (rot * state.pockets[mol_i].mesh_orientation).to_normalized();
+                rebuild_pocket = Some(mol_i);
             }
+
+            redraw.set(mol_type);
         }
         ManipMode::None => (),
+    }
+
+    if let Some(mol_i) = rebuild_pocket {
+        state.pockets[mol_i].rebuild_spheres();
     }
 }
 
 /// Sets the manipulation mode, and adjusts camera controls A/R. Called from inputs, or the UI.
 pub fn set_manip(
     vol: &mut StateVolatile,
+    pockets: &mut [Pocket],
     _save_flag: &mut bool,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
@@ -416,6 +446,7 @@ pub fn set_manip(
             }
             // For rotating.
             Selection::BondLig((_, i)) => (MolType::Ligand, *i),
+            Selection::AtomPocket((_, i)) => (MolType::Pocket, *i),
             _ => return,
         },
         OperatingMode::ProteinEditor => unimplemented!(),
@@ -484,6 +515,14 @@ pub fn set_manip(
             };
         }
         ManipMode::None => unreachable!(),
+    }
+
+    // Once complete with manip on a pocket, rebuild the volume, respresentation.
+    if let Some((mol_type, i)) = vol.active_mol
+        && mol_type == MolType::Pocket
+    {
+        pockets[i].regen_mesh_vol();
+        redraw.pocket = true;
     }
 
     redraw.set(mol_type_active);

@@ -226,6 +226,7 @@ pub fn event_dev_handler(
                             &state_.ligands,
                             &state_.nucleic_acids,
                             &state_.lipids,
+                            &state_.pockets,
                             &mut scene.camera,
                             &mut updates,
                         );
@@ -279,14 +280,21 @@ pub fn event_dev_handler(
                         OperatingMode::ProteinEditor => (),
                     },
                     Code(KeyCode::KeyM) => {
+                        let mol_type = match state_.active_mol() {
+                            Some(m) => m.mol_type(),
+                            None => return updates,
+                        };
+
                         let mut rebuild_md_editor = false;
                         mol_manip::set_manip(
                             &mut state_.volatile,
+                            &mut state_.pockets,
                             &mut state_.to_save.save_flag,
                             scene,
                             &mut redraw,
                             &mut rebuild_md_editor,
-                            ManipMode::Move((MolType::Ligand, 0)),
+                            // ManipMode::Move((MolType::Ligand, 0)),
+                            ManipMode::Move((mol_type, 0)),
                             &state_.ui.selection,
                         );
 
@@ -314,6 +322,7 @@ pub fn event_dev_handler(
                         if !skip {
                             mol_manip::set_manip(
                                 &mut state_.volatile,
+                                &mut state_.pockets,
                                 &mut state_.to_save.save_flag,
                                 scene,
                                 &mut redraw_in_place,
@@ -542,7 +551,6 @@ pub fn event_dev_handler(
 
     if redraw.pocket && state_.volatile.operating_mode == OperatingMode::Primary {
         wrappers::draw_all_pockets(state_, scene);
-
         updates.entities = EntityUpdate::All;
     }
 
@@ -575,7 +583,12 @@ pub fn event_dev_handler(
     }
 
     if redraw_in_place.pocket && state_.volatile.operating_mode == OperatingMode::Primary {
-        redraw_inplace_helper(MolType::Pocket, state_, scene, &mut updates);
+        // todo: Inplace isn't working here. Not sure why.
+        // println!("INPLACE pocket redraw");
+        // redraw_inplace_helper(MolType::Pocket, state_, scene, &mut updates);
+
+        wrappers::draw_all_pockets(state_, scene);
+        updates.entities = EntityUpdate::Classes(vec![EntityClass::Pocket as u32]);
     }
 
     if redraw_mol_editor {

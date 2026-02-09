@@ -226,7 +226,7 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
     }
 
     let mut entities = Vec::new();
-    for (i_mol, mol) in state.pockets.iter_mut().enumerate() {
+    for mol in &mut state.pockets {
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol =
@@ -312,6 +312,16 @@ fn update_inplace_inner(
         state.ligands.len(),
     );
 
+    update_inplace_inner_part2(ent_i_start, ent_i_end, ents_updated, scene)
+}
+
+/// Split out to handle cases where we don't use `draw_mol`
+fn update_inplace_inner_part2(
+    ent_i_start: usize,
+    ent_i_end: usize,
+    ents_updated: Vec<Entity>,
+    scene: &mut Scene,
+) {
     if ents_updated.len() != ent_i_end - ent_i_start {
         eprintln!(
             "Error: Mismatch between new and old mol et counts. Old: {}, new: {}",
@@ -430,6 +440,9 @@ pub fn update_single_pocket_inplace(i: usize, state: &State, scene: &mut Scene) 
         return;
     };
 
-    let mol = MolGenericRef::Pocket(mol);
-    update_inplace_inner(mol, i, ent_i_start, ent_i_end, state, scene);
+    // Here we copy+paste+modify update_inplace_inner; we don't use "draw_mol" for pockets.
+
+    // todo: Hydrogen bonds
+    let ents_updated = drawing::draw_pocket(mol, &[], &state.ui.visibility, &state.ui.selection);
+    update_inplace_inner_part2(ent_i_start, ent_i_end, ents_updated, scene);
 }

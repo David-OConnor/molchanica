@@ -340,7 +340,7 @@ fn manip_toolbar(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
                 the mouse. Scroll to move it forward and back.")
                 .clicked() {
 
-                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene, redraw,&mut false,
+                set_manip(&mut state.volatile, &mut state.pockets, &mut state.to_save.save_flag, scene, redraw,&mut false,
                           ManipMode::Move((active_mol_type, active_mol_i)), &state.ui.selection,);
             }
 
@@ -348,7 +348,7 @@ fn manip_toolbar(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
                 .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll.")
                 .clicked() {
 
-                set_manip(&mut state.volatile,&mut state.to_save.save_flag, scene,redraw,&mut false,
+                set_manip(&mut state.volatile, &mut state.pockets, &mut state.to_save.save_flag, scene,redraw,&mut false,
                           ManipMode::Rotate((active_mol_type, active_mol_i)), &state.ui.selection,);
             }
         }

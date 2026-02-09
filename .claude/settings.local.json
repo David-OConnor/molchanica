@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\\\Users\\\\the_a\")",
+      "Bash(cargo check:*)",
+      "Bash(findstr:*)"
+    ]
+  }
+}

@@ -12,7 +12,7 @@ use crate::{
     cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
     docking::DockingSite,
     drawing,
-    drawing::{BOND_RADIUS_BASE, wrappers},
+    drawing::{atoms_bonds::BOND_RADIUS_BASE, wrappers},
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::State,
@@ -28,10 +28,6 @@ pub const BACKGROUND_COLOR: Color = (0., 0., 0.);
 
 // todo: These consts should probably be in the drawing module.
 
-// todo: Shinyness broken?
-pub const ATOM_SHININESS: f32 = 0.9;
-pub const BODY_SHINYNESS: f32 = 0.9;
-
 // Keep this in sync with mesh init.
 pub const MESH_SPHERE_HIGHRES: usize = 0;
 pub const MESH_CUBE: usize = 1;
@@ -44,17 +40,6 @@ pub const MESH_SOLVENT_SURFACE: usize = 6; // Van Der Waals surface.
 pub const MESH_DENSITY_SURFACE: usize = 8;
 pub const MESH_SECONDARY_STRUCTURE: usize = 9;
 pub const MESH_POCKET: usize = 10;
-
-pub const BALL_STICK_RADIUS: f32 = 0.3;
-pub const BALL_STICK_RADIUS_H: f32 = 0.1;
-
-pub const BALL_RADIUS_WATER_O: f32 = 0.09;
-pub const BALL_RADIUS_WATER_H: f32 = 0.06;
-pub const WATER_BOND_THICKNESS: f32 = 0.1;
-
-pub const WATER_OPACITY: f32 = 1.;
-pub const PHARMACOPHORE_OPACITY: f32 = 0.3;
-pub const RADIUS_PHARMACOPHORE_HINT: f32 = 0.25;
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 

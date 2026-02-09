@@ -530,7 +530,8 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 for res in &pep.het_residues {
                     // Note: This approach will fail if there are multiple hetero residues of similar len to
                     // this ligand.
-                    if (res.atoms.len() - mol.common().atoms.len()) < 3 {
+
+                    if (res.atoms.len() as i32 - mol.common().atoms.len() as i32) < 3 {
                         let name = match &res.res_type {
                             ResidueType::Other(name) => name,
                             _ => "hetero residue",
@@ -658,17 +659,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
     }
 }
 
-pub(in crate::ui) fn display_mol_data(
-    state: &mut State,
-    // scene: &mut Scene,
-    ui: &mut Ui,
-    // redraw_pep: &mut bool,
-    // redraw_lig: &mut bool,
-    // redraw_na: &mut bool,
-    // redraw_lipid: &mut bool,
-    // close: &mut bool,
-    // engine_updates: &mut EngineUpdates,
-) {
+pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let Some((active_mol_type, active_mol_i)) = state.volatile.active_mol else {
             return;

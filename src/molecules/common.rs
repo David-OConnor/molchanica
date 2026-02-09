@@ -148,6 +148,18 @@ impl MoleculeCommon {
         sum / n
     }
 
+    /// Uses atom internal positions.
+    pub fn centroid_local(&self) -> Vec3 {
+        let n = self.atoms.len() as f64;
+        let mut sum = Vec3::new_zero();
+
+        for a in &self.atoms {
+            sum += a.posit;
+        }
+
+        sum / n
+    }
+
     pub fn move_to(&mut self, pos: Vec3) {
         let delta = pos - self.centroid();
         for posit in &mut self.atom_posits {

@@ -15,7 +15,10 @@ use bincode::{
 };
 use bio_files::{Mol2, Sdf};
 use graphics::{EngineUpdates, EntityUpdate, Mesh, Scene};
-use lin_alg::f64::Vec3;
+use lin_alg::{
+    f32::{Quaternion, Vec3 as Vec3F32},
+    f64::Vec3,
+};
 
 use crate::{
     drawing::wrappers::draw_all_pockets,
@@ -62,6 +65,12 @@ pub struct Pocket {
     /// Contains atoms around the pocket only.
     /// todo: Should this include enough atoms to perform basic MD, or just cover the surface?
     pub common: MoleculeCommon,
+    /// Used to rotate the mesh, so we don't have to regenerate it when
+    /// the user rotates the pocket.
+    pub mesh_orientation: Quaternion,
+    /// This pivot must match the rotation we use for the inner
+    /// molecules; this is the molecule's centroid.
+    pub mesh_pivot: Vec3F32,
     pub surface_mesh: Mesh,
     // todo: This excluded volume is duplicated with the pharmacophore. I think
     // todo having both here is fine for now, and we will settle out hwo the
@@ -103,25 +112,35 @@ impl Pocket {
 
         reassign_bond_indices(&mut bonds, &atoms);
 
-        let surface_mesh = make_mesh(&atoms);
-
         let mut mol = MoleculeCommon::new(ident.to_owned(), atoms, bonds, HashMap::new(), None);
         mol.center_local_posits_around_origin();
 
+        // Set up the mesh and volume after centering the local atom posits.
         let volume = PocketVolume::new(&mol);
+        let surface_mesh = make_mesh(&mol.atoms, &mol.atom_posits);
+
+        let mesh_pivot = mol.centroid_local().into();
 
         Self {
             common: mol,
+            mesh_orientation: Quaternion::new_identity(),
+            mesh_pivot,
             surface_mesh,
             volume,
         }
     }
 
+    pub fn rebuild_spheres(&mut self) {
+        self.volume.rebuild_spheres(&self.common);
+    }
+
     /// Run this, for example, after moving the molecule. Move the atoms in the same manner
     /// as with other molecule types, then run this to synchronize.
+    ///
+    /// Also rebuilds the mesh.
     pub fn regen_mesh_vol(&mut self) {
         self.volume = PocketVolume::new(&self.common);
-        // self.surface_mesh = make_mesh(&self.common.atoms);
+        self.surface_mesh = make_mesh(&self.common.atoms, &self.common.atom_posits);
     }
 
     pub fn save_sdf(&self, path: &Path) -> io::Result<()> {
@@ -164,10 +183,14 @@ impl Pocket {
 
         mol.common.update_path(path);
 
-        let surface_mesh = make_mesh(&mol.common.atoms);
+        let surface_mesh = make_mesh(&mol.common.atoms, &mol.common.atom_posits);
+        let mesh_pivot = mol.common.centroid_local().into();
 
         Ok(Self {
             common: mol.common,
+            // Note: Unused.
+            mesh_orientation: Quaternion::new_identity(),
+            mesh_pivot,
             surface_mesh,
             volume: Default::default(),
         })
@@ -311,9 +334,11 @@ impl PocketGrid {
     }
 }
 
-/// Generally the area taken up by protein atoms in the pocket + their VDW radius.
+/// Generally the area taken up by protein atoms in the pocket + their VDW radius. The purpose
+/// of this is to allow a fast comparison of if an atom is inside the pocket or in conflict with
+/// the protein etc molecules that define it.
 ///
-/// Note: We could take various approaches including voxels, spheres,  gaussians etc.
+/// Note: We could take various approaches including voxels, spheres, gaussians etc.
 /// Our goal is to represent a 3D space accurately, with fast determiniation if a point is
 /// inside or outside the volume. We must be also be able to generate these easily from atom coordinates
 /// in a protein.
@@ -388,17 +413,33 @@ impl<'de, Context> BorrowDecode<'de, Context> for PocketVolume {
     }
 }
 
-// todo: New pocket module
 impl PocketVolume {
     /// atoms_pocket is just from the atoms in the vicinity of the pocket. i.e,
     /// a subset of the protein.
     pub fn new(mol_pocket: &MoleculeCommon) -> Self {
-        let mut spheres = Vec::with_capacity(mol_pocket.atoms.len());
+        let mut res = Self::default();
+
+        res.rebuild_spheres(mol_pocket);
+        res.update_voxel_grid();
+
+        println!(
+            "Created {} pocket spheres from {} atoms.",
+            res.spheres.len(),
+            mol_pocket.atoms.len()
+        );
+
+        res
+    }
+
+    /// Separate so we can, for example, update this rapidly while manipulating a pocket.
+    /// Bases it on relative atom positions. Also updates cell size and base grid.
+    fn rebuild_spheres(&mut self, mol: &MoleculeCommon) {
+        let mut spheres = Vec::with_capacity(mol.atoms.len());
 
         let mut max_r = 0.;
 
-        for (i, a) in mol_pocket.atoms.iter().enumerate() {
-            let center = mol_pocket.atom_posits[i];
+        for (i, a) in mol.atoms.iter().enumerate() {
+            let center = mol.atom_posits[i];
             let r = a.element.vdw_radius() + PROBE_RADIUS_EXCLUDED_VOL;
             if r > max_r {
                 max_r = r;
@@ -415,22 +456,14 @@ impl PocketVolume {
             grid.entry(c).or_default().push(i as u32);
         }
 
-        // todo: Why does this take spheres? Is that ok, or should it take atoms directly?
-        let pocket_grid = PocketGrid::new(&spheres);
+        self.spheres = spheres;
+        self.cell_size = cell_size;
+        self.grid = grid;
+    }
 
-        println!(
-            "Created {} pocket spheres from {} atoms.",
-            spheres.len(),
-            mol_pocket.atoms.len()
-        );
-
-        Self {
-            spheres,
-            voxel_grid: pocket_grid,
-            cell_size,
-            grid,
-            // mesh: None,
-        }
+    /// E.g. update this after manipulation is complete.
+    pub fn update_voxel_grid(&mut self) {
+        self.voxel_grid = PocketGrid::new(&self.spheres);
     }
 
     /// Uses the voxel approach.
@@ -513,10 +546,20 @@ fn cell_of(p: Vec3, cell_size: f32) -> (i32, i32, i32) {
     )
 }
 
-fn make_mesh(atoms: &[Atom]) -> Mesh {
-    let atoms_for_mesh: Vec<(_)> = atoms
+/// We use local atom positions to make the mesh, then move the mesh position as required when
+/// drawing.
+// fn make_mesh(atoms: &[Atom]) -> Mesh {
+fn make_mesh(atoms: &[Atom], posits: &[Vec3]) -> Mesh {
+    // let atoms_for_mesh: Vec<_> = atoms
+    //     .iter()
+    //     .enumerate()
+    //     .map(|(i, a)| (posits[i], a.element.vdw_radius()))
+    //     .collect();
+
+    let atoms_for_mesh: Vec<_> = atoms
         .iter()
-        .map(|a| (a.posit.into(), a.element.vdw_radius()))
+        .enumerate()
+        .map(|(i, a)| (posits[i].into(), a.element.vdw_radius()))
         .collect();
 
     make_sas_mesh(&atoms_for_mesh, MESH_PROBE_RADIUS, POCKET_MESH_PRECISION)

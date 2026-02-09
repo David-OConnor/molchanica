@@ -13,6 +13,7 @@ pub mod small;
 
 use std::{
     collections::HashMap,
+    f64::consts::PI,
     fmt::{self, Display, Formatter},
     io,
     io::ErrorKind,
@@ -42,6 +43,7 @@ use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use small::MoleculeSmall;
 
+use crate::bond_inference::h_bond_strength;
 use crate::{
     bond_inference::create_hydrogen_bonds,
     drawing::EntityClass,
@@ -619,6 +621,23 @@ pub struct HydrogenBond {
     pub donor: usize,
     pub acceptor: usize,
     pub hydrogen: usize,
+    pub strength: f32,
+}
+
+impl HydrogenBond {
+    pub fn new(donor: usize, acceptor: usize, hydrogen: usize, atoms: &[Atom]) -> Self {
+        let strength = h_bond_strength(
+            atoms[donor].posit,
+            atoms[hydrogen].posit,
+            atoms[acceptor].posit,
+        );
+        Self {
+            donor,
+            acceptor,
+            hydrogen,
+            strength,
+        }
+    }
 }
 
 /// A bond between two molecules.
@@ -629,6 +648,31 @@ pub struct HydrogenBondTwoMols {
     pub donor: (usize, usize),
     pub acceptor: (usize, usize),
     pub hydrogen: usize,
+    pub strength: f32,
+}
+
+impl HydrogenBondTwoMols {
+    /// `atoms_donor`: atoms of the donor molecule (also contains the hydrogen).
+    /// `atoms_acc`: atoms of the acceptor molecule.
+    pub fn new(
+        donor: (usize, usize),
+        acceptor: (usize, usize),
+        hydrogen: usize,
+        atoms_donor: &[Atom],
+        atoms_acc: &[Atom],
+    ) -> Self {
+        let strength = h_bond_strength(
+            atoms_donor[donor.1].posit,
+            atoms_donor[hydrogen].posit,
+            atoms_acc[acceptor.1].posit,
+        );
+        Self {
+            donor,
+            acceptor,
+            hydrogen,
+            strength,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

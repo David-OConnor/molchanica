@@ -182,7 +182,14 @@ impl State {
                         None
                     }
                 }
-                _ => None,
+                MolType::Pocket => {
+                    if i < self.pockets.len() {
+                        Some(MolGenericRef::Pocket(&self.pockets[i]))
+                    } else {
+                        None
+                    }
+                }
+                MolType::Water => None,
             },
             None => None,
         }
@@ -215,7 +222,14 @@ impl State {
                         None
                     }
                 }
-                _ => None,
+                MolType::Pocket => {
+                    if i < self.pockets.len() {
+                        Some(MolGenericRefMut::Pocket(&mut self.pockets[i]))
+                    } else {
+                        None
+                    }
+                }
+                MolType::Water => None,
             },
             None => None,
         }

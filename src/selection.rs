@@ -1092,6 +1092,7 @@ pub fn handle_selection_attempt_mol_editor(
 
     mol_manip::set_manip(
         &mut state.volatile,
+        &mut state.pockets,
         &mut state.to_save.save_flag,
         scene,
         &mut redraw_flags,

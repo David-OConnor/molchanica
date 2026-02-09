@@ -1097,36 +1097,38 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         let close_active_mol = false; // to avoid borrow error.
 
         ui.horizontal(|ui| {
-            // Show the picker, at least.
-            if !state.ligands.is_empty() || !state.lipids.is_empty() || !state.nucleic_acids.is_empty() {
-                // display_mol_data(state, scene, ui, &mut redraw.peptide, &mut redraw.ligand, &mut redraw_na, &mut redraw_lipid, &mut close_active_mol, &mut engine_updates);
-                display_mol_data(state, ui);
-            }
-
-            if state.ligands.len() >= 2 && ui.button("Align")
-                .on_hover_text("Perform flexible alignment on two opened small molecules. This button opens a \
-                window which lets you configure and run this alignment, then view the resulting 3D conformations,\
-                and similarity metrics.")
-                .clicked() {
-                state.ui.popup.alignment = !state.ui.popup.alignment;
-
-                if state.volatile.alignment.mols_to_align.len() < 2 {
-                    state.volatile.alignment.mols_to_align = vec![0, 1];
+            section_box().show(ui, |ui| {
+                if !state.ligands.is_empty() || !state.lipids.is_empty() || !state.nucleic_acids.is_empty() || !state.pockets.is_empty() {
+                    display_mol_data(state, ui);
                 }
-            }
 
-            if ui.button("Alignment screen")
-                .on_hover_text("Perform a fast small molecule alignment screening from all \
-                files in a selected folder").clicked() {
-                state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
-            }
+                if state.ligands.len() >= 2 && ui.button("Align")
+                    .on_hover_text("Perform flexible alignment on two opened small molecules. This button opens a \
+                    window which lets you configure and run this alignment, then view the resulting 3D conformations,\
+                    and similarity metrics.")
+                    .clicked() {
+                    state.ui.popup.alignment = !state.ui.popup.alignment;
+
+                    if state.volatile.alignment.mols_to_align.len() < 2 {
+                        state.volatile.alignment.mols_to_align = vec![0, 1];
+                    }
+                }
+
+                if ui.button("Alignment screen")
+                    .on_hover_text("Perform a fast small molecule alignment screening from all \
+                    files in a selected folder").clicked() {
+                    state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
+                }
+            });
         });
-
-        // Todo: Move to popups  etc A/R.
-        // mol_characterization(state, ui);
+        // Prevents the UI from jumping.
+        if state.volatile.active_mol.is_none() {
+            ui.add_space(3.);
+        }
 
         let redraw_prev = redraw.peptide;
         selection_section(state, &mut redraw.peptide, ui);
+
         // todo: Kludge
         if redraw.peptide && !redraw_prev {
             redraw.set_all();
@@ -1401,7 +1403,8 @@ pub(crate) fn cam_controls(
                         .on_hover_text("(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.")
                         .clicked()
                     {
-                        move_cam_to_sel(&mut state.ui, &state.peptide, &state.ligands, &state.nucleic_acids, &state.lipids, &mut scene.camera, engine_updates);
+                        move_cam_to_sel(&mut state.ui, &state.peptide, &state.ligands, &state.nucleic_acids,
+                                        &state.lipids, &state.pockets, &mut scene.camera, engine_updates);
                     }
                 }
 

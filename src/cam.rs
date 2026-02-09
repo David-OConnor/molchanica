@@ -5,7 +5,7 @@ use lin_alg::f32::{Quaternion, Vec3};
 use crate::{
     molecules::{
         MoleculePeptide, common::MoleculeCommon, lipid::MoleculeLipid,
-        nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
+        nucleic_acid::MoleculeNucleicAcid, pocket::Pocket, small::MoleculeSmall,
     },
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
     selection::Selection,
@@ -244,6 +244,7 @@ pub fn move_cam_to_sel(
     ligs: &[MoleculeSmall],
     nucleic_acids: &[MoleculeNucleicAcid],
     lipids: &[MoleculeLipid],
+    pockets: &[Pocket],
     cam: &mut Camera,
     engine_updates: &mut EngineUpdates,
 ) {
@@ -271,6 +272,9 @@ pub fn move_cam_to_sel(
         }
         Selection::AtomLipid((i_mol, i_atom)) => {
             cam_look_at(cam, lipids[*i_mol].common.atom_posits[*i_atom]);
+        }
+        Selection::AtomPocket((i_mol, i_atom)) => {
+            cam_look_at(cam, pockets[*i_mol].common.atom_posits[*i_atom]);
         }
         _ => {
             selection_found = false;

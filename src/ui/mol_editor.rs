@@ -704,6 +704,7 @@ fn edit_tools(
 
                 mol_manip::set_manip(
                     &mut state.volatile,
+                    &mut state.pockets,
                     &mut state.to_save.save_flag,
                     scene,
                     &mut redraw_flags,
@@ -733,6 +734,7 @@ fn edit_tools(
                         redraw_flags.ligand = *redraw;
                         mol_manip::set_manip(
                             &mut state.volatile,
+                            &mut state.pockets,
                             &mut state.to_save.save_flag,
                             scene,
                             &mut redraw_flags,

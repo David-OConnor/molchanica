@@ -338,35 +338,38 @@ impl TherapeuticProperties {
         // Code cleaner
         let mut infer = |dataset| infer_general(mol, dataset, models, ff_params, false);
 
+        // Warning: Unwrap or default here sets to 0 for individual properties
+
         // The target names here must match the CSV names, as downloaded from TDC.
         let adme = Adme {
-            intestinal_permeability: infer(DatasetTdc::Caco2Wang)?,
-            intestinal_absorption: infer(DatasetTdc::HiaHou)?,
-            pgp: infer(DatasetTdc::PgpBroccatelli)?,
-            oral_bioavailablity: infer(DatasetTdc::BioavailabilityMa)?,
-            lipophilicity: infer(DatasetTdc::LipophilicityAstrazeneca)?,
-            solubility_water: infer(DatasetTdc::SolubilityAqsoldb)?,
-            blood_brain_barrier: infer(DatasetTdc::BbbMartins)?,
-            plasma_protein_binding_rate: infer(DatasetTdc::PpbrAz)?,
-            membrane_permeability: infer(DatasetTdc::PampaNcats)?,
-            hydration_free_energy: infer(DatasetTdc::HydrationfreeenergyFreesolv)?,
-            vdss: infer(DatasetTdc::VdssLombardo)?,
-            cyp_2c19_inhibition: infer(DatasetTdc::Cyp2c19Veith)?,
-            cyp_2d6_inhibition: infer(DatasetTdc::Cyp2d6Veith)?,
-            cyp_3a4_inhibition: infer(DatasetTdc::Cyp3a4Veith)?,
-            cyp_1a2_inhibition: infer(DatasetTdc::Cyp1a2Veith)?,
-            cyp_2c9_inhibition: infer(DatasetTdc::Cyp2c9Veith)?,
-            half_life: infer(DatasetTdc::HalfLifeObach)?,
-            clearance: infer(DatasetTdc::ClearanceHepatocyteAz)?,
+            intestinal_permeability: infer(DatasetTdc::Caco2Wang).unwrap_or_default(),
+            intestinal_absorption: infer(DatasetTdc::HiaHou).unwrap_or_default(),
+            pgp: infer(DatasetTdc::PgpBroccatelli).unwrap_or_default(),
+            oral_bioavailablity: infer(DatasetTdc::BioavailabilityMa).unwrap_or_default(),
+            lipophilicity: infer(DatasetTdc::LipophilicityAstrazeneca).unwrap_or_default(),
+            solubility_water: infer(DatasetTdc::SolubilityAqsoldb).unwrap_or_default(),
+            blood_brain_barrier: infer(DatasetTdc::BbbMartins).unwrap_or_default(),
+            plasma_protein_binding_rate: infer(DatasetTdc::PpbrAz).unwrap_or_default(),
+            membrane_permeability: infer(DatasetTdc::PampaNcats).unwrap_or_default(),
+            hydration_free_energy: infer(DatasetTdc::HydrationfreeenergyFreesolv)
+                .unwrap_or_default(),
+            vdss: infer(DatasetTdc::VdssLombardo).unwrap_or_default(),
+            cyp_2c19_inhibition: infer(DatasetTdc::Cyp2c19Veith).unwrap_or_default(),
+            cyp_2d6_inhibition: infer(DatasetTdc::Cyp2d6Veith).unwrap_or_default(),
+            cyp_3a4_inhibition: infer(DatasetTdc::Cyp3a4Veith).unwrap_or_default(),
+            cyp_1a2_inhibition: infer(DatasetTdc::Cyp1a2Veith).unwrap_or_default(),
+            cyp_2c9_inhibition: infer(DatasetTdc::Cyp2c9Veith).unwrap_or_default(),
+            half_life: infer(DatasetTdc::HalfLifeObach).unwrap_or_default(),
+            clearance: infer(DatasetTdc::ClearanceHepatocyteAz).unwrap_or_default(),
         };
 
         let toxicity = Toxicity {
-            ld50: infer(DatasetTdc::Ld50Zhu)?,
-            ether_a_go_go: infer(DatasetTdc::Herg)?,
-            mutagencity: infer(DatasetTdc::Ames)?,
-            drug_induced_liver_injury: infer(DatasetTdc::Dili)?,
-            skin_reaction: infer(DatasetTdc::SkinReaction)?,
-            carcinogen: infer(DatasetTdc::CarcinogensLagunin)?,
+            ld50: infer(DatasetTdc::Ld50Zhu).unwrap_or_default(),
+            ether_a_go_go: infer(DatasetTdc::Herg).unwrap_or_default(),
+            mutagencity: infer(DatasetTdc::Ames).unwrap_or_default(),
+            drug_induced_liver_injury: infer(DatasetTdc::Dili).unwrap_or_default(),
+            skin_reaction: infer(DatasetTdc::SkinReaction).unwrap_or_default(),
+            carcinogen: infer(DatasetTdc::CarcinogensLagunin).unwrap_or_default(),
         };
 
         Ok(Self {

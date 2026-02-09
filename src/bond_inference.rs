@@ -1,8 +1,8 @@
 #![allow(unused)]
 
-use std::f64::consts::TAU;
-
+use lin_alg::f64::Vec3;
 use na_seq::Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur};
+use std::f64::consts::{PI, TAU};
 
 use crate::{
     molecules::{Atom, Bond, HydrogenBond},
@@ -25,6 +25,11 @@ const H_BOND_DIST_GRID: f64 = 3.6;
 
 const H_BOND_ANGLE_THRESH: f64 = TAU / 3.;
 
+// H-bond strength scoring: distance and angle ranges.
+const H_BOND_STRENGTH_DIST_MIN: f64 = 2.4; // Å — strongest
+const H_BOND_STRENGTH_DIST_MAX: f64 = 3.6; // Å — cutoff
+const H_BOND_STRENGTH_ANGLE_MIN: f64 = PI * 2. / 3.; // 120° — weakest accepted
+
 /// Helper
 fn h_bond_candidate_el(atom: &Atom) -> bool {
     matches!(atom.element, Nitrogen | Oxygen | Sulfur | Fluorine)
@@ -39,6 +44,8 @@ fn hydrogen_bond_inner(
     donor_h_i: usize,
     acc_i: usize,
     relaxed_dist_thresh: bool,
+    atoms_donor: &[Atom],
+    atoms_acc: &[Atom],
 ) {
     let d_e = donor_heavy.element; // Cleans up the verbose code below.
     let a_e = acc_candidate.element;
@@ -80,11 +87,13 @@ fn hydrogen_bond_inner(
     };
 
     if angle > H_BOND_ANGLE_THRESH {
-        bonds.push(HydrogenBond {
-            donor: donor_heavy_i,
-            acceptor: acc_i,
-            hydrogen: donor_h_i,
-        });
+        // Note: Assumes one way.
+        bonds.push(HydrogenBond::new(
+            donor_heavy_i,
+            acc_i,
+            donor_h_i,
+            &atoms_donor,
+        ));
     }
 }
 
@@ -166,9 +175,30 @@ pub fn create_hydrogen_bonds_one_way(
                 donor_h_i,
                 *acc_i,
                 relaxed_dist_thresh,
+                atoms_donor,
+                atoms_acc,
             );
         }
     }
 
     result
+}
+
+/// Calculate hydrogen bond strength from donor heavy-atom, hydrogen, and acceptor positions.
+/// Uses the D···A distance and the D-H···A angle (at H). Returns a value in [0, 1].
+pub fn h_bond_strength(donor_posit: Vec3, h_posit: Vec3, acc_posit: Vec3) -> f32 {
+    let dist = (donor_posit - acc_posit).magnitude();
+    let dist_score = ((H_BOND_STRENGTH_DIST_MAX - dist)
+        / (H_BOND_STRENGTH_DIST_MAX - H_BOND_STRENGTH_DIST_MIN))
+        .clamp(0., 1.);
+
+    // D-H···A angle measured at the hydrogen. 180° (π) is ideal / linear.
+    let vec_hd = (donor_posit - h_posit).to_normalized();
+    let vec_ha = (acc_posit - h_posit).to_normalized();
+    let angle = vec_hd.dot(vec_ha).clamp(-1., 1.).acos();
+
+    let angle_score =
+        ((angle - H_BOND_STRENGTH_ANGLE_MIN) / (PI - H_BOND_STRENGTH_ANGLE_MIN)).clamp(0., 1.);
+
+    (dist_score * angle_score) as f32
 }

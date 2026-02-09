@@ -22,8 +22,11 @@ use na_seq::{
 
 use crate::{
     drawing::{
-        EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView, atom_color,
-        bond_entities, draw_mol, draw_peptide, draw_pocket,
+        EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
+        atoms_bonds::{
+            ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, atom_color, bond_entities,
+        },
+        draw_mol, draw_peptide, draw_pocket,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     md::change_snapshot_helper,
@@ -32,12 +35,10 @@ use crate::{
         Atom, Bond, MolGenericRef, MolType, common::NEXT_ATOM_SN, pocket::Pocket,
         small::MoleculeSmall,
     },
-    render::{
-        ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, set_flashlight, set_static_light,
-    },
+    render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, State, StateUi, Visibility},
-    util::{find_neighbor_posit, orbit_center},
+    util::find_neighbor_posit,
 };
 
 pub const INIT_CAM_DIST: f32 = 20.;
