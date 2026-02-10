@@ -217,7 +217,6 @@ pub fn event_dev_handler(
                             if let Some((mol_type, i)) = state_.volatile.active_mol
                                 && mol_type == MolType::Pocket
                             {
-                                println!("\n\n clearing manip C");
                                 state_.pockets[i].regen_mesh_vol();
                                 scene.meshes[MESH_POCKET] = state_.pockets[i].surface_mesh.clone();
 

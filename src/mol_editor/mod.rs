@@ -721,12 +721,14 @@ pub fn save(state: &mut State, path: &Path) -> io::Result<()> {
     let extension = binding;
 
     match extension.to_str().unwrap_or_default() {
-        "sdf" => mol.to_sdf().save(path)?,
-        "mol2" => mol.to_mol2().save(path)?,
-        "xyz" => mol.to_xyz().save(path)?,
+        "sdf" => mol.to_sdf()?.save(path)?,
+        "mol2" => mol.to_mol2()?.save(path)?,
+        "xyz" => mol.to_xyz()?.save(path)?,
         "prmtop" => (), // todo
-        "pdbqt" => mol.to_pdbqt().save(path)?,
-        _ => unimplemented!(),
+        "pdbqt" => mol.to_pdbqt()?.save(path)?,
+        _ => {
+            return Err(io::Error::new(ErrorKind::Other, "Unsupported file type"));
+        }
     }
 
     Ok(())

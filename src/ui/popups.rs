@@ -883,7 +883,7 @@ fn lig_pocket_from_het_res(
                     ctr / res.atoms.len() as f64
                 };
 
-                let ident = format!("Pocket: {name}");
+                let ident = format!("Pocket_{name}");
                 pocket_to_add = Some(Pocket::new(
                     mol,
                     lig_ctr,

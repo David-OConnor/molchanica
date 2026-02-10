@@ -25,7 +25,7 @@ pub const VIEW_DEPTH_NEAR_MAX: u16 = 300;
 pub const FOG_HALF_DEPTH: u16 = 40;
 
 // The range to start fading distance objects, and when the fade is complete.
-pub const FOG_DIST_DEFAULT: u16 = 70;
+pub const FOG_DIST_DEFAULT: u16 = 115;
 
 // Affects the user-setting far property.
 // Sets the fog center point in its fade.

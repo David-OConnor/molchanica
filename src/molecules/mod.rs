@@ -188,31 +188,51 @@ impl<'a> MolGenericRef<'a> {
 
     /// Note: Serial numbers mus be sequential prior to running this, as SDF format
     /// doesn't include serial numbers; this will break bonds.
-    pub fn to_sdf(&self) -> Sdf {
+    pub fn to_sdf(&self) -> io::Result<Sdf> {
         match self {
-            Self::Small(l) => l.to_sdf(),
-            _ => unimplemented!(),
+            Self::Small(l) => Ok(l.to_sdf()),
+            Self::Pocket(p) => Ok(MoleculeSmall {
+                common: p.common.clone(),
+                ..Default::default()
+            }
+            .to_sdf()),
+            _ => Err(io::Error::other("Not implemented")),
         }
     }
 
-    pub fn to_xyz(&self) -> Xyz {
+    pub fn to_xyz(&self) -> io::Result<Xyz> {
         match self {
-            Self::Small(l) => l.to_xyz(),
-            _ => unimplemented!(),
+            Self::Small(l) => Ok(l.to_xyz()),
+            Self::Pocket(p) => Ok(MoleculeSmall {
+                common: p.common.clone(),
+                ..Default::default()
+            }
+            .to_xyz()),
+            _ => Err(io::Error::other("Not implemented")),
         }
     }
 
-    pub fn to_mol2(&self) -> Mol2 {
+    pub fn to_mol2(&self) -> io::Result<Mol2> {
         match self {
-            Self::Small(l) => l.to_mol2(),
-            _ => unimplemented!(),
+            Self::Small(l) => Ok(l.to_mol2()),
+            Self::Pocket(p) => Ok(MoleculeSmall {
+                common: p.common.clone(),
+                ..Default::default()
+            }
+            .to_mol2()),
+            _ => Err(io::Error::other("Not implemented")),
         }
     }
 
-    pub fn to_pdbqt(&self) -> Pdbqt {
+    pub fn to_pdbqt(&self) -> io::Result<Pdbqt> {
         match self {
-            Self::Small(l) => l.to_pdbqt(),
-            _ => unimplemented!(),
+            Self::Small(l) => Ok(l.to_pdbqt()),
+            Self::Pocket(p) => Ok(MoleculeSmall {
+                common: p.common.clone(),
+                ..Default::default()
+            }
+            .to_pdbqt()),
+            _ => Err(io::Error::other("Not implemented")),
         }
     }
 }

@@ -390,8 +390,8 @@ impl State {
                 }
             }
             "sdf" => match self.active_mol() {
-                Some(lig) => {
-                    lig.to_sdf().save(path)?;
+                Some(mol) => {
+                    mol.to_sdf()?.save(path)?;
 
                     self.update_history(path, OpenType::Ligand);
 
@@ -401,8 +401,8 @@ impl State {
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
             "mol2" => match self.active_mol() {
-                Some(lig) => {
-                    lig.to_mol2().save(path)?;
+                Some(mol) => {
+                    mol.to_mol2()?.save(path)?;
                     self.update_history(path, OpenType::Ligand);
 
                     // Save the open history.
@@ -411,8 +411,8 @@ impl State {
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
             "xyz" => match self.active_mol() {
-                Some(lig) => {
-                    lig.to_xyz().save(path)?;
+                Some(mol) => {
+                    mol.to_xyz()?.save(path)?;
                     self.update_history(path, OpenType::Ligand);
 
                     // Save the open history.
@@ -422,8 +422,8 @@ impl State {
             },
             "prmtop" => (), // todo
             "pdbqt" => match self.active_mol() {
-                Some(lig) => {
-                    lig.to_pdbqt().save(path)?;
+                Some(mol) => {
+                    mol.to_pdbqt()?.save(path)?;
                     self.update_history(path, OpenType::Ligand);
 
                     // Save the open history.

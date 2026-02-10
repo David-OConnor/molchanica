@@ -2,6 +2,7 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::drawing::{EntityClass, draw_pocket};
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
     drawing::COLOR_SELECTED,
@@ -467,7 +468,7 @@ pub(in crate::ui) fn sidebar(
             if state.volatile.operating_mode == OperatingMode::MolEditor {
                 ui.label("Pockets");
 
-                for (mol_i, pocket) in state.pockets.iter().enumerate() {
+                for (mol_i, pocket) in state.pockets.iter_mut().enumerate() {
                     let selected = state.mol_editor.pocket_i_in_state == Some(mol_i);
 
                     let color = if selected {
@@ -484,11 +485,28 @@ pub(in crate::ui) fn sidebar(
                         )
                         .clicked()
                     {
+                        scene
+                            .entities
+                            .retain(|e| e.class != EntityClass::Pocket as u32);
+
                         if selected {
                             state.mol_editor.pocket = None;
+                            state.mol_editor.pocket_i_in_state = None;
                         } else {
+                            // todo: This pocket adjustment code should probably be moved
+                            // todo: H bonds`
+                            pocket.common.center_local_posits_around_origin();
+                            pocket.common.reset_posits();
+                            pocket.rebuild_spheres();
+                            pocket.regen_mesh_vol();
+
+                            draw_pocket(pocket, &[], &state.ui.visibility, &state.ui.selection);
+
+                            state.mol_editor.pocket = Some(pocket.clone());
                             state.mol_editor.pocket_i_in_state = Some(mol_i);
                         }
+
+                        redraw.pocket = true;
                     }
                 }
             } else {
