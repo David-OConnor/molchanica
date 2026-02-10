@@ -2,7 +2,11 @@
 //! For example, we may call some of these from the GUI, but they won't have any EGUI-specific
 //! logic in them.
 
-use std::time::Instant;
+use std::{
+    process::{Command, Stdio},
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
 use bio_files::ResidueType;
 #[cfg(feature = "cudarc")]
@@ -13,7 +17,7 @@ use cudarc::{
 #[cfg(feature = "cuda")]
 use dynamics::ComputationDevice;
 use egui::Color32;
-use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
@@ -21,10 +25,9 @@ use lin_alg::{
 use na_seq::{AaIdent, Element};
 
 use crate::{
-    cam,
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide, draw_pocket,
+        color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
         ribbon_mesh::build_cartoon_mesh,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
@@ -917,91 +920,6 @@ pub fn handle_scene_flags(
     }
 }
 
-/// Poll receivers for data on potentially long-running calls. E.g. HTTP.
-pub fn handle_thread_rx(state: &mut State) {
-    if let Some(rx) = &mut state.volatile.pubchem_properties_avail {
-        match rx.try_recv() {
-            Ok((ident, http_result)) => {
-                let mut mol = None;
-                for mol_ in &mut state.ligands {
-                    for ident_ in &mol_.idents {
-                        if ident_ == &ident {
-                            mol = Some(mol_);
-                            break;
-                        }
-                    }
-                }
-
-                let Some(mol) = mol else {
-                    state.volatile.pubchem_properties_avail = None;
-                    eprintln!(
-                        "Unable to find the mol we requested PubChem properties for: {ident:?}"
-                    );
-                    return;
-                };
-
-                match http_result {
-                    Ok(props) => {
-                        println!("Received PubChem properties over HTTP.");
-                        mol.update_idents_and_char_from_pubchem(&props);
-
-                        state
-                            .to_save
-                            .pubchem_properties_map
-                            .insert(ident.clone(), props.clone());
-                    }
-                    Err(_) => {
-                        // Note: This is currently broken.
-                        // println!("Unable to find Smiles for ident {ident_type:?}, generating one.");
-                        eprintln!("Unable to find PubChem properties for ident {ident:?}");
-                        // todo: Not saving to cache; not confident enough.
-                        // mol.smiles = Some(mol.common.to_smiles());
-                    }
-                }
-                state.volatile.pubchem_properties_avail = None;
-            }
-            // E.g. no results. Could handle explicit errors too.
-            Err(_) => {}
-        }
-    }
-
-    if state.volatile.mol_pending_data_avail.is_some()
-        && let Some(mol) = &mut state.peptide
-        && mol.poll_mol_pending_data(&mut state.volatile.mol_pending_data_avail)
-    {
-        state.update_save_prefs(false);
-    }
-
-    if let Some(rx) = &mut state.volatile.amber_geostd_data_avail {
-        match rx.try_recv() {
-            Ok((i_mol, data)) => {
-                println!("Geostd thread returned"); // todo temp
-
-                if i_mol >= state.ligands.len() {
-                    eprintln!("Uhoh: Can't find a ligand we loaded Geostd data for");
-                    state.volatile.amber_geostd_data_avail = None;
-                    return;
-                }
-                let mol = &mut state.ligands[i_mol];
-
-                match data {
-                    Ok(d) => {
-                        mol.apply_geostd_data(d, &mut state.mol_specific_params);
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            " Unable to load GeoStd data for this molecule (Likely not in the data set.)"
-                        );
-                    }
-                }
-                state.volatile.amber_geostd_data_avail = None;
-            }
-
-            Err(_) => {}
-        }
-    }
-}
-
 pub fn make_egui_color(color: Color) -> Color32 {
     Color32::from_rgb(
         (color.0 * 255.) as u8,
@@ -1495,3 +1413,38 @@ pub fn rotate_atoms_about_point(atoms: &mut [Atom], pivot: Vec3, rotator: Quater
 // make an edit to one of the CUDA files (e.g. add a newline), then run, to create this file.
 #[cfg(feature = "cuda")]
 pub const PTX: &str = include_str!("../molchanica.ptx");
+
+/// We've run into an infinite hang on Linux that had the Orca screen reader installed, when
+/// using a naive approach
+pub fn orca_avail() -> bool {
+    let mut child = match Command::new("orca")
+        .arg("--help") // or "--version" if your ORCA supports it
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    let deadline = Instant::now() + Duration::from_millis(200);
+
+    while Instant::now() < deadline {
+        if let Ok(Some(_)) = child.try_wait() {
+            let Some(out) = child.wait_with_output().ok() else {
+                return false;
+            };
+
+            let text = String::from_utf8_lossy(&out.stdout).to_string()
+                + &String::from_utf8_lossy(&out.stderr);
+
+            return text.contains("O   R   C   A");
+        }
+        sleep(Duration::from_millis(10));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    false
+}

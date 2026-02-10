@@ -48,6 +48,7 @@ mod tautomers;
 #[cfg(test)]
 mod tests;
 mod therapeutic;
+mod threads;
 
 use std::{process::Command, time::Instant};
 
@@ -55,7 +56,10 @@ use dynamics::{ComputationDevice, Integrator, SimBoxInit, params::FfParamSet};
 use molecules::{MolType, lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
-use crate::{render::render, util::handle_err};
+use crate::{
+    render::render,
+    util::{handle_err, orca_avail},
+};
 
 fn main() {
     #[cfg(not(feature = "cuda"))]
@@ -187,13 +191,7 @@ fn main() {
     //     }
     // }
 
-    if let Ok(out) = Command::new("orca").output() {
-        let out = String::from_utf8(out.stdout).unwrap();
-        // No simpler way like version?
-        if out.contains("This program requires") {
-            state.volatile.orca_avail = true;
-        }
-    };
+    state.volatile.orca_avail = orca_avail();
     //
     // // todo: For now
     // for tgt in ["bbb_martins", "ld50_zhu", "solubility_aqsoldb", "herg"] {

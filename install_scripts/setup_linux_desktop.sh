@@ -42,5 +42,5 @@ if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
   printf "\ngemmi installed. You can uninstall it with sudo apt remove gemmi.\n"
 fi
 
-printf "Moved the ${NAME_UPPER} executable and icon to ${APP_DIR}."
-printf "\nYou can launch ${NAME_UPPER} through the GUI (e.g., search \"${NAME_UPPER}\") and/or add it to favorites.\n"
+printf "\nMoved the ${NAME_UPPER} executable and icon to ${APP_DIR}."
+printf "\n\nYou can launch ${NAME_UPPER} through the GUI (e.g., search \"${NAME_UPPER}\") and/or add it to favorites.\n"

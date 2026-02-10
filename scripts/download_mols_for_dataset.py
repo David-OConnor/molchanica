@@ -28,7 +28,7 @@ AQ_SOL_SMILES_COL = 4
 TDC_SMILES_COL = 1
 
 # PubCHem requests no more than 5 per second. We pad this.
-SLEEP_BETWEEN_MOLS = 0.22 # Seconds.
+SLEEP_BETWEEN_MOLS = 0.22  # Seconds.
 
 
 # def sdf_url_from_smiles(ident: str) -> str:
@@ -62,13 +62,31 @@ def download_sdf(ident: str, timeout_s: float) -> str:
         return resp.content.decode("latin-1")
 
 
-
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Download PubChem 3D SDFs associated with a data set.")
-    ap.add_argument("--csv", type=str, required=True, help="Path to the CSV listing mols")
-    ap.add_argument("--start", type=int, default=0, help="Start row index (0-based, excluding header)")
-    ap.add_argument("--end", type=int, default=None, help="End row index (exclusive, excluding header)")
-    ap.add_argument("--out_path", type=str, required=True, help="Folder to place the downloaded molecules")
+    ap = argparse.ArgumentParser(
+        description="Download PubChem 3D SDFs associated with a data set."
+    )
+    ap.add_argument(
+        "--csv", type=str, required=True, help="Path to the CSV listing mols"
+    )
+    ap.add_argument(
+        "--start",
+        type=int,
+        default=0,
+        help="Start row index (0-based, excluding header)",
+    )
+    ap.add_argument(
+        "--end",
+        type=int,
+        default=None,
+        help="End row index (exclusive, excluding header)",
+    )
+    ap.add_argument(
+        "--out_path",
+        type=str,
+        required=True,
+        help="Folder to place the downloaded molecules",
+    )
     ap.add_argument("--smiles_col", type=int, default=TDC_SMILES_COL)
     ap.add_argument("--id_col", type=int, default=None)
 

@@ -35,6 +35,7 @@ use crate::{
     render::set_flashlight,
     selection::{Selection, ViewSelLevel},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
+    threads::handle_thread_rx,
     ui::{
         misc::section_box,
         mol_data::{display_mol_data_peptide, metadata},
@@ -49,7 +50,7 @@ use crate::{
     },
     util::{
         RedrawFlags, check_prefs_save, close_mol, close_peptide, cycle_selected, handle_err,
-        handle_scene_flags, handle_success, handle_thread_rx, orbit_center, select_from_search,
+        handle_scene_flags, handle_success, orbit_center, select_from_search,
     },
 };
 
@@ -524,7 +525,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
         ViewSelLevel::Bond => (),
     }
 
-    if !state.ligands.is_empty() {
+    if state.ligands.len() >= 2 {
         let color = if state.ui.color_by_mol {
             COLOR_ACTIVE
         } else {
@@ -958,7 +959,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             };
 
             let query_help = "Download and view a molecule from RCSB PDB, PubChem, DrugBank, or Amber Geostd";
-            ui.label(RichText::new("Query DBs:").color(color_open_tools))
+            ui.label(RichText::new("Query:").color(color_open_tools))
                 .on_hover_text(query_help);
 
             let edit_resp = ui
@@ -974,7 +975,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             }
 
             if state.ui.db_input.len() == 4 || inp_lower.starts_with("pdb_") {
-                let button_clicked = ui.button("Load from RCSB").clicked();
+                let button_clicked = ui.button("Load RCSB").clicked();
 
                 if (button_clicked || enter_pressed) && state.ui.db_input.trim().len() == 4 {
                     let ident = state.ui.db_input.clone().trim().to_owned();

@@ -387,7 +387,7 @@ impl State {
         self.ui.mol_move_sens_input = self.to_save.mol_move_sens.to_string();
         self.ui.color_surface_mesh = self.to_save.color_surface_mesh;
 
-        // self.update_docking_site(center);
+        println!("Done");
     }
 
     pub fn load_prefs(&mut self) {

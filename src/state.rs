@@ -5,17 +5,11 @@ use std::{
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
-    sync::mpsc::Receiver,
     time::Instant,
 };
 
 use bincode::{Decode, Encode};
-use bio_apis::{
-    ReqError,
-    amber_geostd::{GeostdData, GeostdItem},
-    pubchem,
-    rcsb::{FilesAvailable, PdbDataResults},
-};
+use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
@@ -31,7 +25,7 @@ use crate::{
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     molecules::{
-        MolGenericRef, MolGenericRefMut, MolIdent, MolType, MoleculePeptide,
+        MolGenericRef, MolGenericRefMut, MolType, MoleculePeptide,
         lipid::{LipidShape, MoleculeLipid},
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
         pocket::Pocket,
@@ -45,6 +39,7 @@ use crate::{
         infer::Infer,
         pharmacophore::{Pharmacophore, PharmacophoreFeatType},
     },
+    threads::ThreadReceivers,
 };
 
 pub struct State {
@@ -239,26 +234,12 @@ impl State {
 /// Temporary, and generated state.
 pub struct StateVolatile {
     pub dialogs: FileDialogs,
-    // /// Center and size are used for setting the camera. Dependent on the molecule atom positions.
-    // mol_center: Vec3,
-    // mol_size: f32, // Dimension-agnostic
+    pub thread_receivers: ThreadReceivers,
     /// We Use this to keep track of key press state for the camera movement, so we can continuously
     /// update the flashlight when moving.
     pub inputs_commanded: InputsCommanded,
     // todo: Replace with the V2 version A/R
     // docking_setup: Option<DockingSetup>,
-    /// Receives thread data upon an HTTP result completion.
-    pub mol_pending_data_avail: Option<
-        Receiver<(
-            Result<PdbDataResults, ReqError>,
-            Result<FilesAvailable, ReqError>,
-        )>,
-    >,
-    /// Receives thread data upon an HTTP result completion.
-    pub pubchem_properties_avail:
-        Option<Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>>,
-    /// The first param is the index.
-    pub amber_geostd_data_avail: Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
     /// We may change CWD during CLI navigation; keep prefs directory constant.
     pub prefs_dir: PathBuf,
     /// Entered by the user, for this session.
@@ -303,10 +284,8 @@ impl Default for StateVolatile {
     fn default() -> Self {
         Self {
             dialogs: Default::default(),
+            thread_receivers: Default::default(),
             inputs_commanded: Default::default(),
-            pubchem_properties_avail: Default::default(),
-            mol_pending_data_avail: Default::default(),
-            amber_geostd_data_avail: Default::default(),
             prefs_dir: env::current_dir().unwrap(), // This is why we can't derive.
             cli_input_history: Default::default(),
             cli_input_selected: Default::default(),
@@ -617,7 +596,7 @@ impl Default for UiVisibility {
             lipids: false,
             nucleic_acids: false,
             amino_acids: false,
-            dynamics: true,
+            dynamics: false,
             orca: false,
             mol_char: true, // todo: For now.
             pharmacophore_list: false,

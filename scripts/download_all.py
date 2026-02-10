@@ -7,7 +7,9 @@ import argparse
 from pathlib import Path
 import subprocess
 
-ap = argparse.ArgumentParser(description="Download PubChem 3D SDFs associated with multiple data sets.")
+ap = argparse.ArgumentParser(
+    description="Download PubChem 3D SDFs associated with multiple data sets."
+)
 ap.add_argument("--path", type=str, required=True, help="The path containing the CSVs")
 args = ap.parse_args()
 

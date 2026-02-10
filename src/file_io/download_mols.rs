@@ -157,7 +157,7 @@ pub fn load_atom_coords_rcsb(
         .peptide
         .as_mut()
         .unwrap()
-        .updates_rcsb_data(&mut state.volatile.mol_pending_data_avail);
+        .updates_rcsb_data(&mut state.volatile.thread_receivers.mol_pending_data_avail);
 }
 
 // todo: DIff between this and the non-2 variant?

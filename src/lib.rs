@@ -34,5 +34,6 @@ pub mod smiles;
 pub mod state;
 pub mod tautomers;
 pub mod therapeutic;
+pub mod threads;
 pub mod ui;
 pub mod util;

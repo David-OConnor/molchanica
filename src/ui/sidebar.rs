@@ -2,10 +2,9 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::drawing::{EntityClass, draw_pocket};
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
-    drawing::COLOR_SELECTED,
+    drawing::{COLOR_SELECTED, EntityClass, draw_pocket},
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
@@ -499,14 +498,13 @@ pub(in crate::ui) fn sidebar(
                             pocket.common.reset_posits();
                             pocket.rebuild_spheres();
                             pocket.regen_mesh_vol();
+                            engine_updates.meshes = true;
 
                             draw_pocket(pocket, &[], &state.ui.visibility, &state.ui.selection);
 
                             state.mol_editor.pocket = Some(pocket.clone());
                             state.mol_editor.pocket_i_in_state = Some(mol_i);
                         }
-
-                        redraw.pocket = true;
                     }
                 }
             } else {

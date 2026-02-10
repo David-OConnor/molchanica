@@ -503,6 +503,8 @@ impl MoleculeSmall {
         >,
         models: &mut HashMap<DatasetTdc, Infer>,
         ff_params: &ForceFieldParams,
+        therapeutic_properties_avail: &mut Option<Receiver<(usize, TherapeuticProperties)>>,
+        mol_i: usize,
     ) {
         self.update_characterization();
 
@@ -529,10 +531,6 @@ impl MoleculeSmall {
                             thread::spawn(move || {
                                 // Part of our borrow-checker workaround
                                 let cid: u32 = ident_for_thread.ident_innner().parse().unwrap();
-
-                                println!(
-                                    "Launching thread for PubChem properties HTTP for {ident_for_thread:?}..."
-                                ); // todo temp?
                                 let data = pubchem::properties(
                                     StructureSearchNamespace::Cid,
                                     &cid.to_string(),
@@ -579,10 +577,25 @@ impl MoleculeSmall {
         // todo: We may wish to run this after updating params from PubChem, but this is fine for now,
         // todo, or in general if you get everything you need Hi-fi from calculations.
 
-        match TherapeuticProperties::new(self, models, ff_params) {
-            Ok(tp) => self.therapeutic_props = Some(tp),
-            Err(e) => eprintln!("Error loading therapeutic properties: {e}"),
-        }
+        let (tx, rx) = mpsc::channel();
+        let mol_for_thread = self.clone();
+        let ff_params_for_thread = ff_params.clone();
+        let mut models_for_thread = std::mem::take(models);
+
+        thread::spawn(move || {
+            match TherapeuticProperties::new(
+                &mol_for_thread,
+                &mut models_for_thread,
+                &ff_params_for_thread,
+            ) {
+                Ok(tp) => {
+                    let _ = tx.send((mol_i, tp));
+                }
+                Err(e) => eprintln!("Error loading therapeutic properties: {e}"),
+            }
+        });
+
+        *therapeutic_properties_avail = Some(rx);
     }
 
     pub fn update_idents_and_char_from_pubchem(&mut self, props: &pubchem::Properties) {

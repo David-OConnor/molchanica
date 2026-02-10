@@ -14,7 +14,9 @@ def _dataset_df(data_obj) -> pd.DataFrame:
         return data_obj.get_data()
     if hasattr(data_obj, "get_dataset"):
         return data_obj.get_dataset()
-    raise RuntimeError("Couldn't find a way to fetch the full dataset dataframe from this TDC object.")
+    raise RuntimeError(
+        "Couldn't find a way to fetch the full dataset dataframe from this TDC object."
+    )
 
 
 def train_test_split(name: str, tox: bool, method: str = "scaffold"):
@@ -37,12 +39,20 @@ def train_test_split(name: str, tox: bool, method: str = "scaffold"):
     # Join keys = all columns shared between full and split frames (excluding orig_idx).
     common_cols = [c for c in train.columns if c in full.columns and c != "orig_idx"]
     if not common_cols:
-        raise RuntimeError("No shared columns between full dataset and train/test split to map indices.")
+        raise RuntimeError(
+            "No shared columns between full dataset and train/test split to map indices."
+        )
 
     # Map each split row back to its original index.
-    train_m = train.merge(full[common_cols + ["orig_idx"]], on=common_cols, how="left", validate="m:1")
-    test_m = test.merge(full[common_cols + ["orig_idx"]], on=common_cols, how="left", validate="m:1")
-    valid_m = valid.merge(full[common_cols + ["orig_idx"]], on=common_cols, how="left", validate="m:1")
+    train_m = train.merge(
+        full[common_cols + ["orig_idx"]], on=common_cols, how="left", validate="m:1"
+    )
+    test_m = test.merge(
+        full[common_cols + ["orig_idx"]], on=common_cols, how="left", validate="m:1"
+    )
+    valid_m = valid.merge(
+        full[common_cols + ["orig_idx"]], on=common_cols, how="left", validate="m:1"
+    )
 
     if train_m["orig_idx"].isna().any() or test_m["orig_idx"].isna().any():
         missing_train = int(train_m["orig_idx"].isna().sum())
@@ -59,10 +69,11 @@ def train_test_split(name: str, tox: bool, method: str = "scaffold"):
     test_indices = test_m["orig_idx"].astype(int).tolist()
     valid_indices = valid_m["orig_idx"].astype(int).tolist()
 
-#     print(f"\n{name} Train indices:\n{train_indices}")
+    #     print(f"\n{name} Train indices:\n{train_indices}")
     print(f"\n\n{name} Validation indices:\n{valid_indices}")
-#     print(f"\n\n{name} Test indices:\n{test_indices}")
 
+
+#     print(f"\n\n{name} Test indices:\n{test_indices}")
 
 
 sets = [

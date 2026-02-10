@@ -465,7 +465,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
             if pep.common.ident.len() <= 5 {
                 // todo: You likely need a better approach.
                 if ui
-                    .button("View on RCSB")
+                    .button("RCSB")
                     .on_hover_text("Open a web browser to the RCSB PDB page for this molecule.")
                     .clicked()
                 {
@@ -473,13 +473,13 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 }
             }
 
-            if ui.button("Plot dihe")
+            if ui.button("Dihe")
                 .on_hover_text("Draw a Ramachandran plot of the dihedral angles of the peptide.")
                 .clicked() {
                 state.ui.popup.rama_plot = !state.ui.popup.rama_plot;
             }
 
-            if ui.button("Metadata")
+            if ui.button("Meta")
                 .on_hover_text("Display metadata for this molecule")
                 .clicked() {
                 if let Some((mol_type, _)) = state.ui.popup.metadata && mol_type == MolType::Peptide {
@@ -539,7 +539,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                         ui.add_space(COL_SPACING / 2.);
 
                         if ui
-                            .button(RichText::new(format!("Move lig to {name}")).color(COLOR_HIGHLIGHT))
+                            .button(RichText::new(format!("Lig to {name}")).color(COLOR_HIGHLIGHT))
                             .on_hover_text("Move the ligand to be colocated with this residue. this is intended to \
                     be used to synchronize the ligand with a pre-positioned hetero residue in the protein file, e.g. \
                     prior to docking. In addition to moving \

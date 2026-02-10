@@ -22,7 +22,7 @@ use crate::{
 pub type Color = (f32, f32, f32);
 
 const WINDOW_TITLE: &str = "Molchanica";
-const WINDOW_SIZE_X: f32 = 1_600.;
+const WINDOW_SIZE_X: f32 = 1_800.;
 const WINDOW_SIZE_Y: f32 = 1_200.;
 pub const BACKGROUND_COLOR: Color = (0., 0., 0.);
 

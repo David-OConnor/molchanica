@@ -33,6 +33,7 @@ use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
     str::FromStr,
+    time::Instant,
 };
 
 use bio_files::md_params::ForceFieldParams;
@@ -335,6 +336,9 @@ impl TherapeuticProperties {
         models: &mut HashMap<DatasetTdc, Infer>,
         ff_params: &ForceFieldParams,
     ) -> io::Result<Self> {
+        println!("Inferring ADME properties...");
+        let start = Instant::now();
+
         // Code cleaner
         let mut infer = |dataset| infer_general(mol, dataset, models, ff_params, false);
 
@@ -371,6 +375,9 @@ impl TherapeuticProperties {
             skin_reaction: infer(DatasetTdc::SkinReaction).unwrap_or_default(),
             carcinogen: infer(DatasetTdc::CarcinogensLagunin).unwrap_or_default(),
         };
+
+        let elapsed = start.elapsed().as_millis();
+        println!("ADME inference complete in {elapsed} ms");
 
         Ok(Self {
             adme,

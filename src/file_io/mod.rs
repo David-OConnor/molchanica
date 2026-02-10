@@ -657,9 +657,11 @@ impl State {
 
                     mol.update_aux(
                         &self.to_save.pubchem_properties_map,
-                        &mut self.volatile.pubchem_properties_avail,
+                        &mut self.volatile.thread_receivers.pubchem_properties_avail,
                         &mut self.volatile.inference_models,
                         self.ff_param_set.small_mol.as_ref().unwrap(),
+                        &mut self.volatile.thread_receivers.therapeutic_properties_avail,
+                        mol_i,
                     );
                 } else {
                     handle_err(
@@ -765,7 +767,7 @@ impl State {
 
             if let Some(mol) = &mut self.peptide {
                 // Only after updating from prefs (to prevent unnecessary loading) do we update data avail.
-                mol.updates_rcsb_data(&mut self.volatile.mol_pending_data_avail);
+                mol.updates_rcsb_data(&mut self.volatile.thread_receivers.mol_pending_data_avail);
             }
         }
 

@@ -55,3 +55,4 @@ Cargo.lock
 
 *.water_init_template
 
+/.claude

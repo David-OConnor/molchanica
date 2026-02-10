@@ -460,7 +460,6 @@ impl MoleculePeptide {
         if let Some(rx) = pending_data_avail {
             match rx.try_recv() {
                 Ok((Ok(pdb_data), Ok(files_avail))) => {
-                    println!("RCSB data ready for {}", self.common.ident);
                     self.rcsb_data = Some(pdb_data);
                     self.rcsb_files_avail = Some(files_avail);
 
