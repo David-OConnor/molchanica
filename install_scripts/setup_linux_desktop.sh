@@ -1,6 +1,6 @@
 # This file sets up a Linux desktop entry, and moves the application to the home directory.
 
-NAME_UPPER="molchanica"
+NAME_UPPER="Molchanica"
 NAME="molchanica"
 
 APP_DIR="$HOME/${NAME}"
@@ -33,7 +33,7 @@ chmod +x "$DESKTOP_PATH"
 cufft_lib="libcufft.so.12"
 if [ -f "./$cufft_lib" ]; then
   sudo cp "./$cufft_lib" /usr/lib/
-  printf "Moved the libcufft.so.12 library (for the cuFFT dependency)  to /usr/lib."
+  printf "Moved the libcufft.so.12 library (for the cuFFT dependency)  to /usr/lib.\n"
 fi
 
 read -p "Install gemmi from apt, to support unprocessed electron density files? [y/n] " ans

@@ -51,7 +51,7 @@ mod therapeutic;
 
 use std::{process::Command, time::Instant};
 
-use dynamics::{Integrator, SimBoxInit, params::FfParamSet};
+use dynamics::{ComputationDevice, Integrator, SimBoxInit, params::FfParamSet};
 use molecules::{MolType, lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
