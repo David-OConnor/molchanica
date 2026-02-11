@@ -40,7 +40,7 @@ pub const STATIC_ATOM_DIST_THRESH: f64 = 14.;
 // MD steps for a small molecule + water sim.
 const MD_STEPS_PER_APPLICATION_FRAME: usize = 10;
 
-pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
+pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     if state.mol_dynamics.is_none() {
         eprintln!("Can't run MD cleanup; MD state is None");
         return;
@@ -109,7 +109,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, engine_updates: &m
 
     state.ui.current_snapshot = 0;
 
-    engine_updates.entities = EntityUpdate::All;
+    updates.entities = EntityUpdate::All;
 }
 pub fn build_and_run_dynamics(
     dev: &ComputationDevice,

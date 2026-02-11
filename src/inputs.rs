@@ -853,6 +853,7 @@ fn post_event_cleanup(
                     &mut scene.entities,
                     &state.mol_editor.mol,
                     &state.mol_editor.pocket,
+                    &state.mol_editor.h_bonds,
                     &state.ui,
                     state.volatile.mol_manip.mode,
                     state.ligands.len(),
@@ -888,11 +889,12 @@ fn post_event_cleanup(
                     &mut scene.entities,
                     &state.mol_editor.mol,
                     &state.mol_editor.pocket,
+                    &state.mol_editor.h_bonds,
                     &state.ui,
                     state.volatile.mol_manip.mode,
                     state.ligands.len(),
                 );
-                updates.entities = EntityUpdate::Classes(vec![EntityClass::Ligand as u32]);
+                updates.entities.push_class(EntityClass::Ligand as u32);
             }
             OperatingMode::ProteinEditor => (),
         }
@@ -909,7 +911,7 @@ fn post_event_cleanup(
     if redraw_in_place.pocket && state.volatile.operating_mode == OperatingMode::Primary {
         redraw_inplace_helper(MolType::Pocket, state, scene, updates);
         // wrappers::draw_all_pockets(state, scene);
-        updates.entities = EntityUpdate::Classes(vec![EntityClass::Pocket as u32]);
+        updates.entities.push_class(EntityClass::Pocket as u32);
     }
 
     if redraw_mol_editor {
@@ -917,6 +919,7 @@ fn post_event_cleanup(
             &mut scene.entities,
             &state.mol_editor.mol,
             &state.mol_editor.pocket,
+            &state.mol_editor.h_bonds,
             &state.ui,
             state.volatile.mol_manip.mode,
             state.ligands.len(),

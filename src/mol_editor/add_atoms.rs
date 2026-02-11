@@ -337,7 +337,8 @@ pub fn add_atom(
             ..Default::default()
         };
 
-        redraw(entities, &mol_wrapper, &None, ui, manip_mode, 0);
+        // todo: Get pocket and h bonds in here.
+        redraw(entities, &mol_wrapper, &None, &[], ui, manip_mode, 0);
     }
 
     let atoms_to_add = bonds_avail(i_par, mol, el_parent);

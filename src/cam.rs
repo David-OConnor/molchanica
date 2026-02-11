@@ -246,7 +246,7 @@ pub fn move_cam_to_sel(
     lipids: &[MoleculeLipid],
     pockets: &[Pocket],
     cam: &mut Camera,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
 ) {
     let mut selection_found = true;
 
@@ -288,7 +288,7 @@ pub fn move_cam_to_sel(
         // }
     }
 
-    engine_updates.camera = true;
+    updates.camera = true;
     state_ui.cam_snapshot = None;
 }
 

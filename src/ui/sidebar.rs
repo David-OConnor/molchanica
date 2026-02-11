@@ -398,7 +398,7 @@ pub(in crate::ui) fn sidebar(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     ctx: &Context,
 ) {
     let out = egui::SidePanel::left("sidebar")
@@ -453,7 +453,7 @@ pub(in crate::ui) fn sidebar(
 
             ui.add_space(ROW_SPACING / 2.);
 
-            manip_toolbar(state, scene, redraw, ui, engine_updates);
+            manip_toolbar(state, scene, redraw, ui, updates);
 
             ui.add_space(ROW_SPACING / 2.);
             ui.separator();
@@ -466,6 +466,7 @@ pub(in crate::ui) fn sidebar(
 
             if state.volatile.operating_mode == OperatingMode::MolEditor {
                 ui.label("Pockets");
+                ui.separator();
 
                 for (mol_i, pocket) in state.pockets.iter_mut().enumerate() {
                     let selected = state.mol_editor.pocket_i_in_state == Some(mol_i);
@@ -492,23 +493,30 @@ pub(in crate::ui) fn sidebar(
                             state.mol_editor.pocket = None;
                             state.mol_editor.pocket_i_in_state = None;
                         } else {
-                            // todo: This pocket adjustment code should probably be moved
-                            // todo: H bonds`
                             pocket.common.center_local_posits_around_origin();
                             pocket.common.reset_posits();
                             pocket.rebuild_spheres();
                             pocket.regen_mesh_vol();
-                            engine_updates.meshes = true;
-
-                            draw_pocket(pocket, &[], &state.ui.visibility, &state.ui.selection);
 
                             state.mol_editor.pocket = Some(pocket.clone());
                             state.mol_editor.pocket_i_in_state = Some(mol_i);
+
+                            state.mol_editor.update_h_bonds();
+
+                            scene.entities.extend(draw_pocket(
+                                pocket,
+                                &state.mol_editor.h_bonds,
+                                &state.ui.visibility,
+                                &state.ui.selection,
+                            ));
+
+                            updates.meshes = true;
+                            updates.entities.push_class(EntityClass::Pocket as u32);
                         }
                     }
                 }
             } else {
-                mol_picker(state, scene, ui, redraw, engine_updates);
+                mol_picker(state, scene, ui, redraw, updates);
             }
 
             // todo: Still list global pharmacophores
@@ -560,5 +568,5 @@ pub(in crate::ui) fn sidebar(
             }
         });
 
-    engine_updates.ui_reserved_px.0 = out.response.rect.width();
+    updates.ui_reserved_px.0 = out.response.rect.width();
 }

@@ -1,12 +1,10 @@
-#![allow(unused)]
-
 use std::f64::consts::{PI, TAU};
 
 use lin_alg::f64::Vec3;
 use na_seq::Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur};
 
 use crate::{
-    molecules::{Atom, Bond, HydrogenBond},
+    molecules::{Atom, Bond, HydrogenBond, HydrogenBondTwoMols},
     util::find_atom,
 };
 
@@ -39,14 +37,17 @@ fn h_bond_candidate_el(atom: &Atom) -> bool {
 fn hydrogen_bond_inner(
     bonds: &mut Vec<HydrogenBond>,
     donor_heavy: &Atom,
+    donor_heavy_posit: Vec3,
     donor_h: &Atom,
+    donor_h_posit: Vec3,
     acc_candidate: &Atom,
+    acc_candidate_posit: Vec3,
     donor_heavy_i: usize,
     donor_h_i: usize,
     acc_i: usize,
     relaxed_dist_thresh: bool,
-    atoms_donor: &[Atom],
-    atoms_acc: &[Atom],
+    // atoms_donor: &[Atom],
+    // atoms_acc: &[Atom],
 ) {
     let d_e = donor_heavy.element; // Cleans up the verbose code below.
     let a_e = acc_candidate.element;
@@ -72,14 +73,14 @@ fn hydrogen_bond_inner(
     let dist_thresh_min = dist_thresh - modifier;
     let dist_thresh_max = dist_thresh + modifier;
 
-    let dist = (acc_candidate.posit - donor_heavy.posit).magnitude();
+    let dist = (acc_candidate_posit - donor_heavy_posit).magnitude();
     if dist < dist_thresh_min || dist > dist_thresh_max {
         return;
     }
 
     let angle = {
-        let donor_h = donor_h.posit - donor_heavy.posit;
-        let donor_acceptor = donor_heavy.posit - acc_candidate.posit;
+        let donor_h = donor_h_posit - donor_heavy_posit;
+        let donor_acceptor = donor_heavy_posit - acc_candidate_posit;
 
         donor_acceptor
             .to_normalized()
@@ -88,21 +89,81 @@ fn hydrogen_bond_inner(
     };
 
     if angle > H_BOND_ANGLE_THRESH {
+        let strength = h_bond_strength(donor_heavy_posit, donor_h_posit, acc_candidate_posit);
         // Note: Assumes one way.
-        bonds.push(HydrogenBond::new(
-            donor_heavy_i,
-            acc_i,
-            donor_h_i,
-            &atoms_donor,
-        ));
+        bonds.push(HydrogenBond::new(donor_heavy_i, acc_i, donor_h_i, strength));
     }
 }
 
-/// Create hydrogen bonds between all atoms in a group. See `create_hydrogen_bonds_one_way` for the more
+/// Create hydrogen bonds between all atoms in a single molecule. See `create_hydrogen_bonds_one_way` for the more
 /// flexible fn it calls.
-pub fn create_hydrogen_bonds(atoms: &[Atom], bonds: &[Bond]) -> Vec<HydrogenBond> {
+pub fn create_hydrogen_bonds_single_mol(
+    atoms: &[Atom],
+    posits: &[Vec3],
+    bonds: &[Bond],
+) -> Vec<HydrogenBond> {
     let indices: Vec<_> = (0..atoms.len()).collect();
-    create_hydrogen_bonds_one_way(atoms, &indices, bonds, atoms, &indices, false)
+    create_hydrogen_bonds_one_way(
+        atoms, posits, &indices, bonds, atoms, posits, &indices, false,
+    )
+}
+
+/// Create hydrogen bonds between two  molecules.
+pub fn create_hydrogen_bonds_two_mols(
+    atoms_mol0: &[Atom],
+    posits_mol0: &[Vec3],
+    bonds_mol0: &[Bond],
+    atoms_mol1: &[Atom],
+    posits_mol1: &[Vec3],
+    bonds_mol1: &[Bond],
+) -> Vec<HydrogenBondTwoMols> {
+    let indices_0: Vec<_> = (0..atoms_mol0.len()).collect();
+    let indices_1: Vec<_> = (0..atoms_mol1.len()).collect();
+    // Mol 0: Donor. Mol 1: Acceptor.
+    let part_0 = create_hydrogen_bonds_one_way(
+        atoms_mol0,
+        posits_mol0,
+        &indices_0,
+        bonds_mol0,
+        atoms_mol1,
+        posits_mol1,
+        &indices_1,
+        false,
+    );
+
+    // Mol 1: Donor. Mol 0: Acceptor.
+    let part_1 = create_hydrogen_bonds_one_way(
+        atoms_mol1,
+        posits_mol1,
+        &indices_1,
+        bonds_mol1,
+        atoms_mol0,
+        posits_mol0,
+        &indices_0,
+        false,
+    );
+
+    let mut res = Vec::new();
+
+    for bond in part_0 {
+        res.push(HydrogenBondTwoMols {
+            donor: (0, bond.donor),
+            acceptor: (1, bond.acceptor),
+            hydrogen: bond.hydrogen,
+            strength: bond.strength,
+        });
+    }
+
+    for bond in part_1 {
+        res.push(HydrogenBondTwoMols {
+            donor: (1, bond.donor),
+            acceptor: (0, bond.acceptor),
+            hydrogen: bond.hydrogen,
+            strength: bond.strength,
+        });
+    }
+
+    res
 }
 
 /// Infer hydrogen bonds from a list of atoms. This takes into account bond distance between suitable
@@ -110,13 +171,15 @@ pub fn create_hydrogen_bonds(atoms: &[Atom], bonds: &[Bond]) -> Vec<HydrogenBond
 /// bonded to the donor.
 ///
 /// Separates donor from acceptor inputs, for use in cases like bonds between targets and ligands.
-/// We indlude indices, in the case where atoms are subsets of molecules; this allows bonds indices
+/// We include indices, in the case where atoms are subsets of molecules; this allows bonds indices
 /// to be preserved.
 pub fn create_hydrogen_bonds_one_way(
     atoms_donor: &[Atom],
+    posits_donor: &[Vec3],
     atoms_donor_i: &[usize],
     bonds_donor: &[Bond],
     atoms_acc: &[Atom],
+    posits_acc: &[Vec3],
     atoms_acc_i: &[usize],
     relaxed_dist_thresh: bool,
 ) -> Vec<HydrogenBond> {
@@ -144,11 +207,11 @@ pub fn create_hydrogen_bonds_one_way(
         })
         .collect();
 
-    let potential_acceptors: Vec<(usize, &Atom)> = atoms_acc
+    let potential_acceptors: Vec<(usize, &Atom, Vec3)> = atoms_acc
         .iter()
         .enumerate()
         .filter(|(_, a)| h_bond_candidate_el(a))
-        .map(|(i, a)| (atoms_acc_i[i], a))
+        .map(|(i, a)| (atoms_acc_i[i], a, posits_acc[i]))
         .collect();
 
     for donor_bond in potential_donor_bonds {
@@ -160,24 +223,42 @@ pub fn create_hydrogen_bonds_one_way(
             continue;
         };
 
-        let (donor_heavy, donor_h, donor_heavy_i, donor_h_i) = if donor_0.element == Hydrogen {
-            (donor_1, donor_0, donor_bond.atom_1, donor_bond.atom_0)
-        } else {
-            (donor_0, donor_1, donor_bond.atom_0, donor_bond.atom_1)
-        };
+        let (donor_heavy, posit_heavy, donor_h, posit_h, donor_heavy_i, donor_h_i) =
+            if donor_0.element == Hydrogen {
+                (
+                    donor_1,
+                    posits_donor[donor_bond.atom_1],
+                    donor_0,
+                    posits_donor[donor_bond.atom_0],
+                    donor_bond.atom_1,
+                    donor_bond.atom_0,
+                )
+            } else {
+                (
+                    donor_0,
+                    posits_donor[donor_bond.atom_0],
+                    donor_1,
+                    posits_donor[donor_bond.atom_1],
+                    donor_bond.atom_0,
+                    donor_bond.atom_1,
+                )
+            };
 
-        for (acc_i, acc_candidate) in &potential_acceptors {
+        for (acc_i, acc_candidate, acc_posit) in &potential_acceptors {
             hydrogen_bond_inner(
                 &mut result,
                 donor_heavy,
+                posit_heavy,
                 donor_h,
+                posit_h,
                 acc_candidate,
+                *acc_posit,
                 donor_heavy_i,
                 donor_h_i,
                 *acc_i,
                 relaxed_dist_thresh,
-                atoms_donor,
-                atoms_acc,
+                // atoms_donor,
+                // atoms_acc,
             );
         }
     }

@@ -21,6 +21,7 @@ use na_seq::{
 };
 
 use crate::{
+    bond_inference::create_hydrogen_bonds_two_mols,
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
         atoms_bonds::{
@@ -32,8 +33,8 @@ use crate::{
     md::change_snapshot_helper,
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, MolGenericRef, MolType, common::NEXT_ATOM_SN, pocket::Pocket,
-        small::MoleculeSmall,
+        Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, common::NEXT_ATOM_SN,
+        pocket::Pocket, small::MoleculeSmall,
     },
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
@@ -52,6 +53,8 @@ const MOL_IDENT: &str = "editor_mol";
 pub struct MolEditorState {
     pub mol: MoleculeSmall,
     pub pocket: Option<Pocket>,
+    /// Hydrogen bonds between the mol and pocket.
+    pub h_bonds: Vec<HydrogenBondTwoMols>,
     /// I.e. state.ligands[i]
     pub mol_i_in_state: Option<usize>,
     /// I.e. state.pockets[i]
@@ -80,6 +83,7 @@ impl Default for MolEditorState {
         Self {
             mol: Default::default(),
             pocket: Default::default(),
+            h_bonds: Default::default(),
             mol_i_in_state: Default::default(),
             pocket_i_in_state: Default::default(),
             md_state: Default::default(),
@@ -289,7 +293,8 @@ impl MolEditorState {
         redraw(
             &mut scene.entities,
             &self.mol,
-            &None,
+            &self.pocket,
+            &self.h_bonds,
             state_ui,
             manip_mode,
             0,
@@ -334,7 +339,15 @@ impl MolEditorState {
 
         self.md_state.as_mut().unwrap().snapshots = Vec::new();
 
-        redraw(entities, &self.mol, &None, state_ui, manip_mode, 0);
+        redraw(
+            entities,
+            &self.mol,
+            &self.pocket,
+            &self.h_bonds,
+            state_ui,
+            manip_mode,
+            0,
+        );
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -352,7 +365,15 @@ impl MolEditorState {
             self.mol.common.atom_posits[i] = atom.posit.into();
         }
 
-        redraw(entities, &self.mol, &None, state_ui, manip_mode, 0);
+        redraw(
+            entities,
+            &self.mol,
+            &self.pocket,
+            &self.h_bonds,
+            state_ui,
+            manip_mode,
+            0,
+        );
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -427,6 +448,22 @@ impl MolEditorState {
 
         if let Some(v) = msp.get(MOL_IDENT) {
             self.mol_specific_params = v.clone();
+        }
+    }
+
+    pub fn update_h_bonds(&mut self) {
+        if let Some(pocket) = &self.pocket {
+            self.h_bonds = create_hydrogen_bonds_two_mols(
+                &self.mol.common.atoms,
+                &self.mol.common.atom_posits,
+                &self.mol.common.bonds,
+                &pocket.common.atoms,
+                &pocket.common.atom_posits,
+                &pocket.common.bonds,
+            );
+
+            // todo temp
+            println!("Created H bonds in editor: {:?}", self.h_bonds);
         }
     }
 }
@@ -509,6 +546,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
         &mut scene.entities,
         &state.mol_editor.mol,
         &state.mol_editor.pocket,
+        &state.mol_editor.h_bonds,
         &state.ui,
         state.volatile.mol_manip.mode,
         0,
@@ -556,6 +594,7 @@ pub fn redraw(
     // todo: SOrt out how you will handle it; maybe a local pocket copy in the
     // todo editor instead of an index.
     pocket: &Option<Pocket>,
+    hydrogen_bonds: &[HydrogenBondTwoMols],
     ui: &StateUi,
     manip_mode: ManipMode,
     num_ligs: usize,
@@ -577,10 +616,9 @@ pub fn redraw(
     ));
 
     if let Some(p) = pocket {
-        let hydrogen_bonds = Vec::new(); // todo: A/R
         entities.extend(draw_pocket(
             p,
-            &hydrogen_bonds,
+            hydrogen_bonds,
             &Visibility::default(),
             &Selection::None,
         ));

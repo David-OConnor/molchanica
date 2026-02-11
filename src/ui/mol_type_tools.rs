@@ -170,7 +170,7 @@ pub(in crate::ui) fn lipid_section(
 pub(in crate::ui) fn na_section(
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
     section_box().show(ui, |ui| {
@@ -233,7 +233,7 @@ pub(in crate::ui) fn na_section(
             state.nucleic_acids.push(mol);
 
             draw_all_nucleic_acids(state, scene);
-            engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::NucleicAcid as u32]);
+            updates.entities.push_class(EntityClass::NucleicAcid as u32);
         }
     });
 }

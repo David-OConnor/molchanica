@@ -95,7 +95,8 @@ fn change_el_button(
             );
         }
 
-        mol_editor::redraw(entities, mol, &None, state_ui, manip_mode, 0);
+        // todo: Get pocket and lig here.
+        mol_editor::redraw(entities, mol, &None, &[], state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
 
         *redraw = true;
@@ -178,6 +179,14 @@ pub(in crate::ui) fn editor(
                 &mut state.ui.visibility.hide_hydrogen,
                 "H",
                 "Show or hide Hydrogen atoms",
+                ui,
+                &mut redraw,
+            );
+
+            misc::toggle_btn_inv(
+                &mut state.ui.visibility.hide_pockets,
+                "H",
+                "Show or hide the pocket",
                 ui,
                 &mut redraw,
             );
@@ -444,6 +453,7 @@ pub(in crate::ui) fn editor(
             &mut scene.entities,
             &state.mol_editor.mol,
             &state.mol_editor.pocket,
+            &state.mol_editor.h_bonds,
             &state.ui,
             state.volatile.mol_manip.mode,
             0,
@@ -634,6 +644,7 @@ fn edit_tools(
                             &mut scene.entities,
                             &state.mol_editor.mol,
                             &state.mol_editor.pocket,
+                            &state.mol_editor.h_bonds,
                             &state.ui,
                             state.volatile.mol_manip.mode,
                             0,

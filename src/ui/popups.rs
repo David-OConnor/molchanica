@@ -780,7 +780,7 @@ fn lig_pocket_from_het_res(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
 ) {
     let Some(mol) = &state.peptide else {
         return;
@@ -853,6 +853,7 @@ fn lig_pocket_from_het_res(
                 .clicked()
             {
                 create_lig_from_res = Some(res.clone());
+                state.ui.popup.lig_pocket_creation = false;
 
                 // download_mols::load_geostd(name, &mut load_data, &mut state.ui);
                 // res_to_load = Some(res.clone()); // Clone avoids borrow error.
@@ -890,6 +891,8 @@ fn lig_pocket_from_het_res(
                     POCKET_DIST_THRESH_DEFAULT,
                     &ident,
                 ));
+
+                state.ui.popup.lig_pocket_creation = false;
             }
         });
         ui.add_space(ROW_SPACING);
@@ -900,14 +903,15 @@ fn lig_pocket_from_het_res(
         scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
 
         state.pockets.push(pocket);
+        state.volatile.active_mol = Some((MolType::Pocket, state.pockets.len() - 1));
         draw_all_pockets(state, scene);
 
-        engine_updates.meshes = true;
-        engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::Pocket as u32]);
+        updates.meshes = true;
+        updates.entities.push_class(EntityClass::Pocket as u32);
     }
 
     if let Some(res) = &create_lig_from_res {
-        make_lig_from_res(state, res, scene, engine_updates);
+        make_lig_from_res(state, res, scene, updates);
     }
     //
     // // Avoids dbl-borrow

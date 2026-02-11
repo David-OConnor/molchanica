@@ -713,7 +713,7 @@ impl State {
                     draw_all_nucleic_acids(self, s);
                 }
 
-                engine_updates.entities = EntityUpdate::Classes(vec![entity_class]);
+                engine_updates.entities.push_class(entity_class);
 
                 (ident, centroid)
             }
@@ -735,7 +735,7 @@ impl State {
             }
         };
 
-        engine_updates.entities = EntityUpdate::Classes(vec![entity_class]);
+        engine_updates.entities.push_class(entity_class);
 
         self.volatile.active_mol = Some((mol_type, mol_i));
         self.volatile.orbit_center = Some((mol_type, mol_i));

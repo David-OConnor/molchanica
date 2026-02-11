@@ -24,8 +24,8 @@ use crate::{
     },
     mol_manip::ManipMode,
     molecules::{
-        Atom, AtomRole, Chain, HydrogenBond, MolGenericRef, MolType, MoleculePeptide,
-        pocket::Pocket, small::MoleculeSmall,
+        Atom, AtomRole, Chain, HydrogenBond, HydrogenBondTwoMols, MolGenericRef, MolType,
+        MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
     },
     reflection::DensityPt,
     render::{
@@ -1749,13 +1749,16 @@ pub fn draw_pharmacophore_hint_sites(
         ent.class = EntityClass::PharmacophoreHint as u32;
         entities.push(ent);
     }
-    engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::PharmacophoreHint as u32]);
+
+    engine_updates
+        .entities
+        .push_class(EntityClass::PharmacophoreHint as u32);
 }
 
 pub fn draw_pocket(
     // entities: &mut Vec<Entity>,
     pocket: &Pocket,
-    hydrogen_bonds: &[HydrogenBond],
+    hydrogen_bonds: &[HydrogenBondTwoMols],
     visibility: &Visibility,
     selection: &Selection,
 ) -> Vec<Entity> {

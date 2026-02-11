@@ -44,7 +44,7 @@ use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use small::MoleculeSmall;
 
 use crate::{
-    bond_inference::{create_hydrogen_bonds, h_bond_strength},
+    bond_inference::{create_hydrogen_bonds_single_mol, h_bond_strength},
     drawing::EntityClass,
     molecules::{
         common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
@@ -357,7 +357,11 @@ impl MoleculePeptide {
         };
 
         result.aa_seq = result.get_seq();
-        result.bonds_hydrogen = create_hydrogen_bonds(&result.common.atoms, &result.common.bonds);
+        result.bonds_hydrogen = create_hydrogen_bonds_single_mol(
+            &result.common.atoms,
+            &result.common.atom_posits,
+            &result.common.bonds,
+        );
 
         // Override the one set in Common::new(), now that we've added hydrogens.
         result.common.build_adjacency_list();
@@ -643,12 +647,7 @@ pub struct HydrogenBond {
 }
 
 impl HydrogenBond {
-    pub fn new(donor: usize, acceptor: usize, hydrogen: usize, atoms: &[Atom]) -> Self {
-        let strength = h_bond_strength(
-            atoms[donor].posit,
-            atoms[hydrogen].posit,
-            atoms[acceptor].posit,
-        );
+    pub fn new(donor: usize, acceptor: usize, hydrogen: usize, strength: f32) -> Self {
         Self {
             donor,
             acceptor,
@@ -670,20 +669,12 @@ pub struct HydrogenBondTwoMols {
 }
 
 impl HydrogenBondTwoMols {
-    /// `atoms_donor`: atoms of the donor molecule (also contains the hydrogen).
-    /// `atoms_acc`: atoms of the acceptor molecule.
     pub fn new(
         donor: (usize, usize),
         acceptor: (usize, usize),
         hydrogen: usize,
-        atoms_donor: &[Atom],
-        atoms_acc: &[Atom],
+        strength: f32,
     ) -> Self {
-        let strength = h_bond_strength(
-            atoms_donor[donor.1].posit,
-            atoms_donor[hydrogen].posit,
-            atoms_acc[acceptor.1].posit,
-        );
         Self {
             donor,
             acceptor,
