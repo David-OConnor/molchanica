@@ -185,7 +185,7 @@ pub(in crate::ui) fn editor(
 
             misc::toggle_btn_inv(
                 &mut state.ui.visibility.hide_pockets,
-                "H",
+                "Pocket",
                 "Show or hide the pocket",
                 ui,
                 &mut redraw,

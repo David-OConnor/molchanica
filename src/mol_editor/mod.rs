@@ -599,9 +599,11 @@ pub fn redraw(
     manip_mode: ManipMode,
     num_ligs: usize,
 ) {
-    // entities.retain(|e| {
-    //     e.class != EntityClass::Ligand as u32 && e.class != EntityClass::Pharmacophore as u32&&
-    // });
+    entities.retain(|e| {
+        e.class != EntityClass::Ligand as u32
+            && e.class != EntityClass::Pharmacophore as u32
+            && e.class != EntityClass::Pocket as u32
+    });
 
     *entities = Vec::new();
 
