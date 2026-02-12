@@ -135,7 +135,7 @@ pub fn handle_cmd(
         let filename = &caps[1];
         let path = PathBuf::from_str(filename).unwrap();
 
-        state.open_mol_from_file(&path, Some(scene), engine_updates)?;
+        state.open_mol_from_file(&path, scene, engine_updates)?;
 
         set_flashlight(scene);
         engine_updates.lighting = true;

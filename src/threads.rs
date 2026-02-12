@@ -101,9 +101,10 @@ pub fn handle_thread_rx(state: &mut State, scene: &mut Scene, updates: &mut Engi
     if let Some(rx) = &mut state.volatile.thread_receivers.therapeutic_properties_avail {
         match rx.try_recv() {
             Ok((i_mol, tp)) => {
-                state.ligands[i_mol].therapeutic_props = Some(tp);
-
-                state.volatile.thread_receivers.therapeutic_properties_avail = None;
+                if i_mol < state.ligands.len() {
+                    state.ligands[i_mol].therapeutic_props = Some(tp);
+                    state.volatile.thread_receivers.therapeutic_properties_avail = None;
+                }
             }
             Err(_) => {}
         }

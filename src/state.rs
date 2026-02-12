@@ -17,6 +17,7 @@ use dynamics::{ComputationDevice, MdState, params::FfParamSet};
 use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
+use crate::util::orca_avail;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -87,7 +88,7 @@ impl Default for State {
 
         Self {
             ui,
-            volatile: Default::default(),
+            volatile: StateVolatile::new(),
             cif_pdb_raw: Default::default(),
             peptide: Default::default(),
             ligands: Default::default(),
@@ -149,44 +150,7 @@ impl State {
     /// Helper
     pub fn active_mol(&self) -> Option<MolGenericRef<'_>> {
         match self.volatile.active_mol {
-            Some((mol_type, i)) => match mol_type {
-                MolType::Peptide => {
-                    if self.peptide.is_some() {
-                        Some(MolGenericRef::Peptide(&self.peptide.as_ref().unwrap()))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Ligand => {
-                    if i < self.ligands.len() {
-                        Some(MolGenericRef::Small(&self.ligands[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::NucleicAcid => {
-                    if i < self.nucleic_acids.len() {
-                        Some(MolGenericRef::NucleicAcid(&self.nucleic_acids[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Lipid => {
-                    if i < self.lipids.len() {
-                        Some(MolGenericRef::Lipid(&self.lipids[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Pocket => {
-                    if i < self.pockets.len() {
-                        Some(MolGenericRef::Pocket(&self.pockets[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Water => None,
-            },
+            Some((mol_type, i)) => self.get_mol(mol_type, i),
             None => None,
         }
     }
@@ -195,44 +159,90 @@ impl State {
     /// todo: DRy with the non-mutable variant.
     pub fn active_mol_mut(&mut self) -> Option<MolGenericRefMut<'_>> {
         match self.volatile.active_mol {
-            Some((mol_type, i)) => match mol_type {
-                MolType::Peptide => None,
-                MolType::Ligand => {
-                    if i < self.ligands.len() {
-                        Some(MolGenericRefMut::Small(&mut self.ligands[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::NucleicAcid => {
-                    if i < self.nucleic_acids.len() {
-                        Some(MolGenericRefMut::NucleicAcid(&mut self.nucleic_acids[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Lipid => {
-                    if i < self.lipids.len() {
-                        Some(MolGenericRefMut::Lipid(&mut self.lipids[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Pocket => {
-                    if i < self.pockets.len() {
-                        Some(MolGenericRefMut::Pocket(&mut self.pockets[i]))
-                    } else {
-                        None
-                    }
-                }
-                MolType::Water => None,
-            },
+            Some((mol_type, i)) => self.get_mol_mut(mol_type, i),
             None => None,
+        }
+    }
+
+    pub fn get_mol(&self, mol_type: MolType, i: usize) -> Option<MolGenericRef<'_>> {
+        match mol_type {
+            MolType::Peptide => {
+                if self.peptide.is_some() {
+                    Some(MolGenericRef::Peptide(&self.peptide.as_ref().unwrap()))
+                } else {
+                    None
+                }
+            }
+            MolType::Ligand => {
+                if i < self.ligands.len() {
+                    Some(MolGenericRef::Small(&self.ligands[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::NucleicAcid => {
+                if i < self.nucleic_acids.len() {
+                    Some(MolGenericRef::NucleicAcid(&self.nucleic_acids[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::Lipid => {
+                if i < self.lipids.len() {
+                    Some(MolGenericRef::Lipid(&self.lipids[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::Pocket => {
+                if i < self.pockets.len() {
+                    Some(MolGenericRef::Pocket(&self.pockets[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::Water => None,
+        }
+    }
+
+    pub fn get_mol_mut(&mut self, mol_type: MolType, i: usize) -> Option<MolGenericRefMut<'_>> {
+        match mol_type {
+            MolType::Peptide => None,
+            MolType::Ligand => {
+                if i < self.ligands.len() {
+                    Some(MolGenericRefMut::Small(&mut self.ligands[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::NucleicAcid => {
+                if i < self.nucleic_acids.len() {
+                    Some(MolGenericRefMut::NucleicAcid(&mut self.nucleic_acids[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::Lipid => {
+                if i < self.lipids.len() {
+                    Some(MolGenericRefMut::Lipid(&mut self.lipids[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::Pocket => {
+                if i < self.pockets.len() {
+                    Some(MolGenericRefMut::Pocket(&mut self.pockets[i]))
+                } else {
+                    None
+                }
+            }
+            MolType::Water => None,
         }
     }
 }
 
 /// Temporary, and generated state.
+#[derive(Default)]
 pub struct StateVolatile {
     pub dialogs: FileDialogs,
     pub thread_receivers: ThreadReceivers,
@@ -281,32 +291,12 @@ pub struct StateVolatile {
     pub inference_models: HashMap<DatasetTdc, Infer>,
 }
 
-impl Default for StateVolatile {
-    fn default() -> Self {
+impl StateVolatile {
+    pub fn new() -> Self {
         Self {
-            dialogs: Default::default(),
-            thread_receivers: Default::default(),
-            inputs_commanded: Default::default(),
-            prefs_dir: env::current_dir().unwrap(), // This is why we can't derive.
-            cli_input_history: Default::default(),
-            cli_input_selected: Default::default(),
-            aa_seq_text: Default::default(),
-            flags: Default::default(),
-            md_runtime: Default::default(),
-            active_mol: Default::default(),
-            mol_manip: Default::default(),
-            control_scheme_prev: Default::default(),
-            orbit_center_prev: Default::default(),
-            md_peptide_selected: Default::default(),
-            key_modifiers: Default::default(),
-            operating_mode: Default::default(),
-            primary_mode_cam: Default::default(),
-            md_local: Default::default(),
-            orbit_center: None,
-            orca_avail: Default::default(),
-            protein_sfc_mesh_coarse: Default::default(),
-            alignment: Default::default(),
-            inference_models: Default::default(),
+            prefs_dir: env::current_dir().unwrap(),
+            orca_avail: orca_avail(),
+            ..Default::default()
         }
     }
 }

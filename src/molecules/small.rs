@@ -266,8 +266,25 @@ impl MoleculeSmall {
     }
 
     pub fn to_sdf(&self) -> Sdf {
-        let atoms = self.common.atoms.iter().map(|a| a.to_generic()).collect();
-        let bonds = self.common.bonds.iter().map(|b| b.to_generic()).collect();
+        // SDF doesn't support explicit atom SNs; they use order. This reassignment makes sure
+        // the bond atom assignments aren't lost in this process.
+        let (atoms, bonds) = {
+            let mut common_reassigned = self.common.clone();
+            common_reassigned.reassign_sns();
+
+            let a = common_reassigned
+                .atoms
+                .iter()
+                .map(|a| a.to_generic())
+                .collect();
+            let b = common_reassigned
+                .bonds
+                .iter()
+                .map(|b| b.to_generic())
+                .collect();
+
+            (a, b)
+        };
 
         let mut metadata = self.common.metadata.clone();
 

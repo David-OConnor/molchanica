@@ -39,6 +39,12 @@ use crate::{
 
 pub const DEFAULT_PREFS_FILE: &str = "molchanica_prefs.mca";
 
+// todo: Eventually, implement a system that automatically checks for changes, and don't
+// todo save to disk if there are no changes.
+// For now, we check for differences between to_save and to_save prev, and write to disk
+// if they're not equal.
+pub const PREFS_SAVE_INTERVAL: u64 = 20; // seconds
+
 /// Used to sequence how we handle each file type.
 #[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
 pub enum OpenType {
@@ -304,13 +310,21 @@ impl State {
         println!("Saving state to prefs file");
 
         // Sync molecule positions.
-        // todo: Consider the same for proteins.
-        for lig in &self.ligands {
+        // todo: Consider the same for proteins, and other mol types.
+        for mol in &self.ligands {
             for oh in &mut self.to_save.open_history {
-                if let Some(p) = &lig.common.path {
-                    // println!("Path checks: {:?}\n\n", p);
+                if let Some(p) = &mol.common.path {
                     if &oh.path == p {
-                        oh.position = Some(lig.common.centroid());
+                        oh.position = Some(mol.common.centroid());
+                    }
+                }
+            }
+        }
+        for mol in &self.pockets {
+            for oh in &mut self.to_save.open_history {
+                if let Some(p) = &mol.common.path {
+                    if &oh.path == p {
+                        oh.position = Some(mol.common.centroid());
                     }
                 }
             }
@@ -402,9 +416,3 @@ impl State {
         self.update_from_prefs();
     }
 }
-
-// todo: Eventually, implement a system that automatically checks for changes, and don't
-// todo save to disk if there are no changes.
-// For now, we check for differences between to_save and to_save prev, and write to disk
-// if they're not equal.
-pub const PREFS_SAVE_INTERVAL: u64 = 20; // seconds

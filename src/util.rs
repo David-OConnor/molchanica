@@ -1113,7 +1113,7 @@ pub fn make_lig_from_res(
 
     state.load_mol_to_state(
         MoleculeGeneric::Ligand(mol_fm_res),
-        Some(scene),
+        scene,
         engine_updates,
         None,
     );

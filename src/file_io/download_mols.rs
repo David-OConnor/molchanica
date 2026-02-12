@@ -205,7 +205,7 @@ pub fn load_geostd2(
 
                         state.load_mol_to_state(
                             MoleculeGeneric::Ligand(mol),
-                            Some(scene),
+                            scene,
                             engine_updates,
                             None,
                         );

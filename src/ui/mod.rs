@@ -38,7 +38,7 @@ use crate::{
     threads::handle_thread_rx,
     ui::{
         misc::section_box,
-        mol_data::{display_mol_data_peptide, metadata},
+        mol_data::display_mol_data_peptide,
         mol_type_tools::mol_type_toolbars,
         orca::orca_input,
         sidebar::sidebar,
@@ -135,7 +135,7 @@ pub fn handle_input(
         // Check for file drop
         if let Some(dropped_files) = ip.raw.dropped_files.first() {
             if let Some(path) = &dropped_files.path {
-                if let Err(e) = state.open_file(path, Some(scene), engine_updates) {
+                if let Err(e) = state.open_file(path, scene, engine_updates) {
                     handle_err(&mut state.ui, e.to_string());
                 }
             }
@@ -744,6 +744,9 @@ fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> EngineUpdates {
+    // We perform init items here that rely on  UI context.
+    if !INIT_COMPLETE.swap(true, Ordering::AcqRel) {}
+
     let mut updates = EngineUpdates::default();
 
     // Checks each frame; takes action based on time since last save.
@@ -1239,11 +1242,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
     if state.volatile.inputs_commanded.inputs_present() {
         set_flashlight(scene);
         updates.lighting = true;
-    }
-
-    // We perform init items here that rely on the scene, or UI context.
-    if !INIT_COMPLETE.swap(true, Ordering::AcqRel) {
-        init_with_scene(state, scene, ctx);
     }
 
     handle_scene_flags(state, scene, &mut updates);

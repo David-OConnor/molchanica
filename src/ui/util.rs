@@ -3,8 +3,12 @@ use std::io;
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
+use crate::drawing::wrappers;
+use crate::drawing::wrappers::draw_all_pockets;
+use crate::molecules::MolType;
 use crate::{
     cam::reset_camera,
+    drawing,
     drawing::{
         draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
@@ -32,7 +36,7 @@ pub fn update_file_dialogs(
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {
-            OperatingMode::Primary => state.open_file(path, Some(scene), engine_updates),
+            OperatingMode::Primary => state.open_file(path, scene, engine_updates),
             OperatingMode::MolEditor => state.mol_editor.open_molecule(
                 path,
                 scene,
@@ -144,17 +148,30 @@ pub fn open_lig_from_input(
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
 ) {
-    state.load_mol_to_state(
-        MoleculeGeneric::Ligand(mol),
-        Some(scene),
-        engine_updates,
-        None,
-    );
+    state.load_mol_to_state(MoleculeGeneric::Ligand(mol), scene, engine_updates, None);
 
     state.ui.db_input = String::new();
 }
 
-pub fn init_with_scene(state: &mut State, scene: &mut Scene, ctx: &egui::Context) {
+/// Contains functionality we wish to run at program load, but can't do until the scene is loaded.
+/// Run this near the top of the UI initialization.
+pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
+    // We must have loaded prefs prior to this, so we know which file to open.
+    state.load_last_opened(scene);
+    // todo trouble: It's somewhere around here, saving the inited-from-load atom posits, overwriting
+    // todo the previously-saved ones.
+
+    // todo: Workaround to allow us to apply params to the ligand once it's loaded. Unfortunate we have
+    // todo to double-load prefs.
+    {
+        // state.load_prefs();
+
+        // A default active small molecule.
+        if !state.ligands.is_empty() {
+            state.volatile.active_mol = Some((MolType::Ligand, 0));
+        }
+    }
+
     if state.peptide.is_some() {
         set_static_light(
             scene,
@@ -168,9 +185,22 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene, ctx: &egui::Context
             lig.common.centroid().into(),
             3., // todo good enough?
         );
+
+        //     let posit = state.to_save.per_mol[&mol.common.ident]
+        //         .docking_site
+        //         .site_center;
+        //     // state.update_docking_site(posit);
     }
 
     reset_orbit_center(state, scene);
+
+    draw_peptide(state, scene);
+    draw_all_ligs(state, scene);
+    draw_all_nucleic_acids(state, scene);
+    draw_all_lipids(state, scene);
+    draw_all_pockets(state, scene);
+
+    set_flashlight(scene);
 }
 
 /// An assistant to make a colored label.

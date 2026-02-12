@@ -408,7 +408,7 @@ fn recent_files_popup(
     }
 
     if let Some(path) = open {
-        if state.open_file(&path, Some(scene), engine_updates).is_err() {
+        if state.open_file(&path, scene, engine_updates).is_err() {
             handle_err(&mut state.ui, format!("Problem opening file {:?}", path));
         }
         state.ui.popup.recent_files = false;

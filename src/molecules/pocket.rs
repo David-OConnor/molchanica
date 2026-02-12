@@ -150,51 +150,43 @@ impl Pocket {
     pub fn new(mol: &MoleculePeptide, center: Vec3, dist_thresh: f64, ident: &str) -> Self {
         let dist_thresh_sq = dist_thresh.powi(2);
 
-        // For now at least, use use the atoms' original positions.
-        let atoms: Vec<_> = mol
-            .common
-            .atoms
-            .iter()
-            .filter(|a| {
-                if a.hetero {
-                    // E.g. ligands included with a mmCIF file, or water molecules.
-                    return false;
-                }
+        let mol = {
+            // For now at least, use use the atoms' original positions.
+            let atoms: Vec<_> = mol
+                .common
+                .atoms
+                .iter()
+                .filter(|a| {
+                    if a.hetero {
+                        // E.g. ligands included with a mmCIF file, or water molecules.
+                        return false;
+                    }
 
-                let dist_sq = (a.posit - center).magnitude_squared();
-                dist_sq < dist_thresh_sq
-            })
-            .cloned()
-            .collect();
+                    let dist_sq = (a.posit - center).magnitude_squared();
+                    dist_sq < dist_thresh_sq
+                })
+                .cloned()
+                .collect();
 
-        let atom_sns: HashSet<_> = atoms.iter().map(|a| a.serial_number).collect();
+            let atom_sns: HashSet<_> = atoms.iter().map(|a| a.serial_number).collect();
 
-        let mut bonds: Vec<_> = mol
-            .common
-            .bonds
-            .iter()
-            .filter(|b| atom_sns.contains(&b.atom_0_sn) && atom_sns.contains(&b.atom_1_sn))
-            .cloned()
-            .collect();
+            let mut bonds: Vec<_> = mol
+                .common
+                .bonds
+                .iter()
+                .filter(|b| atom_sns.contains(&b.atom_0_sn) && atom_sns.contains(&b.atom_1_sn))
+                .cloned()
+                .collect();
 
-        reassign_bond_indices(&mut bonds, &atoms);
+            reassign_bond_indices(&mut bonds, &atoms);
 
-        let mut mol = MoleculeCommon::new(ident.to_owned(), atoms, bonds, HashMap::new(), None);
-        mol.center_local_posits_around_origin();
+            let mut mol = MoleculeCommon::new(ident.to_owned(), atoms, bonds, HashMap::new(), None);
+            mol.center_local_posits_around_origin();
 
-        // Set up the mesh and volume after centering the local atom posits.
-        let volume = PocketVolume::new(&mol);
-        let surface_mesh = make_mesh(&mol.atoms, &mol.atom_posits);
+            mol
+        };
 
-        let mesh_pivot = mol.centroid_local().into();
-
-        Self {
-            common: mol,
-            mesh_orientation: Quaternion::new_identity(),
-            mesh_pivot,
-            surface_mesh,
-            volume,
-        }
+        mol.into()
     }
 
     pub fn rebuild_spheres(&mut self) {
@@ -263,6 +255,26 @@ impl Pocket {
         })
     }
     // todo: mmCIF saving as well? Note that the input for these is generally mmCIF.
+}
+
+impl From<MoleculeCommon> for Pocket {
+    /// Given the molecule, create the other features like volume, and surface mesh.
+    /// This is an alternate constructor to `new`, which creates it from a macromolecule.
+    fn from(mol: MoleculeCommon) -> Self {
+        // Set up the mesh and volume after centering the local atom posits.
+        let volume = PocketVolume::new(&mol);
+        let surface_mesh = make_mesh(&mol.atoms, &mol.atom_posits);
+
+        let mesh_pivot = mol.centroid_local().into();
+
+        Self {
+            common: mol,
+            mesh_orientation: Quaternion::new_identity(),
+            mesh_pivot,
+            surface_mesh,
+            volume,
+        }
+    }
 }
 
 /// For a voxel-based approach.

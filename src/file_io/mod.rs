@@ -3,11 +3,12 @@ use std::{fs, io, io::ErrorKind, path::Path, time::Instant};
 use bio_files::{DensityMap, MmCif, Mol2, Pdbqt, Xyz, md_params::ForceFieldParams, sdf::Sdf};
 use chrono::Utc;
 use egui_file_dialog::{FileDialog, FileDialogConfig};
-use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::{AaIdent, Element};
 use rand::Rng;
 
+use crate::render::MESH_POCKET;
 use crate::{
     cam::move_mol_to_cam,
     drawing::{
@@ -37,7 +38,8 @@ impl State {
     pub fn open_file(
         &mut self,
         path: &Path,
-        scene: Option<&mut Scene>,
+        // scene: Option<&mut Scene>,
+        scene: &mut Scene,
         engine_updates: &mut EngineUpdates,
     ) -> io::Result<()> {
         match path
@@ -86,7 +88,8 @@ impl State {
     pub fn open_mol_from_file(
         &mut self,
         path: &Path,
-        scene: Option<&mut Scene>,
+        // scene: Option<&mut Scene>,
+        scene: &mut Scene,
         engine_updates: &mut EngineUpdates,
     ) -> io::Result<()> {
         let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
@@ -98,12 +101,22 @@ impl State {
             "sdf" => {
                 let mut m: MoleculeSmall = Sdf::load(path)?.try_into()?;
                 m.common.update_path(path);
-                Ok(MoleculeGeneric::Ligand(m))
+
+                if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
+                    Ok(MoleculeGeneric::Pocket(m.common.into()))
+                } else {
+                    Ok(MoleculeGeneric::Ligand(m))
+                }
             }
             "mol2" => {
                 let mut m: MoleculeSmall = Mol2::load(path)?.try_into()?;
                 m.common.update_path(path);
-                Ok(MoleculeGeneric::Ligand(m))
+
+                if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
+                    Ok(MoleculeGeneric::Pocket(m.common.into()))
+                } else {
+                    Ok(MoleculeGeneric::Ligand(m))
+                }
             }
             "xyz" => {
                 let mut m = MoleculeSmall::from_xyz(Xyz::load(path)?, path)?;
@@ -395,7 +408,12 @@ impl State {
                 Some(mol) => {
                     mol.to_sdf()?.save(path)?;
 
-                    self.update_history(path, OpenType::Ligand);
+                    let open_type = if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
+                        OpenType::Pocket
+                    } else {
+                        OpenType::Ligand
+                    };
+                    self.update_history(path, open_type);
 
                     // Save the open history.
                     self.update_save_prefs(false);
@@ -405,7 +423,14 @@ impl State {
             "mol2" => match self.active_mol() {
                 Some(mol) => {
                     mol.to_mol2()?.save(path)?;
-                    self.update_history(path, OpenType::Ligand);
+
+                    let open_type = if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
+                        OpenType::Pocket
+                    } else {
+                        OpenType::Ligand
+                    };
+
+                    self.update_history(path, open_type);
 
                     // Save the open history.
                     self.update_save_prefs(false);
@@ -512,8 +537,8 @@ impl State {
     }
 
     /// We run this at init. Loads all relevant files marked as "last opened".
-    pub fn load_last_opened(&mut self) {
-        let histories = self.to_save.open_history.clone(); // todo: I hate this.
+    pub fn load_last_opened(&mut self, scene: &mut Scene) {
+        let histories = self.to_save.open_history.clone();
 
         // This prevents loading duplicates
         // todo: When you place paths in mol.common etc, re-implement this.
@@ -527,7 +552,7 @@ impl State {
             match history.type_ {
                 OpenType::Peptide => {
                     if let Err(e) =
-                        self.open_mol_from_file(&history.path, None, &mut Default::default())
+                        self.open_mol_from_file(&history.path, scene, &mut Default::default())
                     {
                         handle_err(&mut self.ui, e.to_string());
                     } else {
@@ -536,21 +561,24 @@ impl State {
                         }
                     }
                 }
-                OpenType::Ligand | OpenType::NucleicAcid | OpenType::Lipid => {
-                    if let Err(e) =
-                        self.open_mol_from_file(&history.path, None, &mut Default::default())
-                    {
-                        handle_err(&mut self.ui, e.to_string());
-                    } else {
-                        if let Some(p) = &history.position {
-                            let i = self.ligands.len() - 1;
-                            self.ligands[i].common.move_to(p.clone());
-                        }
-                    }
+                OpenType::Ligand => {
+                    let len = self.ligands.len();
+                    self.last_opened_helper(history, scene, MolType::Ligand, len);
                 }
-                OpenType::Pocket => unimplemented!(), // todo
+                OpenType::Lipid => {
+                    let len = self.lipids.len();
+                    self.last_opened_helper(history, scene, MolType::Lipid, len);
+                }
+                OpenType::NucleicAcid => {
+                    let len = self.nucleic_acids.len();
+                    self.last_opened_helper(history, scene, MolType::NucleicAcid, len);
+                }
+                OpenType::Pocket => {
+                    let len = self.pockets.len();
+                    self.last_opened_helper(history, scene, MolType::Pocket, len);
+                }
                 OpenType::Map => {
-                    if let Err(e) = self.open_file(&history.path, None, &mut Default::default()) {
+                    if let Err(e) = self.open_file(&history.path, scene, &mut Default::default()) {
                         handle_err(&mut self.ui, e.to_string());
                     }
                 }
@@ -560,6 +588,25 @@ impl State {
                     }
                 }
                 OpenType::Trajectory => (), // A/R.
+            }
+        }
+    }
+
+    fn last_opened_helper(
+        &mut self,
+        history: &OpenHistory,
+        scene: &mut Scene,
+        mol_type: MolType,
+        len: usize,
+    ) {
+        if let Err(e) = self.open_mol_from_file(&history.path, scene, &mut Default::default()) {
+            handle_err(&mut self.ui, e.to_string());
+        } else {
+            if let Some(p) = &history.position {
+                match self.get_mol_mut(mol_type, len) {
+                    Some(mut m) => m.common_mut().move_to(p.clone()),
+                    None => eprintln!("Error loading last opened; missing mol"),
+                }
             }
         }
     }
@@ -607,15 +654,12 @@ impl State {
     pub fn load_mol_to_state(
         &mut self,
         mol: MoleculeGeneric,
-        mut scene: Option<&mut Scene>,
-        engine_updates: &mut EngineUpdates,
+        // mut scene: Option<&mut Scene>,
+        scene: &mut Scene,
+        updates: &mut EngineUpdates,
         path: Option<&Path>,
     ) {
-        let mol_type = if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
-            MolType::Pocket
-        } else {
-            mol.mol_type()
-        };
+        let mol_type = mol.mol_type();
 
         let entity_class = mol_type.entity_type() as u32;
         let open_type = mol_type.to_open_type();
@@ -648,16 +692,17 @@ impl State {
                 let ident = m.common.ident.clone();
                 self.peptide = Some(m);
 
-                if let Some(ref mut s) = scene {
-                    draw_peptide(self, s);
-                }
+                // if let Some(ref mut s) = scene {
+                draw_peptide(self, scene);
+                // }
 
                 (ident, centroid)
             }
             MoleculeGeneric::Ligand(mut mol) => {
-                if let Some(ref mut s) = scene {
-                    move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                }
+                // if let Some(ref mut s) = scene {
+                // move_mol_to_cam(&mut mol.common_mut(), &s.camera);
+                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
+                // }
 
                 if let Some(p) = &self.ff_param_set.small_mol {
                     mol.update_ff_related(&mut self.mol_specific_params, p, false);
@@ -700,74 +745,84 @@ impl State {
                 self.ligands.push(mol);
 
                 // Make sure to draw *after* loaded into state.
-                if let Some(ref mut s) = scene {
-                    draw_all_ligs(self, s);
-                }
+                // if let Some(ref mut s) = scene {
+                // draw_all_ligs(self, s);
+                draw_all_ligs(self, scene);
+                // }
 
                 (ident, centroid)
             }
             MoleculeGeneric::NucleicAcid(mut mol) => {
-                if let Some(ref mut s) = scene {
-                    move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                }
+                // if let Some(ref mut s) = scene {
+                //     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
+                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
+                // }
 
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
 
                 self.nucleic_acids.push(mol);
 
-                if let Some(ref mut s) = scene {
-                    draw_all_nucleic_acids(self, s);
-                }
-
-                engine_updates.entities.push_class(entity_class);
+                // if let Some(ref mut s) = scene {
+                //     draw_all_nucleic_acids(self, s);
+                draw_all_nucleic_acids(self, scene);
+                // }
 
                 (ident, centroid)
             }
             MoleculeGeneric::Lipid(mut mol) => {
-                if let Some(ref mut s) = scene {
-                    move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                }
+                // if let Some(ref mut s) = scene {
+                //     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
+                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
+                // }
 
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
 
                 self.lipids.push(mol);
 
-                if let Some(ref mut s) = scene {
-                    draw_all_lipids(self, s);
-                }
+                // if let Some(ref mut s) = scene {
+                //     draw_all_lipids(self, s);
+                draw_all_lipids(self, scene);
+                // }
 
                 (ident, centroid)
             }
             MoleculeGeneric::Pocket(mut mol) => {
-                if let Some(ref mut s) = scene {
-                    move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                }
+                // if let Some(ref mut s) = scene {
+                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
+                // }
 
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
 
                 self.pockets.push(mol);
+                // todo: Warning! Only one pocket mesh is set up in our scene!
+                // if let Some(ref mut s) = scene {
+                // todo: Work this. Need scene avail here on initial load.
+                scene.meshes[MESH_POCKET] =
+                    self.pockets[self.pockets.len() - 1].surface_mesh.clone();
 
-                if let Some(ref mut s) = scene {
-                    draw_all_pockets(self, s);
-                }
+                updates.meshes = true;
+
+                draw_all_pockets(self, scene);
+                // }
 
                 (ident, centroid)
             }
         };
 
-        engine_updates.entities.push_class(entity_class);
+        updates.entities.push_class(entity_class);
 
         self.volatile.active_mol = Some((mol_type, mol_i));
         self.volatile.orbit_center = Some((mol_type, mol_i));
 
-        if let Some(ref mut s) = scene {
-            if let ControlScheme::Arc { center } = &mut s.input_settings.control_scheme {
-                *center = centroid.into();
-            }
+        // if let Some(ref mut s) = scene {
+        //     if let ControlScheme::Arc { center } = &mut s.input_settings.control_scheme {
+        if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
+            *center = centroid.into();
         }
+        // }
 
         if mol_type == MolType::Peptide {
             // Mark all other peptides as not last session.

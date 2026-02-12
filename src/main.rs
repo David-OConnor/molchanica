@@ -132,28 +132,6 @@ fn main() {
         };
     }
 
-    // We must have loaded prefs prior to this, so we know which file to open.
-    state.load_last_opened();
-
-    // todo trouble: It's somewhere around here, saving the inited-from-load atom posits, overwriting
-    // todo the previously-saved ones.
-
-    // todo: Workaround to allow us to apply params to the ligand once it's loaded. Unfortunate we have
-    // todo to double-load prefs.
-    state.load_prefs();
-
-    if let Some(mol) = &state.peptide {
-        let posit = state.to_save.per_mol[&mol.common.ident]
-            .docking_site
-            .site_center;
-        // state.update_docking_site(posit);
-    }
-
-    // todo: Consider if you want this default, and if you also want to add default Lipids etc.
-    if !state.ligands.is_empty() {
-        state.volatile.active_mol = Some((MolType::Ligand, 0));
-    }
-
     match load_lipid_templates() {
         Ok(t) => {
             state.templates.lipid = t;
@@ -191,7 +169,6 @@ fn main() {
     //     }
     // }
 
-    state.volatile.orca_avail = orca_avail();
     //
     // // todo: For now
     // for tgt in ["bbb_martins", "ld50_zhu", "solubility_aqsoldb", "herg"] {

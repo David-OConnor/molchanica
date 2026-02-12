@@ -8,6 +8,7 @@ use graphics::{
 };
 use lin_alg::f32::{Quaternion, Vec3};
 
+use crate::ui::util::init_with_scene;
 use crate::{
     cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
     docking::DockingSite,
@@ -197,10 +198,7 @@ pub fn render(mut state: State) {
         icon_path: Some("resources/icon.png".to_owned()),
     };
 
-    drawing::draw_peptide(&mut state, &mut scene);
-    wrappers::draw_all_ligs(&mut state, &mut scene);
-
-    set_flashlight(&mut scene);
+    init_with_scene(&mut state, &mut scene);
 
     let msaa_samples = state.to_save.msaa as u8 as u32;
 

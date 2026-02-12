@@ -57,6 +57,7 @@ use crate::{
 };
 
 pub const POCKET_METADATA_KEY: &str = "is_pocket";
+pub const POCKET_METADATA_VAL: &str = "true";
 
 // todo: Experimenting
 pub trait MolGenericTrait {
@@ -200,7 +201,10 @@ impl<'a> MolGenericRef<'a> {
             Self::Pocket(p) => {
                 // Mark the metadata so we know when loading to handle this as a pocket.
                 let mut metadata = p.common.metadata.clone();
-                metadata.insert(POCKET_METADATA_KEY.to_string(), String::new());
+                metadata.insert(
+                    POCKET_METADATA_KEY.to_string(),
+                    POCKET_METADATA_VAL.to_string(),
+                );
 
                 Ok(MoleculeSmall {
                     common: MoleculeCommon {
@@ -233,7 +237,10 @@ impl<'a> MolGenericRef<'a> {
             Self::Pocket(p) => {
                 // Mark the metadata so we know when loading to handle this as a pocket.
                 let mut metadata = p.common.metadata.clone();
-                metadata.insert(POCKET_METADATA_KEY.to_string(), String::new());
+                metadata.insert(
+                    POCKET_METADATA_KEY.to_string(),
+                    POCKET_METADATA_VAL.to_string(),
+                );
 
                 Ok(MoleculeSmall {
                     common: MoleculeCommon {
@@ -254,7 +261,10 @@ impl<'a> MolGenericRef<'a> {
             Self::Pocket(p) => {
                 // Mark the metadata so we know when loading to handle this as a pocket.
                 let mut metadata = p.common.metadata.clone();
-                metadata.insert(POCKET_METADATA_KEY.to_string(), String::new());
+                metadata.insert(
+                    POCKET_METADATA_KEY.to_string(),
+                    POCKET_METADATA_VAL.to_string(),
+                );
 
                 Ok(MoleculeSmall {
                     common: MoleculeCommon {
@@ -375,9 +385,9 @@ impl MoleculePeptide {
         metadata: HashMap<String, String>,
         path: Option<PathBuf>,
     ) -> Self {
-        let (center, size) = mol_center_size(&atoms);
+        let start = Instant::now();
 
-        println!("Loading atoms into mol...");
+        let (center, size) = mol_center_size(&atoms);
 
         let mut result = Self {
             // We create bonds only after
@@ -409,7 +419,6 @@ impl MoleculePeptide {
 
         // Ideally, alternate conformations should go here, but we place them in from_mmcif
         // so they can be added prior to Hydrogens.
-
         result
     }
 
