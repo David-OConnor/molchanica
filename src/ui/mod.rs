@@ -744,7 +744,7 @@ fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> EngineUpdates {
-    let mut engine_updates = EngineUpdates::default();
+    let mut updates = EngineUpdates::default();
 
     // Checks each frame; takes action based on time since last save.
     check_prefs_save(state);
@@ -761,7 +761,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
     // For getting DT for certain buttons when held. Does not seem to be the same as the 3D render DT.
     let start = Instant::now();
 
-    sidebar(state, scene, &mut redraw, &mut engine_updates, ctx);
+    sidebar(state, scene, &mut redraw, &mut updates, ctx);
 
     let out_main_panel = TopBottomPanel::top("0").show(ctx, |ui| {
         ui.spacing_mut().slider_width = 120.;
@@ -769,21 +769,21 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         handle_input(
             state,
             ui,
-            &mut engine_updates,
+            &mut updates,
             scene,
         );
 
         if state.volatile.operating_mode == OperatingMode::MolEditor {
-            mol_editor::editor(state, scene, &mut engine_updates, ui);
+            mol_editor::editor(state, scene, &mut updates, ui);
 
-            if let Err(e) = update_file_dialogs(state, scene, ui, &mut engine_updates) {
+            if let Err(e) = update_file_dialogs(state, scene, ui, &mut updates) {
                 handle_err(&mut state.ui, format!("Problem saving file: {e:?}"));
             }
 
             state.mol_editor.md_step(&state.dev, &mut scene.entities, &state.ui,
-                                     &mut engine_updates, state.volatile.mol_manip.mode, );
+                                     &mut updates, state.volatile.mol_manip.mode, );
 
-            load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut engine_updates);
+            load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
 
             return;
         }
@@ -803,17 +803,17 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             }
 
             if ui.button(RichText::new("Editor").color(COLOR_HIGHLIGHT)).clicked() {
-                enter_edit_mode(state, scene, &mut engine_updates);
+                enter_edit_mode(state, scene, &mut updates);
             }
 
             let metadata_loaded = false; // avoids borrow error.
 
             {
                 let mut close = false;
-                display_mol_data_peptide(state, scene, ui, &mut redraw.peptide, &mut redraw.ligand, &mut close, &mut engine_updates);
+                display_mol_data_peptide(state, scene, ui, &mut redraw.peptide, &mut redraw.ligand, &mut close, &mut updates);
 
                 if close {
-                    close_peptide(state, scene, &mut engine_updates);
+                    close_peptide(state, scene, &mut updates);
                 }
             }
 
@@ -984,7 +984,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         &ident,
                         state,
                         scene,
-                        &mut engine_updates,
+                        &mut updates,
                         &mut redraw.peptide,
                         &mut reset_cam,
                     );
@@ -996,7 +996,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
                 if button_clicked || enter_pressed {
                     let db_input = &state.ui.db_input.clone(); // Avoids a double borrow.
-                    state.load_geostd_mol_data(&db_input, true, true, &mut engine_updates, scene);
+                    state.load_geostd_mol_data(&db_input, true, true, &mut updates, scene);
 
                     state.ui.db_input = String::new();
                 }
@@ -1006,7 +1006,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 if button_clicked || enter_pressed {
                     match load_sdf_drugbank(&state.ui.db_input) {
                         Ok(mol) => {
-                            open_lig_from_input(state, mol, scene, &mut engine_updates);
+                            open_lig_from_input(state, mol, scene, &mut updates);
                             redraw.ligand = true;
                             // reset_cam = true;
                         }
@@ -1023,7 +1023,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 if button_clicked || enter_pressed {
                     match load_sdf_pubchem(cid) {
                         Ok(mol) => {
-                            open_lig_from_input(state, mol, scene, &mut engine_updates);
+                            open_lig_from_input(state, mol, scene, &mut updates);
                             redraw.ligand = true;
                             // reset_cam = true;
                         }
@@ -1046,7 +1046,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                 // todo: DRY with the other pubchem branch above.
                                 match load_sdf_pubchem(c[0]) {
                                     Ok(mol) => {
-                                        open_lig_from_input(state, mol, scene, &mut engine_updates);
+                                        open_lig_from_input(state, mol, scene, &mut updates);
                                         redraw.ligand = true;
                                         // reset_cam = true;
 
@@ -1084,7 +1084,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                 &ident,
                                 state,
                                 scene,
-                                &mut engine_updates,
+                                &mut updates,
                                 &mut redraw.peptide,
                                 &mut reset_cam,
                             );
@@ -1136,12 +1136,12 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         }
 
         ui.horizontal_wrapped(|ui| {
-            cam_controls(scene, state, &mut engine_updates, ui);
-            cam_snapshots(state, scene, &mut engine_updates, ui);
+            cam_controls(scene, state, &mut updates, ui);
+            cam_snapshots(state, scene, &mut updates, ui);
         });
 
         ui.horizontal(|ui| {
-            view_settings(state, scene, &mut engine_updates, &mut redraw, ui);
+            view_settings(state, scene, &mut updates, &mut redraw, ui);
 
             ui.add_space(COL_SPACING);
 
@@ -1152,10 +1152,10 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
         chain_selector(state, &mut redraw.peptide, ui);
 
-        mol_type_toolbars(state, scene, &mut engine_updates, ui);
+        mol_type_toolbars(state, scene, &mut updates, ui);
 
         if state.ui.ui_vis.dynamics {
-            md_setup(state, scene, &mut engine_updates, ui);
+            md_setup(state, scene, &mut updates, ui);
         }
         if state.ui.ui_vis.orca {
             orca_input(state, &mut redraw.ligand, ui);
@@ -1192,7 +1192,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         draw_cli(
             state,
             scene,
-            &mut engine_updates,
+            &mut updates,
             &mut redraw,
             &mut reset_cam,
             ui,
@@ -1212,33 +1212,33 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         //     // }));
         // }
 
-        load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut engine_updates);
+        load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
 
         // -------UI above; clean-up items (based on flags) below
 
         if close_active_mol {
             if let Some((mol_type, i)) = state.volatile.active_mol {
-                close_mol(mol_type, i, state, scene, &mut engine_updates);
+                close_mol(mol_type, i, state, scene, &mut updates);
             }
         }
 
-        if let Err(e) = update_file_dialogs(state, scene, ui, &mut engine_updates) {
+        if let Err(e) = update_file_dialogs(state, scene, ui, &mut updates) {
             handle_err(&mut state.ui, format!("Problem saving file: {e:?}"));
         }
 
         handle_redraw(
             state,
-            scene, &mut redraw, reset_cam, &mut engine_updates,
+            scene, &mut redraw, reset_cam, &mut updates,
         )
     });
 
     // todo: Experimenting
-    engine_updates.ui_reserved_px.1 = out_main_panel.response.rect.height();
+    updates.ui_reserved_px.1 = out_main_panel.response.rect.height();
 
     // todo: Appropriate place for this?
     if state.volatile.inputs_commanded.inputs_present() {
         set_flashlight(scene);
-        engine_updates.lighting = true;
+        updates.lighting = true;
     }
 
     // We perform init items here that rely on the scene, or UI context.
@@ -1246,11 +1246,11 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         init_with_scene(state, scene, ctx);
     }
 
-    handle_scene_flags(state, scene, &mut engine_updates);
-    handle_thread_rx(state);
+    handle_scene_flags(state, scene, &mut updates);
+    handle_thread_rx(state, scene, &mut updates);
 
     // Run one or more MD steps, if a MD computation is in progress.
-    state.md_step(scene, &mut engine_updates);
+    state.md_step(scene, &mut updates);
 
     state.ui.dt_render = start.elapsed().as_secs_f32();
 
@@ -1260,7 +1260,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         ctx.request_repaint();
     }
 
-    engine_updates
+    updates
 }
 
 pub fn flag_btn(val: &mut bool, label: &str, hover_text: &str, ui: &mut Ui) {

@@ -12,7 +12,7 @@ use na_seq::Element::*;
 
 use crate::{
     molecules::{Atom, Bond, common::MoleculeCommon, rotatable_bonds::RotatableBond},
-    sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
 
 /// Describes a small molecule by features practical for description and characterization.

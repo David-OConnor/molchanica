@@ -599,12 +599,6 @@ pub fn redraw(
     manip_mode: ManipMode,
     num_ligs: usize,
 ) {
-    entities.retain(|e| {
-        e.class != EntityClass::Ligand as u32
-            && e.class != EntityClass::Pharmacophore as u32
-            && e.class != EntityClass::Pocket as u32
-    });
-
     *entities = Vec::new();
 
     entities.extend(draw_mol(
@@ -621,7 +615,8 @@ pub fn redraw(
         entities.extend(draw_pocket(
             p,
             hydrogen_bonds,
-            &Visibility::default(),
+            &mol.common.atom_posits,
+            &ui.visibility,
             &Selection::None,
         ));
     }

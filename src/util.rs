@@ -4,6 +4,8 @@
 
 use std::{
     process::{Command, Stdio},
+    sync::mpsc,
+    thread,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -38,10 +40,10 @@ use crate::{
     },
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
-    render::{Color, MESH_SECONDARY_STRUCTURE, MESH_SOLVENT_SURFACE, set_flashlight},
-    sa_surface,
-    sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    render::{Color, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE, set_flashlight},
     selection::{Selection, ViewSelLevel},
+    sfc_mesh,
+    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
 };
 
@@ -875,7 +877,7 @@ pub fn handle_scene_flags(
                 .map(|(i, a)| (mol.common.atom_posits[i].into(), a.element.vdw_radius()))
                 .collect();
 
-            scene.meshes[MESH_SOLVENT_SURFACE] = {
+            scene.meshes[MESH_PEP_SOLVENT_SURFACE] = {
                 let mut precision = state.to_save.sa_surface_precision;
 
                 // todo: Experimenting avoiding problems on large mols. We have problems with both surface
@@ -892,7 +894,25 @@ pub fn handle_scene_flags(
                 make_sas_mesh(&atoms, SOLVENT_RAD, precision)
             };
 
-            sa_surface::update_sas_mesh_coloring(mol, &state.ui, &mut scene.meshes, engine_updates);
+            {
+                let (tx, rx) = mpsc::channel();
+                let mesh_for_thread = scene.meshes[MESH_PEP_SOLVENT_SURFACE].clone();
+                let mol_for_thread = mol.common.clone();
+                let coloring = state.ui.mesh_coloring;
+
+                thread::spawn(move || {
+                    let mut updates = EngineUpdates::default();
+                    let colors = sfc_mesh::update_mesh_coloring(
+                        &mesh_for_thread,
+                        &mol_for_thread,
+                        coloring,
+                        &mut updates,
+                    );
+                    let _ = tx.send(colors);
+                });
+
+                state.volatile.thread_receivers.peptide_mesh_coloring = Some(rx);
+            }
 
             // We draw the molecule here
             if matches!(
@@ -915,8 +935,25 @@ pub fn handle_scene_flags(
     if state.volatile.flags.update_sas_coloring
         && let Some(mol) = &state.peptide
     {
-        sa_surface::update_sas_mesh_coloring(mol, &state.ui, &mut scene.meshes, engine_updates);
         state.volatile.flags.update_sas_coloring = false;
+
+        let (tx, rx) = mpsc::channel();
+        let mesh_for_thread = scene.meshes[MESH_PEP_SOLVENT_SURFACE].clone();
+        let mol_for_thread = mol.common.clone();
+        let coloring = state.ui.mesh_coloring;
+
+        thread::spawn(move || {
+            let mut eu = EngineUpdates::default();
+            let colors = sfc_mesh::update_mesh_coloring(
+                &mesh_for_thread,
+                &mol_for_thread,
+                coloring,
+                &mut eu,
+            );
+            let _ = tx.send(colors);
+        });
+
+        state.volatile.thread_receivers.peptide_mesh_coloring = Some(rx);
     }
 }
 

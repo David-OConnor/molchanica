@@ -308,6 +308,17 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 }
             }
         }
+
+        if let Some(pocket) = &state.mol_editor.pocket {
+            ui.add_space(COL_SPACING);
+            if ui
+                .button("Use this pocket for pharmacophore")
+                .on_hover_text("Use the displayed pocket as part of the pharmacophore")
+                .clicked()
+            {
+                state.mol_editor.pocket = Some(pocket.clone());
+            }
+        }
     });
 }
 

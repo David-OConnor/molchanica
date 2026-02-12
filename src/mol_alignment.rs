@@ -60,7 +60,7 @@ use crate::{
     md::{build_dynamics, launch_md_energy_computation},
     mol_characterization::Ring,
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
-    sa_surface::{SOLVENT_RAD, make_sas_mesh},
+    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::State,
     util::rotate_about_point,
 };

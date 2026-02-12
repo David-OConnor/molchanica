@@ -56,6 +56,8 @@ use crate::{
     util::mol_center_size,
 };
 
+pub const POCKET_METADATA_KEY: &str = "is_pocket";
+
 // todo: Experimenting
 pub trait MolGenericTrait {
     fn common(&self) -> &MoleculeCommon;
@@ -119,6 +121,7 @@ pub enum MoleculeGeneric {
     Ligand(MoleculeSmall),
     NucleicAcid(MoleculeNucleicAcid),
     Lipid(MoleculeLipid),
+    Pocket(Pocket),
 }
 
 impl MoleculeGeneric {
@@ -129,6 +132,7 @@ impl MoleculeGeneric {
             Ligand(m) => &m.common,
             NucleicAcid(m) => &m.common,
             Lipid(m) => &m.common,
+            Pocket(m) => &m.common,
         }
     }
 
@@ -139,6 +143,7 @@ impl MoleculeGeneric {
             Ligand(m) => &mut m.common,
             NucleicAcid(m) => &mut m.common,
             Lipid(m) => &mut m.common,
+            Pocket(m) => &mut m.common,
         }
     }
 
@@ -149,6 +154,7 @@ impl MoleculeGeneric {
             Ligand(_) => MolType::Ligand,
             NucleicAcid(_) => MolType::NucleicAcid,
             Lipid(_) => MolType::Lipid,
+            Pocket(_) => MolType::Pocket,
         }
     }
 }
@@ -191,11 +197,20 @@ impl<'a> MolGenericRef<'a> {
     pub fn to_sdf(&self) -> io::Result<Sdf> {
         match self {
             Self::Small(l) => Ok(l.to_sdf()),
-            Self::Pocket(p) => Ok(MoleculeSmall {
-                common: p.common.clone(),
-                ..Default::default()
+            Self::Pocket(p) => {
+                // Mark the metadata so we know when loading to handle this as a pocket.
+                let mut metadata = p.common.metadata.clone();
+                metadata.insert(POCKET_METADATA_KEY.to_string(), String::new());
+
+                Ok(MoleculeSmall {
+                    common: MoleculeCommon {
+                        metadata,
+                        ..p.common.clone()
+                    },
+                    ..Default::default()
+                }
+                .to_sdf())
             }
-            .to_sdf()),
             _ => Err(io::Error::other("Not implemented")),
         }
     }
@@ -215,11 +230,20 @@ impl<'a> MolGenericRef<'a> {
     pub fn to_mol2(&self) -> io::Result<Mol2> {
         match self {
             Self::Small(l) => Ok(l.to_mol2()),
-            Self::Pocket(p) => Ok(MoleculeSmall {
-                common: p.common.clone(),
-                ..Default::default()
+            Self::Pocket(p) => {
+                // Mark the metadata so we know when loading to handle this as a pocket.
+                let mut metadata = p.common.metadata.clone();
+                metadata.insert(POCKET_METADATA_KEY.to_string(), String::new());
+
+                Ok(MoleculeSmall {
+                    common: MoleculeCommon {
+                        metadata,
+                        ..p.common.clone()
+                    },
+                    ..Default::default()
+                }
+                .to_mol2())
             }
-            .to_mol2()),
             _ => Err(io::Error::other("Not implemented")),
         }
     }
@@ -227,11 +251,20 @@ impl<'a> MolGenericRef<'a> {
     pub fn to_pdbqt(&self) -> io::Result<Pdbqt> {
         match self {
             Self::Small(l) => Ok(l.to_pdbqt()),
-            Self::Pocket(p) => Ok(MoleculeSmall {
-                common: p.common.clone(),
-                ..Default::default()
+            Self::Pocket(p) => {
+                // Mark the metadata so we know when loading to handle this as a pocket.
+                let mut metadata = p.common.metadata.clone();
+                metadata.insert(POCKET_METADATA_KEY.to_string(), String::new());
+
+                Ok(MoleculeSmall {
+                    common: MoleculeCommon {
+                        metadata,
+                        ..p.common.clone()
+                    },
+                    ..Default::default()
+                }
+                .to_pdbqt())
             }
-            .to_pdbqt()),
             _ => Err(io::Error::other("Not implemented")),
         }
     }

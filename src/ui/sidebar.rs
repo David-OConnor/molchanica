@@ -9,6 +9,8 @@ use crate::{
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
+    render::MESH_POCKET,
+    sfc_mesh::{apply_mesh_colors, update_mesh_coloring},
     state::{OperatingMode, State},
     therapeutic::pharmacophore::Pharmacophore,
     ui::{
@@ -498,14 +500,28 @@ pub(in crate::ui) fn sidebar(
                             pocket.rebuild_spheres();
                             pocket.regen_mesh_vol();
 
+                            scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
                             state.mol_editor.pocket = Some(pocket.clone());
                             state.mol_editor.pocket_i_in_state = Some(mol_i);
+
+                            {
+                                let colors = update_mesh_coloring(
+                                    &pocket.surface_mesh,
+                                    &pocket.common,
+                                    state.ui.mesh_coloring,
+                                    updates,
+                                );
+
+                                apply_mesh_colors(&mut pocket.surface_mesh, &colors);
+                                apply_mesh_colors(&mut scene.meshes[MESH_POCKET], &colors);
+                            }
 
                             state.mol_editor.update_h_bonds();
 
                             scene.entities.extend(draw_pocket(
                                 pocket,
                                 &state.mol_editor.h_bonds,
+                                &state.mol_editor.mol.common.atom_posits,
                                 &state.ui.visibility,
                                 &state.ui.selection,
                             ));

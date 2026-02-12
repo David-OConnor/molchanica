@@ -8,8 +8,15 @@ use bio_apis::{
     pubchem,
     rcsb::{FilesAvailable, PdbDataResults},
 };
+use graphics::{EngineUpdates, Scene};
 
-use crate::{molecules::MolIdent, state::State, therapeutic::TherapeuticProperties};
+use crate::{
+    molecules::MolIdent,
+    render::MESH_PEP_SOLVENT_SURFACE,
+    sfc_mesh::{MeshColors, apply_mesh_colors},
+    state::State,
+    therapeutic::TherapeuticProperties,
+};
 
 /// Contains receivers for threads. We use these for longer-running processes, as to
 /// not block the UI. For example, computations, and HTTP calls.
@@ -29,10 +36,11 @@ pub struct ThreadReceivers {
     pub therapeutic_properties_avail: Option<Receiver<(usize, TherapeuticProperties)>>,
     /// The first param is the index.
     pub amber_geostd_data_avail: Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
+    pub peptide_mesh_coloring: Option<Receiver<Option<MeshColors>>>,
 }
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
-pub fn handle_thread_rx(state: &mut State) {
+pub fn handle_thread_rx(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     if let Some(rx) = &mut state.volatile.thread_receivers.pubchem_properties_avail {
         match rx.try_recv() {
             Ok((ident, http_result)) => {
@@ -124,6 +132,18 @@ pub fn handle_thread_rx(state: &mut State) {
                 state.volatile.thread_receivers.amber_geostd_data_avail = None;
             }
 
+            Err(_) => {}
+        }
+    }
+
+    // Poll for completed mesh coloring from thread.
+    if let Some(rx) = &mut state.volatile.thread_receivers.peptide_mesh_coloring {
+        match rx.try_recv() {
+            Ok(colors) => {
+                apply_mesh_colors(&mut scene.meshes[MESH_PEP_SOLVENT_SURFACE], &colors);
+                updates.meshes = true;
+                state.volatile.thread_receivers.peptide_mesh_coloring = None;
+            }
             Err(_) => {}
         }
     }

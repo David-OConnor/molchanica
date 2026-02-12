@@ -12,12 +12,12 @@ use crate::{
     cam::move_mol_to_cam,
     drawing::{
         draw_peptide,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     md::launch_md,
     molecules::{
-        MolGenericTrait, MolType, MoleculeGeneric, MoleculePeptide, common::MoleculeCommon,
-        small::MoleculeSmall,
+        MolGenericTrait, MolType, MoleculeGeneric, MoleculePeptide, POCKET_METADATA_KEY,
+        common::MoleculeCommon, small::MoleculeSmall,
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
@@ -93,6 +93,8 @@ impl State {
         let extension = binding;
 
         let molecule = match extension.to_str().unwrap() {
+            // Note: We handle loading pockets from these files downstream,
+            // by parsing their metadata.
             "sdf" => {
                 let mut m: MoleculeSmall = Sdf::load(path)?.try_into()?;
                 m.common.update_path(path);
@@ -609,7 +611,12 @@ impl State {
         engine_updates: &mut EngineUpdates,
         path: Option<&Path>,
     ) {
-        let mol_type = mol.mol_type();
+        let mol_type = if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
+            MolType::Pocket
+        } else {
+            mol.mol_type()
+        };
+
         let entity_class = mol_type.entity_type() as u32;
         let open_type = mol_type.to_open_type();
 
@@ -729,6 +736,22 @@ impl State {
 
                 if let Some(ref mut s) = scene {
                     draw_all_lipids(self, s);
+                }
+
+                (ident, centroid)
+            }
+            MoleculeGeneric::Pocket(mut mol) => {
+                if let Some(ref mut s) = scene {
+                    move_mol_to_cam(&mut mol.common_mut(), &s.camera);
+                }
+
+                let centroid = mol.common.centroid();
+                let ident = mol.common.ident.clone();
+
+                self.pockets.push(mol);
+
+                if let Some(ref mut s) = scene {
+                    draw_all_pockets(self, s);
                 }
 
                 (ident, centroid)

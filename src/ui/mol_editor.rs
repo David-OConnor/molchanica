@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
-use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
+use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Mesh, Scene};
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
@@ -20,7 +20,10 @@ use crate::{
     mol_manip,
     mol_manip::ManipMode,
     molecules::{Bond, MolIdent, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
+    render::{MESH_PEP_SOLVENT_SURFACE, MESH_POCKET},
     selection::{Selection, ViewSelLevel},
+    sfc_mesh,
+    sfc_mesh::{apply_mesh_colors, update_mesh_coloring},
     state::{State, StateUi},
     ui,
     ui::{
@@ -29,7 +32,9 @@ use crate::{
         misc,
         misc::{active_color, section_box},
         mol_data::selected_data,
+        pharmacophore::pharmacophore_edit_tools,
         util::color_egui_from_f32,
+        view::mesh_coloring_selector,
     },
     util::{RedrawFlags, handle_err},
 };
@@ -107,7 +112,7 @@ fn change_el_button(
 pub(in crate::ui) fn editor(
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
     let mut redraw = false;
@@ -119,7 +124,7 @@ pub(in crate::ui) fn editor(
 
             // todo: The distances this function resets to may not be ideal for our use case
             // todo here. Adjust A/R.
-            cam_reset_controls(state, scene, ui, engine_updates, &mut cam_changed);
+            cam_reset_controls(state, scene, ui, updates, &mut cam_changed);
             // if ui.button("Reset cam").clicked() {
             //     scene.camera.position = lin_alg::f32::Vec3::new(0., 0., -INIT_CAM_DIST);
             //     scene.camera.orientation = Quaternion::new_identity();
@@ -187,6 +192,14 @@ pub(in crate::ui) fn editor(
                 &mut state.ui.visibility.hide_pockets,
                 "Pocket",
                 "Show or hide the pocket",
+                ui,
+                &mut redraw,
+            );
+
+            misc::toggle_btn_inv(
+                &mut state.ui.visibility.hide_h_bonds,
+                "H bonds",
+                "Show or hide hydrogen bonds. For example, between a pocket and the molecule being edited.",
                 ui,
                 &mut redraw,
             );
@@ -304,7 +317,7 @@ pub(in crate::ui) fn editor(
             if let Some(md) = &mut state.mol_editor.md_state {
                 md.minimize_energy(&state.dev, MAX_RELAX_ITERS, None); // todo: Iters A/R.
                 state.mol_editor.load_atom_posits_from_md(&mut scene.entities, &state.ui,
-                                                          engine_updates, state.volatile.mol_manip.mode, );
+                                                          updates, state.volatile.mol_manip.mode, );
             }
         }
 
@@ -321,7 +334,7 @@ pub(in crate::ui) fn editor(
                 state.mol_editor.mol.clone()
             );
 
-            exit_edit_mode(state, scene, engine_updates);
+            exit_edit_mode(state, scene, updates);
         }
 
         if let Some(mol_i) = state.mol_editor.mol_i_in_state && mol_i < state.ligands.len() {
@@ -339,7 +352,7 @@ pub(in crate::ui) fn editor(
                     state.ligands[mol_i].common.build_adjacency_list();
                     state.ligands[mol_i].common.reset_posits();
 
-                exit_edit_mode(state, scene, engine_updates);
+                exit_edit_mode(state, scene, updates);
             }
         }
 
@@ -348,12 +361,12 @@ pub(in crate::ui) fn editor(
             .on_hover_text("Exit the mol editor, discarding all unsaved changes.")
             .clicked()
         {
-            exit_edit_mode(state, scene, engine_updates);
+            exit_edit_mode(state, scene, updates);
         }
     });
 
     ui.horizontal(|ui| {
-        edit_tools(state, scene, ui, engine_updates, &mut redraw);
+        edit_tools(state, scene, ui, updates, &mut redraw);
 
         // todo: Show/hide this button A/R
         if ui
@@ -377,7 +390,7 @@ pub(in crate::ui) fn editor(
                         i,
                         &mut scene.entities,
                         &mut state.ui,
-                        engine_updates,
+                        updates,
                         state.volatile.mol_manip.mode,
                     );
                 }
@@ -388,7 +401,31 @@ pub(in crate::ui) fn editor(
         }
     });
 
-    ui::pharmacophore::pharmacophore_edit_tools(state, scene, ui, engine_updates, &mut redraw);
+    ui.horizontal(|ui| {
+        pharmacophore_edit_tools(state, scene, ui, updates, &mut redraw);
+
+        ui.add_space(COL_SPACING);
+
+        if let Some(pocket) = &mut state.mol_editor.pocket {
+            let mut updated_coloring = false;
+            mesh_coloring_selector(&mut state.ui.mesh_coloring, &mut updated_coloring, ui);
+
+            if updated_coloring {
+                let colors = update_mesh_coloring(
+                    &pocket.surface_mesh,
+                    &pocket.common,
+                    state.ui.mesh_coloring,
+                    updates,
+                );
+
+                apply_mesh_colors(&mut pocket.surface_mesh, &colors);
+                apply_mesh_colors(&mut scene.meshes[MESH_POCKET], &colors);
+                updates.meshes = true;
+
+                redraw = true;
+            }
+        }
+    });
 
     ui.horizontal(|ui| {
         for ident in &state.mol_editor.mol.idents {
@@ -458,7 +495,7 @@ pub(in crate::ui) fn editor(
             state.volatile.mol_manip.mode,
             0,
         );
-        engine_updates.entities = EntityUpdate::All;
+        updates.entities = EntityUpdate::All;
     }
 }
 

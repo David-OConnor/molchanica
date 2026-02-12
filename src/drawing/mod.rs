@@ -29,11 +29,11 @@ use crate::{
     },
     reflection::DensityPt,
     render::{
-        Color, MESH_BOND, MESH_CUBE, MESH_DENSITY_SURFACE, MESH_POCKET, MESH_SECONDARY_STRUCTURE,
-        MESH_SOLVENT_SURFACE, MESH_SPHERE_HIGHRES, MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES,
+        Color, MESH_BOND, MESH_CUBE, MESH_DENSITY_SURFACE, MESH_PEP_SOLVENT_SURFACE, MESH_POCKET,
+        MESH_SECONDARY_STRUCTURE, MESH_SPHERE_HIGHRES, MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES,
     },
-    sa_surface::{SOLVENT_RAD, make_sas_mesh},
     selection::{Selection, ViewSelLevel},
+    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{OperatingMode, ResColoring, State, StateUi, Visibility},
     util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center},
 };
@@ -921,12 +921,12 @@ fn draw_dots(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
         return;
     }
 
-    if scene.meshes[MESH_SOLVENT_SURFACE].vertices.len() > 1_000_000 {
+    if scene.meshes[MESH_PEP_SOLVENT_SURFACE].vertices.len() > 1_000_000 {
         eprintln!("Not drawing dots due to a large-mol rendering problem.");
         return;
     }
 
-    for vertex in &scene.meshes[MESH_SOLVENT_SURFACE].vertices {
+    for vertex in &scene.meshes[MESH_PEP_SOLVENT_SURFACE].vertices {
         let mut entity = Entity::new(
             MESH_SURFACE_DOT,
             Vec3::from_slice(&vertex.position).unwrap(),
@@ -950,7 +950,7 @@ fn draw_sa_surface(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene
     }
 
     let mut ent = Entity::new(
-        MESH_SOLVENT_SURFACE,
+        MESH_PEP_SOLVENT_SURFACE,
         Vec3::new_zero(),
         Quaternion::new_identity(),
         1.,
@@ -1756,16 +1756,17 @@ pub fn draw_pharmacophore_hint_sites(
 }
 
 pub fn draw_pocket(
-    // entities: &mut Vec<Entity>,
     pocket: &Pocket,
     hydrogen_bonds: &[HydrogenBondTwoMols],
+    // Lig posits are for drawing Hydrogen bonds.
+    lig_posits: &[Vec3F64],
     visibility: &Visibility,
     selection: &Selection,
 ) -> Vec<Entity> {
-    let mut result = Vec::new();
+    let mut res = Vec::new();
 
     if visibility.hide_pockets {
-        return result;
+        return res;
     }
 
     // todo: For now, drawing the spheres we use to compute exclusion.
@@ -1781,7 +1782,7 @@ pub fn draw_pocket(
         );
 
         ent.class = EntityClass::Pocket as u32;
-        result.push(ent);
+        res.push(ent);
     }
 
     let mut color_mesh = (0.3, 0.4, 0.5);
@@ -1811,7 +1812,46 @@ pub fn draw_pocket(
     ent.class = EntityClass::Pocket as u32;
     ent.opacity = POCKET_SURFACE_OPACITY;
 
-    result.push(ent);
+    if !visibility.hide_h_bonds {
+        for bond in hydrogen_bonds {
+            let posit_donor = if bond.donor.0 == 0 {
+                if bond.donor.1 > lig_posits.len() {
+                    eprintln!("Out of bounds error on drawing H bond (lig)");
+                    continue;
+                }
+                lig_posits[bond.donor.1]
+            } else {
+                if bond.donor.1 > pocket.common.atom_posits.len() {
+                    eprintln!("Out of bounds error on drawing H bond (pocket)");
+                    continue;
+                }
+                pocket.common.atom_posits[bond.donor.1]
+            };
 
-    result
+            let posit_acc = if bond.acceptor.0 == 0 {
+                if bond.acceptor.1 > lig_posits.len() {
+                    eprintln!("Out of bounds error on drawing H bond (lig)");
+                    continue;
+                }
+                lig_posits[bond.acceptor.1]
+            } else {
+                if bond.acceptor.1 > pocket.common.atom_posits.len() {
+                    eprintln!("Out of bounds error on drawing H bond (pocket)");
+                    continue;
+                }
+                pocket.common.atom_posits[bond.acceptor.1]
+            };
+
+            res.extend(draw_hydrogen_bond(
+                posit_donor.into(),
+                posit_acc.into(),
+                MolType::Pocket,
+                bond.strength,
+            ));
+        }
+    }
+
+    res.push(ent);
+
+    res
 }

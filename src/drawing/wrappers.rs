@@ -230,7 +230,8 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol =
-            drawing::draw_pocket(mol, &[], &state.ui.visibility, &state.ui.selection);
+            // No H bonds or lig atoms in this context.
+            drawing::draw_pocket(mol, &[], &[], &state.ui.visibility, &state.ui.selection);
 
         // Note: This may already be set.
         let end_i_mol = start_i_mol + ents_this_mol.len();
@@ -442,7 +443,8 @@ pub fn update_single_pocket_inplace(i: usize, state: &State, scene: &mut Scene) 
 
     // Here we copy+paste+modify update_inplace_inner; we don't use "draw_mol" for pockets.
 
-    // todo: Hydrogen bonds
-    let ents_updated = drawing::draw_pocket(mol, &[], &state.ui.visibility, &state.ui.selection);
+    // No lig atoms or H bonds in this context.
+    let ents_updated =
+        drawing::draw_pocket(mol, &[], &[], &state.ui.visibility, &state.ui.selection);
     update_inplace_inner_part2(ent_i_start, ent_i_end, ents_updated, scene);
 }

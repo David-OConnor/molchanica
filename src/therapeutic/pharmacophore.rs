@@ -12,19 +12,22 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     mol_characterization::{MolCharacterization, RingType},
-    molecules::{HydrogenBondTwoMols, pocket::PocketVolume, small::MoleculeSmall},
+    molecules::{
+        HydrogenBondTwoMols,
+        pocket::{Pocket, PocketVolume},
+        small::MoleculeSmall,
+    },
     render::Color,
 };
-
-#[derive(Clone, Debug)]
-pub struct PocketBinding {
-    /// Indices of these molecules.
-    pub pocket: usize,
-    pub ligand: usize,
-    // pub pocket: Pocket,
-    // pub ligand: MoleculeSmall
-    pub hydrogen_bonds: Vec<HydrogenBondTwoMols>,
-}
+// #[derive(Clone, Debug)]
+// pub struct PocketBinding {
+//     /// Indices of these molecules.
+//     pub pocket: usize,
+//     pub ligand: usize,
+//     // pub pocket: Pocket,
+//     // pub ligand: MoleculeSmall
+//     pub hydrogen_bonds: Vec<HydrogenBondTwoMols>,
+// }
 
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode, Hash, PartialOrd, Ord)] // Default is for the UI
@@ -298,7 +301,7 @@ pub struct PharmacophoreFeature {
     // Note: For these projections, we can't easily add them as an inner value of FeatureType,
     // without adding a way to hash and sort them for certain uses.
     pub posit_projected: Option<Vec3>,
-    /// Used when associating with a specific atom.
+    /// Used when associating with a specific atom and molecule.
     pub atom_i: Option<Vec<usize>>,
     pub atom_i_projected: Option<usize>,
     pub strength: f32,
@@ -357,12 +360,17 @@ impl PharmacophoreFeature {
     }
 }
 
+/// We don't have a Ligand field, as this pharmacophore may exist *as part of the ligand*.
 #[derive(Clone, Debug, Default, Encode, Decode)]
 pub struct Pharmacophore {
     pub name: String,
     pub features: Vec<PharmacophoreFeature>,
     pub feature_relations: Vec<FeatureRelation>,
-    pub excluded_volume: Option<PocketVolume>,
+    // pub excluded_volume: Option<PocketVolume>,
+    /// We mainly operate on the pocket's excluded volume, but associate with the whole pocket
+    /// as its mesh is useful for visualzation, and atoms/bonds useful for moving and computing
+    /// Hydrogen bonds with the ligand in the pharmacophore.
+    pub pocket: Option<Pocket>,
 }
 
 impl Pharmacophore {
@@ -466,12 +474,12 @@ impl Pharmacophore {
             score *= match_frac / 0.4;
         }
 
-        if let Some(ev) = &self.excluded_volume {
+        if let Some(pocket) = &self.pocket {
             // Penalize if any ligand atom is inside excluded volume.
             // For screening: cheap boolean check is often enough.
             let mut inside_count = 0usize;
             for &p in atom_posits {
-                if ev.inside(p) {
+                if pocket.volume.inside(p) {
                     inside_count += 1;
                 }
             }

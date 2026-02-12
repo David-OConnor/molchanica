@@ -23,12 +23,13 @@ use lin_alg::{
 use crate::{
     drawing::wrappers::draw_all_pockets,
     molecules::{
-        Atom, MoleculePeptide,
+        Atom, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide,
         common::{MoleculeCommon, reassign_bond_indices},
+        lipid::MoleculeLipid,
         small::MoleculeSmall,
     },
     render::MESH_POCKET,
-    sa_surface::make_sas_mesh,
+    sfc_mesh::make_sas_mesh,
     state::State,
 };
 
@@ -76,6 +77,72 @@ pub struct Pocket {
     // todo having both here is fine for now, and we will settle out hwo the
     // todo state works organically.
     pub volume: PocketVolume,
+}
+
+// todo: Consider ditching this: Instead, use SDF and/or Mol2 for the atoms, and re-generate
+// todo the rest.
+impl Encode for Pocket {
+    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+        self.mesh_orientation.encode(encoder)?;
+        self.mesh_pivot.encode(encoder)?;
+        self.surface_mesh.encode(encoder)?;
+        self.volume.encode(encoder)?;
+        Ok(())
+    }
+}
+
+impl<Context> Decode<Context> for Pocket {
+    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
+        let mesh_orientation = Quaternion::decode(decoder)?;
+        let mesh_pivot = Vec3F32::decode(decoder)?;
+        let surface_mesh = Mesh::decode(decoder)?;
+        let volume = PocketVolume::decode(decoder)?;
+
+        Ok(Self {
+            common: MoleculeCommon::default(),
+            mesh_orientation,
+            mesh_pivot,
+            surface_mesh,
+            volume,
+        })
+    }
+}
+
+impl MolGenericTrait for Pocket {
+    fn common(&self) -> &MoleculeCommon {
+        &self.common
+    }
+
+    fn common_mut(&mut self) -> &mut MoleculeCommon {
+        &mut self.common
+    }
+
+    fn to_ref(&self) -> MolGenericRef<'_> {
+        MolGenericRef::Pocket(self)
+    }
+
+    fn mol_type(&self) -> MolType {
+        MolType::Lipid
+    }
+}
+
+impl<'de, Context> BorrowDecode<'de, Context> for Pocket {
+    fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let mesh_orientation = <Quaternion as BorrowDecode<'de, Context>>::borrow_decode(decoder)?;
+        let mesh_pivot = <Vec3F32 as BorrowDecode<'de, Context>>::borrow_decode(decoder)?;
+        let surface_mesh = <Mesh as BorrowDecode<'de, Context>>::borrow_decode(decoder)?;
+        let volume = <PocketVolume as BorrowDecode<'de, Context>>::borrow_decode(decoder)?;
+
+        Ok(Self {
+            common: MoleculeCommon::default(),
+            mesh_orientation,
+            mesh_pivot,
+            surface_mesh,
+            volume,
+        })
+    }
 }
 
 impl Pocket {

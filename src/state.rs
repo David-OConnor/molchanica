@@ -34,6 +34,7 @@ use crate::{
     orca::StateOrca,
     prefs::ToSave,
     selection::{Selection, ViewSelLevel},
+    sfc_mesh::MeshColoring,
     therapeutic::{
         DatasetTdc,
         infer::Infer,
@@ -371,9 +372,7 @@ pub struct StateUi {
     pub popup: PopupState,
     pub md: StateUiMd,
     pub ph_input: String,
-    /// If true, the surface mesh is colored according to the atom or residue colors closest to
-    /// it. (E.g. CPK, by partial charge, by hydrophobicity etc). If false, it's a solid color.
-    pub color_surface_mesh: bool,
+    pub mesh_coloring: MeshColoring,
     /// Color ligands by molecule, to contrast.
     pub color_by_mol: bool,
     // todo: Dedicated pharmacophore sub-state A/R.

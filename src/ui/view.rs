@@ -1,4 +1,4 @@
-use egui::{ComboBox, RichText, Slider, Ui};
+use egui::{ComboBox, RichText, Slider, Ui, Widget};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 
 use crate::{
@@ -7,6 +7,7 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     molecules::MolType,
+    sfc_mesh::MeshColoring,
     state::State,
     ui::{
         COL_SPACING, DENS_ISO_MAX, DENS_ISO_MIN, misc,
@@ -48,18 +49,15 @@ pub fn view_settings(
                 .on_hover_text(help_text);
 
             if state.ui.mol_view != prev_view {
-redraw.set_all();
+                redraw.set_all();
             }
 
-            if state.ui.mol_view == MoleculeView::Surface {
-                let help_text = "If selected, the solvent-accessible surface will be colored according \
-                to the atoms closest to it. If not, it will display as a constant color.";
-                ui.label("Color sfc").on_hover_text(help_text);
-                if ui.checkbox(&mut state.ui.color_surface_mesh, "")
-                    .on_hover_text(help_text)
-                    .changed() {
-                    state.volatile.flags.update_sas_coloring = true;
-                }
+            if state.ui.mol_view == MoleculeView::Surface || !state.pockets.is_empty() {
+                mesh_coloring_selector(
+                    &mut state.ui.mesh_coloring,
+                    &mut state.volatile.flags.update_sas_coloring,
+                    ui,
+                );
             }
 
             ui.add_space(COL_SPACING);
@@ -117,7 +115,7 @@ redraw.set_all();
 
             // Hanndle the other redraws.
             if state.ui.visibility.hide_hydrogen != hide_hydrogen_prev {
-redraw.set_all();
+                redraw.set_all();
             }
 
             // We allow toggling water now regardless of hide hetero, as it's part of our MD sim.
@@ -229,7 +227,7 @@ redraw.set_all();
                     .clicked()
                 {
                     state.ui.visibility.dim_peptide = !state.ui.visibility.dim_peptide;
-                    redraw.peptide =  true;
+                    redraw.peptide = true;
                 }
             }
 
@@ -341,4 +339,31 @@ pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
     let tooltip =
         "Show or hide the ORCA (Quantum mechanics package) section. Has powerful, but slow tools";
     vis_helper(&mut state.ui.ui_vis.orca, "ORCA", tooltip, ui);
+}
+
+pub fn mesh_coloring_selector(coloring: &mut MeshColoring, update_flag: &mut bool, ui: &mut Ui) {
+    let help_text = "If selected, the solvent-accessible surface will be colored according \
+                to the atoms closest to it. If not, it will display as a constant color.";
+    ui.label("Color sfc:").on_hover_text(help_text);
+
+    let prev = *coloring;
+    ComboBox::from_id_salt(9912)
+        .width(80.)
+        .selected_text(coloring.to_string())
+        .show_ui(ui, |ui| {
+            for v in [
+                MeshColoring::Solid,
+                MeshColoring::Element,
+                MeshColoring::PartialCharge,
+                MeshColoring::Lipophilicity,
+            ] {
+                ui.selectable_value(coloring, v, v.to_string());
+            }
+        })
+        .response
+        .on_hover_text(help_text);
+
+    if *coloring != prev {
+        *update_flag = true;
+    }
 }

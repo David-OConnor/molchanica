@@ -30,6 +30,7 @@ use crate::{
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     molecules::MolIdent,
     selection::{Selection, ViewSelLevel},
+    sfc_mesh::MeshColoring,
     state::{
         CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, State, UiVisibility,
         Visibility,
@@ -181,7 +182,7 @@ pub struct ToSave {
     pub save_flag: bool,
     pub lipid: LipidUi,
     pub nucleic_acid: NucleicAcidUi,
-    pub color_surface_mesh: bool,
+    pub mesh_coloring: MeshColoring,
 }
 
 impl Default for ToSave {
@@ -214,7 +215,7 @@ impl Default for ToSave {
             save_flag: false,
             lipid: Default::default(),
             nucleic_acid: Default::default(),
-            color_surface_mesh: Default::default(),
+            mesh_coloring: Default::default(),
         }
     }
 }
@@ -330,7 +331,7 @@ impl State {
         self.to_save.nearby_dist_thresh = self.ui.nearby_dist_thresh;
         self.to_save.visibility = self.ui.visibility.clone();
         self.to_save.ui_visibility = self.ui.ui_vis.clone();
-        self.to_save.color_surface_mesh = self.ui.color_surface_mesh;
+        self.to_save.mesh_coloring = self.ui.mesh_coloring;
 
         self.to_save_prev = self.to_save.clone();
 
@@ -385,7 +386,7 @@ impl State {
         self.ui.movement_speed_input = self.to_save.movement_speed.to_string();
         self.ui.rotation_sens_input = self.to_save.rotation_sens.to_string();
         self.ui.mol_move_sens_input = self.to_save.mol_move_sens.to_string();
-        self.ui.color_surface_mesh = self.to_save.color_surface_mesh;
+        self.ui.mesh_coloring = self.to_save.mesh_coloring;
 
         println!("Done");
     }
