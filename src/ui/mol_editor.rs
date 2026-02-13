@@ -764,7 +764,6 @@ fn edit_tools(
                 );
                 *redraw = redraw_flags.ligand;
             }
-            // }
 
             if bond_mode {
                 if ui.button(RichText::new("⟳ Rot around bond").color(color_rotate))

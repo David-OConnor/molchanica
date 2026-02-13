@@ -3,10 +3,13 @@ use std::{collections::HashMap, path::Path};
 use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 
+use crate::mol_manip::ManipMode;
+use crate::molecules::MolType;
+use crate::util::RedrawFlags;
 use crate::{
     drawing,
     drawing::blend_color,
-    label,
+    label, mol_manip,
     selection::Selection,
     state::{PopupState, State},
     therapeutic::pharmacophore::{
@@ -310,6 +313,64 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
         }
 
         if let Some(pocket) = &state.mol_editor.pocket {
+            let mut color_move = COLOR_INACTIVE;
+            let mut color_rotate = COLOR_INACTIVE;
+
+            match state.volatile.mol_manip.mode {
+                ManipMode::Move((mol_type, _mol_i)) => {
+                    if mol_type == MolType::Pocket {
+                        color_move = COLOR_ACTIVE;
+                    }
+                }
+                ManipMode::Rotate((mol_type, _mol_i)) => {
+                    if mol_type == MolType::Pocket {
+                        color_rotate = COLOR_ACTIVE;
+                    }
+                }
+                ManipMode::None => (),
+            }
+
+            // dummy API interaction.
+            let mut redraw_flags = RedrawFlags::default();
+            redraw_flags.pocket = *redraw;
+            if ui
+                .button(RichText::new("↔ pocket").color(color_move))
+                .on_hover_text("Move the pocket relative to the molecule.")
+                .clicked()
+            {
+                mol_manip::set_manip(
+                    &mut state.volatile,
+                    &mut state.pockets,
+                    &mut state.to_save.save_flag,
+                    scene,
+                    &mut redraw_flags,
+                    &mut false,
+                    ManipMode::Move((MolType::Pocket, 0)),
+                    &Selection::AtomPocket((0, 0)),
+                    engine_updates,
+                );
+                *redraw = redraw_flags.pocket;
+            }
+
+            if ui
+                .button(RichText::new("⟳ pocket").color(color_move))
+                .on_hover_text("Rotate the pocket relative to the molecule.")
+                .clicked()
+            {
+                mol_manip::set_manip(
+                    &mut state.volatile,
+                    &mut state.pockets,
+                    &mut state.to_save.save_flag,
+                    scene,
+                    &mut redraw_flags,
+                    &mut false,
+                    ManipMode::Rotate((MolType::Pocket, 0)),
+                    &Selection::AtomPocket((0, 0)),
+                    engine_updates,
+                );
+                *redraw = redraw_flags.pocket;
+            }
+
             ui.add_space(COL_SPACING);
             if ui
                 .button("Use this pocket for pharmacophore")

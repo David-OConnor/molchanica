@@ -455,7 +455,9 @@ pub(in crate::ui) fn sidebar(
 
             ui.add_space(ROW_SPACING / 2.);
 
-            manip_toolbar(state, scene, redraw, ui, updates);
+            if state.volatile.operating_mode != OperatingMode::MolEditor {
+                manip_toolbar(state, scene, redraw, ui, updates);
+            }
 
             ui.add_space(ROW_SPACING / 2.);
             ui.separator();
