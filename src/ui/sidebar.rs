@@ -520,6 +520,7 @@ pub(in crate::ui) fn sidebar(
                                 &state.mol_editor.mol.common.atom_posits,
                                 &state.ui.visibility,
                                 &state.ui.selection,
+                                &state.volatile.mol_manip.mode,
                             ));
 
                             updates.meshes = true;

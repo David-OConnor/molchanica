@@ -124,7 +124,6 @@ pub fn handle_mol_manip_in_plane(
                                 *p += movement_vec;
                             }
                         } else {
-                            println!("Normal atom move mode in editor"); // todo temp
                             // `mol_i` = atom_i here.
                             mol.atom_posits[mol_i] += movement_vec;
                             mol.atoms[mol_i].posit = mol.atom_posits[mol_i];
@@ -523,41 +522,49 @@ pub fn set_manip(
 
     let op_mode = vol.operating_mode;
 
-    let (mut mol_type_active, mut i_active) = match op_mode {
+    // If in primary mode, the item to move is an entire molecule, indexec by the appropriate molecule set.
+    // In the mol editor, we are interested in the selected atom or bond. (Or the pocket)
+    let (mut mol_type_active, mut item_to_move_i) = match op_mode {
         OperatingMode::Primary => match vol.active_mol {
             Some(v) => v,
             None => return,
         },
         // In the editor mode, select the selected atom as the one to move.
-        OperatingMode::MolEditor => match &state.ui.selection {
-            Selection::AtomLig((_, i)) => (MolType::Ligand, *i),
-            Selection::AtomsLig((_, i)) => {
-                // todo: How should we handle this?
-                (MolType::Ligand, i[0])
-            }
-            // For rotating.
-            Selection::BondLig((_, i)) => (MolType::Ligand, *i),
-            Selection::AtomPocket((_, i)) => (MolType::Pocket, *i),
-            // Allow pocket manip without requiring a pocket atom selection.
-            _ => match mode {
-                ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _)) => {
-                    (MolType::Pocket, 0)
+        OperatingMode::MolEditor => {
+            if matches!(vol.active_mol, Some((MolType::Pocket, _))) {
+                (MolType::Pocket, 0)
+            } else {
+                match &state.ui.selection {
+                    Selection::AtomLig((_, i)) => (MolType::Ligand, *i),
+                    Selection::AtomsLig((_, i)) => {
+                        // todo: How should we handle this?
+                        (MolType::Ligand, i[0])
+                    }
+                    // Rotating around a bond.
+                    Selection::BondLig((_, i)) => (MolType::Ligand, *i),
+                    _ => return,
+                    // Allow pocket manip without requiring a pocket atom selection.
+                    // _ => match mode {
+                    //     ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _)) => {
+                    //         (MolType::Pocket, 0)
+                    //     }
+                    //     _ => return,
+                    // },
                 }
-                _ => return,
-            },
-        },
+            }
+        }
         OperatingMode::ProteinEditor => unimplemented!(),
     };
 
-    if matches!(
-        mode,
-        ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _))
-    ) && op_mode == OperatingMode::MolEditor
-    {
-        println!("Override: manip pocket in editor");
-        mol_type_active = MolType::Pocket;
-        i_active = 0;
-    }
+    // if matches!(
+    //     mode,
+    //     ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _))
+    // ) && op_mode == OperatingMode::MolEditor
+    // {
+    //     println!("Override: manip pocket in editor");
+    //     mol_type_active = MolType::Pocket;
+    //     i_active = 0;
+    // }
 
     let (move_active, rotate_active) = {
         let mut move_ = false;
@@ -566,12 +573,12 @@ pub fn set_manip(
         match vol.mol_manip.mode {
             ManipMode::None => (),
             ManipMode::Move((mol_type, mol_i)) => {
-                if mol_type == mol_type_active && mol_i == i_active {
+                if mol_type == mol_type_active && mol_i == item_to_move_i {
                     move_ = true;
                 }
             }
             ManipMode::Rotate((mol_type, mol_i)) => {
-                if mol_type == mol_type_active && mol_i == i_active {
+                if mol_type == mol_type_active && mol_i == item_to_move_i {
                     rotate = true;
                 }
             }
@@ -587,23 +594,23 @@ pub fn set_manip(
                 scene.input_settings.control_scheme = vol.control_scheme_prev;
                 vol.mol_manip.mode = ManipMode::None;
                 vol.mol_manip.pivot = None;
-                println!("Exiting manip"); // todo temp
+                println!("\nExiting manip\n"); // todo temp
 
                 if op_mode == OperatingMode::MolEditor {
                     *rebuild_md_editor = true;
                 }
             } else if rotate_active {
                 // Entering a move from rotation
-                vol.mol_manip.mode = ManipMode::Move((mol_type_active, i_active));
+                vol.mol_manip.mode = ManipMode::Move((mol_type_active, item_to_move_i));
             } else {
                 // Entering a move from no manip prior.
-                println!("Entering manip"); // todo temp
+                println!("\nEntering manip\n"); // todo temp
 
                 if scene.input_settings.control_scheme != ControlScheme::None {
                     vol.control_scheme_prev = scene.input_settings.control_scheme;
                 }
                 scene.input_settings.control_scheme = ControlScheme::None;
-                vol.mol_manip.mode = ManipMode::Move((mol_type_active, i_active));
+                vol.mol_manip.mode = ManipMode::Move((mol_type_active, item_to_move_i));
             };
         }
         ManipMode::Rotate(_) => {
@@ -616,22 +623,24 @@ pub fn set_manip(
                     *rebuild_md_editor = true;
                 }
             } else if move_active {
-                vol.mol_manip.mode = ManipMode::Rotate((mol_type_active, i_active));
+                vol.mol_manip.mode = ManipMode::Rotate((mol_type_active, item_to_move_i));
             } else {
                 if scene.input_settings.control_scheme != ControlScheme::None {
                     vol.control_scheme_prev = scene.input_settings.control_scheme;
                 }
                 scene.input_settings.control_scheme = ControlScheme::None;
-                vol.mol_manip.mode = ManipMode::Rotate((mol_type_active, i_active));
+                vol.mol_manip.mode = ManipMode::Rotate((mol_type_active, item_to_move_i));
             };
         }
         ManipMode::None => unreachable!(),
     }
 
+    println!("\nActive mol: {:?}", vol.active_mol); // todo temp
     // Once complete with manip on a pocket, rebuild the volume, representation.
     if let Some((mol_type, i)) = vol.active_mol
         && mol_type == MolType::Pocket
     {
+        println!("\nCleaning up the pocket post manip\n"); // todo temp
         let p = if op_mode == OperatingMode::MolEditor {
             if let Some(p_) = &mut state.mol_editor.pocket {
                 p_
@@ -643,7 +652,7 @@ pub fn set_manip(
             &mut state.pockets[i]
         };
 
-        p.reset_post_manip(&mut scene.meshes, updates);
+        p.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
         redraw.pocket = true;
     }
 

@@ -307,59 +307,96 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
             }
         }
 
+        // Pocket-related functionality.
         let mut copy_pocket_to_pharmacophore = false; // avoids dbl-borrow.
-        // if let Some(pocket) = &state.mol_editor.pocket {
         if state.mol_editor.pocket.is_some() {
-            let mut color_move = COLOR_INACTIVE;
-            let mut color_rotate = COLOR_INACTIVE;
+            // todo: Match on selection, or active mol here?
+            // let pocket_sel_prev = matches!(state.ui.selection, Selection::AtomPocket(_));
+            let pocket_sel_prev = matches!(state.volatile.active_mol, Some((MolType::Pocket, _)));
 
-            match state.volatile.mol_manip.mode {
-                ManipMode::Move((mol_type, _mol_i)) => {
-                    if mol_type == MolType::Pocket {
-                        color_move = COLOR_ACTIVE;
-                    }
+            // Allow selecting the pocket, e.g. as opposed to a lig atom or bond.
+            {
+                let color = if pocket_sel_prev {
+                    COLOR_ACTIVE
+                } else {
+                    COLOR_INACTIVE
+                };
+
+                if ui
+                    .button(RichText::new("Select pocket").color(color))
+                    .on_hover_text(
+                        "Select the pocket, e.g. to manipulate it relative to the ligand.",
+                    )
+                    .clicked()
+                {
+                    state.ui.selection = if pocket_sel_prev {
+                        Selection::None
+                    } else {
+                        Selection::AtomPocket((0, 0))
+                    };
+
+                    state.volatile.active_mol = if pocket_sel_prev {
+                        None
+                    } else {
+                        Some((MolType::Pocket, 0))
+                    };
                 }
-                ManipMode::Rotate((mol_type, _mol_i)) => {
-                    if mol_type == MolType::Pocket {
-                        color_rotate = COLOR_ACTIVE;
-                    }
-                }
-                ManipMode::None => (),
             }
 
-            // dummy API interaction.
-            let mut redraw_flags = RedrawFlags::default();
-            redraw_flags.pocket = *redraw;
-            if ui
-                .button(RichText::new("↔ pocket").color(color_move))
-                .on_hover_text("Move the pocket relative to the molecule.")
-                .clicked()
-            {
-                mol_manip::set_manip(
-                    state,
-                    scene,
-                    &mut redraw_flags,
-                    &mut false,
-                    ManipMode::Move((MolType::Pocket, 0)),
-                    updates,
-                );
-                *redraw = redraw_flags.pocket;
-            }
+            // if matches!(state.ui.selection, Selection::AtomPocket(_)) {
+            if pocket_sel_prev {
+                let mut color_move = COLOR_INACTIVE;
+                let mut color_rotate = COLOR_INACTIVE;
 
-            if ui
-                .button(RichText::new("⟳ pocket").color(color_rotate))
-                .on_hover_text("Rotate the pocket relative to the molecule.")
-                .clicked()
-            {
-                mol_manip::set_manip(
-                    state,
-                    scene,
-                    &mut redraw_flags,
-                    &mut false,
-                    ManipMode::Rotate((MolType::Pocket, 0)),
-                    updates,
-                );
-                *redraw = redraw_flags.pocket;
+                match state.volatile.mol_manip.mode {
+                    ManipMode::Move((mol_type, _mol_i)) => {
+                        if mol_type == MolType::Pocket {
+                            color_move = COLOR_ACTIVE;
+                        }
+                    }
+                    ManipMode::Rotate((mol_type, _mol_i)) => {
+                        if mol_type == MolType::Pocket {
+                            color_rotate = COLOR_ACTIVE;
+                        }
+                    }
+                    ManipMode::None => (),
+                }
+
+                // dummy API interaction.
+                let mut redraw_flags = RedrawFlags::default();
+                redraw_flags.pocket = *redraw;
+
+                if ui
+                    .button(RichText::new("↔ pocket").color(color_move))
+                    .on_hover_text("Move the pocket relative to the molecule.")
+                    .clicked()
+                {
+                    mol_manip::set_manip(
+                        state,
+                        scene,
+                        &mut redraw_flags,
+                        &mut false,
+                        ManipMode::Move((MolType::Pocket, 0)),
+                        updates,
+                    );
+                    *redraw = redraw_flags.pocket;
+                }
+
+                if ui
+                    .button(RichText::new("⟳ pocket").color(color_rotate))
+                    .on_hover_text("Rotate the pocket relative to the molecule.")
+                    .clicked()
+                {
+                    mol_manip::set_manip(
+                        state,
+                        scene,
+                        &mut redraw_flags,
+                        &mut false,
+                        ManipMode::Rotate((MolType::Pocket, 0)),
+                        updates,
+                    );
+                    *redraw = redraw_flags.pocket;
+                }
             }
 
             ui.add_space(COL_SPACING);

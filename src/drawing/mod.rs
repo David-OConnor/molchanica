@@ -86,7 +86,9 @@ pub const COLOR_DOCKING_SITE_MESH: Color = (0.5, 0.5, 0.9);
 
 // These colors are the default solid ones, i.e. if not colored by an atom-etc-based scheme.
 const COLOR_SA_SURFACE: Color = (0.3, 0.2, 1.);
-const COLOR_POCKET: Color = (0.3, 0.5, 0.8);
+// const COLOR_POCKET: Color = (0.3, 0.5, 0.8);
+const COLOR_POCKET: Color = (0.3, 0., 0.8);
+const COLOR_POCKET_SPHERES: Color = (1., 1., 0.);
 
 // Absolute unit in Å.
 
@@ -1755,6 +1757,7 @@ pub fn draw_pharmacophore_hint_sites(
         .push_class(EntityClass::PharmacophoreHint as u32);
 }
 
+/// Render spheres if manipulation is active, otherwise the mesh.
 pub fn draw_pocket(
     pocket: &Pocket,
     hydrogen_bonds: &[HydrogenBondTwoMols],
@@ -1762,6 +1765,8 @@ pub fn draw_pocket(
     lig_posits: &[Vec3F64],
     visibility: &Visibility,
     selection: &Selection,
+    manip_mode: &ManipMode,
+    // draw_mesh: bool, // E.g. false when moving.
 ) -> Vec<Entity> {
     let mut res = Vec::new();
 
@@ -1777,13 +1782,20 @@ pub fn draw_pocket(
             sphere.center.into(),
             Quaternion::new_identity(),
             sphere.radius,
-            (1., 0.1, 0.1),
+            COLOR_POCKET_SPHERES,
             ATOM_SHININESS,
         );
 
         ent.class = EntityClass::Pocket as u32;
+        // todo kludge to now show this, without updating the entity count.
+        // todo: Opacity=0 is producing undesired effects.
+        if manip_mode == &ManipMode::None {
+            ent.position += UP_VEC * 10_000.;
+        }
         res.push(ent);
     }
+
+    // let mesh_posit = pocket.common.atom_posits[0] - pocket.common.atoms[0].posit;
 
     let color_mesh = if matches!(
         selection,
@@ -1793,7 +1805,6 @@ pub fn draw_pocket(
     } else {
         COLOR_POCKET
     };
-    // let mesh_posit = pocket.common.atom_posits[0] - pocket.common.atoms[0].posit;
 
     // Draw the surface mesh; pre-computed.
     let mut ent = Entity::new(
@@ -1811,6 +1822,14 @@ pub fn draw_pocket(
     // ent.pivot = Some(pocket.mesh_pivot);
     ent.class = EntityClass::Pocket as u32;
     ent.opacity = POCKET_SURFACE_OPACITY;
+
+    // todo kludge to now show this, without updating the entity count.
+    // todo: Opacity=0 is producing undesired effects.
+    if manip_mode != &ManipMode::None {
+        ent.position += UP_VEC * 10_000.;
+    }
+
+    res.push(ent);
 
     if !visibility.hide_h_bonds {
         for bond in hydrogen_bonds {
@@ -1850,8 +1869,6 @@ pub fn draw_pocket(
             ));
         }
     }
-
-    res.push(ent);
 
     res
 }

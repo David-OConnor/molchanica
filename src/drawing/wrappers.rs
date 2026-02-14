@@ -209,6 +209,7 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
 }
 
 // todo: You need to generalize your drawing code so you have less repetition, and it's more consistent.
+// pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, draw_mesh: bool) {
 pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
     // draw_all_mol_of_type(state, scene, &mut state.lipids, MolType::Lipid, state.ui.visibility.hide_lipids);
     // return;
@@ -231,7 +232,8 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
 
         let ents_this_mol =
             // No H bonds or lig atoms in this context.
-            drawing::draw_pocket(mol, &[], &[], &state.ui.visibility, &state.ui.selection);
+            drawing::draw_pocket(mol, &[], &[], &state.ui.visibility,
+                                 &state.ui.selection, &state.volatile.mol_manip.mode);
 
         // Note: This may already be set.
         let end_i_mol = start_i_mol + ents_this_mol.len();
@@ -444,7 +446,13 @@ pub fn update_single_pocket_inplace(i: usize, state: &State, scene: &mut Scene) 
     // Here we copy+paste+modify update_inplace_inner; we don't use "draw_mol" for pockets.
 
     // No lig atoms or H bonds in this context.
-    let ents_updated =
-        drawing::draw_pocket(mol, &[], &[], &state.ui.visibility, &state.ui.selection);
+    let ents_updated = drawing::draw_pocket(
+        mol,
+        &[],
+        &[],
+        &state.ui.visibility,
+        &state.ui.selection,
+        &state.volatile.mol_manip.mode,
+    );
     update_inplace_inner_part2(ent_i_start, ent_i_end, ents_updated, scene);
 }

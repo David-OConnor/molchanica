@@ -59,7 +59,7 @@ pub fn event_dev_handler(
     // This affects our app-specific commands, vs engine built-in ones. For example, hot keys
     // to change various modes.
 
-    let redraw = RedrawFlags::default();
+    let mut redraw = RedrawFlags::default();
     let mut redraw_in_place = RedrawFlags::default();
     let redraw_mol_editor = false;
 
@@ -607,10 +607,10 @@ fn handle_physical_key(
                     };
 
                     let mut rebuild_md_editor = false;
-                    mol_manip::set_manip(
+                    set_manip(
                         state,
                         scene,
-                        redraw,
+                        redraw_in_place,
                         &mut rebuild_md_editor,
                         ManipMode::Move((mol_type, 0)),
                         updates,
@@ -638,7 +638,7 @@ fn handle_physical_key(
                         }
                     }
                     if !skip {
-                        mol_manip::set_manip(
+                        set_manip(
                             state,
                             scene,
                             redraw_in_place,
@@ -920,12 +920,18 @@ fn post_event_cleanup(
             scene
                 .entities
                 .retain(|e| e.class != EntityClass::Pocket as u32);
+
             scene.entities.extend(draw_pocket(
                 pocket,
                 &state.mol_editor.h_bonds,
                 &state.mol_editor.mol.common.atom_posits,
                 &state.ui.visibility,
                 &state.ui.selection,
+                // true,
+                // Don't draw the mesh; we redraw it once manipulation is complete.
+                // This prevents the original mesh position from being confusing or a
+                // visual blocker.
+                &state.volatile.mol_manip.mode,
             ));
         }
 

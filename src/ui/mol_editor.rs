@@ -20,12 +20,10 @@ use crate::{
     mol_manip,
     mol_manip::ManipMode,
     molecules::{Bond, MolIdent, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
-    render::{MESH_PEP_SOLVENT_SURFACE, MESH_POCKET},
+    render::MESH_POCKET,
     selection::{Selection, ViewSelLevel},
-    sfc_mesh,
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{State, StateUi},
-    ui,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
         md::energy_disp,

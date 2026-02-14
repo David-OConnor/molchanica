@@ -618,6 +618,7 @@ pub fn redraw(
             &mol.common.atom_posits,
             &ui.visibility,
             &Selection::None,
+            &manip_mode,
         ));
     }
 }

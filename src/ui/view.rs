@@ -7,7 +7,8 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     molecules::MolType,
-    sfc_mesh::MeshColoring,
+    render::MESH_POCKET,
+    sfc_mesh::{MeshColoring, apply_mesh_colors, get_mesh_colors},
     state::State,
     ui::{
         COL_SPACING, DENS_ISO_MAX, DENS_ISO_MIN, misc,
@@ -19,7 +20,7 @@ use crate::{
 pub fn view_settings(
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     redraw: &mut RedrawFlags,
     ui: &mut Ui,
 ) {
@@ -58,6 +59,25 @@ pub fn view_settings(
                     &mut state.volatile.flags.update_sas_coloring,
                     ui,
                 );
+            }
+
+            // Update any pocket meshes as well. Separate from the threaded protein one; this is
+            // fast enough to do directly.
+            for pocket in &mut state.pockets {
+                if state.volatile.flags.update_sas_coloring {
+                    let colors = get_mesh_colors(
+                        &pocket.surface_mesh,
+                        &pocket.common,
+                        state.ui.mesh_coloring,
+                        updates,
+                    );
+
+                    apply_mesh_colors(&mut pocket.surface_mesh, &colors);
+                    // todo warning: single scene pocket mesh again.
+                    apply_mesh_colors(&mut scene.meshes[MESH_POCKET], &colors);
+                    updates.meshes = true;
+                    redraw.pocket = true;
+                }
             }
 
             ui.add_space(COL_SPACING);
@@ -162,8 +182,8 @@ pub fn view_settings(
                     state.ui.visibility.hide_ligand = !state.ui.visibility.hide_ligand;
 
                     draw_all_ligs(state, scene);
-                    engine_updates.entities = EntityUpdate::All;
-                    engine_updates.lighting = true; // docking light.
+                    updates.entities = EntityUpdate::All;
+                    updates.lighting = true; // docking light.
                 }
             }
             if !state.nucleic_acids.is_empty() {
@@ -172,7 +192,7 @@ pub fn view_settings(
                     state.ui.visibility.hide_ligand = !state.ui.visibility.hide_ligand;
 
                     draw_all_nucleic_acids(state, scene);
-                    engine_updates.entities = EntityUpdate::All;
+                    updates.entities = EntityUpdate::All;
                 }
             }
             if !state.lipids.is_empty() {
@@ -181,7 +201,7 @@ pub fn view_settings(
                     state.ui.visibility.hide_lipids = !state.ui.visibility.hide_lipids;
 
                     draw_all_lipids(state, scene);
-                    engine_updates.entities = EntityUpdate::All;
+                    updates.entities = EntityUpdate::All;
                 }
             }
 
@@ -251,7 +271,7 @@ pub fn view_settings(
                             draw_density_point_cloud(&mut scene.entities, dens);
                         }
                         clear_mol_entity_indices(state, None);
-                        engine_updates.entities = EntityUpdate::All;
+                        updates.entities = EntityUpdate::All;
                         // engine_updates.entities.push_class(EntityClass::Peptide as u32);
                     }
 
@@ -286,7 +306,7 @@ pub fn view_settings(
                         } else {
                             draw_density_surface(&mut scene.entities, state);
                         }
-                        engine_updates.entities = EntityUpdate::All;
+                        updates.entities = EntityUpdate::All;
                         // engine_updates
                         //     .entities
                         //     .push_class(EntityClass::DensitySurface as u32);
