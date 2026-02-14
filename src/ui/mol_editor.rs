@@ -404,7 +404,7 @@ pub(in crate::ui) fn editor(
 
         ui.add_space(COL_SPACING);
 
-        if let Some(pocket) = &mut state.mol_editor.pocket {
+        if let Some(pocket) = &mut state.mol_editor.mol.pharmacophore.pocket {
             let mut updated_coloring = false;
             mesh_coloring_selector(&mut state.ui.mesh_coloring, &mut updated_coloring, ui);
 
@@ -487,7 +487,7 @@ pub(in crate::ui) fn editor(
         mol_editor::redraw(
             &mut scene.entities,
             &state.mol_editor.mol,
-            &state.mol_editor.pocket,
+            &state.mol_editor.mol.pharmacophore.pocket,
             &state.mol_editor.h_bonds,
             &state.ui,
             state.volatile.mol_manip.mode,
@@ -678,7 +678,7 @@ fn edit_tools(
                         mol_editor::redraw(
                             &mut scene.entities,
                             &state.mol_editor.mol,
-                            &state.mol_editor.pocket,
+                            &state.mol_editor.mol.pharmacophore.pocket,
                             &state.mol_editor.h_bonds,
                             &state.ui,
                             state.volatile.mol_manip.mode,

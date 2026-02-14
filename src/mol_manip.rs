@@ -68,7 +68,16 @@ pub fn handle_mol_manip_in_plane(
                 },
                 OperatingMode::MolEditor => match mol_type {
                     MolType::Ligand => &mut state.mol_editor.mol.common,
-                    MolType::Pocket => &mut state.mol_editor.pocket.as_mut().unwrap().common,
+                    MolType::Pocket => {
+                        &mut state
+                            .mol_editor
+                            .mol
+                            .pharmacophore
+                            .pocket
+                            .as_mut()
+                            .unwrap()
+                            .common
+                    }
                     _ => unimplemented!(),
                 },
                 OperatingMode::ProteinEditor => unimplemented!(),
@@ -180,7 +189,7 @@ pub fn handle_mol_manip_in_plane(
                 OperatingMode::MolEditor => match mol_type {
                     MolType::Ligand => &mut state.mol_editor.mol.common,
                     MolType::Pocket => {
-                        if let Some(p) = &mut state.mol_editor.pocket {
+                        if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
                             &mut p.common
                         } else {
                             return;
@@ -264,11 +273,15 @@ pub fn handle_mol_manip_in_plane(
         ManipMode::None => (),
     }
 
+    // Rebuild H bonds if either the ligand or pocket is changed.
+    if op_mode == OperatingMode::MolEditor && (rebuild_pocket.is_some() || redraw.ligand) {
+        state.mol_editor.update_h_bonds();
+    }
+
     if let Some(mol_i) = rebuild_pocket {
         if op_mode == OperatingMode::MolEditor {
-            if let Some(p) = &mut state.mol_editor.pocket {
+            if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
                 p.rebuild_spheres();
-                state.mol_editor.update_h_bonds(); // todo: Make sure this doesn't slow things down too much.
             }
         } else {
             state.pockets[mol_i].rebuild_spheres();
@@ -316,7 +329,7 @@ pub fn handle_mol_manip_in_out(
                 OperatingMode::MolEditor => match mol_type {
                     MolType::Ligand => &mut state.mol_editor.mol.common,
                     MolType::Pocket => {
-                        if let Some(p) = &mut state.mol_editor.pocket {
+                        if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
                             &mut p.common
                         } else {
                             return;
@@ -463,7 +476,7 @@ pub fn handle_mol_manip_in_out(
                 MolType::Pocket => match op_mode {
                     OperatingMode::Primary => &mut state.pockets[mol_i].common,
                     OperatingMode::MolEditor => {
-                        if let Some(p) = &mut state.mol_editor.pocket {
+                        if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
                             &mut p.common
                         } else {
                             return;
@@ -492,11 +505,15 @@ pub fn handle_mol_manip_in_out(
         ManipMode::None => (),
     }
 
+    // Rebuild H bonds if either the ligand or pocket is changed.
+    if op_mode == OperatingMode::MolEditor && (rebuild_pocket.is_some() || redraw.ligand) {
+        state.mol_editor.update_h_bonds();
+    }
+
     if let Some(mol_i) = rebuild_pocket {
         if op_mode == OperatingMode::MolEditor {
-            if let Some(p) = &mut state.mol_editor.pocket {
+            if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
                 p.rebuild_spheres();
-                state.mol_editor.update_h_bonds(); // todo: Make sure this doesn't slow things down too much.
             }
         } else {
             state.pockets[mol_i].rebuild_spheres();
@@ -642,7 +659,7 @@ pub fn set_manip(
         && mol_type == MolType::Pocket
     {
         let p = if op_mode == OperatingMode::MolEditor {
-            if let Some(p_) = &mut state.mol_editor.pocket {
+            if let Some(p_) = &mut state.mol_editor.mol.pharmacophore.pocket {
                 p_
             } else {
                 eprintln!("Missing pocket tos set manip on");

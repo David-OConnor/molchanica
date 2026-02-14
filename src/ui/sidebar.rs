@@ -485,7 +485,7 @@ pub(in crate::ui) fn sidebar(
                         .button(RichText::new(&pocket.common.ident).color(color))
                         .on_hover_text(
                             "Display this pocket, and optionally use it as part of \
-                        a pharmacophore, e.g. its excluded volume..",
+                        a pharmacophore, e.g. its excluded volume.",
                         )
                         .clicked()
                     {
@@ -494,7 +494,7 @@ pub(in crate::ui) fn sidebar(
                             .retain(|e| e.class != EntityClass::Pocket as u32);
 
                         if selected {
-                            state.mol_editor.pocket = None;
+                            state.mol_editor.mol.pharmacophore.pocket = None;
                             state.mol_editor.pocket_i_in_state = None;
                         } else {
                             pocket.common.center_local_posits_around_origin();
@@ -506,7 +506,7 @@ pub(in crate::ui) fn sidebar(
                                 updates,
                             );
 
-                            state.mol_editor.pocket = Some(pocket.clone());
+                            state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
                             state.mol_editor.pocket_i_in_state = Some(mol_i);
 
                             state.mol_editor.update_h_bonds();

@@ -854,7 +854,7 @@ fn post_event_cleanup(
                 mol_editor::redraw(
                     &mut scene.entities,
                     &state.mol_editor.mol,
-                    &state.mol_editor.pocket,
+                    &state.mol_editor.mol.pharmacophore.pocket,
                     &state.mol_editor.h_bonds,
                     &state.ui,
                     state.volatile.mol_manip.mode,
@@ -890,7 +890,7 @@ fn post_event_cleanup(
                 mol_editor::redraw(
                     &mut scene.entities,
                     &state.mol_editor.mol,
-                    &state.mol_editor.pocket,
+                    &state.mol_editor.mol.pharmacophore.pocket,
                     &state.mol_editor.h_bonds,
                     &state.ui,
                     state.volatile.mol_manip.mode,
@@ -916,7 +916,7 @@ fn post_event_cleanup(
     }
 
     if redraw_in_place.pocket && state.volatile.operating_mode == OperatingMode::MolEditor {
-        if let Some(pocket) = &state.mol_editor.pocket {
+        if let Some(pocket) = &state.mol_editor.mol.pharmacophore.pocket {
             scene
                 .entities
                 .retain(|e| e.class != EntityClass::Pocket as u32);
@@ -942,7 +942,7 @@ fn post_event_cleanup(
         mol_editor::redraw(
             &mut scene.entities,
             &state.mol_editor.mol,
-            &state.mol_editor.pocket,
+            &state.mol_editor.mol.pharmacophore.pocket,
             &state.mol_editor.h_bonds,
             &state.ui,
             state.volatile.mol_manip.mode,

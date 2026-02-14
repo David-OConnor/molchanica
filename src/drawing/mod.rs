@@ -1774,6 +1774,11 @@ pub fn draw_pocket(
         return res;
     }
 
+    let manipulating_pocket = matches!(
+        manip_mode,
+        ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _))
+    );
+
     // todo: For now, drawing the spheres we use to compute exclusion.
     // todo: Likely not useful to the user, but useful for validating our approach and debugging.
     for sphere in &pocket.volume.spheres {
@@ -1791,7 +1796,7 @@ pub fn draw_pocket(
 
         // todo kludge to now show this, without updating the entity count.
         // todo: Opacity=0 is producing undesired effects.
-        if manip_mode == &ManipMode::None {
+        if !manipulating_pocket {
             ent.position += UP_VEC * 10_000.;
         }
         res.push(ent);
@@ -1827,7 +1832,7 @@ pub fn draw_pocket(
 
     // todo kludge to now show this, without updating the entity count.
     // todo: Opacity=0 is producing undesired effects.
-    if manip_mode != &ManipMode::None {
+    if manipulating_pocket {
         ent.position += UP_VEC * 10_000.;
     }
 

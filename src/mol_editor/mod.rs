@@ -52,7 +52,7 @@ const MOL_IDENT: &str = "editor_mol";
 /// For editing small organic molecules.
 pub struct MolEditorState {
     pub mol: MoleculeSmall,
-    pub pocket: Option<Pocket>,
+    // pub pocket: Option<Pocket>,
     /// Hydrogen bonds between the mol and pocket.
     pub h_bonds: Vec<HydrogenBondTwoMols>,
     /// I.e. state.ligands[i]
@@ -82,7 +82,7 @@ impl Default for MolEditorState {
     fn default() -> Self {
         Self {
             mol: Default::default(),
-            pocket: Default::default(),
+            // pocket: Default::default(),
             h_bonds: Default::default(),
             mol_i_in_state: Default::default(),
             pocket_i_in_state: Default::default(),
@@ -293,7 +293,7 @@ impl MolEditorState {
         redraw(
             &mut scene.entities,
             &self.mol,
-            &self.pocket,
+            &self.mol.pharmacophore.pocket,
             &self.h_bonds,
             state_ui,
             manip_mode,
@@ -342,7 +342,7 @@ impl MolEditorState {
         redraw(
             entities,
             &self.mol,
-            &self.pocket,
+            &self.mol.pharmacophore.pocket,
             &self.h_bonds,
             state_ui,
             manip_mode,
@@ -368,7 +368,7 @@ impl MolEditorState {
         redraw(
             entities,
             &self.mol,
-            &self.pocket,
+            &self.mol.pharmacophore.pocket,
             &self.h_bonds,
             state_ui,
             manip_mode,
@@ -452,7 +452,7 @@ impl MolEditorState {
     }
 
     pub fn update_h_bonds(&mut self) {
-        if let Some(pocket) = &self.pocket {
+        if let Some(pocket) = &self.mol.pharmacophore.pocket {
             self.h_bonds = create_hydrogen_bonds_two_mols(
                 &self.mol.common.atoms,
                 &self.mol.common.atom_posits,
@@ -461,9 +461,6 @@ impl MolEditorState {
                 &pocket.common.atom_posits,
                 &pocket.common.bonds,
             );
-
-            // todo temp
-            println!("Created H bonds in editor: {:?}", self.h_bonds);
         }
     }
 }
@@ -545,7 +542,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     redraw(
         &mut scene.entities,
         &state.mol_editor.mol,
-        &state.mol_editor.pocket,
+        &state.mol_editor.mol.pharmacophore.pocket,
         &state.mol_editor.h_bonds,
         &state.ui,
         state.volatile.mol_manip.mode,

@@ -309,7 +309,7 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
 
         // Pocket-related functionality.
         let mut copy_pocket_to_pharmacophore = false; // avoids dbl-borrow.
-        if state.mol_editor.pocket.is_some() {
+        if state.mol_editor.mol.pharmacophore.pocket.is_some() {
             // todo: Match on selection, or active mol here?
             // let pocket_sel_prev = matches!(state.ui.selection, Selection::AtomPocket(_));
             let pocket_sel_prev = matches!(state.volatile.active_mol, Some((MolType::Pocket, _)));
@@ -399,16 +399,18 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 }
             }
 
-            ui.add_space(COL_SPACING);
-            if ui
-                .button("Use this pocket for pharmacophore")
-                .on_hover_text("Use the displayed pocket as part of the pharmacophore")
-                .clicked()
-            {
-                copy_pocket_to_pharmacophore = true;
-            }
+            // ui.add_space(COL_SPACING);
+            // if ui
+            //     .button("Use this pocket for pharmacophore")
+            //     .on_hover_text("Use the displayed pocket as part of the pharmacophore")
+            //     .clicked()
+            // {
+            //     copy_pocket_to_pharmacophore = true;
+            // }
         }
-        if copy_pocket_to_pharmacophore && let Some(pocket) = &state.mol_editor.pocket {
+        if copy_pocket_to_pharmacophore
+            && let Some(pocket) = &state.mol_editor.mol.pharmacophore.pocket
+        {
             state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
         }
     });
