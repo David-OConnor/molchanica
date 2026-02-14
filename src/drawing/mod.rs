@@ -1787,6 +1787,8 @@ pub fn draw_pocket(
         );
 
         ent.class = EntityClass::Pocket as u32;
+        // No transparency on spheres; makes it more confusing by adding clutter.
+
         // todo kludge to now show this, without updating the entity count.
         // todo: Opacity=0 is producing undesired effects.
         if manip_mode == &ManipMode::None {

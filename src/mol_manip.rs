@@ -268,6 +268,7 @@ pub fn handle_mol_manip_in_plane(
         if op_mode == OperatingMode::MolEditor {
             if let Some(p) = &mut state.mol_editor.pocket {
                 p.rebuild_spheres();
+                state.mol_editor.update_h_bonds(); // todo: Make sure this doesn't slow things down too much.
             }
         } else {
             state.pockets[mol_i].rebuild_spheres();
@@ -495,6 +496,7 @@ pub fn handle_mol_manip_in_out(
         if op_mode == OperatingMode::MolEditor {
             if let Some(p) = &mut state.mol_editor.pocket {
                 p.rebuild_spheres();
+                state.mol_editor.update_h_bonds(); // todo: Make sure this doesn't slow things down too much.
             }
         } else {
             state.pockets[mol_i].rebuild_spheres();
@@ -635,12 +637,10 @@ pub fn set_manip(
         ManipMode::None => unreachable!(),
     }
 
-    println!("\nActive mol: {:?}", vol.active_mol); // todo temp
     // Once complete with manip on a pocket, rebuild the volume, representation.
     if let Some((mol_type, i)) = vol.active_mol
         && mol_type == MolType::Pocket
     {
-        println!("\nCleaning up the pocket post manip\n"); // todo temp
         let p = if op_mode == OperatingMode::MolEditor {
             if let Some(p_) = &mut state.mol_editor.pocket {
                 p_
@@ -654,6 +654,10 @@ pub fn set_manip(
 
         p.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
         redraw.pocket = true;
+    }
+
+    if op_mode == OperatingMode::MolEditor {
+        state.mol_editor.update_h_bonds();
     }
 
     redraw.set(mol_type_active);
