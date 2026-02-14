@@ -3,13 +3,12 @@ use std::{collections::HashMap, path::Path};
 use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 
-use crate::mol_manip::ManipMode;
-use crate::molecules::MolType;
-use crate::util::RedrawFlags;
 use crate::{
     drawing,
     drawing::blend_color,
     label, mol_manip,
+    mol_manip::ManipMode,
+    molecules::MolType,
     selection::Selection,
     state::{PopupState, State},
     therapeutic::pharmacophore::{
@@ -20,7 +19,7 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
         util::color_egui_from_f32,
     },
-    util::{handle_err, make_egui_color},
+    util::{RedrawFlags, handle_err, make_egui_color},
 };
 
 /// Assumes run from the editor for now.
@@ -237,7 +236,7 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     redraw: &mut bool,
 ) {
     ui.horizontal(|ui| {
@@ -266,11 +265,7 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 .pharmacaphore_type
                 .hint_sites(char, &mol.common.atom_posits);
 
-            drawing::draw_pharmacophore_hint_sites(
-                &mut scene.entities,
-                &hint_sites,
-                engine_updates,
-            );
+            drawing::draw_pharmacophore_hint_sites(&mut scene.entities, &hint_sites, updates);
         }
 
         if let Selection::AtomLig((_mol_i, atom_i)) = &state.ui.selection {
@@ -312,7 +307,9 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
             }
         }
 
-        if let Some(pocket) = &state.mol_editor.pocket {
+        let mut copy_pocket_to_pharmacophore = false; // avoids dbl-borrow.
+        // if let Some(pocket) = &state.mol_editor.pocket {
+        if state.mol_editor.pocket.is_some() {
             let mut color_move = COLOR_INACTIVE;
             let mut color_rotate = COLOR_INACTIVE;
 
@@ -339,34 +336,28 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 .clicked()
             {
                 mol_manip::set_manip(
-                    &mut state.volatile,
-                    &mut state.pockets,
-                    &mut state.to_save.save_flag,
+                    state,
                     scene,
                     &mut redraw_flags,
                     &mut false,
                     ManipMode::Move((MolType::Pocket, 0)),
-                    &Selection::AtomPocket((0, 0)),
-                    engine_updates,
+                    updates,
                 );
                 *redraw = redraw_flags.pocket;
             }
 
             if ui
-                .button(RichText::new("⟳ pocket").color(color_move))
+                .button(RichText::new("⟳ pocket").color(color_rotate))
                 .on_hover_text("Rotate the pocket relative to the molecule.")
                 .clicked()
             {
                 mol_manip::set_manip(
-                    &mut state.volatile,
-                    &mut state.pockets,
-                    &mut state.to_save.save_flag,
+                    state,
                     scene,
                     &mut redraw_flags,
                     &mut false,
                     ManipMode::Rotate((MolType::Pocket, 0)),
-                    &Selection::AtomPocket((0, 0)),
-                    engine_updates,
+                    updates,
                 );
                 *redraw = redraw_flags.pocket;
             }
@@ -377,8 +368,11 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 .on_hover_text("Use the displayed pocket as part of the pharmacophore")
                 .clicked()
             {
-                state.mol_editor.pocket = Some(pocket.clone());
+                copy_pocket_to_pharmacophore = true;
             }
+        }
+        if copy_pocket_to_pharmacophore && let Some(pocket) = &state.mol_editor.pocket {
+            state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
         }
     });
 }

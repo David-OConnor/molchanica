@@ -84,9 +84,9 @@ const COLOR_DOCKING_BOX: Color = (0.3, 0.3, 0.9);
 pub const COLOR_DOCKING_SITE_MESH: Color = (0.5, 0.5, 0.9);
 // const DOCKING_SITE_OPACITY: f32 = 0.1;
 
-// todo temp while debugging
+// These colors are the default solid ones, i.e. if not colored by an atom-etc-based scheme.
 const COLOR_SA_SURFACE: Color = (0.3, 0.2, 1.);
-// const COLOR_SA_SURFACE: Color = (1., 0., 0.);
+const COLOR_POCKET: Color = (0.3, 0.5, 0.8);
 
 // Absolute unit in Å.
 
@@ -1785,14 +1785,14 @@ pub fn draw_pocket(
         res.push(ent);
     }
 
-    let mut color_mesh = (0.3, 0.4, 0.5);
-    if matches!(
+    let color_mesh = if matches!(
         selection,
         Selection::AtomPocket(_) | Selection::BondPocket(_)
     ) {
-        color_mesh = COLOR_SELECTED;
-    }
-
+        COLOR_SELECTED
+    } else {
+        COLOR_POCKET
+    };
     // let mesh_posit = pocket.common.atom_posits[0] - pocket.common.atoms[0].posit;
 
     // Draw the surface mesh; pre-computed.

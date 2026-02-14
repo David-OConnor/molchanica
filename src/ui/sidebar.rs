@@ -10,7 +10,7 @@ use crate::{
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
     render::MESH_POCKET,
-    sfc_mesh::{apply_mesh_colors, update_mesh_coloring},
+    sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{OperatingMode, State},
     therapeutic::pharmacophore::Pharmacophore,
     ui::{
@@ -348,17 +348,17 @@ fn manip_toolbar(
                 the mouse. Scroll to move it forward and back.")
                 .clicked() {
 
-                set_manip(&mut state.volatile, &mut state.pockets, &mut state.to_save.save_flag, scene, redraw,&mut false,
-                          ManipMode::Move((active_mol_type, active_mol_i)), &state.ui.selection, engine_updates);
+                set_manip(state, scene, redraw,&mut false,
+                          ManipMode::Move((active_mol_type, active_mol_i)),engine_updates);
             }
 
             if ui.button(RichText::new("⟳").color(color_rotate))
                 .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll.")
                 .clicked() {
 
-                set_manip(&mut state.volatile, &mut state.pockets, &mut state.to_save.save_flag,
+                set_manip(state,
                           scene,redraw,&mut false,
-                          ManipMode::Rotate((active_mol_type, active_mol_i)), &state.ui.selection ,engine_updates,);
+                          ManipMode::Rotate((active_mol_type, active_mol_i)),engine_updates,);
             }
         }
 
@@ -499,27 +499,21 @@ pub(in crate::ui) fn sidebar(
                         } else {
                             pocket.common.center_local_posits_around_origin();
                             pocket.common.reset_posits();
-                            pocket.rebuild_spheres();
-                            pocket.regen_mesh_vol();
 
-                            scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
+                            pocket.reset_post_manip(
+                                &mut scene.meshes,
+                                state.ui.mesh_coloring,
+                                updates,
+                            );
+
                             state.mol_editor.pocket = Some(pocket.clone());
                             state.mol_editor.pocket_i_in_state = Some(mol_i);
 
-                            {
-                                let colors = update_mesh_coloring(
-                                    &pocket.surface_mesh,
-                                    &pocket.common,
-                                    state.ui.mesh_coloring,
-                                    updates,
-                                );
-
-                                apply_mesh_colors(&mut pocket.surface_mesh, &colors);
-                                apply_mesh_colors(&mut scene.meshes[MESH_POCKET], &colors);
-                            }
-
                             state.mol_editor.update_h_bonds();
 
+                            scene
+                                .entities
+                                .retain(|e| e.class != EntityClass::Pocket as u32);
                             scene.entities.extend(draw_pocket(
                                 pocket,
                                 &state.mol_editor.h_bonds,

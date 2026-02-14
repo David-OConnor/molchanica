@@ -14,7 +14,6 @@ use crate::{
         CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, draw_pocket,
         wrappers::draw_all_pockets,
     },
-    file_io::download_mols,
     label,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,

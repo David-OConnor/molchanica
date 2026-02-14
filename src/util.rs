@@ -902,7 +902,7 @@ pub fn handle_scene_flags(
 
                 thread::spawn(move || {
                     let mut updates = EngineUpdates::default();
-                    let colors = sfc_mesh::update_mesh_coloring(
+                    let colors = sfc_mesh::get_mesh_colors(
                         &mesh_for_thread,
                         &mol_for_thread,
                         coloring,
@@ -944,12 +944,8 @@ pub fn handle_scene_flags(
 
         thread::spawn(move || {
             let mut eu = EngineUpdates::default();
-            let colors = sfc_mesh::update_mesh_coloring(
-                &mesh_for_thread,
-                &mol_for_thread,
-                coloring,
-                &mut eu,
-            );
+            let colors =
+                sfc_mesh::get_mesh_colors(&mesh_for_thread, &mol_for_thread, coloring, &mut eu);
             let _ = tx.send(colors);
         });
 

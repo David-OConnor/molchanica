@@ -8,7 +8,6 @@ use graphics::{
 };
 use lin_alg::f32::{Quaternion, Vec3};
 
-use crate::ui::util::init_with_scene;
 use crate::{
     cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
     docking::DockingSite,
@@ -17,7 +16,7 @@ use crate::{
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::State,
-    ui::ui_handler,
+    ui::{ui_handler, util::init_with_scene},
 };
 
 pub type Color = (f32, f32, f32);

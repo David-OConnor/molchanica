@@ -3,18 +3,15 @@ use std::io;
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
-use crate::drawing::wrappers;
-use crate::drawing::wrappers::draw_all_pockets;
-use crate::molecules::MolType;
 use crate::{
     cam::reset_camera,
     drawing,
     drawing::{
-        draw_peptide,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+        draw_peptide, wrappers,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_editor,
-    molecules::{MoleculeGeneric, small::MoleculeSmall},
+    molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
     state::{OperatingMode, State},
     ui::set_window_title,
@@ -190,6 +187,17 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
         //         .docking_site
         //         .site_center;
         //     // state.update_docking_site(posit);
+    }
+
+    // This updates the mesh and spheres after the initial prefs load, which may
+    // have altered their posits. This prevents a visual jump upon the first re-render of pockets,
+    // as the mesh moves to the correct location.
+    for pocket in &mut state.pockets {
+        pocket.reset_post_manip(
+            &mut scene.meshes,
+            state.ui.mesh_coloring,
+            &mut Default::default(),
+        );
     }
 
     reset_orbit_center(state, scene);

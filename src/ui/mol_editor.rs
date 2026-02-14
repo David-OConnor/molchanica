@@ -23,7 +23,7 @@ use crate::{
     render::{MESH_PEP_SOLVENT_SURFACE, MESH_POCKET},
     selection::{Selection, ViewSelLevel},
     sfc_mesh,
-    sfc_mesh::{apply_mesh_colors, update_mesh_coloring},
+    sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{State, StateUi},
     ui,
     ui::{
@@ -411,7 +411,7 @@ pub(in crate::ui) fn editor(
             mesh_coloring_selector(&mut state.ui.mesh_coloring, &mut updated_coloring, ui);
 
             if updated_coloring {
-                let colors = update_mesh_coloring(
+                let colors = get_mesh_colors(
                     &pocket.surface_mesh,
                     &pocket.common,
                     state.ui.mesh_coloring,
@@ -751,15 +751,12 @@ fn edit_tools(
                 redraw_flags.ligand = *redraw;
 
                 mol_manip::set_manip(
-                    &mut state.volatile,
-                    &mut state.pockets,
-                    &mut state.to_save.save_flag,
+                    state,
                     scene,
                     &mut redraw_flags,
                     &mut rebuild_md,
                     // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
                     ManipMode::Move((MolType::Ligand, selected_idxs[0])),
-                    &state.ui.selection,
                     engine_updates,
                 );
                 *redraw = redraw_flags.ligand;
@@ -781,15 +778,12 @@ fn edit_tools(
                         let mut redraw_flags = RedrawFlags::default();
                         redraw_flags.ligand = *redraw;
                         mol_manip::set_manip(
-                            &mut state.volatile,
-                            &mut state.pockets,
-                            &mut state.to_save.save_flag,
+                            state,
                             scene,
                             &mut redraw_flags,
                             &mut rebuild_md,
                             // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
                             ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
-                            &state.ui.selection,
                             engine_updates,
                         );
                         *redraw = redraw_flags.ligand;

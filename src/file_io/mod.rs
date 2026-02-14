@@ -8,7 +8,6 @@ use lin_alg::f64::Vec3;
 use na_seq::{AaIdent, Element};
 use rand::Rng;
 
-use crate::render::MESH_POCKET;
 use crate::{
     cam::move_mol_to_cam,
     drawing::{
@@ -22,6 +21,7 @@ use crate::{
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
+    render::MESH_POCKET,
     selection::Selection,
     state::State,
     util::{handle_err, handle_success},
@@ -798,8 +798,6 @@ impl State {
 
                 self.pockets.push(mol);
                 // todo: Warning! Only one pocket mesh is set up in our scene!
-                // if let Some(ref mut s) = scene {
-                // todo: Work this. Need scene avail here on initial load.
                 scene.meshes[MESH_POCKET] =
                     self.pockets[self.pockets.len() - 1].surface_mesh.clone();
 

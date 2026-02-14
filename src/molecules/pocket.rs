@@ -21,7 +21,7 @@ use lin_alg::{
 };
 
 use crate::{
-    drawing::wrappers::draw_all_pockets,
+    drawing::{EntityClass, wrappers::draw_all_pockets},
     molecules::{
         Atom, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide,
         common::{MoleculeCommon, reassign_bond_indices},
@@ -29,7 +29,7 @@ use crate::{
         small::MoleculeSmall,
     },
     render::MESH_POCKET,
-    sfc_mesh::make_sas_mesh,
+    sfc_mesh::{MeshColoring, apply_mesh_colors, get_mesh_colors, make_sas_mesh},
     state::State,
 };
 
@@ -68,10 +68,10 @@ pub struct Pocket {
     pub common: MoleculeCommon,
     /// Used to rotate the mesh, so we don't have to regenerate it when
     /// the user rotates the pocket.
-    pub mesh_orientation: Quaternion,
+    pub mesh_orientation: Quaternion, // Unused
     /// This pivot must match the rotation we use for the inner
     /// molecules; this is the molecule's centroid.
-    pub mesh_pivot: Vec3F32,
+    pub mesh_pivot: Vec3F32, // Unused
     pub surface_mesh: Mesh,
     // todo: This excluded volume is duplicated with the pharmacophore. I think
     // todo having both here is fine for now, and we will settle out hwo the
@@ -189,6 +189,8 @@ impl Pocket {
         mol.into()
     }
 
+    /// Can be used to quickly see visual changes, e.g. during manipulation, while being much
+    /// cheaper than a full volume and mesh rebuild.
     pub fn rebuild_spheres(&mut self) {
         self.volume.rebuild_spheres(&self.common);
     }
@@ -197,9 +199,30 @@ impl Pocket {
     /// as with other molecule types, then run this to synchronize.
     ///
     /// Also rebuilds the mesh.
-    pub fn regen_mesh_vol(&mut self) {
+    pub fn regen_mesh_vol(&mut self, scene_meshes: &mut [Mesh], updates: &mut EngineUpdates) {
         self.volume = PocketVolume::new(&self.common);
         self.surface_mesh = make_mesh(&self.common.atoms, &self.common.atom_posits);
+
+        scene_meshes[MESH_POCKET] = self.surface_mesh.clone();
+
+        updates.meshes = true;
+        updates.entities.push_class(EntityClass::Pocket as u32);
+    }
+
+    /// Run this after a move. Resets local positions, and rebuilds everything else (volume, spheres,
+    /// mesh etc, and updates the engine's meshes)
+    pub fn reset_post_manip(
+        &mut self,
+        scene_meshes: &mut [Mesh],
+        coloring: MeshColoring,
+        updates: &mut EngineUpdates,
+    ) {
+        self.rebuild_spheres();
+        self.regen_mesh_vol(scene_meshes, updates);
+
+        let color = get_mesh_colors(&self.surface_mesh, &self.common, coloring, updates);
+        apply_mesh_colors(&mut self.surface_mesh, &color);
+        apply_mesh_colors(&mut scene_meshes[MESH_POCKET], &color);
     }
 
     pub fn save_sdf(&self, path: &Path) -> io::Result<()> {
@@ -642,23 +665,4 @@ fn make_mesh(atoms: &[Atom], posits: &[Vec3]) -> Mesh {
         .collect();
 
     make_sas_mesh(&atoms_for_mesh, MESH_PROBE_RADIUS, POCKET_MESH_PRECISION)
-}
-
-/// Wrapper that adds the pocket to state, and re-renders.
-pub fn add_pocket(
-    state: &mut State,
-    scene: &mut Scene,
-    mol: &MoleculePeptide,
-    posit: Vec3,
-    ident: &str,
-    engine_updates: &mut EngineUpdates,
-) {
-    let pocket = Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, ident);
-
-    scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
-    draw_all_pockets(state, scene);
-    state.pockets.push(pocket);
-
-    engine_updates.meshes = true;
-    engine_updates.entities = EntityUpdate::All; // todo temp
 }

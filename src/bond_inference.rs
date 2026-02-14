@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    f64::consts::{PI, TAU},
+    time::Instant,
+};
 
 use lin_alg::f64::Vec3;
 use na_seq::Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur};
 use rayon::prelude::*;
-use std::f64::consts::{PI, TAU};
-use std::time::Instant;
 
 use crate::molecules::{Atom, Bond, HydrogenBond, HydrogenBondTwoMols};
 

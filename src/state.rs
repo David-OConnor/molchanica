@@ -17,7 +17,6 @@ use dynamics::{ComputationDevice, MdState, params::FfParamSet};
 use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
-use crate::util::orca_avail;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -42,6 +41,7 @@ use crate::{
         pharmacophore::{Pharmacophore, PharmacophoreFeatType},
     },
     threads::ThreadReceivers,
+    util::orca_avail,
 };
 
 pub struct State {

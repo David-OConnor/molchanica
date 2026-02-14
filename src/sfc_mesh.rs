@@ -204,7 +204,7 @@ fn cell_key(p: Vec3F32, cell_size: f32) -> (i32, i32, i32) {
 ///
 /// In the case of element-based coloring, we omit Hydrogens.
 /// Returns a Vec of vertex colors, or none if there is no change.
-pub fn update_mesh_coloring(
+pub fn get_mesh_colors(
     mesh: &Mesh,
     mol: &MoleculeCommon,
     coloring: MeshColoring,

@@ -13,11 +13,11 @@ use na_seq::Element::Carbon;
 use crate::{
     cam::{FOG_DIST_MIN, move_cam_to_sel, set_fog_dist},
     drawing,
-    drawing::{EntityClass, wrappers},
+    drawing::{EntityClass, draw_pocket, wrappers},
     mol_editor,
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
-    mol_manip::ManipMode,
+    mol_manip::{ManipMode, set_manip},
     molecules::MolType,
     render::{MESH_POCKET, set_flashlight},
     selection,
@@ -502,28 +502,36 @@ fn handle_physical_key(
                         state.volatile.mol_manip.mode,
                         ManipMode::Move(_) | ManipMode::Rotate(_)
                     ) {
-                        // Exit manip mode.
-                        state.volatile.mol_manip.mode = ManipMode::None;
-                        state.volatile.mol_manip.pivot = None;
-                        scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
+                        // Toggles it off, and performs cleanup.
+                        set_manip(
+                            state,
+                            scene,
+                            redraw,
+                            redraw_mol_editor,
+                            state.volatile.mol_manip.mode,
+                            updates,
+                        );
 
-                        // Clean up things, e.g. for moving the pocket to command its mesh
-                        // to rebuild. Note required for most other things.
-                        // c+p from set_manip to regen the pocket mesh and volume if exiting
-                        // manip through the esc key.
-                        if let Some((mol_type, i)) = state.volatile.active_mol
-                            && mol_type == MolType::Pocket
-                        {
-                            state.pockets[i].regen_mesh_vol();
-                            scene.meshes[MESH_POCKET] = state.pockets[i].surface_mesh.clone();
-
-                            updates.meshes = true;
-                            redraw.pocket = true;
-                        }
-
-                        if state.volatile.operating_mode == OperatingMode::MolEditor {
-                            sync_md(state);
-                        }
+                        //
+                        // // Exit manip mode.
+                        // state.volatile.mol_manip.mode = ManipMode::None;
+                        // state.volatile.mol_manip.pivot = None;
+                        // scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
+                        //
+                        // // Clean up things, e.g. for moving the pocket to command its mesh
+                        // // to rebuild. Note required for most other things.
+                        // // c+p from set_manip to regen the pocket mesh and volume if exiting
+                        // // manip through the esc key.
+                        // if let Some((mol_type, i)) = state.volatile.active_mol
+                        //     && mol_type == MolType::Pocket
+                        // {
+                        //     state.pockets[i].regen_mesh_vol(&mut scene.meshes, updates);
+                        //     redraw.pocket = true;
+                        // }
+                        //
+                        // if state.volatile.operating_mode == OperatingMode::MolEditor {
+                        //     sync_md(state);
+                        // }
                     } else {
                         // Unselect everything.
                         state.ui.selection = Selection::None;
@@ -600,14 +608,11 @@ fn handle_physical_key(
 
                     let mut rebuild_md_editor = false;
                     mol_manip::set_manip(
-                        &mut state.volatile,
-                        &mut state.pockets,
-                        &mut state.to_save.save_flag,
+                        state,
                         scene,
                         redraw,
                         &mut rebuild_md_editor,
                         ManipMode::Move((mol_type, 0)),
-                        &state.ui.selection,
                         updates,
                     );
 
@@ -634,14 +639,11 @@ fn handle_physical_key(
                     }
                     if !skip {
                         mol_manip::set_manip(
-                            &mut state.volatile,
-                            &mut state.pockets,
-                            &mut state.to_save.save_flag,
+                            state,
                             scene,
                             redraw_in_place,
                             &mut rebuild_md_editor,
                             ManipMode::Rotate((mol_type, 0)),
-                            &state.ui.selection,
                             updates,
                         );
                     }
@@ -910,7 +912,23 @@ fn post_event_cleanup(
 
     if redraw_in_place.pocket && state.volatile.operating_mode == OperatingMode::Primary {
         redraw_inplace_helper(MolType::Pocket, state, scene, updates);
-        // wrappers::draw_all_pockets(state, scene);
+        updates.entities.push_class(EntityClass::Pocket as u32);
+    }
+
+    if redraw_in_place.pocket && state.volatile.operating_mode == OperatingMode::MolEditor {
+        if let Some(pocket) = &state.mol_editor.pocket {
+            scene
+                .entities
+                .retain(|e| e.class != EntityClass::Pocket as u32);
+            scene.entities.extend(draw_pocket(
+                pocket,
+                &state.mol_editor.h_bonds,
+                &state.mol_editor.mol.common.atom_posits,
+                &state.ui.visibility,
+                &state.ui.selection,
+            ));
+        }
+
         updates.entities.push_class(EntityClass::Pocket as u32);
     }
 

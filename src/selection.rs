@@ -1092,14 +1092,11 @@ pub fn handle_selection_attempt_mol_editor(
     redraw_flags.ligand = *redraw;
 
     mol_manip::set_manip(
-        &mut state.volatile,
-        &mut state.pockets,
-        &mut state.to_save.save_flag,
+        state,
         scene,
         &mut redraw_flags,
         &mut rebuild_md,
         manip_mode_new,
-        &state.ui.selection,
         engine_updates,
     );
     *redraw = redraw_flags.ligand;
