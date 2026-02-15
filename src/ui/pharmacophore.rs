@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::Path};
 use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 
+use crate::mol_editor::redraw;
 use crate::{
     drawing,
     drawing::blend_color,
@@ -175,6 +176,7 @@ pub(in crate::ui) fn pharmacophore_list(
     popup: &mut PopupState,
     vis_flag: &mut bool,
     ui: &mut Ui,
+    redraw: &mut bool,
 ) {
     ui.horizontal(|ui| {
         label!(ui, "Pharmacophores", Color32::GRAY);
@@ -204,7 +206,7 @@ pub(in crate::ui) fn pharmacophore_list(
 
     let mut remove = None;
     for (i, feat) in pharmacophore.features.iter().enumerate() {
-        let descrip = format!("{feat}");
+        let descrip = format!("{}| {feat}", i + 1);
 
         ui.horizontal(|ui| {
             label!(ui, descrip, Color32::WHITE);
@@ -221,6 +223,7 @@ pub(in crate::ui) fn pharmacophore_list(
 
     if let Some(i) = remove {
         pharmacophore.features.remove(i);
+        *redraw = true;
     }
 
     boolean_list(

@@ -543,11 +543,15 @@ pub(in crate::ui) fn sidebar(
                 // if let MolGenericRef::Small(mol) = mol {
 
                 ui.add_space(ROW_SPACING);
+
+                // todo: Hmm. Need to redraw.
+                let mut redraw_mol_editor = false;
                 pharmacophore::pharmacophore_list(
                     &mut mol.pharmacophore,
                     &mut state.ui.popup,
                     &mut closed,
                     ui,
+                    &mut redraw_mol_editor,
                 );
 
                 // }

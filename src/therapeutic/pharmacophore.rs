@@ -330,8 +330,8 @@ impl Display for PharmacophoreFeature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} : Posit: {} Str: {:.2} Tol: {:.2}",
-            self.feature_type, self.posit, self.strength, self.tolerance,
+            "{}:  Str: {:.2} Tol: {:.2}",
+            self.feature_type, self.strength, self.tolerance,
         )
     }
 }

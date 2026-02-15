@@ -825,7 +825,7 @@ pub fn draw_mol(
         if let MolGenericRef::Small(m) = &mol
             && (!ui.visibility.hide_pharmacophore || mode == OperatingMode::MolEditor)
         {
-            result.extend(draw_mol_pharmacophore(m));
+            result.extend(draw_mol_pharmacophore(m, mode));
         }
 
         result.extend(entities);
@@ -1694,10 +1694,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
 
 /// Note: We currently have this combined with the same call time and entity class as other
 /// small mols.
-fn draw_mol_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
+fn draw_mol_pharmacophore(mol: &MoleculeSmall, op_mode: OperatingMode) -> Vec<Entity> {
     let mut res = Vec::new();
 
-    for feat in &mol.pharmacophore.features {
+    for (i, feat) in mol.pharmacophore.features.iter().enumerate() {
         let posit: Vec3 = feat
             .posit_from_atoms(&mol.common.atom_posits)
             .unwrap_or(feat.posit)
@@ -1711,6 +1711,15 @@ fn draw_mol_pharmacophore(mol: &MoleculeSmall) -> Vec<Entity> {
             feat.feature_type.color(),
             ATOM_SHININESS,
         );
+
+        if op_mode == OperatingMode::MolEditor {
+            ent.overlay_text = Some(TextOverlay {
+                text: format!("{}", i + 1),
+                size: LABEL_SIZE_ATOM,
+                color: LABEL_COLOR_ATOM,
+                font_family: FontFamily::Proportional,
+            });
+        }
 
         ent.opacity = PHARMACOPHORE_OPACITY;
         // ent.class = EntityClass::Pharmacophore as u32;

@@ -522,10 +522,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     scene.camera.position = Vec3F32::new(0., 0., -INIT_CAM_DIST);
     scene.camera.orientation = QuaternionF32::new_identity();
 
-    // Un-render proteins, NAs, lipids etc.
-    scene
-        .entities
-        .retain(|e| e.class == EntityClass::Ligand as u32);
+    scene.entities.clear();
 
     state.volatile.mol_manip.mode = ManipMode::None;
 
