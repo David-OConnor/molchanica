@@ -133,7 +133,7 @@ fn amide_group(
     start_i: usize,
 ) -> (Vec<Atom>, Vec<Bond>) {
     const LEN: f64 = 1.37;
-    let posits = vec![Vec3::new_zero(), Vec3::new(LEN, 0., 0.)];
+    let posits = [Vec3::new_zero(), Vec3::new(LEN, 0., 0.)];
 
     let r_group_local = -X_VEC;
 
@@ -360,7 +360,7 @@ fn ring(
         // Mean neighbor direction, projected into plane.
         let mut mean_dir = Vec3::new(0.0, 0.0, 0.0);
         for p in r_aligners {
-            mean_dir = mean_dir + (*p - a0);
+            mean_dir += *p - a0;
         }
         if len2(mean_dir) <= eps {
             // Stable in-plane fallback
@@ -405,12 +405,10 @@ fn ring(
             } else {
                 start_i + (k - 2)
             }
+        } else if k == 0 {
+            anchor_is[0]
         } else {
-            if k == 0 {
-                anchor_is[0]
-            } else {
-                start_i + (k - 1)
-            }
+            start_i + (k - 1)
         }
     };
 
@@ -423,12 +421,10 @@ fn ring(
             } else {
                 start_sn + (k as u32) - 2
             }
+        } else if k == 0 {
+            anchor_sns[0]
         } else {
-            if k == 0 {
-                anchor_sns[0]
-            } else {
-                start_sn + (k as u32) - 1
-            }
+            start_sn + (k as u32) - 1
         }
     };
 

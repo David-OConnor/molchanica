@@ -7,14 +7,14 @@ use egui::{
     Align, Color32, ComboBox, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText, ScrollArea,
     TextEdit, Ui,
 };
-use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
 use crate::{
-    cam::{move_cam_to_active_mol, move_cam_to_mol},
+    cam::move_cam_to_mol,
     drawing::{EntityClass, wrappers::draw_all_pockets},
-    file_io::{download_mols, download_mols::load_atom_coords_rcsb},
+    file_io::download_mols::load_atom_coords_rcsb,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
     mol_alignment::run_alignment,
@@ -95,17 +95,17 @@ pub(in crate::ui) fn load_popups(
         });
     }
 
-    if state.ui.popup.rama_plot {
-        if let Some(mol) = &state.peptide {
-            popup("rama", ui).show(|ui| {
-                rama_plot::plot_rama(
-                    &mol.residues,
-                    &mol.common.ident,
-                    ui,
-                    &mut state.ui.popup.rama_plot,
-                );
-            });
-        }
+    if state.ui.popup.rama_plot
+        && let Some(mol) = &state.peptide
+    {
+        popup("rama", ui).show(|ui| {
+            rama_plot::plot_rama(
+                &mol.residues,
+                &mol.common.ident,
+                ui,
+                &mut state.ui.popup.rama_plot,
+            );
+        });
     }
 
     if state.ui.popup.pharmacophore_boolean {
@@ -219,11 +219,11 @@ fn associated_structures(
     ui: &mut Ui,
 ) {
     let mut associated_structs = Vec::new();
-    if let Some(lig) = state.active_mol() {
-        if let MolGenericRef::Small(l) = lig {
-            // todo: I don't like this clone, but not sure how else to do it.
-            associated_structs = l.associated_structures.clone();
-        }
+    if let Some(lig) = state.active_mol()
+        && let MolGenericRef::Small(l) = lig
+    {
+        // todo: I don't like this clone, but not sure how else to do it.
+        associated_structs = l.associated_structures.clone();
     }
 
     if state.active_mol().is_some() {
@@ -477,7 +477,7 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
             });
 
         if state.to_save.msaa != msaa_prev {
-            state.update_save_prefs(false);
+            state.update_save_prefs();
         }
 
         ui.add_space(COL_SPACING);
@@ -490,7 +490,7 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
                 state.to_save.movement_speed = *v;
                 scene.input_settings.move_sens = *v as f32;
 
-                state.update_save_prefs(false);
+                state.update_save_prefs();
             } else {
                 // reset
                 state.ui.movement_speed_input = state.to_save.movement_speed.to_string();
@@ -507,7 +507,7 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
                 state.to_save.rotation_sens = *v;
                 scene.input_settings.rotate_sens = *v as f32 / 100.;
 
-                state.update_save_prefs(false);
+                state.update_save_prefs();
             } else {
                 // reset
                 state.ui.rotation_sens_input = state.to_save.rotation_sens.to_string();
@@ -524,7 +524,7 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
         {
             if let Ok(v) = &mut state.ui.mol_move_sens_input.parse::<u8>() {
                 state.to_save.mol_move_sens = *v;
-                state.update_save_prefs(false);
+                state.update_save_prefs();
             } else {
                 // reset
                 state.ui.mol_move_sens_input = state.to_save.mol_move_sens.to_string();
@@ -544,7 +544,7 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
             state.to_save.mol_move_sens = (SENS_MOL_MOVE_SCROLL * 1_000.) as u8;
             state.ui.mol_move_sens_input = state.to_save.mol_move_sens.to_string();
 
-            state.update_save_prefs(false);
+            state.update_save_prefs();
         }
     });
 

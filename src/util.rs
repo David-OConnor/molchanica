@@ -312,7 +312,7 @@ pub fn check_prefs_save(state: &mut State) {
                 LAST_PREF_SAVE_CHECK = Some(now);
 
                 if state.to_save != state.to_save_prev {
-                    state.update_save_prefs(false)
+                    state.update_save_prefs()
                 }
             }
         } else {
@@ -362,9 +362,8 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
         match &state.ui.selection {
             Selection::AtomPeptide(i) => {
                 if let Some(mol) = &state.peptide {
-                    match mol.common.atoms.get(*i) {
-                        Some(a) => return a.posit.into(),
-                        None => (),
+                    if let Some(a) = mol.common.atoms.get(*i) {
+                        return a.posit.into();
                     }
                 }
             }
@@ -435,12 +434,9 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 if let Some(mol) = &state.peptide {
                     let mut ctr = Vec3F32::new_zero();
                     for i in is {
-                        match mol.common.atoms.get(*i) {
-                            Some(a) => {
-                                let p: Vec3F32 = a.posit.into();
-                                ctr += p;
-                            }
-                            None => (),
+                        if let Some(a) = mol.common.atoms.get(*i) {
+                            let p: Vec3F32 = a.posit.into();
+                            ctr += p;
                         }
                     }
                     return ctr / is.len() as f32;
@@ -580,7 +576,7 @@ pub fn save_snap(state: &mut State, cam: &Camera, name: &str) {
 
     state.ui.cam_snapshot = Some(state.cam_snapshots.len() - 1);
 
-    state.update_save_prefs(false);
+    state.update_save_prefs();
 }
 
 // The snap must be set in state.ui.cam_snapshot ahead of calling this.
@@ -653,7 +649,7 @@ pub fn close_peptide(state: &mut State, scene: &mut Scene, engine_updates: &mut 
         }
     }
 
-    state.update_save_prefs(false);
+    state.update_save_prefs();
 
     engine_updates.entities = EntityUpdate::All;
     // engine_updates.entities.push_class(EntityClass::Peptide as u32);
@@ -708,15 +704,15 @@ pub fn close_mol(
 
             if let Some(path) = path {
                 for history in &mut state.to_save.open_history {
-                    if let OpenType::Ligand = history.type_ {
-                        if history.path == path {
-                            history.last_session = false;
-                        }
+                    if let OpenType::Ligand = history.type_
+                        && history.path == path
+                    {
+                        history.last_session = false;
                     }
                 }
             }
 
-            state.update_save_prefs(false);
+            state.update_save_prefs();
         }
         // todo: DRY
         MolType::NucleicAcid => {
@@ -1080,10 +1076,10 @@ pub fn clear_mol_entity_indices(state: &mut State, exempt: Option<MolType>) {
         mol.common.entity_i_range = None;
     }
     for mol in &mut state.lipids {
-        if let Some(e) = exempt {
-            if e == MolType::Lipid {
-                break;
-            }
+        if let Some(e) = exempt
+            && e == MolType::Lipid
+        {
+            break;
         }
         mol.common.entity_i_range = None;
     }

@@ -197,10 +197,10 @@ fn rec(
             continue;
         };
 
-        if let Some(last) = last_order {
-            if ord == last {
-                continue; // enforce alternation
-            }
+        if let Some(last) = last_order
+            && ord == last
+        {
+            continue; // enforce alternation
         }
 
         visited[nbr] = true;

@@ -50,16 +50,13 @@ mod tests;
 mod therapeutic;
 mod threads;
 
-use std::{process::Command, time::Instant};
+use std::time::Instant;
 
-use dynamics::{ComputationDevice, Integrator, SimBoxInit, params::FfParamSet};
-use molecules::{MolType, lipid::load_lipid_templates, nucleic_acid::load_na_templates};
+use dynamics::{Integrator, SimBoxInit, params::FfParamSet};
+use molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
-use crate::{
-    render::render,
-    util::{handle_err, orca_avail},
-};
+use crate::{render::render, util::handle_err};
 
 fn main() {
     #[cfg(not(feature = "cuda"))]

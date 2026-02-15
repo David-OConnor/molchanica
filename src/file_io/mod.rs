@@ -149,7 +149,7 @@ impl State {
 
                         self.update_history(path, OpenType::Map);
                         // Save the open history.
-                        self.update_save_prefs(false);
+                        self.update_save_prefs();
 
                         return Ok(());
                     }
@@ -248,7 +248,7 @@ impl State {
 
         self.update_history(path, OpenType::Map);
         // Save the open history.
-        self.update_save_prefs(false);
+        self.update_save_prefs();
 
         Ok(())
     }
@@ -260,7 +260,7 @@ impl State {
 
         self.update_history(path, OpenType::Map);
         // Save the open history.
-        self.update_save_prefs(false);
+        self.update_save_prefs();
 
         Ok(())
     }
@@ -340,7 +340,7 @@ impl State {
                 // self.update_history(path, OpenType::Frcmod, mol_name.as_str());
                 self.update_history(path, OpenType::Frcmod);
                 // Save the open history.
-                self.update_save_prefs(false);
+                self.update_save_prefs();
 
                 println!("Loaded molecule-specific force fields.");
             }
@@ -374,7 +374,7 @@ impl State {
         }
 
         self.update_history(path, OpenType::Trajectory);
-        self.update_save_prefs(false);
+        self.update_save_prefs();
 
         Ok(())
     }
@@ -401,7 +401,7 @@ impl State {
                     self.update_history(path, OpenType::Peptide);
 
                     // Save the open history.
-                    self.update_save_prefs(false);
+                    self.update_save_prefs();
                 }
             }
             "sdf" => match self.active_mol() {
@@ -416,7 +416,7 @@ impl State {
                     self.update_history(path, open_type);
 
                     // Save the open history.
-                    self.update_save_prefs(false);
+                    self.update_save_prefs();
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
@@ -433,7 +433,7 @@ impl State {
                     self.update_history(path, open_type);
 
                     // Save the open history.
-                    self.update_save_prefs(false);
+                    self.update_save_prefs();
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
@@ -443,7 +443,7 @@ impl State {
                     self.update_history(path, OpenType::Ligand);
 
                     // Save the open history.
-                    self.update_save_prefs(false);
+                    self.update_save_prefs();
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
@@ -454,7 +454,7 @@ impl State {
                     self.update_history(path, OpenType::Ligand);
 
                     // Save the open history.
-                    self.update_save_prefs(false);
+                    self.update_save_prefs();
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
@@ -476,7 +476,7 @@ impl State {
                         self.update_history(path, OpenType::Map);
 
                         // Save the open history.
-                        self.update_save_prefs(false);
+                        self.update_save_prefs();
                     }
                     None => {
                         return Err(io::Error::new(
@@ -852,7 +852,7 @@ impl State {
         }
 
         // Save the open history.
-        self.update_save_prefs(false);
+        self.update_save_prefs();
 
         // Now, save prefs: This is to save last opened. Note that anomalies happen
         // if we update the molecule here, e.g. with docking site posit.

@@ -354,24 +354,24 @@ pub fn handle_cmd(
     }
 
     // Selections
-    if let Some(caps) = re_sel_resn.captures(&input) {
-        if let Some(mol) = &state.peptide {
-            let aa = AminoAcid::from_str(&caps[1])?;
+    if let Some(caps) = re_sel_resn.captures(&input)
+        && let Some(mol) = &state.peptide
+    {
+        let aa = AminoAcid::from_str(&caps[1])?;
 
-            let mut result = Vec::new();
+        let mut result = Vec::new();
 
-            for res in &mol.residues {
-                if let ResidueType::AminoAcid(aa_) = res.res_type
-                    && aa_ == aa
-                {
-                    result.extend(&res.atoms);
-                }
+        for res in &mol.residues {
+            if let ResidueType::AminoAcid(aa_) = res.res_type
+                && aa_ == aa
+            {
+                result.extend(&res.atoms);
             }
-
-            state.ui.selection = Selection::AtomsPeptide(result);
-            *redraw = true;
-            return Ok("Complete".to_owned());
         }
+
+        state.ui.selection = Selection::AtomsPeptide(result);
+        *redraw = true;
+        return Ok("Complete".to_owned());
     }
 
     if let Some(caps) = re_sel_resi.captures(&input)

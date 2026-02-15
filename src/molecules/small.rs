@@ -28,7 +28,7 @@ use na_seq::Element;
 use crate::{
     mol_characterization::MolCharacterization,
     molecules::{
-        Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, MolType as Mt, Residue,
+        Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, Residue,
         common::MoleculeCommon,
     },
     therapeutic::{
@@ -79,15 +79,15 @@ impl MoleculeSmall {
             };
         }
 
-        if let Some(db_name) = metadata.get("DATABASE_NAME") {
-            if db_name.to_lowercase() == "drugbank" {
-                if let Some(id) = metadata.get("DATABASE_ID") {
-                    idents.push(MolIdent::DrugBank(id.clone()));
-                }
-                // This seems to be valid for Drugbank-sourced molecules.
-                if let Ok(id) = ident.parse::<u32>() {
-                    idents.push(MolIdent::PubChem(id));
-                }
+        if let Some(db_name) = metadata.get("DATABASE_NAME")
+            && db_name.to_lowercase() == "drugbank"
+        {
+            if let Some(id) = metadata.get("DATABASE_ID") {
+                idents.push(MolIdent::DrugBank(id.clone()));
+            }
+            // This seems to be valid for Drugbank-sourced molecules.
+            if let Ok(id) = ident.parse::<u32>() {
+                idents.push(MolIdent::PubChem(id));
             }
         }
 
@@ -474,15 +474,14 @@ impl MoleculeSmall {
             println!("Loaded Amber Geostd FF data for {}", self.common.ident);
         }
 
-        if !self.frcmod_loaded {
-            if let Some(f) = data.frcmod
-                && let Ok(frcmod) = ForceFieldParamsVec::from_frcmod(&f)
-            {
-                lig_specific.insert(self.common.ident.clone(), ForceFieldParams::new(&frcmod));
-                self.frcmod_loaded = true;
+        if !self.frcmod_loaded
+            && let Some(f) = data.frcmod
+            && let Ok(frcmod) = ForceFieldParamsVec::from_frcmod(&f)
+        {
+            lig_specific.insert(self.common.ident.clone(), ForceFieldParams::new(&frcmod));
+            self.frcmod_loaded = true;
 
-                println!("Loaded Amber FRCMOD data for {}", self.common.ident);
-            }
+            println!("Loaded Amber FRCMOD data for {}", self.common.ident);
         }
     }
 
@@ -530,7 +529,7 @@ impl MoleculeSmall {
         let mut pubchem_ident_exists = false;
 
         for ident in &self.idents {
-            match pubchem_properties_map.get(&ident) {
+            match pubchem_properties_map.get(ident) {
                 Some(props) => {
                     println!("Loaded Properties for {ident:?} from our local DB.");
 
@@ -573,20 +572,17 @@ impl MoleculeSmall {
                 let (tx, rx) = mpsc::channel(); // one-shot channel
                 let ident_for_thread = ident.clone();
 
-                match ident {
-                    MolIdent::PdbeAmber(_) => {
-                        println!("\nLoading PubChem properties for {ident:?} over HTTP...");
-                        thread::spawn(move || {
-                            let data =
-                                pubchem::properties_from_pdbe_id(&ident_for_thread.ident_innner());
+                if let MolIdent::PdbeAmber(_) = ident {
+                    println!("\nLoading PubChem properties for {ident:?} over HTTP...");
+                    thread::spawn(move || {
+                        let data =
+                            pubchem::properties_from_pdbe_id(&ident_for_thread.ident_innner());
 
-                            let _ = tx.send((ident_for_thread, data));
-                        });
+                        let _ = tx.send((ident_for_thread, data));
+                    });
 
-                        *pubchem_properties_avail = Some(rx);
-                        break;
-                    }
-                    _ => (),
+                    *pubchem_properties_avail = Some(rx);
+                    break;
                 }
             }
         }

@@ -207,36 +207,34 @@ pub fn add_from_template(
     mol.build_adjacency_list();
 
     // Set the anchor bond to Aromatic type if appropriate.
-    if template == Template::AromaticRing {
-        if anchor_is.len() == 2 {
-            let mut atoms_to_update_h = Vec::new(); // avoids db-borrow error.
-            for bond in &mut mol.bonds {
-                if (bond.atom_0 == anchor_is[0] && bond.atom_1 == anchor_is[1])
-                    | (bond.atom_0 == anchor_is[1] && bond.atom_1 == anchor_is[0])
-                {
-                    bond.bond_type = BondType::Aromatic;
-                }
-
-                // todo: This section is dry with the GUI buttons to change bond types. Use a common fn for htis.
-                for i in 0..mol.atoms.len() {
-                    if bond.atom_0 != i && bond.atom_1 != i {
-                        continue;
-                    }
-                    atoms_to_update_h.push(i);
-                }
+    if template == Template::AromaticRing && anchor_is.len() == 2 {
+        let mut atoms_to_update_h = Vec::new(); // avoids db-borrow error.
+        for bond in &mut mol.bonds {
+            if (bond.atom_0 == anchor_is[0] && bond.atom_1 == anchor_is[1])
+                | (bond.atom_0 == anchor_is[1] && bond.atom_1 == anchor_is[0])
+            {
+                bond.bond_type = BondType::Aromatic;
             }
 
-            for i in atoms_to_update_h {
-                remove_hydrogens(mol, i);
-                populate_hydrogens_on_atom(
-                    mol,
-                    i,
-                    &mut Vec::new(),
-                    state_ui,
-                    &mut Default::default(),
-                    manip_mode,
-                );
+            // todo: This section is dry with the GUI buttons to change bond types. Use a common fn for htis.
+            for i in 0..mol.atoms.len() {
+                if bond.atom_0 != i && bond.atom_1 != i {
+                    continue;
+                }
+                atoms_to_update_h.push(i);
             }
+        }
+
+        for i in atoms_to_update_h {
+            remove_hydrogens(mol, i);
+            populate_hydrogens_on_atom(
+                mol,
+                i,
+                &mut Vec::new(),
+                state_ui,
+                &mut Default::default(),
+                manip_mode,
+            );
         }
     }
 

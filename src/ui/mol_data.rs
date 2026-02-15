@@ -11,8 +11,7 @@ use crate::{
     cam::move_cam_to_active_mol,
     drawing,
     drawing::{
-        CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, draw_pocket,
-        wrappers::draw_all_pockets,
+        CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, wrappers::draw_all_pockets,
     },
     label,
     molecules::{
@@ -442,9 +441,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
-    redraw_peptide: &mut bool,
     redraw_lig: &mut bool,
-    close: &mut bool,
     engine_updates: &mut EngineUpdates,
 ) {
     // These variables prevent double borrows.

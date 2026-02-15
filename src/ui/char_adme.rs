@@ -4,7 +4,7 @@ use crate::{
     label,
     molecules::{MolIdent, small::MoleculeSmall},
     therapeutic::{Adme, Toxicity},
-    ui::{COL_SPACING, ROW_SPACING, sidebar},
+    ui::{COL_SPACING, ROW_SPACING},
 };
 
 fn adme_disp(adme: &Adme, ui: &mut Ui) {

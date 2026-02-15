@@ -1,4 +1,4 @@
-use egui::{ComboBox, RichText, Slider, Ui, Widget};
+use egui::{ComboBox, RichText, Slider, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 
 use crate::{

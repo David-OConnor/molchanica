@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
-use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Mesh, Scene};
+use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},

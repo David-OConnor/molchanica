@@ -48,10 +48,8 @@ pub fn generate(
             }
         }
 
-        if blod_brain_barrier {
-            if ther.adme.blood_brain_barrier < 0.00 {
-                continue;
-            }
+        if blod_brain_barrier && ther.adme.blood_brain_barrier < 0.00 {
+            continue;
         }
     }
 

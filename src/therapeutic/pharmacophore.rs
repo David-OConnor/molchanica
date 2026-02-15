@@ -5,18 +5,14 @@
 
 use std::{collections::HashMap, fmt::Display, io, io::ErrorKind};
 
-use bincode::{BorrowDecode, Decode, Encode, de::Decoder};
+use bincode::{Decode, Encode, de::Decoder};
 use bio_files::PharmacophoreTypeGeneric;
 use egui_file_dialog::FileDialog;
 use lin_alg::f64::Vec3;
 
 use crate::{
     mol_characterization::{MolCharacterization, RingType},
-    molecules::{
-        HydrogenBondTwoMols,
-        pocket::{Pocket, PocketVolume},
-        small::MoleculeSmall,
-    },
+    molecules::{pocket::Pocket, small::MoleculeSmall},
     render::Color,
 };
 // #[derive(Clone, Debug)]
@@ -560,10 +556,7 @@ pub fn add_pharmacophore(
         // Position::Atom(atom_i)
 
         if atom_i >= mol.common.atom_posits.len() {
-            return Err(io::Error::new(
-                ErrorKind::Other,
-                "Atom index out of bounds.",
-            ));
+            return Err(io::Error::other("Atom index out of bounds."));
         }
         mol.common.atom_posits[atom_i]
     };

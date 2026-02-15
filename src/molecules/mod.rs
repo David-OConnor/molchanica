@@ -13,7 +13,6 @@ pub mod small;
 
 use std::{
     collections::HashMap,
-    f64::consts::PI,
     fmt::{self, Display, Formatter},
     io,
     io::ErrorKind,
@@ -385,8 +384,6 @@ impl MoleculePeptide {
         metadata: HashMap<String, String>,
         path: Option<PathBuf>,
     ) -> Self {
-        let start = Instant::now();
-
         let (center, size) = mol_center_size(&atoms);
 
         let mut result = Self {
@@ -410,10 +407,10 @@ impl MoleculePeptide {
         result.common.build_adjacency_list();
 
         for res in &result.residues {
-            if let ResidueType::Other(_) = &res.res_type {
-                if res.atoms.len() >= 10 {
-                    result.het_residues.push(res.clone());
-                }
+            if let ResidueType::Other(_) = &res.res_type
+                && res.atoms.len() >= 10
+            {
+                result.het_residues.push(res.clone());
             }
         }
 
@@ -435,10 +432,10 @@ impl MoleculePeptide {
                 if !res.atoms.is_empty() {
                     for atom_i in &res.atoms {
                         let atom = &self.common.atoms[*atom_i];
-                        if let Some(role) = atom.role {
-                            if role == AtomRole::C_Alpha {
-                                return Some(atom);
-                            }
+                        if let Some(role) = atom.role
+                            && role == AtomRole::C_Alpha
+                        {
+                            return Some(atom);
                         }
                     }
 
@@ -1036,10 +1033,10 @@ impl MoleculePeptide {
         // Sort out alternate conformations prior to adding hydrogens.
         let mut alternate_conformations: Vec<String> = Vec::new();
         for atom in &mut m.atoms {
-            if let Some(alt) = &atom.alt_conformation_id {
-                if !alternate_conformations.contains(&alt) {
-                    alternate_conformations.push(alt.to_owned());
-                }
+            if let Some(alt) = &atom.alt_conformation_id
+                && !alternate_conformations.contains(alt)
+            {
+                alternate_conformations.push(alt.to_owned());
             }
         }
 
@@ -1104,7 +1101,7 @@ impl MoleculePeptide {
             path,
         );
 
-        result.experimental_method = m.experimental_method.clone();
+        result.experimental_method = m.experimental_method;
         result.secondary_structure = m.secondary_structure.clone();
 
         if !alternate_conformations.is_empty() {

@@ -11,8 +11,7 @@ use lin_alg::f32::{Quaternion, Vec3};
 use crate::{
     cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
     docking::DockingSite,
-    drawing,
-    drawing::{atoms_bonds::BOND_RADIUS_BASE, wrappers},
+    drawing::atoms_bonds::BOND_RADIUS_BASE,
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::State,

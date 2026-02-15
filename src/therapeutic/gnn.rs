@@ -79,7 +79,7 @@ pub(in crate::therapeutic) fn mol_to_graph_data(
 
     let num_atoms = atoms.len();
     if num_atoms == 0 {
-        return Err(io::Error::new(ErrorKind::Other, "Molecule has 0 atoms"));
+        return Err(io::Error::other("Molecule has 0 atoms"));
     }
 
     // Node features (Indices and Scalars)
@@ -324,8 +324,8 @@ pub(in crate::therapeutic) fn pad_adj_and_mask(
 
     // Mask: 1.0 for atoms, 0.0 for pad
     let mut p_mask = Vec::with_capacity(MAX_ATOMS);
-    p_mask.extend(std::iter::repeat(1.0).take(n));
-    p_mask.extend(std::iter::repeat(0.0).take(MAX_ATOMS - n));
+    p_mask.extend(std::iter::repeat_n(1.0, n));
+    p_mask.extend(std::iter::repeat_n(0.0, MAX_ATOMS - n));
 
     //Adj: Reconstruct row-by-row to handle 2D padding
     let mut p_adj = Vec::with_capacity(MAX_ATOMS * MAX_ATOMS);

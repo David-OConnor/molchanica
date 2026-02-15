@@ -5,9 +5,8 @@ use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
     cam::reset_camera,
-    drawing,
     drawing::{
-        draw_peptide, wrappers,
+        draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_editor,

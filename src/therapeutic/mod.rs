@@ -183,12 +183,10 @@ impl DatasetTdc {
 
         let load = |name| match MODEL_INCLUDE.get_file(name) {
             Some(v) => Ok(v.contents()),
-            None => {
-                return Err(io::Error::new(
-                    ErrorKind::NotFound,
-                    format!("Missing embedded file: {name}"),
-                ));
-            }
+            None => Err(io::Error::new(
+                ErrorKind::NotFound,
+                format!("Missing embedded file: {name}"),
+            )),
         };
 
         let model = load(&model_name)?;

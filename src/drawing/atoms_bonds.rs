@@ -150,10 +150,10 @@ pub fn atom_color(
             }
         }
         Selection::Residue(sel_i) => {
-            if let Some(res_i) = atom.residue {
-                if res_i == *sel_i {
-                    result = COLOR_SELECTED;
-                }
+            if let Some(res_i) = atom.residue
+                && res_i == *sel_i
+            {
+                result = COLOR_SELECTED;
             }
         }
         Selection::AtomsPeptide(sel_is) => {
@@ -186,9 +186,7 @@ pub fn atom_color(
                 result = COLOR_SELECTED;
             }
         }
-        _ => (), // Other bond types; impl A/R.
-
-        Selection::None => (),
+        _ => (),
     }
 
     if dimmed && result != COLOR_SELECTED {
@@ -280,8 +278,8 @@ fn add_bond(
 pub fn bond_entities(
     posit_0: Vec3,
     posit_1: Vec3,
-    mut color_0: Color,
-    mut color_1: Color,
+    color_0: Color,
+    color_1: Color,
     bond_type: BondType,
     mol_type: MolType,
     // No caps for ball and stick

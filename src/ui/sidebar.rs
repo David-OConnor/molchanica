@@ -4,13 +4,11 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam},
-    drawing::{COLOR_SELECTED, EntityClass, draw_pocket},
+    drawing::{EntityClass, draw_pocket},
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
-    render::MESH_POCKET,
-    sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{OperatingMode, State},
     therapeutic::pharmacophore::Pharmacophore,
     ui::{

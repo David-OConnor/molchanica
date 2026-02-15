@@ -95,57 +95,46 @@ pub fn handle_thread_rx(state: &mut State, scene: &mut Scene, updates: &mut Engi
         && let Some(mol) = &mut state.peptide
         && mol.poll_mol_pending_data(&mut state.volatile.thread_receivers.mol_pending_data_avail)
     {
-        state.update_save_prefs(false);
+        state.update_save_prefs();
     }
 
-    if let Some(rx) = &mut state.volatile.thread_receivers.therapeutic_properties_avail {
-        match rx.try_recv() {
-            Ok((i_mol, tp)) => {
-                if i_mol < state.ligands.len() {
-                    state.ligands[i_mol].therapeutic_props = Some(tp);
-                    state.volatile.thread_receivers.therapeutic_properties_avail = None;
-                }
-            }
-            Err(_) => {}
-        }
+    if let Some(rx) = &mut state.volatile.thread_receivers.therapeutic_properties_avail
+        && let Ok((i_mol, tp)) = rx.try_recv()
+        && i_mol < state.ligands.len()
+    {
+        state.ligands[i_mol].therapeutic_props = Some(tp);
+        state.volatile.thread_receivers.therapeutic_properties_avail = None;
     }
 
-    if let Some(rx) = &mut state.volatile.thread_receivers.amber_geostd_data_avail {
-        match rx.try_recv() {
-            Ok((i_mol, data)) => {
-                if i_mol >= state.ligands.len() {
-                    eprintln!("Uhoh: Can't find a ligand we loaded Geostd data for");
-                    state.volatile.thread_receivers.amber_geostd_data_avail = None;
-                    return;
-                }
-                let mol = &mut state.ligands[i_mol];
-
-                match data {
-                    Ok(d) => {
-                        mol.apply_geostd_data(d, &mut state.mol_specific_params);
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            " Unable to load GeoStd data for this molecule (Likely not in the data set.)"
-                        );
-                    }
-                }
-                state.volatile.thread_receivers.amber_geostd_data_avail = None;
-            }
-
-            Err(_) => {}
+    if let Some(rx) = &mut state.volatile.thread_receivers.amber_geostd_data_avail
+        && let Ok((i_mol, data)) = rx.try_recv()
+    {
+        if i_mol >= state.ligands.len() {
+            eprintln!("Uhoh: Can't find a ligand we loaded Geostd data for");
+            state.volatile.thread_receivers.amber_geostd_data_avail = None;
+            return;
         }
+        let mol = &mut state.ligands[i_mol];
+
+        match data {
+            Ok(d) => {
+                mol.apply_geostd_data(d, &mut state.mol_specific_params);
+            }
+            Err(_) => {
+                eprintln!(
+                    " Unable to load GeoStd data for this molecule (Likely not in the data set.)"
+                );
+            }
+        }
+        state.volatile.thread_receivers.amber_geostd_data_avail = None;
     }
 
     // Poll for completed mesh coloring from thread.
-    if let Some(rx) = &mut state.volatile.thread_receivers.peptide_mesh_coloring {
-        match rx.try_recv() {
-            Ok(colors) => {
-                apply_mesh_colors(&mut scene.meshes[MESH_PEP_SOLVENT_SURFACE], &colors);
-                updates.meshes = true;
-                state.volatile.thread_receivers.peptide_mesh_coloring = None;
-            }
-            Err(_) => {}
-        }
+    if let Some(rx) = &mut state.volatile.thread_receivers.peptide_mesh_coloring
+        && let Ok(colors) = rx.try_recv()
+    {
+        apply_mesh_colors(&mut scene.meshes[MESH_PEP_SOLVENT_SURFACE], &colors);
+        updates.meshes = true;
+        state.volatile.thread_receivers.peptide_mesh_coloring = None;
     }
 }

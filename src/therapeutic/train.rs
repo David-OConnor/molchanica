@@ -403,13 +403,16 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             let n = item.graph.num_atoms.min(MAX_ATOMS);
 
             batch_elem_ids.extend_from_slice(&item.graph.elem_indices[0..n]);
-            batch_elem_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
+            batch_elem_ids.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
 
             batch_ff_ids.extend_from_slice(&item.graph.ff_indices[0..n]);
-            batch_ff_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
+            batch_ff_ids.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
 
             batch_scalars.extend_from_slice(&item.graph.scalars[0..n * n_scalars_per_atom]);
-            batch_scalars.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * n_scalars_per_atom));
+            batch_scalars.extend(std::iter::repeat_n(
+                0.0,
+                (MAX_ATOMS - n) * n_scalars_per_atom,
+            ));
 
             // Adjacency list and  mask
             let (p_adj, p_mask) = gnn::pad_adj_and_mask(&item.graph.adj, item.graph.num_atoms);
@@ -472,7 +475,7 @@ impl StandardScaler {
         y_norm * s + self.y_mean
     }
 
-    pub fn apply_in_place(&self, x: &mut Vec<f32>) {
+    pub fn apply_in_place(&self, x: &mut [f32]) {
         for i in 0..x.len() {
             let s = if self.std[i].abs() < 1e-9 {
                 1.0
@@ -716,10 +719,7 @@ fn read_data(
 /// in both training and inference workflows.
 pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
     let Some(c) = &mol.characterization else {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Missing mol characterization",
-        ));
+        return Err(io::Error::other("Missing mol characterization"));
     };
 
     // Helper to compress large ranges (Log1p)

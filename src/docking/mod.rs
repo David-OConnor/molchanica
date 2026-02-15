@@ -120,7 +120,7 @@ pub fn dock(
 
     let mut md_state = build_dynamics_docking(
         &state.dev,
-        &mol,
+        mol,
         Some(pep),
         starting_vel.into(),
         &state.ff_param_set,

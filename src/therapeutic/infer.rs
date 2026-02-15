@@ -36,8 +36,8 @@ pub struct Infer {
 impl Infer {
     /// Helper used by both loading approaches.
     fn load(cfg_bytes: &[u8], scaler_bytes: &[u8]) -> io::Result<(Self, NdArrayDevice)> {
-        let config: ModelConfig = serde_json::from_slice(&cfg_bytes)?;
-        let scaler: StandardScaler = serde_json::from_slice(&scaler_bytes)?;
+        let config: ModelConfig = serde_json::from_slice(cfg_bytes)?;
+        let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;
 
         let device = Default::default();
 
@@ -82,7 +82,7 @@ impl Infer {
     pub fn load_from_embedded(data_set: DatasetTdc) -> io::Result<Self> {
         let (model_bytes, scaler_bytes, cfg_bytes) = data_set.data()?;
 
-        let (mut model, device) = Self::load(&cfg_bytes, &scaler_bytes)?;
+        let (mut model, device) = Self::load(cfg_bytes, scaler_bytes)?;
 
         let recorder = NamedMpkBytesRecorder::<FullPrecisionSettings>::new();
 
@@ -117,7 +117,7 @@ impl Infer {
         // -- Pad Indices (Int) --
         let mut p_el_ids = Vec::with_capacity(MAX_ATOMS);
         p_el_ids.extend_from_slice(&graph.elem_indices[0..n]);
-        p_el_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
+        p_el_ids.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
 
         let mut p_ff_ids = Vec::with_capacity(MAX_ATOMS);
         p_ff_ids.extend_from_slice(&graph.ff_indices[0..n]);
@@ -132,7 +132,10 @@ impl Infer {
         };
         let mut p_scalars = Vec::with_capacity(MAX_ATOMS * n_scalars_per_atom);
         p_scalars.extend_from_slice(&graph.scalars[0..n * n_scalars_per_atom]);
-        p_scalars.extend(std::iter::repeat(0.0).take((MAX_ATOMS - n) * n_scalars_per_atom));
+        p_scalars.extend(std::iter::repeat_n(
+            0.0,
+            (MAX_ATOMS - n) * n_scalars_per_atom,
+        ));
 
         // -- Pad Adj & Mask (Float) --
         // Use the helper from train.rs

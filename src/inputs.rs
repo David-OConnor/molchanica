@@ -19,7 +19,7 @@ use crate::{
     mol_manip,
     mol_manip::{ManipMode, set_manip},
     molecules::MolType,
-    render::{MESH_POCKET, set_flashlight},
+    render::set_flashlight,
     selection,
     selection::Selection,
     state::{OperatingMode, State},
@@ -59,7 +59,7 @@ pub fn event_dev_handler(
     // This affects our app-specific commands, vs engine built-in ones. For example, hot keys
     // to change various modes.
 
-    let mut redraw = RedrawFlags::default();
+    let redraw = RedrawFlags::default();
     let mut redraw_in_place = RedrawFlags::default();
     let redraw_mol_editor = false;
 

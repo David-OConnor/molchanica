@@ -247,7 +247,7 @@ fn add_bond(
     bond_type: BondType,
     bonds: &mut Vec<Bond>,
     adj: &mut Vec<Vec<usize>>,
-    atoms: &Vec<Atom>,
+    atoms: &[Atom],
 ) {
     let (lo, hi) = if a < b { (a, b) } else { (b, a) };
     bonds.push(Bond {

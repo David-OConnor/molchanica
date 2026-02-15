@@ -991,7 +991,7 @@ pub fn handle_selection_attempt_mol_editor(
 
     let (sel_atoms, dist_atoms) = {
         let atoms_along_ray_lig =
-            points_along_ray_atom(selected_ray, &[atoms.clone()], dist_thresh);
+            points_along_ray_atom(selected_ray, std::slice::from_ref(&atoms), dist_thresh);
 
         find_selected_atom_or_bond(
             &[],
@@ -1023,8 +1023,8 @@ pub fn handle_selection_attempt_mol_editor(
 
         let bonds_along_ray_lig = points_along_ray_bond(
             selected_ray,
-            &[bonds.clone()],
-            &[atoms.clone()],
+            std::slice::from_ref(&bonds),
+            std::slice::from_ref(&atoms),
             dist_thresh,
         );
 

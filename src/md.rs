@@ -6,8 +6,6 @@ use std::{
 };
 
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
-#[cfg(feature = "cuda")]
-use cudarc::driver::HostSlice;
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdState, MolDynamics, ParamError,
     compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
@@ -251,7 +249,7 @@ pub fn build_dynamics(
         mols.push(mol);
 
         if copies > 1 && *ff_mol_type == FfMolType::SmallOrganic {
-            let offset_dirs = [X_VEC, -X_VEC, Y_VEC - Y_VEC, Z_VEC, -Z_VEC];
+            let offset_dirs = [X_VEC, -X_VEC, Y_VEC, -Y_VEC, Z_VEC, -Z_VEC];
             // todo: Dedicated fn for this?
             let offset_amt = 10.; // todo: Should depend on the mol.
             // todo: This produces atoms in a plus configuration; not a grid! Sloppy proxy..\

@@ -38,7 +38,7 @@ use crate::{
     },
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
-    state::{OperatingMode, State, StateUi, Visibility},
+    state::{OperatingMode, State, StateUi},
     util::find_neighbor_posit,
 };
 
@@ -760,7 +760,7 @@ pub fn save(state: &mut State, path: &Path) -> io::Result<()> {
         "prmtop" => (), // todo
         "pdbqt" => mol.to_pdbqt()?.save(path)?,
         _ => {
-            return Err(io::Error::new(ErrorKind::Other, "Unsupported file type"));
+            return Err(io::Error::other("Unsupported file type"));
         }
     }
 

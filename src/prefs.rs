@@ -306,7 +306,7 @@ impl State {
 
     /// Update when prefs change, periodically etc.
     /// todo: See the note in PerMolsave::from_state. Workaround for order-related bugs.
-    pub fn update_save_prefs(&mut self, on_init: bool) {
+    pub fn update_save_prefs(&mut self) {
         println!("Saving state to prefs file");
 
         // Sync molecule positions.
@@ -362,8 +362,6 @@ impl State {
         println!("Updating state from prefs data");
         self.reset_selections();
 
-        let mut center = Vec3::new_zero();
-
         if let Some(mol) = &mut self.peptide {
             if self.to_save.per_mol.contains_key(&mol.common.ident) {
                 let data = &self.to_save.per_mol[&mol.common.ident];
@@ -379,8 +377,6 @@ impl State {
                         chain.visible = data.chain_vis[i];
                     }
                 }
-
-                center = data.docking_site.site_center;
 
                 mol.rcsb_data = data.rcsb_data.clone();
                 mol.rcsb_files_avail = data.rcsb_files_avail.clone();

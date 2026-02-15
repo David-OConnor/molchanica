@@ -14,23 +14,21 @@ use bincode::{
     error::{DecodeError, EncodeError},
 };
 use bio_files::{Mol2, Sdf};
-use graphics::{EngineUpdates, EntityUpdate, Mesh, Scene};
+use graphics::{EngineUpdates, Mesh};
 use lin_alg::{
     f32::{Quaternion, Vec3 as Vec3F32},
     f64::Vec3,
 };
 
 use crate::{
-    drawing::{EntityClass, wrappers::draw_all_pockets},
+    drawing::EntityClass,
     molecules::{
         Atom, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide,
         common::{MoleculeCommon, reassign_bond_indices},
-        lipid::MoleculeLipid,
         small::MoleculeSmall,
     },
     render::MESH_POCKET,
     sfc_mesh::{MeshColoring, apply_mesh_colors, get_mesh_colors, make_sas_mesh},
-    state::State,
 };
 
 // A larger probe radius will make the pocket tighter and coarser. Tune this to be realistic.

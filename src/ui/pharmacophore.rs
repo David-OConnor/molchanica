@@ -268,47 +268,44 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
             drawing::draw_pharmacophore_hint_sites(&mut scene.entities, &hint_sites, updates);
         }
 
-        if let Selection::AtomLig((_mol_i, atom_i)) = &state.ui.selection {
-            if ui
+        if let Selection::AtomLig((_mol_i, atom_i)) = &state.ui.selection
+            && ui
                 .button(RichText::new("Add pharmacophore").color(COLOR_ACTION))
                 .clicked()
+        {
+            if add_pharmacophore(
+                &mut state.mol_editor.mol,
+                state.ui.pharmacaphore_type,
+                *atom_i,
+            )
+            .is_err()
             {
-                if add_pharmacophore(
-                    &mut state.mol_editor.mol,
-                    state.ui.pharmacaphore_type,
-                    *atom_i,
-                )
-                .is_err()
-                {
-                    eprintln!("Error adding pharmacophore feature.");
-                };
+                eprintln!("Error adding pharmacophore feature.");
+            };
 
-                *redraw = true;
-            }
+            *redraw = true;
         }
 
-        if !state.mol_editor.mol.pharmacophore.features.is_empty() {
-            if ui
+        if !state.mol_editor.mol.pharmacophore.features.is_empty()
+            && ui
                 .button(RichText::new("Save"))
                 .on_hover_text("Save the pharmacophore to a file.")
                 .clicked()
-            {
-                let name = &state.mol_editor.mol.common.ident;
+        {
+            let name = &state.mol_editor.mol.common.ident;
 
-                if state
-                    .mol_editor
-                    .mol
-                    .pharmacophore
-                    .save(&mut state.volatile.dialogs.save, name)
-                    .is_err()
-                {
-                    handle_err(&mut state.ui, "Problem saving the pharmacophore".to_owned());
-                }
+            if state
+                .mol_editor
+                .mol
+                .pharmacophore
+                .save(&mut state.volatile.dialogs.save, name)
+                .is_err()
+            {
+                handle_err(&mut state.ui, "Problem saving the pharmacophore".to_owned());
             }
         }
 
         // Pocket-related functionality.
-        let mut copy_pocket_to_pharmacophore = false; // avoids dbl-borrow.
         if state.mol_editor.mol.pharmacophore.pocket.is_some() {
             // todo: Match on selection, or active mol here?
             // let pocket_sel_prev = matches!(state.ui.selection, Selection::AtomPocket(_));
@@ -407,11 +404,6 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
             // {
             //     copy_pocket_to_pharmacophore = true;
             // }
-        }
-        if copy_pocket_to_pharmacophore
-            && let Some(pocket) = &state.mol_editor.mol.pharmacophore.pocket
-        {
-            state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
         }
     });
 }

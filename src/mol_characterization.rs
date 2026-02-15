@@ -287,7 +287,7 @@ impl MolCharacterization {
 
         let adj = &mol.adjacency_list;
 
-        let rings = rings(&adj, &mol.atoms, &bond_type_by_edge);
+        let rings = rings(adj, &mol.atoms, &bond_type_by_edge);
         let ring_systems = fused_rings(&rings, &mol.atoms);
 
         let mut num_rings_aromatic = 0;
@@ -616,7 +616,7 @@ impl MolCharacterization {
 
         let balaban_j = calc_balaban_j(mol);
 
-        let bertz_ct = bertz_ct(&mol, 100) as f32;
+        let bertz_ct = bertz_ct(mol, 100) as f32;
 
         // Simple monotonic heuristics for logP and MR (good ML features, not RDKit-identical)
         let rings_ct = rings.len() as f32;
@@ -983,7 +983,7 @@ fn rings(
         result.push(Ring {
             atoms: ring.to_vec(),
             ring_type,
-            plane_norm: find_plane_norm(&ring, &atoms),
+            plane_norm: find_plane_norm(&ring, atoms),
         })
     }
 
@@ -1949,7 +1949,6 @@ pub fn bertz_ct(mol: &MoleculeCommon, cutoff: usize) -> f64 {
 }
 
 /// Excludes hydrogens.
-
 fn wiener_index(mol: &MoleculeCommon) -> Option<u32> {
     let n = mol.atoms.len();
     if mol.adjacency_list.len() != n {

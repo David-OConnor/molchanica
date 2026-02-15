@@ -245,8 +245,7 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                 //
                 //     ui.add_space(COL_SPACING);
 
-                if state.volatile.orca_avail {
-                    if ui
+                if state.volatile.orca_avail && ui
                         .button(RichText::new("Run").color(COLOR_ACTION))
                         .on_hover_text(
                             "Run ORCA using the settings here, on the active molecule.",
@@ -259,7 +258,6 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                         };
                         state.orca.input.atoms = mol.common().atoms.iter().map(|a| a.to_generic()).collect();
                     }
-                }
             }
 
             if run {
@@ -293,7 +291,7 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                             OrcaOutput::Text(t) => {
                                 println!("ORCA run complete. Output: \n\n{t}");
 
-                                handle_success(&mut state.ui, format!("ORCA run complete"));
+                                handle_success(&mut state.ui, "ORCA run complete".to_owned());
                             }
                             OrcaOutput::Charges(o) => {
                                 // println!("Charge output: {:?}", o);

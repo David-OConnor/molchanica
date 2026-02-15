@@ -278,7 +278,7 @@ impl DensityRect {
             .iter()
             .enumerate()
             .filter(|(i, _)| i.is_multiple_of(DIST_TO_ATOMS_SAMPLE_RATIO))
-            .map(|(_, a)| (*a).into())
+            .map(|(_, a)| *a)
             .collect();
 
         // Note: We get a big speedup from both Rayon, and then GPU on top of that. e.g.:

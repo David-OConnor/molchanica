@@ -167,8 +167,8 @@ impl State {
     pub fn get_mol(&self, mol_type: MolType, i: usize) -> Option<MolGenericRef<'_>> {
         match mol_type {
             MolType::Peptide => {
-                if self.peptide.is_some() {
-                    Some(MolGenericRef::Peptide(&self.peptide.as_ref().unwrap()))
+                if let Some(p) = &self.peptide {
+                    Some(MolGenericRef::Peptide(p))
                 } else {
                     None
                 }

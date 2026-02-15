@@ -813,7 +813,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
             {
                 let mut close = false;
-                display_mol_data_peptide(state, scene, ui, &mut redraw.peptide, &mut redraw.ligand, &mut close, &mut updates);
+                display_mol_data_peptide(state, scene, ui, &mut redraw.ligand,&mut updates);
 
                 if close {
                     close_peptide(state, scene, &mut updates);
@@ -949,7 +949,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
 
             if metadata_loaded {
-                state.update_save_prefs(false);
+                state.update_save_prefs();
             }
 
             ui.add_space(COL_SPACING);
@@ -1219,10 +1219,8 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
         // -------UI above; clean-up items (based on flags) below
 
-        if close_active_mol {
-            if let Some((mol_type, i)) = state.volatile.active_mol {
+        if close_active_mol && let Some((mol_type, i)) = state.volatile.active_mol {
                 close_mol(mol_type, i, state, scene, &mut updates);
-            }
         }
 
         if let Err(e) = update_file_dialogs(state, scene, ui, &mut updates) {
@@ -1378,8 +1376,7 @@ pub(crate) fn cam_controls(
                     state.to_save.control_scheme = ControlScheme::Arc { center };
                 }
 
-                if arc_active {
-                    if ui
+                if arc_active &&ui
                         .button(
                             RichText::new("Orbit sel")
                                 .color(misc::active_color(state.ui.orbit_selected_atom)),
@@ -1392,19 +1389,16 @@ pub(crate) fn cam_controls(
                         let center = orbit_center(state);
                         scene.input_settings.control_scheme = ControlScheme::Arc { center };
                     }
-                }
 
                 ui.add_space(COL_SPACING);
 
-                if state.ui.selection != Selection::None {
-                    if ui
+                if state.ui.selection != Selection::None && ui
                         .button(RichText::new("Cam to sel").color(COLOR_HIGHLIGHT))
                         .on_hover_text("(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.")
                         .clicked()
                     {
                         move_cam_to_sel(&mut state.ui, &state.peptide, &state.ligands, &state.nucleic_acids,
                                         &state.lipids, &state.pockets, &mut scene.camera, engine_updates);
-                    }
                 }
 
                 // if state.volatile.active_mol.is_some() {
@@ -1527,7 +1521,7 @@ pub(crate) fn cam_snapshots(
                         state.cam_snapshots.remove(i);
                     }
                     state.ui.cam_snapshot = None;
-                    state.update_save_prefs(false);
+                    state.update_save_prefs();
                 }
             }
 

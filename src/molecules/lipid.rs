@@ -9,10 +9,10 @@
 //! Lipids-per-area in membrane starting point:
 //! PC (POPC/DPPC, fluid): ~60–68 Å², PE (POPE): ~52–58 Å², DOPC: ~68–72 Å²
 //!
-//! // Example ratios:
-//! - E-coli membrane: PE:PG:CL: 70-80:20-25:5-10 (mol%)
-//! - Staphy aureus: PG:CL: 80:20
-//! Bacillus subtilis: PE:PG:CL: 40-60%, 5-40%, 8-18%
+//! Example ratios:
+//!   - E-coli membrane: PE:PG:CL: 70-80:20-25:5-10 (mol%)
+//!   - Staphy aureus: PG:CL: 80:20
+//!   -Bacillus subtilis: PE:PG:CL: 40-60%, 5-40%, 8-18%
 //!
 // notes for when constructing liposomes and LNPs:
 // "

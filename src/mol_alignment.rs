@@ -662,7 +662,7 @@ fn find_best_rotation_about_axis(
 fn apply_best_rotation_about_axis(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,
-    posits_q_aligned: &mut Vec<Vec3>,
+    posits_q_aligned: &mut [Vec3],
     axis_center: Vec3,
     axis_dir_unit: Vec3,
     rot_count: u16,
@@ -696,12 +696,8 @@ fn align_from_similar_center(
     let atoms_t = &mol_template.common.atoms;
     let atoms_q = &mol_query.common.atoms;
 
-    let Some(closest_to_ctr_t) = find_closest_to_ctr(&mol_template.common) else {
-        return None;
-    };
-    let Some(closest_to_ctr_q) = find_closest_to_ctr(&mol_query.common) else {
-        return None;
-    };
+    let closest_to_ctr_t = find_closest_to_ctr(&mol_template.common)?;
+    let closest_to_ctr_q = find_closest_to_ctr(&mol_query.common)?;
 
     let nbrs_t = &mol_template.common.adjacency_list[closest_to_ctr_t];
     let nbrs_q = &mol_query.common.adjacency_list[closest_to_ctr_q];
@@ -713,7 +709,7 @@ fn align_from_similar_center(
 
     // Position the query molecule so that its atom closest to center is overlaid on that of
     // the template's.
-    let mut posits_q_translated = {
+    let posits_q_translated = {
         let offset = posit_ctr_t - atoms_q[closest_to_ctr_q].posit;
 
         let mut p = Vec::with_capacity(atoms_q.len());
@@ -766,7 +762,7 @@ fn align_from_similar_center(
 /// then aligning both the position and plane. The result should be that the positions generated have
 /// these rings coplanar and with the same center. We align all ring combinations, in both directions,
 /// then rotate around these ring alignments while maintaining the ring plane, scoring to find the best.
-
+///
 /// Returns (positions template, positions_query), and score.
 fn align_from_rings(
     mol_template: &MoleculeSmall,
@@ -968,8 +964,8 @@ fn force_synthetic(
     // if matches_def()
 
     // Should never be missing.
-    let ff_t = &atom_t.force_field_type.clone().unwrap_or(String::new());
-    let ff_q = &atom_q.force_field_type.clone().unwrap_or(String::new());
+    let ff_t = &atom_t.force_field_type.clone().unwrap_or_default();
+    let ff_q = &atom_q.force_field_type.clone().unwrap_or_default();
 
     let f_ff_type = if atom_t.force_field_type == atom_q.force_field_type {
         -COEFF_FF_TYPE

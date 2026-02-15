@@ -543,7 +543,7 @@ pub fn set_manip(
 
     // If in primary mode, the item to move is an entire molecule, indexec by the appropriate molecule set.
     // In the mol editor, we are interested in the selected atom or bond. (Or the pocket)
-    let (mut mol_type_active, mut item_to_move_i) = match op_mode {
+    let (mol_type_active, item_to_move_i) = match op_mode {
         OperatingMode::Primary => match vol.active_mol {
             Some(v) => v,
             None => return,

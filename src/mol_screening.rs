@@ -45,10 +45,8 @@ pub fn screen_by_alignment(
             make_initial_alignment(mol_template, &mol_q, RING_ALIGN_ROT_COUNT_QUICK);
 
         // Assume sorted by score already.
-        if !init_alignments.is_empty() {
-            if init_alignments[0].score <= score_thresh {
-                res.push((i, init_alignments[0].score));
-            }
+        if !init_alignments.is_empty() && init_alignments[0].score <= score_thresh {
+            res.push((i, init_alignments[0].score));
         }
     }
 

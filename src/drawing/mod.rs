@@ -6,7 +6,7 @@ use std::{fmt, fmt::Display, io, io::ErrorKind, str::FromStr, sync::OnceLock};
 use bincode::{Decode, Encode};
 use bio_files::{BondType, ResidueType};
 use egui::{Color32, FontFamily};
-use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOverlay, UP_VEC};
+use graphics::{ControlScheme, EngineUpdates, Entity, Scene, TextOverlay, UP_VEC};
 use lin_alg::{
     f32::{Quaternion, Vec3},
     f64::Vec3 as Vec3F64,
@@ -24,8 +24,8 @@ use crate::{
     },
     mol_manip::ManipMode,
     molecules::{
-        Atom, AtomRole, Chain, HydrogenBond, HydrogenBondTwoMols, MolGenericRef, MolType,
-        MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
+        Atom, AtomRole, Chain, HydrogenBondTwoMols, MolGenericRef, MolType, MoleculePeptide,
+        pocket::Pocket, small::MoleculeSmall,
     },
     reflection::DensityPt,
     render::{
@@ -166,7 +166,7 @@ fn text_overlay_bonds(
 
         if ui.visibility.labels_mol && i_atom == 0 {
             entity.overlay_text = Some(TextOverlay {
-                text: format!("{}", mol_ident),
+                text: mol_ident.to_string(),
                 size: LABEL_SIZE_MOL,
                 color,
                 font_family: FontFamily::Proportional,
@@ -442,8 +442,8 @@ pub fn draw_water(
 
         // Bonds
         for pair in [(o_pos[i], h0_pos[i]), (o_pos[i], h1_pos[i])] {
-            let center: Vec3 = ((pair.0 + pair.1) / 2.).into();
-            let diff: Vec3 = (pair.0 - pair.1).into();
+            let center = (pair.0 + pair.1) / 2.;
+            let diff = pair.0 - pair.1;
             let dist = diff.magnitude();
 
             // This handles the case of atoms in the water molecule split across the periodic boundary
@@ -1080,17 +1080,16 @@ pub fn filter_pep_atoms_by_dist<'a>(
     for (i_atom, _atom) in mol.atoms.iter().enumerate() {
         let posit = mol.atom_posits[i_atom];
 
-        if ui.show_near_sel_only {
-            if let Selection::AtomPeptide(i_sel) = &ui.selection {
-                // todo: This will fail after moves and dynamics. You must pick the selected atom
-                // todo posit correctly!
+        if ui.show_near_sel_only
+            && let Selection::AtomPeptide(i_sel) = &ui.selection
+        {
+            // todo: This will fail after moves and dynamics. You must pick the selected atom
+            // todo posit correctly!
 
-                if (posit - mol.atom_posits[*i_sel]).magnitude_squared() as f32
-                    > nearby_dist_thresh_sq
-                {
-                    result.push(i_atom);
-                    continue;
-                }
+            if (posit - mol.atom_posits[*i_sel]).magnitude_squared() as f32 > nearby_dist_thresh_sq
+            {
+                result.push(i_atom);
+                continue;
             }
         }
 
@@ -1189,25 +1188,21 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
     }
 
     // Note that this renders over a sticks model.
-    if !state.ui.visibility.hide_protein {
-        if ui.mol_view == MoleculeView::Dots {
-            draw_dots(
-                &mut state.volatile.flags.update_sas_mesh,
-                state.volatile.flags.sas_mesh_created,
-                scene,
-            );
-        }
+    if !state.ui.visibility.hide_protein && ui.mol_view == MoleculeView::Dots {
+        draw_dots(
+            &mut state.volatile.flags.update_sas_mesh,
+            state.volatile.flags.sas_mesh_created,
+            scene,
+        );
     }
 
     // todo: Consider if you handle this here, or in a sep fn.
-    if !state.ui.visibility.hide_protein {
-        if ui.mol_view == MoleculeView::Surface {
-            draw_sa_surface(
-                &mut state.volatile.flags.update_sas_mesh,
-                state.volatile.flags.sas_mesh_created,
-                scene,
-            );
-        }
+    if !state.ui.visibility.hide_protein && ui.mol_view == MoleculeView::Surface {
+        draw_sa_surface(
+            &mut state.volatile.flags.update_sas_mesh,
+            state.volatile.flags.sas_mesh_created,
+            scene,
+        );
     }
 
     let chains_invis: Vec<&Chain> = mol.chains.iter().filter(|c| !c.visible).collect();
@@ -1227,34 +1222,34 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         for (i_atom, atom) in mol.common.atoms.iter().enumerate() {
             if atom.hetero {
                 // todo: Excessive nesting.
-                if let Some(role) = atom.role {
-                    if role == AtomRole::Water {
-                        let color_atom = atoms_bonds::atom_color(
-                            atom,
-                            0,
-                            i_atom,
-                            &mol.residues,
-                            aa_count,
-                            sel,
-                            state.ui.view_sel_level,
-                            false,
-                            ResColoring::default(),
-                            false,
-                            MolType::Peptide,
-                        );
+                if let Some(role) = atom.role
+                    && role == AtomRole::Water
+                {
+                    let color_atom = atoms_bonds::atom_color(
+                        atom,
+                        0,
+                        i_atom,
+                        &mol.residues,
+                        aa_count,
+                        sel,
+                        state.ui.view_sel_level,
+                        false,
+                        ResColoring::default(),
+                        false,
+                        MolType::Peptide,
+                    );
 
-                        let mut entity = Entity::new(
-                            MESH_WATER_SPHERE,
-                            mol.common.atom_posits[i_atom].into(),
-                            Quaternion::new_identity(),
-                            BALL_RADIUS_WATER_O,
-                            color_atom,
-                            ATOM_SHININESS,
-                        );
+                    let mut entity = Entity::new(
+                        MESH_WATER_SPHERE,
+                        mol.common.atom_posits[i_atom].into(),
+                        Quaternion::new_identity(),
+                        BALL_RADIUS_WATER_O,
+                        color_atom,
+                        ATOM_SHININESS,
+                    );
 
-                        entity.class = EntityClass::Protein as u32;
-                        entities.push(entity);
-                    }
+                    entity.class = EntityClass::Protein as u32;
+                    entities.push(entity);
                 }
             }
         }
@@ -1297,12 +1292,11 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             }
 
             if let Some(role) = atom.role {
-                if state.ui.visibility.hide_sidechains
-                    || state.ui.mol_view == MoleculeView::Backbone
+                if (state.ui.visibility.hide_sidechains
+                    || state.ui.mol_view == MoleculeView::Backbone)
+                    && matches!(role, AtomRole::Sidechain | AtomRole::H_Sidechain)
                 {
-                    if matches!(role, AtomRole::Sidechain | AtomRole::H_Sidechain) {
-                        continue;
-                    }
+                    continue;
                 }
                 if (state.ui.visibility.hide_water || ui.mol_view == MoleculeView::SpaceFill)
                     && role == AtomRole::Water
@@ -1385,10 +1379,9 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                     .filter(|l| l.common.selected_for_md)
                     .count()
                     != 0
+                && state.volatile.md_peptide_selected.contains(&(0, i_atom))
             {
-                if state.volatile.md_peptide_selected.contains(&(0, i_atom)) {
-                    color_atom = blend_color(color_atom, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
-                }
+                color_atom = blend_color(color_atom, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
             }
 
             let mut entity = Entity::new(
@@ -1460,12 +1453,12 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         }
 
         // Assuming water won't be bonded to the main molecule.
-        if state.ui.visibility.hide_sidechains || state.ui.mol_view == MoleculeView::Backbone {
-            if let Some(role_0) = atom_0.role {
-                if let Some(role_1) = atom_1.role {
-                    if role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain {
-                        continue;
-                    }
+        if (state.ui.visibility.hide_sidechains || state.ui.mol_view == MoleculeView::Backbone)
+            && let Some(role_0) = atom_0.role
+        {
+            if let Some(role_1) = atom_1.role {
+                if role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain {
+                    continue;
                 }
             }
         }
