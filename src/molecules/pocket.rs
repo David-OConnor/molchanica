@@ -3,7 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io,
-    io::ErrorKind,
+    io::{Cursor, ErrorKind},
     path::Path,
 };
 
@@ -77,32 +77,39 @@ pub struct Pocket {
     pub volume: PocketVolume,
 }
 
-// todo: Consider ditching this: Instead, use SDF and/or Mol2 for the atoms, and re-generate
-// todo the rest.
 impl Encode for Pocket {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.mesh_orientation.encode(encoder)?;
-        self.mesh_pivot.encode(encoder)?;
-        self.surface_mesh.encode(encoder)?;
-        self.volume.encode(encoder)?;
+        let mol = MoleculeSmall {
+            common: self.common.clone(),
+            ..Default::default()
+        }
+        .to_mol2();
+
+        // write mol2 into bytes, then UTF-8
+        let mut bytes = Vec::<u8>::new();
+        mol.write_to(&mut bytes)
+            .map_err(|e| EncodeError::OtherString(e.to_string()))?;
+
+        let mol2_text =
+            String::from_utf8(bytes).map_err(|e| EncodeError::OtherString(e.to_string()))?;
+
+        mol2_text.encode(encoder)?;
         Ok(())
     }
 }
 
 impl<Context> Decode<Context> for Pocket {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let mesh_orientation = Quaternion::decode(decoder)?;
-        let mesh_pivot = Vec3F32::decode(decoder)?;
-        let surface_mesh = Mesh::decode(decoder)?;
-        let volume = PocketVolume::decode(decoder)?;
+        let mol2_text = String::decode(decoder)?;
 
-        Ok(Self {
-            common: MoleculeCommon::default(),
-            mesh_orientation,
-            mesh_pivot,
-            surface_mesh,
-            volume,
-        })
+        // If Mol2::new is fallible:
+        let mol2 = Mol2::new(&mol2_text).map_err(|e| DecodeError::OtherString(e.to_string()))?;
+
+        let mol: MoleculeSmall = mol2
+            .try_into()
+            .map_err(|_| DecodeError::OtherString(String::from("Problem loading from mol2")))?;
+
+        Ok(mol.common.into())
     }
 }
 

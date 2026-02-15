@@ -58,7 +58,13 @@ pub fn update_file_dialogs(
 
                 if extension == "pmp" {
                     if let Err(e) =
-                        graphics::app_utils::save(path, &state.mol_editor.mol.pharmacophore)
+                        // todo
+                        // graphics::app_utils::save(path, &state.mol_editor.mol.pharmacophore)
+                        graphics::app_utils::save(
+                            path,
+                            &state.mol_editor.mol.pharmacophore.clone(),
+                        )
+                    // state.mol_editor.mol.pharmacophore.save(path)
                     {
                         handle_err(&mut state.ui, e.to_string());
                     };

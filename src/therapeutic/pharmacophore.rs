@@ -3,7 +3,7 @@
 //!
 //! https://www.eyesopen.com/rocs
 
-use std::{collections::HashMap, fmt::Display, io, io::ErrorKind};
+use std::{collections::HashMap, fmt::Display, io, io::ErrorKind, path::Path};
 
 use bincode::{Decode, Encode, de::Decoder};
 use bio_files::PharmacophoreTypeGeneric;
@@ -26,17 +26,19 @@ use crate::{
 // }
 
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
+/// The u8 rep is for serialization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode, Hash, PartialOrd, Ord)] // Default is for the UI
+#[repr(u8)]
 pub enum PharmacophoreFeatType {
-    Hydrophobic,
-    Hydrophilic,
-    Aromatic,
+    Hydrophobic = 0,
+    Hydrophilic = 1,
+    Aromatic = 3,
     #[default]
-    Acceptor,
-    AcceptorProjected,
-    Donor,
-    Cation,
-    Anion,
+    Acceptor = 4,
+    AcceptorProjected = 5,
+    Donor = 6,
+    Cation = 7,
+    Anion = 8,
     /// Directional.
     DonorProjected,
     // HeavyAtom,
@@ -492,7 +494,7 @@ impl Pharmacophore {
     }
 
     /// Save to disk.
-    pub fn save(&self, dialog: &mut FileDialog, name_default: &str) -> io::Result<()> {
+    pub fn save_using_dialog(&self, dialog: &mut FileDialog, name_default: &str) -> io::Result<()> {
         let fname_default = {
             let ext_default = "pmp"; // A custom format
 
@@ -506,6 +508,11 @@ impl Pharmacophore {
 
         Ok(())
     }
+
+    // pub fn save(&self, path: &Path) -> io::Result<()> {
+    //
+    //     Ok(())
+    // }
 
     /// Terse
     pub fn summary(&self) -> String {

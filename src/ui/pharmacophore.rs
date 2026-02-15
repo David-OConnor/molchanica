@@ -298,7 +298,7 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 .mol_editor
                 .mol
                 .pharmacophore
-                .save(&mut state.volatile.dialogs.save, name)
+                .save_using_dialog(&mut state.volatile.dialogs.save, name)
                 .is_err()
             {
                 handle_err(&mut state.ui, "Problem saving the pharmacophore".to_owned());
