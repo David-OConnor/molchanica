@@ -534,12 +534,15 @@ impl Pharmacophore {
 }
 
 /// Handles adding the feature, the entity etc.
-pub fn add_pharmacophore(
+pub fn add_pharmacophore_feat(
     mol: &mut MoleculeSmall,
     feat_type: PharmacophoreFeatType,
     atom_i: usize,
 ) -> io::Result<()> {
     // Ideally the user clicks a ring hint etc. Workaround for now.
+
+    let mut indices = vec![atom_i];
+
     let posit = if feat_type == PharmacophoreFeatType::Aromatic {
         // todo: Move this logic (if you keep it)
         // todo: DOn't unwrap
@@ -547,8 +550,9 @@ pub fn add_pharmacophore(
         let mut val = None;
         for ring in &mol.characterization.as_ref().unwrap().rings {
             if ring.atoms.contains(&atom_i) {
-                // val = Some(&ring.atoms);
                 val = Some(ring.center(&mol.common.atom_posits));
+                indices = ring.atoms.clone();
+
                 break;
             }
         }
@@ -560,8 +564,6 @@ pub fn add_pharmacophore(
             // None => Position::Atom(atom_i),
         }
     } else {
-        // Position::Atom(atom_i)
-
         if atom_i >= mol.common.atom_posits.len() {
             return Err(io::Error::other("Atom index out of bounds."));
         }
@@ -571,7 +573,7 @@ pub fn add_pharmacophore(
     mol.pharmacophore.features.push(PharmacophoreFeature {
         feature_type: feat_type,
         posit,
-        atom_i: Some(vec![atom_i]),
+        atom_i: Some(indices),
         ..Default::default()
     });
 

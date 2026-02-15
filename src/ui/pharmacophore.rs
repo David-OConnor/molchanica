@@ -13,7 +13,7 @@ use crate::{
     state::{PopupState, State},
     therapeutic::pharmacophore::{
         FeatureRelation, Pharmacophore, PharmacophoreFeatType, PharmacophoreFeature,
-        add_pharmacophore,
+        add_pharmacophore_feat,
     },
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
@@ -270,10 +270,11 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
 
         if let Selection::AtomLig((_mol_i, atom_i)) = &state.ui.selection
             && ui
-                .button(RichText::new("Add pharmacophore").color(COLOR_ACTION))
+                .button(RichText::new("Add pharmac feat").color(COLOR_ACTION))
+                .on_hover_text("Add pharmacophore feature.")
                 .clicked()
         {
-            if add_pharmacophore(
+            if add_pharmacophore_feat(
                 &mut state.mol_editor.mol,
                 state.ui.pharmacaphore_type,
                 *atom_i,
