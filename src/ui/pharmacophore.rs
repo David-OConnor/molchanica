@@ -447,10 +447,6 @@ pub(in crate::ui) fn pharmacophore_summary(
 }
 
 pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
-    // todo: Use a file picker
-    // let path = Path::new("C:/Users/the_a/Desktop/bio_misc/Binding/ZINC22/H04");
-    // let path = Path::new("C:/Users/the_a/Desktop/");
-
     ui.horizontal(|ui| {
         label!(ui, "Pharmacophore screening", Color32::WHITE);
         ui.add_space(COL_SPACING);
@@ -487,17 +483,9 @@ pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
             .clicked()
         {
             // todo: Sort out your state of lig-basd pharmacophores vs full ones
-            match mol_screening::load_mols(&path) {
-                Ok(m) => {
-                    let ph = &state.ligands[ph_i].pharmacophore;
-                    // let ph = &state.pharmacophores[ph_i];
-
-                    ph.screen_ligs(&m, PHARMACOPHORE_SCREENING_THRESH_DEFAULT);
-                }
-                Err(e) => {
-                    eprintln!("Error: Unable to load molecules from path: {e}");
-                }
-            }
+            let ph = &state.ligands[ph_i].pharmacophore;
+            // let ph = &state.pharmacophores[ph_i];
+            ph.screen_ligs(&path, PHARMACOPHORE_SCREENING_THRESH_DEFAULT);
         }
     }
 }

@@ -10,9 +10,12 @@ use bio_files::PharmacophoreTypeGeneric;
 use egui_file_dialog::FileDialog;
 use lin_alg::f64::Vec3;
 
+use rayon::prelude::*;
+
 use crate::{
     copy_le,
     mol_characterization::{MolCharacterization, RingType},
+    mol_screening,
     molecules::{pocket::Pocket, small::MoleculeSmall},
     parse_le,
     render::Color,
@@ -544,26 +547,60 @@ impl Pharmacophore {
     }
 
     /// Return (indices passed, atom posits, score).
-    pub fn screen_ligs(&self, mols: &[MoleculeSmall], thresh: f32) -> Vec<(usize, Vec<Vec3>, f32)> {
-        println!("Screening {} mols using the pharmacophore", mols.len());
+    ///
+    /// Handles incremental loading from disk, with using modest amounts of memory in mind.
+    pub fn screen_ligs(&self, path: &Path, thresh: f32) -> Vec<(usize, Vec<Vec3>, f32)> {
+        println!("Screening mols using the pharmacophore...");
         let start = Instant::now();
 
+        let max_mols = 10_000; //  todo tempish cap on number of mols.
+
         let mut res = Vec::new();
-        for (i, mol) in mols.iter().enumerate() {
-            let score = self.score(mol);
 
-            println!("SCORE: {score:.2}");
+        let mut mols_screened = 0;
 
-            if score > thresh {
-                res.push((i, vec![], score));
+        while mols_screened < max_mols {
+            let mols = match mol_screening::load_mols(&path, None, Some(max_mols)) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Error: Unable to load molecules from path: {e}");
+                    return Vec::new();
+                }
+            };
+            if mols.is_empty() {
+                break;
             }
+
+            mols_screened += mols.len();
+
+            // Note: The performance bottleneck is currently disk-IO, but this still is a parallel
+            // problem which ray helps with, even at modest mol counts.
+            let scores_this_set: Vec<_> = mols
+                .par_iter()
+                .enumerate()
+                .filter_map(|(i, mol)| {
+                    let score = self.score(mol);
+                    // println!("SCORE: {score:.2}");
+
+                    if score < thresh {
+                        None
+                    } else {
+                        // todo: Include atom posits?
+                        Some((i, vec![], score))
+                    }
+                })
+                .collect();
+
+            res.extend(scores_this_set);
+
+            println!("Screening progress. Screened {} mols", mols.len());
         }
 
         let elapsed = start.elapsed().as_millis();
         println!(
             "Screening complete in {elapsed} ms. {} / {} passed",
             res.len(),
-            mols.len()
+            mols_screened
         );
 
         res

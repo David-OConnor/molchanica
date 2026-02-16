@@ -302,7 +302,7 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
                 // todo: Don't block; launch a new thread.
 
                 // let path = Path::new("C:/Users/the_a/Desktop/bio_misc/amber_geostd/c");
-                if let Ok(mols) = mol_screening::load_mols(path) {
+                if let Ok(mols) = mol_screening::load_mols(path, None, None) {
                     state.volatile.alignment.mols_passed_screening = Vec::new();
 
                     let template = mols[0].clone();

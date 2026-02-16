@@ -14,6 +14,10 @@ use crate::{
     molecules::small::MoleculeSmall,
 };
 
+// We load molecules from disk in batches, to prevent using too much memory. We use
+// atom count as a proxy; better than molecule count, but perhaps not as regular as bytes.
+pub const MOL_CACHE_SIZE_ATOM_COUNT: u32 = 1_000_000;
+
 /// Screen small molecules by matching to a template. This is a cheap procedure that can be run
 /// prior to a more careful screening or alignment.
 pub fn screen_by_alignment(
@@ -65,7 +69,11 @@ pub fn screen_by_alignment(
 /// Load all `SDF` and `Mol2` files in a directory and its sub-dirs into memory. Bypass our normal loading pipeline,
 /// which includes computation to load FF type, partial charge, SMILES,
 /// camera considerations etc.
-pub fn load_mols(path: &Path) -> io::Result<Vec<MoleculeSmall>> {
+pub fn load_mols(
+    path: &Path,
+    start_i: Option<usize>,
+    end_i: Option<usize>,
+) -> io::Result<Vec<MoleculeSmall>> {
     println!("Loading molecules from path {path:?}...");
     let start = Instant::now();
 
@@ -73,13 +81,13 @@ pub fn load_mols(path: &Path) -> io::Result<Vec<MoleculeSmall>> {
 
     let mut dirs_to_visit = vec![path.to_path_buf()];
 
-    // todo: Limit the num loaded to memory
-    let max_val = 6_000; // todo temp
-    let mut loaded: u32 = 0;
+    let mut mols_found: usize = 0; // for the start/end system
+    let mut atoms_loaded: u32 = 0;
+    let mut mols_loaded: u32 = 0;
 
     while let Some(dir) = dirs_to_visit.pop() {
         for entry in dir.read_dir()? {
-            if loaded >= max_val {
+            if atoms_loaded >= MOL_CACHE_SIZE_ATOM_COUNT {
                 break;
             }
 
@@ -94,6 +102,21 @@ pub fn load_mols(path: &Path) -> io::Result<Vec<MoleculeSmall>> {
 
             if !ty.is_file() {
                 continue;
+            }
+
+            mols_found += 1;
+
+            // todo: More clear and/or efficient approach? We're still iterating through all files from teh top.
+            if let Some(i) = start_i {
+                if mols_found < i {
+                    continue;
+                }
+            }
+
+            if let Some(i) = end_i {
+                if mols_found > i {
+                    continue;
+                }
             }
 
             let ext = match path.extension().and_then(|e| e.to_str()) {
@@ -111,11 +134,13 @@ pub fn load_mols(path: &Path) -> io::Result<Vec<MoleculeSmall>> {
             // This is fast, and [partly] used in our screening workflows.
             mol.update_characterization();
 
-            result.push(mol);
-            loaded += 1;
+            atoms_loaded += mol.common.atoms.len() as u32;
+            mols_loaded += 1;
 
-            if loaded.is_multiple_of(2_000) {
-                println!("Loading progress: {loaded} mols");
+            result.push(mol);
+
+            if mols_loaded.is_multiple_of(2_000) {
+                println!("Loading progress: {mols_loaded} mols, {atoms_loaded} atoms");
             }
         }
     }
