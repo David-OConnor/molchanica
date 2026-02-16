@@ -1,4 +1,4 @@
-use std::io;
+use std::{fs::File, io, io::Write, path::Path};
 
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
@@ -57,17 +57,10 @@ pub fn update_file_dialogs(
                 let extension = binding;
 
                 if extension == "pmp" {
-                    if let Err(e) =
-                        // todo
-                        // graphics::app_utils::save(path, &state.mol_editor.mol.pharmacophore)
-                        graphics::app_utils::save(
-                            path,
-                            &state.mol_editor.mol.pharmacophore.clone(),
-                        )
-                    // state.mol_editor.mol.pharmacophore.save(path)
-                    {
-                        handle_err(&mut state.ui, e.to_string());
-                    };
+                    // graphics::app_utils::save(path, &state.mol_editor.mol.pharmacophore)
+                    let buf = state.mol_editor.mol.pharmacophore.to_bytes();
+                    let mut file = File::open(path)?;
+                    file.write_all(&buf)?;
                 } else {
                     mol_editor::save(state, path)?
                 }
@@ -77,7 +70,7 @@ pub fn update_file_dialogs(
     }
 
     if let Some(path) = &state.volatile.dialogs.screening.take_picked() {
-        state.volatile.alignment.screening_path = Some(path.to_owned());
+        state.to_save.screening_path = Some(path.to_owned());
     }
 
     Ok(())

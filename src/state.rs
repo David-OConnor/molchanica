@@ -289,6 +289,7 @@ pub struct StateVolatile {
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
+    pub pharmacophore_for_screening: Option<usize>,
 }
 
 impl StateVolatile {
@@ -433,6 +434,7 @@ pub struct PopupState {
     pub alignment: bool,
     pub alignment_screening: bool,
     pub pharmacophore_boolean: bool,
+    pub pharmacophore_screening: bool,
     pub lig_pocket_creation: bool,
 }
 

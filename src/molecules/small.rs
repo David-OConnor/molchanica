@@ -798,12 +798,6 @@ fn pharmacophore_from_biofiles(
         }
         posit /= feat.atom_sns.len() as f64;
 
-        let atom_i = if !atom_i.is_empty() {
-            Some(atom_i)
-        } else {
-            None
-        };
-
         features.push(PharmacophoreFeature {
             feature_type: feat.type_.clone().into(),
             posit,
@@ -823,7 +817,7 @@ fn pharmacophore_to_biofiles(ph: &Pharmacophore) -> io::Result<Vec<Pharmacophore
     let mut result = Vec::new();
 
     for feat in &ph.features {
-        let Some(atom_i) = &feat.atom_i else {
+        if feat.atom_i.is_empty() {
             eprintln!("Pharmacophore feature missing atom index");
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -831,7 +825,7 @@ fn pharmacophore_to_biofiles(ph: &Pharmacophore) -> io::Result<Vec<Pharmacophore
             ));
         };
 
-        let atom_sns = atom_i.iter().map(|i| *i as u32 + 1).collect();
+        let atom_sns = feat.atom_i.iter().map(|i| *i as u32 + 1).collect();
         result.push(PharmacophoreFeatureGeneric {
             atom_sns,
             type_: feat.feature_type.to_generic(),

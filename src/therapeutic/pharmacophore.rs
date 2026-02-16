@@ -3,7 +3,7 @@
 //!
 //! https://www.eyesopen.com/rocs
 
-use std::{collections::HashMap, fmt::Display, io, io::ErrorKind, path::Path};
+use std::{collections::HashMap, fmt::Display, io, io::ErrorKind, path::Path, time::Instant};
 
 use bincode::{Decode, Encode, de::Decoder};
 use bio_files::PharmacophoreTypeGeneric;
@@ -11,9 +11,14 @@ use egui_file_dialog::FileDialog;
 use lin_alg::f64::Vec3;
 
 use crate::{
+    copy_le,
     mol_characterization::{MolCharacterization, RingType},
     molecules::{pocket::Pocket, small::MoleculeSmall},
+    parse_le,
     render::Color,
+    therapeutic::pharmacophore::PharmacophoreFeatType::{
+        AcceptorProjected, Donor, DonorProjected, Hydrophilic, Hydrophobic,
+    },
 };
 // #[derive(Clone, Debug)]
 // pub struct PocketBinding {
@@ -25,9 +30,11 @@ use crate::{
 //     pub hydrogen_bonds: Vec<HydrogenBondTwoMols>,
 // }
 
+pub const PHARMACOPHORE_SCREENING_THRESH_DEFAULT: f32 = 0.6;
+
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
 /// The u8 rep is for serialization
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode, Hash, PartialOrd, Ord)] // Default is for the UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash, PartialOrd, Ord)] // Default is for the UI
 #[repr(u8)]
 pub enum PharmacophoreFeatType {
     Hydrophobic = 0,
@@ -40,7 +47,7 @@ pub enum PharmacophoreFeatType {
     Cation = 7,
     Anion = 8,
     /// Directional.
-    DonorProjected,
+    DonorProjected = 9,
     // HeavyAtom,
     // Ring,
     // RingNonPlanar,
@@ -99,6 +106,23 @@ impl PharmacophoreFeatType {
             // VolumeConstraint,
 
         ]
+    }
+
+    pub fn from_u8(v: u8) -> Option<Self> {
+        use PharmacophoreFeatType::*;
+
+        Some(match v {
+            0 => Hydrophobic,
+            1 => Hydrophilic,
+            3 => Aromatic,
+            4 => Acceptor,
+            5 => AcceptorProjected,
+            6 => Donor,
+            7 => Cation,
+            8 => Anion,
+            9 => DonorProjected,
+            _ => return None,
+        })
     }
 
     /// List likely locations in a molecule to place this feature type.
@@ -284,14 +308,51 @@ pub enum Motion {
 }
 
 /// Relates two features, e.g. colocated ones.
-#[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum FeatureRelation {
     And((usize, usize)),
     Or((usize, usize)),
     // Not(PharmacophoreFeatType),
 }
 
-#[derive(Clone, Debug, Encode, Decode)]
+impl FeatureRelation {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut res = vec![0; 9];
+
+        match self {
+            Self::And((v0, v1)) => {
+                res[0] = 0;
+                copy_le!(res, (*v0 as u32), 1..5);
+                copy_le!(res, (*v1 as u32), 5..9);
+            }
+            Self::Or((v0, v1)) => {
+                res[0] = 1;
+                copy_le!(res, (*v0 as u32), 1..5);
+                copy_le!(res, (*v1 as u32), 5..9);
+            }
+        }
+
+        res
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut res = vec![0; 9];
+
+        let v0 = parse_le!(bytes, u32, 1..5) as usize;
+        let v1 = parse_le!(bytes, u32, 5..9) as usize;
+
+        match res[0] {
+            0 => Self::And((v0, v1)),
+            1 => Self::And((v0, v1)),
+            _ => {
+                eprintln!("Error parsing feat relation");
+                Self::Or((v0, v1))
+            } //
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct PharmacophoreFeature {
     pub feature_type: PharmacophoreFeatType,
     // pub feature_type_additional: FeatureAdditional,
@@ -300,7 +361,7 @@ pub struct PharmacophoreFeature {
     // without adding a way to hash and sort them for certain uses.
     pub posit_projected: Option<Vec3>,
     /// Used when associating with a specific atom and molecule.
-    pub atom_i: Option<Vec<usize>>,
+    pub atom_i: Vec<usize>,
     pub atom_i_projected: Option<usize>,
     pub strength: f32,
     pub tolerance: f32,
@@ -315,7 +376,7 @@ impl Default for PharmacophoreFeature {
             feature_type: PharmacophoreFeatType::default(),
             posit: Vec3::new_zero(),
             posit_projected: None,
-            atom_i: None,
+            atom_i: Vec::new(),
             atom_i_projected: None,
             strength: 1.0, // todo?
             tolerance: 1.0,
@@ -337,15 +398,109 @@ impl Display for PharmacophoreFeature {
 }
 
 impl PharmacophoreFeature {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let atom_len = self.atom_i.len();
+        assert!(
+            atom_len <= u8::MAX as usize,
+            "atom_i too long to serialize as u8"
+        );
+
+        let atom_len = self.atom_i.len();
+        assert!(
+            atom_len <= u8::MAX as usize,
+            "atom_i too long to serialize as u8"
+        );
+
+        // 1 + 24 + 1 + 4*atom_len + 4 + 4
+        let total_size = 34 + 4 * atom_len;
+        let mut result = vec![0; total_size];
+        let mut i = 0usize;
+
+        result[i] = self.feature_type as u8;
+        i += 1;
+
+        result[i..i + 24].copy_from_slice(&self.posit.to_le_bytes());
+        i += 24;
+
+        // todo: posit projected field?
+        result[24] = self.atom_i.len() as u8;
+        i += 1;
+
+        for atom_i in &self.atom_i {
+            copy_le!(result, *atom_i as u32, i..i + 4);
+            i += 4;
+        }
+
+        // todo: atom_i projected field?
+
+        copy_le!(result, self.strength, i..i + 4);
+        i += 4;
+
+        copy_le!(result, self.tolerance, i..i + 4);
+        i += 4;
+
+        // todo: Oscillation field?
+        // ui_selected is not serialized.
+
+        result
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut i = 0usize;
+
+        assert!(bytes.len() >= 1 + 24 + 1 + 4 + 4, "bytes too short");
+
+        let feature_type = PharmacophoreFeatType::from_u8(bytes[i]).unwrap_or_default();
+        i += 1;
+
+        let posit_bytes: [u8; 24] = bytes[i..i + 24].try_into().unwrap();
+        let posit = Vec3::from_le_bytes(&posit_bytes);
+        i += 24;
+
+        let atom_len = bytes[i] as usize;
+        i += 1;
+
+        let needed = 1 + 24 + 1 + 4 * atom_len + 4 + 4;
+        assert!(
+            bytes.len() >= needed,
+            "bytes too short for atom_i_len={atom_len}"
+        );
+
+        let mut atom_i = Vec::with_capacity(atom_len);
+        for _ in 0..atom_len {
+            let v = parse_le!(bytes, u32, i..i + 4);
+            atom_i.push(v as usize);
+            i += 4;
+        }
+
+        let strength = parse_le!(bytes, f32, i..i + 4);
+        i += 4;
+
+        let tolerance = parse_le!(bytes, f32, i..i + 4);
+        // i += 4;
+
+        Self {
+            feature_type,
+            posit,
+            posit_projected: None,
+            atom_i,
+            atom_i_projected: None,
+            strength,
+            tolerance,
+            oscillation: None,
+            ui_selected: false,
+        }
+    }
+
     /// Get the absolute position from atoms, if available.
     /// If multiple atoms, e.g. a ring, get the center.
     pub fn posit_from_atoms(&self, atom_posits: &[Vec3]) -> Option<Vec3> {
-        let Some(atom_i) = &self.atom_i else {
+        if self.atom_i.is_empty() {
             return None;
         };
 
         let mut result = Vec3::new_zero();
-        for i in atom_i {
+        for i in &self.atom_i {
             if *i >= atom_posits.len() {
                 eprintln!("Error: Atom index out of bounds when getting pharmacophore posit");
                 return None;
@@ -354,12 +509,12 @@ impl PharmacophoreFeature {
             result += atom_posits[*i];
         }
 
-        Some(result / atom_i.len() as f64)
+        Some(result / self.atom_i.len() as f64)
     }
 }
 
 /// We don't have a Ligand field, as this pharmacophore may exist *as part of the ligand*.
-#[derive(Clone, Debug, Default, Encode, Decode)]
+#[derive(Clone, Debug, Default)]
 pub struct Pharmacophore {
     pub name: String,
     pub features: Vec<PharmacophoreFeature>,
@@ -372,20 +527,44 @@ pub struct Pharmacophore {
 }
 
 impl Pharmacophore {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut res = Vec::new();
+        // todo temp
+        res
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self::default()
+    }
+}
+
+impl Pharmacophore {
     pub fn create(mols: &[MoleculeSmall]) -> Vec<Self> {
         Vec::new()
     }
 
     /// Return (indices passed, atom posits, score).
-    pub fn filter_ligs(&self, mols: &[MoleculeSmall], thresh: f32) -> Vec<(usize, Vec<Vec3>, f32)> {
+    pub fn screen_ligs(&self, mols: &[MoleculeSmall], thresh: f32) -> Vec<(usize, Vec<Vec3>, f32)> {
+        println!("Screening {} mols using the pharmacophore", mols.len());
+        let start = Instant::now();
+
         let mut res = Vec::new();
         for (i, mol) in mols.iter().enumerate() {
             let score = self.score(mol);
+
+            println!("SCORE: {score:.2}");
 
             if score > thresh {
                 res.push((i, vec![], score));
             }
         }
+
+        let elapsed = start.elapsed().as_millis();
+        println!(
+            "Screening complete in {elapsed} ms. {} / {} passed",
+            res.len(),
+            mols.len()
+        );
 
         res
     }
@@ -396,97 +575,301 @@ impl Pharmacophore {
             None => return 0.0,
         };
 
-        // let atoms: &[Atom] = &mol.common.atoms;
-        let atom_posits = &mol.common.atom_posits;
+        if self.features.is_empty() {
+            return 0.0;
+        }
 
-        // Candidate sites on the ligand for a given feature type.
-        let ligand_sites = |ft: PharmacophoreFeatType| -> Vec<Vec3> {
-            match ft {
-                PharmacophoreFeatType::Hydrophilic => {
-                    // Reasonable default: polar sites = donors ∪ acceptors
-                    let mut v = Vec::new();
-                    for &i in &char.h_bond_donor {
-                        v.push(atom_posits[i]);
-                    }
-                    for &i in &char.h_bond_acceptor {
-                        v.push(atom_posits[i]);
-                    }
-                    v
-                }
-                _ => ft.hint_sites(char, atom_posits),
+        let atoms = &mol.common.atoms;
+        let atom_posits = &mol.common.atom_posits;
+        let adj = &mol.common.adjacency_list;
+
+        if atom_posits.is_empty() {
+            return 0.0;
+        }
+
+        // H-bond donor direction: heavy atom toward attached H.
+        let donor_dir = |i: usize| -> Option<Vec3> {
+            if i >= adj.len() {
+                return None;
             }
+            for &j in &adj[i] {
+                if j < atoms.len() && atoms[j].element == na_seq::Element::Hydrogen {
+                    let d = atom_posits[j] - atom_posits[i];
+                    let mag = d.magnitude();
+                    if mag > 1e-8 {
+                        return Some(d / mag);
+                    }
+                }
+            }
+            None
         };
 
-        let mut total_strength = 0.0f32;
-        let mut total = 0.0f32;
+        // H-bond acceptor direction: away from heavy-atom neighbors (lone-pair proxy).
+        let acceptor_dir = |i: usize| -> Option<Vec3> {
+            if i >= adj.len() {
+                return None;
+            }
+            let mut centroid = Vec3::new_zero();
+            let mut count = 0usize;
+            for &j in &adj[i] {
+                if j < atoms.len() && atoms[j].element != na_seq::Element::Hydrogen {
+                    centroid += atom_posits[j];
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                return None;
+            }
+            let c = centroid / count as f64;
+            let d = atom_posits[i] - c;
+            let mag = d.magnitude();
+            if mag > 1e-8 { Some(d / mag) } else { None }
+        };
 
-        let mut matched = 0usize;
-        let mut considered = 0usize;
+        // Ligand candidate sites per feature type.
+        // Each site: (position, claim_atom_indices, claim_ring_index, direction).
+        // `claim_ring_index` is set for aromatic ring sites; `claim_atoms` for atom-based sites.
+        // These are used for bijective matching to prevent the same ligand site from
+        // satisfying multiple pharmacophore features.
+        let ligand_sites =
+            |ft: PharmacophoreFeatType| -> Vec<(Vec3, Vec<usize>, Option<usize>, Option<Vec3>)> {
+                use PharmacophoreFeatType::*;
+                match ft {
+                    Hydrophobic => char
+                        .hydrophobic_carbon
+                        .iter()
+                        .map(|&i| (atom_posits[i], vec![i], None, None))
+                        .collect(),
 
-        for feat in &self.features {
-            // let qpos = match feat.posit.absolute(Some(&mol.common.atom_posits)) {
-            //     Ok(p) => p,
-            //     Err(_e) => {
-            //         eprintln!("Failed to get absolute posit for feature: {:?}", feat);
-            //         continue;
-            //     }
-            // };
+                    Hydrophilic => {
+                        let mut sites = Vec::new();
+                        let mut seen = Vec::new();
+                        for &i in &char.h_bond_donor {
+                            sites.push((atom_posits[i], vec![i], None, None));
+                            seen.push(i);
+                        }
+                        for &i in &char.h_bond_acceptor {
+                            if !seen.contains(&i) {
+                                sites.push((atom_posits[i], vec![i], None, None));
+                            }
+                        }
+                        sites
+                    }
+
+                    Aromatic => char
+                        .rings
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.ring_type == RingType::Aromatic)
+                        .map(|(ri, ring)| {
+                            (
+                                ring.center(atom_posits),
+                                Vec::new(),
+                                Some(ri),
+                                Some(ring.plane_norm),
+                            )
+                        })
+                        .collect(),
+
+                    Acceptor | AcceptorProjected => char
+                        .h_bond_acceptor
+                        .iter()
+                        .map(|&i| (atom_posits[i], vec![i], None, acceptor_dir(i)))
+                        .collect(),
+
+                    Donor | DonorProjected => char
+                        .h_bond_donor
+                        .iter()
+                        .map(|&i| (atom_posits[i], vec![i], None, donor_dir(i)))
+                        .collect(),
+
+                    Cation => char
+                        .amines
+                        .iter()
+                        .map(|&i| (atom_posits[i], vec![i], None, None))
+                        .collect(),
+
+                    Anion => char
+                        .carboxylate
+                        .iter()
+                        .map(|&i| (atom_posits[i], vec![i], None, None))
+                        .collect(),
+                }
+            };
+
+        // Greedy bijective matching: process high-strength features first so the most
+        // important pharmacophore constraints claim their best ligand sites before weaker ones.
+        let mut feat_order: Vec<usize> = (0..self.features.len()).collect();
+        feat_order.sort_by(|&a, &b| {
+            self.features[b]
+                .strength
+                .partial_cmp(&self.features[a].strength)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut claimed_atoms = vec![false; atom_posits.len()];
+        let mut claimed_rings = vec![false; char.rings.len()];
+
+        let mut feat_scores = vec![0.0f32; self.features.len()];
+        let mut feat_matched = vec![false; self.features.len()];
+
+        for &fi in &feat_order {
+            let feat = &self.features[fi];
             let qpos = feat.posit;
-
-            considered += 1;
-            total_strength += feat.strength.max(0.0);
+            let sigma = feat.tolerance.max(1e-6) as f64;
 
             let sites = ligand_sites(feat.feature_type);
             if sites.is_empty() {
                 continue;
             }
 
-            let sigma = feat.tolerance.max(1e-6) as f64;
+            // Pharmacophore feature direction: from projected position or oscillator orientation.
+            let feat_dir: Option<Vec3> = if matches!(
+                feat.feature_type,
+                PharmacophoreFeatType::AcceptorProjected | PharmacophoreFeatType::DonorProjected
+            ) {
+                feat.posit_projected
+                    .map(|proj| (proj - qpos).to_normalized())
+            } else if feat.feature_type == PharmacophoreFeatType::Aromatic {
+                feat.oscillation.as_ref().and_then(|m| match m {
+                    Motion::Oscillator(o) => Some(o.orientation.to_normalized()),
+                    _ => None,
+                })
+            } else {
+                None
+            };
 
-            let mut best = 0.0f32;
-            for spos in sites {
-                let dist_sq = (qpos - spos).magnitude_squared();
+            let mut best_score = 0.0f32;
+            let mut best_idx: Option<usize> = None;
 
-                let s = gaussian(dist_sq, sigma);
-                if s > best {
-                    best = s;
+            for (si, (spos, claim_atoms, claim_ring, site_dir)) in sites.iter().enumerate() {
+                // Bijective constraint: skip already-claimed sites.
+                let already = if let Some(ri) = claim_ring {
+                    *ri < claimed_rings.len() && claimed_rings[*ri]
+                } else {
+                    claim_atoms
+                        .iter()
+                        .any(|&a| a < claimed_atoms.len() && claimed_atoms[a])
+                };
+                if already {
+                    continue;
+                }
+
+                let dist_sq = (qpos - *spos).magnitude_squared();
+                let mut s = gaussian(dist_sq, sigma);
+
+                // Directional modulation for projected/aromatic features.
+                if let (Some(fd), Some(sd)) = (&feat_dir, site_dir) {
+                    let cos_a = if feat.feature_type == PharmacophoreFeatType::Aromatic {
+                        // Aromatic ring normals are valid in either orientation.
+                        fd.dot(*sd).abs()
+                    } else {
+                        // H-bond projected features: direction matters.
+                        fd.dot(*sd).max(0.0)
+                    } as f32;
+                    // 70% spatial, 30% directional.
+                    s *= 0.7 + 0.3 * cos_a;
+                }
+
+                if s > best_score {
+                    best_score = s;
+                    best_idx = Some(si);
                 }
             }
 
-            if best > 0.2 {
-                matched += 1;
-            }
+            if let Some(si) = best_idx {
+                feat_scores[fi] = best_score;
+                feat_matched[fi] = best_score > 0.2;
 
-            total += feat.strength.max(0.0) * best;
+                // Claim the matched site.
+                let (_, ref claim_atoms, claim_ring, _) = sites[si];
+                if let Some(ri) = claim_ring {
+                    if ri < claimed_rings.len() {
+                        claimed_rings[ri] = true;
+                    }
+                }
+                for &a in claim_atoms {
+                    if a < claimed_atoms.len() {
+                        claimed_atoms[a] = true;
+                    }
+                }
+            }
         }
 
-        if total_strength <= 0.0 || considered == 0 {
+        // --- Feature relations (AND / OR) ---
+        let mut or_suppressed = vec![false; self.features.len()];
+
+        for rel in &self.feature_relations {
+            match rel {
+                FeatureRelation::Or((a, b)) => {
+                    let (a, b) = (*a, *b);
+                    if a < self.features.len() && b < self.features.len() {
+                        // Keep the better-scoring alternative; suppress the other from the total.
+                        if feat_scores[a] >= feat_scores[b] {
+                            or_suppressed[b] = true;
+                        } else {
+                            or_suppressed[a] = true;
+                        }
+                    }
+                }
+                FeatureRelation::And((a, b)) => {
+                    let (a, b) = (*a, *b);
+                    if a < self.features.len() && b < self.features.len() {
+                        // Both must match; penalize both if either fails.
+                        if !feat_matched[a] || !feat_matched[b] {
+                            feat_scores[a] *= 0.5;
+                            feat_scores[b] *= 0.5;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Weighted aggregation ---
+        let mut total_weight = 0.0f32;
+        let mut weighted_sum = 0.0f32;
+        let mut matched_count = 0usize;
+        let mut considered = 0usize;
+
+        for (fi, feat) in self.features.iter().enumerate() {
+            if or_suppressed[fi] {
+                continue;
+            }
+            let w = feat.strength.max(0.0);
+            considered += 1;
+            total_weight += w;
+            weighted_sum += w * feat_scores[fi];
+            if feat_matched[fi] {
+                matched_count += 1;
+            }
+        }
+
+        if total_weight <= 0.0 || considered == 0 {
             return 0.0;
         }
 
-        let mut score = total / total_strength;
+        let mut score = weighted_sum / total_weight;
 
-        // Optional: require some minimum match fraction to avoid “one lucky feature” passing.
-        let match_frac = matched as f32 / considered as f32;
-        if match_frac < 0.4 {
-            score *= match_frac / 0.4;
+        // Coverage penalty: require a reasonable fraction of features to match.
+        // Prevents a single strong match from passing screening.
+        let match_frac = matched_count as f32 / considered as f32;
+        if match_frac < 0.5 {
+            score *= match_frac / 0.5;
         }
 
+        // Excluded-volume steric clash penalty.
         if let Some(pocket) = &self.pocket {
-            // Penalize if any ligand atom is inside excluded volume.
-            // For screening: cheap boolean check is often enough.
-            let mut inside_count = 0usize;
+            let mut clash_count = 0usize;
             for &p in atom_posits {
                 if pocket.volume.inside(p) {
-                    inside_count += 1;
+                    clash_count += 1;
                 }
             }
-
-            if inside_count > 0 {
-                // Simple penalty: scale down score by how many atoms clash.
-                // Tune this to taste; for screening you often want to be harsh.
-                let frac = inside_count as f32 / atom_posits.len().max(1) as f32;
-                score *= (1.0 - frac).clamp(0.0, 1.0);
+            if clash_count > 0 {
+                // Harsh: 2x multiplier makes even a few clashing atoms significantly reduce the
+                // score. E.g. 10% atoms clashing → score *= 0.8; 25% → score *= 0.5.
+                let clash_frac = clash_count as f32 / atom_posits.len().max(1) as f32;
+                score *= (1.0 - 2.0 * clash_frac).clamp(0.0, 1.0);
             }
         }
 
@@ -573,7 +956,7 @@ pub fn add_pharmacophore_feat(
     mol.pharmacophore.features.push(PharmacophoreFeature {
         feature_type: feat_type,
         posit,
-        atom_i: Some(indices),
+        atom_i: indices,
         ..Default::default()
     });
 

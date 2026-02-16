@@ -66,14 +66,23 @@ pub fn screen_by_alignment(
 /// which includes computation to load FF type, partial charge, SMILES,
 /// camera considerations etc.
 pub fn load_mols(path: &Path) -> io::Result<Vec<MoleculeSmall>> {
+    println!("Loading molecules from path {path:?}...");
     let start = Instant::now();
 
     let mut result = Vec::new();
 
     let mut dirs_to_visit = vec![path.to_path_buf()];
 
+    // todo: Limit the num loaded to memory
+    let max_val = 6_000; // todo temp
+    let mut loaded: u32 = 0;
+
     while let Some(dir) = dirs_to_visit.pop() {
         for entry in dir.read_dir()? {
+            if loaded >= max_val {
+                break;
+            }
+
             let entry = entry?;
             let path = entry.path();
             let ty = entry.file_type()?;
@@ -98,10 +107,16 @@ pub fn load_mols(path: &Path) -> io::Result<Vec<MoleculeSmall>> {
                 _ => continue,
             };
 
+            // todo RMed for now.
             // This is fast, and [partly] used in our screening workflows.
             mol.update_characterization();
 
             result.push(mol);
+            loaded += 1;
+
+            if loaded.is_multiple_of(2_000) {
+                println!("Loading progress: {loaded} mols");
+            }
         }
     }
 

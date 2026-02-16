@@ -155,8 +155,9 @@ fn count_disp(v: &mut String, count: usize, name: &str) {
 impl Display for MolCharacterization {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut v = format!(
-            "#: {} Wt: {}",
-            self.num_atoms,
+            "Hvy: {} Wt: {}",
+            // self.num_atoms,
+            self.num_heavy_atoms,
             self.mol_weight.round() as u32
         );
 

@@ -29,6 +29,7 @@ use crate::{
     render::MESH_POCKET,
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, PopupState, State},
+    ui,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         mol_data::metadata, pharmacophore, rama_plot, recent_files, recent_files::NUM_TO_SHOW,
@@ -111,6 +112,12 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.pharmacophore_boolean {
         popup("pharmacophore_boolean", ui).show(|ui| {
             pharmacophore::pharmacophore_boolean_window(state, ui);
+        });
+    }
+
+    if state.ui.popup.pharmacophore_screening {
+        popup("pharmacophore_screen", ui).show(|ui| {
+            pharmacophore::pharmacophore_screen(state, ui);
         });
     }
 
@@ -286,7 +293,7 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
             state.volatile.dialogs.screening.pick_directory();
         }
 
-        if let Some(path) = &state.volatile.alignment.screening_path {
+        if let Some(path) = &state.to_save.screening_path {
             ui.add_space(COL_SPACING);
             if ui
                 .button(RichText::new("Run screening").color(COLOR_ACTION))
@@ -337,7 +344,7 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
             .button(RichText::new("Close").color(Color32::LIGHT_RED))
             .clicked()
         {
-            state.ui.popup.alignment = false;
+            state.ui.popup.alignment_screening = false;
         }
     });
 
@@ -566,7 +573,7 @@ fn alignment(
     ui: &mut Ui,
 ) {
     ui.horizontal(|ui| {
-        ui.label("Choose molecules to align:");
+        ui.label("Alignment:");
 
         ui.add_space(COL_SPACING);
         if ui

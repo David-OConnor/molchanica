@@ -1,4 +1,8 @@
 //! Code related to saving user *preferences*. e.g. opened molecules, view configuration etc.
+//!
+//! todo: Get away from bincode. Divide into packets, so perhaps there is some breaking for
+//! todo individual packet changes, but teh whole thing can't get broken by a small change to
+//! todo the format.
 
 use std::{
     collections::HashMap,
@@ -45,6 +49,40 @@ pub const DEFAULT_PREFS_FILE: &str = "molchanica_prefs.mca";
 // if they're not equal.
 pub const PREFS_SAVE_INTERVAL: u64 = 20; // seconds
 
+#[macro_export]
+macro_rules! parse_le {
+    ($bytes:expr, $t:ty, $range:expr) => {{ <$t>::from_le_bytes($bytes[$range].try_into().unwrap()) }};
+}
+
+#[macro_export]
+macro_rules! copy_le {
+    ($dest:expr, $src:expr, $range:expr) => {{ $dest[$range].copy_from_slice(&$src.to_le_bytes()) }};
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u8)]
+pub enum PrefsPacketType {
+    OpenHistory = 0,
+    Misc = 1,
+}
+
+pub struct PrefsPacketHeader {
+    pub packet_type: PrefsPacketType,
+    // In bytes
+    pub len: usize,
+}
+
+impl PrefsPacketHeader {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut result = vec![0; 5];
+        result[0] = self.packet_type as u8;
+
+        copy_le!(result, self.len as u32, 1..5);
+
+        result
+    }
+}
+
 /// Used to sequence how we handle each file type.
 #[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
 pub enum OpenType {
@@ -84,6 +122,18 @@ pub struct OpenHistory {
     pub position: Option<Vec3>,
     /// For determining which to open at program start.
     pub last_session: bool,
+}
+
+impl OpenHistory {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut result = Vec::new();
+
+        result
+    }
+
+    // pub fn from_bytes(bytes: &[u8]) -> Self {
+    //
+    // }
 }
 
 // Manual bincode impls
@@ -189,6 +239,7 @@ pub struct ToSave {
     pub lipid: LipidUi,
     pub nucleic_acid: NucleicAcidUi,
     pub mesh_coloring: MeshColoring,
+    pub screening_path: Option<PathBuf>,
 }
 
 impl Default for ToSave {
@@ -222,6 +273,7 @@ impl Default for ToSave {
             lipid: Default::default(),
             nucleic_acid: Default::default(),
             mesh_coloring: Default::default(),
+            screening_path: None,
         }
     }
 }

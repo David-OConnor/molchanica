@@ -1,20 +1,20 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
 use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 
-use crate::mol_editor::redraw;
 use crate::{
     drawing,
     drawing::blend_color,
     label, mol_manip,
     mol_manip::ManipMode,
+    mol_screening,
     molecules::MolType,
     selection::Selection,
     state::{PopupState, State},
     therapeutic::pharmacophore::{
-        FeatureRelation, Pharmacophore, PharmacophoreFeatType, PharmacophoreFeature,
-        add_pharmacophore_feat,
+        FeatureRelation, PHARMACOPHORE_SCREENING_THRESH_DEFAULT, Pharmacophore,
+        PharmacophoreFeatType, PharmacophoreFeature, add_pharmacophore_feat,
     },
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
@@ -23,7 +23,8 @@ use crate::{
     util::{RedrawFlags, handle_err, make_egui_color},
 };
 
-/// Assumes run from the editor for now.
+/// Assumes run from the editor for now. For setting relations between
+/// Pharmacophore features, e.g. "or" logic.
 pub(in crate::ui) fn pharmacophore_boolean_window(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         label!(ui, "Relate pharmacophore features", Color32::WHITE);
@@ -206,10 +207,11 @@ pub(in crate::ui) fn pharmacophore_list(
 
     let mut remove = None;
     for (i, feat) in pharmacophore.features.iter().enumerate() {
-        let descrip = format!("{}| {feat}", i + 1);
+        let descrip = format!("{} | {feat}", i + 1);
 
         ui.horizontal(|ui| {
-            label!(ui, descrip, Color32::WHITE);
+            let color = color_egui_from_f32(feat.feature_type.color());
+            label!(ui, descrip, color);
 
             ui.add_space(COL_SPACING);
             if ui
@@ -413,7 +415,13 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
 }
 
 /// Similar to the `summary` method, but splits up labels for color-coding.
-pub(in crate::ui) fn pharmacophore_summary(ph: &Pharmacophore, ui: &mut Ui) {
+pub(in crate::ui) fn pharmacophore_summary(
+    ph: &Pharmacophore,
+    ph_i: usize,
+    popup: &mut PopupState,
+    ph_for_screening: &mut Option<usize>,
+    ui: &mut Ui,
+) {
     let mut feat_counts = HashMap::new();
     for feat in &ph.features {
         *feat_counts.entry(feat.feature_type).or_insert(0) += 1;
@@ -431,10 +439,65 @@ pub(in crate::ui) fn pharmacophore_summary(ph: &Pharmacophore, ui: &mut Ui) {
             label!(ui, &format!("{ft}: {count} "), color);
         }
 
-        if ui.button(RichText::new("screen")).clicked() {
-            // todo: Use a file picker
-            let path = Path::new("C:/Users/the_a/Desktop/bio_misc/Binding/ZINC22/H04");
-            let path = Path::new("C:/Users/the_a/Desktop/");
+        if ui.button(RichText::new("Screen")).clicked() {
+            popup.pharmacophore_screening = !popup.pharmacophore_screening;
+            *ph_for_screening = Some(ph_i)
         }
     });
+}
+
+pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
+    // todo: Use a file picker
+    // let path = Path::new("C:/Users/the_a/Desktop/bio_misc/Binding/ZINC22/H04");
+    // let path = Path::new("C:/Users/the_a/Desktop/");
+
+    ui.horizontal(|ui| {
+        label!(ui, "Pharmacophore screening", Color32::WHITE);
+        ui.add_space(COL_SPACING);
+
+        if ui
+            .button(RichText::new("Choose mol path"))
+            .on_hover_text("Choose a path which contains the molecules to screen.")
+            .clicked()
+        {
+            // Re-using this dialog.
+            state.volatile.dialogs.screening.pick_directory();
+        }
+
+        ui.add_space(COL_SPACING);
+
+        if ui
+            .button(RichText::new("Close").color(Color32::LIGHT_RED))
+            .clicked()
+        {
+            state.ui.popup.pharmacophore_screening = false;
+        }
+    });
+    ui.add_space(ROW_SPACING);
+
+    if let Some(path) = &state.to_save.screening_path
+        && let Some(ph_i) = state.volatile.pharmacophore_for_screening
+    {
+        label!(ui, format!("Path: {path:?}"), Color32::GRAY);
+
+        ui.add_space(ROW_SPACING);
+
+        if ui
+            .button(RichText::new("Run screening").color(COLOR_ACTION))
+            .clicked()
+        {
+            // todo: Sort out your state of lig-basd pharmacophores vs full ones
+            match mol_screening::load_mols(&path) {
+                Ok(m) => {
+                    let ph = &state.ligands[ph_i].pharmacophore;
+                    // let ph = &state.pharmacophores[ph_i];
+
+                    ph.screen_ligs(&m, PHARMACOPHORE_SCREENING_THRESH_DEFAULT);
+                }
+                Err(e) => {
+                    eprintln!("Error: Unable to load molecules from path: {e}");
+                }
+            }
+        }
+    }
 }

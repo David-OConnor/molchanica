@@ -280,8 +280,23 @@ impl MoleculeCommon {
     /// Uses both the indentifier and filename, if different.
     pub fn name(&self) -> String {
         let mut result = self.ident.to_string();
+
         if self.filename.to_lowercase() != result.to_lowercase() {
-            result.push_str(format!(" | {}", self.filename).as_str());
+            let filename = self.filename.as_str();
+
+            let (truncated, did_truncate) = if filename.chars().count() > 12 {
+                let mut s: String = filename.chars().take(12).collect();
+                s.push_str("...");
+                (s, true)
+            } else {
+                (filename.to_string(), false)
+            };
+
+            // (did_truncate is unused but kept to make intent obvious; remove if you want)
+            let _ = did_truncate;
+
+            result.push_str(" | ");
+            result.push_str(&truncated);
         }
 
         result

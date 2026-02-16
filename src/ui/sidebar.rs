@@ -9,7 +9,7 @@ use crate::{
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
-    state::{OperatingMode, State},
+    state::{OperatingMode, PopupState, State, StateVolatile},
     therapeutic::pharmacophore::Pharmacophore,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
@@ -21,13 +21,16 @@ use crate::{
 /// Abstracts over all molecule types. (Currently not protein though)
 /// A single row for the molecule.
 fn mol_picker_one(
+    // tood; Just take Statevolatile.
     active_mol: &mut Option<(MolType, usize)>,
     orbit_center: &mut Option<(MolType, usize)>,
+    ph_for_screening: &mut Option<usize>,
     i_mol: usize,
     mol: &mut MoleculeCommon,
     mol_char: &Option<MolCharacterization>,
     pharmacophore: Option<&Pharmacophore>,
     mol_type: MolType,
+    popup: &mut PopupState,
     scene: &mut Scene,
     ui: &mut Ui,
     engine_updates: &mut EngineUpdates,
@@ -149,7 +152,7 @@ fn mol_picker_one(
     if let Some(pm) = pharmacophore
         && !pm.features.is_empty()
     {
-        pharmacophore::pharmacophore_summary(pm, ui);
+        pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_for_screening, ui);
     }
     ui.separator();
 }
@@ -175,11 +178,13 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
+            &mut state.volatile.pharmacophore_for_screening,
             0,
             &mut mol.common,
             &None,
             None,
             MolType::Peptide,
+            &mut state.ui.popup,
             scene,
             ui,
             engine_updates,
@@ -195,11 +200,13 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
+            &mut state.volatile.pharmacophore_for_screening,
             i_mol,
             &mut mol.common,
             &mol.characterization,
             Some(&mol.pharmacophore),
             MolType::Ligand,
+            &mut state.ui.popup,
             scene,
             ui,
             engine_updates,
@@ -215,11 +222,13 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
+            &mut state.volatile.pharmacophore_for_screening,
             i_mol,
             &mut mol.common,
             &None,
             None,
             MolType::Lipid,
+            &mut state.ui.popup,
             scene,
             ui,
             engine_updates,
@@ -236,11 +245,13 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
+            &mut state.volatile.pharmacophore_for_screening,
             i_mol,
             &mut mol.common,
             &None,
             None,
             MolType::NucleicAcid,
+            &mut state.ui.popup,
             scene,
             ui,
             engine_updates,
@@ -257,11 +268,13 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
+            &mut state.volatile.pharmacophore_for_screening,
             i_mol,
             &mut mol.common,
             &None,
             None,
             MolType::Pocket,
+            &mut state.ui.popup,
             scene,
             ui,
             engine_updates,
@@ -491,6 +504,12 @@ pub(in crate::ui) fn sidebar(
                             .entities
                             .retain(|e| e.class != EntityClass::Pocket as u32);
 
+                        state.mol_editor.update_h_bonds();
+                        // Not sure why updating the pocket alone isn't working; entityupdate::All
+                        // is working though.
+                        updates.meshes = true;
+                        updates.entities = EntityUpdate::All;
+
                         if selected {
                             state.mol_editor.mol.pharmacophore.pocket = None;
                             state.mol_editor.pocket_i_in_state = None;
@@ -507,11 +526,10 @@ pub(in crate::ui) fn sidebar(
                             state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
                             state.mol_editor.pocket_i_in_state = Some(mol_i);
 
-                            state.mol_editor.update_h_bonds();
-
                             scene
                                 .entities
                                 .retain(|e| e.class != EntityClass::Pocket as u32);
+
                             scene.entities.extend(draw_pocket(
                                 pocket,
                                 &state.mol_editor.h_bonds,
@@ -522,7 +540,6 @@ pub(in crate::ui) fn sidebar(
                             ));
 
                             updates.meshes = true;
-                            updates.entities.push_class(EntityClass::Pocket as u32);
                         }
                     }
                 }
