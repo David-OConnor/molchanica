@@ -20,6 +20,7 @@ pub mod inputs;
 pub mod md;
 pub mod mol_alignment;
 pub mod mol_characterization;
+pub mod mol_components;
 pub mod mol_editor;
 pub mod mol_manip;
 pub mod mol_screening;

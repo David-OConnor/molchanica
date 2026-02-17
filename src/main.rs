@@ -36,6 +36,7 @@ mod drug_design;
 mod md;
 mod mol_alignment;
 mod mol_characterization;
+mod mol_components;
 mod mol_editor;
 mod mol_manip;
 mod mol_screening;

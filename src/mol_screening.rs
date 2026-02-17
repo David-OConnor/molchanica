@@ -66,31 +66,28 @@ pub fn screen_by_alignment(
     res
 }
 
-/// Load all `SDF` and `Mol2` files in a directory and its sub-dirs into memory. Bypass our normal loading pipeline,
+/// Load `SDF` and `Mol2` files in a directory and its sub-dirs into memory. Bypass our normal loading pipeline,
 /// which includes computation to load FF type, partial charge, SMILES,
 /// camera considerations etc.
-pub fn load_mols(
-    path: &Path,
-    start_i: Option<usize>,
-    end_i: Option<usize>,
-) -> io::Result<Vec<MoleculeSmall>> {
-    println!("Loading molecules from path {path:?}...");
+///
+/// Loads incrementally: `skip` specifies how many valid mol files to skip from the start,
+/// and loading stops when `MOL_CACHE_SIZE_ATOM_COUNT` atoms have been loaded. Returns the
+/// loaded molecules and whether there are more files remaining to load.
+pub fn load_mols(path: &Path, skip: usize) -> io::Result<(Vec<MoleculeSmall>, bool)> {
+    println!("Loading molecules from path {path:?} (skip {skip})...");
     let start = Instant::now();
 
     let mut result = Vec::new();
 
     let mut dirs_to_visit = vec![path.to_path_buf()];
 
-    let mut mols_found: usize = 0; // for the start/end system
+    let mut mols_found: usize = 0;
     let mut atoms_loaded: u32 = 0;
     let mut mols_loaded: u32 = 0;
+    let mut has_more = false;
 
-    while let Some(dir) = dirs_to_visit.pop() {
+    'outer: while let Some(dir) = dirs_to_visit.pop() {
         for entry in dir.read_dir()? {
-            if atoms_loaded >= MOL_CACHE_SIZE_ATOM_COUNT {
-                break;
-            }
-
             let entry = entry?;
             let path = entry.path();
             let ty = entry.file_type()?;
@@ -104,33 +101,34 @@ pub fn load_mols(
                 continue;
             }
 
-            mols_found += 1;
-
-            // todo: More clear and/or efficient approach? We're still iterating through all files from teh top.
-            if let Some(i) = start_i {
-                if mols_found < i {
-                    continue;
-                }
-            }
-
-            if let Some(i) = end_i {
-                if mols_found > i {
-                    continue;
-                }
-            }
-
             let ext = match path.extension().and_then(|e| e.to_str()) {
                 Some(ext) => ext.to_ascii_lowercase(),
                 None => continue,
             };
 
+            // Only count files with valid mol extensions.
+            match ext.as_str() {
+                "sdf" | "mol2" => {}
+                _ => continue,
+            }
+
+            mols_found += 1;
+
+            if mols_found <= skip {
+                continue;
+            }
+
+            if atoms_loaded >= MOL_CACHE_SIZE_ATOM_COUNT {
+                has_more = true;
+                break 'outer;
+            }
+
             let mut mol: MoleculeSmall = match ext.as_str() {
                 "sdf" => Sdf::load(&path)?.try_into()?,
                 "mol2" => Mol2::load(&path)?.try_into()?,
-                _ => continue,
+                _ => unreachable!(),
             };
 
-            // todo RMed for now.
             // This is fast, and [partly] used in our screening workflows.
             mol.update_characterization();
 
@@ -151,5 +149,5 @@ pub fn load_mols(
         result.len()
     );
 
-    Ok(result)
+    Ok((result, has_more))
 }

@@ -546,10 +546,10 @@ impl Pharmacophore {
         Vec::new()
     }
 
-    /// Return (indices passed, atom posits, score).
+    /// Return (indices passed, ident, atom posits, score).
     ///
     /// Handles incremental loading from disk, with using modest amounts of memory in mind.
-    pub fn screen_ligs(&self, path: &Path, thresh: f32) -> Vec<(usize, Vec<Vec3>, f32)> {
+    pub fn screen_ligs(&self, path: &Path, thresh: f32) -> Vec<(usize, String, Vec<Vec3>, f32)> {
         println!("Screening mols using the pharmacophore...");
         let start = Instant::now();
 
@@ -559,8 +559,8 @@ impl Pharmacophore {
 
         let mut mols_screened = 0;
 
-        while mols_screened < max_mols {
-            let mols = match mol_screening::load_mols(&path, None, Some(max_mols)) {
+        loop {
+            let (mols, has_more) = match mol_screening::load_mols(&path, mols_screened) {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("Error: Unable to load molecules from path: {e}");
@@ -571,6 +571,7 @@ impl Pharmacophore {
                 break;
             }
 
+            let batch_offset = mols_screened;
             mols_screened += mols.len();
 
             // Note: The performance bottleneck is currently disk-IO, but this still is a parallel
@@ -580,20 +581,23 @@ impl Pharmacophore {
                 .enumerate()
                 .filter_map(|(i, mol)| {
                     let score = self.score(mol);
-                    // println!("SCORE: {score:.2}");
 
                     if score < thresh {
                         None
                     } else {
                         // todo: Include atom posits?
-                        Some((i, vec![], score))
+                        Some((batch_offset + i, mol.common.ident.clone(), vec![], score))
                     }
                 })
                 .collect();
 
             res.extend(scores_this_set);
 
-            println!("Screening progress. Screened {} mols", mols.len());
+            println!("Screening progress. Screened {} mols total", mols_screened);
+
+            if !has_more || mols_screened >= max_mols {
+                break;
+            }
         }
 
         let elapsed = start.elapsed().as_millis();
@@ -602,6 +606,8 @@ impl Pharmacophore {
             res.len(),
             mols_screened
         );
+
+        println!("Mols passed: {:?}", res);
 
         res
     }
