@@ -33,6 +33,7 @@ pub struct MolCharacterization {
     pub num_rings_aliphatic: usize,
     /// Fused rings, i.e. 2 or more rings with shared edges.
     /// These are indices of the `rings` field here. Note that we only have
+    /// These are indices of the `rings` field here. Note that we only have
     /// one level of ring systems. For example. 3 rings that have shared edges are one system of len 3;
     /// we don't also include the len-2 subsystems.
     pub ring_systems: Vec<Vec<usize>>,

@@ -13,7 +13,7 @@ use crate::{
     therapeutic::pharmacophore::Pharmacophore,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, char_adme, pharmacophore,
+        COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, pharmacophore,
     },
     util::{RedrawFlags, close_mol, handle_err, orbit_center},
 };
@@ -414,6 +414,8 @@ pub(in crate::ui) fn sidebar(
     updates: &mut EngineUpdates,
     ctx: &Context,
 ) {
+    let edit_mode = state.volatile.operating_mode == OperatingMode::MolEditor;
+
     let out = egui::SidePanel::left("sidebar")
         .resizable(true) // let user drag the width
         .default_width(140.0)
@@ -466,7 +468,7 @@ pub(in crate::ui) fn sidebar(
 
             ui.add_space(ROW_SPACING / 2.);
 
-            if state.volatile.operating_mode != OperatingMode::MolEditor {
+            if !edit_mode {
                 manip_toolbar(state, scene, redraw, ui, updates);
             }
 
@@ -479,109 +481,23 @@ pub(in crate::ui) fn sidebar(
             //     .show(ui, |ui| {
             // todo: Function or macro to reduce this DRY.
 
-            if state.volatile.operating_mode == OperatingMode::MolEditor {
-                ui.label("Pockets");
-                ui.separator();
-
-                for (mol_i, pocket) in state.pockets.iter_mut().enumerate() {
-                    let selected = state.mol_editor.pocket_i_in_state == Some(mol_i);
-
-                    let color = if selected {
-                        COLOR_ACTIVE
-                    } else {
-                        COLOR_INACTIVE
-                    };
-
-                    if ui
-                        .button(RichText::new(&pocket.common.ident).color(color))
-                        .on_hover_text(
-                            "Display this pocket, and optionally use it as part of \
-                        a pharmacophore, e.g. its excluded volume.",
-                        )
-                        .clicked()
-                    {
-                        scene
-                            .entities
-                            .retain(|e| e.class != EntityClass::Pocket as u32);
-
-                        state.mol_editor.update_h_bonds();
-                        // Not sure why updating the pocket alone isn't working; entityupdate::All
-                        // is working though.
-                        updates.meshes = true;
-                        updates.entities = EntityUpdate::All;
-
-                        if selected {
-                            state.mol_editor.mol.pharmacophore.pocket = None;
-                            state.mol_editor.pocket_i_in_state = None;
-                        } else {
-                            pocket.common.center_local_posits_around_origin();
-                            pocket.common.reset_posits();
-
-                            pocket.reset_post_manip(
-                                &mut scene.meshes,
-                                state.ui.mesh_coloring,
-                                updates,
-                            );
-
-                            state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
-                            state.mol_editor.pocket_i_in_state = Some(mol_i);
-
-                            scene
-                                .entities
-                                .retain(|e| e.class != EntityClass::Pocket as u32);
-
-                            scene.entities.extend(draw_pocket(
-                                pocket,
-                                &state.mol_editor.h_bonds,
-                                &state.mol_editor.mol.common.atom_posits,
-                                &state.ui.visibility,
-                                &state.ui.selection,
-                                &state.volatile.mol_manip.mode,
-                            ));
-
-                            updates.meshes = true;
-                        }
-                    }
-                }
+            if edit_mode {
+                mol_editor_sidebar::pocket_list(state, scene, updates, ui);
             } else {
                 mol_picker(state, scene, ui, redraw, updates);
             }
 
             // todo: Still list global pharmacophores
-            if state.ui.ui_vis.pharmacophore_list
-                && state.volatile.operating_mode == OperatingMode::MolEditor
-            {
-                // todo: Make this work eventually when out of hte mol editor.
+            if state.ui.ui_vis.pharmacophore_list && edit_mode {
+                mol_editor_sidebar::pharmacophore_list(state, ui);
+            }
 
-                // if let Some(mol) = &state.active_mol() {
-                // if let Some(mol) = &state.mol_editor.mol {
-                let mol = &mut state.mol_editor.mol;
-                let mut closed = false;
-                // if let MolGenericRef::Small(mol) = mol {
-
-                ui.add_space(ROW_SPACING);
-
-                // todo: Hmm. Need to redraw.
-                let mut redraw_mol_editor = false;
-                pharmacophore::pharmacophore_list(
-                    &mut mol.pharmacophore,
-                    &mut state.ui.popup,
-                    &mut closed,
-                    ui,
-                    &mut redraw_mol_editor,
-                );
-
-                // }
-                if closed {
-                    // Broken out to avoid double borrow.
-                    state.ui.ui_vis.pharmacophore_list = false;
-                }
-                // }
+            if edit_mode {
+                mol_editor_sidebar::component_list(state, ui);
             }
 
             // todo: UI flag to show or hide this.
-            if state.ui.ui_vis.mol_char && state.volatile.operating_mode != OperatingMode::MolEditor
-            {
+            if state.ui.ui_vis.mol_char && !edit_mode {
                 let mut toggled = false; // Avoid double borrow.
                 if let Some(m) = &state.active_mol() {
                     if let MolGenericRef::Small(mol) = m {

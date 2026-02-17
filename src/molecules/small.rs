@@ -27,6 +27,7 @@ use na_seq::Element;
 
 use crate::{
     mol_characterization::MolCharacterization,
+    mol_components::{Component, MolComponents},
     molecules::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, Residue,
         common::MoleculeCommon,
@@ -59,6 +60,7 @@ pub struct MoleculeSmall {
     pub characterization: Option<MolCharacterization>,
     pub pharmacophore: Pharmacophore,
     pub therapeutic_props: Option<TherapeuticProperties>,
+    pub components: Option<MolComponents>,
 }
 
 impl MoleculeSmall {

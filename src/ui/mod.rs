@@ -59,6 +59,7 @@ mod md;
 pub mod misc;
 mod mol_data;
 mod mol_editor;
+mod mol_editor_sidebar;
 mod mol_type_tools;
 mod orca;
 mod pharmacophore;

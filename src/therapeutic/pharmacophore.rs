@@ -9,7 +9,6 @@ use bincode::{Decode, Encode, de::Decoder};
 use bio_files::PharmacophoreTypeGeneric;
 use egui_file_dialog::FileDialog;
 use lin_alg::f64::Vec3;
-
 use rayon::prelude::*;
 
 use crate::{
