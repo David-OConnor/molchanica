@@ -35,8 +35,6 @@ pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 1;
 const BOND_DIST_PARAM_SCALE: f32 = 0.15;
 const KB_REF: f32 = 300.0;
 
-pub(in crate::therapeutic) const ATOM_GNN_ENABLED: bool = false;
-pub(in crate::therapeutic) const COMP_GNN_ENABLED: bool = false;
 
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphData {

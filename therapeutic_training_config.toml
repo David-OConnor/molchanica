@@ -1,0 +1,4 @@
+[adme]
+gnn_atom_enabled = true
+gnn_comp_enabled = false
+mlp_enabled = false

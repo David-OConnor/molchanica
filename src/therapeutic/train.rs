@@ -62,10 +62,7 @@ use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc, gnn,
-        gnn::{
-            ATOM_GNN_ENABLED, COMP_GNN_ENABLED, GraphData, GraphDataComponent, PER_ATOM_SCALARS,
-            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
-        },
+        gnn::{GraphData, GraphDataComponent, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS},
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -80,6 +77,69 @@ pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 // todo: How should this be set up
 pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for padding
 pub(in crate::therapeutic) const MAX_COMPS: usize = 30; // Max components for padding
+
+/// Which network branches are active for a given training run.
+/// Loaded from `therapeutic_training_config.toml` at the project root.
+///
+/// Section lookup order: `[<dataset_name>]` → `[default]` → all enabled.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(in crate::therapeutic) struct BranchConfig {
+    pub atom_gnn_enabled: bool,
+    pub comp_gnn_enabled: bool,
+    pub mlp_enabled: bool,
+}
+
+impl Default for BranchConfig {
+    fn default() -> Self {
+        Self { atom_gnn_enabled: true, comp_gnn_enabled: true, mlp_enabled: true }
+    }
+}
+
+/// Minimal parser for the subset of TOML used by `therapeutic_training_config.toml`:
+/// top-level sections (`[name]`) containing `key = true/false` pairs.
+/// Unknown keys are silently ignored; missing keys keep the default value.
+#[cfg(feature = "train")]
+fn load_branch_config(dataset_name: &str) -> BranchConfig {
+    const CONFIG_PATH: &str = "therapeutic_training_config.toml";
+
+    let text = match fs::read_to_string(CONFIG_PATH) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Warning: could not read {CONFIG_PATH}: {e}. Using defaults.");
+            return BranchConfig::default();
+        }
+    };
+
+    // Parse into HashMap<section, HashMap<key, bool>>
+    let mut sections: HashMap<String, HashMap<String, bool>> = HashMap::new();
+    let mut current = String::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            current = line[1..line.len() - 1].to_string();
+        } else if let Some((k, v)) = line.split_once('=') {
+            if let Ok(b) = v.trim().parse::<bool>() {
+                sections.entry(current.clone()).or_default().insert(k.trim().to_string(), b);
+            }
+        }
+    }
+
+    // Look up: specific dataset → "default" → all-true
+    let map = sections
+        .get(dataset_name)
+        .or_else(|| sections.get("default"));
+
+    let get = |map: Option<&HashMap<String, bool>>, key: &str| -> bool {
+        map.and_then(|m| m.get(key).copied()).unwrap_or(true)
+    };
+
+    BranchConfig {
+        atom_gnn_enabled: get(map, "gnn_atom_enabled"),
+        comp_gnn_enabled: get(map, "gnn_comp_enabled"),
+        mlp_enabled:      get(map, "mlp_enabled"),
+    }
+}
 
 pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
 
@@ -128,6 +188,10 @@ pub(in crate::therapeutic) struct ModelConfig {
     pub comp_embedding_dim: usize,
     pub n_comp_scalars: usize,
     pub comp_edge_feat_dim: usize,
+    // Which branches are active — saved so inference reloads correctly
+    pub atom_gnn_enabled: bool,
+    pub comp_gnn_enabled: bool,
+    pub mlp_enabled: bool,
 }
 
 impl ModelConfig {
@@ -184,17 +248,9 @@ impl ModelConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
-        let combined_dim = self.mlp_hidden_dim
-            + if ATOM_GNN_ENABLED {
-                self.gnn_hidden_dim
-            } else {
-                0
-            }
-            + if COMP_GNN_ENABLED {
-                self.gnn_hidden_dim
-            } else {
-                0
-            };
+        let combined_dim = if self.mlp_enabled { self.mlp_hidden_dim } else { 0 }
+            + if self.atom_gnn_enabled { self.gnn_hidden_dim } else { 0 }
+            + if self.comp_gnn_enabled { self.gnn_hidden_dim } else { 0 };
 
         let emb_elem = EmbeddingConfig::new(self.vocab_size_elem, self.embedding_dim).init(device);
         let emb_ff = EmbeddingConfig::new(self.vocab_size_ff, self.embedding_dim).init(device);
@@ -256,6 +312,9 @@ impl ModelConfig {
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
             dropout: DropoutConfig::new(DROPOUT.unwrap_or_default()).init(),
+            atom_gnn_enabled: self.atom_gnn_enabled,
+            comp_gnn_enabled: self.comp_gnn_enabled,
+            mlp_enabled: self.mlp_enabled,
         }
     }
 }
@@ -282,6 +341,13 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     head: Linear<B>,
     /// This dropout is useful if using more than 3 GNN layers.
     dropout: Dropout,
+    // Active branches — not trained weights, restored from ModelConfig JSON on load.
+    #[module(skip)]
+    atom_gnn_enabled: bool,
+    #[module(skip)]
+    comp_gnn_enabled: bool,
+    #[module(skip)]
+    mlp_enabled: bool,
 }
 
 impl<B: Backend> Model<B> {
@@ -347,7 +413,7 @@ impl<B: Backend> Model<B> {
         let mut branches: Vec<Tensor<B, 2>> = Vec::new();
 
         // --- Atom GNN branch ---
-        if ATOM_GNN_ENABLED {
+        if self.atom_gnn_enabled {
             let [b, n, _n2, f] = edge_feats.dims();
 
             let ef_flat = edge_feats.clone().reshape([b * n * n, f]);
@@ -379,7 +445,7 @@ impl<B: Backend> Model<B> {
         }
 
         // --- Component GNN branch ---
-        if COMP_GNN_ENABLED {
+        if self.comp_gnn_enabled {
             let [bc, nc, _nc2, fc] = comp_edge_feats.dims();
 
             let cef_flat = comp_edge_feats.clone().reshape([bc * nc * nc, fc]);
@@ -415,15 +481,17 @@ impl<B: Backend> Model<B> {
             branches.push(comp_mean.reshape([b_c, d_c]));
         }
 
-        // --- MLP branch (always active) ---
-        let mut mlp_prev = params;
-        for (i, layer) in self.mlp_layers.iter().enumerate() {
-            mlp_prev = activation::relu(layer.forward(mlp_prev.clone()));
-            if i != self.mlp_layers.len() - 1 && DROPOUT.is_some() {
-                mlp_prev = self.dropout.forward(mlp_prev);
+        // --- MLP branch ---
+        if self.mlp_enabled {
+            let mut mlp_prev = params;
+            for (i, layer) in self.mlp_layers.iter().enumerate() {
+                mlp_prev = activation::relu(layer.forward(mlp_prev.clone()));
+                if i != self.mlp_layers.len() - 1 && DROPOUT.is_some() {
+                    mlp_prev = self.dropout.forward(mlp_prev);
+                }
             }
+            branches.push(mlp_prev);
         }
-        branches.push(mlp_prev);
 
         let combined = Tensor::cat(branches, 1);
         let combined = self.fusion_norm.forward(combined);
@@ -1005,6 +1073,12 @@ pub(in crate::therapeutic) fn train(
     // For now at least, the target name will always be the csv filename (Without extension)
     let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
 
+    let branch_cfg = load_branch_config(&dataset.name());
+    println!(
+        "Branch config for '{}': atom_gnn={} comp_gnn={} mlp={}",
+        dataset.name(), branch_cfg.atom_gnn_enabled, branch_cfg.comp_gnn_enabled, branch_cfg.mlp_enabled,
+    );
+
     let (model_path, scaler_path, config_path) = dataset.model_paths();
 
     let start = Instant::now();
@@ -1065,6 +1139,10 @@ pub(in crate::therapeutic) fn train(
         comp_embedding_dim: 8,
         n_comp_scalars: PER_COMP_SCALARS,
         comp_edge_feat_dim: PER_EDGE_COMP_FEATS,
+        // Read which branches to enable from the config file.
+        atom_gnn_enabled: branch_cfg.atom_gnn_enabled,
+        comp_gnn_enabled: branch_cfg.comp_gnn_enabled,
+        mlp_enabled: branch_cfg.mlp_enabled,
     };
 
     let model = model_cfg.init::<TrainBackend>(&device);
