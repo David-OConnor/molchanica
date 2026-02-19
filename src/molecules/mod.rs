@@ -1151,7 +1151,7 @@ impl MoleculePeptide {
     }
 }
 
-pub fn build_adjacency_list(bonds: &Vec<Bond>, atoms_len: usize) -> Vec<Vec<usize>> {
+pub fn build_adjacency_list(bonds: &[Bond], atoms_len: usize) -> Vec<Vec<usize>> {
     let mut result = vec![Vec::new(); atoms_len];
 
     // For each bond, record its atoms as neighbors of each other

@@ -10,7 +10,7 @@
 //! You can run the eval fns directly, or call the `train` executable with the `--eval` param:
 //! `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data --eval`
 //!
-//! Add a `--tgt herg` etc flag to spsecify a single target, vs every data file in the directory.
+//! Add a `--tgt herg` etc flag to specify a single target, vs every data file in the directory.
 
 use std::{collections::HashMap, fmt::Display, io, path::Path, time::Instant};
 

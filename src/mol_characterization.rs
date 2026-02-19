@@ -60,7 +60,7 @@ pub struct MolCharacterization {
     pub pyrrole_like_nh: Vec<usize>,
     /// Has a C=N double bond
     pub imine_like_n: Vec<usize>,
-    /// C atom bound to O.
+    /// The O atom.
     pub carbonyl: Vec<usize>,
     pub carboxylate: Vec<usize>,
     pub sulfonamide: Vec<usize>,
@@ -486,7 +486,11 @@ impl MolCharacterization {
             let el = mol.atoms[i].element;
 
             if el == Carbon && carbon_has_double_bonded_oxygen(i) {
-                carbonyl.push(i);
+                for &n in &adj[i] {
+                    if mol.atoms[n].element == Oxygen && is_double_bond(i, n) {
+                        carbonyl.push(n);
+                    }
+                }
 
                 if carbon_is_carboxylate(i) {
                     carboxylate.push(i);

@@ -6,9 +6,9 @@
 //!   - As a graph neural network (GNN) feature representation for ML.
 //!   - As an editor building block: swap or parametrically modify components.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-
 use na_seq::Element::{self, *};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Display;
 
 use crate::{
     mol_characterization::RingType,
@@ -37,6 +37,26 @@ pub enum ComponentType {
     Amide,
     Sulfonamide,
     Sulfonimide,
+}
+
+impl Display for ComponentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use ComponentType::*;
+        let v = match self {
+            Atom(element) => format!("Atom: {}", element),
+            Ring(ring) => format!("Ring: {:?}", ring.ring_type),
+            Chain(chain) => format!("Chain: {}", chain),
+            Hydroxyl => "Hydroxyl".to_string(),
+            Carbonyl => "Carbonyl".to_string(),
+            Carboxylate => "Carboxylate".to_string(),
+            Amine => "Amine".to_string(),
+            Amide => "Amide".to_string(),
+            Sulfonamide => "Sulfonamide".to_string(),
+            Sulfonimide => "Sulfonimide".to_string(),
+        };
+
+        write!(f, "{}", v)
+    }
 }
 
 impl ComponentType {
@@ -75,6 +95,10 @@ pub struct Connection {
     pub atom_0: usize,
     pub comp_1: usize,
     pub atom_1: usize,
+    /// True if this the atom is shared between both components; false if they are
+    /// separate components. For example, this will be true on the connection points
+    /// between fused rings, and there will be two connections fusing the rings.
+    pub shared_atoms: bool,
 }
 
 /// The top-level data structure for representing a molecule as a set of connected components.
@@ -136,47 +160,48 @@ impl MolComponents {
 
         // --- 1. Rings ---
         // Fused ring systems become a single component; isolated rings each get their own.
-        let mut ring_in_system: HashSet<usize> = HashSet::new();
+        // let mut ring_in_system: HashSet<usize> = HashSet::new();
 
-        for system in &char.ring_systems {
-            let mut sys_atoms: Vec<usize> = Vec::new();
-            for &ri in system {
-                ring_in_system.insert(ri);
-                for &a in &char.rings[ri].atoms {
-                    if !sys_atoms.contains(&a) {
-                        sys_atoms.push(a);
-                    }
-                }
-            }
-            // Aromatic takes precedence; then Aliphatic; finally Saturated.
-            let ring_type = system.iter().map(|&i| char.rings[i].ring_type).fold(
-                RingType::Saturated,
-                |best, rt| match rt {
-                    RingType::Aromatic => RingType::Aromatic,
-                    RingType::Aliphatic if best != RingType::Aromatic => RingType::Aliphatic,
-                    _ => best,
-                },
-            );
-            let num_atoms = sys_atoms.len() as u8;
-            add_comp!(
-                ComponentType::Ring(RingComponent {
-                    num_atoms,
-                    ring_type
-                }),
-                sys_atoms
-            );
-        }
+        // for system in &char.ring_systems {
+        //     let mut sys_atoms: Vec<usize> = Vec::new();
+        //     for &ri in system {
+        //         ring_in_system.insert(ri);
+        //         for &a in &char.rings[ri].atoms {
+        //             if !sys_atoms.contains(&a) {
+        //                 sys_atoms.push(a);
+        //             }
+        //         }
+        //     }
+        //     // Aromatic takes precedence; then Aliphatic; finally Saturated.
+        //     let ring_type = system.iter().map(|&i| char.rings[i].ring_type).fold(
+        //         RingType::Saturated,
+        //         |best, rt| match rt {
+        //             RingType::Aromatic => RingType::Aromatic,
+        //             RingType::Aliphatic if best != RingType::Aromatic => RingType::Aliphatic,
+        //             _ => best,
+        //         },
+        //     );
+        //     let num_atoms = sys_atoms.len() as u8;
+        //     add_comp!(
+        //         ComponentType::Ring(RingComponent {
+        //             num_atoms,
+        //             ring_type
+        //         }),
+        //         sys_atoms
+        //     );
+        // }
 
         for (ri, ring) in char.rings.iter().enumerate() {
-            if ring_in_system.contains(&ri) {
-                continue;
-            }
+            // if ring_in_system.contains(&ri) {
+            //     continue;
+            // }
             let ring_atoms: Vec<usize> = ring
                 .atoms
                 .iter()
                 .filter(|&&a| !claimed.contains(&a))
                 .copied()
                 .collect();
+
             if ring_atoms.is_empty() {
                 continue;
             }
@@ -189,8 +214,6 @@ impl MolComponents {
             );
         }
 
-        // --- 2. Carboxylates (C + both O atoms) ---
-        let carboxylate_cs: HashSet<usize> = char.carboxylate.iter().copied().collect();
         for &c_idx in &char.carboxylate {
             if claimed.contains(&c_idx) {
                 continue;
@@ -210,7 +233,6 @@ impl MolComponents {
             add_comp!(ComponentType::Carboxylate, comp_atoms);
         }
 
-        // --- 3. Sulfonimides (N bonded to two sulfonyl S groups) ---
         for &n_idx in &char.sulfonimide {
             if claimed.contains(&n_idx) {
                 continue;
@@ -233,7 +255,6 @@ impl MolComponents {
             add_comp!(ComponentType::Sulfonimide, comp_atoms);
         }
 
-        // --- 4. Sulfonamides (N bonded to one sulfonyl S group) ---
         for &n_idx in &char.sulfonamide {
             if claimed.contains(&n_idx) {
                 continue;
@@ -256,7 +277,6 @@ impl MolComponents {
             add_comp!(ComponentType::Sulfonamide, comp_atoms);
         }
 
-        // --- 5. Amides (N only; the C=O carbon is handled by Carbonyl below) ---
         for &n_idx in &char.amides {
             if claimed.contains(&n_idx) {
                 continue;
@@ -270,14 +290,16 @@ impl MolComponents {
             add_comp!(ComponentType::Amide, comp_atoms);
         }
 
-        // --- 6. Carbonyls (C=O, excluding carboxylate carbons already claimed) ---
-        for &c_idx in &char.carbonyl {
-            if claimed.contains(&c_idx) || carboxylate_cs.contains(&c_idx) {
+        // char.carbonyl now stores O atom indices (the =O oxygen, not the C).
+        // Carboxylate O atoms are already claimed above, so they're naturally skipped.
+        for &o_idx in &char.carbonyl {
+            if claimed.contains(&o_idx) {
                 continue;
             }
-            let mut comp_atoms = vec![c_idx]; // key atom first
-            for &nb in &adj[c_idx] {
-                if atoms[nb].element == Oxygen && !claimed.contains(&nb) {
+            let mut comp_atoms = vec![o_idx]; // key atom first (O)
+            // Include the carbonyl C if it hasn't been claimed by a ring or chain yet.
+            for &nb in &adj[o_idx] {
+                if atoms[nb].element == Carbon && !claimed.contains(&nb) {
                     comp_atoms.push(nb);
                 }
             }
@@ -345,13 +367,26 @@ impl MolComponents {
         // --- 10. Fallback: singleton component for every remaining atom ---
         for i in 0..n_atoms {
             if !claimed.contains(&i) {
-                add_comp!(ComponentType::Atom(atoms[i].element), vec![i]);
+                let el = atoms[i].element;
+                if el != Hydrogen {
+                    add_comp!(ComponentType::Atom(el), vec![i]);
+                }
             }
         }
 
         // --- Build connections ---
         // Every bond whose two endpoints belong to different components becomes a Connection.
         // `atom_0` / `atom_1` are positions within the respective component's `atoms` list.
+
+        // Precompute how many detected rings each atom belongs to.
+        // Atoms that appear in 2+ rings are bridgehead (fusion) atoms.
+        let mut atom_ring_count: HashMap<usize, usize> = HashMap::new();
+        for ring in &char.rings {
+            for &a in &ring.atoms {
+                *atom_ring_count.entry(a).or_insert(0) += 1;
+            }
+        }
+
         let mut conns: Vec<Connection> = Vec::new();
 
         for bond in bonds {
@@ -368,11 +403,21 @@ impl MolComponents {
             let atom_0 = comps[ca].atoms.iter().position(|&x| x == a).unwrap_or(0);
             let atom_1 = comps[cb].atoms.iter().position(|&x| x == b).unwrap_or(0);
 
+            // A connection is at a ring fusion when both components are rings and at least
+            // one endpoint is a bridgehead atom (present in 2+ detected rings). Because of
+            // exclusive atom claiming, only one side of the fusion bond will be a bridgehead;
+            // the other side is the non-bridgehead neighbour in the second ring component.
+            let shared_atoms = matches!(comps[ca].comp_type, ComponentType::Ring(_))
+                && matches!(comps[cb].comp_type, ComponentType::Ring(_))
+                && (atom_ring_count.get(&a).copied().unwrap_or(0) > 1
+                    || atom_ring_count.get(&b).copied().unwrap_or(0) > 1);
+
             conns.push(Connection {
                 comp_0: ca,
                 atom_0,
                 comp_1: cb,
                 atom_1,
+                shared_atoms,
             });
         }
 
@@ -401,4 +446,18 @@ impl MolComponents {
 
         (mol.atoms, mol.bonds)
     }
+}
+
+/// Mirrors the atoms/bonds based one.
+pub fn build_adjacency_list_conn(conns: &[Connection], comps_len: usize) -> Vec<Vec<usize>> {
+    let mut result = vec![Vec::new(); comps_len];
+
+    // For each conn, record its comps as neighbors of each other
+    for conn in conns {
+        // todo: Should we take into account the atoms joined at?
+        result[conn.comp_0].push(conn.comp_1);
+        result[conn.comp_1].push(conn.comp_0);
+    }
+
+    result
 }

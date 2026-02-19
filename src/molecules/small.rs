@@ -108,7 +108,10 @@ impl MoleculeSmall {
     }
 
     pub fn update_characterization(&mut self) {
-        self.characterization = Some(MolCharacterization::new(&self.common))
+        self.characterization = Some(MolCharacterization::new(&self.common));
+
+        // For now, this works as the spot
+        self.components = MolComponents::new(&self);
     }
 }
 

@@ -62,7 +62,10 @@ use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc, gnn,
-        gnn::{GraphData, PER_ATOM_SCALARS, PER_EDGE_FEATS},
+        gnn::{
+            ATOM_GNN_ENABLED, COMP_GNN_ENABLED, GraphData, GraphDataComponent, PER_ATOM_SCALARS,
+            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
+        },
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -76,6 +79,7 @@ pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 
 // todo: How should this be set up
 pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for padding
+pub(in crate::therapeutic) const MAX_COMPS: usize = 30; // Max components for padding
 
 pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
 
@@ -112,13 +116,18 @@ pub(in crate::therapeutic) struct ModelConfig {
     // pub atom_input_dim: usize,
     pub gnn_hidden_dim: usize,
     pub mlp_hidden_dim: usize,
-    // These covab and embeddings are used for per-atom GNN properties, e.g. element.
+    // These vocab and embeddings are used for per-atom GNN properties, e.g. element.
     pub vocab_size_elem: usize,
     pub vocab_size_ff: usize,
     pub embedding_dim: usize,
     /// E.g. 2, one for charge; one for degree, one for R, one for mean_nb_dist
     pub n_node_scalars: usize,
     pub edge_feat_dim: usize,
+    // Component GNN fields
+    pub vocab_size_comp: usize,
+    pub comp_embedding_dim: usize,
+    pub n_comp_scalars: usize,
+    pub comp_edge_feat_dim: usize,
 }
 
 impl ModelConfig {
@@ -175,20 +184,30 @@ impl ModelConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
-        let combined_dim = self.mlp_hidden_dim + self.gnn_hidden_dim;
+        let combined_dim = self.mlp_hidden_dim
+            + if ATOM_GNN_ENABLED {
+                self.gnn_hidden_dim
+            } else {
+                0
+            }
+            + if COMP_GNN_ENABLED {
+                self.gnn_hidden_dim
+            } else {
+                0
+            };
 
         let emb_elem = EmbeddingConfig::new(self.vocab_size_elem, self.embedding_dim).init(device);
         let emb_ff = EmbeddingConfig::new(self.vocab_size_ff, self.embedding_dim).init(device);
 
         let gnn_input_dim = self.embedding_dim * 2 + self.n_node_scalars;
 
-        // [NEW] Project Nodes to match Hidden Dim (so we can add Edges to them)
+        // Project Nodes to match Hidden Dim (so we can add Edges to them)
         let node_encoder = LinearConfig::new(gnn_input_dim, dim_gnn).init(device);
 
-        // [UNCHANGED] Project Edges to match Hidden Dim
+        // Project Edges to match Hidden Dim
         let edge_encoder = LinearConfig::new(self.edge_feat_dim, dim_gnn).init(device);
 
-        // [CHANGED] All GNN layers now operate on dim_gnn -> dim_gnn
+        // All GNN layers now operate on dim_gnn -> dim_gnn
         let mut gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
         for _ in 0..NUM_GNN_LAYERS {
             gnn_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
@@ -196,7 +215,21 @@ impl ModelConfig {
 
         let edge_proj = LinearConfig::new(self.edge_feat_dim, 1).init(device);
 
-        // ... MLP Layers (Unchanged) ...
+        // Component GNN
+        let emb_comp =
+            EmbeddingConfig::new(self.vocab_size_comp, self.comp_embedding_dim).init(device);
+        let comp_gnn_input_dim = self.comp_embedding_dim + self.n_comp_scalars;
+        let comp_node_encoder = LinearConfig::new(comp_gnn_input_dim, dim_gnn).init(device);
+        let comp_edge_encoder = LinearConfig::new(self.comp_edge_feat_dim, dim_gnn).init(device);
+
+        let mut comp_gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
+        for _ in 0..NUM_GNN_LAYERS {
+            comp_gnn_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
+        }
+
+        let comp_edge_proj = LinearConfig::new(self.comp_edge_feat_dim, 1).init(device);
+
+        // MLP Layers
         let mut mlp_layers = Vec::with_capacity(NUM_MLP_LAYERS);
         for layer_i in 0..NUM_MLP_LAYERS {
             let (in_dim, out_dim) = if layer_i == 0 {
@@ -210,10 +243,15 @@ impl ModelConfig {
         Model {
             emb_elem,
             emb_ff,
-            node_encoder, // Add to struct
+            node_encoder,
             edge_encoder,
             gnn_layers,
             edge_proj,
+            emb_comp,
+            comp_node_encoder,
+            comp_edge_encoder,
+            comp_gnn_layers,
+            comp_edge_proj,
             mlp_layers,
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
@@ -231,6 +269,12 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     /// GNN layers: Broadly graph and per-atom data.
     gnn_layers: Vec<Linear<B>>,
     edge_proj: Linear<B>,
+    /// Component GNN branch
+    emb_comp: Embedding<B>,
+    comp_node_encoder: Linear<B>,
+    comp_edge_encoder: Linear<B>,
+    comp_gnn_layers: Vec<Linear<B>>,
+    comp_edge_proj: Linear<B>,
     /// Parameter features. These are for molecule-level parameters. (Atom count, weight, volume, PSA etc)
     mlp_layers: Vec<Linear<B>>,
     fusion_norm: LayerNorm<B>,
@@ -292,44 +336,86 @@ impl<B: Backend> Model<B> {
         adj: Tensor<B, 3>,
         edge_feats: Tensor<B, 4>,
         mask: Tensor<B, 3>,
+        // Component graph
+        comp_idx: Tensor<B, 2, Int>,
+        comp_scalars: Tensor<B, 3>,
+        comp_adj: Tensor<B, 3>,
+        comp_edge_feats: Tensor<B, 4>,
+        comp_mask: Tensor<B, 3>,
         params: Tensor<B, 2>,
     ) -> Tensor<B, 2> {
-        let [b, n, _n2, f] = edge_feats.dims();
+        let mut branches: Vec<Tensor<B, 2>> = Vec::new();
 
-        // 1. Edge Gating
-        let ef_flat = edge_feats.clone().reshape([b * n * n, f]);
-        let gate_flat = activation::sigmoid(self.edge_proj.forward(ef_flat.clone()));
-        let gate = gate_flat.reshape([b, n, n]);
-        let adj_eff = adj * gate;
+        // --- Atom GNN branch ---
+        if ATOM_GNN_ENABLED {
+            let [b, n, _n2, f] = edge_feats.dims();
 
-        // Edge Embedding
-        let edge_emb_flat = self.edge_encoder.forward(ef_flat);
+            let ef_flat = edge_feats.clone().reshape([b * n * n, f]);
+            let gate_flat = activation::sigmoid(self.edge_proj.forward(ef_flat.clone()));
+            let gate = gate_flat.reshape([b, n, n]);
+            let adj_eff = adj * gate;
 
-        // Get d_hidden dynamically. `Linear` struct does not have public `d_output`.
-        let [_, d_hidden] = edge_emb_flat.dims();
-        let edge_emb = edge_emb_flat.reshape([b, n, n, d_hidden]);
+            let edge_emb_flat = self.edge_encoder.forward(ef_flat);
+            let [_, d_hidden] = edge_emb_flat.dims();
+            let edge_emb = edge_emb_flat.reshape([b, n, n, d_hidden]);
 
-        // 3. Prepare Nodes
-        let x_elem = self.emb_elem.forward(elem_idx);
-        let x_ff = self.emb_ff.forward(ff_idx);
-        let raw_nodes = Tensor::cat(vec![x_elem, x_ff, scalars], 2);
+            let x_elem = self.emb_elem.forward(elem_idx);
+            let x_ff = self.emb_ff.forward(ff_idx);
+            let raw_nodes = Tensor::cat(vec![x_elem, x_ff, scalars], 2);
+            let nodes = self.node_encoder.forward(raw_nodes);
 
-        // Project Nodes to Hidden Dim
-        let nodes = self.node_encoder.forward(raw_nodes);
+            let mut gnn_prev = nodes;
+            for (i, layer) in self.gnn_layers.iter().enumerate() {
+                let dropout = i != self.gnn_layers.len() - 1;
+                gnn_prev =
+                    self.make_gnn_layer(&adj_eff, &mask, gnn_prev, &edge_emb, layer, dropout);
+            }
 
-        let mut gnn_prev = nodes;
-
-        for (i, layer) in self.gnn_layers.iter().enumerate() {
-            let dropout = i != self.gnn_layers.len() - 1;
-            gnn_prev = self.make_gnn_layer(&adj_eff, &mask, gnn_prev, &edge_emb, layer, dropout);
+            let graph_sum = gnn_prev.sum_dim(1);
+            let atom_counts = mask.sum_dim(1);
+            let graph_mean = graph_sum / (atom_counts + 1e-6);
+            let [b_g, _one, d] = graph_mean.dims();
+            branches.push(graph_mean.reshape([b_g, d]));
         }
 
-        let graph_sum = gnn_prev.sum_dim(1);
-        let atom_counts = mask.sum_dim(1);
-        let graph_mean = graph_sum / (atom_counts + 1e-6);
-        let [b_g, _one, d] = graph_mean.dims();
-        let graph_embedding = graph_mean.reshape([b_g, d]);
+        // --- Component GNN branch ---
+        if COMP_GNN_ENABLED {
+            let [bc, nc, _nc2, fc] = comp_edge_feats.dims();
 
+            let cef_flat = comp_edge_feats.clone().reshape([bc * nc * nc, fc]);
+            let comp_gate_flat = activation::sigmoid(self.comp_edge_proj.forward(cef_flat.clone()));
+            let comp_gate = comp_gate_flat.reshape([bc, nc, nc]);
+            let comp_adj_eff = comp_adj * comp_gate;
+
+            let comp_edge_emb_flat = self.comp_edge_encoder.forward(cef_flat);
+            let [_, d_comp_hidden] = comp_edge_emb_flat.dims();
+            let comp_edge_emb = comp_edge_emb_flat.reshape([bc, nc, nc, d_comp_hidden]);
+
+            let x_comp = self.emb_comp.forward(comp_idx);
+            let raw_comp_nodes = Tensor::cat(vec![x_comp, comp_scalars], 2);
+            let comp_nodes = self.comp_node_encoder.forward(raw_comp_nodes);
+
+            let mut comp_gnn_prev = comp_nodes;
+            for (i, layer) in self.comp_gnn_layers.iter().enumerate() {
+                let dropout = i != self.comp_gnn_layers.len() - 1;
+                comp_gnn_prev = self.make_gnn_layer(
+                    &comp_adj_eff,
+                    &comp_mask,
+                    comp_gnn_prev,
+                    &comp_edge_emb,
+                    layer,
+                    dropout,
+                );
+            }
+
+            let comp_sum = comp_gnn_prev.sum_dim(1);
+            let comp_counts = comp_mask.sum_dim(1);
+            let comp_mean = comp_sum / (comp_counts + 1e-6);
+            let [b_c, _one_c, d_c] = comp_mean.dims();
+            branches.push(comp_mean.reshape([b_c, d_c]));
+        }
+
+        // --- MLP branch (always active) ---
         let mut mlp_prev = params;
         for (i, layer) in self.mlp_layers.iter().enumerate() {
             mlp_prev = activation::relu(layer.forward(mlp_prev.clone()));
@@ -337,8 +423,9 @@ impl<B: Backend> Model<B> {
                 mlp_prev = self.dropout.forward(mlp_prev);
             }
         }
+        branches.push(mlp_prev);
 
-        let combined = Tensor::cat(vec![graph_embedding, mlp_prev], 1);
+        let combined = Tensor::cat(branches, 1);
         let combined = self.fusion_norm.forward(combined);
 
         self.head.forward(combined)
@@ -350,6 +437,7 @@ pub(in crate::therapeutic) struct Sample {
     /// From computed properties of the molecule.
     pub features_property: Vec<f32>,
     pub graph: GraphData,
+    pub graph_comp: GraphDataComponent,
     pub target: f32,
 }
 
@@ -362,6 +450,12 @@ pub(in crate::therapeutic) struct Batch<B: Backend> {
     pub adj_list: Tensor<B, 3>,
     pub edge_feats: Tensor<B, 4>,
     pub mask: Tensor<B, 3>,
+    // Component graph
+    pub comp_indices: Tensor<B, 2, Int>,
+    pub comp_scalars: Tensor<B, 3>,
+    pub comp_adj_list: Tensor<B, 3>,
+    pub comp_edge_feats: Tensor<B, 4>,
+    pub comp_mask: Tensor<B, 3>,
     pub mol_params: Tensor<B, 2>,
     pub targets: Tensor<B, 2>,
 }
@@ -381,6 +475,11 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let mut batch_adj = Vec::new();
         let mut batch_edge_feats = Vec::new();
         let mut batch_mask = Vec::new();
+        let mut batch_comp_ids = Vec::new();
+        let mut batch_comp_scalars = Vec::new();
+        let mut batch_comp_adj = Vec::new();
+        let mut batch_comp_edge_feats = Vec::new();
+        let mut batch_comp_mask = Vec::new();
         let mut batch_globals = Vec::new();
         let mut batch_y = Vec::new();
 
@@ -399,7 +498,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_globals.extend_from_slice(&item.features_property);
             batch_y.push(self.scaler.normalize_target(item.target));
 
-            // Pad and Extend Graph Data
+            // Pad and Extend Atom Graph Data
             let n = item.graph.num_atoms.min(MAX_ATOMS);
 
             batch_elem_ids.extend_from_slice(&item.graph.elem_indices[0..n]);
@@ -414,13 +513,44 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 (MAX_ATOMS - n) * n_scalars_per_atom,
             ));
 
-            // Adjacency list and  mask
-            let (p_adj, p_mask) = gnn::pad_adj_and_mask(&item.graph.adj, item.graph.num_atoms);
+            let (p_adj, p_mask) =
+                gnn::pad_adj_and_mask(&item.graph.adj, item.graph.num_atoms, MAX_ATOMS);
             batch_adj.extend(p_adj);
             batch_mask.extend(p_mask);
 
-            let p_edge = gnn::pad_edge_feats(&item.graph.edge_feats, item.graph.num_atoms);
+            let p_edge = gnn::pad_edge_feats(
+                &item.graph.edge_feats,
+                item.graph.num_atoms,
+                PER_EDGE_FEATS,
+                MAX_ATOMS,
+            );
             batch_edge_feats.extend(p_edge);
+
+            // Pad and Extend Component Graph Data
+            let n_comps = item.graph_comp.num_comps.min(MAX_COMPS);
+
+            batch_comp_ids.extend_from_slice(&item.graph_comp.comp_type_indices[0..n_comps]);
+            batch_comp_ids.extend(std::iter::repeat_n(0_i32, MAX_COMPS - n_comps));
+
+            batch_comp_scalars
+                .extend_from_slice(&item.graph_comp.scalars[0..n_comps * PER_COMP_SCALARS]);
+            batch_comp_scalars.extend(std::iter::repeat_n(
+                0.0_f32,
+                (MAX_COMPS - n_comps) * PER_COMP_SCALARS,
+            ));
+
+            let (p_comp_adj, p_comp_mask) =
+                gnn::pad_adj_and_mask(&item.graph_comp.adj, item.graph_comp.num_comps, MAX_COMPS);
+            batch_comp_adj.extend(p_comp_adj);
+            batch_comp_mask.extend(p_comp_mask);
+
+            let p_comp_edge = gnn::pad_edge_feats(
+                &item.graph_comp.edge_feats,
+                item.graph_comp.num_comps,
+                PER_EDGE_COMP_FEATS,
+                MAX_COMPS,
+            );
+            batch_comp_edge_feats.extend(p_comp_edge);
         }
 
         let elem_ids = TensorData::new(batch_elem_ids, [batch_size, MAX_ATOMS]);
@@ -432,6 +562,17 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             [batch_size, MAX_ATOMS, MAX_ATOMS, PER_EDGE_FEATS],
         );
         let mask = TensorData::new(batch_mask, [batch_size, MAX_ATOMS, 1]);
+        let comp_ids = TensorData::new(batch_comp_ids, [batch_size, MAX_COMPS]);
+        let comp_scalars = TensorData::new(
+            batch_comp_scalars,
+            [batch_size, MAX_COMPS, PER_COMP_SCALARS],
+        );
+        let comp_adj = TensorData::new(batch_comp_adj, [batch_size, MAX_COMPS, MAX_COMPS]);
+        let comp_edge_feats = TensorData::new(
+            batch_comp_edge_feats,
+            [batch_size, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
+        );
+        let comp_mask = TensorData::new(batch_comp_mask, [batch_size, MAX_COMPS, 1]);
         let globals = TensorData::new(batch_globals, [batch_size, n_feat_params]);
         let y = TensorData::new(batch_y, [batch_size, 1]);
 
@@ -442,6 +583,11 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             adj_list: Tensor::from_data(adj, device),
             edge_feats: Tensor::from_data(edge_feats, device),
             mask: Tensor::from_data(mask, device),
+            comp_indices: Tensor::from_data(comp_ids, device),
+            comp_scalars: Tensor::from_data(comp_scalars, device),
+            comp_adj_list: Tensor::from_data(comp_adj, device),
+            comp_edge_feats: Tensor::from_data(comp_edge_feats, device),
+            comp_mask: Tensor::from_data(comp_mask, device),
             mol_params: Tensor::from_data(globals, device),
             targets: Tensor::from_data(y, device),
         }
@@ -500,6 +646,11 @@ impl TrainStep for Model<TrainBackend> {
             batch.adj_list,
             batch.edge_feats,
             batch.mask,
+            batch.comp_indices,
+            batch.comp_scalars,
+            batch.comp_adj_list,
+            batch.comp_edge_feats,
+            batch.comp_mask,
             batch.mol_params,
         );
 
@@ -521,7 +672,6 @@ impl InferenceStep for Model<ValidBackend> {
     type Output = RegressionOutput<ValidBackend>;
 
     fn step(&self, batch: Self::Input) -> Self::Output {
-        // This is exactly what your ValidStep does
         let pred = self.forward(
             batch.el_indices,
             batch.ff_indices,
@@ -529,6 +679,11 @@ impl InferenceStep for Model<ValidBackend> {
             batch.adj_list,
             batch.edge_feats,
             batch.mask,
+            batch.comp_indices,
+            batch.comp_scalars,
+            batch.comp_adj_list,
+            batch.comp_edge_feats,
+            batch.comp_mask,
             batch.mol_params,
         );
 
@@ -626,7 +781,7 @@ pub(in crate::therapeutic) fn load_training_data(
 
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
-        mol.update_characterization();
+        mol.update_characterization(); // also builds mol.components
 
         if train_set.contains(&i) {
             result.train.push((mol, target));
@@ -688,7 +843,7 @@ fn read_data(
                 continue;
             }
 
-            let graph = match gnn::mol_to_graph_data(&mol, ff_params) {
+            let graph = match GraphData::new(&mol, ff_params) {
                 Ok(res) => res,
                 Err(e) => {
                     eprintln!("Error getting graph data: {:?}", e);
@@ -696,16 +851,28 @@ fn read_data(
                 }
             };
 
-            // if num_atoms == 0 || num_atoms > MAX_ATOMS {
-            //     continue;
-            // }
             if graph.num_atoms == 0 {
                 continue;
             }
 
+            let graph_comp = match &mol.components {
+                Some(comps) => match GraphDataComponent::new(comps) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        eprintln!("Error getting comp graph data: {e:?}");
+                        continue;
+                    }
+                },
+                None => {
+                    eprintln!("Missing components for mol; skipping.");
+                    continue;
+                }
+            };
+
             result_set.push(Sample {
                 features_property: feat_params,
                 graph,
+                graph_comp,
                 target: *target,
             });
         }
@@ -790,13 +957,13 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         c.num_hetero_atoms as f32,
         c.halogen.len() as f32,
         c.rotatable_bonds.len() as f32,
-        c.amines.len() as f32,
-        c.amides.len() as f32,
-        c.carbonyl.len() as f32,
-        c.hydroxyl.len() as f32,
-        c.carboxylate.len() as f32,
-        c.sulfonamide.len() as f32,
-        c.sulfonimide.len() as f32,
+        // c.amines.len() as f32,
+        // c.amides.len() as f32,
+        // c.carbonyl.len() as f32,
+        // c.hydroxyl.len() as f32,
+        // c.carboxylate.len() as f32,
+        // c.sulfonamide.len() as f32,
+        // c.sulfonimide.len() as f32,
         // c.num_valence_elecs as f32,
         // c.num_rings_aromatic as f32,
         // c.num_rings_saturated as f32,
@@ -894,6 +1061,10 @@ pub(in crate::therapeutic) fn train(
         embedding_dim: 16,             // Tune this (8, 16, 32)
         n_node_scalars: PER_ATOM_SCALARS,
         edge_feat_dim: PER_EDGE_FEATS,
+        vocab_size_comp: 10, // 10 component types (see vocab_lookup_component)
+        comp_embedding_dim: 8,
+        n_comp_scalars: PER_COMP_SCALARS,
+        comp_edge_feat_dim: PER_EDGE_COMP_FEATS,
     };
 
     let model = model_cfg.init::<TrainBackend>(&device);

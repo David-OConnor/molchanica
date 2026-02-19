@@ -154,4 +154,59 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
     for g in &char.amides {}
 
     for g in &char.amines {}
+
+    // Component-based approach below; char-based approach above -------------
+
+    let Some(comps) = &state.mol_editor.mol.components else {
+        return;
+    };
+
+    ui.add_space(ROW_SPACING);
+    ui.label("Components");
+    ui.separator();
+
+    for (i_comp, comp) in comps.components.iter().enumerate() {
+        ui.horizontal(|ui| {
+            // this loop is probably not great to bind conns. Todo: Some sort of hash
+            // todo as a cheap way to speed up, if you use this apch.
+
+            let mut conns_to_this = Vec::new();
+            for conn in &comps.connections {
+                if conn.comp_0 == i_comp {
+                    conns_to_this.push(conn.comp_1);
+                } else if conn.comp_1 == i_comp {
+                    conns_to_this.push(conn.comp_0);
+                }
+            }
+
+            label!(ui, format!("{i_comp}: {}", comp.comp_type), Color32::WHITE);
+
+            ui.add_space(COL_SPACING);
+
+            for con in conns_to_this {
+                label!(ui, format!(" - {con}"), Color32::GRAY);
+            }
+
+            if ui.button("Sel").clicked() {}
+
+            if ui.button("Remove").clicked() {}
+
+            if ui.button("Chg to").clicked() {}
+        });
+    }
+
+    ui.add_space(ROW_SPACING);
+    ui.label("Connections: ");
+    for conn in &comps.connections {
+        let mut descrip = format!(
+            "Mol {} - {} | Atom {} - {}",
+            conn.comp_0, conn.comp_1, conn.atom_0, conn.atom_1
+        );
+
+        if conn.shared_atoms {
+            descrip.push_str(" - Shared");
+        }
+
+        label!(ui, descrip, Color32::WHITE);
+    }
 }

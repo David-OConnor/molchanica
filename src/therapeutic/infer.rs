@@ -12,12 +12,15 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
+use crate::therapeutic::gnn::{
+    GraphData, GraphDataComponent, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+};
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
-        gnn::{PER_EDGE_FEATS, mol_to_graph_data, pad_adj_and_mask, pad_edge_feats},
-        train::{MAX_ATOMS, Model, ModelConfig, StandardScaler, param_feats_from_mol},
+        gnn::{PER_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats},
+        train::{MAX_ATOMS, MAX_COMPS, Model, ModelConfig, StandardScaler, param_feats_from_mol},
     },
 };
 
@@ -103,35 +106,68 @@ impl Infer {
     ) -> io::Result<f32> {
         let start = Instant::now();
 
-        // 1. Prepare Globals
+        // Prepare Globals
         let n_feat_params = feat_params.len();
         self.scaler.apply_in_place(&mut feat_params);
 
-        // 2. Extract Graph Data (New Return Signature)
-        let graph = mol_to_graph_data(&mol, ff_params)?;
+        // Extract Graph Data (New Return Signature)
+        let graph_atom_bond = GraphData::new(&mol, ff_params)?;
+
+        let Some(comps) = &mol.components else {
+            return Err(io::Error::other("Missing components in ML inference"));
+        };
+
+        let graph_comp = GraphDataComponent::new(&comps)?;
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
-        let num_atoms = graph.num_atoms;
+        let num_atoms = graph_atom_bond.num_atoms;
         let n = num_atoms.min(MAX_ATOMS);
 
-        // -- Pad Indices (Int) --
-        let mut p_el_ids = Vec::with_capacity(MAX_ATOMS);
-        p_el_ids.extend_from_slice(&graph.elem_indices[0..n]);
-        p_el_ids.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
+        let num_comps = graph_comp.num_comps;
+        let n_comps = num_comps.min(MAX_COMPS);
 
-        let mut p_ff_ids = Vec::with_capacity(MAX_ATOMS);
-        p_ff_ids.extend_from_slice(&graph.ff_indices[0..n]);
-        p_ff_ids.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
+        // Pad Indices (Int) --
+        let p_el_ids = {
+            let mut v = Vec::with_capacity(MAX_ATOMS);
+            v.extend_from_slice(&graph_atom_bond.elem_indices[0..n]);
+            v.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
+
+            v
+        };
+
+        let p_ff_ids = {
+            let mut v = Vec::with_capacity(MAX_ATOMS);
+            v.extend_from_slice(&graph_atom_bond.ff_indices[0..n]);
+            v.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
+
+            v
+        };
+
+        let p_comp_type_ids = {
+            let mut v = Vec::with_capacity(MAX_COMPS);
+            v.extend_from_slice(&graph_comp.comp_type_indices[0..n_comps]);
+            v.extend(std::iter::repeat_n(0, MAX_COMPS - n_comps));
+
+            v
+        };
+
+        // -- Pad Comp Scalars (Float) --
+        let mut p_comp_scalars = Vec::with_capacity(MAX_COMPS * PER_COMP_SCALARS);
+        p_comp_scalars.extend_from_slice(&graph_comp.scalars[0..n_comps * PER_COMP_SCALARS]);
+        p_comp_scalars.extend(std::iter::repeat_n(
+            0.0f32,
+            (MAX_COMPS - n_comps) * PER_COMP_SCALARS,
+        ));
 
         // -- Pad Scalars (Float) --
         // Calculate dimensionality (should be 2: charge + degree)
         let n_scalars_per_atom = if num_atoms > 0 {
-            graph.scalars.len() / num_atoms
+            graph_atom_bond.scalars.len() / num_atoms
         } else {
             2
         };
         let mut p_scalars = Vec::with_capacity(MAX_ATOMS * n_scalars_per_atom);
-        p_scalars.extend_from_slice(&graph.scalars[0..n * n_scalars_per_atom]);
+        p_scalars.extend_from_slice(&graph_atom_bond.scalars[0..n * n_scalars_per_atom]);
         p_scalars.extend(std::iter::repeat_n(
             0.0,
             (MAX_ATOMS - n) * n_scalars_per_atom,
@@ -139,8 +175,23 @@ impl Infer {
 
         // -- Pad Adj & Mask (Float) --
         // Use the helper from train.rs
-        let (padded_adj, padded_mask) = pad_adj_and_mask(&graph.adj, num_atoms);
-        let p_edge_feats = pad_edge_feats(&graph.edge_feats, num_atoms);
+        let (padded_adj, padded_mask) =
+            pad_adj_and_mask(&graph_atom_bond.adj, num_atoms, MAX_ATOMS);
+        let p_edge_feats = pad_edge_feats(
+            &graph_atom_bond.edge_feats,
+            num_atoms,
+            PER_EDGE_FEATS,
+            MAX_ATOMS,
+        );
+
+        let (padded_adj_comp, padded_mask_comp) =
+            pad_adj_and_mask(&graph_comp.adj, num_comps, MAX_COMPS);
+        let p_edge_comp_feats = pad_edge_feats(
+            &graph_comp.edge_feats,
+            num_comps,
+            PER_EDGE_COMP_FEATS,
+            MAX_COMPS,
+        );
 
         // 4. Create Tensors
         let t_param_feats = Tensor::<InferBackend, 2>::from_data(
@@ -156,6 +207,11 @@ impl Infer {
 
         let t_ff_ids = Tensor::<InferBackend, 2, Int>::from_data(
             TensorData::new(p_ff_ids, [1, MAX_ATOMS]),
+            &self.device,
+        );
+
+        let t_comp_ids = Tensor::<InferBackend, 2, Int>::from_data(
+            TensorData::new(p_comp_type_ids, [1, MAX_COMPS]),
             &self.device,
         );
 
@@ -180,6 +236,30 @@ impl Infer {
             &self.device,
         );
 
+        // Comp tensors
+        let t_comp_scalars = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(p_comp_scalars, [1, MAX_COMPS, PER_COMP_SCALARS]),
+            &self.device,
+        );
+
+        let t_comp_adj = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(padded_adj_comp, [1, MAX_COMPS, MAX_COMPS]),
+            &self.device,
+        );
+
+        let t_comp_edge_feats = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(
+                p_edge_comp_feats,
+                [1, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
+            ),
+            &self.device,
+        );
+
+        let t_comp_mask = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(padded_mask_comp, [1, MAX_COMPS, 1]),
+            &self.device,
+        );
+
         // 5. Forward Pass
         let forward_tensor = self.model.forward(
             t_elem_ids,
@@ -188,6 +268,11 @@ impl Infer {
             t_adj,
             t_edge_feats,
             t_mask,
+            t_comp_ids,
+            t_comp_scalars,
+            t_comp_adj,
+            t_comp_edge_feats,
+            t_comp_mask,
             t_param_feats,
         );
 
