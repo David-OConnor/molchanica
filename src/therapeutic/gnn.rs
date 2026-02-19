@@ -9,13 +9,15 @@ use std::{
 };
 
 use bio_files::{BondType, md_params::ForceFieldParams};
-use na_seq::Element;
-use na_seq::Element::{
-    Bromine, Carbon, Chlorine, Fluorine, Hydrogen, Iodine, Nitrogen, Oxygen, Phosphorus, Sulfur,
+use na_seq::{
+    Element,
+    Element::{
+        Bromine, Carbon, Chlorine, Fluorine, Hydrogen, Iodine, Nitrogen, Oxygen, Phosphorus, Sulfur,
+    },
 };
 
-use crate::mol_components::{ComponentType, MolComponents, build_adjacency_list_conn};
 use crate::{
+    mol_components::{ComponentType, MolComponents, build_adjacency_list_conn},
     molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
     therapeutic::train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS, MAX_ATOMS},
 };
@@ -34,7 +36,6 @@ pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 1;
 
 const BOND_DIST_PARAM_SCALE: f32 = 0.15;
 const KB_REF: f32 = 300.0;
-
 
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphData {

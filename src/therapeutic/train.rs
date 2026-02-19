@@ -62,7 +62,10 @@ use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc, gnn,
-        gnn::{GraphData, GraphDataComponent, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS},
+        gnn::{
+            GraphData, GraphDataComponent, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            PER_EDGE_FEATS,
+        },
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -91,7 +94,11 @@ pub(in crate::therapeutic) struct BranchConfig {
 
 impl Default for BranchConfig {
     fn default() -> Self {
-        Self { atom_gnn_enabled: true, comp_gnn_enabled: true, mlp_enabled: true }
+        Self {
+            atom_gnn_enabled: true,
+            comp_gnn_enabled: true,
+            mlp_enabled: true,
+        }
     }
 }
 
@@ -120,7 +127,10 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
             current = line[1..line.len() - 1].to_string();
         } else if let Some((k, v)) = line.split_once('=') {
             if let Ok(b) = v.trim().parse::<bool>() {
-                sections.entry(current.clone()).or_default().insert(k.trim().to_string(), b);
+                sections
+                    .entry(current.clone())
+                    .or_default()
+                    .insert(k.trim().to_string(), b);
             }
         }
     }
@@ -137,15 +147,17 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
     BranchConfig {
         atom_gnn_enabled: get(map, "gnn_atom_enabled"),
         comp_gnn_enabled: get(map, "gnn_comp_enabled"),
-        mlp_enabled:      get(map, "mlp_enabled"),
+        mlp_enabled: get(map, "mlp_enabled"),
     }
 }
 
 pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
 
-// We see the validation and training dirs separate from model_dir so `include_dir` doesn't place
-// them in the executable.
 pub(in crate::therapeutic) const TRAIN_VALID_DIR: &str = "ml_models";
+
+// Only embed model files in the main app binary. The train binary always loads from disk,
+// and embedding here would force a recompile every time a training run writes new model files.
+#[cfg(not(feature = "train"))]
 pub(in crate::therapeutic) static MODEL_INCLUDE: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/ml_models/models");
 
@@ -248,9 +260,19 @@ impl ModelConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
-        let combined_dim = if self.mlp_enabled { self.mlp_hidden_dim } else { 0 }
-            + if self.atom_gnn_enabled { self.gnn_hidden_dim } else { 0 }
-            + if self.comp_gnn_enabled { self.gnn_hidden_dim } else { 0 };
+        let combined_dim = if self.mlp_enabled {
+            self.mlp_hidden_dim
+        } else {
+            0
+        } + if self.atom_gnn_enabled {
+            self.gnn_hidden_dim
+        } else {
+            0
+        } + if self.comp_gnn_enabled {
+            self.gnn_hidden_dim
+        } else {
+            0
+        };
 
         let emb_elem = EmbeddingConfig::new(self.vocab_size_elem, self.embedding_dim).init(device);
         let emb_ff = EmbeddingConfig::new(self.vocab_size_ff, self.embedding_dim).init(device);
@@ -1076,7 +1098,10 @@ pub(in crate::therapeutic) fn train(
     let branch_cfg = load_branch_config(&dataset.name());
     println!(
         "Branch config for '{}': atom_gnn={} comp_gnn={} mlp={}",
-        dataset.name(), branch_cfg.atom_gnn_enabled, branch_cfg.comp_gnn_enabled, branch_cfg.mlp_enabled,
+        dataset.name(),
+        branch_cfg.atom_gnn_enabled,
+        branch_cfg.comp_gnn_enabled,
+        branch_cfg.mlp_enabled,
     );
 
     let (model_path, scaler_path, config_path) = dataset.model_paths();

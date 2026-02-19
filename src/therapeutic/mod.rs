@@ -38,11 +38,13 @@ use std::{
 
 use bio_files::md_params::ForceFieldParams;
 
+#[cfg(not(feature = "train"))]
+use crate::therapeutic::train::MODEL_INCLUDE;
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         infer::{Infer, infer_general},
-        train::{MODEL_DIR, MODEL_INCLUDE},
+        train::MODEL_DIR,
     },
 };
 
@@ -173,7 +175,8 @@ impl DatasetTdc {
         (model, scaler, cfg)
     }
 
-    /// Fet the models, embedded in the executable. Used in inference.
+    /// Get the models, embedded in the executable. Used in inference (main app only).
+    #[cfg(not(feature = "train"))]
     pub(in crate::therapeutic) fn data(
         self,
     ) -> io::Result<(&'static [u8], &'static [u8], &'static [u8])> {

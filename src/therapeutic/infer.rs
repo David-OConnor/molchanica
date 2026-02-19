@@ -12,14 +12,14 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
-use crate::therapeutic::gnn::{
-    GraphData, GraphDataComponent, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
-};
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
-        gnn::{PER_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats},
+        gnn::{
+            GraphData, GraphDataComponent, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
+            pad_adj_and_mask, pad_edge_feats,
+        },
         train::{MAX_ATOMS, MAX_COMPS, Model, ModelConfig, StandardScaler, param_feats_from_mol},
     },
 };
@@ -82,6 +82,7 @@ impl Infer {
 
     /// Load the model from our include_bytes, i.e. part of the binary. Use this for inference, i.e.
     /// for the main application
+    #[cfg(not(feature = "train"))]
     pub fn load_from_embedded(data_set: DatasetTdc) -> io::Result<Self> {
         let (model_bytes, scaler_bytes, cfg_bytes) = data_set.data()?;
 
@@ -308,7 +309,16 @@ pub fn infer_general(
             let infer = if load_from_file {
                 Infer::load_from_file(dataset)?
             } else {
-                Infer::load_from_embedded(dataset)?
+                #[cfg(not(feature = "train"))]
+                {
+                    Infer::load_from_embedded(dataset)?
+                }
+                #[cfg(feature = "train")]
+                {
+                    return Err(io::Error::other(
+                        "load_from_embedded not available in train build",
+                    ));
+                }
             };
 
             models.insert(dataset, infer);

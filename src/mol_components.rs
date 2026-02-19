@@ -6,9 +6,12 @@
 //!   - As a graph neural network (GNN) feature representation for ML.
 //!   - As an editor building block: swap or parametrically modify components.
 
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt::Display,
+};
+
 use na_seq::Element::{self, *};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Display;
 
 use crate::{
     mol_characterization::RingType,
