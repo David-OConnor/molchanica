@@ -217,6 +217,15 @@ macro_rules! label {
     };
 }
 
+/// An assistant to make a colored button.
+#[macro_export]
+macro_rules! button {
+    ($ui:expr, $text:expr, $color:expr, $hover_text:expr) => {
+        $ui.button(egui::RichText::new($text).color($color))
+            .on_hover_text($hover_text)
+    };
+}
+
 pub fn color_egui_from_f32(c: Color) -> Color32 {
     let (r, g, b) = c;
     Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8)

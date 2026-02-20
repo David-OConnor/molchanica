@@ -13,6 +13,7 @@ use crate::{
     drawing::MoleculeView,
     mol_editor,
     mol_editor::{
+        MolEditorState,
         add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
         exit_edit_mode, sync_md,
         templates::Template,
@@ -51,12 +52,12 @@ const MAX_RELAX_ITERS: usize = 300;
 
 fn change_el_button(
     // atoms: &mut [Atom],
+    // editor: &mut MolEditorState,
     sel: &Selection,
     el: Element,
     ui: &mut Ui,
     entities: &mut Vec<Entity>,
     state_ui: &mut StateUi,
-    // editor: &mut MolEditorState,
     mol: &mut MoleculeSmall,
     engine_updates: &mut EngineUpdates,
     redraw: &mut bool,
@@ -84,6 +85,8 @@ fn change_el_button(
             }
         };
 
+        // let mol = &mut editor.mol;
+
         for i in idxs {
             mol.common.atoms[i].element = el;
 
@@ -98,8 +101,6 @@ fn change_el_button(
             );
         }
 
-        // todo: Get pocket and lig here.
-        mol_editor::redraw(entities, mol, &None, &[], state_ui, manip_mode, 0);
         engine_updates.entities = EntityUpdate::All;
 
         *redraw = true;
@@ -204,42 +205,42 @@ pub(in crate::ui) fn editor(
         });
 
         section_box().show(ui, |ui| {
-            let prev = state.mol_editor.md_running;
+            let prev = state.mol_editor.md.running;
             misc::toggle_btn(
-                &mut state.mol_editor.md_running,
+                &mut state.mol_editor.md.running,
                 "MD running",
                 "Start a molecular dynamics simulation of the selected molecules",
                 ui,
                 &mut redraw,
             );
 
-            if state.mol_editor.md_running {
-                let color = active_color(!state.mol_editor.md_skip_water);
+            if state.mol_editor.md.running {
+                let color = active_color(!state.mol_editor.md.skip_water);
                 if ui
                     .button(RichText::new("MD Water").color(color))
                     .on_hover_text("If enabled, use the explicit solvation model. If disabled, does not model water.")
                     .clicked()
                 {
-                    state.mol_editor.md_skip_water = !state.mol_editor.md_skip_water;
+                    state.mol_editor.md.skip_water = !state.mol_editor.md.skip_water;
 
                     redraw = true;
-                    state.mol_editor.md_rebuild_required = true;
+                    state.mol_editor.md.rebuild_required = true;
                 }
             }
 
-            let started = !prev && state.mol_editor.md_running;
+            let started = !prev && state.mol_editor.md.running;
 
-            if started && (state.mol_editor.md_rebuild_required || state.mol_editor.md_state.is_none()) {
+            if started && (state.mol_editor.md.rebuild_required || state.mol_editor.md.md.is_none()) {
                 match mol_editor::build_dynamics(
                     &state.dev,
                     &mut state.mol_editor,
                     &state.ff_param_set,
                     &state.to_save.md_config,
                 ) {
-                    Ok(d) => state.mol_editor.md_state = Some(d),
+                    Ok(d) => state.mol_editor.md.md = Some(d),
                     Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
                 }
-                state.mol_editor.md_rebuild_required = false;
+                state.mol_editor.md.rebuild_required = false;
             }
         });
 
@@ -251,7 +252,7 @@ pub(in crate::ui) fn editor(
 
             state.mol_editor.clear_mol(&mut state.ui.selection);
 
-            state.mol_editor.md_rebuild_required = true;
+            state.mol_editor.md.rebuild_required = true;
             state.mol_editor.rebuild_ff_related(&state.ff_param_set);
 
             redraw = true;
@@ -298,7 +299,7 @@ pub(in crate::ui) fn editor(
         if ui.button("Relax")
             .on_hover_text("Relax geometry; adjust atom positions to minimize energy.")
             .clicked() {
-            if state.mol_editor.md_state.is_none() {
+            if state.mol_editor.md.md.is_none() {
                 match mol_editor::build_dynamics(
                     &state.dev,
                     &mut state.mol_editor,
@@ -306,13 +307,13 @@ pub(in crate::ui) fn editor(
                     &state.to_save.md_config,
                 ) {
                     Ok(md) => {
-                        state.mol_editor.md_state = Some(md);
+                        state.mol_editor.md.md = Some(md);
                     }
                     Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
                 }
             }
 
-            if let Some(md) = &mut state.mol_editor.md_state {
+            if let Some(md) = &mut state.mol_editor.md.md {
                 md.minimize_energy(&state.dev, MAX_RELAX_ITERS, None); // todo: Iters A/R.
                 state.mol_editor.load_atom_posits_from_md(&mut scene.entities, &state.ui,
                                                           updates, state.volatile.mol_manip.mode, );
@@ -433,20 +434,20 @@ pub(in crate::ui) fn editor(
             }
         }
 
-        if state.mol_editor.md_state.is_some() {
+        if state.mol_editor.md.md.is_some() {
             section_box().show(ui, |ui| {
                 ui.label("MD speed:");
 
                 ui.spacing_mut().slider_width = 200.;
                 ui.add(Slider::new(
-                    &mut state.mol_editor.dt_md,
+                    &mut state.mol_editor.md.dt,
                     DT_MIN..=DT_MAX,
                 ))
                     .on_hover_text("Set the simulation ratio compared to normal time.");
 
                 ui.add_space(COL_SPACING);
 
-                if let Some(snap) = &state.mol_editor.snap {
+                if let Some(snap) = &state.mol_editor.md.snap {
                     energy_disp(snap, ui);
                 }
             });
@@ -460,7 +461,7 @@ pub(in crate::ui) fn editor(
             // factor of 10e5 to make the value more readable.
             // 10e5: 10e3 for ms run interval. 10e3 to get between 10e-12 (input dt) and 10e-15 (displayed value)
             // todo: Still an unaccounted for factor of 10...
-            let ratio = state.mol_editor.dt_md * 10e5 / state.mol_editor.time_between_md_runs;
+            let ratio = state.mol_editor.md.dt * 10e5 / state.mol_editor.md.time_between_runs;
             ui.label(format!("Ratio: {ratio:.1}×10-¹⁵")).on_hover_text(ratio_help);
         }
     });
@@ -486,12 +487,9 @@ pub(in crate::ui) fn editor(
     if redraw {
         mol_editor::redraw(
             &mut scene.entities,
-            &state.mol_editor.mol,
-            &state.mol_editor.mol.pharmacophore.pocket,
-            &state.mol_editor.h_bonds,
+            &state.mol_editor,
             &state.ui,
             state.volatile.mol_manip.mode,
-            0,
         );
         updates.entities = EntityUpdate::All;
     }
@@ -674,16 +672,7 @@ fn edit_tools(
 
                         // `add_atom` handles individual redrawing, but here we need something, or the previous
                         // atom will still show as the selected color.
-                        // todo better. (todo: More specific than this redraw all?)
-                        mol_editor::redraw(
-                            &mut scene.entities,
-                            &state.mol_editor.mol,
-                            &state.mol_editor.mol.pharmacophore.pocket,
-                            &state.mol_editor.h_bonds,
-                            &state.ui,
-                            state.volatile.mol_manip.mode,
-                            0,
-                        );
+                        *redraw = true;
                     }
                 }
                 rebuild_md = true;
@@ -709,6 +698,30 @@ fn edit_tools(
                 );
             }
         });
+
+        if selected_idxs.len() == 2 {
+            ui.add_space(COL_SPACING);
+            if ui
+                .button("Add bond")
+                .on_hover_text("Add a covalent bond connecting the selected atoms")
+                .clicked()
+            {
+                let atom_0_sn = state.mol_editor.mol.common.atoms[selected_idxs[0]].serial_number;
+                let atom_1_sn = state.mol_editor.mol.common.atoms[selected_idxs[1]].serial_number;
+
+                state.mol_editor.mol.common.bonds.push(Bond {
+                    bond_type: BondType::Single, // The user can change after.
+                    atom_0_sn,
+                    atom_1_sn,
+                    atom_0: selected_idxs[0],
+                    atom_1: selected_idxs[1],
+                    is_backbone: false,
+                });
+
+                *redraw = true;
+                rebuild_md = true;
+            }
+        }
     }
 
     ui.add_space(COL_SPACING / 2.);

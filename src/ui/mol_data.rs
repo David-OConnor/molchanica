@@ -431,6 +431,7 @@ pub(in crate::ui) fn selected_data(
                     ui,
                 );
             }
+            Selection::ComponentEditor(_) => {}
             Selection::None => {}
         }
     });

@@ -509,6 +509,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     / 2.)
                     .into();
             }
+            Selection::ComponentEditor(_) => {}
             Selection::None => {
                 if let Some(mol) = &state.peptide {
                     return mol.center.into();
@@ -520,38 +521,18 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
         let Some((mol_type, i)) = &state.volatile.orbit_center else {
             return Vec3F32::new_zero();
         };
-        let i = *i;
 
-        match mol_type {
-            MolType::Peptide => {
-                if let Some(mol) = &state.peptide {
-                    // Used the cached position, as computing centroid may be expensive
-                    // for large proteins.
-                    return mol.center.into();
+        return match state.get_mol(*mol_type, *i) {
+            Some(m) => {
+                // Use the cached one for peptide; cheaper.
+                if *mol_type == MolType::Peptide {
+                    state.peptide.as_ref().unwrap().center.into()
+                } else {
+                    m.common().centroid().into()
                 }
             }
-            MolType::Ligand => {
-                if i < state.ligands.len() {
-                    return state.ligands[i].common.centroid().into();
-                }
-            }
-            MolType::NucleicAcid => {
-                if i < state.nucleic_acids.len() {
-                    return state.nucleic_acids[i].common.centroid().into();
-                }
-            }
-            MolType::Lipid => {
-                if i < state.lipids.len() {
-                    return state.lipids[i].common.centroid().into();
-                }
-            }
-            MolType::Pocket => {
-                if i < state.pockets.len() {
-                    return state.pockets[i].common.centroid().into();
-                }
-            }
-            MolType::Water => (),
-        }
+            None => lin_alg::f32::Vec3::new_zero(),
+        };
     }
 
     Vec3F32::new_zero()
@@ -1026,7 +1007,7 @@ pub fn find_neighbor_posit(
     // let neighbors_1 = &mol.adjacency_list[atom_1];
     let neighbors_1 = &adj_list[atom_1];
 
-    if !neighbors_1.len() >= 2 {
+    if neighbors_1.len() >= 2 {
         for neighbor in neighbors_1 {
             if *neighbor != atom_0 && !hydrogen_is[*neighbor] {
                 return Some((*neighbor, true));
@@ -1035,6 +1016,70 @@ pub fn find_neighbor_posit(
     }
 
     None
+}
+
+/// Finds the centroid of atoms forming the smallest ring that contains the bond (atom_0, atom_1).
+/// Uses BFS from atom_1 back to atom_0 while forbidding the direct edge, which traces the ring.
+/// The returned centroid is always inside the ring regardless of substituents or adjacency order.
+/// Returns None if the bond is not part of any ring.
+pub fn aromatic_ring_centroid(
+    adj_list: &[Vec<usize>],
+    atom_posits: &[Vec3],
+    atom_0: usize,
+    atom_1: usize,
+    hydrogen_is: &[bool],
+) -> Option<Vec3> {
+    let n = adj_list.len();
+    let sentinel = n; // "no predecessor" marker
+    let mut prev = vec![sentinel; n];
+    let mut visited = vec![false; n];
+    let mut queue = std::collections::VecDeque::new();
+
+    visited[atom_1] = true;
+    queue.push_back(atom_1);
+
+    let mut found = false;
+    'bfs: while let Some(curr) = queue.pop_front() {
+        for &next in &adj_list[curr] {
+            if hydrogen_is[next] {
+                continue;
+            }
+            // Forbid the direct edge atom_1 → atom_0 so BFS goes around the ring.
+            if curr == atom_1 && next == atom_0 {
+                continue;
+            }
+            if next == atom_0 {
+                prev[next] = curr;
+                found = true;
+                break 'bfs;
+            }
+            if !visited[next] {
+                visited[next] = true;
+                prev[next] = curr;
+                queue.push_back(next);
+            }
+        }
+    }
+
+    if !found {
+        return None;
+    }
+
+    // Backtrack from atom_0 to atom_1 to collect ring atom indices.
+    let mut ring_atoms = Vec::new();
+    let mut curr = atom_0;
+    loop {
+        ring_atoms.push(curr);
+        if curr == atom_1 {
+            break;
+        }
+        curr = prev[curr];
+    }
+
+    let sum = ring_atoms
+        .iter()
+        .fold(Vec3::new_zero(), |acc, &i| acc + atom_posits[i]);
+    Some(sum / ring_atoms.len() as f64)
 }
 
 // /// We use this when moving molecules. We use the same movement logic as Blender, where moving an object

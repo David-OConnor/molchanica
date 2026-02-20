@@ -43,6 +43,7 @@ pub enum Selection {
     BondNucleicAcid((usize, usize)),
     BondLipid((usize, usize)),
     BondPocket((usize, usize)),
+    ComponentEditor(usize),
 }
 
 impl Selection {

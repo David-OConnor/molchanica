@@ -2,8 +2,10 @@ use egui::{Color32, RichText, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 
 use crate::{
+    button,
     drawing::{EntityClass, draw_pocket},
     label,
+    selection::Selection,
     state::State,
     ui::{COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, pharmacophore},
 };
@@ -106,7 +108,7 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
         return;
     };
 
-    label!(ui, "Components", Color32::GRAY);
+    label!(ui, "Components (Char)", Color32::GRAY);
     ui.add_space(COL_SPACING / 2.);
 
     for g in &char.rings {
@@ -115,7 +117,7 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
 
             if ui.button("Sel").clicked() {}
 
-            if ui.button("Remove").clicked() {}
+            if button!(ui, "❌", Color32::LIGHT_RED, "").clicked() {}
 
             if ui.button("Chg to").clicked() {}
         });
@@ -131,7 +133,10 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
 
             if ui.button("Sel").clicked() {}
 
-            if ui.button("Remove").clicked() {}
+            if ui
+                .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                .clicked()
+            {}
 
             if ui.button("Chg to").clicked() {}
         });
@@ -143,7 +148,10 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
 
             if ui.button("Sel").clicked() {}
 
-            if ui.button("Remove").clicked() {}
+            if ui
+                .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                .clicked()
+            {}
 
             if ui.button("Chg to").clicked() {}
         });
@@ -162,7 +170,7 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
     };
 
     ui.add_space(ROW_SPACING);
-    ui.label("Components");
+    ui.label("Components (mol comps)");
     ui.separator();
 
     for (i_comp, comp) in comps.components.iter().enumerate() {
@@ -187,9 +195,36 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
                 label!(ui, format!(" - {con}"), Color32::GRAY);
             }
 
-            if ui.button("Sel").clicked() {}
+            let selected = state.ui.selection == Selection::ComponentEditor(i_comp);
+            let color_sel = if selected {
+                COLOR_ACTIVE
+            } else {
+                COLOR_INACTIVE
+            };
 
-            if ui.button("Remove").clicked() {}
+            if button!(
+                ui,
+                "sel",
+                color_sel,
+                "Select this component for details and editing"
+            )
+            .clicked()
+            {
+                state.ui.selection = if selected {
+                    Selection::None
+                } else {
+                    Selection::ComponentEditor(i_comp)
+                };
+            }
+
+            if button!(
+                ui,
+                "❌",
+                Color32::LIGHT_RED,
+                "Delete this component and all atoms in it"
+            )
+            .clicked()
+            {}
 
             if ui.button("Chg to").clicked() {}
         });

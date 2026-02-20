@@ -11,7 +11,7 @@ use na_seq::{
 
 use crate::{
     mol_editor,
-    mol_editor::{MolEditorState, NEXT_ATOM_SN, redraw, templates::Template},
+    mol_editor::{MolEditorState, NEXT_ATOM_SN, templates::Template},
     mol_manip::ManipMode,
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     state::StateUi,
@@ -305,6 +305,7 @@ pub fn remove_hydrogens(mol: &mut MoleculeCommon, i: usize) {
 
 /// Returns the index of the atom added.
 pub fn add_atom(
+    // editor: &mut MolEditorState,
     mol: &mut MoleculeCommon,
     entities: &mut Vec<Entity>,
     i_par: usize, // Of the parent atom
@@ -318,6 +319,8 @@ pub fn add_atom(
     control: &mut ControlScheme,
     manip_mode: ManipMode,
 ) -> Option<usize> {
+    // let mol = &mut editor.mol.common;
+
     // todo: For readability, we really need somethign like this, but getter borrow errors:
     let posit_parent = mol.atom_posits[i_par];
     let el_parent = mol.atoms[i_par].element;
@@ -336,7 +339,10 @@ pub fn add_atom(
         };
 
         // todo: Get pocket and h bonds in here.
-        redraw(entities, &mol_wrapper, &None, &[], ui, manip_mode, 0);
+
+        // todo!!!
+        // redraw(entities, &mol_wrapper, &None, &[], ui, manip_mode, 0);
+        // redraw(entities, editor, ui, manip_mode, 0);
     }
 
     let atoms_to_add = bonds_avail(i_par, mol, el_parent);
@@ -409,6 +415,7 @@ pub fn add_atom(
         entities,
         &mol.bonds[i_new_bond],
         &mol.atoms,
+        &mol.bonds,
         &mol.adjacency_list,
         ui,
     );

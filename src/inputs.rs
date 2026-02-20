@@ -853,12 +853,9 @@ fn post_event_cleanup(
             OperatingMode::MolEditor => {
                 mol_editor::redraw(
                     &mut scene.entities,
-                    &state.mol_editor.mol,
-                    &state.mol_editor.mol.pharmacophore.pocket,
-                    &state.mol_editor.h_bonds,
+                    &state.mol_editor,
                     &state.ui,
                     state.volatile.mol_manip.mode,
-                    state.ligands.len(),
                 );
             }
             OperatingMode::ProteinEditor => (),
@@ -889,12 +886,9 @@ fn post_event_cleanup(
             OperatingMode::MolEditor => {
                 mol_editor::redraw(
                     &mut scene.entities,
-                    &state.mol_editor.mol,
-                    &state.mol_editor.mol.pharmacophore.pocket,
-                    &state.mol_editor.h_bonds,
+                    &state.mol_editor,
                     &state.ui,
                     state.volatile.mol_manip.mode,
-                    state.ligands.len(),
                 );
                 updates.entities.push_class(EntityClass::Ligand as u32);
             }
@@ -941,12 +935,9 @@ fn post_event_cleanup(
     if redraw_mol_editor {
         mol_editor::redraw(
             &mut scene.entities,
-            &state.mol_editor.mol,
-            &state.mol_editor.mol.pharmacophore.pocket,
-            &state.mol_editor.h_bonds,
+            &state.mol_editor,
             &state.ui,
             state.volatile.mol_manip.mode,
-            state.ligands.len(),
         );
         updates.entities = EntityUpdate::All;
     }

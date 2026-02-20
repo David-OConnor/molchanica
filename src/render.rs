@@ -174,7 +174,7 @@ pub fn render(mut state: State) {
             ],
         },
         input_settings: InputSettings {
-            control_scheme: state.to_save.control_scheme,
+            control_scheme: state.to_save.control_scheme.to_scheme_default(),
             move_sens: state.to_save.movement_speed as f32,
             rotate_sens: (state.to_save.rotation_sens as f32) / 100.,
             run_factor: RUN_FACTOR,

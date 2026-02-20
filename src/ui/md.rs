@@ -7,6 +7,7 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
+    button,
     cam::move_cam_to_active_mol,
     drawing::EntityClass,
     file_io::save_trajectory,
@@ -52,9 +53,8 @@ pub fn md_setup(
             if !state.lipids.is_empty() {
                 let prev_val = state.lipids[0].common.selected_for_md;
                 let color = if prev_val { COLOR_ACTIVE } else { COLOR_INACTIVE };
-                if ui
-                    .button(RichText::new("All lipids").color(color))
-                    .on_hover_text("Select all lipids for MD")
+
+                if button!(ui, "All lipids", color, "Select all lipids for MD")
                     .clicked()
                 {
                     for l in &mut state.lipids {
@@ -93,9 +93,12 @@ pub fn md_setup(
                 engine_updates.entities = EntityUpdate::All;
             }
 
-            if ui
-                .button(RichText::new("Run MD").color(COLOR_ACTION))
-                .on_hover_text("Run a molecular dynamics simulation on all molecules selected.")
+            if button!(
+                ui,
+                "Run MD",
+                COLOR_ACTION,
+                "Run a molecular dynamics simulation on all molecules selected."
+            )
                 .clicked() {
 
                 clear_cli_out(&mut state.ui); // todo: Not working; not loaded until next frame.
@@ -128,9 +131,12 @@ pub fn md_setup(
             }
 
             // todo: WIP
-            if ui
-                .button(RichText::new("Compute E").color(COLOR_ACTION))
-                .on_hover_text("Compute and display instantaneous energy of selected molecules.")
+            if button!(
+                ui,
+                "Compute E",
+                COLOR_ACTION,
+                "Compute and display instantaneous energy of selected molecules."
+            )
                 .clicked() {
 
                 // todo: DRY with teh run_md button above. C+P
@@ -190,9 +196,12 @@ pub fn md_setup(
             }
 
             if let Some(md) = &state.mol_dynamics && !md.snapshots.is_empty() {
-                if ui
-                    .button(RichText::new("Save traj").color(COLOR_ACTION))
-                    .on_hover_text("Save the computed MD trajectory to a DCD file.")
+                if button!(
+                    ui,
+                    "Save traj",
+                    COLOR_ACTION,
+                    "Save the computed MD trajectory to a DCD file."
+                )
                     .clicked() {
 
                     if save_trajectory(&mut state.volatile.dialogs.save).is_err() {

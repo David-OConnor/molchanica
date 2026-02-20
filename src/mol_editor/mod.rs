@@ -39,7 +39,7 @@ use crate::{
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, State, StateUi},
-    util::find_neighbor_posit,
+    util::{aromatic_ring_centroid, find_neighbor_posit},
 };
 
 pub const INIT_CAM_DIST: f32 = 20.;
@@ -49,33 +49,56 @@ pub const STATIC_LIGHT_MOL_SIZE: f32 = 500.;
 
 const MOL_IDENT: &str = "editor_mol";
 
+pub struct MdEditor {
+    pub md: Option<MdState>,
+    pub mol_specific_params: ForceFieldParams,
+    /// Picoseconds. Combined with how often we run MD. 0.001 - 0.002 is good for preventing
+    /// the simulation from blowing up, but we have other concerns re frame rate and desired ratio.
+    /// todo: Make this customizable in the UI, and display the ratio.
+    pub dt: f32,
+    /// ms. Sim time:real time ratio = dt_md x s x 10^-12 / (time_between_runs x s x 10^-3) = dt_md / time_between_runs * 10^-9)
+    // ~30fps updates. Conservative. Should vary this based on how fast it's taking for the total
+    // frame, including MD.
+    pub time_between_runs: f32,
+    pub running: bool,
+    pub skip_water: bool,
+    pub snap: Option<Snapshot>,
+    pub last_dt_run: Instant,
+    pub rebuild_required: bool,
+}
+
+impl Default for MdEditor {
+    fn default() -> Self {
+        Self {
+            md: Default::default(),
+            skip_water: true,
+            mol_specific_params: Default::default(),
+            dt: 0.00001,
+            time_between_runs: 33.333,
+            running: Default::default(),
+            last_dt_run: Instant::now(),
+            snap: Default::default(),
+            rebuild_required: Default::default(),
+        }
+    }
+}
+
 /// For editing small organic molecules.
 pub struct MolEditorState {
     pub mol: MoleculeSmall,
     // pub pocket: Option<Pocket>,
     /// Hydrogen bonds between the mol and pocket.
     pub h_bonds: Vec<HydrogenBondTwoMols>,
-    /// I.e. state.ligands[i]
+    /// I.e. state.ligands[i]. For instance, we replace this in the primary state
+    /// if "updating".
     pub mol_i_in_state: Option<usize>,
     /// I.e. state.pockets[i]
     pub pocket_i_in_state: Option<usize>,
-    pub md_state: Option<MdState>,
-    pub mol_specific_params: ForceFieldParams,
-    /// Picoseconds. Combined with how often we run MD. 0.001 - 0.002 is good for preventing
-    /// the simulation from blowing up, but we have other concerns re frame rate and desired ratio.
-    /// todo: Make this customizable in the UI, and display the ratio.
-    pub dt_md: f32,
-    /// ms. Sim time:real time ratio = dt_md x s x 10^-12 / (time_between_runs x s x 10^-3) = dt_md / time_between_runs * 10^-9)
-    // ~30fps updates. Conservative. Should vary this based on how fast it's taking for the total
-    // frame, including MD.
-    pub time_between_md_runs: f32,
-    pub md_running: bool,
-    pub md_skip_water: bool,
-    pub snap: Option<Snapshot>,
-    pub last_dt_run: Instant,
-    pub md_rebuild_required: bool,
+    pub md: MdEditor,
     /// Bond index.
+    // todo: DRY with mol char?
     pub rotatable_bonds: Vec<usize>,
+    pub selected_comp: Option<usize>,
 }
 
 impl Default for MolEditorState {
@@ -86,16 +109,9 @@ impl Default for MolEditorState {
             h_bonds: Default::default(),
             mol_i_in_state: Default::default(),
             pocket_i_in_state: Default::default(),
-            md_state: Default::default(),
-            md_skip_water: true,
-            mol_specific_params: Default::default(),
-            dt_md: 0.00001,
-            time_between_md_runs: 33.333,
-            md_running: Default::default(),
-            last_dt_run: Instant::now(),
-            snap: Default::default(),
-            md_rebuild_required: Default::default(),
+            md: Default::default(),
             rotatable_bonds: Default::default(),
+            selected_comp: Default::default(),
         }
     }
 }
@@ -290,15 +306,7 @@ impl MolEditorState {
         // Clear all entities for non-editor molecules. And render the initial relaxation
         // from building dynamics.
 
-        redraw(
-            &mut scene.entities,
-            &self.mol,
-            &self.mol.pharmacophore.pocket,
-            &self.h_bonds,
-            state_ui,
-            manip_mode,
-            0,
-        );
+        redraw(&mut scene.entities, &self, state_ui, manip_mode);
 
         set_flashlight(scene);
         engine_updates.entities = EntityUpdate::All;
@@ -323,7 +331,7 @@ impl MolEditorState {
         engine_updates: &mut EngineUpdates,
         manip_mode: ManipMode,
     ) {
-        let Some(snap) = self.md_state.as_ref().unwrap().snapshots.last() else {
+        let Some(snap) = self.md.md.as_ref().unwrap().snapshots.last() else {
             return;
         };
 
@@ -335,19 +343,11 @@ impl MolEditorState {
         for (i, posit) in mol.atom_posits.iter().enumerate() {
             mol.atoms[i].posit = *posit;
         }
-        self.snap = Some(snap.clone());
+        self.md.snap = Some(snap.clone());
 
-        self.md_state.as_mut().unwrap().snapshots = Vec::new();
+        self.md.md.as_mut().unwrap().snapshots = Vec::new();
 
-        redraw(
-            entities,
-            &self.mol,
-            &self.mol.pharmacophore.pocket,
-            &self.h_bonds,
-            state_ui,
-            manip_mode,
-            0,
-        );
+        redraw(entities, &self, state_ui, manip_mode);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -359,21 +359,13 @@ impl MolEditorState {
         engine_updates: &mut EngineUpdates,
         manip_mode: ManipMode,
     ) {
-        let Some(md) = &self.md_state else { return };
+        let Some(md) = &self.md.md else { return };
         for (i, atom) in md.atoms.iter().enumerate() {
             self.mol.common.atoms[i].posit = atom.posit.into();
             self.mol.common.atom_posits[i] = atom.posit.into();
         }
 
-        redraw(
-            entities,
-            &self.mol,
-            &self.mol.pharmacophore.pocket,
-            &self.h_bonds,
-            state_ui,
-            manip_mode,
-            0,
-        );
+        redraw(entities, &self, state_ui, manip_mode);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -388,17 +380,17 @@ impl MolEditorState {
     ) {
         static mut I: u32 = 0;
 
-        if !self.md_running
-            || self.last_dt_run.elapsed().as_micros() as f32 * 1_000. < self.time_between_md_runs
+        if !self.md.running
+            || self.md.last_dt_run.elapsed().as_micros() as f32 * 1_000. < self.md.time_between_runs
         {
             return;
         }
 
-        let Some(md) = &mut self.md_state else { return };
+        let Some(md) = &mut self.md.md else { return };
 
-        self.last_dt_run = Instant::now();
+        self.md.last_dt_run = Instant::now();
 
-        md.step(dev, self.dt_md, None);
+        md.step(dev, self.md.dt, None);
 
         // unsafe {
         //     I += 1;
@@ -447,7 +439,7 @@ impl MolEditorState {
         }
 
         if let Some(v) = msp.get(MOL_IDENT) {
-            self.mol_specific_params = v.clone();
+            self.md.mol_specific_params = v.clone();
         }
     }
 
@@ -470,11 +462,14 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     state.volatile.operating_mode = OperatingMode::MolEditor;
 
     // Rebuilt shortly.
-    state.mol_editor.md_state = None;
+    state.mol_editor.md.md = None;
     state.ui.view_sel_level = ViewSelLevel::Atom;
 
     state.ui.ui_vis.mol_char = false;
     state.ui.ui_vis.pharmacophore_list = true;
+
+    state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
+    state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
 
     // This stays false under several conditions.
     let mut mol_loaded = false;
@@ -501,9 +496,6 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     if !mol_loaded {
         state.mol_editor.clear_mol(&mut state.ui.selection);
     }
-
-    state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
-    state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
 
     // Reset positions to be around the origin.
     state.mol_editor.move_to_origin();
@@ -538,12 +530,9 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     // Clear all entities for non-editor molecules.
     redraw(
         &mut scene.entities,
-        &state.mol_editor.mol,
-        &state.mol_editor.mol.pharmacophore.pocket,
-        &state.mol_editor.h_bonds,
+        &state.mol_editor,
         &state.ui,
         state.volatile.mol_manip.mode,
-        0,
     );
 
     set_static_light(scene, Vec3F32::new_zero(), STATIC_LIGHT_MOL_SIZE);
@@ -556,8 +545,8 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
 pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
     state.volatile.operating_mode = OperatingMode::Primary;
 
-    state.mol_editor.md_state = None;
-    state.mol_editor.md_running = false;
+    state.mol_editor.md.md = None;
+    state.mol_editor.md.running = false;
     state.mol_editor.mol_i_in_state = None;
     state.mol_editor.pocket_i_in_state = None;
 
@@ -581,35 +570,31 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut
 }
 
 // todo: Move to drawing_wrappers?
+// todo: Method on MolEditor?
 pub fn redraw(
     entities: &mut Vec<Entity>,
-    mol: &MoleculeSmall,
-    // todo: Loading pocket from state into this is proving messy.
-    // todo: SOrt out how you will handle it; maybe a local pocket copy in the
-    // todo editor instead of an index.
-    pocket: &Option<Pocket>,
-    hydrogen_bonds: &[HydrogenBondTwoMols],
+    editor: &MolEditorState,
     ui: &StateUi,
     manip_mode: ManipMode,
-    num_ligs: usize,
+    // num_ligs: usize,
 ) {
     *entities = Vec::new();
 
     entities.extend(draw_mol(
-        MolGenericRef::Small(mol),
+        MolGenericRef::Small(&editor.mol),
         0,
         ui,
         &None,
         manip_mode,
         OperatingMode::MolEditor,
-        num_ligs,
+        1,
     ));
 
-    if let Some(p) = pocket {
+    if let Some(p) = &editor.mol.pharmacophore.pocket {
         entities.extend(draw_pocket(
             p,
-            hydrogen_bonds,
-            &mol.common.atom_posits,
+            &editor.h_bonds,
+            &editor.mol.common.atom_posits,
             &ui.visibility,
             &Selection::None,
             &manip_mode,
@@ -666,6 +651,7 @@ fn draw_bond(
     entities: &mut Vec<Entity>,
     bond: &Bond,
     atoms: &[Atom],
+    bonds: &[Bond],
     adj_list: &[Vec<usize>],
     ui: &StateUi,
 ) {
@@ -684,12 +670,39 @@ fn draw_bond(
     // For determining how to orient multiple-bonds. Only run for relevant bonds to save
     // computation.
     let neighbor_posit = match bond.bond_type {
-        BondType::Aromatic | BondType::Double | BondType::Triple => {
+        BondType::Aromatic => {
             let mut hydrogen_is = Vec::with_capacity(atoms.len());
             for atom in atoms {
                 hydrogen_is.push(atom.element == Hydrogen);
             }
-
+            let aromatic_adj = {
+                let n = atoms.len();
+                let mut adj = vec![Vec::new(); n];
+                for b in bonds {
+                    if b.bond_type == BondType::Aromatic {
+                        adj[b.atom_0].push(b.atom_1);
+                        adj[b.atom_1].push(b.atom_0);
+                    }
+                }
+                adj
+            };
+            let atom_posits_f64: Vec<Vec3> = atoms.iter().map(|a| a.posit).collect();
+            let centroid: Vec3F32 = aromatic_ring_centroid(
+                &aromatic_adj,
+                &atom_posits_f64,
+                bond.atom_0,
+                bond.atom_1,
+                &hydrogen_is,
+            )
+            .map(|c| c.into())
+            .unwrap_or_else(|| atoms[0].posit.into());
+            (centroid, false)
+        }
+        BondType::Double | BondType::Triple => {
+            let mut hydrogen_is = Vec::with_capacity(atoms.len());
+            for atom in atoms {
+                hydrogen_is.push(atom.element == Hydrogen);
+            }
             let neighbor_i = find_neighbor_posit(adj_list, bond.atom_0, bond.atom_1, &hydrogen_is);
             match neighbor_i {
                 Some((i, p1)) => (atoms[i].posit.into(), p1),
@@ -800,7 +813,7 @@ pub(super) fn build_dynamics(
         adjacency_list: Some(editor.mol.common.adjacency_list.clone()),
         static_: false,
         bonded_only: false,
-        mol_specific_params: Some(editor.mol_specific_params.clone()),
+        mol_specific_params: Some(editor.md.mol_specific_params.clone()),
     }];
 
     let cfg = MdConfig {
@@ -853,7 +866,7 @@ pub(super) fn build_dynamics(
 
 /// Used to share this between GUI and inputs.
 pub fn sync_md(state: &mut State) {
-    if state.mol_editor.md_running {
+    if state.mol_editor.md.running {
         // todo: Ideally don't rebuild the whole dynamics, for performance reasons.
         match build_dynamics(
             &state.dev,
@@ -861,12 +874,12 @@ pub fn sync_md(state: &mut State) {
             &state.ff_param_set,
             &state.to_save.md_config,
         ) {
-            Ok(d) => state.mol_editor.md_state = Some(d),
+            Ok(d) => state.mol_editor.md.md = Some(d),
             Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
         }
     } else {
         // The MD build Will be triggered next time MD is started.
-        state.mol_editor.md_rebuild_required = true;
+        state.mol_editor.md.rebuild_required = true;
         state.mol_editor.rebuild_ff_related(&state.ff_param_set);
     }
 }

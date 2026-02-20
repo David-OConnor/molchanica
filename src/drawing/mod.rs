@@ -35,7 +35,7 @@ use crate::{
     selection::{Selection, ViewSelLevel},
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{OperatingMode, ResColoring, State, StateUi, Visibility},
-    util::{clear_mol_entity_indices, find_neighbor_posit, orbit_center},
+    util::{aromatic_ring_centroid, clear_mol_entity_indices, find_neighbor_posit, orbit_center},
 };
 // const LIGAND_COLOR_ANCHOR: Color = (1., 0., 1.);
 
@@ -626,6 +626,20 @@ pub fn draw_mol(
         }
     }
 
+    // Aromatic-only adjacency list used for ring centroid BFS (so it finds the aromatic ring,
+    // not a shorter fused non-aromatic ring).
+    let aromatic_adj = {
+        let n = mol.common().atoms.len();
+        let mut adj = vec![Vec::new(); n];
+        for b in &mol.common().bonds {
+            if b.bond_type == BondType::Aromatic {
+                adj[b.atom_0].push(b.atom_1);
+                adj[b.atom_1].push(b.atom_0);
+            }
+        }
+        adj
+    };
+
     // todo: C+P from draw_molecule. With some removed, but much repeated.
     for (i_bond, bond) in mol.common().bonds.iter().enumerate() {
         let atom_0 = &mol.common().atoms[bond.atom_0];
@@ -643,12 +657,27 @@ pub fn draw_mol(
         // For determining how to orient multiple-bonds. Only run for relevant bonds to save
         // computation.
         let neighbor_posit = match bond.bond_type {
-            BondType::Aromatic | BondType::Double | BondType::Triple => {
+            BondType::Aromatic => {
                 let mut hydrogen_is = Vec::with_capacity(mol.common().atoms.len());
                 for atom in &mol.common().atoms {
                     hydrogen_is.push(atom.element == Element::Hydrogen);
                 }
-
+                let centroid: Vec3 = aromatic_ring_centroid(
+                    &aromatic_adj,
+                    &mol.common().atom_posits,
+                    bond.atom_0,
+                    bond.atom_1,
+                    &hydrogen_is,
+                )
+                .map(|c| c.into())
+                .unwrap_or_else(|| mol.common().atom_posits[0].into());
+                (centroid, false)
+            }
+            BondType::Double | BondType::Triple => {
+                let mut hydrogen_is = Vec::with_capacity(mol.common().atoms.len());
+                for atom in &mol.common().atoms {
+                    hydrogen_is.push(atom.element == Element::Hydrogen);
+                }
                 let neighbor_i = find_neighbor_posit(
                     &mol.common().adjacency_list,
                     bond.atom_0,
@@ -1414,6 +1443,19 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         hydrogen_is.push(atom.element == Element::Hydrogen);
     }
 
+    // Aromatic-only adjacency list for ring centroid BFS.
+    let aromatic_adj = {
+        let n = mol.common.atoms.len();
+        let mut adj = vec![Vec::new(); n];
+        for b in &mol.common.bonds {
+            if b.bond_type == BondType::Aromatic {
+                adj[b.atom_0].push(b.atom_1);
+                adj[b.atom_1].push(b.atom_0);
+            }
+        }
+        adj
+    };
+
     // Draw bonds.
     for (i_bond, bond) in mol.common.bonds.iter().enumerate() {
         if ui.mol_view == MoleculeView::Backbone && !bond.is_backbone {
@@ -1473,17 +1515,28 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         let posit_1: Vec3 = atom_1_posit.into();
 
         // For determining how to orient multiple-bonds.
-        let neighbor_i = find_neighbor_posit(
-            &mol.common.adjacency_list,
-            bond.atom_0,
-            bond.atom_1,
-            &hydrogen_is,
-        );
-        let neighbor_posit = match neighbor_i {
-            // Some((i, p1)) => (mol.common.atoms[i].posit.into(), p1),
-            // None => (mol.common.atoms[0].posit.into(), false),
-            Some((i, p1)) => (mol.common.atom_posits[i].into(), p1),
-            None => (mol.common.atom_posits[0].into(), false),
+        let neighbor_posit = if bond.bond_type == BondType::Aromatic {
+            let centroid: Vec3 = aromatic_ring_centroid(
+                &aromatic_adj,
+                &mol.common.atom_posits,
+                bond.atom_0,
+                bond.atom_1,
+                &hydrogen_is,
+            )
+            .map(|c| c.into())
+            .unwrap_or_else(|| mol.common.atom_posits[0].into());
+            (centroid, false)
+        } else {
+            let neighbor_i = find_neighbor_posit(
+                &mol.common.adjacency_list,
+                bond.atom_0,
+                bond.atom_1,
+                &hydrogen_is,
+            );
+            match neighbor_i {
+                Some((i, p1)) => (mol.common.atom_posits[i].into(), p1),
+                None => (mol.common.atom_posits[0].into(), false),
+            }
         };
 
         let dim_peptide_0 =

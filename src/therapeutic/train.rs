@@ -135,10 +135,18 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
         }
     }
 
-    // Look up: specific dataset → "default" → all-true
-    let map = sections
-        .get(dataset_name)
-        .or_else(|| sections.get("default"));
+    // Look up: specific dataset → [default] → first section in file → all-true fallback
+    let (section_name, map) = if let Some(m) = sections.get(dataset_name) {
+        (dataset_name.to_string(), Some(m))
+    } else if let Some(m) = sections.get("default") {
+        ("default".to_string(), Some(m))
+    } else if let Some((name, m)) = sections.iter().next() {
+        (name.clone(), Some(m))
+    } else {
+        ("(none — file empty or unparseable)".to_string(), None)
+    };
+
+    println!("  Branch config section used: [{section_name}]");
 
     let get = |map: Option<&HashMap<String, bool>>, key: &str| -> bool {
         map.and_then(|m| m.get(key).copied()).unwrap_or(true)

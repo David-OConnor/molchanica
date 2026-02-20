@@ -31,7 +31,8 @@ use crate::{
         gemmi_path,
     },
     mol_editor::enter_edit_mode,
-    molecules::{MolGenericRef, MolIdent},
+    molecules::{MolGenericRef, MolIdent, MolType},
+    prefs::ControlSchemeType,
     render::set_flashlight,
     selection::{Selection, ViewSelLevel},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
@@ -1361,7 +1362,7 @@ pub(crate) fn cam_controls(
                     .clicked()
                 {
                     scene.input_settings.control_scheme = ControlScheme::FreeCamera;
-                    state.to_save.control_scheme = ControlScheme::FreeCamera;
+                    state.to_save.control_scheme = ControlSchemeType::Free;
                 }
 
                 if ui
@@ -1369,12 +1370,10 @@ pub(crate) fn cam_controls(
                     .on_hover_text("Set the camera to orbit around a point: Either the center of the molecule, or the selection.")
                     .clicked()
                 {
-                    let center = match &state.peptide {
-                        Some(mol) => mol.center.into(),
-                        None => Vec3::new_zero(),
-                    };
+                    let center = orbit_center(state);
+
                     scene.input_settings.control_scheme = ControlScheme::Arc { center };
-                    state.to_save.control_scheme = ControlScheme::Arc { center };
+                    state.to_save.control_scheme = ControlSchemeType::Arc;
                 }
 
                 if arc_active &&ui

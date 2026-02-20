@@ -195,6 +195,24 @@ impl OpenHistory {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
+pub enum ControlSchemeType {
+    Free,
+    Arc,
+}
+
+impl ControlSchemeType {
+    /// I.e. without a default Arc center.
+    pub fn to_scheme_default(self) -> ControlScheme {
+        match self {
+            Self::Free => ControlScheme::FreeCamera,
+            Self::Arc => ControlScheme::Arc {
+                center: lin_alg::f32::Vec3::new_zero(),
+            },
+        }
+    }
+}
+
 /// We maintain some of the state that is saved in the preferences file here, to keep
 /// the save/load state streamlined, instead of in an intermediate struct between main state, and
 /// saving/loading.
@@ -205,7 +223,7 @@ impl OpenHistory {
 pub struct ToSave {
     pub per_mol: HashMap<String, PerMolToSave>,
     pub open_history: Vec<OpenHistory>,
-    pub control_scheme: ControlScheme,
+    pub control_scheme: ControlSchemeType,
     pub msaa: MsaaSetting,
     /// Direct conversion from engine standard
     pub movement_speed: u8,
@@ -247,7 +265,7 @@ impl Default for ToSave {
         Self {
             per_mol: Default::default(),
             open_history: Default::default(),
-            control_scheme: Default::default(),
+            control_scheme: ControlSchemeType::Free,
             msaa: Default::default(),
             movement_speed: MOVEMENT_SENS as u8,
             rotation_sens: (ROTATE_SENS * 100.) as u8,

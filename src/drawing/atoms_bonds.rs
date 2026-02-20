@@ -330,18 +330,12 @@ pub fn bond_entities(
             // Compute the dihedral angle so we always place the smaller, offset bond on the inside.
 
             let (posit_0_inner, posit_1_inner, center_inner, dist_half_inner) = {
-                // A vector perpendicular to the plane of the bonds (e.g. the ring)
-                // This direction only works in some cases; need a more reliable way.
-                // Note: This has problems at the connections to rings, but is works for most aromatic
-                // bonds. WHen it fails, it shows the shorter part on the outside.
-                let perp_vec = if neighbor.1 {
-                    diff.cross(neighbor.0 - posit_1)
-                } else {
-                    diff.cross(neighbor.0 - posit_0)
-                }
-                .to_normalized();
-
-                let dir_in = perp_vec.cross(diff.to_normalized()).to_normalized();
+                // Direction from the bond midpoint toward the neighbor atom, projected into the
+                // plane perpendicular to the bond axis. The neighbor is always on the ring, so
+                // this unambiguously points toward the ring interior regardless of winding order.
+                let to_neighbor = neighbor.0 - center;
+                let along_bond = diff_unit.dot(to_neighbor);
+                let dir_in = (to_neighbor - diff_unit * along_bond).to_normalized();
                 let offset = dir_in * AR_INNER_OFFSET;
 
                 let mut p0 = posit_0 + offset;

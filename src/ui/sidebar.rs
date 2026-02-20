@@ -3,6 +3,7 @@ use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
+    button,
     cam::{move_cam_to_mol, move_mol_to_cam},
     drawing::{EntityClass, draw_pocket},
     label,
@@ -306,18 +307,24 @@ fn open_tools(state: &mut State, ui: &mut Ui) {
         COLOR_INACTIVE
     };
 
-    if ui
-        .button(RichText::new("Open").color(color_open_tools))
-        .on_hover_text("Open a molecule, electron density, or other file from disk.")
-        .clicked()
+    if button!(
+        ui,
+        "Open",
+        color_open_tools,
+        "Open a molecule, electron density, or other file from disk."
+    )
+    .clicked()
     {
         state.volatile.dialogs.load.pick_file();
     }
 
-    if ui
-        .button(RichText::new("Recent").color(color_open_tools))
-        .on_hover_text("Select a recently-opened file to open")
-        .clicked()
+    if button!(
+        ui,
+        "Recent",
+        color_open_tools,
+        "Select a recently-opened file to open"
+    )
+    .clicked()
     {
         state.ui.popup.recent_files = !state.ui.popup.recent_files;
     }
@@ -354,19 +361,23 @@ fn manip_toolbar(
             }
 
             // ✥ doesn't work in EGUI.
-            if ui.button(RichText::new("↔").color(color_move))
-                .on_hover_text("(Hotkey: M. M or Esc to stop)) Move the active molecule by clicking and dragging with /
-                the mouse. Scroll to move it forward and back.")
-                .clicked() {
-
+            if button!(
+                ui,
+                "↔",
+                color_move,
+                "(Hotkey: M. M or Esc to stop)) Move the active molecule by clicking and dragging with /
+                the mouse. Scroll to move it forward and back."
+            ).clicked() {
                 set_manip(state, scene, redraw,&mut false,
                           ManipMode::Move((active_mol_type, active_mol_i)),engine_updates);
             }
 
-            if ui.button(RichText::new("⟳").color(color_rotate))
-                .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll.")
-                .clicked() {
-
+            if button!(
+                ui,
+                "⟳",
+                color_rotate,
+                "(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll."
+            ).clicked() {
                 set_manip(state,
                           scene,redraw,&mut false,
                           ManipMode::Rotate((active_mol_type, active_mol_i)),engine_updates,);
@@ -384,14 +395,13 @@ fn manip_toolbar(
                 redraw.set(active_mol_type);
             }
 
-            if ui
-                .button(RichText::new("Reset pos").color(COLOR_HIGHLIGHT))
-                .on_hover_text(
-                    "Move the molecule to its absolute coordinates, e.g. as defined in /
-                        its source mmCIF, Mol2 or SDF file.",
-                )
-                .clicked()
-            {
+            if button!(
+                ui,
+                "Reset pos",
+                COLOR_HIGHLIGHT,
+                "Move the molecule to its absolute coordinates, e.g. as defined in /
+                        its source mmCIF, Mol2 or SDF file."
+            ).clicked() {
                 mol.common_mut().reset_posits();
 
                 // todo: Use the inplace move.

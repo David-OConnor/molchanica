@@ -1,4 +1,5 @@
 [adme]
-gnn_atom_enabled = false
-gnn_comp_enabled = false
+gnn_atom_enabled = true
+gnn_comp_enabled = true
 mlp_enabled = false
+
