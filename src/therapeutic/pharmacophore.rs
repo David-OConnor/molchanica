@@ -14,7 +14,7 @@ use std::{
     time::Instant,
 };
 
-use bincode::{Decode, Encode, de::Decoder};
+use bincode::{Decode, Encode, config, de::Decoder};
 use bio_files::PharmacophoreTypeGeneric;
 use egui_file_dialog::FileDialog;
 use lin_alg::f64::Vec3;
@@ -128,7 +128,7 @@ impl PharmacophoreFeatType {
         ]
     }
 
-    # todo: Use TryFromPrimitive
+    // todo: Use TryFromPrimitive
     pub fn from_u8(v: u8) -> Option<Self> {
         use PharmacophoreFeatType::*;
 
@@ -357,18 +357,16 @@ impl FeatureRelation {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let mut res = vec![0; 9];
-
         let v0 = parse_le!(bytes, u32, 1..5) as usize;
         let v1 = parse_le!(bytes, u32, 5..9) as usize;
 
-        match res[0] {
+        match bytes[0] {
             0 => Self::And((v0, v1)),
-            1 => Self::And((v0, v1)),
+            1 => Self::Or((v0, v1)),
             _ => {
                 eprintln!("Error parsing feat relation");
                 Self::Or((v0, v1))
-            } //
+            }
         }
     }
 }
@@ -426,12 +424,6 @@ impl PharmacophoreFeature {
             "atom_i too long to serialize as u8"
         );
 
-        let atom_len = self.atom_i.len();
-        assert!(
-            atom_len <= u8::MAX as usize,
-            "atom_i too long to serialize as u8"
-        );
-
         // 1 + 24 + 1 + 4*atom_len + 4 + 4
         let total_size = 34 + 4 * atom_len;
         let mut result = vec![0; total_size];
@@ -444,7 +436,7 @@ impl PharmacophoreFeature {
         i += 24;
 
         // todo: posit projected field?
-        result[24] = self.atom_i.len() as u8;
+        result[i] = atom_len as u8;
         i += 1;
 
         for atom_i in &self.atom_i {
@@ -552,12 +544,101 @@ pub struct Pharmacophore {
 impl Pharmacophore {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut res = Vec::new();
-        // todo temp
+
+        // name: u32 byte-length prefix + UTF-8 bytes
+        let name_bytes = self.name.as_bytes();
+        res.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+        res.extend_from_slice(name_bytes);
+
+        // mol_ident: u32 byte-length prefix + UTF-8 bytes
+        let mol_ident_bytes = self.mol_ident.as_bytes();
+        res.extend_from_slice(&(mol_ident_bytes.len() as u32).to_le_bytes());
+        res.extend_from_slice(mol_ident_bytes);
+
+        // features: u32 count, then for each: u32 byte-length prefix + feature bytes
+        res.extend_from_slice(&(self.features.len() as u32).to_le_bytes());
+        for feat in &self.features {
+            let feat_bytes = feat.to_bytes();
+            res.extend_from_slice(&(feat_bytes.len() as u32).to_le_bytes());
+            res.extend_from_slice(&feat_bytes);
+        }
+
+        // feature_relations: u32 count, then each fixed-9-byte encoding
+        res.extend_from_slice(&(self.feature_relations.len() as u32).to_le_bytes());
+        for rel in &self.feature_relations {
+            res.extend_from_slice(&rel.to_bytes());
+        }
+
+        // pocket: 0 = None, 1 = Some; if Some: u32 byte-length prefix + bincode bytes
+        match &self.pocket {
+            None => res.push(0),
+            Some(pocket) => {
+                res.push(1);
+                let pocket_bytes =
+                    bincode::encode_to_vec(pocket, config::standard()).unwrap_or_default();
+                res.extend_from_slice(&(pocket_bytes.len() as u32).to_le_bytes());
+                res.extend_from_slice(&pocket_bytes);
+            }
+        }
+
         res
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self::default()
+        let mut i = 0usize;
+
+        // name
+        let name_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        i += 4;
+        let name = String::from_utf8(bytes[i..i + name_len].to_vec()).unwrap_or_default();
+        i += name_len;
+
+        // mol_ident
+        let mol_ident_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        i += 4;
+        let mol_ident = String::from_utf8(bytes[i..i + mol_ident_len].to_vec()).unwrap_or_default();
+        i += mol_ident_len;
+
+        // features
+        let feat_count = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        i += 4;
+        let mut features = Vec::with_capacity(feat_count);
+        for _ in 0..feat_count {
+            let feat_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+            i += 4;
+            features.push(PharmacophoreFeature::from_bytes(&bytes[i..i + feat_len]));
+            i += feat_len;
+        }
+
+        // feature_relations
+        let rel_count = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        i += 4;
+        let mut feature_relations = Vec::with_capacity(rel_count);
+        for _ in 0..rel_count {
+            feature_relations.push(FeatureRelation::from_bytes(&bytes[i..i + 9]));
+            i += 9;
+        }
+
+        // pocket
+        let pocket = if bytes[i] == 0 {
+            i += 1;
+            None
+        } else {
+            i += 1;
+            let pocket_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+            i += 4;
+            bincode::decode_from_slice::<Pocket, _>(&bytes[i..i + pocket_len], config::standard())
+                .ok()
+                .map(|(pocket, _)| pocket)
+        };
+
+        Self {
+            name,
+            mol_ident,
+            features,
+            feature_relations,
+            pocket,
+        }
     }
 
     /// Create a pharmacophore from all candidate sites in a molecule — one `PharmacophoreFeature`
@@ -679,6 +760,7 @@ impl Pharmacophore {
 
         Self {
             name: "All sites".to_string(),
+            mol_ident: mol.common.ident.clone(),
             features,
             feature_relations: Vec::new(),
             pocket: None,

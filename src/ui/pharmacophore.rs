@@ -443,11 +443,11 @@ pub(in crate::ui) fn pharmacophore_summary(
             popup.pharmacophore_screening = !popup.pharmacophore_screening;
             ph_state.ph_for_screening = Some(ph_i)
         }
-
-        if ph_state.screening_in_progress {
-            label!(ui, "Screening in progress", COLOR_ACTIVE);
-        }
     });
+
+    if ph_state.screening_in_progress {
+        label!(ui, "Screening in progress", COLOR_ACTIVE);
+    }
 }
 
 pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
@@ -493,7 +493,15 @@ pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
         }
         ui.add_space(ROW_SPACING);
 
-        ui.horizontal(|ui| {
+        if state.pharmacophore.screening_in_progress {
+            if button!(ui, "Stop", COLOR_ACTION, "Abort the screening process.").clicked() {
+                state.pharmacophore.screening_in_progress = false;
+                // Dropping the receiver causes the screening thread's next tx.send() to
+                // fail, which makes it break out of its batch loop cleanly.
+                state.volatile.thread_receivers.ph_screening = None;
+                println!("Screening aborted.");
+            }
+        } else {
             if button!(
                 ui,
                 "Run Screening",
@@ -511,10 +519,6 @@ pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
                     &mut state.pharmacophore.screening_in_progress,
                 ));
             }
-
-            if button!(ui, "Stop", COLOR_ACTION, "Abort the screening process.").clicked() {
-                state.pharmacophore.screening_in_progress = false;
-            }
-        });
+        }
     }
 }
