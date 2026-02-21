@@ -63,8 +63,9 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            GraphData, GraphDataComponent, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
-            PER_EDGE_FEATS,
+            GraphData, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
+            PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
+            PHARM_VOCAB_SIZE,
         },
         train_test_split_indices::TrainTestSplit,
     },
@@ -80,6 +81,7 @@ pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 // todo: How should this be set up
 pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for padding
 pub(in crate::therapeutic) const MAX_COMPS: usize = 30; // Max components for padding
+pub(in crate::therapeutic) const MAX_PHARM: usize = 30; // Max pharmacophore nodes for padding
 
 /// Configuation for the model; can be set at runtime, e.g. using the config file.
 /// Loaded from `therapeutic_training_config.toml` at the project root.
@@ -87,9 +89,11 @@ pub(in crate::therapeutic) const MAX_COMPS: usize = 30; // Max components for pa
 pub(in crate::therapeutic) struct BranchConfig {
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
+    pub gnn_spacial_enabled: bool,
     pub mlp_enabled: bool,
     pub gnn_atom_layers: u8,
     pub gnn_comp_layers: u8,
+    pub gnn_spacial_layers: u8,
     pub mlp_layers: u8,
 }
 
@@ -98,9 +102,11 @@ impl Default for BranchConfig {
         Self {
             gnn_atom_enabled: true,
             gnn_comp_enabled: true,
+            gnn_spacial_enabled: true,
             mlp_enabled: true,
             gnn_atom_layers: 3,
             gnn_comp_layers: 3,
+            gnn_spacial_layers: 2,
             mlp_layers: 3,
         }
     }
@@ -167,9 +173,11 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
     BranchConfig {
         gnn_atom_enabled: get(map, "gnn_atom_enabled"),
         gnn_comp_enabled: get(map, "gnn_comp_enabled"),
+        gnn_spacial_enabled: get(map, "gnn_spacial_enabled"),
         mlp_enabled: get(map, "mlp_enabled"),
         gnn_atom_layers: get_int(map, "gnn_atom_layers", 3),
         gnn_comp_layers: get_int(map, "gnn_comp_layers", 3),
+        gnn_spacial_layers: get_int(map, "gnn_spacial_layers", 2),
         mlp_layers: get_int(map, "mlp_layers", 3),
     }
 }
@@ -220,12 +228,19 @@ pub(in crate::therapeutic) struct ModelConfig {
     pub comp_embedding_dim: usize,
     pub n_comp_scalars: usize,
     pub comp_edge_feat_dim: usize,
+    // Spatial (pharmacophore) GNN fields
+    pub vocab_size_pharm: usize,
+    pub pharm_embedding_dim: usize,
+    pub n_pharm_scalars: usize,
+    pub spacial_edge_feat_dim: usize,
     // Which branches are active — saved so inference reloads correctly
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
+    pub gnn_spacial_enabled: bool,
     pub mlp_enabled: bool,
     pub gnn_atom_layers: u8,
     pub gnn_comp_layers: u8,
+    pub gnn_spacial_layers: u8,
     pub mlp_layers: u8,
 }
 
@@ -243,6 +258,10 @@ impl ModelConfig {
         } else {
             0
         } + if self.gnn_comp_enabled {
+            self.gnn_hidden_dim
+        } else {
+            0
+        } + if self.gnn_spacial_enabled {
             self.gnn_hidden_dim
         } else {
             0
@@ -281,6 +300,21 @@ impl ModelConfig {
 
         let comp_edge_proj = LinearConfig::new(self.comp_edge_feat_dim, 1).init(device);
 
+        // Spatial (pharmacophore) GNN
+        let emb_pharm =
+            EmbeddingConfig::new(self.vocab_size_pharm, self.pharm_embedding_dim).init(device);
+        let pharm_gnn_input_dim = self.pharm_embedding_dim + self.n_pharm_scalars;
+        let pharm_node_encoder = LinearConfig::new(pharm_gnn_input_dim, dim_gnn).init(device);
+        let pharm_edge_encoder =
+            LinearConfig::new(self.spacial_edge_feat_dim, dim_gnn).init(device);
+
+        let mut spacial_gnn_layers = Vec::with_capacity(self.gnn_spacial_layers as usize);
+        for _ in 0..self.gnn_spacial_layers {
+            spacial_gnn_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
+        }
+
+        let pharm_edge_proj = LinearConfig::new(self.spacial_edge_feat_dim, 1).init(device);
+
         // MLP Layers
         let mut mlp_layers = Vec::with_capacity(self.mlp_layers as usize);
         for layer_i in 0..self.mlp_layers {
@@ -304,12 +338,18 @@ impl ModelConfig {
             comp_edge_encoder,
             comp_gnn_layers: gnn_comp_layers,
             comp_edge_proj,
+            emb_pharm,
+            pharm_node_encoder,
+            pharm_edge_encoder,
+            spacial_gnn_layers,
+            pharm_edge_proj,
             mlp_layers,
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
             dropout: DropoutConfig::new(DROPOUT.unwrap_or_default()).init(),
             atom_gnn_enabled: self.gnn_atom_enabled,
             comp_gnn_enabled: self.gnn_comp_enabled,
+            spacial_gnn_enabled: self.gnn_spacial_enabled,
             mlp_enabled: self.mlp_enabled,
         }
     }
@@ -330,6 +370,13 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     comp_edge_encoder: Linear<B>,
     comp_gnn_layers: Vec<Linear<B>>,
     comp_edge_proj: Linear<B>,
+    /// Spatial (pharmacophore) GNN branch. Nodes = pharmacophore features;
+    /// edges encode Euclidean distances via Gaussian RBF.
+    emb_pharm: Embedding<B>,
+    pharm_node_encoder: Linear<B>,
+    pharm_edge_encoder: Linear<B>,
+    spacial_gnn_layers: Vec<Linear<B>>,
+    pharm_edge_proj: Linear<B>,
     /// Parameter features. These are for molecule-level parameters. (Atom count, weight, volume, PSA etc)
     mlp_layers: Vec<Linear<B>>,
     fusion_norm: LayerNorm<B>,
@@ -342,6 +389,8 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     atom_gnn_enabled: bool,
     #[module(skip)]
     comp_gnn_enabled: bool,
+    #[module(skip)]
+    spacial_gnn_enabled: bool,
     #[module(skip)]
     mlp_enabled: bool,
 }
@@ -404,6 +453,12 @@ impl<B: Backend> Model<B> {
         comp_adj: Tensor<B, 3>,
         comp_edge_feats: Tensor<B, 4>,
         comp_mask: Tensor<B, 3>,
+        // Spatial (pharmacophore) graph
+        pharm_idx: Tensor<B, 2, Int>,
+        pharm_scalars: Tensor<B, 3>,
+        pharm_adj: Tensor<B, 3>,
+        pharm_edge_feats: Tensor<B, 4>,
+        pharm_mask: Tensor<B, 3>,
         params: Tensor<B, 2>,
     ) -> Tensor<B, 2> {
         let mut branches: Vec<Tensor<B, 2>> = Vec::new();
@@ -477,6 +532,46 @@ impl<B: Backend> Model<B> {
             branches.push(comp_mean.reshape([b_c, d_c]));
         }
 
+        // --- Spatial (pharmacophore) GNN branch ---
+        // Nodes = pharmacophore sites (H-bond donors/acceptors, hydrophobics, ring centres).
+        // Edge features are distance-based RBF encodings; the adjacency is Gaussian-weighted.
+        if self.spacial_gnn_enabled {
+            let [bp, np, _np2, fp] = pharm_edge_feats.dims();
+
+            let pef_flat = pharm_edge_feats.clone().reshape([bp * np * np, fp]);
+            let pharm_gate_flat =
+                activation::sigmoid(self.pharm_edge_proj.forward(pef_flat.clone()));
+            let pharm_gate = pharm_gate_flat.reshape([bp, np, np]);
+            let pharm_adj_eff = pharm_adj * pharm_gate;
+
+            let pharm_edge_emb_flat = self.pharm_edge_encoder.forward(pef_flat);
+            let [_, d_pharm_hidden] = pharm_edge_emb_flat.dims();
+            let pharm_edge_emb = pharm_edge_emb_flat.reshape([bp, np, np, d_pharm_hidden]);
+
+            let x_pharm = self.emb_pharm.forward(pharm_idx);
+            let raw_pharm_nodes = Tensor::cat(vec![x_pharm, pharm_scalars], 2);
+            let pharm_nodes = self.pharm_node_encoder.forward(raw_pharm_nodes);
+
+            let mut spacial_gnn_prev = pharm_nodes;
+            for (i, layer) in self.spacial_gnn_layers.iter().enumerate() {
+                let dropout = i != self.spacial_gnn_layers.len() - 1;
+                spacial_gnn_prev = self.make_gnn_layer(
+                    &pharm_adj_eff,
+                    &pharm_mask,
+                    spacial_gnn_prev,
+                    &pharm_edge_emb,
+                    layer,
+                    dropout,
+                );
+            }
+
+            let pharm_sum = spacial_gnn_prev.sum_dim(1);
+            let pharm_counts = pharm_mask.sum_dim(1);
+            let pharm_mean = pharm_sum / (pharm_counts + 1e-6);
+            let [b_p, _one_p, d_p] = pharm_mean.dims();
+            branches.push(pharm_mean.reshape([b_p, d_p]));
+        }
+
         // --- MLP branch ---
         if self.mlp_enabled {
             let mut mlp_prev = params;
@@ -502,6 +597,7 @@ pub(in crate::therapeutic) struct Sample {
     pub features_property: Vec<f32>,
     pub graph: GraphData,
     pub graph_comp: GraphDataComponent,
+    pub graph_spacial: GraphDataSpacial,
     pub target: f32,
 }
 
@@ -520,6 +616,12 @@ pub(in crate::therapeutic) struct Batch<B: Backend> {
     pub comp_adj_list: Tensor<B, 3>,
     pub comp_edge_feats: Tensor<B, 4>,
     pub comp_mask: Tensor<B, 3>,
+    // Spatial (pharmacophore) graph
+    pub pharm_indices: Tensor<B, 2, Int>,
+    pub pharm_scalars: Tensor<B, 3>,
+    pub pharm_adj_list: Tensor<B, 3>,
+    pub pharm_edge_feats: Tensor<B, 4>,
+    pub pharm_mask: Tensor<B, 3>,
     pub mol_params: Tensor<B, 2>,
     pub targets: Tensor<B, 2>,
 }
@@ -544,6 +646,11 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let mut batch_comp_adj = Vec::new();
         let mut batch_comp_edge_feats = Vec::new();
         let mut batch_comp_mask = Vec::new();
+        let mut batch_pharm_ids = Vec::new();
+        let mut batch_pharm_scalars = Vec::new();
+        let mut batch_pharm_adj = Vec::new();
+        let mut batch_pharm_edge_feats = Vec::new();
+        let mut batch_pharm_mask = Vec::new();
         let mut batch_globals = Vec::new();
         let mut batch_y = Vec::new();
 
@@ -615,6 +722,35 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 MAX_COMPS,
             );
             batch_comp_edge_feats.extend(p_comp_edge);
+
+            // Pad and Extend Spatial (Pharmacophore) Graph Data
+            let n_pharm = item.graph_spacial.num_nodes.min(MAX_PHARM);
+
+            batch_pharm_ids.extend_from_slice(&item.graph_spacial.pharm_type_indices[0..n_pharm]);
+            batch_pharm_ids.extend(std::iter::repeat_n(0_i32, MAX_PHARM - n_pharm));
+
+            batch_pharm_scalars
+                .extend_from_slice(&item.graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
+            batch_pharm_scalars.extend(std::iter::repeat_n(
+                0.0_f32,
+                (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS,
+            ));
+
+            let (p_pharm_adj, p_pharm_mask) = gnn::pad_adj_and_mask(
+                &item.graph_spacial.adj,
+                item.graph_spacial.num_nodes,
+                MAX_PHARM,
+            );
+            batch_pharm_adj.extend(p_pharm_adj);
+            batch_pharm_mask.extend(p_pharm_mask);
+
+            let p_pharm_edge = gnn::pad_edge_feats(
+                &item.graph_spacial.edge_feats,
+                item.graph_spacial.num_nodes,
+                PER_SPACIAL_EDGE_FEATS,
+                MAX_PHARM,
+            );
+            batch_pharm_edge_feats.extend(p_pharm_edge);
         }
 
         let elem_ids = TensorData::new(batch_elem_ids, [batch_size, MAX_ATOMS]);
@@ -637,6 +773,17 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             [batch_size, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
         );
         let comp_mask = TensorData::new(batch_comp_mask, [batch_size, MAX_COMPS, 1]);
+        let pharm_ids = TensorData::new(batch_pharm_ids, [batch_size, MAX_PHARM]);
+        let pharm_scalars = TensorData::new(
+            batch_pharm_scalars,
+            [batch_size, MAX_PHARM, PER_PHARM_SCALARS],
+        );
+        let pharm_adj = TensorData::new(batch_pharm_adj, [batch_size, MAX_PHARM, MAX_PHARM]);
+        let pharm_edge_feats = TensorData::new(
+            batch_pharm_edge_feats,
+            [batch_size, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
+        );
+        let pharm_mask = TensorData::new(batch_pharm_mask, [batch_size, MAX_PHARM, 1]);
         let globals = TensorData::new(batch_globals, [batch_size, n_feat_params]);
         let y = TensorData::new(batch_y, [batch_size, 1]);
 
@@ -652,6 +799,11 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             comp_adj_list: Tensor::from_data(comp_adj, device),
             comp_edge_feats: Tensor::from_data(comp_edge_feats, device),
             comp_mask: Tensor::from_data(comp_mask, device),
+            pharm_indices: Tensor::from_data(pharm_ids, device),
+            pharm_scalars: Tensor::from_data(pharm_scalars, device),
+            pharm_adj_list: Tensor::from_data(pharm_adj, device),
+            pharm_edge_feats: Tensor::from_data(pharm_edge_feats, device),
+            pharm_mask: Tensor::from_data(pharm_mask, device),
             mol_params: Tensor::from_data(globals, device),
             targets: Tensor::from_data(y, device),
         }
@@ -715,6 +867,11 @@ impl TrainStep for Model<TrainBackend> {
             batch.comp_adj_list,
             batch.comp_edge_feats,
             batch.comp_mask,
+            batch.pharm_indices,
+            batch.pharm_scalars,
+            batch.pharm_adj_list,
+            batch.pharm_edge_feats,
+            batch.pharm_mask,
             batch.mol_params,
         );
 
@@ -748,6 +905,11 @@ impl InferenceStep for Model<ValidBackend> {
             batch.comp_adj_list,
             batch.comp_edge_feats,
             batch.comp_mask,
+            batch.pharm_indices,
+            batch.pharm_scalars,
+            batch.pharm_adj_list,
+            batch.pharm_edge_feats,
+            batch.pharm_mask,
             batch.mol_params,
         );
 
@@ -933,10 +1095,19 @@ fn read_data(
                 }
             };
 
+            let graph_spacial = match GraphDataSpacial::new(&mol) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("Error getting spacial graph data: {e:?}");
+                    continue;
+                }
+            };
+
             result_set.push(Sample {
                 features_property: feat_params,
                 graph,
                 graph_comp,
+                graph_spacial,
                 target: *target,
             });
         }
@@ -1071,10 +1242,11 @@ pub(in crate::therapeutic) fn train(
 
     let branch_cfg = load_branch_config(&dataset.name());
     println!(
-        "Branch config for '{}': atom_gnn={} comp_gnn={} mlp={}",
+        "Branch config for '{}': atom_gnn={} comp_gnn={} spacial_gnn={} mlp={}",
         dataset.name(),
         branch_cfg.gnn_atom_enabled,
         branch_cfg.gnn_comp_enabled,
+        branch_cfg.gnn_spacial_enabled,
         branch_cfg.mlp_enabled,
     );
 
@@ -1138,12 +1310,19 @@ pub(in crate::therapeutic) fn train(
         comp_embedding_dim: 8,
         n_comp_scalars: PER_COMP_SCALARS,
         comp_edge_feat_dim: PER_EDGE_COMP_FEATS,
+        // Spatial (pharmacophore) GNN
+        vocab_size_pharm: PHARM_VOCAB_SIZE, // 0=pad,1=donor,2=acc,3=hydrophobic,4=aromatic
+        pharm_embedding_dim: 8,
+        n_pharm_scalars: PER_PHARM_SCALARS,
+        spacial_edge_feat_dim: PER_SPACIAL_EDGE_FEATS,
         // Read which branches to enable from the config file.
         gnn_atom_enabled: branch_cfg.gnn_atom_enabled,
         gnn_comp_enabled: branch_cfg.gnn_comp_enabled,
+        gnn_spacial_enabled: branch_cfg.gnn_spacial_enabled,
         mlp_enabled: branch_cfg.mlp_enabled,
         gnn_atom_layers: branch_cfg.gnn_atom_layers,
         gnn_comp_layers: branch_cfg.gnn_comp_layers,
+        gnn_spacial_layers: branch_cfg.gnn_spacial_layers,
         mlp_layers: branch_cfg.mlp_layers,
     };
 

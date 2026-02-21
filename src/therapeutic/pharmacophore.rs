@@ -624,6 +624,9 @@ impl Pharmacophore {
                  ({file_offset}/{total_files} files), {} passed so far",
                 res.len()
             );
+            for r in &res {
+                println!("  -Passed: {}: {:.2}", r.1, r.3); // Ident
+            }
         }
 
         let elapsed = start.elapsed().as_millis();

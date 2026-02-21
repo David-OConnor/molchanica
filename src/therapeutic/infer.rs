@@ -17,10 +17,14 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         gnn::{
-            GraphData, GraphDataComponent, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
-            pad_adj_and_mask, pad_edge_feats,
+            GraphData, GraphDataComponent, GraphDataSpacial, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask,
+            pad_edge_feats,
         },
-        train::{MAX_ATOMS, MAX_COMPS, Model, ModelConfig, StandardScaler, param_feats_from_mol},
+        train::{
+            MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler,
+            param_feats_from_mol,
+        },
     },
 };
 
@@ -119,6 +123,7 @@ impl Infer {
         };
 
         let graph_comp = GraphDataComponent::new(&comps)?;
+        let graph_spacial = GraphDataSpacial::new(mol)?;
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
         let num_atoms = graph_atom_bond.num_atoms;
@@ -194,6 +199,34 @@ impl Infer {
             MAX_COMPS,
         );
 
+        // Spatial (pharmacophore) graph padding
+        let num_pharm = graph_spacial.num_nodes;
+        let n_pharm = num_pharm.min(MAX_PHARM);
+
+        let p_pharm_ids = {
+            let mut v = Vec::with_capacity(MAX_PHARM);
+            v.extend_from_slice(&graph_spacial.pharm_type_indices[0..n_pharm]);
+            v.extend(std::iter::repeat_n(0_i32, MAX_PHARM - n_pharm));
+            v
+        };
+
+        let mut p_pharm_scalars = Vec::with_capacity(MAX_PHARM * PER_PHARM_SCALARS);
+        p_pharm_scalars
+            .extend_from_slice(&graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
+        p_pharm_scalars.extend(std::iter::repeat_n(
+            0.0_f32,
+            (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS,
+        ));
+
+        let (padded_adj_pharm, padded_mask_pharm) =
+            pad_adj_and_mask(&graph_spacial.adj, num_pharm, MAX_PHARM);
+        let p_edge_pharm_feats = pad_edge_feats(
+            &graph_spacial.edge_feats,
+            num_pharm,
+            PER_SPACIAL_EDGE_FEATS,
+            MAX_PHARM,
+        );
+
         // 4. Create Tensors
         let t_param_feats = Tensor::<InferBackend, 2>::from_data(
             TensorData::new(feat_params, [1, n_feat_params]),
@@ -261,6 +294,35 @@ impl Infer {
             &self.device,
         );
 
+        // Spatial (pharmacophore) tensors
+        let t_pharm_ids = Tensor::<InferBackend, 2, Int>::from_data(
+            TensorData::new(p_pharm_ids, [1, MAX_PHARM]),
+            &self.device,
+        );
+
+        let t_pharm_scalars = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(p_pharm_scalars, [1, MAX_PHARM, PER_PHARM_SCALARS]),
+            &self.device,
+        );
+
+        let t_pharm_adj = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(padded_adj_pharm, [1, MAX_PHARM, MAX_PHARM]),
+            &self.device,
+        );
+
+        let t_pharm_edge_feats = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(
+                p_edge_pharm_feats,
+                [1, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
+            ),
+            &self.device,
+        );
+
+        let t_pharm_mask = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(padded_mask_pharm, [1, MAX_PHARM, 1]),
+            &self.device,
+        );
+
         // 5. Forward Pass
         let forward_tensor = self.model.forward(
             t_elem_ids,
@@ -274,6 +336,11 @@ impl Infer {
             t_comp_adj,
             t_comp_edge_feats,
             t_comp_mask,
+            t_pharm_ids,
+            t_pharm_scalars,
+            t_pharm_adj,
+            t_pharm_edge_feats,
+            t_pharm_mask,
             t_param_feats,
         );
 
