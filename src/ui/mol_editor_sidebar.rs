@@ -102,66 +102,65 @@ pub(in crate::ui) fn pharmacophore_list(state: &mut State, ui: &mut Ui) {
 }
 
 /// e.g. functional groups, rings, etc.
-pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
-    // todo: Char  field based for now. Reconcile this with your component structures.
-    let Some(char) = &state.mol_editor.mol.characterization else {
-        return;
-    };
-
-    label!(ui, "Components (Char)", Color32::GRAY);
-    ui.add_space(COL_SPACING / 2.);
-
-    for g in &char.rings {
-        ui.horizontal(|ui| {
-            label!(ui, "Ring", Color32::WHITE);
-
-            if ui.button("Sel").clicked() {}
-
-            if button!(ui, "❌", Color32::LIGHT_RED, "").clicked() {}
-
-            if ui.button("Chg to").clicked() {}
-        });
-    }
-
-    // for g in &char.chains {
+pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui, redraw: &mut bool) {
+    // let Some(char) = &state.mol_editor.mol.characterization else {
+    //     return;
+    // };
     //
+    // label!(ui, "Components (Char)", Color32::GRAY);
+    // ui.add_space(COL_SPACING / 2.);
+    //
+    // for g in &char.rings {
+    //     ui.horizontal(|ui| {
+    //         label!(ui, "Ring", Color32::WHITE);
+    //
+    //         if ui.button("Sel").clicked() {}
+    //
+    //         if button!(ui, "❌", Color32::LIGHT_RED, "").clicked() {}
+    //
+    //         if ui.button("Chg to").clicked() {}
+    //     });
     // }
-
-    for g in &char.hydroxyl {
-        ui.horizontal(|ui| {
-            label!(ui, "Hydroxyl", Color32::WHITE);
-
-            if ui.button("Sel").clicked() {}
-
-            if ui
-                .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .clicked()
-            {}
-
-            if ui.button("Chg to").clicked() {}
-        });
-    }
-
-    for g in &char.carbonyl {
-        ui.horizontal(|ui| {
-            label!(ui, "Carbonyl", Color32::WHITE);
-
-            if ui.button("Sel").clicked() {}
-
-            if ui
-                .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .clicked()
-            {}
-
-            if ui.button("Chg to").clicked() {}
-        });
-    }
-
-    for g in &char.carboxylate {}
-
-    for g in &char.amides {}
-
-    for g in &char.amines {}
+    //
+    // // for g in &char.chains {
+    // //
+    // // }
+    //
+    // for g in &char.hydroxyl {
+    //     ui.horizontal(|ui| {
+    //         label!(ui, "Hydroxyl", Color32::WHITE);
+    //
+    //         if ui.button("Sel").clicked() {}
+    //
+    //         if ui
+    //             .button(RichText::new("❌").color(Color32::LIGHT_RED))
+    //             .clicked()
+    //         {}
+    //
+    //         if ui.button("Chg to").clicked() {}
+    //     });
+    // }
+    //
+    // for g in &char.carbonyl {
+    //     ui.horizontal(|ui| {
+    //         label!(ui, "Carbonyl", Color32::WHITE);
+    //
+    //         if ui.button("Sel").clicked() {}
+    //
+    //         if ui
+    //             .button(RichText::new("❌").color(Color32::LIGHT_RED))
+    //             .clicked()
+    //         {}
+    //
+    //         if ui.button("Chg to").clicked() {}
+    //     });
+    // }
+    //
+    // for g in &char.carboxylate {}
+    //
+    // for g in &char.amides {}
+    //
+    // for g in &char.amines {}
 
     // Component-based approach below; char-based approach above -------------
 
@@ -191,9 +190,9 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
 
             ui.add_space(COL_SPACING);
 
-            for con in conns_to_this {
-                label!(ui, format!(" - {con}"), Color32::GRAY);
-            }
+            // for con in conns_to_this {
+            //     label!(ui, format!(" - {con}"), Color32::GRAY);
+            // }
 
             let selected = state.ui.selection == Selection::ComponentEditor(i_comp);
             let color_sel = if selected {
@@ -215,6 +214,8 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui) {
                 } else {
                     Selection::ComponentEditor(i_comp)
                 };
+
+                *redraw = true;
             }
 
             if button!(

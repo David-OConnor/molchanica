@@ -31,6 +31,7 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     md::change_snapshot_helper,
+    mol_components::MolComponents,
     mol_manip::ManipMode,
     molecules::{
         Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, common::NEXT_ATOM_SN,
@@ -576,7 +577,6 @@ pub fn redraw(
     editor: &MolEditorState,
     ui: &StateUi,
     manip_mode: ManipMode,
-    // num_ligs: usize,
 ) {
     *entities = Vec::new();
 
@@ -603,7 +603,12 @@ pub fn redraw(
 }
 
 /// Tailored function to prevent having to redraw the whole mol.
-fn draw_atom(entities: &mut Vec<Entity>, atom: &Atom, ui: &StateUi) {
+fn draw_atom(
+    entities: &mut Vec<Entity>,
+    atom: &Atom,
+    components: &Option<MolComponents>,
+    ui: &StateUi,
+) {
     if matches!(ui.mol_view, MoleculeView::BallAndStick) {
         if ui.visibility.hide_hydrogen && atom.element == Hydrogen {
             return;
@@ -621,6 +626,7 @@ fn draw_atom(entities: &mut Vec<Entity>, atom: &Atom, ui: &StateUi) {
             ui.res_coloring,
             ui.atom_color_by_charge,
             MolType::Ligand,
+            components,
         );
 
         let (radius, mesh) = match ui.mol_view {
@@ -654,6 +660,7 @@ fn draw_bond(
     bonds: &[Bond],
     adj_list: &[Vec<usize>],
     ui: &StateUi,
+    components: &Option<MolComponents>,
 ) {
     // todo: C+P from draw_molecule. With some removed, but much repeated.
     let atom_0 = &atoms[bond.atom_0];
@@ -724,6 +731,7 @@ fn draw_bond(
         ui.res_coloring,
         ui.atom_color_by_charge,
         MolType::Ligand,
+        components,
     );
 
     let color_1 = atom_color(
@@ -738,6 +746,7 @@ fn draw_bond(
         ui.res_coloring,
         ui.atom_color_by_charge,
         MolType::Ligand,
+        components,
     );
 
     let to_hydrogen = atom_0.element == Hydrogen || atom_1.element == Hydrogen;

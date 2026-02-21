@@ -10,6 +10,7 @@ use crate::{
         CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_PEPTIDE_AMT, LABEL_COLOR_ATOM,
         LABEL_COLOR_MOL, LABEL_COLOR_MOL_SEL, LABEL_SIZE_ATOM, LABEL_SIZE_MOL, MESH_BOND_CAP,
     },
+    mol_components::MolComponents,
     molecules::{Atom, MolType, Residue},
     render::{BACKGROUND_COLOR, Color, MESH_BOND},
     selection::{Selection, ViewSelLevel},
@@ -99,7 +100,7 @@ pub fn text_overlay_atoms(
 pub fn atom_color(
     atom: &Atom,
     mol_i: usize,
-    i: usize,
+    item_i: usize,
     residues: &[Residue],
     aa_count: usize, // # AA residues; used for color-mapping.
     selection: &Selection,
@@ -108,6 +109,7 @@ pub fn atom_color(
     res_coloring: ResColoring,
     atom_color_by_q: bool,
     mol_type: MolType,
+    components: &Option<MolComponents>,
 ) -> Color {
     let mut result = match view_sel_level {
         ViewSelLevel::Atom => {
@@ -145,7 +147,7 @@ pub fn atom_color(
     // If selected, the selected color overrides the element or residue color.
     match selection {
         Selection::AtomPeptide(sel_i) => {
-            if mol_type == MolType::Peptide && *sel_i == i {
+            if mol_type == MolType::Peptide && *sel_i == item_i {
                 result = COLOR_SELECTED;
             }
         }
@@ -157,33 +159,42 @@ pub fn atom_color(
             }
         }
         Selection::AtomsPeptide(sel_is) => {
-            if sel_is.contains(&i) {
+            if sel_is.contains(&item_i) {
                 result = COLOR_SELECTED;
             }
         }
         Selection::AtomLig((i_mol, i_atom)) => {
-            if mol_type == MolType::Ligand && *i_atom == i && *i_mol == mol_i {
+            if mol_type == MolType::Ligand && *i_atom == item_i && *i_mol == mol_i {
                 result = COLOR_SELECTED;
             }
         }
         Selection::AtomsLig((i_mol, is_atom)) => {
-            if mol_type == MolType::Ligand && is_atom.contains(&i) && *i_mol == mol_i {
+            if mol_type == MolType::Ligand && is_atom.contains(&item_i) && *i_mol == mol_i {
                 result = COLOR_SELECTED;
             }
         }
         Selection::AtomNucleicAcid((lig_i, sel_i)) => {
-            if mol_type == MolType::NucleicAcid && *sel_i == i && *lig_i == mol_i {
+            if mol_type == MolType::NucleicAcid && *sel_i == item_i && *lig_i == mol_i {
                 result = COLOR_SELECTED;
             }
         }
         Selection::AtomLipid((lig_i, sel_i)) => {
-            if mol_type == MolType::Lipid && *sel_i == i && *lig_i == mol_i {
+            if mol_type == MolType::Lipid && *sel_i == item_i && *lig_i == mol_i {
                 result = COLOR_SELECTED;
             }
         }
         Selection::BondLig((lig_i, sel_i)) => {
-            if mol_type == MolType::Ligand && *sel_i == i && *lig_i == mol_i {
+            if mol_type == MolType::Ligand && *sel_i == item_i && *lig_i == mol_i {
                 result = COLOR_SELECTED;
+            }
+        }
+        Selection::ComponentEditor(comp_i) => {
+            if let Some(c) = components {
+                let atoms_this_comp = &c.components[*comp_i].atoms;
+
+                if atoms_this_comp.contains(&item_i) {
+                    result = COLOR_SELECTED;
+                }
             }
         }
         _ => (),

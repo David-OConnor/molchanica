@@ -779,7 +779,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         );
 
         if state.volatile.operating_mode == OperatingMode::MolEditor {
-            mol_editor::editor(state, scene, &mut updates, ui);
+            mol_editor::editor(state, scene, &mut updates, redraw.ligand, ui);
 
             if let Err(e) = update_file_dialogs(state, scene, ui, &mut updates) {
                 handle_err(&mut state.ui, format!("Problem saving file: {e:?}"));
@@ -789,6 +789,8 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                      &mut updates, state.volatile.mol_manip.mode, );
 
             load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
+
+
 
             return;
         }
@@ -1075,6 +1077,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     }
                 }
             }
+
 
             if state.peptide.is_none() && state.active_mol().is_none() {
                 ui.add_space(COL_SPACING / 2.);

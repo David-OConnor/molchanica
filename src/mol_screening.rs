@@ -5,7 +5,11 @@
 //! We bypass parts of our molecule loading algorithm for speed: E.g. skipping inferring partial charge
 //! ff type, characterization, and other properties that are not required.
 
-use std::{io, path::Path, time::Instant};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use bio_files::{Mol2, Sdf};
 
@@ -66,34 +70,23 @@ pub fn screen_by_alignment(
     res
 }
 
-/// Load `SDF` and `Mol2` files in a directory and its sub-dirs into memory. Bypass our normal loading pipeline,
-/// which includes computation to load FF type, partial charge, SMILES,
-/// camera considerations etc.
+/// Collect all SDF and Mol2 file paths from a directory tree into a sorted list.
 ///
-/// Loads incrementally: `skip` specifies how many valid mol files to skip from the start,
-/// and loading stops when `MOL_CACHE_SIZE_ATOM_COUNT` atoms have been loaded. Returns the
-/// loaded molecules and whether there are more files remaining to load.
-pub fn load_mols(path: &Path, skip: usize) -> io::Result<(Vec<MoleculeSmall>, bool)> {
-    println!("Loading molecules from path {path:?} (skip {skip})...");
-    let start = Instant::now();
-
-    let mut result = Vec::new();
-
+/// Sorting ensures deterministic, consistent ordering across batches and runs. Call this
+/// once at the start of a screening session, then pass the result (or slices of it) to
+/// [`load_mol_batch`] repeatedly.
+pub fn collect_mol_files(path: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
     let mut dirs_to_visit = vec![path.to_path_buf()];
 
-    let mut mols_found: usize = 0;
-    let mut atoms_loaded: u32 = 0;
-    let mut mols_loaded: u32 = 0;
-    let mut has_more = false;
-
-    'outer: while let Some(dir) = dirs_to_visit.pop() {
+    while let Some(dir) = dirs_to_visit.pop() {
         for entry in dir.read_dir()? {
             let entry = entry?;
-            let path = entry.path();
+            let p = entry.path();
             let ty = entry.file_type()?;
 
             if ty.is_dir() {
-                dirs_to_visit.push(path);
+                dirs_to_visit.push(p);
                 continue;
             }
 
@@ -101,53 +94,117 @@ pub fn load_mols(path: &Path, skip: usize) -> io::Result<(Vec<MoleculeSmall>, bo
                 continue;
             }
 
-            let ext = match path.extension().and_then(|e| e.to_str()) {
+            let ext = match p.extension().and_then(|e| e.to_str()) {
                 Some(ext) => ext.to_ascii_lowercase(),
                 None => continue,
             };
 
-            // Only count files with valid mol extensions.
             match ext.as_str() {
-                "sdf" | "mol2" => {}
-                _ => continue,
+                "sdf" | "mol2" => files.push(p),
+                _ => {}
             }
+        }
+    }
 
-            mols_found += 1;
+    // Sort for deterministic ordering; read_dir order is not guaranteed.
+    files.sort();
 
-            if mols_found <= skip {
+    println!("Found {} molecule files in {path:?}", files.len());
+    Ok(files)
+}
+
+/// Load a batch of molecules from a pre-collected file list, up to the atom-count budget.
+///
+/// - Reads from the beginning of `files` until [`MOL_CACHE_SIZE_ATOM_COUNT`] atoms are loaded
+///   or the slice is exhausted.
+/// - Returns `(molecules, files_consumed)`. `files_consumed` includes files that failed to
+///   parse (which are skipped with a warning), so callers can advance their file offset by
+///   exactly this count to get a non-overlapping next batch.
+///
+/// Typical usage with [`collect_mol_files`]:
+/// ```ignore
+/// let files = collect_mol_files(&dir)?;
+/// let mut offset = 0;
+/// while offset < files.len() {
+///     let (mols, consumed) = load_mol_batch(&files[offset..])?;
+///     offset += consumed;
+///     // … process mols …
+/// }
+/// ```
+pub fn load_mol_batch(files: &[PathBuf]) -> io::Result<(Vec<MoleculeSmall>, usize)> {
+    let start = Instant::now();
+
+    let mut result = Vec::new();
+    let mut atoms_loaded: u32 = 0;
+    let mut files_consumed = 0;
+
+    for path in files {
+        // Check the atom budget before loading the next file.
+        if atoms_loaded >= MOL_CACHE_SIZE_ATOM_COUNT {
+            break;
+        }
+
+        files_consumed += 1;
+
+        let ext = match path.extension().and_then(|e| e.to_str()) {
+            Some(ext) => ext.to_ascii_lowercase(),
+            None => continue,
+        };
+
+        // Use a closure so that `?` inside converts errors uniformly to io::Error.
+        let mol_result: io::Result<MoleculeSmall> = (|| {
+            Ok(match ext.as_str() {
+                "sdf" => Sdf::load(path)?.try_into()?,
+                "mol2" => Mol2::load(path)?.try_into()?,
+                _ => unreachable!(),
+            })
+        })();
+
+        let mut mol = match mol_result {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Skipping {:?}: {e}",
+                    path.file_name().unwrap_or_default()
+                );
                 continue;
             }
+        };
 
-            if atoms_loaded >= MOL_CACHE_SIZE_ATOM_COUNT {
-                has_more = true;
-                break 'outer;
-            }
+        mol.update_characterization();
+        atoms_loaded += mol.common.atoms.len() as u32;
+        result.push(mol);
 
-            let mut mol: MoleculeSmall = match ext.as_str() {
-                "sdf" => Sdf::load(&path)?.try_into()?,
-                "mol2" => Mol2::load(&path)?.try_into()?,
-                _ => unreachable!(),
-            };
-
-            // This is fast, and [partly] used in our screening workflows.
-            mol.update_characterization();
-
-            atoms_loaded += mol.common.atoms.len() as u32;
-            mols_loaded += 1;
-
-            result.push(mol);
-
-            if mols_loaded.is_multiple_of(2_000) {
-                println!("Loading progress: {mols_loaded} mols, {atoms_loaded} atoms");
-            }
+        if result.len().is_multiple_of(2_000) {
+            println!(
+                "Loading progress: {} mols, {atoms_loaded} atoms",
+                result.len()
+            );
         }
     }
 
     let elapsed = start.elapsed().as_millis();
     println!(
-        "Loaded {} molecules from disk in {elapsed} ms",
+        "Loaded {} molecules ({atoms_loaded} atoms) from {files_consumed} files in {elapsed} ms",
         result.len()
     );
 
-    Ok((result, has_more))
+    Ok((result, files_consumed))
+}
+
+/// Load `SDF` and `Mol2` files in a directory and its sub-dirs into memory.
+///
+/// This is a convenience wrapper around [`collect_mol_files`] + [`load_mol_batch`] for
+/// callers that only need a single batch. For streaming through large directories use
+/// those two functions directly to avoid re-traversing the directory on every call.
+pub fn load_mols(path: &Path, skip: usize) -> io::Result<(Vec<MoleculeSmall>, bool)> {
+    let files = collect_mol_files(path)?;
+    let remaining = if skip < files.len() {
+        &files[skip..]
+    } else {
+        &[]
+    };
+    let (mols, consumed) = load_mol_batch(remaining)?;
+    let has_more = skip + consumed < files.len();
+    Ok((mols, has_more))
 }

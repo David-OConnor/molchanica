@@ -1,7 +1,7 @@
 use std::{fs::File, io, io::Write, path::Path};
 
 use egui::{Color32, Ui};
-use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use graphics::{EngineUpdates, Entity, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
     cam::reset_camera,
@@ -10,9 +10,11 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_editor,
+    mol_editor::{MolEditorState, redraw},
+    mol_manip::ManipMode,
     molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
-    state::{OperatingMode, State},
+    state::{OperatingMode, State, StateUi},
     ui::set_window_title,
     util::{RedrawFlags, handle_err, reset_orbit_center},
 };
@@ -101,15 +103,25 @@ pub fn handle_redraw(
     }
 
     if redraw.ligand {
-        draw_all_ligs(state, scene);
+        match state.volatile.operating_mode {
+            OperatingMode::Primary => {
+                draw_all_ligs(state, scene);
+                // For docking light, but may be overkill here.
+                if state.active_mol().is_some() {
+                    engine_updates.lighting = true;
+                }
+            }
+            OperatingMode::MolEditor => mol_editor::redraw(
+                &mut scene.entities,
+                &state.mol_editor,
+                &state.ui,
+                state.volatile.mol_manip.mode,
+            ),
+            OperatingMode::ProteinEditor => unimplemented!(),
+        }
 
         engine_updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::Ligand as u32);
-
-        // For docking light, but may be overkill here.
-        if state.active_mol().is_some() {
-            engine_updates.lighting = true;
-        }
     }
 
     if redraw.na {

@@ -505,6 +505,11 @@ pub fn draw_mol(
         &ui.selection
     };
 
+    let components = match mol {
+        MolGenericRef::Small(m) => &m.components,
+        _ => &None,
+    };
+
     if matches!(
         ui.mol_view,
         MoleculeView::BallAndStick | MoleculeView::SpaceFill
@@ -565,6 +570,7 @@ pub fn draw_mol(
                     ui.res_coloring,
                     ui.atom_color_by_charge,
                     mol.mol_type(),
+                    components,
                 );
 
                 if color != COLOR_SELECTED {
@@ -755,6 +761,7 @@ pub fn draw_mol(
                 ui.res_coloring,
                 ui.atom_color_by_charge,
                 mol.mol_type(),
+                components,
             );
             color_1 = atoms_bonds::atom_color(
                 atom_1,
@@ -768,6 +775,7 @@ pub fn draw_mol(
                 ui.res_coloring,
                 ui.atom_color_by_charge,
                 mol.mol_type(),
+                components,
             );
 
             // If in atom sel mode, we color bonds normally above (The  half of each bond connected
@@ -1266,6 +1274,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                         ResColoring::default(),
                         false,
                         MolType::Peptide,
+                        &None,
                     );
 
                     let mut entity = Entity::new(
@@ -1392,6 +1401,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                     state.ui.res_coloring,
                     state.ui.atom_color_by_charge,
                     MolType::Peptide,
+                    &None,
                 );
             }
 
@@ -1580,6 +1590,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 state.ui.res_coloring,
                 state.ui.atom_color_by_charge,
                 MolType::Peptide,
+                &None,
             );
             color_1 = atoms_bonds::atom_color(
                 atom_1,
@@ -1593,6 +1604,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 state.ui.res_coloring,
                 state.ui.atom_color_by_charge,
                 MolType::Peptide,
+                &None,
             );
         }
 

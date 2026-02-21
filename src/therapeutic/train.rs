@@ -81,23 +81,27 @@ pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for padding
 pub(in crate::therapeutic) const MAX_COMPS: usize = 30; // Max components for padding
 
-/// Which network branches are active for a given training run.
+/// Configuation for the model; can be set at runtime, e.g. using the config file.
 /// Loaded from `therapeutic_training_config.toml` at the project root.
-///
-/// Section lookup order: `[<dataset_name>]` → `[default]` → all enabled.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::therapeutic) struct BranchConfig {
-    pub atom_gnn_enabled: bool,
-    pub comp_gnn_enabled: bool,
+    pub gnn_atom_enabled: bool,
+    pub gnn_comp_enabled: bool,
     pub mlp_enabled: bool,
+    pub gnn_atom_layers: u8,
+    pub gnn_comp_layers: u8,
+    pub mlp_layers: u8,
 }
 
 impl Default for BranchConfig {
     fn default() -> Self {
         Self {
-            atom_gnn_enabled: true,
-            comp_gnn_enabled: true,
+            gnn_atom_enabled: true,
+            gnn_comp_enabled: true,
             mlp_enabled: true,
+            gnn_atom_layers: 3,
+            gnn_comp_layers: 3,
+            mlp_layers: 3,
         }
     }
 }
@@ -117,8 +121,8 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
         }
     };
 
-    // Parse into HashMap<section, HashMap<key, bool>>
-    let mut sections: HashMap<String, HashMap<String, bool>> = HashMap::new();
+    // Parse into HashMap<section, HashMap<key, String>>; handles both bool and integer values.
+    let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut current = String::new();
 
     for line in text.lines() {
@@ -126,12 +130,12 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
         if line.starts_with('[') && line.ends_with(']') {
             current = line[1..line.len() - 1].to_string();
         } else if let Some((k, v)) = line.split_once('=') {
-            if let Ok(b) = v.trim().parse::<bool>() {
-                sections
-                    .entry(current.clone())
-                    .or_default()
-                    .insert(k.trim().to_string(), b);
-            }
+            // Strip inline comments and whitespace.
+            let v = v.split('#').next().unwrap_or("").trim().to_string();
+            sections
+                .entry(current.clone())
+                .or_default()
+                .insert(k.trim().to_string(), v);
         }
     }
 
@@ -148,14 +152,25 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
 
     println!("  Branch config section used: [{section_name}]");
 
-    let get = |map: Option<&HashMap<String, bool>>, key: &str| -> bool {
-        map.and_then(|m| m.get(key).copied()).unwrap_or(true)
+    let get = |map: Option<&HashMap<String, String>>, key: &str| -> bool {
+        map.and_then(|m| m.get(key))
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or(true)
+    };
+
+    let get_int = |map: Option<&HashMap<String, String>>, key: &str, default: u8| -> u8 {
+        map.and_then(|m| m.get(key))
+            .and_then(|v| v.parse::<u8>().ok())
+            .unwrap_or(default)
     };
 
     BranchConfig {
-        atom_gnn_enabled: get(map, "gnn_atom_enabled"),
-        comp_gnn_enabled: get(map, "gnn_comp_enabled"),
+        gnn_atom_enabled: get(map, "gnn_atom_enabled"),
+        gnn_comp_enabled: get(map, "gnn_comp_enabled"),
         mlp_enabled: get(map, "mlp_enabled"),
+        gnn_atom_layers: get_int(map, "gnn_atom_layers", 3),
+        gnn_comp_layers: get_int(map, "gnn_comp_layers", 3),
+        mlp_layers: get_int(map, "mlp_layers", 3),
     }
 }
 
@@ -175,9 +190,6 @@ pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 // Experiment with this more later.
 pub(in crate::therapeutic) const EXCLUDE_HYDROGEN: bool = true;
 
-// Increasing layers may or may not improve model performance. It will slow down inference and training.
-const NUM_GNN_LAYERS: usize = 3;
-const NUM_MLP_LAYERS: usize = 3;
 // It seems that low or no dropout significantly improves results, but perhaps it makes the
 // model more likely to overfit, and makes it less general? Maybe 0.1 or disabled.
 // Perhaps skip dropout due to our small TDC data sets.
@@ -209,74 +221,28 @@ pub(in crate::therapeutic) struct ModelConfig {
     pub n_comp_scalars: usize,
     pub comp_edge_feat_dim: usize,
     // Which branches are active — saved so inference reloads correctly
-    pub atom_gnn_enabled: bool,
-    pub comp_gnn_enabled: bool,
+    pub gnn_atom_enabled: bool,
+    pub gnn_comp_enabled: bool,
     pub mlp_enabled: bool,
+    pub gnn_atom_layers: u8,
+    pub gnn_comp_layers: u8,
+    pub mlp_layers: u8,
 }
 
 impl ModelConfig {
-    // pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
-    //     let dim_gnn = self.gnn_hidden_dim;
-    //     let dim_mlp = self.mlp_hidden_dim;
-    //     let combined_dim = self.mlp_hidden_dim + self.gnn_hidden_dim;
-    //
-    //     let emb_elem = EmbeddingConfig::new(self.vocab_size_elem, self.embedding_dim).init(device);
-    //     let emb_ff = EmbeddingConfig::new(self.vocab_size_ff, self.embedding_dim).init(device);
-    //
-    //     // The input to the GNN is now: embedding_dim + embedding_dim + scalar_features (degree, charge)
-    //     let gnn_input_dim = self.embedding_dim * 2 + self.n_node_scalars;
-    //
-    //     let edge_encoder = LinearConfig::new(self.edge_feat_dim, dim_gnn).init(device);
-    //
-    //     // GNN
-    //     let mut gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
-    //     for layer_i in 0..NUM_GNN_LAYERS {
-    //         let (in_dim, out_dim) = if layer_i == 0 {
-    //             (gnn_input_dim, dim_gnn)
-    //         } else {
-    //             (dim_gnn, dim_gnn)
-    //         };
-    //         gnn_layers.push(LinearConfig::new(in_dim, out_dim).init(device));
-    //     }
-    //
-    //     let edge_proj = LinearConfig::new(self.edge_feat_dim, 1).init(device);
-    //
-    //     // MLP
-    //     let mut mlp_layers = Vec::with_capacity(NUM_MLP_LAYERS);
-    //     for layer_i in 0..NUM_MLP_LAYERS {
-    //         let (in_dim, out_dim) = if layer_i == 0 {
-    //             (self.global_input_dim, dim_mlp)
-    //         } else {
-    //             (dim_mlp, dim_mlp)
-    //         };
-    //         mlp_layers.push(LinearConfig::new(in_dim, out_dim).init(device));
-    //     }
-    //
-    //     Model {
-    //         emb_elem,
-    //         emb_ff,
-    //         edge_encoder,
-    //         gnn_layers,
-    //         edge_proj,
-    //         mlp_layers,
-    //         fusion_norm: LayerNormConfig::new(combined_dim).init(device),
-    //         head: LinearConfig::new(combined_dim, 1).init(device),
-    //         dropout: DropoutConfig::new(DROPOUT.unwrap_or_default()).init(),
-    //     }
-    // }
-
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
+
         let combined_dim = if self.mlp_enabled {
             self.mlp_hidden_dim
         } else {
             0
-        } + if self.atom_gnn_enabled {
+        } + if self.gnn_atom_enabled {
             self.gnn_hidden_dim
         } else {
             0
-        } + if self.comp_gnn_enabled {
+        } + if self.gnn_comp_enabled {
             self.gnn_hidden_dim
         } else {
             0
@@ -294,9 +260,9 @@ impl ModelConfig {
         let edge_encoder = LinearConfig::new(self.edge_feat_dim, dim_gnn).init(device);
 
         // All GNN layers now operate on dim_gnn -> dim_gnn
-        let mut gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
-        for _ in 0..NUM_GNN_LAYERS {
-            gnn_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
+        let mut gnn_atom_layers = Vec::with_capacity(self.gnn_atom_layers as usize);
+        for _ in 0..self.gnn_atom_layers {
+            gnn_atom_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
 
         let edge_proj = LinearConfig::new(self.edge_feat_dim, 1).init(device);
@@ -308,16 +274,16 @@ impl ModelConfig {
         let comp_node_encoder = LinearConfig::new(comp_gnn_input_dim, dim_gnn).init(device);
         let comp_edge_encoder = LinearConfig::new(self.comp_edge_feat_dim, dim_gnn).init(device);
 
-        let mut comp_gnn_layers = Vec::with_capacity(NUM_GNN_LAYERS);
-        for _ in 0..NUM_GNN_LAYERS {
-            comp_gnn_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
+        let mut gnn_comp_layers = Vec::with_capacity(self.gnn_comp_layers as usize);
+        for _ in 0..self.gnn_comp_layers {
+            gnn_comp_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
 
         let comp_edge_proj = LinearConfig::new(self.comp_edge_feat_dim, 1).init(device);
 
         // MLP Layers
-        let mut mlp_layers = Vec::with_capacity(NUM_MLP_LAYERS);
-        for layer_i in 0..NUM_MLP_LAYERS {
+        let mut mlp_layers = Vec::with_capacity(self.mlp_layers as usize);
+        for layer_i in 0..self.mlp_layers {
             let (in_dim, out_dim) = if layer_i == 0 {
                 (self.global_input_dim, dim_mlp)
             } else {
@@ -331,19 +297,19 @@ impl ModelConfig {
             emb_ff,
             node_encoder,
             edge_encoder,
-            gnn_layers,
+            gnn_layers: gnn_atom_layers,
             edge_proj,
             emb_comp,
             comp_node_encoder,
             comp_edge_encoder,
-            comp_gnn_layers,
+            comp_gnn_layers: gnn_comp_layers,
             comp_edge_proj,
             mlp_layers,
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
             head: LinearConfig::new(combined_dim, 1).init(device),
             dropout: DropoutConfig::new(DROPOUT.unwrap_or_default()).init(),
-            atom_gnn_enabled: self.atom_gnn_enabled,
-            comp_gnn_enabled: self.comp_gnn_enabled,
+            atom_gnn_enabled: self.gnn_atom_enabled,
+            comp_gnn_enabled: self.gnn_comp_enabled,
             mlp_enabled: self.mlp_enabled,
         }
     }
@@ -1107,8 +1073,8 @@ pub(in crate::therapeutic) fn train(
     println!(
         "Branch config for '{}': atom_gnn={} comp_gnn={} mlp={}",
         dataset.name(),
-        branch_cfg.atom_gnn_enabled,
-        branch_cfg.comp_gnn_enabled,
+        branch_cfg.gnn_atom_enabled,
+        branch_cfg.gnn_comp_enabled,
         branch_cfg.mlp_enabled,
     );
 
@@ -1173,9 +1139,12 @@ pub(in crate::therapeutic) fn train(
         n_comp_scalars: PER_COMP_SCALARS,
         comp_edge_feat_dim: PER_EDGE_COMP_FEATS,
         // Read which branches to enable from the config file.
-        atom_gnn_enabled: branch_cfg.atom_gnn_enabled,
-        comp_gnn_enabled: branch_cfg.comp_gnn_enabled,
+        gnn_atom_enabled: branch_cfg.gnn_atom_enabled,
+        gnn_comp_enabled: branch_cfg.gnn_comp_enabled,
         mlp_enabled: branch_cfg.mlp_enabled,
+        gnn_atom_layers: branch_cfg.gnn_atom_layers,
+        gnn_comp_layers: branch_cfg.gnn_comp_layers,
+        mlp_layers: branch_cfg.mlp_layers,
     };
 
     let model = model_cfg.init::<TrainBackend>(&device);

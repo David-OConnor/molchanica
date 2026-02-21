@@ -548,65 +548,96 @@ impl Pharmacophore {
     /// Return (indices passed, ident, atom posits, score).
     ///
     /// Handles incremental loading from disk, with using modest amounts of memory in mind.
+    /// File paths are enumerated once upfront; molecules are then loaded and scored in
+    /// successive batches so only ~[`mol_screening::MOL_CACHE_SIZE_ATOM_COUNT`] atoms
+    /// worth of molecules are held in memory at any one time.
     pub fn screen_ligs(&self, path: &Path, thresh: f32) -> Vec<(usize, String, Vec<Vec3>, f32)> {
         println!("Screening mols using the pharmacophore...");
         let start = Instant::now();
 
-        let max_mols = 10_000; //  todo tempish cap on number of mols.
+        // Enumerate all files once. Sorted for deterministic ordering.
+        let files = match mol_screening::collect_mol_files(path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error collecting molecule files from {path:?}: {e}");
+                return Vec::new();
+            }
+        };
 
+        if files.is_empty() {
+            println!("No molecule files found in {path:?}");
+            return Vec::new();
+        }
+
+        let total_files = files.len();
         let mut res = Vec::new();
-
-        let mut mols_screened = 0;
+        let mut file_offset = 0; // How many files have been consumed (loaded or skipped).
+        let mut mols_screened = 0; // How many molecules have been scored.
 
         loop {
-            let (mols, has_more) = match mol_screening::load_mols(&path, mols_screened) {
+            let remaining = &files[file_offset..];
+            if remaining.is_empty() {
+                break;
+            }
+
+            let (mols, files_consumed) = match mol_screening::load_mol_batch(remaining) {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("Error: Unable to load molecules from path: {e}");
-                    return Vec::new();
+                    eprintln!("Error loading molecule batch: {e}");
+                    break;
                 }
             };
+
             if mols.is_empty() {
                 break;
             }
 
-            let batch_offset = mols_screened;
+            let batch_mol_offset = mols_screened;
             mols_screened += mols.len();
+            file_offset += files_consumed;
 
-            // Note: The performance bottleneck is currently disk-IO, but this still is a parallel
-            // problem which ray helps with, even at modest mol counts.
-            let scores_this_set: Vec<_> = mols
+            // Note: The performance bottleneck is currently disk-IO, but scoring is still a
+            // parallel problem that rayon helps with, even at modest mol counts.
+            let scores_this_batch: Vec<_> = mols
                 .par_iter()
                 .enumerate()
                 .filter_map(|(i, mol)| {
                     let score = self.score(mol);
-
                     if score < thresh {
                         None
                     } else {
                         // todo: Include atom posits?
-                        Some((batch_offset + i, mol.common.ident.clone(), vec![], score))
+                        Some((
+                            batch_mol_offset + i,
+                            mol.common.ident.clone(),
+                            vec![],
+                            score,
+                        ))
                     }
                 })
                 .collect();
 
-            res.extend(scores_this_set);
+            res.extend(scores_this_batch);
 
-            println!("Screening progress. Screened {} mols total", mols_screened);
-
-            if !has_more || mols_screened >= max_mols {
-                break;
-            }
+            println!(
+                "Screening progress: {mols_screened} mols scored \
+                 ({file_offset}/{total_files} files), {} passed so far",
+                res.len()
+            );
         }
 
         let elapsed = start.elapsed().as_millis();
         println!(
-            "Screening complete in {elapsed} ms. {} / {} passed",
-            res.len(),
-            mols_screened
+            "Screening complete in {elapsed} ms. {} / {mols_screened} passed",
+            res.len()
         );
 
-        println!("Mols passed: {:?}", res);
+        if !res.is_empty() {
+            println!("Mols passed:");
+            for (idx, ident, _, score) in &res {
+                println!("  [{idx}] {ident}  score={score:.4}");
+            }
+        }
 
         res
     }

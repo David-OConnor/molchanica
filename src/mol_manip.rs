@@ -613,7 +613,6 @@ pub fn set_manip(
                 scene.input_settings.control_scheme = vol.control_scheme_prev;
                 vol.mol_manip.mode = ManipMode::None;
                 vol.mol_manip.pivot = None;
-                println!("\nExiting manip\n"); // todo temp
 
                 if op_mode == OperatingMode::MolEditor {
                     *rebuild_md_editor = true;
@@ -623,7 +622,6 @@ pub fn set_manip(
                 vol.mol_manip.mode = ManipMode::Move((mol_type_active, item_to_move_i));
             } else {
                 // Entering a move from no manip prior.
-                println!("\nEntering manip\n"); // todo temp
 
                 if scene.input_settings.control_scheme != ControlScheme::None {
                     vol.control_scheme_prev = scene.input_settings.control_scheme;

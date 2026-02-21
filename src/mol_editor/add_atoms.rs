@@ -10,6 +10,7 @@ use na_seq::{
 };
 
 use crate::{
+    mol_components::MolComponents,
     mol_editor,
     mol_editor::{MolEditorState, NEXT_ATOM_SN, templates::Template},
     mol_manip::ManipMode,
@@ -164,6 +165,7 @@ pub fn add_from_template(
     state_ui: &mut StateUi,
     controls: &mut ControlScheme,
     manip_mode: ManipMode,
+    components: &Option<MolComponents>,
 ) {
     let anchor_posits = anchor_is
         .iter()
@@ -234,6 +236,7 @@ pub fn add_from_template(
                 state_ui,
                 &mut Default::default(),
                 manip_mode,
+                components,
             );
         }
     }
@@ -255,6 +258,7 @@ pub fn add_from_template(
             state_ui,
             &mut Default::default(),
             manip_mode,
+            components,
         );
     }
 
@@ -267,6 +271,7 @@ pub fn add_from_template(
             state_ui,
             &mut Default::default(),
             manip_mode,
+            components,
         );
     }
 
@@ -318,6 +323,7 @@ pub fn add_atom(
     updates: &mut EngineUpdates,
     control: &mut ControlScheme,
     manip_mode: ManipMode,
+    components: &Option<MolComponents>,
 ) -> Option<usize> {
     // let mol = &mut editor.mol.common;
 
@@ -410,7 +416,7 @@ pub fn add_atom(
     let i_new = mol.atoms.len() - 1;
     let i_new_bond = mol.bonds.len() - 1;
 
-    mol_editor::draw_atom(entities, &mol.atoms[i_new], ui);
+    mol_editor::draw_atom(entities, &mol.atoms[i_new], components, ui);
     mol_editor::draw_bond(
         entities,
         &mol.bonds[i_new_bond],
@@ -418,12 +424,13 @@ pub fn add_atom(
         &mol.bonds,
         &mol.adjacency_list,
         ui,
+        components,
     );
 
     // Add hydrogens to the new atom.
     // Up to one recursion to add hydrogens to this parent and to the new atom.
     if element != Hydrogen {
-        populate_hydrogens_on_atom(mol, i_new, entities, ui, updates, manip_mode);
+        populate_hydrogens_on_atom(mol, i_new, entities, ui, updates, manip_mode, components);
         *control = ControlScheme::Arc {
             center: mol.centroid().into(),
         };
@@ -484,6 +491,7 @@ pub fn populate_hydrogens_on_atom(
     state_ui: &mut StateUi,
     engine_updates: &mut EngineUpdates,
     manip_mode: ManipMode,
+    components: &Option<MolComponents>,
 ) {
     if i >= mol.atoms.len() {
         eprintln!("Error: Invalid atom index when populating Hydrogens.");
@@ -524,6 +532,7 @@ pub fn populate_hydrogens_on_atom(
             engine_updates,
             &mut ControlScheme::None,
             manip_mode,
+            components,
         );
     }
 }

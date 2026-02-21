@@ -8,6 +8,7 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
+    button,
     cam::move_cam_to_active_mol,
     drawing,
     drawing::{
@@ -535,12 +536,13 @@ pub(in crate::ui) fn display_mol_data_peptide(
                         };
                         ui.add_space(COL_SPACING / 2.);
 
-                        if ui
-                            .button(RichText::new(format!("Lig to {name}")).color(COLOR_HIGHLIGHT))
-                            .on_hover_text("Move the ligand to be colocated with this residue. this is intended to \
+                        if button!(ui, format!("Lig to {name}"), COLOR_HIGHLIGHT,
+                        "Move the ligand to be colocated with this residue. this is intended to \
                     be used to synchronize the ligand with a pre-positioned hetero residue in the protein file, e.g. \
                     prior to docking. In addition to moving \
-                    its center, this attempts to align each atom with its equivalent on the residue.")
+                    its center, this attempts to align each atom with its equivalent on the residue."
+
+                        )
                             .clicked()
                         {
                             // todo: I don't like this clone, but it avoids a dbl-borrow.
@@ -557,9 +559,13 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 state.ui.selection,
                 Selection::None | Selection::AtomLig(_)
             ) {
-                        if ui
-                            .button(RichText::new("Move lig to sel").color(COLOR_HIGHLIGHT))
-                            .on_hover_text("Re-position the ligand to be colacated with the selected atom or residue.")
+
+                        if button!(
+                            ui,
+                            "Move lig to sel",
+                            COLOR_HIGHLIGHT,
+                            "Re-position the ligand to be colocated with the selected atom or residue."
+                        )
                             .clicked()
                         {
                             let peptide = state.peptide.as_ref().unwrap();
@@ -624,8 +630,12 @@ pub(in crate::ui) fn display_mol_data_peptide(
     if let Some(mol) = &state.peptide {
         // todo: Temp location
         if let Selection::AtomPeptide(sel_i) = state.ui.selection {
-            if ui.button(RichText::new("Pocket from sel").color(COLOR_ACTION))
-                .on_hover_text("Create a pocket around the selected atom. For screening, docking, pharmacophores etc.")
+            if button!(
+                ui,
+                "Pocket from sel",
+                COLOR_ACTION,
+                "Create a pocket around the selected atom. For screening, docking, pharmacophores etc."
+            )
                 .clicked() {
 
                 // todo: Rel or abs?
@@ -635,11 +645,14 @@ pub(in crate::ui) fn display_mol_data_peptide(
             }
         }
 
-        if ui
-            .button(RichText::new("Make ligs/pockets").color(COLOR_ACTION))
-            .on_hover_text("Create ligands or pockets based on hetero residues in the protein. \
+        if button!(
+            ui,
+            "Make ligs/pockets",
+            COLOR_ACTION,
+            "Create ligands or pockets based on hetero residues in the protein. \
                 This may be used in pharmacophore creation, screening, etc. Hetero residues included in mmCIF \
-                files may represent bound ligands.")
+                files may represent bound ligands."
+        )
             .clicked()
         {
             state.ui.popup.lig_pocket_creation = !state.ui.popup.lig_pocket_creation;
@@ -717,10 +730,13 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
                 }
             }
 
-            if ui
-                .button("Metadata")
-                .on_hover_text("Display metadata for this molecule")
-                .clicked()
+            if button!(
+                ui,
+                "Metadata",
+                Color32::GRAY,
+                "Display metadata for this molecule"
+            )
+            .clicked()
             {
                 if let Some((mol_type, _)) = state.ui.popup.metadata
                     && mol_type == MolType::Ligand

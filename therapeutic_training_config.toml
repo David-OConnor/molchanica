@@ -1,5 +1,12 @@
 [adme]
 gnn_atom_enabled = true
 gnn_comp_enabled = true
-mlp_enabled = false
+gnn_spacial_enabled = true
+mlp_enabled = true
 
+# Increasing layers may or may not improve model performance. It will slow down inference and training.
+# We have it lower than idea now to improve speed.
+gnn_atom_layers = 1
+gnn_comp_layers = 2
+gnn_spacial_layers = 2
+mlp_layers = 1

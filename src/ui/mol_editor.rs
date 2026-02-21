@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use std::{path::Components, sync::atomic::Ordering};
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
@@ -11,6 +11,7 @@ use na_seq::{
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
+    mol_components::MolComponents,
     mol_editor,
     mol_editor::{
         MolEditorState,
@@ -98,6 +99,7 @@ fn change_el_button(
                 state_ui,
                 engine_updates,
                 manip_mode,
+                &mol.components,
             );
         }
 
@@ -112,10 +114,9 @@ pub(in crate::ui) fn editor(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
+    mut redraw: bool,
     ui: &mut Ui,
 ) {
-    let mut redraw = false;
-
     ui.horizontal_wrapped(|ui| {
         section_box().show(ui, |ui| {
             // ui.horizontal_wrapped(|ui| {
@@ -391,6 +392,7 @@ pub(in crate::ui) fn editor(
                         &mut state.ui,
                         updates,
                         state.volatile.mol_manip.mode,
+                        &state.mol_editor.mol.components,
                     );
                 }
 
@@ -607,6 +609,7 @@ fn edit_tools(
                     &mut state.ui,
                     engine_updates,
                     state.volatile.mol_manip.mode,
+                    &state.mol_editor.mol.components,
                 );
             }
 
@@ -637,6 +640,7 @@ fn edit_tools(
                         engine_updates,
                         &mut scene.input_settings.control_scheme,
                         state.volatile.mol_manip.mode,
+                        &state.mol_editor.mol.components,
                     );
 
                     state.mol_editor.mol.update_characterization();
@@ -665,6 +669,7 @@ fn edit_tools(
                         engine_updates,
                         &mut scene.input_settings.control_scheme,
                         state.volatile.mol_manip.mode,
+                        &state.mol_editor.mol.components,
                     );
 
                     if let Some(i) = new_i {
@@ -951,6 +956,7 @@ fn template_section(
                     &mut state.ui,
                     controls,
                     state.volatile.mol_manip.mode,
+                    &state.mol_editor.mol.components,
                 );
             }
         };

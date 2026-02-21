@@ -503,7 +503,7 @@ pub(in crate::ui) fn sidebar(
             }
 
             if edit_mode {
-                mol_editor_sidebar::component_list(state, ui);
+                mol_editor_sidebar::component_list(state, ui, &mut redraw.ligand);
             }
 
             // todo: UI flag to show or hide this.

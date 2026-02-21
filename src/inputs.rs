@@ -702,6 +702,7 @@ fn handle_physical_key(
                             updates,
                             &mut scene.input_settings.control_scheme,
                             state.volatile.mol_manip.mode,
+                            &state.mol_editor.mol.components,
                         );
                         state.mol_editor.mol.update_characterization();
 
