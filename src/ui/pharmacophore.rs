@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
-use graphics::{EngineUpdates, Scene};
-
+use crate::therapeutic::pharmacophore::PharmacophoreState;
 use crate::{
     button, drawing,
     drawing::blend_color,
@@ -22,6 +20,8 @@ use crate::{
     },
     util::{RedrawFlags, handle_err, make_egui_color},
 };
+use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
+use graphics::{EngineUpdates, Scene};
 
 /// Assumes run from the editor for now. For setting relations between
 /// Pharmacophore features, e.g. "or" logic.
@@ -419,7 +419,7 @@ pub(in crate::ui) fn pharmacophore_summary(
     ph: &Pharmacophore,
     ph_i: usize,
     popup: &mut PopupState,
-    ph_for_screening: &mut Option<usize>,
+    ph_state: &mut PharmacophoreState,
     ui: &mut Ui,
 ) {
     let mut feat_counts = HashMap::new();
@@ -441,7 +441,11 @@ pub(in crate::ui) fn pharmacophore_summary(
 
         if ui.button(RichText::new("Screen")).clicked() {
             popup.pharmacophore_screening = !popup.pharmacophore_screening;
-            *ph_for_screening = Some(ph_i)
+            ph_state.ph_for_screening = Some(ph_i)
+        }
+
+        if ph_state.screening_in_progress {
+            label!(ui, "Screening in progress", COLOR_ACTIVE);
         }
     });
 }
@@ -479,28 +483,38 @@ pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
         ui.add_space(ROW_SPACING);
 
         if state.pharmacophore.screening_in_progress {
-            label!(ui, "Screening in progress", COLOR_ACTION);
+            label!(ui, "Screening in progress", COLOR_ACTIVE);
+            ui.add_space(ROW_SPACING);
         }
 
-        label!(ui, "Results", Color32::GRAY);
-        for v in &state.pharmacophore.screening_results {}
-
-        if button!(
-            ui,
-            "Run Screening",
-            COLOR_ACTION,
-            "Start the screening at this path"
-        )
-        .clicked()
-        {
-            // todo: Sort out your state of lig-basd pharmacophores vs full ones
-            let ph = &state.ligands[ph_i].pharmacophore;
-            // let ph = &state.pharmacophores[ph_i];
-            state.volatile.thread_receivers.ph_screening = Some(ph.screen_ligs(
-                &path,
-                PHARMACOPHORE_SCREENING_THRESH_DEFAULT,
-                &mut state.pharmacophore.screening_in_progress,
-            ));
+        label!(ui, "Results:", Color32::GRAY);
+        for v in &state.pharmacophore.screening_results {
+            label!(ui, format!("{v:?}"), Color32::WHITE);
         }
+        ui.add_space(ROW_SPACING);
+
+        ui.horizontal(|ui| {
+            if button!(
+                ui,
+                "Run Screening",
+                COLOR_ACTION,
+                "Start the screening at this path"
+            )
+            .clicked()
+            {
+                // todo: Sort out your state of lig-basd pharmacophores vs full ones
+                let ph = &state.ligands[ph_i].pharmacophore;
+                // let ph = &state.pharmacophores[ph_i];
+                state.volatile.thread_receivers.ph_screening = Some(ph.screen_ligs(
+                    &path,
+                    PHARMACOPHORE_SCREENING_THRESH_DEFAULT,
+                    &mut state.pharmacophore.screening_in_progress,
+                ));
+            }
+
+            if button!(ui, "Stop", COLOR_ACTION, "Abort the screening process.").clicked() {
+                state.pharmacophore.screening_in_progress = false;
+            }
+        });
     }
 }

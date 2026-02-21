@@ -698,14 +698,14 @@ impl Pharmacophore {
         thresh: f32,
         ph_screening_in_progress: &mut bool,
     ) -> Receiver<Vec<PhScreeningScore>> {
-        println!("Pharmacophore screening starting…");
+        println!("Pharmacophore screening started");
 
         // Clone so the thread owns the pharmacophore, and convert the borrowed path to an
         // owned PathBuf — both are required for `thread::spawn`'s `'static` bound.
         let pharmacophore = self.clone();
         let path = path.to_path_buf();
 
-        *ph_screening_in_progress = false;
+        *ph_screening_in_progress = true;
 
         let (tx, rx) = mpsc::channel();
 

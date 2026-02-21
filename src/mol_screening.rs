@@ -24,6 +24,9 @@ use crate::{
 // atom count as a proxy; better than molecule count, but perhaps not as regular as bytes.
 pub const MOL_CACHE_SIZE_ATOM_COUNT: u32 = 1_000_000;
 
+// Every this many mols loaded and screened, pritn a status update.
+const LOAD_STATUS_RATIO: usize = 20_000;
+
 /// Screen small molecules by matching to a template. This is a cheap procedure that can be run
 /// prior to a more careful screening or alignment.
 pub fn screen_by_alignment(
@@ -177,7 +180,7 @@ pub fn load_mol_batch(files: &[PathBuf]) -> io::Result<(Vec<MoleculeSmall>, usiz
         atoms_loaded += mol.common.atoms.len() as u32;
         result.push(mol);
 
-        if result.len().is_multiple_of(2_000) {
+        if result.len().is_multiple_of(LOAD_STATUS_RATIO) {
             println!(
                 "Loading progress: {} mols, {atoms_loaded} atoms",
                 result.len()

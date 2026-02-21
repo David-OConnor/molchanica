@@ -2,6 +2,7 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::therapeutic::pharmacophore::PharmacophoreState;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam},
@@ -25,7 +26,7 @@ fn mol_picker_one(
     // tood; Just take Statevolatile.
     active_mol: &mut Option<(MolType, usize)>,
     orbit_center: &mut Option<(MolType, usize)>,
-    ph_for_screening: &mut Option<usize>,
+    ph_state: &mut PharmacophoreState,
     i_mol: usize,
     mol: &mut MoleculeCommon,
     mol_char: &Option<MolCharacterization>,
@@ -153,7 +154,7 @@ fn mol_picker_one(
     if let Some(pm) = pharmacophore
         && !pm.features.is_empty()
     {
-        pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_for_screening, ui);
+        pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_state, ui);
     }
     ui.separator();
 }
@@ -179,7 +180,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.pharmacophore.ph_for_screening,
+            &mut state.pharmacophore,
             0,
             &mut mol.common,
             &None,
@@ -201,7 +202,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.pharmacophore.ph_for_screening,
+            &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
             &mol.characterization,
@@ -223,7 +224,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.pharmacophore.ph_for_screening,
+            &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
             &None,
@@ -246,7 +247,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.pharmacophore.ph_for_screening,
+            &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
             &None,
@@ -269,7 +270,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.pharmacophore.ph_for_screening,
+            &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
             &None,
