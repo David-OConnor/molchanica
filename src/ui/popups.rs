@@ -299,8 +299,6 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
                 .button(RichText::new("Run screening").color(COLOR_ACTION))
                 .clicked()
             {
-                // todo: Don't block; launch a new thread.
-
                 // let path = Path::new("C:/Users/the_a/Desktop/bio_misc/amber_geostd/c");
                 if let Ok((mols, _)) = mol_screening::load_mols(path, 0) {
                     state.volatile.alignment.mols_passed_screening = Vec::new();

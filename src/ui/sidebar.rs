@@ -179,7 +179,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.volatile.pharmacophore_for_screening,
+            &mut state.pharmacophore.ph_for_screening,
             0,
             &mut mol.common,
             &None,
@@ -201,7 +201,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.volatile.pharmacophore_for_screening,
+            &mut state.pharmacophore.ph_for_screening,
             i_mol,
             &mut mol.common,
             &mol.characterization,
@@ -223,7 +223,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.volatile.pharmacophore_for_screening,
+            &mut state.pharmacophore.ph_for_screening,
             i_mol,
             &mut mol.common,
             &None,
@@ -246,7 +246,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.volatile.pharmacophore_for_screening,
+            &mut state.pharmacophore.ph_for_screening,
             i_mol,
             &mut mol.common,
             &None,
@@ -269,7 +269,7 @@ fn mol_picker(
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
-            &mut state.volatile.pharmacophore_for_screening,
+            &mut state.pharmacophore.ph_for_screening,
             i_mol,
             &mut mol.common,
             &None,

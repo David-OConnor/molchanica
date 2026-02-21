@@ -38,7 +38,9 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         infer::Infer,
-        pharmacophore::{Pharmacophore, PharmacophoreFeatType},
+        pharmacophore::{
+            PhScreeningScore, Pharmacophore, PharmacophoreFeatType, PharmacophoreState,
+        },
     },
     threads::ThreadReceivers,
     util::orca_avail,
@@ -74,6 +76,9 @@ pub struct State {
     pub templates: Templates,
     pub mol_editor: MolEditorState,
     pub orca: StateOrca,
+    /// For pharmacophore-based screening
+    /// todo: Pharmacophore state
+    pub pharmacophore: PharmacophoreState,
 }
 
 impl Default for State {
@@ -108,6 +113,7 @@ impl Default for State {
             templates: Default::default(),
             mol_editor: Default::default(),
             orca: Default::default(),
+            pharmacophore: Default::default(),
         }
     }
 }
@@ -289,7 +295,6 @@ pub struct StateVolatile {
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
-    pub pharmacophore_for_screening: Option<usize>,
 }
 
 impl StateVolatile {

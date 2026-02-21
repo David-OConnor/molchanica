@@ -18,9 +18,9 @@ pub mod pharmacophore;
 mod solubility;
 pub mod train;
 
-mod gnn;
 #[cfg(feature = "train")]
-pub mod model_eval;
+pub mod eval;
+mod gnn;
 mod mol_gen;
 mod train_md;
 mod train_test_split_indices;

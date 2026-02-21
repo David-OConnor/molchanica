@@ -3,7 +3,16 @@
 //!
 //! https://www.eyesopen.com/rocs
 
-use std::{collections::HashMap, fmt::Display, io, io::ErrorKind, path::Path, time::Instant};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    io,
+    io::ErrorKind,
+    path::Path,
+    sync::{mpsc, mpsc::Receiver},
+    thread,
+    time::Instant,
+};
 
 use bincode::{Decode, Encode, de::Decoder};
 use bio_files::PharmacophoreTypeGeneric;
@@ -19,7 +28,7 @@ use crate::{
     parse_le,
     render::Color,
     therapeutic::pharmacophore::PharmacophoreFeatType::{
-        AcceptorProjected, Donor, DonorProjected, Hydrophilic, Hydrophobic,
+        Acceptor, AcceptorProjected, Donor, DonorProjected, Hydrophilic, Hydrophobic,
     },
 };
 // #[derive(Clone, Debug)]
@@ -32,7 +41,16 @@ use crate::{
 //     pub hydrogen_bonds: Vec<HydrogenBondTwoMols>,
 // }
 
+#[derive(Clone, Debug, Default)]
+pub struct PharmacophoreState {
+    pub screening_results: Vec<PhScreeningScore>,
+    pub screening_in_progress: bool,
+    pub ph_for_screening: Option<usize>,
+}
+
 pub const PHARMACOPHORE_SCREENING_THRESH_DEFAULT: f32 = 0.6;
+
+pub type PhScreeningScore = (usize, String, Vec<Vec3>, f32);
 
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
 /// The u8 rep is for serialization
@@ -538,111 +556,235 @@ impl Pharmacophore {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         Self::default()
     }
-}
 
-impl Pharmacophore {
-    pub fn create(mols: &[MoleculeSmall]) -> Vec<Self> {
-        Vec::new()
-    }
-
-    /// Return (indices passed, ident, atom posits, score).
-    ///
-    /// Handles incremental loading from disk, with using modest amounts of memory in mind.
-    /// File paths are enumerated once upfront; molecules are then loaded and scored in
-    /// successive batches so only ~[`mol_screening::MOL_CACHE_SIZE_ATOM_COUNT`] atoms
-    /// worth of molecules are held in memory at any one time.
-    pub fn screen_ligs(&self, path: &Path, thresh: f32) -> Vec<(usize, String, Vec<Vec3>, f32)> {
-        println!("Screening mols using the pharmacophore...");
-        let start = Instant::now();
-
-        // Enumerate all files once. Sorted for deterministic ordering.
-        let files = match mol_screening::collect_mol_files(path) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("Error collecting molecule files from {path:?}: {e}");
-                return Vec::new();
-            }
+    /// Create a pharmacophore from all candidate sites in a molecule — one `PharmacophoreFeature`
+    /// per site, not per type. For example, a molecule with two H-bond donors produces two
+    /// Donor features. This is designed for use in the spatial ML pipeline rather than for
+    /// screening queries (which use a curated subset of features).
+    pub fn new_all_candidates(mol: &MoleculeSmall) -> Self {
+        let Some(char) = mol.characterization.as_ref() else {
+            return Self::default();
         };
 
-        if files.is_empty() {
-            println!("No molecule files found in {path:?}");
-            return Vec::new();
+        let atom_posits = &mol.common.atom_posits;
+        let mut features = Vec::new();
+
+        use PharmacophoreFeatType::*;
+
+        // H-bond donors: atom position is the heavy atom bearing the H.
+        for &i in &char.h_bond_donor {
+            if i >= atom_posits.len() {
+                continue;
+            }
+            features.push(PharmacophoreFeature {
+                feature_type: Donor,
+                posit: atom_posits[i],
+                atom_i: vec![i],
+                tolerance: 1.0,
+                strength: 1.0,
+                ..Default::default()
+            });
         }
 
-        let total_files = files.len();
-        let mut res = Vec::new();
-        let mut file_offset = 0; // How many files have been consumed (loaded or skipped).
-        let mut mols_screened = 0; // How many molecules have been scored.
-
-        loop {
-            let remaining = &files[file_offset..];
-            if remaining.is_empty() {
-                break;
+        // H-bond acceptors: atom position is the lone-pair-bearing heavy atom.
+        for &i in &char.h_bond_acceptor {
+            if i >= atom_posits.len() {
+                continue;
             }
+            features.push(PharmacophoreFeature {
+                feature_type: Acceptor,
+                posit: atom_posits[i],
+                atom_i: vec![i],
+                tolerance: 1.0,
+                strength: 1.0,
+                ..Default::default()
+            });
+        }
 
-            let (mols, files_consumed) = match mol_screening::load_mol_batch(remaining) {
-                Ok(m) => m,
+        // Cations: protonatable amines (consistent with how score() identifies cation sites).
+        for &i in &char.amines {
+            if i >= atom_posits.len() {
+                continue;
+            }
+            features.push(PharmacophoreFeature {
+                feature_type: Cation,
+                posit: atom_posits[i],
+                atom_i: vec![i],
+                tolerance: 1.5,
+                strength: 1.0,
+                ..Default::default()
+            });
+        }
+
+        // Anions: carboxylate oxygens (consistent with how score() identifies anion sites).
+        for &i in &char.carboxylate {
+            if i >= atom_posits.len() {
+                continue;
+            }
+            features.push(PharmacophoreFeature {
+                feature_type: Anion,
+                posit: atom_posits[i],
+                atom_i: vec![i],
+                tolerance: 1.5,
+                strength: 1.0,
+                ..Default::default()
+            });
+        }
+
+        // Aromatic rings: centroid position, all ring atoms stored in atom_i,
+        // ring plane normal stored in oscillation so directional scoring in score() works.
+        for ring in char
+            .rings
+            .iter()
+            .filter(|r| r.ring_type == RingType::Aromatic)
+        {
+            // QC: all ring atom indices must be in bounds.
+            if ring.atoms.iter().any(|&a| a >= atom_posits.len()) {
+                eprintln!("Warning: aromatic ring has out-of-bounds atom index; skipping feature.");
+                continue;
+            }
+            features.push(PharmacophoreFeature {
+                feature_type: Aromatic,
+                posit: ring.center(atom_posits),
+                atom_i: ring.atoms.clone(),
+                tolerance: 1.5,
+                strength: 1.0,
+                // Store ring normal so score() can apply directional modulation.
+                oscillation: Some(Motion::Oscillator(Oscillator {
+                    k_b: 0.0,
+                    max_displacement: 0.0,
+                    orientation: ring.plane_norm,
+                })),
+                ..Default::default()
+            });
+        }
+
+        // Hydrophobic carbons.
+        for &i in &char.hydrophobic_carbon {
+            if i >= atom_posits.len() {
+                continue;
+            }
+            features.push(PharmacophoreFeature {
+                feature_type: Hydrophobic,
+                posit: atom_posits[i],
+                atom_i: vec![i],
+                tolerance: 1.5,
+                strength: 0.8, // Slightly down-weighted vs polar features.
+                ..Default::default()
+            });
+        }
+
+        Self {
+            name: "All sites".to_string(),
+            features,
+            feature_relations: Vec::new(),
+            pocket: None,
+        }
+    }
+
+    /// Spawn a background thread that screens all molecules in `path` against this pharmacophore,
+    /// sending results incrementally through the returned channel.
+    ///
+    /// Files are enumerated once, then loaded and scored in successive batches so only
+    /// ~[`mol_screening::MOL_CACHE_SIZE_ATOM_COUNT`] atoms worth of molecules are held in
+    /// memory at any one time.  Rayon parallelises scoring within each batch.
+    ///
+    /// Poll the returned [`Receiver`] each frame (see `threads::handle_thread_rx`).  Results
+    /// arrive as `Vec<PhScreeningScore>` messages — one message per completed batch.  When the
+    /// thread is done the channel closes and the receiver returns `Disconnected`.
+    pub fn screen_ligs(
+        &self,
+        path: &Path,
+        thresh: f32,
+        ph_screening_in_progress: &mut bool,
+    ) -> Receiver<Vec<PhScreeningScore>> {
+        println!("Pharmacophore screening starting…");
+
+        // Clone so the thread owns the pharmacophore, and convert the borrowed path to an
+        // owned PathBuf — both are required for `thread::spawn`'s `'static` bound.
+        let pharmacophore = self.clone();
+        let path = path.to_path_buf();
+
+        *ph_screening_in_progress = false;
+
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let files = match mol_screening::collect_mol_files(&path) {
+                Ok(f) => f,
                 Err(e) => {
-                    eprintln!("Error loading molecule batch: {e}");
-                    break;
+                    eprintln!("Error collecting molecule files from {path:?}: {e}");
+                    return;
                 }
             };
 
-            if mols.is_empty() {
-                break;
+            if files.is_empty() {
+                println!("No molecule files found in {path:?}");
+                return;
             }
 
-            let batch_mol_offset = mols_screened;
-            mols_screened += mols.len();
-            file_offset += files_consumed;
+            let total_files = files.len();
+            let mut file_offset = 0; // Files consumed (loaded or skipped).
+            let mut mols_screened = 0; // Molecules scored so far.
 
-            // Note: The performance bottleneck is currently disk-IO, but scoring is still a
-            // parallel problem that rayon helps with, even at modest mol counts.
-            let scores_this_batch: Vec<_> = mols
-                .par_iter()
-                .enumerate()
-                .filter_map(|(i, mol)| {
-                    let score = self.score(mol);
-                    if score < thresh {
-                        None
-                    } else {
-                        // todo: Include atom posits?
-                        Some((
-                            batch_mol_offset + i,
-                            mol.common.ident.clone(),
-                            vec![],
-                            score,
-                        ))
+            loop {
+                let remaining = &files[file_offset..];
+                if remaining.is_empty() {
+                    break;
+                }
+
+                let (mols, files_consumed) = match mol_screening::load_mol_batch(remaining) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("Error loading molecule batch: {e}");
+                        break;
                     }
-                })
-                .collect();
+                };
 
-            res.extend(scores_this_batch);
+                if mols.is_empty() {
+                    break;
+                }
 
-            println!(
-                "Screening progress: {mols_screened} mols scored \
-                 ({file_offset}/{total_files} files), {} passed so far",
-                res.len()
-            );
-            for r in &res {
-                println!("  -Passed: {}: {:.2}", r.1, r.3); // Ident
+                let batch_mol_offset = mols_screened;
+                mols_screened += mols.len();
+                file_offset += files_consumed;
+
+                // Score in parallel within the batch — rayon handles the parallelism, so no
+                // inner thread::spawn needed here.
+                let batch_results: Vec<_> = mols
+                    .par_iter()
+                    .enumerate()
+                    .filter_map(|(i, mol)| {
+                        let score = pharmacophore.score(mol);
+                        if score < thresh {
+                            None
+                        } else {
+                            Some((
+                                batch_mol_offset + i,
+                                mol.common.ident.clone(),
+                                vec![],
+                                score,
+                            ))
+                        }
+                    })
+                    .collect();
+
+                println!(
+                    "Screening progress: {mols_screened} mols scored \
+                     ({file_offset}/{total_files} files), {} passed this batch",
+                    batch_results.len(),
+                );
+
+                // If the receiver was dropped (UI closed etc.), stop early.
+                if tx.send(batch_results).is_err() {
+                    break;
+                }
             }
-        }
 
-        let elapsed = start.elapsed().as_millis();
-        println!(
-            "Screening complete in {elapsed} ms. {} / {mols_screened} passed",
-            res.len()
-        );
+            println!("Pharmacophore screening complete.");
+        });
 
-        if !res.is_empty() {
-            println!("Mols passed:");
-            for (idx, ident, _, score) in &res {
-                println!("  [{idx}] {ident}  score={score:.4}");
-            }
-        }
-
-        res
+        rx
     }
 
     pub fn score(&self, mol: &MoleculeSmall) -> f32 {

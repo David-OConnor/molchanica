@@ -4,7 +4,7 @@ use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
-    drawing,
+    button, drawing,
     drawing::blend_color,
     label, mol_manip,
     mol_manip::ManipMode,
@@ -472,20 +472,35 @@ pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
 
     if let Some(path) = &state.to_save.screening_path
-        && let Some(ph_i) = state.volatile.pharmacophore_for_screening
+        && let Some(ph_i) = state.pharmacophore.ph_for_screening
     {
         label!(ui, format!("Path: {path:?}"), Color32::GRAY);
 
         ui.add_space(ROW_SPACING);
 
-        if ui
-            .button(RichText::new("Run screening").color(COLOR_ACTION))
-            .clicked()
+        if state.pharmacophore.screening_in_progress {
+            label!(ui, "Screening in progress", COLOR_ACTION);
+        }
+
+        label!(ui, "Results", Color32::GRAY);
+        for v in &state.pharmacophore.screening_results {}
+
+        if button!(
+            ui,
+            "Run Screening",
+            COLOR_ACTION,
+            "Start the screening at this path"
+        )
+        .clicked()
         {
             // todo: Sort out your state of lig-basd pharmacophores vs full ones
             let ph = &state.ligands[ph_i].pharmacophore;
             // let ph = &state.pharmacophores[ph_i];
-            ph.screen_ligs(&path, PHARMACOPHORE_SCREENING_THRESH_DEFAULT);
+            state.volatile.thread_receivers.ph_screening = Some(ph.screen_ligs(
+                &path,
+                PHARMACOPHORE_SCREENING_THRESH_DEFAULT,
+                &mut state.pharmacophore.screening_in_progress,
+            ));
         }
     }
 }

@@ -5,6 +5,8 @@
 //! We bypass parts of our molecule loading algorithm for speed: E.g. skipping inferring partial charge
 //! ff type, characterization, and other properties that are not required.
 
+// todo: Pre-categorizie small mols, and set this up in a DB. E.g. by PubChem ID
+
 use std::{
     io,
     path::{Path, PathBuf},

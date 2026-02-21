@@ -211,8 +211,7 @@ impl Infer {
         };
 
         let mut p_pharm_scalars = Vec::with_capacity(MAX_PHARM * PER_PHARM_SCALARS);
-        p_pharm_scalars
-            .extend_from_slice(&graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
+        p_pharm_scalars.extend_from_slice(&graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
         p_pharm_scalars.extend(std::iter::repeat_n(
             0.0_f32,
             (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS,

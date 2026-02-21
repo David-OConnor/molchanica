@@ -57,7 +57,7 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "train")]
-use crate::therapeutic::model_eval::eval;
+use crate::therapeutic::eval::eval;
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
@@ -67,6 +67,7 @@ use crate::{
             PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
             PHARM_VOCAB_SIZE,
         },
+        pharmacophore::Pharmacophore,
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -1008,6 +1009,8 @@ pub(in crate::therapeutic) fn load_training_data(
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
         mol.update_characterization(); // also builds mol.components
+
+        mol.pharmacophore = Pharmacophore::new_all_candidates(&mol);
 
         if train_set.contains(&i) {
             result.train.push((mol, target));

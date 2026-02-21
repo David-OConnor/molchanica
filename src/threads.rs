@@ -9,13 +9,14 @@ use bio_apis::{
     rcsb::{FilesAvailable, PdbDataResults},
 };
 use graphics::{EngineUpdates, Scene};
+use lin_alg::f64::Vec3;
 
 use crate::{
     molecules::MolIdent,
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::{MeshColors, apply_mesh_colors},
     state::State,
-    therapeutic::TherapeuticProperties,
+    therapeutic::{TherapeuticProperties, pharmacophore::PhScreeningScore},
 };
 
 /// Contains receivers for threads. We use these for longer-running processes, as to
@@ -37,6 +38,10 @@ pub struct ThreadReceivers {
     /// The first param is the index.
     pub amber_geostd_data_avail: Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
     pub peptide_mesh_coloring: Option<Receiver<Option<MeshColors>>>,
+    /// Pharmacophore. Returned in batches, e.g. of a large directory.
+    // /// This threads runs the whole outer loops, screening all molecules
+    // pub ph_screening_outer: Option<Receiver<Vec<PhScreeningScore>>>,
+    pub ph_screening: Option<Receiver<Vec<PhScreeningScore>>>,
 }
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
@@ -136,5 +141,20 @@ pub fn handle_thread_rx(state: &mut State, scene: &mut Scene, updates: &mut Engi
         apply_mesh_colors(&mut scene.meshes[MESH_PEP_SOLVENT_SURFACE], &colors);
         updates.meshes = true;
         state.volatile.thread_receivers.peptide_mesh_coloring = None;
+    }
+
+    if let Some(rx) = &mut state.volatile.thread_receivers.ph_screening {
+        loop {
+            match rx.try_recv() {
+                Ok(batch) => state.pharmacophore.screening_results.extend(batch),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread finished; drop the receiver.
+                    state.volatile.thread_receivers.ph_screening = None;
+                    state.pharmacophore.screening_in_progress = false;
+                    break;
+                }
+            }
+        }
     }
 }
