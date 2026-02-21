@@ -128,6 +128,7 @@ impl PharmacophoreFeatType {
         ]
     }
 
+    # todo: Use TryFromPrimitive
     pub fn from_u8(v: u8) -> Option<Self> {
         use PharmacophoreFeatType::*;
 
@@ -537,6 +538,8 @@ impl PharmacophoreFeature {
 #[derive(Clone, Debug, Default)]
 pub struct Pharmacophore {
     pub name: String,
+    /// Used for pairing with an open ligand.
+    pub mol_ident: String,
     pub features: Vec<PharmacophoreFeature>,
     pub feature_relations: Vec<FeatureRelation>,
     // pub excluded_volume: Option<PocketVolume>,
@@ -562,14 +565,14 @@ impl Pharmacophore {
     /// Donor features. This is designed for use in the spatial ML pipeline rather than for
     /// screening queries (which use a curated subset of features).
     pub fn new_all_candidates(mol: &MoleculeSmall) -> Self {
+        use PharmacophoreFeatType::*;
+
         let Some(char) = mol.characterization.as_ref() else {
             return Self::default();
         };
 
         let atom_posits = &mol.common.atom_posits;
         let mut features = Vec::new();
-
-        use PharmacophoreFeatType::*;
 
         // H-bond donors: atom position is the heavy atom bearing the H.
         for &i in &char.h_bond_donor {
