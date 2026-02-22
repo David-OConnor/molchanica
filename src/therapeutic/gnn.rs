@@ -511,11 +511,20 @@ pub(in crate::therapeutic) struct GraphDataSpacial {
 }
 
 impl GraphDataSpacial {
+    pub(in crate::therapeutic) fn empty() -> Self {
+        Self {
+            pharm_type_indices: Vec::new(),
+            scalars: Vec::new(),
+            adj: Vec::new(),
+            edge_feats: Vec::new(),
+            num_nodes: 0,
+        }
+    }
+
     pub fn new(mol: &MoleculeSmall) -> io::Result<Self> {
-        let char = mol
-            .characterization
-            .as_ref()
-            .ok_or_else(|| io::Error::other("Spatial GNN: missing characterization"))?;
+        let Some(char) = mol.characterization.as_ref() else {
+            return Ok(Self::empty());
+        };
 
         let atom_posits = &mol.common.atom_posits;
 
@@ -547,9 +556,7 @@ impl GraphDataSpacial {
 
         let num_nodes = nodes.len();
         if num_nodes == 0 {
-            return Err(io::Error::other(
-                "Spatial GNN: no pharmacophore features found",
-            ));
+            return Ok(Self::empty());
         }
 
         // Pharmacophore centroid.

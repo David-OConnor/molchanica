@@ -1101,7 +1101,8 @@ fn read_data(
             let graph_spacial = match GraphDataSpacial::new(&mol) {
                 Ok(g) => g,
                 Err(e) => {
-                    eprintln!("Error getting spacial graph data: {e:?}");
+                    // Should not happen: new() returns Ok(empty) for missing/no-feature cases.
+                    eprintln!("Unexpected error building spatial graph: {e:?}; skipping sample.");
                     continue;
                 }
             };

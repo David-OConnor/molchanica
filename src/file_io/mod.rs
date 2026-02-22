@@ -795,12 +795,20 @@ impl State {
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
 
+                mol.reset_post_manip(&mut scene.meshes, self.ui.mesh_coloring, updates);
+
                 self.pockets.push(mol);
                 // todo: Warning! Only one pocket mesh is set up in our scene!
-                scene.meshes[MESH_POCKET] =
-                    self.pockets[self.pockets.len() - 1].surface_mesh.clone();
 
-                updates.meshes = true;
+                // todo temp to ts
+                let pocket = &self.pockets[self.pockets.len() - 1];
+                println!(
+                    "Pocket atom posit: {} atom_posits: {}, mesh: {:?}, spheres: {}",
+                    pocket.common.atoms[0].posit,
+                    pocket.common.atom_posits[0],
+                    pocket.surface_mesh.vertices[0].position,
+                    pocket.volume.spheres[0].center
+                );
 
                 draw_all_pockets(self, scene);
                 // }
