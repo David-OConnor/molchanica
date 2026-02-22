@@ -387,8 +387,3 @@ impl TherapeuticProperties {
         })
     }
 }
-
-/// PDB ID
-fn get_common_drug_rel_proteins() -> Vec<String> {
-    vec![]
-}

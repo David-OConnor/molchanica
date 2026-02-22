@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! We attempt 3 approaches:
 //! - ML, using, for example, the [AqSolDB](https://www.nature.com/articles/s41597-019-0151-1)
 //!   -- (AqSolDB data)[https://github.com/mcsorkun/AqSolDB]

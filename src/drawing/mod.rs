@@ -50,7 +50,7 @@ const COLOR_MD_NEAR_MOL: Color = (0.0, 0., 1.); // Blended into
 const BLEND_AMT_MD_NEAR_MOL: f32 = 0.5; // A higher value means it's closer to the special color.
 
 // i.e a flexible bond.
-const LIGAND_COLOR_FLEX: Color = (1., 1., 0.);
+// const LIGAND_COLOR_FLEX: Color = (1., 1., 0.);
 pub const COLOR_AA_NON_RESIDUE: Color = (0., 0.8, 1.0);
 pub const COLOR_AA_NON_RESIDUE_EGUI: Color32 = Color32::from_rgb(0, 204, 255);
 
@@ -63,7 +63,7 @@ const COLOR_SFC_DOT: Color = (0.7, 0.7, 0.7);
 const LABEL_SIZE_ATOM: f32 = 16.;
 const LABEL_SIZE_MOL: f32 = 40.;
 const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (255, 60, 160, 255);
-const LABEL_COLOR_ATOM_SEL: (u8, u8, u8, u8) = (255, 20, 20, 255);
+// const LABEL_COLOR_ATOM_SEL: (u8, u8, u8, u8) = (255, 20, 20, 255);
 const LABEL_COLOR_MOL: (u8, u8, u8, u8) = (255, 120, 150, 255);
 const LABEL_COLOR_MOL_SEL: (u8, u8, u8, u8) = (255, 10, 10, 255);
 
@@ -80,8 +80,8 @@ pub const WATER_OPACITY: f32 = 1.;
 pub const PHARMACOPHORE_OPACITY: f32 = 0.3;
 pub const RADIUS_PHARMACOPHORE_HINT: f32 = 0.25;
 
-const COLOR_DOCKING_BOX: Color = (0.3, 0.3, 0.9);
-pub const COLOR_DOCKING_SITE_MESH: Color = (0.5, 0.5, 0.9);
+// const COLOR_DOCKING_BOX: Color = (0.3, 0.3, 0.9);
+// pub const COLOR_DOCKING_SITE_MESH: Color = (0.5, 0.5, 0.9);
 // const DOCKING_SITE_OPACITY: f32 = 0.1;
 
 // These colors are the default solid ones, i.e. if not colored by an atom-etc-based scheme.

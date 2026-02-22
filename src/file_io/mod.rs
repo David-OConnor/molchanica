@@ -21,7 +21,6 @@ use crate::{
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
-    render::MESH_POCKET,
     selection::Selection,
     state::State,
     util::{handle_err, handle_success},

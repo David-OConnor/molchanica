@@ -11,7 +11,6 @@ use egui::{
     TopBottomPanel, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
-use lin_alg::f32::Vec3;
 use md::md_setup;
 use mol_data::display_mol_data;
 use na_seq::Element;
@@ -31,7 +30,7 @@ use crate::{
         gemmi_path,
     },
     mol_editor::enter_edit_mode,
-    molecules::{MolGenericRef, MolIdent, MolType},
+    molecules::{MolGenericRef, MolIdent},
     prefs::ControlSchemeType,
     render::set_flashlight,
     selection::{Selection, ViewSelLevel},
@@ -43,10 +42,7 @@ use crate::{
         mol_type_tools::mol_type_toolbars,
         orca::orca_input,
         sidebar::sidebar,
-        util::{
-            color_egui_from_f32, handle_redraw, init_with_scene, open_lig_from_input,
-            update_file_dialogs,
-        },
+        util::{color_egui_from_f32, handle_redraw, open_lig_from_input, update_file_dialogs},
         view::{ui_section_vis, view_settings},
     },
     util::{

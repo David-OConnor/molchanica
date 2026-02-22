@@ -17,10 +17,9 @@ pub fn generate(
     oral_delivery: bool,
     blod_brain_barrier: bool,
 ) -> Vec<MoleculeSmall> {
-    let mut result = Vec::new();
+    let result = Vec::new();
 
     for mol in library {
-        let mut score: f32 = 0.;
         let Some(char) = &mol.characterization else {
             eprintln!(
                 "Skipping mol {} due to missing characterization",

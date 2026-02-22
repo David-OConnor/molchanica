@@ -212,7 +212,7 @@ impl GraphData {
 
             {
                 let ff0 = atoms[a0].force_field_type.clone().unwrap();
-                let ff1 = atoms[a0].force_field_type.clone().unwrap();
+                let ff1 = atoms[a1].force_field_type.clone().unwrap();
                 let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
 
                 let bond_stretching = if let Some(v) = bond_stretching {
@@ -229,12 +229,12 @@ impl GraphData {
                         || (&ff1 == "cg" && ff0.starts_with("c"))
                     {
                         safe_fallback = ("cg".to_owned(), "cg".to_owned());
-                    } else if atoms[0].element == Carbon && atoms[1].element == Carbon {
+                    } else if atoms[a0].element == Carbon && atoms[a1].element == Carbon {
                         safe_fallback = ("cc".to_owned(), "cc".to_owned());
                         eprintln!(
                             "Missing bond stretching for bond {bond:?}. \nAtoms {ff0} | {ff1}\n. Using a substitute.",
                         );
-                    } else if atoms[0].element == Nitrogen && atoms[1].element == Nitrogen {
+                    } else if atoms[a0].element == Nitrogen && atoms[a1].element == Nitrogen {
                         safe_fallback = ("n".to_owned(), "n".to_owned());
 
                         eprintln!(
@@ -264,13 +264,20 @@ impl GraphData {
         }
 
         // Symmetric Normalization: D^(-0.5) * A * D^(-0.5)
-        let mut degrees_vec = vec![0.0; num_atoms];
+        let mut degrees_vec = vec![0.0f32; num_atoms];
         for i in 0..num_atoms {
             let mut d = 0.0;
             for j in 0..num_atoms {
                 d += adj_list[i * num_atoms + j];
             }
             degrees_vec[i] = d;
+        }
+        for i in 0..num_atoms {
+            let di_inv_sqrt = 1.0 / degrees_vec[i].max(1e-9).sqrt();
+            for j in 0..num_atoms {
+                let dj_inv_sqrt = 1.0 / degrees_vec[j].max(1e-9).sqrt();
+                adj_list[i * num_atoms + j] *= di_inv_sqrt * dj_inv_sqrt;
+            }
         }
 
         Ok(Self {
@@ -353,13 +360,20 @@ impl GraphDataComponent {
         }
 
         // Symmetric Normalization: D^(-0.5) * A * D^(-0.5)
-        let mut degrees_vec = vec![0.0; num_comps];
+        let mut degrees_vec = vec![0.0f32; num_comps];
         for i in 0..num_comps {
             let mut d = 0.0;
             for j in 0..num_comps {
                 d += adj_list[i * num_comps + j];
             }
             degrees_vec[i] = d;
+        }
+        for i in 0..num_comps {
+            let di_inv_sqrt = 1.0 / degrees_vec[i].max(1e-9).sqrt();
+            for j in 0..num_comps {
+                let dj_inv_sqrt = 1.0 / degrees_vec[j].max(1e-9).sqrt();
+                adj_list[i * num_comps + j] *= di_inv_sqrt * dj_inv_sqrt;
+            }
         }
 
         Ok(Self {

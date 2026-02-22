@@ -13,7 +13,7 @@ use std::{
     thread,
 };
 
-use bincode::{Decode, Encode, config, de::Decoder};
+use bincode::{Decode, Encode, config};
 use bio_files::PharmacophoreTypeGeneric;
 use egui_file_dialog::FileDialog;
 use lin_alg::f64::Vec3;
@@ -27,7 +27,7 @@ use crate::{
     parse_le,
     render::Color,
     therapeutic::pharmacophore::PharmacophoreFeatType::{
-        Acceptor, AcceptorProjected, Donor, DonorProjected, Hydrophilic, Hydrophobic,
+        AcceptorProjected, Donor, DonorProjected, Hydrophilic, Hydrophobic,
     },
 };
 // #[derive(Clone, Debug)]
@@ -251,7 +251,7 @@ impl From<PharmacophoreTypeGeneric> for PharmacophoreFeatType {
             PharmacophoreTypeGeneric::Anion => Anion,
             PharmacophoreTypeGeneric::Aromatic => Aromatic,
             PharmacophoreTypeGeneric::Other(v) => {
-                eprintln!("Unknown generic Pharmacophore type: {:?}", value);
+                eprintln!("Unknown generic Pharmacophore type: {v}");
                 Acceptor
             }
         }

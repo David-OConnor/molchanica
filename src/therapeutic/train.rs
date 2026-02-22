@@ -31,7 +31,7 @@ use burn::{
         dataloader::{DataLoaderBuilder, batcher::Batcher},
         dataset::InMemDataset,
     },
-    lr_scheduler::constant::ConstantLr,
+    lr_scheduler::cosine_annealing::CosineAnnealingLrSchedulerConfig,
     module::Module,
     nn::{
         Dropout, DropoutConfig, Embedding, EmbeddingConfig, LayerNorm, LayerNormConfig, Linear,
@@ -250,20 +250,21 @@ impl ModelConfig {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
 
+        // Each GNN branch contributes mean + max pooled vectors (hence * 2).
         let combined_dim = if self.mlp_enabled {
             self.mlp_hidden_dim
         } else {
             0
         } + if self.gnn_atom_enabled {
-            self.gnn_hidden_dim
+            self.gnn_hidden_dim * 2
         } else {
             0
         } + if self.gnn_comp_enabled {
-            self.gnn_hidden_dim
+            self.gnn_hidden_dim * 2
         } else {
             0
         } + if self.gnn_spacial_enabled {
-            self.gnn_hidden_dim
+            self.gnn_hidden_dim * 2
         } else {
             0
         };
@@ -422,7 +423,7 @@ impl<B: Backend> Model<B> {
         // flatten(2, 3) merges the last two dims -> [B, N, D]
         let agg = (message * weights).sum_dim(2).flatten(2, 3);
 
-        let mut layer_out = gnn_linear.forward(agg);
+        let mut layer_out = activation::relu(gnn_linear.forward(agg));
 
         if dropout && DROPOUT.is_some() {
             layer_out = self.dropout.forward(layer_out);
@@ -489,11 +490,19 @@ impl<B: Backend> Model<B> {
                     self.make_gnn_layer(&adj_eff, &mask, gnn_prev, &edge_emb, layer, dropout);
             }
 
-            let graph_sum = gnn_prev.sum_dim(1);
-            let atom_counts = mask.sum_dim(1);
-            let graph_mean = graph_sum / (atom_counts + 1e-6);
+            let graph_sum = gnn_prev.clone().sum_dim(1);
+            let atom_counts = mask.clone().sum_dim(1);
+            let graph_mean = graph_sum / (atom_counts.clone() + 1e-6);
+            // Max pooling: set padding positions to -inf so they are never selected.
+            let fill = (mask - 1.0) * 1e9;
+            let graph_max = (gnn_prev + fill).max_dim(1);
+            let has_nodes = atom_counts.clamp(0.0, 1.0);
+            let graph_max = graph_max * has_nodes;
             let [b_g, _one, d] = graph_mean.dims();
-            branches.push(graph_mean.reshape([b_g, d]));
+            branches.push(Tensor::cat(
+                vec![graph_mean.reshape([b_g, d]), graph_max.reshape([b_g, d])],
+                1,
+            ));
         }
 
         // --- Component GNN branch ---
@@ -526,11 +535,18 @@ impl<B: Backend> Model<B> {
                 );
             }
 
-            let comp_sum = comp_gnn_prev.sum_dim(1);
-            let comp_counts = comp_mask.sum_dim(1);
-            let comp_mean = comp_sum / (comp_counts + 1e-6);
+            let comp_sum = comp_gnn_prev.clone().sum_dim(1);
+            let comp_counts = comp_mask.clone().sum_dim(1);
+            let comp_mean = comp_sum / (comp_counts.clone() + 1e-6);
+            let comp_fill = (comp_mask - 1.0) * 1e9;
+            let comp_max = (comp_gnn_prev + comp_fill).max_dim(1);
+            let has_comp_nodes = comp_counts.clamp(0.0, 1.0);
+            let comp_max = comp_max * has_comp_nodes;
             let [b_c, _one_c, d_c] = comp_mean.dims();
-            branches.push(comp_mean.reshape([b_c, d_c]));
+            branches.push(Tensor::cat(
+                vec![comp_mean.reshape([b_c, d_c]), comp_max.reshape([b_c, d_c])],
+                1,
+            ));
         }
 
         // --- Spatial (pharmacophore) GNN branch ---
@@ -566,20 +582,32 @@ impl<B: Backend> Model<B> {
                 );
             }
 
-            let pharm_sum = spacial_gnn_prev.sum_dim(1);
-            let pharm_counts = pharm_mask.sum_dim(1);
-            let pharm_mean = pharm_sum / (pharm_counts + 1e-6);
+            let pharm_sum = spacial_gnn_prev.clone().sum_dim(1);
+            let pharm_counts = pharm_mask.clone().sum_dim(1);
+            let pharm_mean = pharm_sum / (pharm_counts.clone() + 1e-6);
+            let pharm_fill = (pharm_mask - 1.0) * 1e9;
+            let pharm_max = (spacial_gnn_prev + pharm_fill).max_dim(1);
+            let has_pharm_nodes = pharm_counts.clamp(0.0, 1.0);
+            let pharm_max = pharm_max * has_pharm_nodes;
             let [b_p, _one_p, d_p] = pharm_mean.dims();
-            branches.push(pharm_mean.reshape([b_p, d_p]));
+            branches.push(Tensor::cat(
+                vec![pharm_mean.reshape([b_p, d_p]), pharm_max.reshape([b_p, d_p])],
+                1,
+            ));
         }
 
         // --- MLP branch ---
         if self.mlp_enabled {
             let mut mlp_prev = params;
             for (i, layer) in self.mlp_layers.iter().enumerate() {
-                mlp_prev = activation::relu(layer.forward(mlp_prev.clone()));
-                if i != self.mlp_layers.len() - 1 && DROPOUT.is_some() {
-                    mlp_prev = self.dropout.forward(mlp_prev);
+                mlp_prev = layer.forward(mlp_prev.clone());
+                // Skip activation on the last layer so the MLP output is unconstrained
+                // going into the fusion head.
+                if i != self.mlp_layers.len() - 1 {
+                    mlp_prev = activation::relu(mlp_prev);
+                    if DROPOUT.is_some() {
+                        mlp_prev = self.dropout.forward(mlp_prev);
+                    }
                 }
             }
             branches.push(mlp_prev);
@@ -1335,7 +1363,11 @@ pub(in crate::therapeutic) fn train(
     println!("Model parameter count: {}", model.num_params());
 
     let optim = AdamConfig::new().init();
-    let lr_scheduler = ConstantLr::new(3e-4);
+    // Cosine annealing from 3e-4 → 1e-5 over the full training run.
+    let num_iters = ((data_train.len() + 127) / 128) * 80; // steps_per_epoch * num_epochs
+    let lr_scheduler = CosineAnnealingLrSchedulerConfig::new(3e-4, num_iters)
+        .with_min_lr(1e-5)
+        .init();
 
     let training = SupervisedTraining::new(
         model_dir_train_val.to_str().unwrap(),

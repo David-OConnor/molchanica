@@ -591,7 +591,7 @@ fn nearest_in_group(
 }
 
 /// Used for cursor selection. Returns (atom indices prot, atom indices lig)
-pub fn points_along_ray_bond_(
+pub fn _points_along_ray_bond_(
     ray: (Vec3F32, Vec3F32),
     bonds_peptide: &[Bond],
     bonds_lig: &[Vec<Bond>],

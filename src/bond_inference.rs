@@ -18,8 +18,8 @@ const H_BOND_O_N_DIST: f64 = 2.9;
 
 const H_BOND_N_F_DIST: f64 = 2.75;
 const H_BOND_N_S_DIST: f64 = 3.35;
-const H_BOND_S_O_DIST: f64 = 3.35;
-const H_BOND_S_F_DIST: f64 = 3.2; // rarate
+// const H_BOND_S_O_DIST: f64 = 3.35;
+// const H_BOND_S_F_DIST: f64 = 3.2; // rarate
 
 const H_BOND_DIST_THRESH: f64 = 0.3;
 const H_BOND_DIST_GRID: f64 = 3.6;

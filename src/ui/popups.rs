@@ -29,12 +29,11 @@ use crate::{
     render::MESH_POCKET,
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, PopupState, State},
-    ui,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         mol_data::metadata, pharmacophore, rama_plot, recent_files, recent_files::NUM_TO_SHOW,
     },
-    util::{RedrawFlags, handle_err, handle_success, make_lig_from_res, orbit_center},
+    util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
 };
 
 /// Based on popup state, shows popups. This is the entry point for all popups.

@@ -49,7 +49,7 @@ pub const CAM_INIT_OFFSET: f32 = 10.;
 const FLASHLIGHT_OFFSET: f32 = 10.;
 // const FLASHLIGHT_FOV: f32 = TAU / 16.;
 pub const OUTSIDE_LIGHTING_OFFSET: f32 = 900.;
-pub const DOCKING_LIGHT_INTENSITY: f32 = 0.3;
+// pub const DOCKING_LIGHT_INTENSITY: f32 = 0.3;
 
 /// Set the flashlight to be a little bit behind the camera; prevents too dramatic of an intensity
 /// scaling on the object looked at, WRT distance.
@@ -74,24 +74,24 @@ pub fn set_static_light(scene: &mut Scene, center: Vec3, size: f32) {
         center + Vec3::new(40., size + OUTSIDE_LIGHTING_OFFSET, 0.);
 }
 
-/// Set lighting based on the docking location.
-pub fn _set_docking_light(scene: &mut Scene, docking_init: Option<&DockingSite>) {
-    let light = &mut scene.lighting.point_lights[2];
-
-    match docking_init {
-        Some(docking_init) => {
-            let intensity = DOCKING_LIGHT_INTENSITY * docking_init.site_radius as f32;
-
-            light.position = docking_init.site_center.into();
-            light.diffuse_intensity = intensity;
-            light.specular_intensity = intensity;
-        }
-        None => {
-            light.diffuse_intensity = 0.;
-            light.specular_intensity = 0.;
-        }
-    }
-}
+// /// Set lighting based on the docking location.
+// pub fn _set_docking_light(scene: &mut Scene, docking_init: Option<&DockingSite>) {
+//     let light = &mut scene.lighting.point_lights[2];
+//
+//     match docking_init {
+//         Some(docking_init) => {
+//             let intensity = DOCKING_LIGHT_INTENSITY * docking_init.site_radius as f32;
+//
+//             light.position = docking_init.site_center.into();
+//             light.diffuse_intensity = intensity;
+//             light.specular_intensity = intensity;
+//         }
+//         None => {
+//             light.diffuse_intensity = 0.;
+//             light.specular_intensity = 0.;
+//         }
+//     }
+// }
 
 /// This runs each frame. Currently, no updates.
 fn render_handler(_state: &mut State, _scene: &mut Scene, _dt: f32) -> EngineUpdates {

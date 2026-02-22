@@ -16,7 +16,6 @@
 use std::{
     collections::{HashMap, HashSet},
     f64::consts::TAU,
-    path::PathBuf,
     time::Instant,
 };
 
@@ -194,65 +193,65 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
 }
 
 // todo: A/R
-fn md_energy_minim() {
-    // Experimenting with the gradient descent energy min
-    // {
-    //     let (mut last_step, mut alpha, mut e_prev, initial_velocities, prev_recip) =
-    //        md.minimize_energy_setup(&state.dev, &Some(forces_by_atom_q));
-    //
-    //     let max_iters = 100;
-    //
-    //     let start_en_min = Instant::now();
-    //     let mut iters = 0;
-    //     for _ in 0..max_iters {
-    //
-    //         // Reset force each step.
-    //         forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
-    //
-    //         // We update the synthetic query atoms, as they're what's maintaining position and velocity
-    //         // during the simulation.
-    //         for (i_q, atom_q_dyn) in md.atoms.iter_mut().enumerate() {
-    //             let atom_q = &mol_q_md.atoms[i_q];
-    //             // Apply our synthetic potential, drawing it to the template.
-    //             for (i_t, atom_t) in mol_template.atoms.iter().enumerate() {
-    //                 let force = force_synthetic(
-    //                     atom_t,
-    //                     atom_q,
-    //                     &bonds_t_by_atom[i_t],
-    //                     &bonds_q_by_atom[i_q],
-    //                     md.step_count,
-    //                 );
-    //                 forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
-    //             }
-    //         }
-    //
-    //
-    //         iters += 1;
-    //         if md.step_energy_min(
-    //             &state.dev,
-    //             &mut last_step,
-    //             &mut alpha,
-    //             &mut e_prev,
-    //             &Some(forces_by_atom_q)
-    //         ) {
-    //             break; // Converged.
-    //         }
-    //
-    //         // Update our atom positions from the MD run; required for the next synthetic force compuatation.
-    //         for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
-    //             atom_q.posit = md.atoms[i].posit.into();
-    //             mol_q_md.atom_posits[i] = atom_q.posit;
-    //         }
-    //     }
-    //
-    //     md.minimize_energy_cleanup(&state.dev, prev_recip, &initial_velocities);
-    //
-    //
-    //     let elapsed = start_en_min.elapsed().as_millis();
-    //     println!("Energy min (with synth F) in {elapsed} ms. Used {iters} of {max_iters} iters");
-    //
-    // }
-}
+// fn md_energy_minim() {
+// Experimenting with the gradient descent energy min
+// {
+//     let (mut last_step, mut alpha, mut e_prev, initial_velocities, prev_recip) =
+//        md.minimize_energy_setup(&state.dev, &Some(forces_by_atom_q));
+//
+//     let max_iters = 100;
+//
+//     let start_en_min = Instant::now();
+//     let mut iters = 0;
+//     for _ in 0..max_iters {
+//
+//         // Reset force each step.
+//         forces_by_atom_q = vec![Vec3F32::new_zero(); mol_query.atoms.len()];
+//
+//         // We update the synthetic query atoms, as they're what's maintaining position and velocity
+//         // during the simulation.
+//         for (i_q, atom_q_dyn) in md.atoms.iter_mut().enumerate() {
+//             let atom_q = &mol_q_md.atoms[i_q];
+//             // Apply our synthetic potential, drawing it to the template.
+//             for (i_t, atom_t) in mol_template.atoms.iter().enumerate() {
+//                 let force = force_synthetic(
+//                     atom_t,
+//                     atom_q,
+//                     &bonds_t_by_atom[i_t],
+//                     &bonds_q_by_atom[i_q],
+//                     md.step_count,
+//                 );
+//                 forces_by_atom_q[i_q] += force * COEFF_F_SYNTHETIC;
+//             }
+//         }
+//
+//
+//         iters += 1;
+//         if md.step_energy_min(
+//             &state.dev,
+//             &mut last_step,
+//             &mut alpha,
+//             &mut e_prev,
+//             &Some(forces_by_atom_q)
+//         ) {
+//             break; // Converged.
+//         }
+//
+//         // Update our atom positions from the MD run; required for the next synthetic force compuatation.
+//         for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
+//             atom_q.posit = md.atoms[i].posit.into();
+//             mol_q_md.atom_posits[i] = atom_q.posit;
+//         }
+//     }
+//
+//     md.minimize_energy_cleanup(&state.dev, prev_recip, &initial_velocities);
+//
+//
+//     let elapsed = start_en_min.elapsed().as_millis();
+//     println!("Energy min (with synth F) in {elapsed} ms. Used {iters} of {max_iters} iters");
+//
+// }
+// }
 
 fn run_md(
     posits_query: &[Vec3],

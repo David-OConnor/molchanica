@@ -327,7 +327,7 @@ pub fn check_prefs_save(state: &mut State) {
 // todo: Also calculate the dihedral angle using 3 bonds. (4 atoms).
 /// Bond_0 and bond_1 must share an atom. For now, we assume `bond_0`'s atom_1 is the same as
 /// `bond_1`'s atom_0.
-pub fn bond_angle(atoms: &[Atom], bond_0: &Bond, bond_1: &Bond) -> f64 {
+pub fn _bond_angle(atoms: &[Atom], bond_0: &Bond, bond_1: &Bond) -> f64 {
     if bond_0.atom_1 != bond_1.atom_0 {
         eprintln!("Error: bonds do not share an atom.");
         return 0.;

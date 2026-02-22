@@ -3,7 +3,6 @@ use std::{path::PathBuf, str::FromStr};
 use bio_files::orca::{
     GeomOptThresh, Keyword, OrcaInput, OrcaOutput, Task,
     basis_sets::BasisSetCategory,
-    charges::MbisChargesCfg,
     dynamics::{Dynamics, Thermostat},
     method::Method,
 };

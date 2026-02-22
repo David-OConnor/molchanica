@@ -9,7 +9,6 @@ use crate::{
     drawing::blend_color,
     label, mol_manip,
     mol_manip::ManipMode,
-    mol_screening,
     molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
     selection::Selection,
     state::{PopupState, State},

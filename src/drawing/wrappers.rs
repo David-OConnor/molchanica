@@ -253,7 +253,7 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
     );
 }
 
-pub fn draw_all_mol_of_type<T: MolGenericTrait>(
+pub fn _draw_all_mol_of_type<T: MolGenericTrait>(
     state: &mut State,
     scene: &mut Scene,
     mols: &mut [T],
@@ -367,7 +367,7 @@ pub fn update_all_ligs_inplace(state: &State, scene: &mut Scene) {
     }
 }
 
-pub fn update_all_na_inplace(state: &State, scene: &mut Scene) {
+pub fn _update_all_na_inplace(state: &State, scene: &mut Scene) {
     for (i, mol) in state.nucleic_acids.iter().enumerate() {
         let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
             eprintln!("Unable to update mol entities in place; missing entity indices");
@@ -379,7 +379,7 @@ pub fn update_all_na_inplace(state: &State, scene: &mut Scene) {
     }
 }
 
-pub fn update_all_lipids_inplace(state: &State, scene: &mut Scene) {
+pub fn _update_all_lipids_inplace(state: &State, scene: &mut Scene) {
     for (i, mol) in state.lipids.iter().enumerate() {
         let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
             eprintln!("Unable to update mol entities in place; missing entity indices");

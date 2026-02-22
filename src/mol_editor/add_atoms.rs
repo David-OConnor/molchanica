@@ -339,10 +339,10 @@ pub fn add_atom(
     if element != Hydrogen {
         remove_hydrogens(mol, i_par);
 
-        let mol_wrapper = MoleculeSmall {
-            common: mol.clone(),
-            ..Default::default()
-        };
+        // let mol_wrapper = MoleculeSmall {
+        //     common: mol.clone(),
+        //     ..Default::default()
+        // };
 
         // todo: Get pocket and h bonds in here.
 

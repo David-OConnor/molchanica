@@ -1,7 +1,7 @@
-use std::{fs::File, io, io::Write, path::Path};
+use std::{fs::File, io, io::Write};
 
 use egui::{Color32, Ui};
-use graphics::{EngineUpdates, Entity, EntityUpdate, FWD_VEC, Scene};
+use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
     cam::reset_camera,
@@ -10,11 +10,9 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_editor,
-    mol_editor::{MolEditorState, redraw},
-    mol_manip::ManipMode,
     molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
-    state::{OperatingMode, State, StateUi},
+    state::{OperatingMode, State},
     ui::set_window_title,
     util::{RedrawFlags, handle_err, reset_orbit_center},
 };

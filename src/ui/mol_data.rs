@@ -717,6 +717,8 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
 
         let mut update_cid = None; // to avoid a borrow error.
 
+        let mut update_assoc_st = None;
+
         if let Some(mol) = state.active_mol() {
             match mol {
                 MolGenericRef::Peptide(_) => {}
@@ -798,8 +800,7 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
                             if m.associated_structures.is_empty() {
                                 match pubchem::load_associated_structures(cid) {
                                     Ok(data) => {
-                                        // todo: Put back! Borrow issue.
-                                        // mol.common().associated_structures = data;
+                                        update_assoc_st = Some(data); // Prevents a borrow problem.
                                         state.ui.popup.show_associated_structures = true;
                                     }
                                     Err(_) => handle_err(
@@ -820,6 +821,13 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
                 }
                 _ => (),
             }
+        }
+
+        if let Some(v) = update_assoc_st
+            && let Some(mol) = state.active_mol_mut()
+            && let MolGenericRefMut::Small(m) = mol
+        {
+            m.associated_structures = v;
         }
 
         if let Some(mol) = state.active_mol_mut() {

@@ -35,7 +35,7 @@ use crate::{
     mol_manip::ManipMode,
     molecules::{
         Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, common::NEXT_ATOM_SN,
-        pocket::Pocket, small::MoleculeSmall,
+        small::MoleculeSmall,
     },
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
@@ -379,8 +379,6 @@ impl MolEditorState {
         engine_updates: &mut EngineUpdates,
         manip_mode: ManipMode,
     ) {
-        static mut I: u32 = 0;
-
         if !self.md.running
             || self.md.last_dt_run.elapsed().as_micros() as f32 * 1_000. < self.md.time_between_runs
         {
