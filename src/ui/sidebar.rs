@@ -2,7 +2,6 @@ use egui::{Color32, Context, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::therapeutic::pharmacophore::PharmacophoreState;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam},
@@ -12,7 +11,7 @@ use crate::{
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
     state::{OperatingMode, PopupState, State, StateVolatile},
-    therapeutic::pharmacophore::Pharmacophore,
+    therapeutic::pharmacophore::{Pharmacophore, PharmacophoreState},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, pharmacophore,

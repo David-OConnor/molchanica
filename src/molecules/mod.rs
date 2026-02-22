@@ -118,7 +118,7 @@ impl MolType {
 #[derive(Debug)]
 pub enum MoleculeGeneric {
     Peptide(MoleculePeptide),
-    Ligand(MoleculeSmall),
+    Small(MoleculeSmall),
     NucleicAcid(MoleculeNucleicAcid),
     Lipid(MoleculeLipid),
     Pocket(Pocket),
@@ -129,7 +129,7 @@ impl MoleculeGeneric {
         use MoleculeGeneric::*;
         match self {
             Peptide(m) => &m.common,
-            Ligand(m) => &m.common,
+            Small(m) => &m.common,
             NucleicAcid(m) => &m.common,
             Lipid(m) => &m.common,
             Pocket(m) => &m.common,
@@ -140,7 +140,7 @@ impl MoleculeGeneric {
         use MoleculeGeneric::*;
         match self {
             Peptide(m) => &mut m.common,
-            Ligand(m) => &mut m.common,
+            Small(m) => &mut m.common,
             NucleicAcid(m) => &mut m.common,
             Lipid(m) => &mut m.common,
             Pocket(m) => &mut m.common,
@@ -151,7 +151,7 @@ impl MoleculeGeneric {
         use MoleculeGeneric::*;
         match self {
             Peptide(_) => MolType::Peptide,
-            Ligand(_) => MolType::Ligand,
+            Small(_) => MolType::Ligand,
             NucleicAcid(_) => MolType::NucleicAcid,
             Lipid(_) => MolType::Lipid,
             Pocket(_) => MolType::Pocket,

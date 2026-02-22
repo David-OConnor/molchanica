@@ -368,11 +368,13 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 }
             }
             Selection::AtomLig((i_mol, i_atom)) => {
-                if *i_mol >= state.ligands.len() {
-                    eprintln!("Error: Invalid lig index for orbit center");
-                    return Vec3F32::new_zero();
-                }
-                return state.ligands[*i_mol].common.atom_posits[*i_atom].into();
+                return match state.get_small(*i_mol) {
+                    Some(m) => m.common.atom_posits[*i_atom].into(),
+                    None => {
+                        eprintln!("Error: Invalid lig index for orbit center");
+                        return Vec3F32::new_zero();
+                    }
+                };
             }
             Selection::AtomsLig((i_mol, is_atom)) => {
                 if i_mol >= &state.ligands.len() {
@@ -394,25 +396,31 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 return ctr / is_atom.len() as f32;
             }
             Selection::AtomNucleicAcid((i_mol, i_atom)) => {
-                if *i_atom >= state.nucleic_acids.len() {
-                    eprintln!("Error: Invalid NA index for orbit center");
-                    return Vec3F32::new_zero();
-                }
-                return state.nucleic_acids[*i_mol].common.atom_posits[*i_atom].into();
+                return match state.get_nucleic_acid(*i_mol) {
+                    Some(m) => m.common.atom_posits[*i_atom].into(),
+                    None => {
+                        eprintln!("Error: Invalid nucleic acid index for orbit center");
+                        return Vec3F32::new_zero();
+                    }
+                };
             }
             Selection::AtomLipid((i_mol, i_atom)) => {
-                if *i_atom >= state.lipids.len() {
-                    eprintln!("Error: Invalid lipid index for orbit center");
-                    return Vec3F32::new_zero();
-                }
-                return state.lipids[*i_mol].common.atom_posits[*i_atom].into();
+                return match state.get_lipid(*i_mol) {
+                    Some(l) => l.common.atom_posits[*i_atom].into(),
+                    None => {
+                        eprintln!("Error: Invalid lipid index for orbit center");
+                        return Vec3F32::new_zero();
+                    }
+                };
             }
             Selection::AtomPocket((i_mol, i_atom)) => {
-                if *i_atom >= state.pockets.len() {
-                    eprintln!("Error: Invalid pocket index for orbit center");
-                    return Vec3F32::new_zero();
-                }
-                return state.pockets[*i_mol].common.atom_posits[*i_atom].into();
+                return match state.get_pocket(*i_mol) {
+                    Some(l) => l.common.atom_posits[*i_atom].into(),
+                    None => {
+                        eprintln!("Error: Invalid pocket index for orbit center");
+                        return Vec3F32::new_zero();
+                    }
+                };
             }
             Selection::Residue(i) => {
                 if let Some(mol) = &state.peptide {
@@ -1149,7 +1157,7 @@ pub fn make_lig_from_res(
     let mol_fm_res = MoleculeSmall::from_res(res, &mol.common.atoms, &mol.common.bonds);
 
     state.load_mol_to_state(
-        MoleculeGeneric::Ligand(mol_fm_res),
+        MoleculeGeneric::Small(mol_fm_res),
         scene,
         engine_updates,
         None,

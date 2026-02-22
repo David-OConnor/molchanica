@@ -204,7 +204,7 @@ pub fn load_geostd2(
                         }
 
                         state.load_mol_to_state(
-                            MoleculeGeneric::Ligand(mol),
+                            MoleculeGeneric::Small(mol),
                             scene,
                             engine_updates,
                             None,

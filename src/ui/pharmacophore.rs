@@ -1,18 +1,21 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
-use crate::therapeutic::pharmacophore::PharmacophoreState;
+use bio_files::{Mol2, Sdf};
+use egui::{Align, Color32, ComboBox, Layout, RichText, ScrollArea, Ui};
+use graphics::{EngineUpdates, Scene};
+
 use crate::{
     button, drawing,
     drawing::blend_color,
     label, mol_manip,
     mol_manip::ManipMode,
     mol_screening,
-    molecules::MolType,
+    molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
     selection::Selection,
     state::{PopupState, State},
     therapeutic::pharmacophore::{
         FeatureRelation, PHARMACOPHORE_SCREENING_THRESH_DEFAULT, Pharmacophore,
-        PharmacophoreFeatType, PharmacophoreFeature, add_pharmacophore_feat,
+        PharmacophoreFeatType, PharmacophoreFeature, PharmacophoreState, add_pharmacophore_feat,
     },
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
@@ -20,8 +23,6 @@ use crate::{
     },
     util::{RedrawFlags, handle_err, make_egui_color},
 };
-use egui::{Align, Color32, ComboBox, Layout, RichText, Ui};
-use graphics::{EngineUpdates, Scene};
 
 /// Assumes run from the editor for now. For setting relations between
 /// Pharmacophore features, e.g. "or" logic.
@@ -450,7 +451,12 @@ pub(in crate::ui) fn pharmacophore_summary(
     }
 }
 
-pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
+pub(in crate::ui) fn pharmacophore_screen(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    updates: &mut EngineUpdates,
+) {
     ui.horizontal(|ui| {
         label!(ui, "Pharmacophore screening", Color32::WHITE);
         ui.add_space(COL_SPACING);
@@ -475,7 +481,7 @@ pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
     });
     ui.add_space(ROW_SPACING);
 
-    if let Some(path) = &state.to_save.screening_path
+    if let Some(path) = state.to_save.screening_path.clone()
         && let Some(ph_i) = state.pharmacophore.ph_for_screening
     {
         label!(ui, format!("Path: {path:?}"), Color32::GRAY);
@@ -488,9 +494,68 @@ pub(in crate::ui) fn pharmacophore_screen(state: &mut State, ui: &mut Ui) {
         }
 
         label!(ui, "Results:", Color32::GRAY);
-        for v in &state.pharmacophore.screening_results {
-            label!(ui, format!("{v:?}"), Color32::WHITE);
-        }
+        ui.separator();
+        ScrollArea::vertical()
+            .min_scrolled_height(800.0)
+            .show(ui, |ui| {
+                // Collect paths first to avoid borrowing state.pharmacophore inside the loop.
+                let results: Vec<_> = state
+                    .pharmacophore
+                    .screening_results
+                    .iter()
+                    .map(|v| (v.1.clone(), v.3, v.4.clone()))
+                    .collect();
+
+                let mut mol_to_load: Option<(MoleculeGeneric, PathBuf)> = None;
+
+                for (ident, score, path) in &results {
+                    ui.horizontal(|ui| {
+                        label!(ui, format!("{ident}  score: {score:.2}"), Color32::WHITE);
+
+                        ui.add_space(COL_SPACING);
+                        if button!(
+                            ui,
+                            "Load mol",
+                            Color32::GRAY,
+                            "Load this molecule from disk to view, etc"
+                        )
+                        .clicked()
+                        {
+                            let ext = path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("")
+                                .to_ascii_lowercase();
+
+                            let mol_result: Option<MoleculeSmall> = match ext.as_str() {
+                                "mol2" => Mol2::load(path)
+                                    .ok()
+                                    .and_then(|m| MoleculeSmall::try_from(m).ok()),
+                                "sdf" => Sdf::load(path)
+                                    .ok()
+                                    .and_then(|m| MoleculeSmall::try_from(m).ok()),
+                                _ => {
+                                    eprintln!(
+                                        "Unrecognised extension for screening result: {path:?}"
+                                    );
+                                    None
+                                }
+                            };
+
+                            if let Some(mol) = mol_result {
+                                mol_to_load = Some((MoleculeGeneric::Small(mol), path.clone()));
+                            } else {
+                                eprintln!("Failed to load screening result mol from {path:?}");
+                            }
+                        }
+                    });
+                }
+
+                if let Some((mol, path)) = mol_to_load {
+                    state.load_mol_to_state(mol, scene, updates, Some(&path));
+                }
+            });
+
         ui.add_space(ROW_SPACING);
 
         if state.pharmacophore.screening_in_progress {

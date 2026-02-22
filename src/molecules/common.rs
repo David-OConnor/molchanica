@@ -103,6 +103,38 @@ impl MoleculeCommon {
         result
     }
 
+    pub fn get_atom(&self, i: usize) -> Option<&Atom> {
+        if i < self.atoms.len() {
+            Some(&self.atoms[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_atom_mut(&mut self, i: usize) -> Option<&mut Atom> {
+        if i < self.atoms.len() {
+            Some(&mut self.atoms[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_bond(&self, i: usize) -> Option<&Bond> {
+        if i < self.bonds.len() {
+            Some(&self.bonds[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_bond_mut(&mut self, i: usize) -> Option<&mut Bond> {
+        if i < self.bonds.len() {
+            Some(&mut self.bonds[i])
+        } else {
+            None
+        }
+    }
+
     pub fn update_path(&mut self, path: &Path) {
         self.path = Some(path.to_owned());
         self.filename = path.file_stem().unwrap().to_string_lossy().to_string();

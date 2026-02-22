@@ -179,34 +179,10 @@ impl State {
                     None
                 }
             }
-            MolType::Ligand => {
-                if i < self.ligands.len() {
-                    Some(MolGenericRef::Small(&self.ligands[i]))
-                } else {
-                    None
-                }
-            }
-            MolType::NucleicAcid => {
-                if i < self.nucleic_acids.len() {
-                    Some(MolGenericRef::NucleicAcid(&self.nucleic_acids[i]))
-                } else {
-                    None
-                }
-            }
-            MolType::Lipid => {
-                if i < self.lipids.len() {
-                    Some(MolGenericRef::Lipid(&self.lipids[i]))
-                } else {
-                    None
-                }
-            }
-            MolType::Pocket => {
-                if i < self.pockets.len() {
-                    Some(MolGenericRef::Pocket(&self.pockets[i]))
-                } else {
-                    None
-                }
-            }
+            MolType::Ligand => self.get_small(i).map(MolGenericRef::Small),
+            MolType::NucleicAcid => self.get_nucleic_acid(i).map(MolGenericRef::NucleicAcid),
+            MolType::Lipid => self.get_lipid(i).map(MolGenericRef::Lipid),
+            MolType::Pocket => self.get_pocket(i).map(MolGenericRef::Pocket),
             MolType::Water => None,
         }
     }
@@ -214,35 +190,77 @@ impl State {
     pub fn get_mol_mut(&mut self, mol_type: MolType, i: usize) -> Option<MolGenericRefMut<'_>> {
         match mol_type {
             MolType::Peptide => None,
-            MolType::Ligand => {
-                if i < self.ligands.len() {
-                    Some(MolGenericRefMut::Small(&mut self.ligands[i]))
-                } else {
-                    None
-                }
-            }
-            MolType::NucleicAcid => {
-                if i < self.nucleic_acids.len() {
-                    Some(MolGenericRefMut::NucleicAcid(&mut self.nucleic_acids[i]))
-                } else {
-                    None
-                }
-            }
-            MolType::Lipid => {
-                if i < self.lipids.len() {
-                    Some(MolGenericRefMut::Lipid(&mut self.lipids[i]))
-                } else {
-                    None
-                }
-            }
-            MolType::Pocket => {
-                if i < self.pockets.len() {
-                    Some(MolGenericRefMut::Pocket(&mut self.pockets[i]))
-                } else {
-                    None
-                }
-            }
+            MolType::Ligand => self.get_small_mut(i).map(MolGenericRefMut::Small),
+            MolType::NucleicAcid => self
+                .get_nucleic_acid_mut(i)
+                .map(MolGenericRefMut::NucleicAcid),
+            MolType::Lipid => self.get_lipid_mut(i).map(MolGenericRefMut::Lipid),
+            MolType::Pocket => self.get_pocket_mut(i).map(MolGenericRefMut::Pocket),
             MolType::Water => None,
+        }
+    }
+
+    pub fn get_small(&self, i: usize) -> Option<&MoleculeSmall> {
+        if i < self.ligands.len() {
+            Some(&self.ligands[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_small_mut(&mut self, i: usize) -> Option<&mut MoleculeSmall> {
+        if i < self.ligands.len() {
+            Some(&mut self.ligands[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_lipid(&self, i: usize) -> Option<&MoleculeLipid> {
+        if i < self.lipids.len() {
+            Some(&self.lipids[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_lipid_mut(&mut self, i: usize) -> Option<&mut MoleculeLipid> {
+        if i < self.lipids.len() {
+            Some(&mut self.lipids[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_nucleic_acid(&self, i: usize) -> Option<&MoleculeNucleicAcid> {
+        if i < self.nucleic_acids.len() {
+            Some(&self.nucleic_acids[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_nucleic_acid_mut(&mut self, i: usize) -> Option<&mut MoleculeNucleicAcid> {
+        if i < self.nucleic_acids.len() {
+            Some(&mut self.nucleic_acids[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_pocket(&self, i: usize) -> Option<&Pocket> {
+        if i < self.pockets.len() {
+            Some(&self.pockets[i])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_pocket_mut(&mut self, i: usize) -> Option<&mut Pocket> {
+        if i < self.pockets.len() {
+            Some(&mut self.pockets[i])
+        } else {
+            None
         }
     }
 }

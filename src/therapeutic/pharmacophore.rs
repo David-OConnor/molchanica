@@ -8,10 +8,9 @@ use std::{
     fmt::Display,
     io,
     io::ErrorKind,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{mpsc, mpsc::Receiver},
     thread,
-    time::Instant,
 };
 
 use bincode::{Decode, Encode, config, de::Decoder};
@@ -50,7 +49,7 @@ pub struct PharmacophoreState {
 
 pub const PHARMACOPHORE_SCREENING_THRESH_DEFAULT: f32 = 0.6;
 
-pub type PhScreeningScore = (usize, String, Vec<Vec3>, f32);
+pub type PhScreeningScore = (usize, String, Vec<Vec3>, f32, PathBuf);
 
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
 /// The u8 rep is for serialization
@@ -427,12 +426,12 @@ impl PharmacophoreFeature {
         // 1 + 24 + 1 + 4*atom_len + 4 + 4
         let total_size = 34 + 4 * atom_len;
         let mut result = vec![0; total_size];
-        let mut i = 0usize;
+        let mut i = 0;
 
         result[i] = self.feature_type as u8;
         i += 1;
 
-        result[i..i + 24].copy_from_slice(&self.posit.to_le_bytes());
+        copy_le!(result, self.posit, i..i + 24);
         i += 24;
 
         // todo: posit projected field?
@@ -588,30 +587,30 @@ impl Pharmacophore {
         let mut i = 0usize;
 
         // name
-        let name_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        let name_len = parse_le!(bytes, u32, 1..i + 4) as usize;
         i += 4;
         let name = String::from_utf8(bytes[i..i + name_len].to_vec()).unwrap_or_default();
         i += name_len;
 
         // mol_ident
-        let mol_ident_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        let mol_ident_len = parse_le!(bytes, u32, 1..i + 4) as usize;
         i += 4;
         let mol_ident = String::from_utf8(bytes[i..i + mol_ident_len].to_vec()).unwrap_or_default();
         i += mol_ident_len;
 
         // features
-        let feat_count = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        let feat_count = parse_le!(bytes, u32, 1..i + 4) as usize;
         i += 4;
         let mut features = Vec::with_capacity(feat_count);
         for _ in 0..feat_count {
-            let feat_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+            let feat_len = parse_le!(bytes, u32, 1..i + 4) as usize;
             i += 4;
             features.push(PharmacophoreFeature::from_bytes(&bytes[i..i + feat_len]));
             i += feat_len;
         }
 
         // feature_relations
-        let rel_count = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+        let rel_count = parse_le!(bytes, u32, 1..i + 4) as usize;
         i += 4;
         let mut feature_relations = Vec::with_capacity(rel_count);
         for _ in 0..rel_count {
@@ -625,8 +624,9 @@ impl Pharmacophore {
             None
         } else {
             i += 1;
-            let pocket_len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+            let pocket_len = parse_le!(bytes, u32, 1..i + 4) as usize;
             i += 4;
+
             bincode::decode_from_slice::<Pocket, _>(&bytes[i..i + pocket_len], config::standard())
                 .ok()
                 .map(|(pocket, _)| pocket)
@@ -849,6 +849,7 @@ impl Pharmacophore {
                                 mol.common.ident.clone(),
                                 vec![],
                                 score,
+                                mol.common.path.clone().unwrap_or_default(),
                             ))
                         }
                     })

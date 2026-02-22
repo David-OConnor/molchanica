@@ -470,15 +470,7 @@ pub(in crate::ui) fn editor(
 
     // This trick prevents a clone.
     let mol = std::mem::take(&mut state.mol_editor.mol); // move out, leave default in place
-    selected_data(
-        state,
-        std::slice::from_ref(&&mol),
-        &[],
-        &[],
-        &[],
-        &state.ui.selection,
-        ui,
-    );
+    selected_data(state, &state.ui.selection, ui);
     state.mol_editor.mol = mol;
 
     // Prevents the UI from jumping when going between a selection and none.

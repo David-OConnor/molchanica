@@ -182,15 +182,7 @@ fn disp_bond_data(
 }
 
 /// Display text of the selected atom or residue.
-pub(in crate::ui) fn selected_data(
-    state: &State,
-    ligands: &[MoleculeSmall],
-    nucleic_acids: &[MoleculeNucleicAcid],
-    lipids: &[MoleculeLipid],
-    pockets: &[Pocket],
-    selection: &Selection,
-    ui: &mut Ui,
-) {
+pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mut Ui) {
     ui.horizontal(|ui| {
         // ui.horizontal_wrapped(|ui| {
         match selection {
@@ -211,10 +203,9 @@ pub(in crate::ui) fn selected_data(
                 ui.label(format!("{} atoms |", atom_is.len()));
 
                 for atom_i in atom_is {
-                    if *atom_i >= mol.common.atoms.len() {
+                    let Some(atom) = mol.common.get_atom(*atom_i) else {
                         return;
-                    }
-                    let atom = &mol.common.atoms[*atom_i];
+                    };
                     let posit = mol.common.atom_posits[*atom_i];
 
                     disp_atom_data(atom, &mol.residues, Some(posit), ui, false, false);
@@ -223,34 +214,29 @@ pub(in crate::ui) fn selected_data(
                 }
             }
             Selection::AtomLig((mol_i, atom_i)) => {
-                if *mol_i >= ligands.len() {
+                let Some(mol) = state.get_small(*mol_i) else {
                     return;
-                }
-                let mol = &ligands[*mol_i];
+                };
 
-                if *atom_i >= mol.common.atoms.len() {
+                let Some(atom) = mol.common.get_atom(*atom_i) else {
                     return;
-                }
-
-                let atom = &mol.common.atoms[*atom_i];
+                };
                 let posit = mol.common.atom_posits[*atom_i];
 
                 disp_atom_data(atom, &[], Some(posit), ui, false, true);
             }
             // todo: Update A/R
             Selection::AtomsLig((mol_i, atom_is)) => {
-                if *mol_i >= ligands.len() {
+                let Some(mol) = state.get_small(*mol_i) else {
                     return;
-                }
-                let mol = &ligands[*mol_i];
+                };
 
                 ui.label(format!("{} atoms |", atom_is.len()));
 
                 for atom_i in atom_is {
-                    if *atom_i >= mol.common.atoms.len() {
+                    let Some(atom) = mol.common.get_atom(*atom_i) else {
                         return;
-                    }
-                    let atom = &mol.common.atoms[*atom_i];
+                    };
                     let posit = mol.common.atom_posits[*atom_i];
 
                     disp_atom_data(atom, &[], Some(posit), ui, false, false);
@@ -259,48 +245,39 @@ pub(in crate::ui) fn selected_data(
             }
             // todo DRY
             Selection::AtomNucleicAcid((mol_i, atom_i)) => {
-                if *mol_i >= nucleic_acids.len() {
+                let Some(mol) = state.get_nucleic_acid(*mol_i) else {
                     return;
-                }
-                let mol = &nucleic_acids[*mol_i];
+                };
 
-                if *atom_i >= mol.common.atoms.len() {
+                let Some(atom) = mol.common.get_atom(*atom_i) else {
                     return;
-                }
-
-                let atom = &mol.common.atoms[*atom_i];
+                };
                 let posit = mol.common.atom_posits[*atom_i];
 
                 disp_atom_data(atom, &mol.residues, Some(posit), ui, true, true);
             }
             // todo DRY
             Selection::AtomLipid((mol_i, atom_i)) => {
-                if *mol_i >= lipids.len() {
+                let Some(mol) = state.get_lipid(*mol_i) else {
                     return;
-                }
-                let mol = &lipids[*mol_i];
+                };
 
-                if *atom_i >= mol.common.atoms.len() {
+                let Some(atom) = mol.common.get_atom(*atom_i) else {
                     return;
-                }
-
-                let atom = &mol.common.atoms[*atom_i];
+                };
                 let posit = mol.common.atom_posits[*atom_i];
 
                 disp_atom_data(atom, &mol.residues, Some(posit), ui, true, true);
             }
             // todo DRY
             Selection::AtomPocket((mol_i, atom_i)) => {
-                if *mol_i >= pockets.len() {
+                let Some(mol) = state.get_pocket(*mol_i) else {
                     return;
-                }
-                let mol = &pockets[*mol_i];
+                };
 
-                if *atom_i >= mol.common.atoms.len() {
+                let Some(atom) = mol.common.get_atom(*atom_i) else {
                     return;
-                }
-
-                let atom = &mol.common.atoms[*atom_i];
+                };
                 let posit = mol.common.atom_posits[*atom_i];
 
                 disp_atom_data(atom, &[], Some(posit), ui, true, true);
@@ -326,11 +303,10 @@ pub(in crate::ui) fn selected_data(
                 let Some(mol) = &state.peptide else {
                     return;
                 };
-                if *bond_i >= mol.common.bonds.len() {
+                let Some(bond) = mol.common.get_bond(*bond_i) else {
                     return;
-                }
+                };
 
-                let bond = &mol.common.bonds[*bond_i];
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
@@ -340,15 +316,13 @@ pub(in crate::ui) fn selected_data(
                 );
             }
             Selection::BondLig((mol_i, bond_i)) => {
-                if *mol_i >= ligands.len() {
+                let Some(mol) = state.get_small(*mol_i) else {
                     return;
-                }
-                let mol = &ligands[*mol_i];
-                if *bond_i >= mol.common.bonds.len() {
+                };
+                let Some(bond) = mol.common.get_bond(*bond_i) else {
                     return;
-                }
+                };
 
-                let bond = &mol.common.bonds[*bond_i];
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
@@ -358,10 +332,9 @@ pub(in crate::ui) fn selected_data(
                 );
             }
             Selection::BondsLig((mol_i, bond_is)) => {
-                if *mol_i >= ligands.len() {
+                let Some(mol) = state.get_small(*mol_i) else {
                     return;
-                }
-                let mol = &ligands[*mol_i];
+                };
 
                 for bond_i in bond_is {
                     if *bond_i >= mol.common.bonds.len() {
@@ -379,15 +352,13 @@ pub(in crate::ui) fn selected_data(
                 }
             }
             Selection::BondNucleicAcid((mol_i, bond_i)) => {
-                if *mol_i >= nucleic_acids.len() {
+                let Some(mol) = state.get_nucleic_acid(*mol_i) else {
                     return;
-                }
-                let mol = &nucleic_acids[*mol_i];
-                if *bond_i >= mol.common.bonds.len() {
+                };
+                let Some(bond) = mol.common.get_bond(*bond_i) else {
                     return;
-                }
+                };
 
-                let bond = &mol.common.bonds[*bond_i];
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
@@ -397,15 +368,13 @@ pub(in crate::ui) fn selected_data(
                 );
             }
             Selection::BondLipid((mol_i, bond_i)) => {
-                if *mol_i >= lipids.len() {
+                let Some(mol) = state.get_lipid(*mol_i) else {
                     return;
-                }
-                let mol = &lipids[*mol_i];
-                if *bond_i >= mol.common.bonds.len() {
+                };
+                let Some(bond) = mol.common.get_bond(*bond_i) else {
                     return;
-                }
+                };
 
-                let bond = &mol.common.bonds[*bond_i];
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
@@ -415,15 +384,13 @@ pub(in crate::ui) fn selected_data(
                 );
             }
             Selection::BondPocket((mol_i, bond_i)) => {
-                if *mol_i >= pockets.len() {
+                let Some(mol) = state.get_pocket(*mol_i) else {
                     return;
-                }
-                let mol = &pockets[*mol_i];
-                if *bond_i >= mol.common.bonds.len() {
+                };
+                let Some(bond) = mol.common.get_bond(*bond_i) else {
                     return;
-                }
+                };
 
-                let bond = &mol.common.bonds[*bond_i];
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,

@@ -25,7 +25,7 @@ use crate::{
 pub const MOL_CACHE_SIZE_ATOM_COUNT: u32 = 1_000_000;
 
 // Every this many mols loaded and screened, pritn a status update.
-const LOAD_STATUS_RATIO: usize = 20_000;
+const LOAD_STATUS_RATIO: usize = 10_000;
 
 /// Screen small molecules by matching to a template. This is a cheap procedure that can be run
 /// prior to a more careful screening or alignment.
@@ -176,6 +176,7 @@ pub fn load_mol_batch(files: &[PathBuf]) -> io::Result<(Vec<MoleculeSmall>, usiz
             }
         };
 
+        mol.common.update_path(path);
         mol.update_characterization();
         atoms_loaded += mol.common.atoms.len() as u32;
         result.push(mol);

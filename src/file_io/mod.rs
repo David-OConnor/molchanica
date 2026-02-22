@@ -105,7 +105,7 @@ impl State {
                 if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
                     Ok(MoleculeGeneric::Pocket(m.common.into()))
                 } else {
-                    Ok(MoleculeGeneric::Ligand(m))
+                    Ok(MoleculeGeneric::Small(m))
                 }
             }
             "mol2" => {
@@ -115,18 +115,18 @@ impl State {
                 if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
                     Ok(MoleculeGeneric::Pocket(m.common.into()))
                 } else {
-                    Ok(MoleculeGeneric::Ligand(m))
+                    Ok(MoleculeGeneric::Small(m))
                 }
             }
             "xyz" => {
                 let mut m = MoleculeSmall::from_xyz(Xyz::load(path)?, path)?;
                 m.common.update_path(path);
-                Ok(MoleculeGeneric::Ligand(m))
+                Ok(MoleculeGeneric::Small(m))
             }
             "pdbqt" => {
                 let mut m: MoleculeSmall = Pdbqt::load(path)?.try_into()?;
                 m.common.update_path(path);
-                Ok(MoleculeGeneric::Ligand(m))
+                Ok(MoleculeGeneric::Small(m))
             }
             "cif" => {
                 // If a 2fo-fc CIF, use gemmi to convert it to Map data.
@@ -654,7 +654,6 @@ impl State {
     pub fn load_mol_to_state(
         &mut self,
         mol: MoleculeGeneric,
-        // mut scene: Option<&mut Scene>,
         scene: &mut Scene,
         updates: &mut EngineUpdates,
         path: Option<&Path>,
@@ -698,7 +697,7 @@ impl State {
 
                 (ident, centroid)
             }
-            MoleculeGeneric::Ligand(mut mol) => {
+            MoleculeGeneric::Small(mut mol) => {
                 // if let Some(ref mut s) = scene {
                 // move_mol_to_cam(&mut mol.common_mut(), &s.camera);
                 move_mol_to_cam(&mut mol.common_mut(), &scene.camera);

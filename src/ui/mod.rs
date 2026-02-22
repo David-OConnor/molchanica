@@ -703,10 +703,6 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                 ui.horizontal(|ui| {
                     mol_data::selected_data(
                         &state,
-                        &state.ligands,
-                        &state.nucleic_acids,
-                        &state.lipids,
-                        &state.pockets,
                         &state.ui.selection,
                         ui,
                     );

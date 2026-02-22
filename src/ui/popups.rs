@@ -117,7 +117,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.pharmacophore_screening {
         popup("pharmacophore_screen", ui).show(|ui| {
-            pharmacophore::pharmacophore_screen(state, ui);
+            pharmacophore::pharmacophore_screen(state, scene, ui, engine_updates);
         });
     }
 

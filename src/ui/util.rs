@@ -155,7 +155,7 @@ pub fn open_lig_from_input(
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
 ) {
-    state.load_mol_to_state(MoleculeGeneric::Ligand(mol), scene, engine_updates, None);
+    state.load_mol_to_state(MoleculeGeneric::Small(mol), scene, engine_updates, None);
 
     state.ui.db_input = String::new();
 }
