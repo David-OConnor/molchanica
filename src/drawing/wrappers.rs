@@ -214,10 +214,13 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
     // draw_all_mol_of_type(state, scene, &mut state.lipids, MolType::Lipid, state.ui.visibility.hide_lipids);
     // return;
 
+    println!("Redrawing all pockets"); // todo tempg
+
     let class = EntityClass::Pocket as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
     if state.ui.visibility.hide_pockets {
+        println!("Hiding pockets; aborting");
         return;
     }
 

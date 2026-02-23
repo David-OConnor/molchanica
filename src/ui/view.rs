@@ -123,7 +123,7 @@ pub fn view_settings(
                     "Pockets",
                     "Show or hide explicitly-added protein pockets for screening, docking, etc",
                     ui,
-                    &mut redraw.peptide,
+                    &mut redraw.pocket,
                 );
             }
 

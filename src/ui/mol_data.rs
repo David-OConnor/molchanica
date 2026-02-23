@@ -624,10 +624,12 @@ pub(in crate::ui) fn display_mol_data_peptide(
     }
 
     if let Some(mut pocket) = pocket_to_add {
-        scene.meshes.push(Default::default());
-        pocket.mesh_i_rel = scene.meshes.len() - 1;
-
-        scene.meshes[MESH_POCKET_START + pocket.mesh_i_rel] = pocket.surface_mesh.clone();
+        pocket.mesh_i_rel = state.pockets.len(); // relative: 0 for first pocket, 1 for second, …
+        let target_mesh_i = MESH_POCKET_START + pocket.mesh_i_rel;
+        while scene.meshes.len() <= target_mesh_i {
+            scene.meshes.push(Default::default());
+        }
+        scene.meshes[target_mesh_i] = pocket.surface_mesh.clone();
         draw_all_pockets(state, scene);
         state.pockets.push(pocket);
 

@@ -135,7 +135,7 @@ pub fn handle_redraw(
     }
 
     if redraw.pocket {
-        draw_all_lipids(state, scene);
+        draw_all_pockets(state, scene);
         engine_updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::Lipid as u32);
     }
