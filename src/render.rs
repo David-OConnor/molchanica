@@ -38,7 +38,9 @@ pub const MESH_PEP_SOLVENT_SURFACE: usize = 6; // Van Der Waals surface.
 // pub const MESH_DOCKING_SURFACE: usize = 7;
 pub const MESH_DENSITY_SURFACE: usize = 8;
 pub const MESH_SECONDARY_STRUCTURE: usize = 9;
-pub const MESH_POCKET: usize = 10;
+
+// We support an arbitrary number of pockets.
+pub const MESH_POCKET_START: usize = 10;
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 
@@ -134,8 +136,9 @@ pub fn render(mut state: State) {
             Mesh::new_box(1., 1., 1.), // Placeholder for docking site surface; populated later.
             Mesh::new_box(1., 1., 1.), // Placeholder for density surface; populated later.
             Mesh::new_box(1., 1., 1.), // Placeholder for secondary structure surface; populated later.
-            // todo: Support rendering multiple pockets?
-            Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.
+
+                                       // No placeholder for pockets; we add them as required.
+                                       // Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.
         ],
         entities: Vec::new(),
         gaussians: Vec::new(),

@@ -1,4 +1,4 @@
-use std::{path::Components, sync::atomic::Ordering};
+use std::sync::atomic::Ordering;
 
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
@@ -11,10 +11,8 @@ use na_seq::{
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
-    mol_components::MolComponents,
     mol_editor,
     mol_editor::{
-        MolEditorState,
         add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
         exit_edit_mode, sync_md,
         templates::Template,
@@ -22,7 +20,7 @@ use crate::{
     mol_manip,
     mol_manip::ManipMode,
     molecules::{Bond, MolIdent, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
-    render::MESH_POCKET,
+    render::MESH_POCKET_START,
     selection::{Selection, ViewSelLevel},
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{State, StateUi},
@@ -420,7 +418,10 @@ pub(in crate::ui) fn editor(
                 );
 
                 apply_mesh_colors(&mut pocket.surface_mesh, &colors);
-                apply_mesh_colors(&mut scene.meshes[MESH_POCKET], &colors);
+                apply_mesh_colors(
+                    &mut scene.meshes[MESH_POCKET_START + pocket.mesh_i_rel],
+                    &colors,
+                );
                 updates.meshes = true;
 
                 redraw = true;

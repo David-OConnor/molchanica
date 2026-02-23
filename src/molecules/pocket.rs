@@ -27,7 +27,7 @@ use crate::{
         common::{MoleculeCommon, reassign_bond_indices},
         small::MoleculeSmall,
     },
-    render::MESH_POCKET,
+    render::MESH_POCKET_START,
     sfc_mesh::{MeshColoring, apply_mesh_colors, get_mesh_colors, make_sas_mesh},
 };
 
@@ -75,6 +75,10 @@ pub struct Pocket {
     // todo having both here is fine for now, and we will settle out hwo the
     // todo state works organically.
     pub volume: PocketVolume,
+    /// Index into the global meshes from the engine.
+    /// Relative the to the base index for pockets. I.e, this value starts at 0, even though
+    /// the meshes for pockets don't.
+    pub mesh_i_rel: usize,
 }
 
 impl Encode for Pocket {
@@ -146,6 +150,7 @@ impl<'de, Context> BorrowDecode<'de, Context> for Pocket {
             mesh_pivot,
             surface_mesh,
             volume,
+            mesh_i_rel: 0,
         })
     }
 }
@@ -204,11 +209,21 @@ impl Pocket {
     /// as with other molecule types, then run this to synchronize.
     ///
     /// Also rebuilds the mesh.
-    pub fn regen_mesh_vol(&mut self, scene_meshes: &mut [Mesh], updates: &mut EngineUpdates) {
+    pub fn regen_mesh_vol(&mut self, scene_meshes: &mut Vec<Mesh>, updates: &mut EngineUpdates) {
         self.volume = PocketVolume::new(&self.common);
         self.surface_mesh = make_mesh(&self.common.atoms, &self.common.atom_posits);
 
-        scene_meshes[MESH_POCKET] = self.surface_mesh.clone();
+        let mesh_i = MESH_POCKET_START + self.mesh_i_rel;
+        if mesh_i == scene_meshes.len() {
+            scene_meshes.push(Mesh::default());
+        } else if mesh_i > scene_meshes.len() {
+            eprintln!(
+                "Error: Unable to find the global mesh at {mesh_i} when assigning it for this pocket"
+            );
+            return;
+        }
+
+        scene_meshes[mesh_i] = self.surface_mesh.clone();
 
         updates.meshes = true;
         updates.entities.push_class(EntityClass::Pocket as u32);
@@ -218,7 +233,7 @@ impl Pocket {
     /// mesh etc, and updates the engine's meshes)
     pub fn reset_post_manip(
         &mut self,
-        scene_meshes: &mut [Mesh],
+        scene_meshes: &mut Vec<Mesh>,
         coloring: MeshColoring,
         updates: &mut EngineUpdates,
     ) {
@@ -227,7 +242,17 @@ impl Pocket {
 
         let color = get_mesh_colors(&self.surface_mesh, &self.common, coloring, updates);
         apply_mesh_colors(&mut self.surface_mesh, &color);
-        apply_mesh_colors(&mut scene_meshes[MESH_POCKET], &color);
+
+        // We handle pushing this mesh in the regen method above.
+        let mesh_i = MESH_POCKET_START + self.mesh_i_rel;
+        if mesh_i >= scene_meshes.len() {
+            eprintln!(
+                "Error: Unable to find the global mesh at {mesh_i} when assigning it for this pocket"
+            );
+            return;
+        }
+
+        apply_mesh_colors(&mut scene_meshes[mesh_i], &color);
     }
 
     pub fn save_sdf(&self, path: &Path) -> io::Result<()> {
@@ -280,6 +305,7 @@ impl Pocket {
             mesh_pivot,
             surface_mesh,
             volume: Default::default(),
+            mesh_i_rel: 0,
         })
     }
     // todo: mmCIF saving as well? Note that the input for these is generally mmCIF.
@@ -301,6 +327,7 @@ impl From<MoleculeCommon> for Pocket {
             mesh_pivot,
             surface_mesh,
             volume,
+            mesh_i_rel: 0,
         }
     }
 }

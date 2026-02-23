@@ -17,12 +17,9 @@ use crate::{
     label,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
-        lipid::MoleculeLipid,
-        nucleic_acid::MoleculeNucleicAcid,
         pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
-        small::MoleculeSmall,
     },
-    render::MESH_POCKET,
+    render::MESH_POCKET_START,
     selection::Selection,
     state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, mol_descrip, popups},
@@ -626,8 +623,11 @@ pub(in crate::ui) fn display_mol_data_peptide(
         }
     }
 
-    if let Some(pocket) = pocket_to_add {
-        scene.meshes[MESH_POCKET] = pocket.surface_mesh.clone();
+    if let Some(mut pocket) = pocket_to_add {
+        scene.meshes.push(Default::default());
+        pocket.mesh_i_rel = scene.meshes.len() - 1;
+
+        scene.meshes[MESH_POCKET_START + pocket.mesh_i_rel] = pocket.surface_mesh.clone();
         draw_all_pockets(state, scene);
         state.pockets.push(pocket);
 

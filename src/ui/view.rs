@@ -7,7 +7,7 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     molecules::MolType,
-    render::MESH_POCKET,
+    render::MESH_POCKET_START,
     sfc_mesh::{MeshColoring, apply_mesh_colors, get_mesh_colors},
     state::State,
     ui::{
@@ -74,7 +74,10 @@ pub fn view_settings(
 
                     apply_mesh_colors(&mut pocket.surface_mesh, &colors);
                     // todo warning: single scene pocket mesh again.
-                    apply_mesh_colors(&mut scene.meshes[MESH_POCKET], &colors);
+                    apply_mesh_colors(
+                        &mut scene.meshes[MESH_POCKET_START + pocket.mesh_i_rel],
+                        &colors,
+                    );
                     updates.meshes = true;
                     redraw.pocket = true;
                 }

@@ -29,8 +29,9 @@ use crate::{
     },
     reflection::DensityPt,
     render::{
-        Color, MESH_BOND, MESH_CUBE, MESH_DENSITY_SURFACE, MESH_PEP_SOLVENT_SURFACE, MESH_POCKET,
-        MESH_SECONDARY_STRUCTURE, MESH_SPHERE_HIGHRES, MESH_SPHERE_LOWRES, MESH_SPHERE_MEDRES,
+        Color, MESH_BOND, MESH_CUBE, MESH_DENSITY_SURFACE, MESH_PEP_SOLVENT_SURFACE,
+        MESH_POCKET_START, MESH_SECONDARY_STRUCTURE, MESH_SPHERE_HIGHRES, MESH_SPHERE_LOWRES,
+        MESH_SPHERE_MEDRES,
     },
     selection::{Selection, ViewSelLevel},
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
@@ -1882,7 +1883,7 @@ pub fn draw_pocket(
 
     // Draw the surface mesh; pre-computed.
     let mut ent = Entity::new(
-        MESH_POCKET,
+        MESH_POCKET_START + pocket.mesh_i_rel,
         // mesh_posit.into(),
         // mesh_posit.into(),
         Vec3::new_zero(),
