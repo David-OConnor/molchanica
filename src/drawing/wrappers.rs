@@ -68,11 +68,13 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
     //     .retain(|ent| ent.class != EntityClass::Pharmacophore as u32);
 
     if state.ui.visibility.hide_ligand {
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
     // Edit small molecules only; not proteins.
     if state.volatile.operating_mode == OperatingMode::MolEditor {
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
@@ -119,11 +121,13 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
     if state.ui.visibility.hide_nucleic_acids {
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
     // Edit small molecules only; not proteins.
     if state.volatile.operating_mode == OperatingMode::MolEditor {
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
@@ -168,11 +172,13 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
     if state.ui.visibility.hide_lipids {
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
     // Edit small molecules only; not proteins.
     if state.volatile.operating_mode == OperatingMode::MolEditor {
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
@@ -211,21 +217,17 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
 // todo: You need to generalize your drawing code so you have less repetition, and it's more consistent.
 // pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, draw_mesh: bool) {
 pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
-    // draw_all_mol_of_type(state, scene, &mut state.lipids, MolType::Lipid, state.ui.visibility.hide_lipids);
-    // return;
-
-    println!("Redrawing all pockets"); // todo tempg
-
     let class = EntityClass::Pocket as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
     if state.ui.visibility.hide_pockets {
-        println!("Hiding pockets; aborting");
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
     // Edit small molecules only; not proteins.
     if state.volatile.operating_mode == OperatingMode::MolEditor {
+        scene.entities.retain(|ent| ent.class != class);
         return;
     }
 

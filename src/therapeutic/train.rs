@@ -1096,7 +1096,7 @@ fn read_data(
         (&mut result_test, &loaded.validation),
     ] {
         for (mol, target) in data {
-            let feat_params = param_feats_from_mol(&mol)?;
+            let feat_params = mlp_feats_from_mol(&mol)?;
 
             if mol.common.bonds.is_empty() {
                 // eprintln!("No bonds found in SDF. Skipping.");
@@ -1152,9 +1152,12 @@ fn read_data(
 
 // Note: We can make variants of this A/R tuned to specific inference items. For now, we are using
 // a single  set of features for all targets.
-/// Extract features from a molecule that are relevant for inferring the target parameter. We use this
+/// Extract  molecule-level features from a molecule that are relevant for inferring the target parameter. We use this
 /// in both training and inference workflows.
-pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
+///
+/// We avoid features that may be more robustly represented by GNNs. For example, the count of rings,
+/// functional groups, and H bond donors/acceptors.
+pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
     let Some(c) = &mol.characterization else {
         return Err(io::Error::other("Missing mol characterization"));
     };
@@ -1222,8 +1225,8 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         ln(c.num_bonds as f32),
         // ln(c.mol_weight),
         ln(c.num_heavy_atoms as f32),
-        c.h_bond_acceptor.len() as f32,
-        c.h_bond_donor.len() as f32,
+        // c.h_bond_acceptor.len() as f32,
+        // c.h_bond_donor.len() as f32,
         c.num_hetero_atoms as f32,
         c.halogen.len() as f32,
         c.rotatable_bonds.len() as f32,
@@ -1238,7 +1241,7 @@ pub(in crate::therapeutic) fn param_feats_from_mol(mol: &MoleculeSmall) -> io::R
         // c.num_rings_aromatic as f32,
         // c.num_rings_saturated as f32,
         // c.num_rings_aliphatic as f32,
-        c.rings.len() as f32,
+        // c.rings.len() as f32,
         c.log_p,
         c.molar_refractivity,
         ln(c.psa_topo),

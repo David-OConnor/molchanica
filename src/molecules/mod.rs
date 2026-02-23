@@ -1122,6 +1122,8 @@ impl MoleculePeptide {
             .map(|a| a.to_generic())
             .collect();
 
+        println!("Reassigning H on protein at pH {ph:.1}");
+
         let mut res_gen: Vec<_> = self.residues.iter().map(|a| a.to_generic()).collect();
         let mut chains_gen: Vec<_> = self.chains.iter().map(|a| a.to_generic()).collect();
 
@@ -1131,9 +1133,6 @@ impl MoleculePeptide {
         let dihedrals =
             populate_hydrogens_dihedrals(&mut atoms_gen, &mut res_gen, &mut chains_gen, ff_map, ph)
                 .map_err(|e| io::Error::new(ErrorKind::InvalidData, e.descrip))?;
-
-        let end = start.elapsed().as_millis();
-        println!("Hydrogens populated in {end:.1}");
 
         let bonds_gen = create_bonds(&atoms_gen);
 
@@ -1146,6 +1145,17 @@ impl MoleculePeptide {
         self.chains = chains;
 
         self.common.build_adjacency_list();
+        self.common.reset_posits();
+
+        let elapsed = start.elapsed().as_millis();
+        let h_count = self
+            .common
+            .atoms
+            .iter()
+            .filter(|a| a.element == Element::Hydrogen)
+            .count();
+
+        println!("{h_count} Hydrogens populated in {elapsed:.1} ms");
 
         Ok(())
     }

@@ -53,8 +53,9 @@ pub struct State {
     pub ligands: Vec<MoleculeSmall>,
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
     pub lipids: Vec<MoleculeLipid>,
-    pub pharmacophores: Vec<Pharmacophore>,
-    // todo: A starting point for pocket.
+    // We are, for now at least, deprecating standalone Pharmacophores in state, in favor
+    // of their small-molecule-based state approach.
+    // pub pharmacophores: Vec<Pharmacophore>,
     pub pockets: Vec<Pocket>,
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
@@ -97,7 +98,7 @@ impl Default for State {
             ligands: Default::default(),
             nucleic_acids: Default::default(),
             lipids: Default::default(),
-            pharmacophores: Default::default(),
+            // pharmacophores: Default::default(),
             pockets: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),

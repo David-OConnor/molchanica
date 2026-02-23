@@ -66,10 +66,10 @@ pub struct Pocket {
     pub common: MoleculeCommon,
     /// Used to rotate the mesh, so we don't have to regenerate it when
     /// the user rotates the pocket.
-    pub mesh_orientation: Quaternion, // Unused
+    pub mesh_orientation: Quaternion, // todo: Unused
     /// This pivot must match the rotation we use for the inner
     /// molecules; this is the molecule's centroid.
-    pub mesh_pivot: Vec3F32, // Unused
+    pub mesh_pivot: Vec3F32, // todo: Unused
     pub surface_mesh: Mesh,
     // todo: This excluded volume is duplicated with the pharmacophore. I think
     // todo having both here is fine for now, and we will settle out hwo the

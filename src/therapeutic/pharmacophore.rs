@@ -541,6 +541,7 @@ pub struct Pharmacophore {
 }
 
 impl Pharmacophore {
+    /// Note: We currently don't
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut res = Vec::new();
 

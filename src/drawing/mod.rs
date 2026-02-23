@@ -1842,6 +1842,10 @@ pub fn draw_pocket(
         return res;
     }
 
+    if !pocket.common.visible {
+        return res;
+    }
+
     let manipulating_pocket = matches!(
         manip_mode,
         ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _))

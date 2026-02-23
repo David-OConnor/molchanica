@@ -228,7 +228,13 @@ pub fn view_settings(
                 redraw.set_all();
             }
 
-            if !(state.ligands.is_empty() && state.pharmacophores.is_empty()) {
+            let num_pharm = state
+                .ligands
+                .iter()
+                .filter(|l| !l.pharmacophore.features.is_empty())
+                .count();
+            // if !(state.ligands.is_empty() && state.pharmacophores.is_empty()) {
+            if num_pharm != 0 {
                 toggle_btn_inv(
                     &mut state.ui.visibility.hide_pharmacophore,
                     "Phar",

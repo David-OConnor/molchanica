@@ -32,7 +32,7 @@ use crate::{
     docking::DockingSite,
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    molecules::MolIdent,
+    molecules::{MolIdent, MolType},
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
     state::{
@@ -109,6 +109,21 @@ impl Display for OpenType {
             Self::Trajectory => "MD Trajectory",
         };
         write!(f, "{v}")
+    }
+}
+
+impl From<MolType> for OpenType {
+    fn from(v: MolType) -> Self {
+        use MolType::*;
+
+        match v {
+            Peptide => Self::Peptide,
+            Ligand => Self::Ligand,
+            NucleicAcid => Self::NucleicAcid,
+            Lipid => Self::Lipid,
+            Pocket => Self::Pocket,
+            Water => unimplemented!(),
+        }
     }
 }
 

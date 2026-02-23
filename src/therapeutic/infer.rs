@@ -22,8 +22,7 @@ use crate::{
             pad_edge_feats,
         },
         train::{
-            MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler,
-            param_feats_from_mol,
+            MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
         },
     },
 };
@@ -367,7 +366,7 @@ pub fn infer_general(
     ff_params: &ForceFieldParams,
     load_from_file: bool,
 ) -> io::Result<f32> {
-    let feat_params = param_feats_from_mol(mol)?;
+    let feat_params = mlp_feats_from_mol(mol)?;
 
     let infer = match models.get_mut(&dataset) {
         Some(inf) => inf,

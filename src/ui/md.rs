@@ -406,7 +406,7 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     // todo: Don't continuously run these computations!
     let atom_count = (snap.water_o_posits.len() * 3) as f32 + snap.atom_posits.len() as f32;
     let ke_per_atom = snap.energy_kinetic / atom_count;
-    ui.label(RichText::new(format!("{:.2}", ke_per_atom)).color(Color32::GOLD));
+    label!(ui, format!("{:.2}", ke_per_atom), Color32::GOLD);
 
     ui.label("PE: ");
     label!(ui, format!("{:.2}", snap.energy_potential), Color32::GOLD);

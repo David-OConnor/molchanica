@@ -286,25 +286,27 @@ fn mol_picker(
         );
     }
 
-    for (i_mol, pm) in state.pharmacophores.iter_mut().enumerate() {
-        label!(
-            ui,
-            format!("Pharmacophore name: {} ident: {}", pm.name, pm.mol_ident),
-            Color32::WHITE
-        );
-        //
-        // if let Some(pm) = pharmacophore
-        //     && !pm.features.is_empty()
-        // {
-        pharmacophore::pharmacophore_summary(
-            pm,
-            i_mol,
-            &mut state.ui.popup,
-            &mut state.pharmacophore,
-            ui,
-        );
-        // }
-    }
+    // Removed, for now.
+
+    // for (i_mol, pm) in state.pharmacophores.iter_mut().enumerate() {
+    //     label!(
+    //         ui,
+    //         format!("Pharmacophore name: {} ident: {}", pm.name, pm.mol_ident),
+    //         Color32::WHITE
+    //     );
+    //     //
+    //     // if let Some(pm) = pharmacophore
+    //     //     && !pm.features.is_empty()
+    //     // {
+    //     pharmacophore::pharmacophore_summary(
+    //         pm,
+    //         i_mol,
+    //         &mut state.ui.popup,
+    //         &mut state.pharmacophore,
+    //         ui,
+    //     );
+    //     // }
+    // }
 
     // todo: AAs here too?
 
@@ -403,6 +405,7 @@ fn manip_toolbar(
             }
         }
 
+        let mut pocket_mesh_stale = false;
         if let Some(mol) = &mut state.active_mol_mut() {
             if ui
                 .button(RichText::new("Move to cam").color(COLOR_HIGHLIGHT))
@@ -410,7 +413,9 @@ fn manip_toolbar(
                 .clicked()
             {
                 move_mol_to_cam(mol.common_mut(), &scene.camera);
-
+                if active_mol_type == MolType::Pocket {
+                    pocket_mesh_stale = true;
+                }
                 redraw.set(active_mol_type);
             }
 
@@ -422,7 +427,9 @@ fn manip_toolbar(
                         its source mmCIF, Mol2 or SDF file."
             ).clicked() {
                 mol.common_mut().reset_posits();
-
+                if active_mol_type == MolType::Pocket {
+                    pocket_mesh_stale = true;
+                }
                 // todo: Use the inplace move.
                 redraw.set(active_mol_type);
             }
@@ -432,6 +439,13 @@ fn manip_toolbar(
                 .clicked() {
                 state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
             }
+        }
+
+        // Pocket meshes are stored in world space, so a position change requires
+        // regenerating the mesh; a simple entity redraw is not sufficient.
+        if pocket_mesh_stale {
+            let pocket = &mut state.pockets[active_mol_i];
+            pocket.regen_mesh_vol(&mut scene.meshes, engine_updates);
         }
     });
 }

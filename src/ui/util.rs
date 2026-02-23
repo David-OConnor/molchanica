@@ -6,7 +6,7 @@ use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use crate::{
     cam::reset_camera,
     drawing::{
-        draw_peptide,
+        EntityClass, draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_editor,
@@ -56,6 +56,7 @@ pub fn update_file_dialogs(
                 let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
                 let extension = binding;
 
+                // Deprecated, for now
                 if extension == "pmp" {
                     let buf = state.mol_editor.mol.pharmacophore.to_bytes();
                     let mut file = File::create(path)?;
@@ -137,7 +138,8 @@ pub fn handle_redraw(
     if redraw.pocket {
         draw_all_pockets(state, scene);
         engine_updates.entities = EntityUpdate::All;
-        // engine_updates.entities.push_class(EntityClass::Lipid as u32);
+
+        // engine_updates.entities.push_class(EntityClass::Pocket as u32);
     }
 
     // Perform cleanup.
@@ -200,7 +202,8 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
     // This updates the mesh and spheres after the initial prefs load, which may
     // have altered their posits. This prevents a visual jump upon the first re-render of pockets,
     // as the mesh moves to the correct location.
-    for pocket in &mut state.pockets {
+    for (i, pocket) in state.pockets.iter_mut().enumerate() {
+        pocket.mesh_i_rel = i;
         pocket.reset_post_manip(
             &mut scene.meshes,
             state.ui.mesh_coloring,

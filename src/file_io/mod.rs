@@ -69,7 +69,7 @@ impl State {
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
             "dcd" | "xtc" | "mdt" => self.open_trajectory(path)?,
-            "pmp" => self.open_pharmacophore(path)?,
+            // "pmp" => self.open_pharmacophore(path)?,
             _ => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
@@ -388,7 +388,8 @@ impl State {
     }
 
     /// A pharmacophore that is stored independently, i.e. without an associated ligand file.
-    pub fn open_pharmacophore(&mut self, path: &Path) -> io::Result<()> {
+    /// todo: FOr now at least, deprecated as a dedicated file type
+    pub fn _open_pharmacophore(&mut self, path: &Path) -> io::Result<()> {
         let mut file = File::open(path)?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
@@ -403,7 +404,7 @@ impl State {
             )
         }
 
-        self.pharmacophores.push(ph);
+        // self.pharmacophores.push(ph);
 
         self.update_history(path, OpenType::Map);
         // Save the open history.
@@ -828,10 +829,10 @@ impl State {
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
 
+                mol.mesh_i_rel = self.pockets.len();
                 mol.reset_post_manip(&mut scene.meshes, self.ui.mesh_coloring, updates);
 
                 self.pockets.push(mol);
-                // todo: Warning! Only one pocket mesh is set up in our scene!
 
                 // todo temp to ts
                 let pocket = &self.pockets[self.pockets.len() - 1];

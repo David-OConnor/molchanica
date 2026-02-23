@@ -669,18 +669,26 @@ pub fn close_mol(
     state.volatile.mol_manip.mode = ManipMode::None;
     engine_updates.entities = EntityUpdate::All;
 
+    let Some(mol) = state.get_mol(mol_type, i) else {
+        eprintln!("Error: Out of bounds when closing a mol");
+        return;
+    };
+
+    let path = mol.common().path.clone();
+    if let Some(path) = path {
+        for history in &mut state.to_save.open_history {
+            let ot: OpenType = mol_type.into();
+            if ot == history.type_ && history.path == path {
+                history.last_session = false;
+            }
+        }
+    }
+
     match mol_type {
         MolType::Peptide => {
             close_peptide(state, scene, engine_updates);
         }
         MolType::Ligand => {
-            if i >= state.ligands.len() {
-                eprintln!("Error: Invalid lig index");
-                return;
-            }
-
-            let path = state.ligands[i].common.path.clone();
-
             state.ligands.remove(i);
 
             if state.ligands.is_empty() {
@@ -691,25 +699,10 @@ pub fn close_mol(
 
             draw_all_ligs(state, scene);
 
-            if let Some(path) = path {
-                for history in &mut state.to_save.open_history {
-                    if let OpenType::Ligand = history.type_
-                        && history.path == path
-                    {
-                        history.last_session = false;
-                    }
-                }
-            }
-
             state.update_save_prefs();
         }
         // todo: DRY
         MolType::NucleicAcid => {
-            if i >= state.nucleic_acids.len() {
-                eprintln!("Error: Invalid nucleic acid index");
-                return;
-            }
-
             state.nucleic_acids.remove(i);
 
             if state.nucleic_acids.is_empty() {
@@ -722,11 +715,6 @@ pub fn close_mol(
             draw_all_nucleic_acids(state, scene);
         }
         MolType::Lipid => {
-            if i >= state.lipids.len() {
-                eprintln!("Error: Invalid lipid index");
-                return;
-            }
-
             state.lipids.remove(i);
 
             if state.lipids.is_empty() {
@@ -738,11 +726,6 @@ pub fn close_mol(
             draw_all_lipids(state, scene);
         }
         MolType::Pocket => {
-            if i >= state.pockets.len() {
-                eprintln!("Error: Invalid pocket index");
-                return;
-            }
-
             state.pockets.remove(i);
 
             if state.pockets.is_empty() {
