@@ -275,7 +275,7 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
 
         if let Selection::AtomLig((_mol_i, atom_i)) = &state.ui.selection
             && ui
-                .button(RichText::new("Add pharmac feat").color(COLOR_ACTION))
+                .button(RichText::new("Add ph feat").color(COLOR_ACTION))
                 .on_hover_text("Add pharmacophore feature.")
                 .clicked()
         {
@@ -294,7 +294,7 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
 
         if !state.mol_editor.mol.pharmacophore.features.is_empty()
             && ui
-                .button(RichText::new("Save"))
+                .button(RichText::new("Save ph"))
                 .on_hover_text("Save the pharmacophore to a file.")
                 .clicked()
         {

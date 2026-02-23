@@ -123,7 +123,8 @@ impl Infer {
         };
 
         let graph_comp = GraphDataComponent::new(&comps)?;
-        let graph_spacial = GraphDataSpacial::new(mol).unwrap_or_else(|_| GraphDataSpacial::empty());
+        let graph_spacial =
+            GraphDataSpacial::new(mol).unwrap_or_else(|_| GraphDataSpacial::empty());
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
         let num_atoms = graph_atom_bond.num_atoms;

@@ -31,7 +31,7 @@ use burn::{
         dataloader::{DataLoaderBuilder, batcher::Batcher},
         dataset::InMemDataset,
     },
-    lr_scheduler::cosine_annealing::CosineAnnealingLrSchedulerConfig,
+    lr_scheduler::cosine::CosineAnnealingLrSchedulerConfig,
     module::Module,
     nn::{
         Dropout, DropoutConfig, Embedding, EmbeddingConfig, LayerNorm, LayerNormConfig, Linear,
@@ -591,7 +591,10 @@ impl<B: Backend> Model<B> {
             let pharm_max = pharm_max * has_pharm_nodes;
             let [b_p, _one_p, d_p] = pharm_mean.dims();
             branches.push(Tensor::cat(
-                vec![pharm_mean.reshape([b_p, d_p]), pharm_max.reshape([b_p, d_p])],
+                vec![
+                    pharm_mean.reshape([b_p, d_p]),
+                    pharm_max.reshape([b_p, d_p]),
+                ],
                 1,
             ));
         }
@@ -1367,7 +1370,8 @@ pub(in crate::therapeutic) fn train(
     let num_iters = ((data_train.len() + 127) / 128) * 80; // steps_per_epoch * num_epochs
     let lr_scheduler = CosineAnnealingLrSchedulerConfig::new(3e-4, num_iters)
         .with_min_lr(1e-5)
-        .init();
+        .init()
+        .unwrap();
 
     let training = SupervisedTraining::new(
         model_dir_train_val.to_str().unwrap(),
@@ -1439,7 +1443,7 @@ pub fn main() {
                 &ff_params,
             ) {
                 Ok(ev) => {
-                    println!("Eval results for {dataset}: {ev}");
+                    println!("\nEval results for {dataset}: {ev}");
                 }
                 Err(e) => {
                     eprintln!("Error evaluating {dataset}: {e}");

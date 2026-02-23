@@ -57,10 +57,10 @@ pub fn update_file_dialogs(
                 let extension = binding;
 
                 if extension == "pmp" {
-                    // graphics::app_utils::save(path, &state.mol_editor.mol.pharmacophore)
                     let buf = state.mol_editor.mol.pharmacophore.to_bytes();
-                    let mut file = File::open(path)?;
+                    let mut file = File::create(path)?;
                     file.write_all(&buf)?;
+                    println!("Saved Pharmacophore to {path:?}");
                 } else {
                     mol_editor::save(state, path)?
                 }

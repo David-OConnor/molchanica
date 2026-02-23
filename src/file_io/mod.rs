@@ -1,4 +1,11 @@
-use std::{fs, io, io::ErrorKind, path::Path, time::Instant};
+use std::{
+    fs,
+    fs::File,
+    io,
+    io::{ErrorKind, Read},
+    path::Path,
+    time::Instant,
+};
 
 use bio_files::{DensityMap, MmCif, Mol2, Pdbqt, Xyz, md_params::ForceFieldParams, sdf::Sdf};
 use chrono::Utc;
@@ -23,6 +30,7 @@ use crate::{
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
     selection::Selection,
     state::State,
+    therapeutic::pharmacophore::Pharmacophore,
     util::{handle_err, handle_success},
 };
 
@@ -61,10 +69,11 @@ impl State {
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
             "dcd" | "xtc" | "mdt" => self.open_trajectory(path)?,
+            "pmp" => self.open_pharmacophore(path)?,
             _ => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
-                    "Unsupported file extension",
+                    "Unsupported file extension when opening",
                 ));
             }
         }
@@ -378,6 +387,25 @@ impl State {
         Ok(())
     }
 
+    /// A pharmacophore that is stored independently, i.e. without an associated ligand file.
+    pub fn open_pharmacophore(&mut self, path: &Path) -> io::Result<()> {
+        let mut file = File::open(path)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+
+        let ph = Pharmacophore::from_bytes(&buf);
+
+        println!("Loaded pharmacophore: {:?}", ph);
+
+        self.pharmacophores.push(ph);
+
+        self.update_history(path, OpenType::Map);
+        // Save the open history.
+        self.update_save_prefs();
+
+        Ok(())
+    }
+
     /// A single endpoint to save a number of file types
     pub fn save(&mut self, path: &Path) -> io::Result<()> {
         let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
@@ -508,7 +536,7 @@ impl State {
             _ => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
-                    "Unsupported file extension",
+                    "Unsupported file extension when saving",
                 ));
             }
         }
@@ -938,6 +966,7 @@ impl Default for FileDialogs {
                 "All",
                 vec![
                     "cif", "mol2", "sdf", "xyz", "pdbqt", "map", "mtz", "frcmod", "dat", "prmtop",
+                    "pmp",
                 ],
             )
             .add_file_filter_extensions(

@@ -573,8 +573,10 @@ impl Pharmacophore {
             None => res.push(0),
             Some(pocket) => {
                 res.push(1);
+
                 let pocket_bytes =
                     bincode::encode_to_vec(pocket, config::standard()).unwrap_or_default();
+
                 res.extend_from_slice(&(pocket_bytes.len() as u32).to_le_bytes());
                 res.extend_from_slice(&pocket_bytes);
             }
@@ -587,30 +589,30 @@ impl Pharmacophore {
         let mut i = 0usize;
 
         // name
-        let name_len = parse_le!(bytes, u32, 1..i + 4) as usize;
+        let name_len = parse_le!(bytes, u32, i..i + 4) as usize;
         i += 4;
         let name = String::from_utf8(bytes[i..i + name_len].to_vec()).unwrap_or_default();
         i += name_len;
 
         // mol_ident
-        let mol_ident_len = parse_le!(bytes, u32, 1..i + 4) as usize;
+        let mol_ident_len = parse_le!(bytes, u32, i..i + 4) as usize;
         i += 4;
         let mol_ident = String::from_utf8(bytes[i..i + mol_ident_len].to_vec()).unwrap_or_default();
         i += mol_ident_len;
 
         // features
-        let feat_count = parse_le!(bytes, u32, 1..i + 4) as usize;
+        let feat_count = parse_le!(bytes, u32, i..i + 4) as usize;
         i += 4;
         let mut features = Vec::with_capacity(feat_count);
         for _ in 0..feat_count {
-            let feat_len = parse_le!(bytes, u32, 1..i + 4) as usize;
+            let feat_len = parse_le!(bytes, u32, i..i + 4) as usize;
             i += 4;
             features.push(PharmacophoreFeature::from_bytes(&bytes[i..i + feat_len]));
             i += feat_len;
         }
 
         // feature_relations
-        let rel_count = parse_le!(bytes, u32, 1..i + 4) as usize;
+        let rel_count = parse_le!(bytes, u32, i..i + 4) as usize;
         i += 4;
         let mut feature_relations = Vec::with_capacity(rel_count);
         for _ in 0..rel_count {
@@ -624,7 +626,7 @@ impl Pharmacophore {
             None
         } else {
             i += 1;
-            let pocket_len = parse_le!(bytes, u32, 1..i + 4) as usize;
+            let pocket_len = parse_le!(bytes, u32, i..i + 4) as usize;
             i += 4;
 
             bincode::decode_from_slice::<Pocket, _>(&bytes[i..i + pocket_len], config::standard())
