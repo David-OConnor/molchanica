@@ -28,13 +28,14 @@ pub(in crate::ui) fn pocket_list(
             COLOR_INACTIVE
         };
 
-        if ui
-            .button(RichText::new(&pocket.common.ident).color(color))
-            .on_hover_text(
-                "Display this pocket, and optionally use it as part of \
-                        a pharmacophore, e.g. its excluded volume.",
-            )
-            .clicked()
+        if button!(
+            ui,
+            &pocket.common.ident,
+            color,
+            "Display this pocket, and optionally use it as part of \
+                        a pharmacophore, e.g. its excluded volume."
+        )
+        .clicked()
         {
             scene
                 .entities

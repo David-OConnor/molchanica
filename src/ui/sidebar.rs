@@ -5,12 +5,11 @@ use lin_alg::f64::Vec3;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam},
-    drawing::{EntityClass, draw_pocket},
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
-    state::{OperatingMode, PopupState, State, StateVolatile},
+    state::{OperatingMode, PopupState, State},
     therapeutic::pharmacophore::{Pharmacophore, PharmacophoreState},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
@@ -287,6 +286,26 @@ fn mol_picker(
         );
     }
 
+    for (i_mol, pm) in state.pharmacophores.iter_mut().enumerate() {
+        label!(
+            ui,
+            format!("Pharmacophore name: {} ident: {}", pm.name, pm.mol_ident),
+            Color32::WHITE
+        );
+        //
+        // if let Some(pm) = pharmacophore
+        //     && !pm.features.is_empty()
+        // {
+        pharmacophore::pharmacophore_summary(
+            pm,
+            i_mol,
+            &mut state.ui.popup,
+            &mut state.pharmacophore,
+            ui,
+        );
+        // }
+    }
+
     // todo: AAs here too?
 
     if let Some((mol_type, i_mol)) = close {
@@ -497,7 +516,6 @@ pub(in crate::ui) fn sidebar(
                 mol_picker(state, scene, ui, redraw, updates);
             }
 
-            // todo: Still list global pharmacophores
             if state.ui.ui_vis.pharmacophore_list && edit_mode {
                 mol_editor_sidebar::pharmacophore_list(state, ui);
             }

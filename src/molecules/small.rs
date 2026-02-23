@@ -811,6 +811,7 @@ fn pharmacophore_from_biofiles(
 
     Ok(Pharmacophore {
         name: ident.to_string(),
+        mol_ident: ident.to_string(),
         features,
         ..Default::default()
     })

@@ -395,7 +395,13 @@ impl State {
 
         let ph = Pharmacophore::from_bytes(&buf);
 
-        println!("Loaded pharmacophore: {:?}", ph);
+        println!("Loaded pharmacophore: {:?}", ph.features);
+        if let Some(p) = &ph.pocket {
+            println!(
+                "Pocket loaded with pharmacophore, based on {} atoms",
+                p.volume.spheres.len()
+            )
+        }
 
         self.pharmacophores.push(ph);
 

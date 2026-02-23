@@ -38,9 +38,7 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         infer::Infer,
-        pharmacophore::{
-            PhScreeningScore, Pharmacophore, PharmacophoreFeatType, PharmacophoreState,
-        },
+        pharmacophore::{Pharmacophore, PharmacophoreFeatType, PharmacophoreState},
     },
     threads::ThreadReceivers,
     util::orca_avail,
