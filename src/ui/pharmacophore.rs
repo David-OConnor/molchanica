@@ -292,24 +292,24 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
             *redraw = true;
         }
 
-        if !state.mol_editor.mol.pharmacophore.features.is_empty()
-            && ui
-                .button(RichText::new("Save ph"))
-                .on_hover_text("Save the pharmacophore to a file.")
-                .clicked()
-        {
-            let name = &state.mol_editor.mol.common.ident;
-
-            if state
-                .mol_editor
-                .mol
-                .pharmacophore
-                .save_using_dialog(&mut state.volatile.dialogs.save, name)
-                .is_err()
-            {
-                handle_err(&mut state.ui, "Problem saving the pharmacophore".to_owned());
-            }
-        }
+        // if !state.mol_editor.mol.pharmacophore.features.is_empty()
+        //     && ui
+        //         .button(RichText::new("Save ph"))
+        //         .on_hover_text("Save the pharmacophore to a file.")
+        //         .clicked()
+        // {
+        //     let name = &state.mol_editor.mol.common.ident;
+        //
+        //     if state
+        //         .mol_editor
+        //         .mol
+        //         .pharmacophore
+        //         .save_using_dialog(&mut state.volatile.dialogs.save, name)
+        //         .is_err()
+        //     {
+        //         handle_err(&mut state.ui, "Problem saving the pharmacophore".to_owned());
+        //     }
+        // }
 
         // Pocket-related functionality.
         if state.mol_editor.mol.pharmacophore.pocket.is_some() {

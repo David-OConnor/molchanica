@@ -31,6 +31,7 @@ use crate::{
     molecules::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent,
         PHARMACOPHORE_POCKET_ATOMS_KEY, Residue, common::MoleculeCommon,
+        pocket::Pocket,
     },
     therapeutic::{
         DatasetTdc, TherapeuticProperties,
@@ -145,14 +146,16 @@ impl TryFrom<Mol2> for MoleculeSmall {
         // Note: We don't compute bonds here; we assume they're included in the molecule format.
         // Handle path after; not supported by TryFrom.
 
-        let mut result = Self::new(m.ident, atoms, bonds, m.metadata.clone(), None);
-        result.pharmacophore = pharmacophore_from_biofiles(
+        let mut res = Self::new(m.ident, atoms, bonds, m.metadata.clone(), None);
+
+        res.pharmacophore = pharmacophore_from_biofiles(
             &m.pharmacophore_features,
-            &result.common.atoms,
-            &result.common.ident,
+            &m.metadata,
+            &res.common.atoms,
+            &res.common.ident,
         )?;
 
-        Ok(result)
+        Ok(res)
     }
 }
 
@@ -181,6 +184,7 @@ impl TryFrom<Sdf> for MoleculeSmall {
 
         result.pharmacophore = pharmacophore_from_biofiles(
             &m.pharmacophore_features,
+            &m.metadata,
             &result.common.atoms,
             &result.common.ident,
         )?;
@@ -277,10 +281,10 @@ impl MoleculeSmall {
         // Save the atoms in the pocket, for reconstruction upon load.
         if let Some(pocket) = &self.pharmacophore.pocket {
             let mut md_val = String::new();
+
             for atom in &pocket.common.atoms {
-                // todo: Alignment chars?
                 md_val.push_str(&format!(
-                    "\n{}    {}    {:.6}    {:.6}    {:.6}",
+                    "{}    {}    {:.5}    {:.5}    {:.5}\n",
                     atom.serial_number,
                     atom.element.to_letter(),
                     atom.posit.x,
@@ -799,9 +803,10 @@ impl MoleculeSmall {
     }
 }
 
-/// Convert the bio_files SDF-based Pharmacophore layout to our own.
+/// Convert the bio_files SDF or Mol2 metadata-based Pharmacophore layout to our own.
 fn pharmacophore_from_biofiles(
     feats: &[PharmacophoreFeatureGeneric],
+    metadata: &HashMap<String, String>,
     atoms: &[Atom],
     ident: &str,
 ) -> io::Result<Pharmacophore> {
@@ -836,10 +841,62 @@ fn pharmacophore_from_biofiles(
         });
     }
 
+    // Reconstruct the pocket from serialized atom positions in metadata.
+    let pocket = if let Some(atoms_str) = metadata.get(PHARMACOPHORE_POCKET_ATOMS_KEY) {
+        let mut pocket_atoms: Vec<Atom> = Vec::new();
+
+        for line in atoms_str.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 5 {
+                continue;
+            }
+
+            let Ok(sn) = parts[0].parse::<u32>() else {
+                eprintln!("Bad serial number in pocket atom line: {line}");
+                continue;
+            };
+            let Ok(element) = Element::from_letter(parts[1]) else {
+                eprintln!("Unknown element in pocket atom line: {line}");
+                continue;
+            };
+            let (Ok(x), Ok(y), Ok(z)) = (
+                parts[2].parse::<f64>(),
+                parts[3].parse::<f64>(),
+                parts[4].parse::<f64>(),
+            ) else {
+                eprintln!("Bad coordinates in pocket atom line: {line}");
+                continue;
+            };
+
+            pocket_atoms.push(Atom {
+                serial_number: sn,
+                posit: Vec3::new(x, y, z),
+                element,
+                ..Default::default()
+            });
+        }
+
+        if pocket_atoms.is_empty() {
+            None
+        } else {
+            let common = MoleculeCommon::new(
+                format!("{ident}_pocket"),
+                pocket_atoms,
+                Vec::new(),
+                HashMap::new(),
+                None,
+            );
+            Some(Pocket::from(common))
+        }
+    } else {
+        None
+    };
+
     Ok(Pharmacophore {
         name: ident.to_string(),
         mol_ident: ident.to_string(),
         features,
+        pocket,
         ..Default::default()
     })
 }
