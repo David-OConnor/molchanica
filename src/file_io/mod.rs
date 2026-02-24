@@ -418,7 +418,7 @@ impl State {
         let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
         let extension = binding.to_str().unwrap_or_default();
 
-        match extension {
+        let open_type = match extension {
             "pdb" | "cif" => {
                 // todo: Eval how you want to handle this. For now, the raw CIF or PDB.
                 // if let Some(pdb) = &mut self.pdb {
@@ -429,28 +429,18 @@ impl State {
                 // We don't allow editing the protein files yet, so save the raw CIF.
                 if let Some(data) = &mut self.cif_pdb_raw {
                     fs::write(path, data)?;
-
-                    // self.to_save.last_peptide_opened = Some(path.to_owned());
-                    // self.update_history(path, OpenType::Peptide, &ident);
-                    self.update_history(path, OpenType::Peptide);
-
-                    // Save the open history.
-                    self.update_save_prefs();
                 }
+                OpenType::Peptide
             }
             "sdf" => match self.active_mol() {
                 Some(mol) => {
                     mol.to_sdf()?.save(path)?;
 
-                    let open_type = if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
+                    if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
                         OpenType::Pocket
                     } else {
                         OpenType::Ligand
-                    };
-                    self.update_history(path, open_type);
-
-                    // Save the open history.
-                    self.update_save_prefs();
+                    }
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
@@ -458,37 +448,31 @@ impl State {
                 Some(mol) => {
                     mol.to_mol2()?.save(path)?;
 
-                    let open_type = if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
+                    if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
                         OpenType::Pocket
                     } else {
                         OpenType::Ligand
-                    };
-
-                    self.update_history(path, open_type);
-
-                    // Save the open history.
-                    self.update_save_prefs();
+                    }
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
             "xyz" => match self.active_mol() {
                 Some(mol) => {
                     mol.to_xyz()?.save(path)?;
-                    self.update_history(path, OpenType::Ligand);
-
-                    // Save the open history.
-                    self.update_save_prefs();
+                    OpenType::Ligand
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
-            "prmtop" => (), // todo
+            "prmtop" => {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "Prmptop saving unimplemented",
+                ));
+            }
             "pdbqt" => match self.active_mol() {
                 Some(mol) => {
                     mol.to_pdbqt()?.save(path)?;
-                    self.update_history(path, OpenType::Ligand);
-
-                    // Save the open history.
-                    self.update_save_prefs();
+                    OpenType::Ligand
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
@@ -504,13 +488,7 @@ impl State {
                             _ => unreachable!(),
                         }
 
-                        // self.to_save.last_map_opened = Some(path.to_owned());
-
-                        // self.update_history(path, OpenType::Map, &mol.common.ident.clone());
-                        self.update_history(path, OpenType::Map);
-
-                        // Save the open history.
-                        self.update_save_prefs();
+                        OpenType::Map
                     }
                     None => {
                         return Err(io::Error::new(
@@ -538,7 +516,13 @@ impl State {
                             "Probably saving the MD trajectory to a file.",
                         ));
                     }
+                } else {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "No dynamics state; can't save a trajectory",
+                    ));
                 }
+                OpenType::Trajectory
             }
             _ => {
                 return Err(io::Error::new(
@@ -546,7 +530,11 @@ impl State {
                     "Unsupported file extension when saving",
                 ));
             }
-        }
+        };
+
+        self.update_history(path, open_type);
+        // Save the open history.
+        self.update_save_prefs();
 
         Ok(())
     }

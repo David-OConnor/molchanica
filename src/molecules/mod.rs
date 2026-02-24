@@ -12,7 +12,7 @@ pub mod rotatable_bonds;
 pub mod small;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{self, Display, Formatter},
     io,
     io::ErrorKind,
@@ -55,8 +55,14 @@ use crate::{
     util::mol_center_size,
 };
 
+// A flag indicating that a small molecule file describes a pocket, and
+// should be loaded as such.
 pub const POCKET_METADATA_KEY: &str = "is_pocket";
 pub const POCKET_METADATA_VAL: &str = "true";
+
+// A metadata field which contains the position of atoms
+// in a pharmacophore-type small molecule's pocket
+pub const PHARMACOPHORE_POCKET_ATOMS_KEY: &str = "pharmacophore_pocket_atoms";
 
 // todo: Experimenting
 pub trait MolGenericTrait {
@@ -218,18 +224,6 @@ impl<'a> MolGenericRef<'a> {
         }
     }
 
-    pub fn to_xyz(&self) -> io::Result<Xyz> {
-        match self {
-            Self::Small(l) => Ok(l.to_xyz()),
-            Self::Pocket(p) => Ok(MoleculeSmall {
-                common: p.common.clone(),
-                ..Default::default()
-            }
-            .to_xyz()),
-            _ => Err(io::Error::other("Not implemented")),
-        }
-    }
-
     pub fn to_mol2(&self) -> io::Result<Mol2> {
         match self {
             Self::Small(l) => Ok(l.to_mol2()),
@@ -274,6 +268,18 @@ impl<'a> MolGenericRef<'a> {
                 }
                 .to_pdbqt())
             }
+            _ => Err(io::Error::other("Not implemented")),
+        }
+    }
+
+    pub fn to_xyz(&self) -> io::Result<Xyz> {
+        match self {
+            Self::Small(l) => Ok(l.to_xyz()),
+            Self::Pocket(p) => Ok(MoleculeSmall {
+                common: p.common.clone(),
+                ..Default::default()
+            }
+            .to_xyz()),
             _ => Err(io::Error::other("Not implemented")),
         }
     }
@@ -757,7 +763,7 @@ impl Residue {
                 None => {
                     return Err(io::Error::new(
                         ErrorKind::InvalidData,
-                        "ble to find atom SN when loading from generic res",
+                        "Unable to find atom SN when loading from generic res",
                     ));
                 }
             }
@@ -1114,6 +1120,14 @@ impl MoleculePeptide {
     /// E.g. run this when pH changes. Removes all hydrogens, and re-adds per the pH. Rebuilds
     /// bonds.
     pub fn reassign_hydrogens(&mut self, ph: f32, ff_map: &ProtFfChargeMapSet) -> io::Result<()> {
+        let non_h_sns: HashSet<u32> = self
+            .common
+            .atoms
+            .iter()
+            .filter(|a| a.element != Element::Hydrogen)
+            .map(|a| a.serial_number)
+            .collect();
+
         let mut atoms_gen = self
             .common
             .atoms
@@ -1124,8 +1138,28 @@ impl MoleculePeptide {
 
         println!("Reassigning H on protein at pH {ph:.1}");
 
-        let mut res_gen: Vec<_> = self.residues.iter().map(|a| a.to_generic()).collect();
-        let mut chains_gen: Vec<_> = self.chains.iter().map(|a| a.to_generic()).collect();
+        // Strip old H serial numbers from residues and chains so that
+        // populate_hydrogens_dihedrals only appends fresh H SNs. Without
+        // this, the stale H SNs remain in atom_sns and Residue::from_generic
+        // fails to find them in the (H-filtered) atoms list.
+        let mut res_gen: Vec<_> = self
+            .residues
+            .iter()
+            .map(|r| {
+                let mut rg = r.to_generic();
+                rg.atom_sns.retain(|sn| non_h_sns.contains(sn));
+                rg
+            })
+            .collect();
+        let mut chains_gen: Vec<_> = self
+            .chains
+            .iter()
+            .map(|c| {
+                let mut cg = c.to_generic();
+                cg.atom_sns.retain(|sn| non_h_sns.contains(sn));
+                cg
+            })
+            .collect();
 
         println!("Populating Hydrogens and dihedral angles...");
         let mut start = Instant::now();

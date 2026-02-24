@@ -27,10 +27,10 @@ use na_seq::Element;
 
 use crate::{
     mol_characterization::MolCharacterization,
-    mol_components::{Component, MolComponents},
+    mol_components::MolComponents,
     molecules::{
-        Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent, Residue,
-        common::MoleculeCommon,
+        Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent,
+        PHARMACOPHORE_POCKET_ATOMS_KEY, Residue, common::MoleculeCommon,
     },
     therapeutic::{
         DatasetTdc, TherapeuticProperties,
@@ -251,21 +251,48 @@ impl TryFrom<Pdbqt> for MoleculeSmall {
 }
 
 impl MoleculeSmall {
-    pub fn to_mol2(&self) -> Mol2 {
-        let atoms = self.common.atoms.iter().map(|a| a.to_generic()).collect();
-        let bonds = self.common.bonds.iter().map(|b| b.to_generic()).collect();
+    /// Augment this molecule's metadata with IDs; run this prior to saving. This ensures these are
+    /// saved and loaded in file formats, as our internal fields don't map directly to these. (Mol2, SDF etc)
+    ///
+    /// Also, serialize the pocket atoms.
+    fn metadata_with_ids_pocket(&self) -> HashMap<String, String> {
+        let mut res = self.common.metadata.clone();
 
-        Mol2 {
-            ident: self.common.ident.clone(),
-            atoms,
-            bonds,
-            metadata: self.common.metadata.clone(),
-            mol_type: MolType::Small,
-            charge_type: ChargeType::None,
-            pharmacophore_features: pharmacophore_to_biofiles(&self.pharmacophore)
-                .unwrap_or_default(),
-            comment: None,
+        // Note: If already present, these may be redundant with metadata already loaded.
+        // Insert them here in case they're not.
+
+        for ident in &self.idents {
+            match ident {
+                MolIdent::PubChem(cid) => {
+                    res.insert("PUBCHEM_COMPOUND_CID".to_string(), cid.to_string());
+                }
+                MolIdent::DrugBank(id) => {
+                    res.insert("DATABASE_ID".to_string(), id.clone());
+                    res.insert("DATABASE_NAME".to_string(), "drugbank".to_string());
+                }
+                _ => (),
+            }
         }
+
+        // Save the atoms in the pocket, for reconstruction upon load.
+        if let Some(pocket) = &self.pharmacophore.pocket {
+            let mut md_val = String::new();
+            for atom in &pocket.common.atoms {
+                // todo: Alignment chars?
+                md_val.push_str(&format!(
+                    "\n{}    {}    {:.6}    {:.6}    {:.6}",
+                    atom.serial_number,
+                    atom.element.to_letter(),
+                    atom.posit.x,
+                    atom.posit.y,
+                    atom.posit.z
+                ));
+            }
+
+            res.insert(PHARMACOPHORE_POCKET_ATOMS_KEY.to_string(), md_val);
+        }
+
+        res
     }
 
     pub fn to_sdf(&self) -> Sdf {
@@ -289,32 +316,32 @@ impl MoleculeSmall {
             (a, b)
         };
 
-        let mut metadata = self.common.metadata.clone();
-
-        // Note: These may be redundant with metadata already loaded.
-
-        for ident in &self.idents {
-            match ident {
-                MolIdent::PubChem(cid) => {
-                    metadata.insert("PUBCHEM_COMPOUND_CID".to_string(), cid.to_string());
-                }
-                MolIdent::DrugBank(id) => {
-                    metadata.insert("DATABASE_ID".to_string(), id.clone());
-                    metadata.insert("DATABASE_NAME".to_string(), "drugbank".to_string());
-                }
-                _ => (),
-            }
-        }
-
         Sdf {
             ident: self.common.ident.clone(),
-            metadata,
+            metadata: self.metadata_with_ids_pocket(),
             atoms,
             bonds,
             chains: Vec::new(),
             residues: Vec::new(),
             pharmacophore_features: pharmacophore_to_biofiles(&self.pharmacophore)
                 .unwrap_or_default(),
+        }
+    }
+
+    pub fn to_mol2(&self) -> Mol2 {
+        let atoms = self.common.atoms.iter().map(|a| a.to_generic()).collect();
+        let bonds = self.common.bonds.iter().map(|b| b.to_generic()).collect();
+
+        Mol2 {
+            ident: self.common.ident.clone(),
+            atoms,
+            bonds,
+            metadata: self.metadata_with_ids_pocket(),
+            mol_type: MolType::Small,
+            charge_type: ChargeType::None,
+            pharmacophore_features: pharmacophore_to_biofiles(&self.pharmacophore)
+                .unwrap_or_default(),
+            comment: None,
         }
     }
 
