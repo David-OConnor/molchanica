@@ -847,33 +847,18 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
 
 /// Display metadata stored for a given molecule.
 pub(super) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui: &mut Ui) {
-    let mol = match mol_type {
-        MolType::Peptide => {
-            if state.peptide.is_none() {
-                return;
-            }
-            &state.peptide.as_ref().unwrap().common
-        }
-        MolType::Ligand => {
-            if i >= state.ligands.len() {
-                return;
-            }
-            &state.ligands[i].common
-        }
-        MolType::NucleicAcid => {
-            if i >= state.nucleic_acids.len() {
-                return;
-            }
-            &state.nucleic_acids[i].common
-        }
-        MolType::Lipid => {
-            if i >= state.lipids.len() {
-                return;
-            }
-            &state.lipids[i].common
-        }
-        _ => return,
+    let Some(mol) = state.get_mol(mol_type, i) else {
+        return;
     };
 
-    popups::metadata_popup(&mut state.ui.popup, mol, ui);
+    // Clone what we need while `mol` (and its borrow of `state`) is still live,
+    // then drop it so we can mutably borrow `state.ui.popup` below.
+    let common = mol.common().clone();
+    let idents: Option<Vec<MolIdent>> = if let MolGenericRef::Small(m) = mol {
+        Some(m.idents.clone())
+    } else {
+        None
+    };
+
+    popups::metadata_popup(&mut state.ui.popup, &common, idents.as_deref(), ui);
 }

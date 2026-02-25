@@ -44,9 +44,9 @@ const SHEET_HALF_W: f32 = 1.0;
 /// Half-thickness of β-strand ribbon.
 const SHEET_HALF_H: f32 = 0.15;
 /// Half-width of the β-strand arrowhead at its widest point.
-const SHEET_ARROW_HALF_W: f32 = 2.2;
+const SHEET_ARROW_HALF_W: f32 = 1.5;
 /// Number of residues the arrowhead spans before the tip.
-const SHEET_ARROW_RES: usize = 2;
+const SHEET_ARROW_RES: usize = 1;
 
 /// Radius of the coil / loop tube.
 const COIL_RADIUS: f32 = 0.25;
@@ -136,11 +136,9 @@ fn smooth_positions(positions: &[Vec3F32], passes: usize) -> Vec<Vec3F32> {
     let mut p = positions.to_vec();
     for _ in 0..passes {
         let prev = p.clone();
-        for i in 0..n {
-            let a = if i > 0 { prev[i - 1] } else { prev[i] };
-            let c = if i < n - 1 { prev[i + 1] } else { prev[i] };
-            // Weighted average (1,2,1)/4 — endpoint-preserving.
-            p[i] = (a + prev[i] * 2.0 + c) * 0.25;
+        // Skip i=0 and i=n-1 so the endpoints stay pinned at their original positions.
+        for i in 1..n - 1 {
+            p[i] = (prev[i - 1] + prev[i] * 2.0 + prev[i + 1]) * 0.25;
         }
     }
     p
@@ -179,9 +177,10 @@ impl Profile {
         }
     }
     fn sheet(half_w: f32) -> Self {
+        // Wide along guide (across-strand, in the sheet plane), thin along binormal (sheet normal).
         Self {
-            hw: half_w,
-            hh: SHEET_HALF_H,
+            hw: SHEET_HALF_H,
+            hh: half_w,
         }
     }
 }
@@ -546,10 +545,10 @@ fn extend_run(
     let mut ext = Vec::with_capacity(run.len() + 2);
 
     if let Some(&first) = run.first() {
-        if first > 0 {
-            let prev = first - 1;
-            if covered.contains(&prev) && ca_map.contains_key(&prev) {
-                ext.push(prev);
+        if first >= 1 {
+            let p1 = first - 1;
+            if covered.contains(&p1) && ca_map.contains_key(&p1) {
+                ext.push(p1);
             }
         }
     }
@@ -557,9 +556,9 @@ fn extend_run(
     ext.extend_from_slice(run);
 
     if let Some(&last) = run.last() {
-        let next = last + 1;
-        if covered.contains(&next) && ca_map.contains_key(&next) {
-            ext.push(next);
+        let n1 = last + 1;
+        if covered.contains(&n1) && ca_map.contains_key(&n1) {
+            ext.push(n1);
         }
     }
 

@@ -8,7 +8,7 @@ use crate::{
 };
 
 fn adme_disp(adme: &Adme, ui: &mut Ui) {
-    label!(ui, "ADME:", Color32::GRAY);
+    // label!(ui, "ADME:", Color32::GRAY);
 
     // Absorption
     char_item(
@@ -16,6 +16,7 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "Intestinal permability",
             &format!("{:.2}", adme.intestinal_permeability),
+            "cm/s",
         )],
     );
     char_item(
@@ -23,29 +24,41 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "Intestinal absorption",
             &format!("{:.2}", adme.intestinal_absorption),
+            "Binary",
         )],
     );
-    char_item(ui, &[("pgp", &format!("{:.2}", adme.pgp))]);
+    char_item(ui, &[("pgp", &format!("{:.2}", adme.pgp), "binary")]);
     char_item(
         ui,
         &[(
             "Oral_bioavailability",
             &format!("{:.2}", adme.oral_bioavailablity),
+            "Binary",
         )],
     );
     char_item(
         ui,
-        &[("Lipophilicity", &format!("{:.2}", adme.lipophilicity))],
+        &[(
+            "Lipophilicity",
+            &format!("{:.2}", adme.lipophilicity),
+            "log-ratio",
+        )],
     );
     char_item(
         ui,
-        &[("Solubility water", &format!("{:.2}", adme.solubility_water))],
+        &[(
+            "Solubility water",
+            &format!("{:.2}", adme.solubility_water),
+            "LogS, where S is the aqueous solubility. log mol/L",
+        )],
     );
     char_item(
         ui,
         &[(
             "Membrane permeability",
             &format!("{:.2}", adme.membrane_permeability),
+            "PAMPA (parallel artificial membrane permeability assay) is a commonly employed assay \
+            to evaluate drug permeability across the cellular membrane. Binary.",
         )],
     );
     char_item(
@@ -53,6 +66,9 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "Hydration free Energy",
             &format!("{:.2}", adme.hydration_free_energy),
+            "The Free Solvation Database, FreeSolv(SAMPL), provides experimental and calculated hydration
+free energy of small molecules in water. The calculated values are derived from alchemical
+free energy calculations using molecular dynamics simulations."
         )],
     );
 
@@ -62,6 +78,7 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "blood_brain_barrier",
             &format!("{:.2}", adme.blood_brain_barrier),
+            "Binary",
         )],
     );
     char_item(
@@ -69,9 +86,26 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "plasma protein binding",
             &format!("{:.2}", adme.plasma_protein_binding_rate),
+            "% binding value.",
         )],
     );
-    char_item(ui, &[("VDSS", &format!("{:.2}", adme.vdss))]);
+    char_item(
+        ui,
+        &[(
+            "VDSS",
+            &format!("{:.2}", adme.vdss),
+            "Volume of Distribution at steady state.",
+        )],
+    );
+
+    let descrip_cyp =
+        " The CYP P450 genes are essential in the breakdown (metabolism) of various molecules and
+chemicals within cells. A drug that can inhibit these enzymes would mean poor metabolism
+to this drug and other drugs, which could lead to drug-drug interactions and adverse effects.
+
+CYP2C19 gene provides instructions for making an enzyme called the endoplasmic reticulum,
+which is involved in protein processing and transport.
+Binary.";
 
     // Metabolism
     char_item(
@@ -79,6 +113,7 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "CYP P450 2C19 inhibition",
             &format!("{:.2}", adme.cyp_2c19_inhibition),
+            descrip_cyp,
         )],
     );
     char_item(
@@ -86,6 +121,7 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "CYP P450 2D6 inhibition",
             &format!("{:.2}", adme.cyp_2d6_inhibition),
+            descrip_cyp,
         )],
     );
     char_item(
@@ -93,6 +129,7 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "CYP P450 3A4 inhibition",
             &format!("{:.2}", adme.cyp_3a4_inhibition),
+            descrip_cyp,
         )],
     );
 
@@ -101,6 +138,7 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "CYP P450 1A2 inhibition",
             &format!("{:.2}", adme.cyp_1a2_inhibition),
+            descrip_cyp,
         )],
     );
 
@@ -109,19 +147,21 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
         &[(
             "CYP P450 2C9 inhibition",
             &format!("{:.2}", adme.cyp_2c9_inhibition),
+            descrip_cyp,
         )],
     );
 
     // Excretion
-    char_item(ui, &[("Half Life", &format!("{:.2}", adme.half_life))]);
-    char_item(ui, &[("Clearance", &format!("{:.2}", adme.clearance))]);
+    char_item(ui, &[("Half Life", &format!("{:.2}", adme.half_life), "")]);
+    char_item(ui, &[("Clearance", &format!("{:.2}", adme.clearance), "")]);
 }
 
-fn char_item(ui: &mut Ui, items: &[(&str, &str)]) {
+/// (name, val, description)
+fn char_item(ui: &mut Ui, items: &[(&str, &str, &str)]) {
     ui.horizontal(|ui| {
-        for (i, (name, v)) in items.iter().enumerate() {
-            label!(ui, format!("{name}:"), Color32::GRAY);
-            label!(ui, *v, Color32::WHITE);
+        for (i, (name, v, descrip)) in items.iter().enumerate() {
+            label!(ui, format!("{name}:"), Color32::GRAY).on_hover_text(*descrip);
+            label!(ui, *v, Color32::WHITE).on_hover_text(*descrip);
 
             if i != items.len() - 1 {
                 ui.add_space(COL_SPACING / 2.);
@@ -142,7 +182,7 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
             ui.horizontal_wrapped(|ui| {
                 label!(ui, format!("{}:", ident.label()), Color32::GRAY);
 
-                let mut ident_txt = RichText::new(ident.ident_innner()).color(Color32::WHITE);
+                let mut ident_txt = RichText::new(ident.ident_inner()).color(Color32::WHITE);
 
                 // These are longer idents.
                 if matches!(
@@ -166,14 +206,22 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     char_item(
         ui,
         &[
-            ("Atoms", &char.num_atoms.to_string()),
-            ("Bonds", &char.num_bonds.to_string()),
-            ("Heavy", &char.num_heavy_atoms.to_string()),
-            ("Het", &char.num_hetero_atoms.to_string()),
+            ("Atoms", &char.num_atoms.to_string(), ""),
+            ("Bonds", &char.num_bonds.to_string(), ""),
+            (
+                "Heavy",
+                &char.num_heavy_atoms.to_string(),
+                "Number of heavy (non-Hydrogen) atoms",
+            ),
+            (
+                "Het",
+                &char.num_hetero_atoms.to_string(),
+                "Number of hetero (non-Carbon) atoms",
+            ),
         ],
     );
 
-    char_item(ui, &[("Weight", &format!("{:.2}", char.mol_weight))]);
+    char_item(ui, &[("Weight", &format!("{:.2}", char.mol_weight), "")]);
 
     ui.add_space(ROW_SPACING);
     // Functional groups
@@ -181,9 +229,9 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     char_item(
         ui,
         &[
-            ("Rings Ar", &char.num_rings_aromatic.to_string()),
-            ("Sat", &char.num_rings_saturated.to_string()),
-            ("Ali", &char.num_rings_aliphatic.to_string()),
+            ("Rings Ar", &char.num_rings_aromatic.to_string(), ""),
+            ("Sat", &char.num_rings_saturated.to_string(), ""),
+            ("Ali", &char.num_rings_aliphatic.to_string(), ""),
         ],
     );
 
@@ -191,10 +239,10 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     char_item(
         ui,
         &[
-            ("Amine", &char.amines.len().to_string()),
-            ("Amide", &char.amides.len().to_string()),
-            ("Carbonyl", &char.carbonyl.len().to_string()),
-            ("Hydroxyl", &char.hydroxyl.len().to_string()),
+            ("Amine", &char.amines.len().to_string(), ""),
+            ("Amide", &char.amides.len().to_string(), ""),
+            ("Carbonyl", &char.carbonyl.len().to_string(), ""),
+            ("Hydroxyl", &char.hydroxyl.len().to_string(), ""),
             // other FGs like sulfur ones and carboxylate?
         ],
     );
@@ -204,9 +252,17 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     char_item(
         ui,
         &[
-            ("H bond donor:", &char.h_bond_donor.len().to_string()),
-            ("acceptor", &char.h_bond_acceptor.len().to_string()),
-            ("Valence elecs", &char.num_valence_elecs.to_string()),
+            (
+                "H bond donor:",
+                &char.h_bond_donor.len().to_string(),
+                "Number of hydrogen bond donors",
+            ),
+            (
+                "acceptor",
+                &char.h_bond_acceptor.len().to_string(),
+                "Number of hydrogen bond acceptors",
+            ),
+            ("Valence elecs", &char.num_valence_elecs.to_string(), ""),
         ],
     );
 
@@ -216,9 +272,21 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     char_item(
         ui,
         &[
-            ("TPSA (Ertl)", &format!("{:.2}", char.tpsa_ertl)),
-            ("PSA (Geom)", &format!("{:.2}", char.psa_topo)),
-            ("Greasiness", &format!("{:.2}", char.greasiness)),
+            (
+                "TPSA (Ertl)",
+                &format!("{:.2}", char.tpsa_ertl),
+                "Polar surface area; computed analytically.",
+            ),
+            (
+                "PSA (Geom)",
+                &format!("{:.2}", char.psa_topo),
+                "Polar surface area; computed by creating a surface mesh, then measuring the polar part of it.",
+            ),
+            (
+                "Greasiness",
+                &format!("{:.2}", char.greasiness),
+                "i.e. lipophilicity",
+            ),
         ],
     );
 
@@ -229,9 +297,17 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     char_item(
         ui,
         &[
-            ("ASA (Labute)", &format!("{:.2}", char.asa_labute)),
-            ("ASA (Geom)", &format!("{:.2}", char.asa_topo)),
-            ("Volume", &format!("{:.2}", vol)),
+            ("ASA (Labute)", &format!("{:.2}", char.asa_labute), ""),
+            (
+                "ASA (Geom)",
+                &format!("{:.2}", char.asa_topo),
+                "Computed by creating a surface mesh, then computing the fraction of its volume that is solvent-accessible",
+            ),
+            (
+                "Volume",
+                &format!("{:.2}", vol),
+                "Computed by creating a surface mesh.",
+            ),
         ],
     );
 
@@ -245,16 +321,20 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
     char_item(
         ui,
         &[
-            ("LogP", &format!("{:.2}", log_p)),
-            ("Mol Refrac", &format!("{:.2}", char.molar_refractivity)),
+            (
+                "LogP",
+                &format!("{:.2}", log_p),
+                "Partition coefficient; a proxy for lipophilicity.",
+            ),
+            ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
         ],
     );
 
     char_item(
         ui,
         &[
-            ("Balaban J", &format!("{:.2}", char.balaban_j)),
-            ("Bertz Complexity", &format!("{:.2}", char.bertz_ct)),
+            ("Balaban J", &format!("{:.2}", char.balaban_j), ""),
+            ("Bertz Complexity", &format!("{:.2}", char.bertz_ct), ""),
         ],
     );
 
@@ -263,6 +343,7 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         &[(
             "Complexity",
             &format!("{:.2}", char.complexity.unwrap_or(0.0)),
+            "",
         )],
     );
 
@@ -271,6 +352,7 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         &[(
             "Wiener index",
             &format!("{}", char.wiener_index.unwrap_or(0)),
+            "",
         )],
     );
 
@@ -287,19 +369,36 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
 fn tox_disp(tox: &Toxicity, ui: &mut Ui) {
     label!(ui, "Toxicity:", Color32::GRAY).on_hover_text("Of our cittyyyyyyy");
 
-    char_item(ui, &[("LD50", &format!("{:.2}", tox.ld50))]);
-    char_item(ui, &[("hERG", &format!("{:.2}", tox.ether_a_go_go))]);
-    char_item(ui, &[("Mutagenicity", &format!("{:.2}", tox.mutagencity))]);
+    char_item(
+        ui,
+        &[("LD50", &format!("{:.2}", tox.ld50), "log(1/(mol/kg))")],
+    );
+    char_item(
+        ui,
+        &[("hERG", &format!("{:.2}", tox.ether_a_go_go), "Binary")],
+    );
+    char_item(
+        ui,
+        &[("Mutagenicity", &format!("{:.2}", tox.mutagencity), "Binary")],
+    );
     char_item(
         ui,
         &[(
             "Liver injury",
             &format!("{:.2}", tox.drug_induced_liver_injury),
+            "DILI",
         )],
     );
     char_item(
         ui,
-        &[("Skin reaction", &format!("{:.2}", tox.skin_reaction))],
+        &[(
+            "Skin reaction",
+            &format!("{:.2}", tox.skin_reaction),
+            "Binary",
+        )],
     );
-    char_item(ui, &[("Carcinogen", &format!("{:.2}", tox.carcinogen))]);
+    char_item(
+        ui,
+        &[("Carcinogen", &format!("{:.2}", tox.carcinogen), "Binary")],
+    );
 }

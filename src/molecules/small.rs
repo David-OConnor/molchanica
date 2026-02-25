@@ -582,7 +582,7 @@ impl MoleculeSmall {
 
                             thread::spawn(move || {
                                 // Part of our borrow-checker workaround
-                                let cid: u32 = ident_for_thread.ident_innner().parse().unwrap();
+                                let cid: u32 = ident_for_thread.ident_inner().parse().unwrap();
                                 let data = pubchem::properties(
                                     StructureSearchNamespace::Cid,
                                     &cid.to_string(),
@@ -612,7 +612,7 @@ impl MoleculeSmall {
                     println!("\nLoading PubChem properties for {ident:?} over HTTP...");
                     thread::spawn(move || {
                         let data =
-                            pubchem::properties_from_pdbe_id(&ident_for_thread.ident_innner());
+                            pubchem::properties_from_pdbe_id(&ident_for_thread.ident_inner());
 
                         let _ = tx.send((ident_for_thread, data));
                     });

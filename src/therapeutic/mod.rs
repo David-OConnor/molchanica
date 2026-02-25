@@ -269,7 +269,7 @@ pub struct Adme {
     /// LogS, where S is the aqueous solubility.
     pub solubility_water: f32,
     /// TDC.PAMPA_NCATS
-    ///  PAMPA (parallel artificial membrane permeability assay) is a commonly employed assay
+    /// PAMPA (parallel artificial membrane permeability assay) is a commonly employed assay
     /// to evaluate drug permeability across the cellular membrane. Binary.
     pub membrane_permeability: f32,
     /// TDC.hHydrationFreeEnergy_FreeSolv

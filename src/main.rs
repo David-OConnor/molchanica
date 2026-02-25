@@ -61,7 +61,7 @@ use crate::{render::render, util::handle_err};
 
 fn main() {
     #[cfg(not(feature = "cuda"))]
-    let dev = ComputationDevice::Cpu;
+    let dev = dynamics::ComputationDevice::Cpu;
 
     #[cfg(feature = "cuda")]
     let (dev, kernel_reflections) = util::get_computation_device();

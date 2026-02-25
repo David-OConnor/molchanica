@@ -21,7 +21,7 @@ use crate::{
     mol_screening,
     mol_screening::screen_by_alignment,
     molecules::{
-        MolGenericRef, MolType,
+        MolGenericRef, MolIdent, MolType,
         common::MoleculeCommon,
         pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
     },
@@ -430,6 +430,7 @@ fn recent_files_popup(
 pub(in crate::ui) fn metadata_popup(
     popup_state: &mut PopupState,
     mol: &MoleculeCommon,
+    idents: Option<&[MolIdent]>,
     ui: &mut Ui,
 ) {
     ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
@@ -442,11 +443,23 @@ pub(in crate::ui) fn metadata_popup(
     });
 
     ui.heading(RichText::new(format!("Metadata for {}", mol.ident)).color(Color32::WHITE));
-    ui.add_space(ROW_SPACING);
 
     ScrollArea::vertical()
         .min_scrolled_height(800.0)
         .show(ui, |ui| {
+            if let Some(idents_) = idents {
+                ui.add_space(ROW_SPACING);
+
+                for ident in idents_ {
+                    ui.horizontal(|ui| {
+                        label!(ui, ident.label(), Color32::GRAY);
+                        label!(ui, ident.ident_inner(), Color32::WHITE);
+                    });
+                }
+            }
+
+            ui.add_space(ROW_SPACING);
+
             for (k, v) in mol.metadata.iter() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{k}: ")));

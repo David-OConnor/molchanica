@@ -1163,6 +1163,7 @@ impl MoleculePeptide {
                 rg
             })
             .collect();
+
         let mut chains_gen: Vec<_> = self
             .chains
             .iter()
@@ -1314,7 +1315,7 @@ pub enum MolIdent {
 
 impl MolIdent {
     /// Useful for some APIs, for example.
-    pub fn ident_innner(&self) -> String {
+    pub fn ident_inner(&self) -> String {
         match self {
             Self::PubChem(cid) => cid.to_string(),
             Self::DrugBank(v) => v.clone(),
