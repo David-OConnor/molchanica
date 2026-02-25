@@ -402,6 +402,15 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 }
             }
 
+            if ui
+                .button(RichText::new("Delete pocket").color(Color32::LIGHT_RED))
+                .on_hover_text("Delete this pocket from the pharmacophore")
+                .clicked()
+            {
+                state.mol_editor.mol.pharmacophore.pocket = None;
+                *redraw = true;
+            }
+
             // ui.add_space(COL_SPACING);
             // if ui
             //     .button("Use this pocket for pharmacophore")

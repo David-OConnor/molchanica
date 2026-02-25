@@ -30,7 +30,7 @@ use crate::{
     mol_components::MolComponents,
     molecules::{
         Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent,
-        PHARMACOPHORE_POCKET_ATOMS_KEY, Residue, common::MoleculeCommon,
+        PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY, Residue, common::MoleculeCommon,
         pocket::Pocket,
     },
     therapeutic::{
@@ -155,6 +155,8 @@ impl TryFrom<Mol2> for MoleculeSmall {
             &res.common.ident,
         )?;
 
+        res.common.metadata.remove(PHARMACOPHORE_POCKET_ATOMS_KEY);
+
         Ok(res)
     }
 }
@@ -180,16 +182,16 @@ impl TryFrom<Sdf> for MoleculeSmall {
             .collect::<Result<_, _>>()?;
 
         // Handle path and state-specific items after; not supported by TryFrom.
-        let mut result = Self::new(m.ident, atoms, bonds, m.metadata.clone(), None);
+        let mut res = Self::new(m.ident, atoms, bonds, m.metadata.clone(), None);
 
-        result.pharmacophore = pharmacophore_from_biofiles(
+        res.pharmacophore = pharmacophore_from_biofiles(
             &m.pharmacophore_features,
             &m.metadata,
-            &result.common.atoms,
-            &result.common.ident,
+            &res.common.atoms,
+            &res.common.ident,
         )?;
 
-        Ok(result)
+        Ok(res)
     }
 }
 

@@ -23,8 +23,8 @@ use crate::{
     },
     md::launch_md,
     molecules::{
-        MolGenericTrait, MolType, MoleculeGeneric, MoleculePeptide, POCKET_METADATA_KEY,
-        common::MoleculeCommon, small::MoleculeSmall,
+        MolGenericTrait, MolType, MoleculeGeneric, MoleculePeptide, PHARMACOPHORE_POCKET_ATOMS_KEY,
+        POCKET_METADATA_KEY, common::MoleculeCommon, small::MoleculeSmall,
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
@@ -190,7 +190,14 @@ impl State {
         };
 
         match molecule {
-            Ok(mol_gen) => self.load_mol_to_state(mol_gen, scene, engine_updates, Some(path)),
+            Ok(mut mol_gen) => {
+                mol_gen
+                    .common_mut()
+                    .metadata
+                    .remove(PHARMACOPHORE_POCKET_ATOMS_KEY);
+
+                self.load_mol_to_state(mol_gen, scene, engine_updates, Some(path));
+            }
             Err(e) => return Err(e),
         }
 
@@ -763,13 +770,16 @@ impl State {
 
                 let ident = mol.common.ident.clone();
 
+                if let Some(p) = &mut mol.pharmacophore.pocket {
+                    // Slot offset: standalone pockets occupy 0..pockets.len(),
+                    // ligand pharmacophore pockets start immediately after.
+                    p.mesh_i_rel = self.pockets.len() + self.ligands.len();
+                    p.regen_mesh_vol(&mut scene.meshes, updates);
+                }
+
                 self.ligands.push(mol);
 
-                // Make sure to draw *after* loaded into state.
-                // if let Some(ref mut s) = scene {
-                // draw_all_ligs(self, s);
                 draw_all_ligs(self, scene);
-                // }
 
                 (ident, centroid)
             }
@@ -909,16 +919,14 @@ pub fn gemmi_path() -> Option<&'static Path> {
 
 impl MoleculeCommon {
     /// Save to disk.
-    pub fn save(&self, dialog: &mut FileDialog) -> io::Result<()> {
+    pub fn save(&self, mol_type: MolType, dialog: &mut FileDialog) -> io::Result<()> {
         let fname_default = {
-            let ext_default = "mol2"; // The default; more robust than SDF.
-
             let name = if self.ident.is_empty() {
                 "molecule".to_string()
             } else {
                 self.ident.clone()
             };
-            format!("{name}.{ext_default}")
+            format!("{name}.{}", mol_type.default_file_ext())
         };
 
         dialog.config_mut().default_file_name = fname_default.to_string();

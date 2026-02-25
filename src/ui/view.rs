@@ -30,6 +30,7 @@ pub fn view_settings(
 
             ui.label("View:").on_hover_text(help_text);
             let prev_view = state.ui.mol_view;
+
             ComboBox::from_id_salt(0)
                 .width(80.)
                 .selected_text(state.ui.mol_view.to_string())
@@ -38,7 +39,7 @@ pub fn view_settings(
                         MoleculeView::Backbone,
                         MoleculeView::Sticks,
                         MoleculeView::BallAndStick,
-                        // MoleculeView::Cartoon,
+                        MoleculeView::Ribbon,
                         MoleculeView::SpaceFill,
                         MoleculeView::Surface,
                         MoleculeView::Dots,
@@ -117,7 +118,14 @@ pub fn view_settings(
                 }
             }
 
-            if !state.pockets.is_empty() {
+            if !state.pockets.is_empty()
+                || state
+                    .ligands
+                    .iter()
+                    .filter(|l| l.pharmacophore.pocket.is_some())
+                    .count()
+                    != 0
+            {
                 toggle_btn_inv(
                     &mut state.ui.visibility.hide_pockets,
                     "Pockets",

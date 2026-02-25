@@ -772,18 +772,14 @@ pub fn reset_orbit_center(state: &mut State, scene: &mut Scene) {
 
 /// Code here is activated by flags. It's organized here, where we have access to the Scene.
 /// These flags are set in places that don't have access to the scene.
-pub fn handle_scene_flags(
-    state: &mut State,
-    scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
-) {
+pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     if state.volatile.flags.new_mol_loaded {
         state.volatile.flags.new_mol_loaded = false;
 
         // cam::reset_camera(state, scene, engine_updates, FWD_VEC);
 
         set_flashlight(scene);
-        engine_updates.lighting = true;
+        updates.lighting = true;
     }
 
     if state.volatile.flags.new_density_loaded {
@@ -795,7 +791,7 @@ pub fn handle_scene_flags(
             if let Some(density) = &mol.elec_density {
                 draw_density_point_cloud(&mut scene.entities, density);
                 clear_mol_entity_indices(state, None);
-                engine_updates.entities = EntityUpdate::All;
+                updates.entities = EntityUpdate::All;
                 // engine_updates
                 //     .entities
                 //     .push_class(EntityClass::DensityPoint as u32);
@@ -816,7 +812,7 @@ pub fn handle_scene_flags(
 
     if state.volatile.flags.make_density_iso_mesh {
         state.volatile.flags.make_density_iso_mesh = false;
-        reflection::make_density_mesh(state, scene, engine_updates);
+        reflection::make_density_mesh(state, scene, updates);
     }
 
     if state.volatile.flags.update_ss_mesh {
@@ -826,8 +822,7 @@ pub fn handle_scene_flags(
         if let Some(mol) = &state.peptide {
             scene.meshes[MESH_SECONDARY_STRUCTURE] =
                 build_cartoon_mesh(&mol.secondary_structure, &mol.common.atoms);
-
-            engine_updates.meshes = true;
+            updates.meshes = true;
         }
     }
 
@@ -889,14 +884,14 @@ pub fn handle_scene_flags(
             ) {
                 // The dots are drawn from the mesh vertices
                 draw_peptide(state, scene);
-                engine_updates.entities = EntityUpdate::All;
+                updates.entities = EntityUpdate::All;
                 // engine_updates.entities.push_class(EntityClass::SaSurface as u32);
                 // engine_updates
                 //     .entities
                 //     .push_class(EntityClass::SaSurfaceDots as u32);
             }
 
-            engine_updates.meshes = true;
+            updates.meshes = true;
         }
     }
 

@@ -499,11 +499,14 @@ pub(in crate::ui) fn sidebar(
                         .on_hover_text("Save the active molecule to a file.")
                         .clicked()
                     {
-                        mol_to_save = Some(mol.common().clone());
+                        mol_to_save = Some((mol.common().clone(), mol.mol_type()));
                     }
                 }
-                if let Some(mol) = mol_to_save {
-                    if mol.save(&mut state.volatile.dialogs.save).is_err() {
+                if let Some((mol, mol_type)) = mol_to_save {
+                    if mol
+                        .save(mol_type, &mut state.volatile.dialogs.save)
+                        .is_err()
+                    {
                         handle_err(&mut state.ui, "Problem saving this file".to_owned());
                     }
                 }

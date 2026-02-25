@@ -43,7 +43,7 @@ use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use small::MoleculeSmall;
 
 use crate::{
-    bond_inference::{create_hydrogen_bonds_single_mol, h_bond_strength},
+    bond_inference::create_hydrogen_bonds_single_mol,
     drawing::EntityClass,
     molecules::{
         common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
@@ -95,7 +95,7 @@ impl MolType {
         }
     }
 
-    pub fn entity_type(&self) -> EntityClass {
+    pub fn entity_type(self) -> EntityClass {
         use MolType::*;
         match self {
             Peptide => EntityClass::Protein,
@@ -105,6 +105,18 @@ impl MolType {
             Pocket => EntityClass::Pocket,
             Water => EntityClass::Protein, // todo for now
         }
+    }
+
+    pub fn default_file_ext(self) -> String {
+        use MolType::*;
+        match self {
+            Peptide => "cif",
+            Ligand | Pocket => "mol2",
+            NucleicAcid => "mol2", // todo?
+            Lipid => "mol2",       // todo?
+            Water => "",
+        }
+        .to_string()
     }
 
     pub fn color(self) -> (u8, u8, u8) {

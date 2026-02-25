@@ -87,6 +87,8 @@ pub const RADIUS_PHARMACOPHORE_HINT: f32 = 0.25;
 
 // These colors are the default solid ones, i.e. if not colored by an atom-etc-based scheme.
 const COLOR_SA_SURFACE: Color = (0.3, 0.2, 1.);
+// i.e. the ribbon mesh, assuming a solid color, which we may not use.
+const COLOR_SECONDARY_STRUCTURE: Color = (0.7, 0.2, 1.);
 // const COLOR_POCKET: Color = (0.3, 0.5, 0.8);
 const COLOR_POCKET: Color = (0.3, 0., 0.8);
 const COLOR_POCKET_SPHERES: Color = (1., 1., 0.);
@@ -272,7 +274,7 @@ impl MoleculeView {
             Self::Backbone => Self::Sticks,
             Self::Sticks => Self::BallAndStick,
             Self::BallAndStick => Self::SpaceFill,
-            Self::SpaceFill => Self::Surface, // skip ribbon for now
+            Self::SpaceFill => Self::Ribbon,
             Self::Ribbon => Self::Surface,
             Self::Surface => Self::Dots,
             Self::Dots => Self::Backbone,
@@ -287,7 +289,7 @@ impl MoleculeView {
             Self::BallAndStick => Self::Sticks,
             Self::SpaceFill => Self::BallAndStick,
             Self::Ribbon => Self::SpaceFill,
-            Self::Surface => Self::SpaceFill,
+            Self::Surface => Self::Ribbon,
             Self::Dots => Self::Surface,
         }
     }
@@ -1007,26 +1009,19 @@ fn draw_sa_surface(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene
     scene.entities.push(ent);
 }
 
-/// Secondary structure, e.g. cartoon.
-// pub fn draw_secondary_structure(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene, state: &mut State) {
+/// Secondary structure, e.g. cartoon view for proteins.
 pub fn draw_secondary_structure(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
     // If the mesh is the default cube, build it. (On demand.)
     if !mesh_created {
         *update_mesh = true;
-        return;
     }
-
-    scene
-        .entities
-        .retain(|ent| ent.class != EntityClass::SecondaryStructure as u32);
-    // clear_mol_entity_indices(state);
 
     let mut ent = Entity::new(
         MESH_SECONDARY_STRUCTURE,
         Vec3::new_zero(),
         Quaternion::new_identity(),
         1.,
-        (0.7, 0.2, 1.), // todo: Make this customizable etc.
+        COLOR_SECONDARY_STRUCTURE,
         ATOM_SHININESS,
     );
     ent.class = EntityClass::SecondaryStructure as u32;
@@ -1182,6 +1177,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         ent.class != EntityClass::Protein as u32
             && ent.class != EntityClass::SaSurface as u32
             && ent.class != EntityClass::SaSurfaceDots as u32
+            && ent.class != EntityClass::SecondaryStructure as u32
     });
 
     // Edit small molecules only; not proteins.
@@ -1476,6 +1472,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         let atom_0 = &mol.common.atoms[bond.atom_0];
         let atom_1 = &mol.common.atoms[bond.atom_1];
 
+        if ui.mol_view == MoleculeView::Ribbon && !atom_0.hetero && !atom_1.hetero {
+            continue;
+        }
+
         let atom_0_posit = mol.common.atom_posits[bond.atom_0];
         let atom_1_posit = mol.common.atom_posits[bond.atom_1];
 
@@ -1685,7 +1685,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
     // todo: This incorrectly hides hetero-only H bonds.
     if !state.ui.visibility.hide_h_bonds
         && !state.ui.visibility.hide_protein
-        && state.ui.mol_view != MoleculeView::SpaceFill
+        && !matches!(
+            state.ui.mol_view,
+            MoleculeView::SpaceFill | MoleculeView::Ribbon
+        )
     {
         for bond in &mol.bonds_hydrogen {
             let atom_donor = &mol.common.atoms[bond.donor];

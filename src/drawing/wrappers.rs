@@ -7,8 +7,9 @@ use graphics::{Entity, Scene};
 
 use crate::{
     drawing,
-    drawing::EntityClass,
+    drawing::{EntityClass, draw_pocket},
     molecules::{MolGenericRef, MolGenericTrait, MolType},
+    render::MESH_POCKET_START,
     state::{OperatingMode, State},
     util::clear_mol_entity_indices,
 };
@@ -231,6 +232,8 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
         return;
     }
 
+    let standalone_count = state.pockets.len();
+
     let mut entities = Vec::new();
     for mol in &mut state.pockets {
         let start_i_mol = ent_i_start + entities.len();
@@ -245,6 +248,36 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
         entities.extend(ents_this_mol);
 
         mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
+    }
+
+    // Also draw pockets embedded in ligand pharmacophores.
+    for lig_i in 0..state.ligands.len() {
+        // Assign a stable mesh slot that doesn't overlap with standalone pockets.
+        let expected_mesh_i_rel = standalone_count + lig_i;
+
+        if let Some(pocket) = &mut state.ligands[lig_i].pharmacophore.pocket {
+            if pocket.mesh_i_rel != expected_mesh_i_rel {
+                pocket.mesh_i_rel = expected_mesh_i_rel;
+                let mesh_i = MESH_POCKET_START + expected_mesh_i_rel;
+                while scene.meshes.len() <= mesh_i {
+                    scene.meshes.push(Default::default());
+                }
+                scene.meshes[mesh_i] = pocket.surface_mesh.clone();
+            }
+        }
+
+        if let Some(pocket) = &state.ligands[lig_i].pharmacophore.pocket {
+            let lig_posits = &state.ligands[lig_i].common.atom_posits;
+            let ents = drawing::draw_pocket(
+                pocket,
+                &[], // H bonds not computed in primary mode.
+                lig_posits,
+                &state.ui.visibility,
+                &state.ui.selection,
+                &state.volatile.mol_manip.mode,
+            );
+            entities.extend(ents);
+        }
     }
 
     helper_b(

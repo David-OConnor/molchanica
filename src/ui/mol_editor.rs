@@ -273,7 +273,7 @@ pub(in crate::ui) fn editor(
                 .mol_editor
                 .mol
                 .common
-                .save(&mut state.volatile.dialogs.save)
+                .save(MolType::Ligand, &mut state.volatile.dialogs.save)
                 .is_err()
             {
                 handle_err(&mut state.ui, "Problem saving this file".to_owned());

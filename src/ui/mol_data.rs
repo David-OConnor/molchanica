@@ -554,8 +554,10 @@ pub(in crate::ui) fn display_mol_data_peptide(
     }
 
     if let Some(res) = move_lig_to_res {
-        if let Some((_, i)) = state.volatile.active_mol {
-            let mol = &mut state.ligands[i];
+        if let Some((_, i)) = state.volatile.active_mol
+            && i < state.ligands.len()
+        {
+            let mol = &mut state.ligands[i]; // can't use `get`; borrow error.
             if let Some(pep) = &state.peptide {
                 move_mol_to_res(&mut MolGenericRefMut::Small(mol), pep, &res);
                 move_cam_to_active_mol(state, scene, pep.center, engine_updates);

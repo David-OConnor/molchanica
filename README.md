@@ -327,7 +327,6 @@ similar in the path, e.g.:
 
 - Only one protein can be loaded at a time
 - Currently, the Langevin middle integrator, and constrained H inject energy into the system.
-- Ribbon (cartoon) view is unavailable.
 - Loading map (electron density) files that are very large (e.g. high detail, especially Map files directly available
   on RCSB, vice created from 2fo-fc) may crash the program.
 - Opening electron density files in general can be slow. This can lead to the program starting slowly if it was

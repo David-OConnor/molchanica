@@ -82,22 +82,21 @@ pub fn handle_redraw(
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
     reset_cam: bool,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
 ) {
     if redraw.peptide {
         draw_peptide(state, scene);
-        // draw_all_ligs(state, scene); // todo: Hmm.
 
         if let Some(mol) = &state.peptide {
             set_window_title(&mol.common.ident, scene);
         }
 
-        engine_updates.entities = EntityUpdate::All;
+        updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::Peptide as u32);
 
         // For docking light, but may be overkill here.
         if state.active_mol().is_some() {
-            engine_updates.lighting = true;
+            updates.lighting = true;
         }
     }
 
@@ -107,7 +106,7 @@ pub fn handle_redraw(
                 draw_all_ligs(state, scene);
                 // For docking light, but may be overkill here.
                 if state.active_mol().is_some() {
-                    engine_updates.lighting = true;
+                    updates.lighting = true;
                 }
             }
             OperatingMode::MolEditor => mol_editor::redraw(
@@ -119,32 +118,32 @@ pub fn handle_redraw(
             OperatingMode::ProteinEditor => unimplemented!(),
         }
 
-        engine_updates.entities = EntityUpdate::All;
+        updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::Ligand as u32);
     }
 
     if redraw.na {
         draw_all_nucleic_acids(state, scene);
-        engine_updates.entities = EntityUpdate::All;
+        updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::NucleicAcid as u32);
     }
 
     if redraw.lipid {
         draw_all_lipids(state, scene);
-        engine_updates.entities = EntityUpdate::All;
+        updates.entities = EntityUpdate::All;
         // engine_updates.entities.push_class(EntityClass::Lipid as u32);
     }
 
     if redraw.pocket {
         draw_all_pockets(state, scene);
-        engine_updates.entities = EntityUpdate::All;
+        updates.entities = EntityUpdate::All;
 
         // engine_updates.entities.push_class(EntityClass::Pocket as u32);
     }
 
     // Perform cleanup.
     if reset_cam {
-        reset_camera(state, scene, engine_updates, FWD_VEC);
+        reset_camera(state, scene, updates, FWD_VEC);
     }
 }
 
@@ -202,6 +201,7 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
     // This updates the mesh and spheres after the initial prefs load, which may
     // have altered their posits. This prevents a visual jump upon the first re-render of pockets,
     // as the mesh moves to the correct location.
+    let standalone_pocket_count = state.pockets.len();
     for (i, pocket) in state.pockets.iter_mut().enumerate() {
         pocket.mesh_i_rel = i;
         pocket.reset_post_manip(
@@ -209,6 +209,17 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
             state.ui.mesh_coloring,
             &mut Default::default(),
         );
+    }
+    // Same treatment for pockets embedded in ligand pharmacophores.
+    for (lig_i, lig) in state.ligands.iter_mut().enumerate() {
+        if let Some(pocket) = &mut lig.pharmacophore.pocket {
+            pocket.mesh_i_rel = standalone_pocket_count + lig_i;
+            pocket.reset_post_manip(
+                &mut scene.meshes,
+                state.ui.mesh_coloring,
+                &mut Default::default(),
+            );
+        }
     }
 
     reset_orbit_center(state, scene);
