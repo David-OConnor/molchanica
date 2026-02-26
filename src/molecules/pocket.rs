@@ -13,7 +13,7 @@ use bincode::{
     enc::Encoder,
     error::{DecodeError, EncodeError},
 };
-use bio_files::{Mol2, Sdf};
+use bio_files::{Mol2, Sdf, SdfFormat};
 use graphics::{EngineUpdates, Mesh};
 use lin_alg::{
     f32::{Quaternion, Vec3 as Vec3F32},
@@ -261,7 +261,7 @@ impl Pocket {
             ..Default::default()
         }
         .to_sdf()
-        .save(path)
+        .save(path, SdfFormat::V2000)
     }
 
     pub fn save_mol2(&self, path: &Path) -> io::Result<()> {

@@ -2,6 +2,12 @@
 //! the most important features, like atoms, bonds, and metadata.
 //!
 
+use crate::mol_editor::add_atoms::{hydrogens_avail, remove_hydrogens};
+use bio_files::BondType;
+use dynamics::{find_planar_posit, find_tetra_posit_final, find_tetra_posits};
+use lin_alg::f64::{Quaternion, Vec3};
+use na_seq::Element;
+use na_seq::Element::{Carbon, Hydrogen, Nitrogen, Oxygen};
 use std::{
     collections::HashMap,
     io,
@@ -9,12 +15,17 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-use lin_alg::f64::{Quaternion, Vec3};
-
-// Used by the mol editor, and alignment.
-pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);
+// // Used by the mol editor, and alignment. Be careful with this!
+// pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);
 
 use crate::molecules::{Atom, Bond, build_adjacency_list};
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum BondGeom {
+    Linear,
+    Planar,
+    Tetrahedral,
+}
 
 /// Contains fields shared by all molecule types.
 #[derive(Debug, Clone)]
@@ -45,6 +56,8 @@ pub struct MoleculeCommon {
     /// We have instantiated multiple copies of a molecule for MD simulations.
     /// If Some, that is the index of the parent.
     pub copy_for_md: Option<usize>,
+    /// A cache
+    pub next_atom_sn: u32,
 }
 
 impl Default for MoleculeCommon {
@@ -63,6 +76,7 @@ impl Default for MoleculeCommon {
             selected_for_md: false,
             entity_i_range: None,
             copy_for_md: None,
+            next_atom_sn: 1,
         }
     }
 }
@@ -271,13 +285,10 @@ impl MoleculeCommon {
             bond.atom_1_sn = updated_sns[bond.atom_1];
         }
 
-        NEXT_ATOM_SN.store(
-            match updated_sns.last() {
-                Some(l) => *l + 1,
-                None => 1,
-            },
-            Ordering::Release,
-        )
+        self.next_atom_sn = match updated_sns.last() {
+            Some(l) => *l + 1,
+            None => 1,
+        };
     }
 
     /// The sum of each atom's elemental atomic weight, in Daltons (amu).
@@ -353,6 +364,153 @@ impl MoleculeCommon {
             assert_eq!(bond.atom_1_sn, self.atoms[bond.atom_1].serial_number);
         }
     }
+
+    /// Adds an atom, and a bond between it and an existing one [parent]. Also adds Hydrogens on this atom.
+    /// Returns (atom's new index, bond's new index).
+    pub fn add_atom(
+        &mut self,
+        i_par: usize,
+        element: Element,
+        bond_type: BondType,
+        ff_type: Option<String>,
+        bond_len: Option<f64>,
+        q: Option<f32>,
+    ) -> Option<(usize, usize)> {
+        let posit_parent = self.atom_posits[i_par];
+        let el_parent = self.atoms[i_par].element;
+
+        if el_parent == Hydrogen {
+            return None;
+        }
+
+        // Delete hydrogens; we'll add back if required.
+        if element != Hydrogen {
+            remove_hydrogens(self, i_par);
+        }
+
+        let atoms_to_add = bonds_avail(i_par, self, el_parent);
+        let currently_bound_count = self.adjacency_list[i_par].len();
+
+        // let geom = match atoms_to_add {
+        let geom = match atoms_to_add + currently_bound_count {
+            4 => BondGeom::Tetrahedral,
+            3 => BondGeom::Planar,
+            2 => BondGeom::Linear,
+            _ => {
+                eprintln!("Error: Unexpected atoms to add count.");
+                BondGeom::Tetrahedral
+            }
+        };
+
+        // todo: Can't use `common` below here due to the delete_atom code and ownership.
+        let posit = match find_appended_posit(
+            posit_parent,
+            &self.atoms,
+            &self.adjacency_list[i_par],
+            bond_len,
+            element,
+            geom,
+        ) {
+            Some(p) => p,
+            // Can't add an atom; already too many atoms bonded.
+            None => return None,
+        };
+
+        let new_sn = self.next_atom_sn;
+        self.next_atom_sn += 1;
+
+        let i_new_atom = self.atoms.len();
+        let i_new_bond = self.bonds.len();
+
+        if i_par >= self.atoms.len() {
+            eprintln!("Index out of range when adding atoms: {i_par}");
+            return None;
+            // todo: This return and print are a workaround; find the root cause.
+        }
+
+        let atom_new = Atom {
+            serial_number: new_sn,
+            posit,
+            element: element.clone(),
+            type_in_res: None,
+            force_field_type: ff_type.clone(),
+            partial_charge: q,
+            ..Default::default()
+        };
+
+        self.atoms.push(atom_new);
+
+        self.atom_posits.push(posit);
+        self.adjacency_list[i_par].push(i_new_atom);
+        self.adjacency_list.push(vec![i_par]);
+
+        self.bonds.push(Bond {
+            bond_type,
+            atom_0_sn: self.atoms[i_par].serial_number,
+            atom_1_sn: new_sn,
+            atom_0: i_par,
+            atom_1: i_new_atom,
+            is_backbone: false,
+        });
+
+        Some((i_new_atom, i_new_bond))
+    }
+
+    /// Populate  hydrogens like the standalone editor fn, but only update the mol; no drawing/state
+    /// updates  etc. We use this, for example, when loading molecules that don't hav eH.
+    pub fn populate_hydrogens_on_atom(&mut self, i: usize) {
+        // todo: Dry with the other fn.
+        if i >= self.atoms.len() {
+            eprintln!("Error: Invalid atom index when populating Hydrogens.");
+            return;
+        }
+
+        let el = self.atoms[i].element;
+        if el == Hydrogen {
+            return;
+        }
+
+        let h_to_add = bonds_avail(i, self, el);
+
+        // let bonds_remaining = bonds_avail.saturating_sub(adj.len());
+
+        for _ in 0..h_to_add {
+            let atom = &self.atoms[i];
+            let (ff_type, bond_len) = {
+                let mut v = (None, 1.1);
+
+                // Grabbing the first, arbitrarily.
+                for (ff, bl) in hydrogens_avail(&atom.force_field_type) {
+                    v.0 = Some(ff);
+                    v.1 = bl;
+                    break;
+                }
+
+                v
+            };
+
+            // I believe we populate partial charge after  and ff  type  after?
+            self.add_atom(i, Hydrogen, BondType::Single, ff_type, Some(bond_len), None);
+        }
+    }
+
+    pub fn populate_hydrogens(&mut self) {
+        self.update_next_sn();
+        for i in 0..self.atoms.len() {
+            self.populate_hydrogens_on_atom(i);
+        }
+    }
+
+    pub fn update_next_sn(&mut self) {
+        let mut highest_sn = 0;
+        for atom in &self.atoms {
+            if atom.serial_number > highest_sn {
+                highest_sn = atom.serial_number;
+            }
+        }
+
+        self.next_atom_sn = highest_sn + 1;
+    }
 }
 
 /// Given stable atom serial numbers, reassign bond indices to match. Useful, for example, after
@@ -367,5 +525,168 @@ pub fn reassign_bond_indices(bonds: &mut [Bond], atoms: &[Atom]) {
     for b in bonds {
         b.atom_0 = sn_to_new_i[&b.atom_0_sn];
         b.atom_1 = sn_to_new_i[&b.atom_1_sn];
+    }
+}
+
+pub fn find_appended_posit(
+    posit_parent: Vec3,
+    atoms: &[Atom],
+    adj_to_par: &[usize],
+    bond_len: Option<f64>,
+    element: Element,
+    geom: BondGeom,
+) -> Option<Vec3> {
+    let neighbor_count = adj_to_par.len();
+
+    // Note on these computations: The parent atom is the "hub" of a tetrahedral or planar
+    // hub-and-spoke config. Other spokes are existing atoms bound to this parent, and the atom
+    // we're computing the position here to add.
+    let result = match neighbor_count {
+        // This 0 branch should only be called for disconnected parents.
+        0 => Some(posit_parent + Vec3::new(1.3, 0., 0.)),
+        1 => {
+            // This neighbor is the *grandparent* to the one we're adding; what ties
+            // the parent to it. We set up the atom we're adding so it's tau/3 to this
+            // grandparent, rotated around the parent.
+            let grandparent = atoms[adj_to_par[0]].posit;
+
+            // For now, pick an arbitrary orientation of the 3 methyl atoms (relative to the rest of the system)
+            // without regard for steric clashes, and let MD sort it out after.
+            // todo: choose something explicitly that avoids steric clashes?
+
+            const TETRA_ANGLE: f64 = 1.91063;
+
+            let bond_par_gp = (grandparent - posit_parent).to_normalized();
+            let ax_rot = bond_par_gp.any_perpendicular();
+            let rotator = Quaternion::from_axis_angle(ax_rot, TETRA_ANGLE);
+
+            // If H, shorten the bond.
+            let mut relative_dir = rotator.rotate_vec(bond_par_gp);
+            if element == Hydrogen {
+                relative_dir = (relative_dir.to_normalized()) * 1.1;
+            }
+            Some(posit_parent + relative_dir)
+        }
+        2 => {
+            let neighbor_0 = atoms[adj_to_par[0]].posit;
+            let neighbor_1 = atoms[adj_to_par[1]].posit;
+
+            match geom {
+                BondGeom::Tetrahedral => {
+                    // This function uses the distance between the first two params, so it's likely
+                    // in the case of adding H, this is what we want. (?)
+                    let (p0, p1) = find_tetra_posits(posit_parent, neighbor_1, neighbor_0);
+
+                    // Score a candidate by its minimum distance to any existing neighbor; pick the larger score.
+                    let neighbors: &[usize] = &adj_to_par;
+                    let score = |p: Vec3| {
+                        let mut best = f64::INFINITY;
+                        for &ni in neighbors {
+                            let q = atoms[ni].posit;
+                            let d2 = (p - q).magnitude_squared();
+                            if d2 < best {
+                                best = d2;
+                            }
+                        }
+                        best
+                    };
+
+                    Some(if score(p0) >= score(p1) { p0 } else { p1 })
+                }
+                BondGeom::Planar => Some(find_planar_posit(posit_parent, neighbor_0, neighbor_1)),
+                BondGeom::Linear => {
+                    return None;
+                }
+            }
+        }
+        3 => {
+            if geom != BondGeom::Tetrahedral {
+                return None;
+            }
+
+            // None
+            let adj_0 = adj_to_par[0];
+            let neighbor_0 = atoms[adj_0].posit;
+            let adj_1 = adj_to_par[1];
+            let neighbor_1 = atoms[adj_1].posit;
+            let adj_2 = adj_to_par[2];
+            let neighbor_2 = atoms[adj_2].posit;
+
+            // todo. Check both angles?
+            // If the incoming angles are ~τ/3, add in a planar config.
+            // let bond_0 = neighbor_0 - posit_parent;
+            // let bond_1 = neighbor_1 - posit_parent;
+            // let angle = bond_1.to_normalized().dot(bond_0.to_normalized()).acos();
+
+            // Planar; full.
+            // if angle > 1.95 {
+            // todo: Experiment. You may wish to use the character of neighboring bond count
+            // todo and type instead of this angle.
+            // if angle > 2.11 {
+            //     println!("Planar abort!: {angle}"); // todo temp!!
+            //     return None;
+            // } else {
+            Some(find_tetra_posit_final(
+                posit_parent,
+                neighbor_0,
+                neighbor_1,
+                neighbor_2,
+            ))
+            // }
+        }
+        _ => None,
+    };
+
+    // Set len, if applicable.
+    // todo: Could be slightly more efficient to bake this length correction into the find_tetra
+    // todo etc fns.
+    match result {
+        Some(p) => match bond_len {
+            Some(l) => {
+                let rel_pos = (p - posit_parent).to_normalized() * l;
+                Some(posit_parent + rel_pos)
+            }
+            None => Some(p),
+        },
+        None => None,
+    }
+}
+
+pub fn bonds_avail(i_atom: usize, mol: &MoleculeCommon, el: Element) -> usize {
+    let mut bonds_avail: isize = match el {
+        Carbon => 4,
+        Oxygen => 2,
+        Nitrogen => 3, // todo?
+        Element::Chlorine => 0,
+        _ => 0, // todo?
+    };
+
+    let mut ar_count = 0;
+    for bond in &mol.bonds {
+        if bond.atom_0 != i_atom && bond.atom_1 != i_atom {
+            continue;
+        }
+
+        match bond.bond_type {
+            BondType::Single => bonds_avail -= 1,
+            BondType::Double => bonds_avail -= 2,
+            BondType::Triple => bonds_avail -= 3,
+            BondType::Aromatic => {
+                ar_count += 1;
+                // bonds_avail -= 2
+            }
+            _ => bonds_avail -= 1,
+        }
+    }
+
+    // Special override for the non-integer case of Aromatic bonds (4 - 1.5 x 2 = 1)
+    if ar_count == 2 {
+        bonds_avail -= 3;
+    }
+
+    if bonds_avail < 0 {
+        0
+    } else {
+        bonds_avail as usize
     }
 }

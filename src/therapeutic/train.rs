@@ -1230,6 +1230,7 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Res
         c.num_hetero_atoms as f32,
         c.halogen.len() as f32,
         c.rotatable_bonds.len() as f32,
+        c.flexibility / 4., // normalizationish?
         // c.amines.len() as f32,
         // c.amides.len() as f32,
         // c.carbonyl.len() as f32,

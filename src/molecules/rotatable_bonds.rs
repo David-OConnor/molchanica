@@ -1,10 +1,10 @@
 //! For determining which bonds in a molecule allow free rotation, i.e. changing the dihedral
 //! angle. For example, not rings.
 
+use crate::molecules::{Bond, common::MoleculeCommon};
 use bio_files::BondType;
 use lin_alg::f64::{Quaternion, Vec3};
-
-use crate::molecules::{Bond, common::MoleculeCommon};
+use na_seq::Element;
 
 #[derive(Clone, Debug)]
 pub struct RotatableBond {
@@ -13,6 +13,10 @@ pub struct RotatableBond {
 }
 
 impl MoleculeCommon {
+    /// Identify which bonds are rotatable; able to change the molecule's conformation. Note that we
+    /// exclude methyl groups.
+    ///
+    /// Return the shorter downstream side.
     pub fn find_rotatable_bonds(&self) -> Vec<RotatableBond> {
         let mut out = Vec::new();
 
@@ -32,8 +36,34 @@ impl MoleculeCommon {
                 continue;
             }
 
-            let downstream = find_downstream_atoms(&self.adjacency_list, atom_0, atom_1);
-            if downstream.is_empty() || downstream.len() == self.atoms.len() {
+            let atom_count = self.atoms.len();
+
+            let mut downstream = find_downstream_atoms(&self.adjacency_list, atom_0, atom_1);
+            if downstream.is_empty() || downstream.len() == atom_count {
+                continue;
+            }
+
+            // Make downstream the smaller side.
+            if downstream.len() > atom_count / 2 {
+                downstream = find_other_side(&downstream, atom_count)
+            }
+
+            // Exclude methyl, hydroxyl, etc groups by convention; they're rotatable, but don't notably
+            // affect the conformation.
+            let mut any_non_h = false;
+            for i_down in &downstream {
+                // Don't check for atoms part of the rotation bond.
+                if *i_down == atom_0 || *i_down == atom_1 {
+                    continue;
+                }
+
+                if self.atoms[*i_down].element != Element::Hydrogen {
+                    any_non_h = true;
+                    break;
+                }
+            }
+
+            if !any_non_h {
                 continue;
             }
 
@@ -74,6 +104,24 @@ impl MoleculeCommon {
     }
 }
 
+/// Find atoms in the molecule that are not part of a set. We use this to find
+/// the other downstream side, after calculating the first.
+fn find_other_side(side0_downstream: &[usize], atom_count: usize) -> Vec<usize> {
+    let mut res = Vec::with_capacity(atom_count - side0_downstream.len());
+
+    let mut on_side0 = vec![false; atom_count];
+    for &idx in side0_downstream {
+        on_side0[idx] = true;
+    }
+
+    for i in 0..atom_count {
+        if !on_side0[i] {
+            res.push(i);
+        }
+    }
+    res
+}
+
 /// See `MoleculeCommon::rotate_around_bond`; this allows us to do it without mutating.
 pub fn rotate_around_bond(
     mol: &MoleculeCommon,
@@ -97,21 +145,7 @@ pub fn rotate_around_bond(
     };
 
     // This is a simple check for all atoms not in side0_downstream, but is faster.
-    let side1_downstream = {
-        let mut v = Vec::with_capacity(mol.atoms.len() - side0_downstream.len());
-
-        let mut on_side0 = vec![false; mol.atoms.len()];
-        for &idx in &side0_downstream {
-            on_side0[idx] = true;
-        }
-
-        for i in 0..mol.atoms.len() {
-            if !on_side0[i] {
-                v.push(i);
-            }
-        }
-        v
-    };
+    let side1_downstream = find_other_side(&side0_downstream, mol.atoms.len());
 
     // Rotate the smaller side; keep pivot_idx on the larger side
     let (pivot_idx, side_idx, downstream_atom_indices) =
@@ -157,7 +191,7 @@ pub fn rotate_around_bond(
 /// in ligand conformation algorithms that try different poses.
 ///
 /// `pivot` and `side` are atom indices.
-pub fn find_downstream_atoms(adj_list: &[Vec<usize>], pivot: usize, side: usize) -> Vec<usize> {
+fn find_downstream_atoms(adj_list: &[Vec<usize>], pivot: usize, side: usize) -> Vec<usize> {
     if pivot == side {
         return Vec::new();
     }

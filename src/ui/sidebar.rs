@@ -1,4 +1,4 @@
-use egui::{Color32, Context, RichText, Ui};
+use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
@@ -21,7 +21,6 @@ use crate::{
 /// Abstracts over all molecule types. (Currently not protein though)
 /// A single row for the molecule.
 fn mol_picker_one(
-    // tood; Just take Statevolatile.
     active_mol: &mut Option<(MolType, usize)>,
     orbit_center: &mut Option<(MolType, usize)>,
     ph_state: &mut PharmacophoreState,
@@ -47,114 +46,126 @@ fn mol_picker_one(
         _ => false,
     };
 
+    let mut frame = Frame::new();
+
     let color = if active {
+        frame = frame
+            .stroke(Stroke::new(1.0, COLOR_ACTIVE_RADIO))
+            .fill(Color32::from_rgb(55, 40, 40))
+            .corner_radius(CornerRadius::same(2))
+            .inner_margin(Margin::symmetric(2, 2))
+            .outer_margin(Margin::symmetric(0, 0));
+
         COLOR_ACTIVE_RADIO
     } else {
         COLOR_INACTIVE
     };
 
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(COL_SPACING / 2.);
-            if ui
-                .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .on_hover_text("(Hotkey: Delete) Close this molecule.")
-                .clicked()
-            {
-                *close = Some((mol_type, i_mol));
-            }
-
-            let color_md = if mol.selected_for_md {
-                COLOR_ACTIVE
-            } else {
-                COLOR_INACTIVE
-            };
-
-            if mol_type != MolType::Pocket {
+    /// Frame so we can draw a colored box around the active one.
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(COL_SPACING / 2.);
                 if ui
-                    .button(RichText::new("MD").color(color_md))
-                    .on_hover_text(
-                        "Select or deselect this molecule for molecular dynamics simulation.",
-                    )
+                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                    .on_hover_text("(Hotkey: Delete) Close this molecule.")
                     .clicked()
                 {
-                    mol.selected_for_md = !mol.selected_for_md;
+                    *close = Some((mol_type, i_mol));
                 }
-            }
 
-            let color_vis = if mol.visible {
-                COLOR_ACTIVE
+                let color_md = if mol.selected_for_md {
+                    COLOR_ACTIVE
+                } else {
+                    COLOR_INACTIVE
+                };
+
+                if mol_type != MolType::Pocket {
+                    if ui
+                        .button(RichText::new("MD").color(color_md))
+                        .on_hover_text(
+                            "Select or deselect this molecule for molecular dynamics simulation.",
+                        )
+                        .clicked()
+                    {
+                        mol.selected_for_md = !mol.selected_for_md;
+                    }
+                }
+
+                let color_vis = if mol.visible {
+                    COLOR_ACTIVE
+                } else {
+                    COLOR_INACTIVE
+                };
+
+                if ui.button(RichText::new("👁").color(color_vis)).clicked() {
+                    mol.visible = !mol.visible;
+
+                    *redraw = true; // todo Overkill; only need to redraw (or even just clear) one.
+                    // todo: Generalize.
+                    engine_updates.entities = EntityUpdate::All;
+                    // engine_updates.entities.push_class(mol_type.entity_class() as u32);
+                }
+
+                if ui
+                    .button(RichText::new("Cam"))
+                    .on_hover_text("Move camera near active molecule, looking at it.")
+                    .clicked()
+                {
+                    let beyond = if mol_type == MolType::Peptide {
+                        Vec3::new_zero()
+                    } else {
+                        pep_center
+                    };
+                    // Setting mol center to 0 if no mol.
+                    move_cam_to_mol(mol, cam_snapshot, scene, beyond, engine_updates)
+                }
+
+                let row_h = ui.spacing().interact_size.y;
+
+                let sel_btn = ui
+                    .add_sized(
+                        egui::vec2(ui.available_width(), row_h),
+                        egui::Button::new(RichText::new(mol.name()).color(color)),
+                    )
+                    .on_hover_text(help_text);
+
+                if sel_btn.clicked() {
+                    if active && active_mol.is_some() {
+                        *active_mol = None;
+                    } else {
+                        *active_mol = Some((mol_type, i_mol));
+                        *orbit_center = *active_mol;
+
+                        *recenter_orbit = true;
+                    }
+
+                    *redraw = true; // To reflect the change in thickness, color etc.
+                }
+
+                if sel_btn.middle_clicked() {
+                    *close = Some((mol_type, i_mol));
+                }
+            });
+        });
+
+        if let Some(char) = mol_char {
+            let color_details = if active {
+                Color32::WHITE
             } else {
-                COLOR_INACTIVE
+                Color32::GRAY
             };
 
-            if ui.button(RichText::new("👁").color(color_vis)).clicked() {
-                mol.visible = !mol.visible;
+            label!(ui, char.to_string().trim(), color_details);
+        }
 
-                *redraw = true; // todo Overkill; only need to redraw (or even just clear) one.
-                // todo: Generalize.
-                engine_updates.entities = EntityUpdate::All;
-                // engine_updates.entities.push_class(mol_type.entity_class() as u32);
-            }
-
-            if ui
-                .button(RichText::new("Cam"))
-                .on_hover_text("Move camera near active molecule, looking at it.")
-                .clicked()
-            {
-                let beyond = if mol_type == MolType::Peptide {
-                    Vec3::new_zero()
-                } else {
-                    pep_center
-                };
-                // Setting mol center to 0 if no mol.
-                move_cam_to_mol(mol, cam_snapshot, scene, beyond, engine_updates)
-            }
-
-            let row_h = ui.spacing().interact_size.y;
-
-            let sel_btn = ui
-                .add_sized(
-                    egui::vec2(ui.available_width(), row_h),
-                    egui::Button::new(RichText::new(mol.name()).color(color)),
-                )
-                .on_hover_text(help_text);
-
-            if sel_btn.clicked() {
-                if active && active_mol.is_some() {
-                    *active_mol = None;
-                } else {
-                    *active_mol = Some((mol_type, i_mol));
-                    *orbit_center = *active_mol;
-
-                    *recenter_orbit = true;
-                }
-
-                *redraw = true; // To reflect the change in thickness, color etc.
-            }
-
-            if sel_btn.middle_clicked() {
-                *close = Some((mol_type, i_mol));
-            }
-        });
+        if let Some(pm) = pharmacophore
+            && !pm.features.is_empty()
+        {
+            pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_state, ui);
+        }
+        ui.separator();
     });
-
-    if let Some(char) = mol_char {
-        let color_details = if active {
-            Color32::WHITE
-        } else {
-            Color32::GRAY
-        };
-
-        label!(ui, char.to_string().trim(), color_details);
-    }
-
-    if let Some(pm) = pharmacophore
-        && !pm.features.is_empty()
-    {
-        pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_state, ui);
-    }
-    ui.separator();
 }
 
 /// Select, close, hide etc molecules from ones opened.
@@ -163,7 +174,7 @@ fn mol_picker(
     scene: &mut Scene,
     ui: &mut Ui,
     redraw: &mut RedrawFlags,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
 ) {
     let mut recenter_orbit = false;
     let mut close = None; // Avoids borrow error.
@@ -187,7 +198,7 @@ fn mol_picker(
             &mut state.ui.popup,
             scene,
             ui,
-            engine_updates,
+            updates,
             &mut redraw.peptide,
             &mut recenter_orbit,
             &mut close,
@@ -209,7 +220,7 @@ fn mol_picker(
             &mut state.ui.popup,
             scene,
             ui,
-            engine_updates,
+            updates,
             &mut redraw.ligand,
             &mut recenter_orbit,
             &mut close,
@@ -231,7 +242,7 @@ fn mol_picker(
             &mut state.ui.popup,
             scene,
             ui,
-            engine_updates,
+            updates,
             &mut redraw.lipid,
             &mut recenter_orbit,
             &mut close,
@@ -254,7 +265,7 @@ fn mol_picker(
             &mut state.ui.popup,
             scene,
             ui,
-            engine_updates,
+            updates,
             &mut redraw.na,
             &mut recenter_orbit,
             &mut close,
@@ -277,7 +288,7 @@ fn mol_picker(
             &mut state.ui.popup,
             scene,
             ui,
-            engine_updates,
+            updates,
             &mut redraw.pocket,
             &mut recenter_orbit,
             &mut close,
@@ -311,7 +322,7 @@ fn mol_picker(
     // todo: AAs here too?
 
     if let Some((mol_type, i_mol)) = close {
-        close_mol(mol_type, i_mol, state, scene, engine_updates);
+        close_mol(mol_type, i_mol, state, scene, updates);
     }
 
     if recenter_orbit {
@@ -434,9 +445,17 @@ fn manip_toolbar(
                 redraw.set(active_mol_type);
             }
 
-            if ui.button("Details")
-                .on_hover_text("Toggle the details display of the active molecule.")
-                .clicked() {
+            let color_details = if state.ui.ui_vis.mol_char {
+                COLOR_ACTIVE
+            } else {
+                COLOR_INACTIVE
+            };
+            if button!(
+                ui,
+                "Details",
+                color_details,
+                "Toggle the details display of the active molecule."
+            ).clicked() {
                 state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
             }
         }
@@ -532,6 +551,7 @@ pub(in crate::ui) fn sidebar(
             } else {
                 mol_picker(state, scene, ui, redraw, updates);
             }
+            ui.add_space(ROW_SPACING);
 
             if state.ui.ui_vis.pharmacophore_list && edit_mode {
                 mol_editor_sidebar::pharmacophore_list(state, ui);
@@ -546,12 +566,12 @@ pub(in crate::ui) fn sidebar(
                 let mut toggled = false; // Avoid double borrow.
                 if let Some(m) = &state.active_mol() {
                     if let MolGenericRef::Small(mol) = m {
-                        if ui
-                            .button(RichText::new("Close details").color(Color32::LIGHT_RED))
-                            .clicked()
-                        {
-                            toggled = true;
-                        }
+                        // if ui
+                        //     .button(RichText::new("Close details").color(Color32::LIGHT_RED))
+                        //     .clicked()
+                        // {
+                        //     toggled = true;
+                        // }
                         char_adme::mol_char_disp(mol, ui);
                     }
                 }

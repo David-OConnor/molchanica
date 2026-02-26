@@ -7,7 +7,9 @@ use std::{
     time::Instant,
 };
 
-use bio_files::{DensityMap, MmCif, Mol2, Pdbqt, Xyz, md_params::ForceFieldParams, sdf::Sdf};
+use bio_files::{
+    DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz, md_params::ForceFieldParams, sdf::Sdf,
+};
 use chrono::Utc;
 use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, Scene};
@@ -441,7 +443,8 @@ impl State {
             }
             "sdf" => match self.active_mol() {
                 Some(mol) => {
-                    mol.to_sdf()?.save(path)?;
+                    /// V2000 only for now. Allow configuring, eventually.
+                    mol.to_sdf()?.save(path, SdfFormat::V2000)?;
 
                     if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {
                         OpenType::Pocket
@@ -727,6 +730,19 @@ impl State {
                 (ident, centroid)
             }
             MoleculeGeneric::Small(mut mol) => {
+                if !mol
+                    .common
+                    .atoms
+                    .iter()
+                    .any(|a| a.element == Element::Hydrogen)
+                {
+                    println!(
+                        "Small molecule {} missing hydrogens; adding.",
+                        mol.common.ident
+                    );
+                    mol.common.populate_hydrogens()
+                }
+
                 // if let Some(ref mut s) = scene {
                 // move_mol_to_cam(&mut mol.common_mut(), &s.camera);
                 move_mol_to_cam(&mut mol.common_mut(), &scene.camera);

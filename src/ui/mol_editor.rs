@@ -19,7 +19,7 @@ use crate::{
     },
     mol_manip,
     mol_manip::ManipMode,
-    molecules::{Bond, MolIdent, MolType, common::NEXT_ATOM_SN, small::MoleculeSmall},
+    molecules::{Bond, MolIdent, MolType, small::MoleculeSmall},
     render::MESH_POCKET_START,
     selection::{Selection, ViewSelLevel},
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
@@ -326,6 +326,7 @@ pub(in crate::ui) fn editor(
             .clicked()
         {
             state.mol_editor.mol.common.reassign_sns();
+            state.mol_editor.mol.update_characterization();
 
             // Load the edited molecule back into the state.
             state.ligands.push(
@@ -349,6 +350,8 @@ pub(in crate::ui) fn editor(
 
                     state.ligands[mol_i].common.build_adjacency_list();
                     state.ligands[mol_i].common.reset_posits();
+
+                    state.ligands[mol_i].update_characterization();
 
                 exit_edit_mode(state, scene, updates);
             }
@@ -628,7 +631,8 @@ fn edit_tools(
                         BondType::Single,
                         Some("c".to_owned()), // todo
                         Some(1.4),            // todo
-                        0.13,                 // todo
+                        // Some(0.13),           // todo
+                        None,
                         &mut state.ui,
                         engine_updates,
                         &mut scene.input_settings.control_scheme,
@@ -657,7 +661,8 @@ fn edit_tools(
                         BondType::Single,
                         Some("ca".to_owned()), // todo
                         Some(1.4),             // todo
-                        0.13,                  // todo
+                        // Some(0.13),            // todo
+                        None,
                         &mut state.ui,
                         engine_updates,
                         &mut scene.input_settings.control_scheme,
@@ -899,7 +904,6 @@ fn template_section(
                 anchor_sns.push(mol_com.atoms[i].serial_number);
             }
 
-            let next_sn = NEXT_ATOM_SN.load(Ordering::Acquire);
             let next_i = mol_com.atoms.len();
 
             // todo: Don't continuously compute orientation; move the fects to add_from_temp... params,
@@ -922,7 +926,7 @@ fn template_section(
                 anchor_idxs,
                 anchor_sns,
                 r_aligners,
-                next_sn,
+                state.mol_editor.mol.common.next_atom_sn,
                 next_i,
                 r_aligner_is,
             )

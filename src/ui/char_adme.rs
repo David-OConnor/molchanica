@@ -1,11 +1,179 @@
-use egui::{Color32, RichText, Ui};
+use egui::{Color32, RichText, ScrollArea, Ui};
 
+use crate::mol_characterization::MolCharacterization;
 use crate::{
     label,
     molecules::{MolIdent, small::MoleculeSmall},
     therapeutic::{Adme, Toxicity},
     ui::{COL_SPACING, ROW_SPACING},
 };
+
+fn char_basics(char: &MolCharacterization, ui: &mut Ui) {
+    // Basics
+    char_item(
+        ui,
+        &[
+            ("Atoms", &char.num_atoms.to_string(), ""),
+            ("Bonds", &char.num_bonds.to_string(), ""),
+            (
+                "Heavy",
+                &char.num_heavy_atoms.to_string(),
+                "Number of heavy (non-Hydrogen) atoms",
+            ),
+            (
+                "Het",
+                &char.num_hetero_atoms.to_string(),
+                "Number of hetero (non-Carbon) atoms",
+            ),
+        ],
+    );
+
+    char_item(
+        ui,
+        &[
+            ("Weight", &format!("{:.2}", char.mol_weight), ""),
+            (
+                "Rotatable",
+                &char.rotatable_bonds.len().to_string(),
+                "Number of rotatable bonds",
+            ),
+            ("Flexibility", &format!("{:.1}", char.flexibility), ""),
+        ],
+    );
+
+    ui.add_space(ROW_SPACING);
+    // Functional groups
+
+    char_item(
+        ui,
+        &[
+            ("Rings Ar", &char.num_rings_aromatic.to_string(), ""),
+            ("Sat", &char.num_rings_saturated.to_string(), ""),
+            ("Ali", &char.num_rings_aliphatic.to_string(), ""),
+        ],
+    );
+
+    // todo: Rings
+    char_item(
+        ui,
+        &[
+            ("Amine", &char.amines.len().to_string(), ""),
+            ("Amide", &char.amides.len().to_string(), ""),
+            ("Carbonyl", &char.carbonyl.len().to_string(), ""),
+            ("Hydroxyl", &char.hydroxyl.len().to_string(), ""),
+            // other FGs like sulfur ones and carboxylate?
+        ],
+    );
+
+    ui.add_space(ROW_SPACING);
+    // Misc properties
+    char_item(
+        ui,
+        &[
+            (
+                "H bond donor:",
+                &char.h_bond_donor.len().to_string(),
+                "Number of hydrogen bond donors",
+            ),
+            (
+                "acceptor",
+                &char.h_bond_acceptor.len().to_string(),
+                "Number of hydrogen bond acceptors",
+            ),
+            ("Valence elecs", &char.num_valence_elecs.to_string(), ""),
+        ],
+    );
+
+    // Geometry
+    // ui.add_space(ROW_SPACING);
+
+    char_item(
+        ui,
+        &[
+            (
+                "TPSA (Ertl)",
+                &format!("{:.2}", char.tpsa_ertl),
+                "Polar surface area; computed analytically.",
+            ),
+            (
+                "PSA (Geom)",
+                &format!("{:.2}", char.psa_topo),
+                "Polar surface area; computed by creating a surface mesh, then measuring the polar part of it.",
+            ),
+            (
+                "Greasiness",
+                &format!("{:.2}", char.greasiness),
+                "i.e. lipophilicity",
+            ),
+        ],
+    );
+
+    let vol = match char.volume_pubchem {
+        Some(v) => v,
+        None => char.volume,
+    };
+    char_item(
+        ui,
+        &[
+            ("ASA (Labute)", &format!("{:.2}", char.asa_labute), ""),
+            (
+                "ASA (Geom)",
+                &format!("{:.2}", char.asa_topo),
+                "Computed by creating a surface mesh, then computing the fraction of its volume that is solvent-accessible",
+            ),
+            (
+                "Volume",
+                &format!("{:.2}", vol),
+                "Computed by creating a surface mesh.",
+            ),
+        ],
+    );
+
+    // Computed properties
+    ui.add_space(ROW_SPACING);
+
+    let log_p = match char.log_p_pubchem {
+        Some(v) => v,
+        None => char.log_p,
+    };
+    char_item(
+        ui,
+        &[
+            (
+                "LogP",
+                &format!("{:.2}", log_p),
+                "Partition coefficient; a proxy for lipophilicity. The higher the value, the more lipophilic, generally.",
+            ),
+            ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
+        ],
+    );
+
+    char_item(
+        ui,
+        &[
+            ("Balaban J", &format!("{:.2}", char.balaban_j), ""),
+            ("Bertz Complexity", &format!("{:.2}", char.bertz_ct), ""),
+        ],
+    );
+
+    char_item(
+        ui,
+        &[(
+            "Complexity",
+            &format!("{:.2}", char.complexity.unwrap_or(0.0)),
+            "",
+        )],
+    );
+
+    char_item(
+        ui,
+        &[(
+            "Wiener index",
+            &format!("{}", char.wiener_index.unwrap_or(0)),
+            "",
+        )],
+    );
+}
 
 fn adme_disp(adme: &Adme, ui: &mut Ui) {
     // label!(ui, "ADME:", Color32::GRAY);
@@ -175,195 +343,53 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
         return;
     };
 
-    // todo: Small font?
-    for ident in &mol.idents {
-        ui.horizontal(|ui| {
-            // Wrap long names, like InChi etc.
-            ui.horizontal_wrapped(|ui| {
-                label!(ui, format!("{}:", ident.label()), Color32::GRAY);
+    // todo: Not working.
+    ScrollArea::vertical()
+        .min_scrolled_height(400.0)
+        .show(ui, |ui| {
+            // todo: Small font?
+            for ident in &mol.idents {
+                ui.horizontal(|ui| {
+                    // Wrap long names, like InChi etc.
+                    ui.horizontal_wrapped(|ui| {
+                        label!(ui, format!("{}:", ident.label()), Color32::GRAY);
 
-                let mut ident_txt = RichText::new(ident.ident_inner()).color(Color32::WHITE);
+                        let mut ident_txt =
+                            RichText::new(ident.ident_inner()).color(Color32::WHITE);
 
-                // These are longer idents.
-                if matches!(
-                    ident,
-                    MolIdent::InchIKey(_)
-                        | MolIdent::InchI(_)
-                        | MolIdent::Smiles(_)
-                        | MolIdent::IupacName(_)
-                ) {
-                    let font = egui::FontId::proportional(10.0);
-                    ident_txt = ident_txt.font(font);
-                }
+                        // These are longer idents.
+                        if matches!(
+                            ident,
+                            MolIdent::InchIKey(_)
+                                | MolIdent::InchI(_)
+                                | MolIdent::Smiles(_)
+                                | MolIdent::IupacName(_)
+                        ) {
+                            let font = egui::FontId::proportional(10.0);
+                            ident_txt = ident_txt.font(font);
+                        }
 
-                ui.label(ident_txt);
-            });
+                        ui.label(ident_txt);
+                    });
+                });
+            }
+
+            ui.separator();
+            ui.add_space(ROW_SPACING);
+
+            char_basics(char, ui);
+            ui.separator();
+            ui.add_space(ROW_SPACING);
+
+            if let Some(ther) = &mol.therapeutic_props {
+                ui.add_space(ROW_SPACING);
+                ui.separator();
+                label!(ui, "Therapeutic data", Color32::LIGHT_BLUE);
+
+                adme_disp(&ther.adme, ui);
+                tox_disp(&ther.toxicity, ui);
+            }
         });
-    }
-
-    ui.add_space(ROW_SPACING);
-    // Basics
-    char_item(
-        ui,
-        &[
-            ("Atoms", &char.num_atoms.to_string(), ""),
-            ("Bonds", &char.num_bonds.to_string(), ""),
-            (
-                "Heavy",
-                &char.num_heavy_atoms.to_string(),
-                "Number of heavy (non-Hydrogen) atoms",
-            ),
-            (
-                "Het",
-                &char.num_hetero_atoms.to_string(),
-                "Number of hetero (non-Carbon) atoms",
-            ),
-        ],
-    );
-
-    char_item(ui, &[("Weight", &format!("{:.2}", char.mol_weight), "")]);
-
-    ui.add_space(ROW_SPACING);
-    // Functional groups
-
-    char_item(
-        ui,
-        &[
-            ("Rings Ar", &char.num_rings_aromatic.to_string(), ""),
-            ("Sat", &char.num_rings_saturated.to_string(), ""),
-            ("Ali", &char.num_rings_aliphatic.to_string(), ""),
-        ],
-    );
-
-    // todo: Rings
-    char_item(
-        ui,
-        &[
-            ("Amine", &char.amines.len().to_string(), ""),
-            ("Amide", &char.amides.len().to_string(), ""),
-            ("Carbonyl", &char.carbonyl.len().to_string(), ""),
-            ("Hydroxyl", &char.hydroxyl.len().to_string(), ""),
-            // other FGs like sulfur ones and carboxylate?
-        ],
-    );
-
-    ui.add_space(ROW_SPACING);
-    // Misc properties
-    char_item(
-        ui,
-        &[
-            (
-                "H bond donor:",
-                &char.h_bond_donor.len().to_string(),
-                "Number of hydrogen bond donors",
-            ),
-            (
-                "acceptor",
-                &char.h_bond_acceptor.len().to_string(),
-                "Number of hydrogen bond acceptors",
-            ),
-            ("Valence elecs", &char.num_valence_elecs.to_string(), ""),
-        ],
-    );
-
-    // Geometry
-    // ui.add_space(ROW_SPACING);
-
-    char_item(
-        ui,
-        &[
-            (
-                "TPSA (Ertl)",
-                &format!("{:.2}", char.tpsa_ertl),
-                "Polar surface area; computed analytically.",
-            ),
-            (
-                "PSA (Geom)",
-                &format!("{:.2}", char.psa_topo),
-                "Polar surface area; computed by creating a surface mesh, then measuring the polar part of it.",
-            ),
-            (
-                "Greasiness",
-                &format!("{:.2}", char.greasiness),
-                "i.e. lipophilicity",
-            ),
-        ],
-    );
-
-    let vol = match char.volume_pubchem {
-        Some(v) => v,
-        None => char.volume,
-    };
-    char_item(
-        ui,
-        &[
-            ("ASA (Labute)", &format!("{:.2}", char.asa_labute), ""),
-            (
-                "ASA (Geom)",
-                &format!("{:.2}", char.asa_topo),
-                "Computed by creating a surface mesh, then computing the fraction of its volume that is solvent-accessible",
-            ),
-            (
-                "Volume",
-                &format!("{:.2}", vol),
-                "Computed by creating a surface mesh.",
-            ),
-        ],
-    );
-
-    // Computed properties
-    ui.add_space(ROW_SPACING);
-
-    let log_p = match char.log_p_pubchem {
-        Some(v) => v,
-        None => char.log_p,
-    };
-    char_item(
-        ui,
-        &[
-            (
-                "LogP",
-                &format!("{:.2}", log_p),
-                "Partition coefficient; a proxy for lipophilicity.",
-            ),
-            ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
-        ],
-    );
-
-    char_item(
-        ui,
-        &[
-            ("Balaban J", &format!("{:.2}", char.balaban_j), ""),
-            ("Bertz Complexity", &format!("{:.2}", char.bertz_ct), ""),
-        ],
-    );
-
-    char_item(
-        ui,
-        &[(
-            "Complexity",
-            &format!("{:.2}", char.complexity.unwrap_or(0.0)),
-            "",
-        )],
-    );
-
-    char_item(
-        ui,
-        &[(
-            "Wiener index",
-            &format!("{}", char.wiener_index.unwrap_or(0)),
-            "",
-        )],
-    );
-
-    if let Some(ther) = &mol.therapeutic_props {
-        ui.add_space(ROW_SPACING);
-        ui.separator();
-        label!(ui, "Therapeutic data", Color32::LIGHT_BLUE);
-
-        adme_disp(&ther.adme, ui);
-        tox_disp(&ther.toxicity, ui);
-    }
 }
 
 fn tox_disp(tox: &Toxicity, ui: &mut Ui) {

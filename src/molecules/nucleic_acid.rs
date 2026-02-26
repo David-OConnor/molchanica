@@ -26,7 +26,7 @@ use na_seq::{
 use crate::{
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
-        common::{MoleculeCommon, NEXT_ATOM_SN},
+        common::MoleculeCommon,
     },
     util::rotate_atoms_about_point,
 };
@@ -601,7 +601,7 @@ impl MoleculeNucleicAcid {
 
         let mut common = MoleculeCommon::new(ident, atoms, bonds, metadata, None);
 
-        NEXT_ATOM_SN.store(1, Ordering::Release);
+        common.next_atom_sn = 1;
         common.reassign_sns();
 
         Ok(Self {

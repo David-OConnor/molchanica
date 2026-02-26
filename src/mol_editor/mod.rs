@@ -5,7 +5,7 @@ use std::{
     collections::HashMap, io, io::ErrorKind, path::Path, sync::atomic::Ordering, time::Instant,
 };
 
-use bio_files::{BondType, Mol2, Pdbqt, Sdf, Xyz, md_params::ForceFieldParams};
+use bio_files::{BondType, Mol2, Pdbqt, Sdf, SdfFormat, Xyz, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState,
     MolDynamics, ParamError, TAU_TEMP_DEFAULT, params::FfParamSet, snapshot::Snapshot,
@@ -33,10 +33,7 @@ use crate::{
     md::change_snapshot_helper,
     mol_components::MolComponents,
     mol_manip::ManipMode,
-    molecules::{
-        Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, common::NEXT_ATOM_SN,
-        small::MoleculeSmall,
-    },
+    molecules::{Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, small::MoleculeSmall},
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, State, StateUi},
@@ -283,14 +280,7 @@ impl MolEditorState {
         self.mol.common.ident = MOL_IDENT.to_owned();
 
         self.mol.common.reset_posits();
-
-        let mut highest_sn = 0;
-        for atom in &self.mol.common.atoms {
-            if atom.serial_number > highest_sn {
-                highest_sn = atom.serial_number;
-            }
-        }
-        NEXT_ATOM_SN.store(highest_sn + 1, Ordering::Release);
+        self.mol.common.update_next_sn();
 
         // Load the initial relaxation into atom positions.
         self.load_atom_posits_from_md(&mut scene.entities, state_ui, engine_updates, manip_mode);
@@ -771,7 +761,7 @@ pub fn save(state: &mut State, path: &Path) -> io::Result<()> {
     let extension = binding;
 
     match extension.to_str().unwrap_or_default() {
-        "sdf" => mol.to_sdf()?.save(path)?,
+        "sdf" => mol.to_sdf()?.save(path, SdfFormat::V2000)?, // todo: format A/R
         "mol2" => mol.to_mol2()?.save(path)?,
         "xyz" => mol.to_xyz()?.save(path)?,
         "prmtop" => (), // todo

@@ -39,6 +39,9 @@ pub struct MolCharacterization {
     pub ring_systems: Vec<Vec<usize>>,
     /// Bond index.
     pub rotatable_bonds: Vec<RotatableBond>,
+    /// A heuristic we created that assess how much the molecule can change shape by rotating
+    /// around rotatable bonds. For example, larger rotatable segments raise this.
+    pub flexibility: f32,
     pub num_carbon: usize,
     pub num_hydrogen: usize,
     pub nitrogen: Vec<usize>,
@@ -144,6 +147,11 @@ impl Ring {
 
         sum / self.atoms.len() as f64
     }
+}
+
+/// https://pubmed.ncbi.nlm.nih.gov/17985865/
+fn xlogp_3(mol: &MoleculeCommon) -> f32 {
+    0. // todo
 }
 
 /// A helper to reduce repetition in string formatting.
@@ -637,6 +645,7 @@ impl MolCharacterization {
         // todo data set as a reference. These may be good enough for now.
         // Note: For this dataset, the negative penalty for Hetero atoms was also
         // reducing accuracy for the large complex A-8, so it is adjusted.
+
         let calc_log_p = (0.13 * (num_carbon as f32)) + (0.10 * hal_ct) - (0.17 * rings_ct)
             + (0.07 * hetero_ct)
             + (0.01 * psa_topo)
@@ -652,6 +661,17 @@ impl MolCharacterization {
 
         let greasiness = greasiness_asa_proxy(mol, &bond_type_by_edge);
 
+        let rotatable_bonds = mol.find_rotatable_bonds();
+
+        // todo: Crude! Do better
+        let flexibility = {
+            let mut v = 0;
+            for bond in &rotatable_bonds {
+                v += bond.downstream_from_a1.len();
+            }
+            v as f32 / mol.atoms.len() as f32
+        };
+
         Self {
             num_atoms,
             num_bonds,
@@ -664,7 +684,8 @@ impl MolCharacterization {
             num_rings_aliphatic,
             ring_systems,
             num_aromatic_atoms,
-            rotatable_bonds: mol.find_rotatable_bonds(),
+            rotatable_bonds,
+            flexibility,
             num_carbon,
             num_hydrogen,
             nitrogen,
