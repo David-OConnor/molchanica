@@ -2,12 +2,6 @@
 //! the most important features, like atoms, bonds, and metadata.
 //!
 
-use crate::mol_editor::add_atoms::{hydrogens_avail, remove_hydrogens};
-use bio_files::BondType;
-use dynamics::{find_planar_posit, find_tetra_posit_final, find_tetra_posits};
-use lin_alg::f64::{Quaternion, Vec3};
-use na_seq::Element;
-use na_seq::Element::{Carbon, Hydrogen, Nitrogen, Oxygen};
 use std::{
     collections::HashMap,
     io,
@@ -15,9 +9,17 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
+use bio_files::BondType;
+use dynamics::{find_planar_posit, find_tetra_posit_final, find_tetra_posits};
+use lin_alg::f64::{Quaternion, Vec3};
+use na_seq::{
+    Element,
+    Element::{Carbon, Hydrogen, Nitrogen, Oxygen},
+};
+
+use crate::mol_editor::add_atoms::{hydrogens_avail, remove_hydrogens};
 // // Used by the mol editor, and alignment. Be careful with this!
 // pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);
-
 use crate::molecules::{Atom, Bond, build_adjacency_list};
 
 #[derive(Clone, Copy, PartialEq)]

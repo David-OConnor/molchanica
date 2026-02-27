@@ -1,10 +1,11 @@
 //! For determining which bonds in a molecule allow free rotation, i.e. changing the dihedral
 //! angle. For example, not rings.
 
-use crate::molecules::{Bond, common::MoleculeCommon};
 use bio_files::BondType;
 use lin_alg::f64::{Quaternion, Vec3};
 use na_seq::Element;
+
+use crate::molecules::{Bond, common::MoleculeCommon};
 
 #[derive(Clone, Debug)]
 pub struct RotatableBond {

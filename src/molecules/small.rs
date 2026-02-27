@@ -99,6 +99,10 @@ impl MoleculeSmall {
 
         let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
 
+        let smiles = common.to_smiles();
+        println!("\n TEMP Created smiles: \n{smiles}\n\n");
+        idents.push(MolIdent::Smiles(smiles));
+
         Self {
             common,
             idents,

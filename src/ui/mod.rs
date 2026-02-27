@@ -42,7 +42,9 @@ use crate::{
         mol_type_tools::mol_type_toolbars,
         orca::orca_input,
         sidebar::sidebar,
-        util::{color_egui_from_f32, handle_redraw, open_lig_from_input, update_file_dialogs},
+        util::{
+            color_egui_from_f32, handle_redraw, open_lig_from_input, query, update_file_dialogs,
+        },
         view::{ui_section_vis, view_settings},
     },
     util::{
@@ -962,114 +964,23 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 .on_hover_text(query_help);
 
             let edit_resp = ui
-                .add(TextEdit::singleline(&mut state.ui.db_input).desired_width(80.))
+                .add(TextEdit::singleline(&mut state.ui.db_input).desired_width(100.))
                 .on_hover_text(query_help);
 
-            let inp_lower = state.ui.db_input.to_lowercase();
 
-            let mut enter_pressed = false;
-            if state.ui.db_input.len() >= 3 {
-                enter_pressed =
-                    edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            if !state.ui.db_input.is_empty() {
+                let inp = state.ui.db_input.clone().to_lowercase().trim().to_owned();
+
+                let mut enter_pressed = false;
+                if state.ui.db_input.len() >= 3 {
+                    enter_pressed =
+                        edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                }
+
+                query(state, scene, &mut redraw, &mut reset_cam, &mut updates, ui,
+                      &inp, enter_pressed);
+
             }
-
-            if state.ui.db_input.len() == 4 || inp_lower.starts_with("pdb_") {
-                let button_clicked = ui.button("Load RCSB").clicked();
-
-                if (button_clicked || enter_pressed) && state.ui.db_input.trim().len() == 4 {
-                    let ident = state.ui.db_input.clone().trim().to_owned();
-
-                    load_atom_coords_rcsb(
-                        &ident,
-                        state,
-                        scene,
-                        &mut updates,
-                        &mut redraw.peptide,
-                        &mut reset_cam,
-                    );
-
-                    state.ui.db_input = String::new();
-                }
-            } else if state.ui.db_input.len() == 3 {
-                let button_clicked = ui.button("Load Geostd").clicked();
-
-                if button_clicked || enter_pressed {
-                    let db_input = &state.ui.db_input.clone(); // Avoids a double borrow.
-                    state.load_geostd_mol_data(&db_input, true, true, &mut updates, scene);
-
-                    state.ui.db_input = String::new();
-                }
-            } else if state.ui.db_input.len() > 4 && inp_lower.starts_with("db") {
-                let button_clicked = ui.button("Load DrugBank").clicked();
-
-                if button_clicked || enter_pressed {
-                    match load_sdf_drugbank(&state.ui.db_input) {
-                        Ok(mol) => {
-                            open_lig_from_input(state, mol, scene, &mut updates);
-                            redraw.ligand = true;
-                            // reset_cam = true;
-                        }
-                        Err(e) => {
-                            let msg = format!("Error loading SDF file: {e:?}");
-                            handle_err(&mut state.ui, msg);
-                        }
-                    }
-                }
-            }
-
-            if let Ok(cid) = state.ui.db_input.parse::<u32>() {
-                let button_clicked = ui.button("Load PubChem").clicked();
-                if button_clicked || enter_pressed {
-                    match load_sdf_pubchem(cid) {
-                        Ok(mol) => {
-                            open_lig_from_input(state, mol, scene, &mut updates);
-                            redraw.ligand = true;
-                            // reset_cam = true;
-                        }
-                        Err(e) => {
-                            let msg = format!("Error loading SDF file: {e:?}");
-                            handle_err(&mut state.ui, msg);
-                        }
-                    }
-                }
-            } else if state.ui.db_input.len() >= 5 && !inp_lower.starts_with("pdb_") && !inp_lower.starts_with("db") {
-                let button_clicked = ui.button("Search PubChem").clicked();
-                if button_clicked || enter_pressed {
-                    let cids = find_cids_from_search(&state.ui.db_input.trim(), false);
-
-                    match cids {
-                        Ok(c) => {
-                            if c.is_empty() {
-                                handle_success(&mut state.ui, "No results found on Pubchem".to_owned());
-                            } else {
-                                // todo: DRY with the other pubchem branch above.
-                                match load_sdf_pubchem(c[0]) {
-                                    Ok(mol) => {
-                                        open_lig_from_input(state, mol, scene, &mut updates);
-                                        redraw.ligand = true;
-                                        // reset_cam = true;
-
-
-                                        let cids_str = c
-                                            .iter()
-                                            .map(u32::to_string)
-                                            .collect::<Vec<_>>()
-                                            .join(", ");
-
-                                        handle_success(&mut state.ui, format!("Found the following Pubchem CIDs: {cids_str}. Loaded {}", c[0]));
-                                    }
-                                    Err(e) => {
-                                        let msg = format!("Error loading SDF file: {e:?}");
-                                        handle_err(&mut state.ui, msg);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => handle_err(&mut state.ui, format!("Error finding a mol from Pubchem {:?}", e)),
-                    }
-                }
-            }
-
 
             if state.peptide.is_none() && state.active_mol().is_none() {
                 ui.add_space(COL_SPACING / 2.);

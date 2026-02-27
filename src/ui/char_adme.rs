@@ -1,8 +1,8 @@
 use egui::{Color32, RichText, ScrollArea, Ui};
 
-use crate::mol_characterization::MolCharacterization;
 use crate::{
     label,
+    mol_characterization::MolCharacterization,
     molecules::{MolIdent, small::MoleculeSmall},
     therapeutic::{Adme, Toxicity},
     ui::{COL_SPACING, ROW_SPACING},

@@ -1,5 +1,6 @@
-use std::{fs::File, io, io::Write};
+use std::{collections::HashMap, fs::File, io, io::Write};
 
+use bio_apis::pubchem::find_cids_from_search;
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
@@ -9,12 +10,14 @@ use crate::{
         EntityClass, draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
+    file_io::download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
     mol_editor,
-    molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
+    molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
+    smiles::is_smiles,
     state::{OperatingMode, State},
     ui::set_window_title,
-    util::{RedrawFlags, handle_err, reset_orbit_center},
+    util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
 };
 
 /// Run this each frame, after all UI elements that affect it are rendered.
@@ -253,4 +256,176 @@ macro_rules! button {
 pub fn color_egui_from_f32(c: Color) -> Color32 {
     let (r, g, b) = c;
     Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8)
+}
+
+/// Handles a general query, which could be a name, identifier etc. Attempts to query
+/// the correct database based on the  text.
+///
+/// We assume input is lowercase and trimmed.
+pub(in crate::ui) fn query(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    reset_cam: &mut bool,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    inp: &str,
+    enter_pressed: bool,
+) {
+    if inp.len() == 4 || inp.starts_with("pdb_") {
+        let button_clicked = ui.button("Load RCSB").clicked();
+        if (button_clicked || enter_pressed) && inp.len() == 4 {
+            let ident = inp.to_owned();
+
+            load_atom_coords_rcsb(
+                &ident,
+                state,
+                scene,
+                updates,
+                &mut redraw.peptide,
+                reset_cam,
+            );
+
+            state.ui.db_input = String::new();
+            return;
+        }
+
+        return;
+    }
+
+    if inp.len() == 3 {
+        let button_clicked = ui.button("Load Geostd").clicked();
+
+        if button_clicked || enter_pressed {
+            state.load_geostd_mol_data(&inp, true, true, updates, scene);
+
+            state.ui.db_input = String::new();
+        }
+
+        return;
+    }
+
+    if inp.len() > 4 && inp.starts_with("db") {
+        let button_clicked = ui.button("Load DrugBank").clicked();
+
+        if button_clicked || enter_pressed {
+            match load_sdf_drugbank(inp) {
+                Ok(mol) => {
+                    open_lig_from_input(state, mol, scene, updates);
+                    redraw.ligand = true;
+                    // reset_cam = true;
+                }
+                Err(e) => {
+                    let msg = format!("Error loading SDF file: {e:?}");
+                    handle_err(&mut state.ui, msg);
+                }
+            }
+        }
+
+        return;
+    }
+
+    // PubChem CID.
+    if ui.button("Load PubChem").clicked() || enter_pressed {
+        if let Ok(cid) = state.ui.db_input.parse::<u32>() {
+            match load_sdf_pubchem(cid) {
+                Ok(mol) => {
+                    open_lig_from_input(state, mol, scene, updates);
+                    redraw.ligand = true;
+                    // reset_cam = true;
+                }
+                Err(e) => {
+                    let msg = format!("Error loading SDF file: {e:?}");
+                    handle_err(&mut state.ui, msg);
+                }
+            }
+        }
+
+        return;
+    }
+
+    // I believe this is cheap enough to run here (continuously)
+    if is_smiles(inp) {
+        let button_clicked = ui.button("Create SMILES").clicked();
+        // Attempt ot infer if this is SMILES.
+        if enter_pressed || button_clicked {
+            match MoleculeCommon::from_smiles(inp) {
+                Ok(m) => {
+                    let smiles_start: String = inp.chars().take(5).collect();
+
+                    let mol = MoleculeSmall::new(
+                        format!("From SMILES {}", smiles_start),
+                        m.atoms,
+                        m.bonds,
+                        HashMap::new(),
+                        None,
+                    );
+
+                    // todo temp
+                    println!("\n SMILES ATOMS:  \n");
+                    for a in &mol.common.atoms {
+                        println!("-{a}");
+                    }
+
+                    for b in &mol.common.bonds {
+                        println!("-{b:?}");
+                    }
+
+                    println!("Loaded mol from smiles: {:?}", mol);
+
+                    open_lig_from_input(state, mol, scene, updates);
+                    redraw.ligand = true;
+                }
+                Err(e) => {
+                    let msg = format!("Error loading a molecule from SMILES: {e:?}");
+                    handle_err(&mut state.ui, msg);
+                }
+            }
+        }
+        return;
+    }
+
+    // PubChem name search.
+    if inp.len() >= 5 && !inp.starts_with("pdb_") && !inp.starts_with("db") {
+        let button_clicked = ui.button("Search PubChem").clicked();
+        if button_clicked || enter_pressed {
+            let cids = find_cids_from_search(&inp, false);
+
+            match cids {
+                Ok(c) => {
+                    if c.is_empty() {
+                        handle_success(&mut state.ui, "No results found on Pubchem".to_owned());
+                    } else {
+                        // todo: DRY with the other pubchem branch above.
+                        match load_sdf_pubchem(c[0]) {
+                            Ok(mol) => {
+                                open_lig_from_input(state, mol, scene, updates);
+                                redraw.ligand = true;
+                                // reset_cam = true;
+
+                                let cids_str =
+                                    c.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
+
+                                handle_success(
+                                    &mut state.ui,
+                                    format!(
+                                        "Found the following Pubchem CIDs: {cids_str}. Loaded {}",
+                                        c[0]
+                                    ),
+                                );
+                            }
+                            Err(e) => {
+                                let msg = format!("Error loading SDF file: {e:?}");
+                                handle_err(&mut state.ui, msg);
+                            }
+                        }
+                    }
+                }
+                Err(e) => handle_err(
+                    &mut state.ui,
+                    format!("Error finding a mol from Pubchem {:?}", e),
+                ),
+            }
+        }
+    }
 }

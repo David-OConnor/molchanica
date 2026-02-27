@@ -5,13 +5,15 @@ use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate};
 use lin_alg::f64::Vec3;
 use na_seq::{Element, Element::Hydrogen};
 
-use crate::molecules::common::bonds_avail;
 use crate::{
     mol_components::MolComponents,
     mol_editor,
     mol_editor::{MolEditorState, templates::Template},
     mol_manip::ManipMode,
-    molecules::{Bond, common::MoleculeCommon},
+    molecules::{
+        Bond,
+        common::{MoleculeCommon, bonds_avail},
+    },
     state::StateUi,
 };
 
