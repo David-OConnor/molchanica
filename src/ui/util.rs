@@ -272,10 +272,15 @@ pub(in crate::ui) fn query(
     inp: &str,
     enter_pressed: bool,
 ) {
-    if inp.len() == 4 || inp.starts_with("pdb_") {
+    // Lowercase copy used for identifier-prefix checks (PDB, DrugBank, etc.).
+    // The original `inp` is passed to SMILES functions so that aromaticity case is
+    // preserved (lowercase = aromatic atom in SMILES, uppercase = aliphatic).
+    let inp_l = inp.to_ascii_lowercase();
+
+    if inp.len() == 4 || inp_l.starts_with("pdb_") {
         let button_clicked = ui.button("Load RCSB").clicked();
         if (button_clicked || enter_pressed) && inp.len() == 4 {
-            let ident = inp.to_owned();
+            let ident = inp_l.clone();
 
             load_atom_coords_rcsb(
                 &ident,
@@ -297,7 +302,7 @@ pub(in crate::ui) fn query(
         let button_clicked = ui.button("Load Geostd").clicked();
 
         if button_clicked || enter_pressed {
-            state.load_geostd_mol_data(&inp, true, true, updates, scene);
+            state.load_geostd_mol_data(&inp_l, true, true, updates, scene);
 
             state.ui.db_input = String::new();
         }
@@ -305,11 +310,11 @@ pub(in crate::ui) fn query(
         return;
     }
 
-    if inp.len() > 4 && inp.starts_with("db") {
+    if inp.len() > 4 && inp_l.starts_with("db") {
         let button_clicked = ui.button("Load DrugBank").clicked();
 
         if button_clicked || enter_pressed {
-            match load_sdf_drugbank(inp) {
+            match load_sdf_drugbank(&inp_l) {
                 Ok(mol) => {
                     open_lig_from_input(state, mol, scene, updates);
                     redraw.ligand = true;
@@ -326,8 +331,8 @@ pub(in crate::ui) fn query(
     }
 
     // PubChem CID.
-    if ui.button("Load PubChem").clicked() || enter_pressed {
-        if let Ok(cid) = state.ui.db_input.parse::<u32>() {
+    if let Ok(cid) = state.ui.db_input.parse::<u32>() {
+        if ui.button("Load PubChem").clicked() || enter_pressed {
             match load_sdf_pubchem(cid) {
                 Ok(mol) => {
                     open_lig_from_input(state, mol, scene, updates);
@@ -346,7 +351,7 @@ pub(in crate::ui) fn query(
 
     // I believe this is cheap enough to run here (continuously)
     if is_smiles(inp) {
-        let button_clicked = ui.button("Create SMILES").clicked();
+        let button_clicked = ui.button("Load from SMILES").clicked();
         // Attempt ot infer if this is SMILES.
         if enter_pressed || button_clicked {
             match MoleculeCommon::from_smiles(inp) {
@@ -361,17 +366,16 @@ pub(in crate::ui) fn query(
                         None,
                     );
 
-                    // todo temp
-                    println!("\n SMILES ATOMS:  \n");
-                    for a in &mol.common.atoms {
-                        println!("-{a}");
-                    }
-
-                    for b in &mol.common.bonds {
-                        println!("-{b:?}");
-                    }
-
-                    println!("Loaded mol from smiles: {:?}", mol);
+                    // // todo temp
+                    // println!("\n  Loaded SMILES atoms:  \n");
+                    // for a in &mol.common.atoms {
+                    //     println!("-{a}");
+                    // }
+                    //
+                    // println!("\n  Loaded SMILES bonds:  \n");
+                    // for b in &mol.common.bonds {
+                    //     println!("-{b:?}");
+                    // }
 
                     open_lig_from_input(state, mol, scene, updates);
                     redraw.ligand = true;
@@ -386,7 +390,7 @@ pub(in crate::ui) fn query(
     }
 
     // PubChem name search.
-    if inp.len() >= 5 && !inp.starts_with("pdb_") && !inp.starts_with("db") {
+    if inp.len() >= 5 && !inp_l.starts_with("pdb_") && !inp_l.starts_with("db") {
         let button_clicked = ui.button("Search PubChem").clicked();
         if button_clicked || enter_pressed {
             let cids = find_cids_from_search(&inp, false);

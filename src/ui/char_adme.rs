@@ -101,9 +101,10 @@ fn char_basics(char: &MolCharacterization, ui: &mut Ui) {
                 "Polar surface area; computed by creating a surface mesh, then measuring the polar part of it.",
             ),
             (
-                "Greasiness",
+                "Greasiness (Geom)",
                 &format!("{:.2}", char.greasiness),
-                "i.e. lipophilicity",
+                "A lipophilicity approximation based on surface geometry. Is computed based on the per-element \
+                lipophilicity of atoms at the molecule's surface",
             ),
         ],
     );
@@ -132,10 +133,12 @@ fn char_basics(char: &MolCharacterization, ui: &mut Ui) {
     // Computed properties
     ui.add_space(ROW_SPACING);
 
-    let log_p = match char.log_p_pubchem {
-        Some(v) => v,
-        None => char.log_p,
-    };
+    // let log_p = match char.log_p_pubchem {
+    //     Some(v) => v,
+    //     None => char.log_p,
+    // };
+    let log_p = char.log_p;
+
     char_item(
         ui,
         &[
@@ -207,9 +210,9 @@ fn adme_disp(adme: &Adme, ui: &mut Ui) {
     char_item(
         ui,
         &[(
-            "Lipophilicity",
+            "Lipophilicity (LogD)",
             &format!("{:.2}", adme.lipophilicity),
-            "log-ratio",
+            "log-ratio. LogD at pH 7.4",
         )],
     );
     char_item(

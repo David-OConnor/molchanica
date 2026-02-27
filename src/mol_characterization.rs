@@ -3,6 +3,7 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    f64::consts::TAU,
     fmt::{Display, Formatter},
 };
 
@@ -89,10 +90,10 @@ pub struct MolCharacterization {
     pub psa_topo: f32,
     /// The (calculated) log10 of the partition coefficient P between octanol and water for the
     /// neutral compound. Higher logP generally means more hydrophobic/lipophilic.
-    /// This version is internally calculated; this is relevant for the purposes of ML training,
-    /// even if we use the pubchem val elsewhere.
+    /// This version is internally calculated analytically in a way similar to XLogP.  (This is a common
+    /// mehtod of calculating it, e.g. by SwissADME (among other methods), and PubChem.
     pub log_p: f32,
-    pub log_p_pubchem: Option<f32>,
+    // pub log_p_pubchem: Option<f32>, // todo: Remove this
     /// A measure related to the molecule’s polarizability and volume (often derived alongside logP
     /// in fragment methods like Wildman–Crippen). Higher MR usually means “bigger/more polarizable.”
     pub molar_refractivity: f32,
@@ -118,6 +119,7 @@ pub struct MolCharacterization {
     /// between all pairs of vertices in the chemical graph representing the non-hydrogen atoms
     /// in the molecule
     pub wiener_index: Option<u32>,
+    /// todo: How does this compare  to the ADME lipophilicity, and logP here?
     pub greasiness: f32,
 }
 
@@ -722,7 +724,7 @@ impl MolCharacterization {
             tpsa_ertl,
             psa_topo,
             log_p: calc_log_p,
-            log_p_pubchem: None,
+            // log_p_pubchem: None,
             molar_refractivity: mol_refractivity,
             num_valence_elecs,
             asa_labute,
@@ -2041,8 +2043,7 @@ fn greasiness_asa_proxy(
 
     // todo: Update to use your topologicial ASA.
 
-    let four_pi = 4.0 * std::f64::consts::PI;
-    let two_pi = 2.0 * std::f64::consts::PI;
+    let two_tau = 2.0 * TAU;
 
     // Treat ASA with a solvent probe (consistent with typical SASA usage).
     let probe = SOLVENT_RAD as f64;
@@ -2052,7 +2053,7 @@ fn greasiness_asa_proxy(
 
     for i in 0..n {
         let ri = mol.atoms[i].element.vdw_radius() as f64 + probe;
-        let mut area_i = four_pi * ri * ri;
+        let mut area_i = two_tau * ri.powi(2);
 
         for &j in &mol.adjacency_list[i] {
             let rj = mol.atoms[j].element.vdw_radius() as f64 + probe;
@@ -2073,7 +2074,7 @@ fn greasiness_asa_proxy(
             let hi = (ri - x).clamp(0.0, 2.0 * ri);
 
             // Covered spherical cap area on i: 2π r h
-            let cap = two_pi * ri * hi;
+            let cap = TAU * ri * hi;
             area_i -= cap;
         }
 

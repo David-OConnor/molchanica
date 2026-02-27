@@ -969,7 +969,9 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
 
             if !state.ui.db_input.is_empty() {
-                let inp = state.ui.db_input.clone().to_lowercase().trim().to_owned();
+                // Preserve original case — SMILES uses lowercase for aromatic atoms and
+                // uppercase for aliphatic atoms; lowercasing destroys that distinction.
+                let inp = state.ui.db_input.trim().to_owned();
 
                 let mut enter_pressed = false;
                 if state.ui.db_input.len() >= 3 {

@@ -263,7 +263,7 @@ pub struct Adme {
     pub pgp: f32,
     /// Bioavailability_Ma. Binary.
     pub oral_bioavailablity: f32,
-    /// TDC.Lipophilicity_AstraZeneca. log-ratio.
+    /// TDC.Lipophilicity_AstraZeneca. log-ratio. LogD at pH 7.4.
     pub lipophilicity: f32,
     /// AqSolDB, or TDC.Solubility_AqSolDB. log mol/L
     /// LogS, where S is the aqueous solubility.

@@ -12,7 +12,7 @@ use bio_apis::{
     ReqError, amber_geostd,
     amber_geostd::GeostdData,
     pubchem,
-    pubchem::{ProteinStructure, StructureSearchNamespace},
+    pubchem::{ProteinStructure, StructureSearchNamespace, properties},
 };
 use bio_files::{
     ChargeType, Mol2, MolType, Pdbqt, PharmacophoreFeatureGeneric, Sdf, Xyz, create_bonds,
@@ -100,7 +100,6 @@ impl MoleculeSmall {
         let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
 
         let smiles = common.to_smiles();
-        println!("\n TEMP Created smiles: \n{smiles}\n\n");
         idents.push(MolIdent::Smiles(smiles));
 
         Self {
@@ -606,7 +605,8 @@ impl MoleculeSmall {
             break;
         }
 
-        // If we don't have a PubChemID, load SMILES, then get a PubChem ID.
+        // If we don't have a PubChemID, use SMILES if we have that. If we have a PDBe/Amber ID,
+        // use that to load SMILES. Once we have SMILES, use that to get a PubChem ID.
         if !pubchem_ident_exists {
             for ident in &self.idents {
                 let (tx, rx) = mpsc::channel(); // one-shot channel
@@ -617,6 +617,21 @@ impl MoleculeSmall {
                     thread::spawn(move || {
                         let data =
                             pubchem::properties_from_pdbe_id(&ident_for_thread.ident_inner());
+
+                        let _ = tx.send((ident_for_thread, data));
+                    });
+
+                    *pubchem_properties_avail = Some(rx);
+                    break;
+                }
+
+                if let MolIdent::Smiles(_) = ident {
+                    println!("\nLoading PubChem properties for {ident:?} over HTTP...");
+                    thread::spawn(move || {
+                        let data = properties(
+                            StructureSearchNamespace::Smiles,
+                            &ident_for_thread.ident_inner(),
+                        );
 
                         let _ = tx.send((ident_for_thread, data));
                     });
@@ -652,6 +667,7 @@ impl MoleculeSmall {
     }
 
     pub fn update_idents_and_char_from_pubchem(&mut self, props: &pubchem::Properties) {
+        let mut pubchem_exists = false;
         let mut smiles_exists = false;
         let mut inchi_exists = false;
         let mut inchi_key_exists = false;
@@ -659,6 +675,9 @@ impl MoleculeSmall {
         let mut title_exists = false;
 
         for ident in &self.idents {
+            if matches!(ident, MolIdent::PubChem(_)) {
+                pubchem_exists = true;
+            }
             if matches!(ident, MolIdent::Smiles(_)) {
                 smiles_exists = true;
             }
@@ -676,6 +695,9 @@ impl MoleculeSmall {
             }
         }
 
+        if !pubchem_exists {
+            self.idents.push(MolIdent::PubChem(props.cid.clone()));
+        }
         if !smiles_exists {
             self.idents.push(MolIdent::Smiles(props.smiles.clone()));
         }
@@ -701,7 +723,7 @@ impl MoleculeSmall {
                 char.log_p, props.log_p, char.tpsa_ertl, props.total_polar_surface_area
             );
 
-            char.log_p_pubchem = Some(props.log_p);
+            // char.log_p_pubchem = Some(props.log_p);
             char.tpsa_ertl = props.total_polar_surface_area;
             char.volume_pubchem = Some(props.volume);
             char.complexity = Some(props.complexity);

@@ -1,14 +1,20 @@
-#![allow(unused)]
-
 //! Convert between molecules and SMILES text
+//! todo: Consider  moving this to bio_files. Although geometry considerations
+//! may be a better suit for here.
 
-use std::{collections::HashMap, io};
+use std::{
+    collections::{HashMap, VecDeque},
+    io,
+};
 
 use bio_files::BondType;
 use lin_alg::f64::Vec3;
 use na_seq::Element;
 
-use crate::molecules::{Atom, Bond, common::MoleculeCommon};
+use crate::molecules::{
+    Atom, Bond,
+    common::{BondGeom, MoleculeCommon, find_appended_posit},
+};
 
 impl MoleculeCommon {
     pub fn to_smiles(&self) -> String {
@@ -18,25 +24,36 @@ impl MoleculeCommon {
 
         let n = self.atoms.len();
 
-        // Step 1: Find ring-closure bonds (back-edges in a DFS spanning forest).
-        // We track which atoms are currently on the DFS stack to detect back-edges.
-        let mut dfs_visited = vec![false; n];
-        let mut dfs_in_stack = vec![false; n];
-        // Maps canonical (lo, hi) bond pair -> ring-closure number.
+        // Hydrogen atoms are implicit in SMILES and must be excluded from both DFS
+        // passes.  Pre-marking them as "visited" keeps them out of start-atom selection
+        // and out of the children lists, which would otherwise produce empty "()" branches.
+        let h_mask: Vec<bool> = self
+            .atoms
+            .iter()
+            .map(|a| a.element == Element::Hydrogen)
+            .collect();
+
+        // Step 1: Ring-closure detection.
+        // IMPORTANT: must use the same per-component starting atom as the write pass
+        // below, otherwise the two DFS traversals produce different spanning trees and
+        // ring-closure digits end up misplaced.
+        let mut detect_visited = h_mask.clone();
+        let mut detect_in_stack = vec![false; n];
         let mut ring_bond_map: HashMap<(usize, usize), u8> = HashMap::new();
         let mut next_ring: u8 = 1;
 
-        for start in 0..n {
-            if !dfs_visited[start] {
-                collect_ring_bonds(
+        loop {
+            match pick_start(n, &self.adjacency_list, &self.atoms, &detect_visited) {
+                None => break,
+                Some(start) => collect_ring_bonds(
                     start,
                     usize::MAX,
                     &self.adjacency_list,
-                    &mut dfs_visited,
-                    &mut dfs_in_stack,
+                    &mut detect_visited,
+                    &mut detect_in_stack,
                     &mut ring_bond_map,
                     &mut next_ring,
-                );
+                ),
             }
         }
 
@@ -47,20 +64,22 @@ impl MoleculeCommon {
             ring_closures[hi].push((lo, rnum));
         }
 
-        // Step 3: DFS serialization.
-        let mut write_visited = vec![false; n];
+        // Step 3: DFS serialization — same start-atom logic as step 1.
+        let mut write_visited = h_mask;
         let mut out = String::new();
         let mut first_component = true;
 
-        for start in 0..n {
-            if write_visited[start] {
-                continue;
+        loop {
+            match pick_start(n, &self.adjacency_list, &self.atoms, &write_visited) {
+                None => break,
+                Some(start) => {
+                    if !first_component {
+                        out.push('.');
+                    }
+                    first_component = false;
+                    write_atom(self, start, &mut write_visited, &ring_closures, &mut out);
+                }
             }
-            if !first_component {
-                out.push('.');
-            }
-            first_component = false;
-            write_atom(self, start, &mut write_visited, &ring_closures, &mut out);
         }
 
         out
@@ -73,11 +92,15 @@ impl MoleculeCommon {
         let mut atom_posits: Vec<Vec3> = Vec::new();
 
         let mut current: Option<usize> = None;
+        // Whether the current atom was written as aromatic (lowercase in SMILES).
+        // Two consecutive aromatic atoms share an implicit aromatic bond; a mixed or
+        // non-aromatic pair gets an implicit single bond.
+        let mut current_aromatic: bool = false;
         let mut last_bond: Option<BondType> = None;
-        // Stack saves the current atom at each branch open.
-        let mut branch_stack: Vec<Option<usize>> = Vec::new();
-        // ring_idx -> (atom_index, bond_type at open)
-        let mut ring_map: HashMap<u32, (usize, BondType)> = HashMap::new();
+        // Stack saves (current atom index, aromaticity) at each branch open.
+        let mut branch_stack: Vec<(Option<usize>, bool)> = Vec::new();
+        // ring_idx -> (atom_index, explicit bond type at open (None = implicit), aromatic at open)
+        let mut ring_map: HashMap<u32, (usize, Option<BondType>, bool)> = HashMap::new();
 
         let mut chars = data.chars().peekable();
         let mut next_serial: u32 = 1;
@@ -107,16 +130,18 @@ impl MoleculeCommon {
                     chars.next();
                 }
 
-                // Branch open: push current atom so we can restore it on ')'
+                // Branch open: push (current atom, aromaticity) so we can restore on ')'
                 '(' => {
-                    branch_stack.push(current);
+                    branch_stack.push((current, current_aromatic));
                     chars.next();
                 }
-                // Branch close: restore current atom; bond state resets
+                // Branch close: restore current atom and its aromaticity; bond state resets
                 ')' => {
-                    current = branch_stack.pop().ok_or_else(|| {
+                    let (prev, prev_ar) = branch_stack.pop().ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidData, "unmatched ')' in SMILES")
                     })?;
+                    current = prev;
+                    current_aromatic = prev_ar;
                     last_bond = None;
                     chars.next();
                 }
@@ -124,6 +149,7 @@ impl MoleculeCommon {
                 // Disconnected component separator
                 '.' => {
                     current = None;
+                    current_aromatic = false;
                     last_bond = None;
                     chars.next();
                 }
@@ -136,7 +162,8 @@ impl MoleculeCommon {
                     handle_ring(
                         d1 * 10 + d2,
                         current,
-                        last_bond.take().unwrap_or(BondType::Single),
+                        current_aromatic,
+                        last_bond.take(), // None = implicit; resolved inside handle_ring
                         &mut ring_map,
                         &mut bonds,
                         &mut adjacency_list,
@@ -151,7 +178,8 @@ impl MoleculeCommon {
                     handle_ring(
                         d,
                         current,
-                        last_bond.take().unwrap_or(BondType::Single),
+                        current_aromatic,
+                        last_bond.take(), // None = implicit; resolved inside handle_ring
                         &mut ring_map,
                         &mut bonds,
                         &mut adjacency_list,
@@ -160,13 +188,19 @@ impl MoleculeCommon {
                 }
 
                 // Bracket atom: [isotope?symbol@?H?charge?:map?]
+                // Bracket atoms are always treated as non-aromatic for bond-type inference
+                // (the bracket form explicitly states valence/Hs, so the bond type is
+                // determined by an explicit bond char or defaults to single).
                 '[' => {
-                    let (element, _aromatic) = parse_bracket_atom(&mut chars)?;
+                    let (element, is_aromatic) = parse_bracket_atom(&mut chars)?;
+                    let bt = last_bond
+                        .take()
+                        .unwrap_or_else(|| implicit_bt(current_aromatic, is_aromatic, current));
                     let idx = push_atom(
                         next_serial,
                         element,
                         current,
-                        last_bond.take(),
+                        Some(bt),
                         &mut atoms,
                         &mut bonds,
                         &mut adjacency_list,
@@ -174,16 +208,20 @@ impl MoleculeCommon {
                     );
                     next_serial += 1;
                     current = Some(idx);
+                    current_aromatic = is_aromatic;
                 }
 
                 // Organic-subset atom (bare symbol, no brackets)
                 _ => match parse_organic_atom(&mut chars)? {
-                    Some((element, _aromatic)) => {
+                    Some((element, is_aromatic)) => {
+                        let bt = last_bond
+                            .take()
+                            .unwrap_or_else(|| implicit_bt(current_aromatic, is_aromatic, current));
                         let idx = push_atom(
                             next_serial,
                             element,
                             current,
-                            last_bond.take(),
+                            Some(bt),
                             &mut atoms,
                             &mut bonds,
                             &mut adjacency_list,
@@ -191,6 +229,7 @@ impl MoleculeCommon {
                         );
                         next_serial += 1;
                         current = Some(idx);
+                        current_aromatic = is_aromatic;
                     }
                     None => {
                         return Err(io::Error::new(
@@ -208,6 +247,11 @@ impl MoleculeCommon {
                 "unclosed ring closure index in SMILES",
             ));
         }
+
+        // Assign rough 3D coordinates via BFS geometry placement.
+        assign_rough_coords(&mut atoms, &adjacency_list, &bonds);
+        // Rebuild atom_posits from the freshly computed atom positions.
+        let atom_posits: Vec<Vec3> = atoms.iter().map(|a| a.posit).collect();
 
         Ok(MoleculeCommon {
             ident: data.trim().to_string(),
@@ -229,6 +273,45 @@ impl MoleculeCommon {
 }
 
 // ── to_smiles helpers ─────────────────────────────────────────────────────────
+
+/// Choose the DFS start atom for one connected component.
+///
+/// Convention (approximates canonical SMILES starting points):
+///   • Prefer a **terminal carbon** (exactly one non-H neighbour, element = C).
+///   • Fall back to any terminal non-H atom (degree 1).
+///   • Fall back to any non-H atom (e.g., isolated heavy atom).
+///   • Among equal-priority candidates pick the one with the **highest atom index**,
+///     which for the typical SDF/Mol2 numbering order starts the traversal from the
+///     far end of the main chain — matching the PubChem-style direction.
+///
+/// Returns `None` when every atom is already visited (all components done).
+fn pick_start(n: usize, adj: &[Vec<usize>], atoms: &[Atom], visited: &[bool]) -> Option<usize> {
+    let mut best: Option<usize> = None;
+    let mut best_score: i32 = -1;
+
+    for i in 0..n {
+        if visited[i] {
+            continue;
+        }
+
+        // Non-H degree (H atoms are pre-marked visited, so this is the heavy-atom degree).
+        let heavy_deg = adj[i].iter().filter(|&&v| !visited[v]).count();
+
+        let score: i32 = match (heavy_deg, atoms[i].element == Element::Carbon) {
+            (1, true) => 3,  // terminal carbon  — best
+            (1, false) => 2, // terminal heteroatom
+            (0, _) => 1,     // isolated heavy atom
+            _ => 0,          // internal atom    — last resort
+        };
+
+        if score > best_score || (score == best_score && i > best.unwrap_or(0)) {
+            best_score = score;
+            best = Some(i);
+        }
+    }
+
+    best
+}
 
 /// DFS that records all back-edges (ring-closure bonds) into `ring_bond_map`.
 /// `parent` is the atom we arrived from (usize::MAX for the root).
@@ -275,39 +358,57 @@ fn write_atom(
 ) {
     visited[u] = true;
 
-    // Write the atom symbol.
-    out.push_str(&smiles_symbol(mol.atoms[u].element));
+    let el = mol.atoms[u].element;
+    if el == Element::Hydrogen {
+        return;
+    }
+
+    // Determine whether this atom is part of an aromatic system.
+    // We use this to decide case (lowercase = aromatic) and to suppress the `:` bond
+    // character between two aromatic atoms (it is implicit for lowercase pairs).
+    let u_aromatic = atom_is_aromatic(u, &mol.bonds);
+
+    // Write the atom symbol (lowercase if aromatic; bracket form for [nH] etc.).
+    out.push_str(&smiles_symbol_for(el, u_aromatic, u, mol));
 
     // Write ring-closure digits attached to this atom.
     for &(other, rnum) in &ring_closures[u] {
         if let Some(b) = mol.find_bond(u, other) {
-            push_bond_char(b.bond_type, out);
+            let other_aromatic = atom_is_aromatic(other, &mol.bonds);
+            push_bond_char_ctx(b.bond_type, u_aromatic, other_aromatic, out);
         }
         push_ring_num(rnum, out);
     }
 
-    // Collect tree-edge children (unvisited neighbors).
+    // Collect tree-edge children: unvisited neighbors that are NOT ring-closure partners.
+    //
+    // Ring-closure partners must be excluded here.  The opener atom (u) writes the ring
+    // digit above, and the closer atom is reached naturally through the DFS tree (the
+    // other path around the ring), where it writes the matching digit.  If we also
+    // traversed the partner as a direct child we would visit it twice and write the
+    // ring number twice, corrupting the SMILES.
     let children: Vec<usize> = mol.adjacency_list[u]
         .iter()
         .copied()
-        .filter(|&v| !visited[v])
+        .filter(|&v| !visited[v] && ring_closures[u].iter().all(|&(rc, _)| rc != v))
         .collect();
 
     let last_i = children.len().wrapping_sub(1);
     for (i, v) in children.into_iter().enumerate() {
         let bt = mol.find_bond(u, v).map(|b| b.bond_type);
+        let v_aromatic = atom_is_aromatic(v, &mol.bonds);
 
         if i == last_i {
             // Last child continues inline (no parentheses).
             if let Some(t) = bt {
-                push_bond_char(t, out);
+                push_bond_char_ctx(t, u_aromatic, v_aromatic, out);
             }
             write_atom(mol, v, visited, ring_closures, out);
         } else {
             // Earlier children are branches.
             out.push('(');
             if let Some(t) = bt {
-                push_bond_char(t, out);
+                push_bond_char_ctx(t, u_aromatic, v_aromatic, out);
             }
             write_atom(mol, v, visited, ring_closures, out);
             out.push(')');
@@ -315,13 +416,63 @@ fn write_atom(
     }
 }
 
-/// Append the explicit bond character for non-single bonds (single is implicit in SMILES).
-fn push_bond_char(bt: BondType, out: &mut String) {
+/// Append a bond character, taking both atoms' aromaticity into account.
+///
+/// Rule: an aromatic bond between two aromatic (lowercase) atoms is **implicit** — no
+/// character needed.  All other non-single bonds are written explicitly.  Single bonds
+/// are always implicit regardless of context.
+fn push_bond_char_ctx(bt: BondType, u_aromatic: bool, v_aromatic: bool, out: &mut String) {
     match bt {
+        BondType::Aromatic if u_aromatic && v_aromatic => {
+            // Implicit for lowercase–lowercase pairs; writing nothing is correct.
+        }
         BondType::Double => out.push('='),
         BondType::Triple => out.push('#'),
-        BondType::Aromatic => out.push(':'),
-        _ => {}
+        BondType::Aromatic => out.push(':'), // unusual: aromatic bond to/from aliphatic atom
+        _ => {}                              // Single — always implicit
+    }
+}
+
+/// Returns `true` if atom `u` participates in at least one aromatic bond.
+fn atom_is_aromatic(u: usize, bonds: &[Bond]) -> bool {
+    bonds
+        .iter()
+        .any(|b| (b.atom_0 == u || b.atom_1 == u) && b.bond_type == BondType::Aromatic)
+}
+
+/// Atom symbol for use in SMILES output.
+///
+/// Aromatic atoms are written lowercase.  Heteroatoms that carry explicit H (like the
+/// pyrrole-type [nH]) are written in bracket form so the H count is unambiguous.
+fn smiles_symbol_for(el: Element, aromatic: bool, u: usize, mol: &MoleculeCommon) -> String {
+    if !aromatic {
+        return smiles_symbol(el);
+    }
+    // Count H atoms directly bonded to u.  These are in the atom list but are
+    // pre-marked as visited in the DFS and never appear as children, so we must
+    // encode them in the bracket atom token instead.
+    let h = mol.adjacency_list[u]
+        .iter()
+        .filter(|&&v| mol.atoms[v].element == Element::Hydrogen)
+        .count();
+    match el {
+        Element::Carbon => "c".into(),
+        Element::Nitrogen => match h {
+            0 => "n".into(),
+            1 => "[nH]".into(),
+            n => format!("[nH{n}]"),
+        },
+        Element::Oxygen => match h {
+            0 => "o".into(),
+            _ => "[oH]".into(),
+        },
+        Element::Sulfur => match h {
+            0 => "s".into(),
+            _ => "[sH]".into(),
+        },
+        Element::Phosphorus => "p".into(),
+        Element::Boron => "b".into(),
+        other => format!("[{}]", other.to_letter()), // non-standard aromatic element
     }
 }
 
@@ -357,6 +508,19 @@ fn smiles_symbol(el: Element) -> String {
 
 // ── from_smiles helpers ───────────────────────────────────────────────────────
 
+/// Determine the implicit bond type between two adjacent atoms in SMILES.
+/// Per the SMILES spec: if both atoms are aromatic (written lowercase) the
+/// implicit bond is aromatic; otherwise it is single.
+/// `has_prev` is false for the very first atom in a component (no bond to create).
+#[inline]
+fn implicit_bt(prev_aromatic: bool, new_aromatic: bool, prev: Option<usize>) -> BondType {
+    if prev.is_some() && prev_aromatic && new_aromatic {
+        BondType::Aromatic
+    } else {
+        BondType::Single
+    }
+}
+
 /// Add a new atom to the vectors, bond it to `prev` if present, return its index.
 fn push_atom(
     serial: u32,
@@ -387,11 +551,18 @@ fn push_atom(
 }
 
 /// Open or close a ring-closure bond.
+///
+/// `explicit_bt` is `Some` only if an explicit bond character (`=`, `#`, `:`, `-`) appeared
+/// immediately before the ring-closure digit; otherwise `None` (implicit bond).
+/// The bond type for an implicit ring closure is:
+///   - aromatic  if both the opening and closing atoms are aromatic
+///   - single    otherwise
 fn handle_ring(
     ring_idx: u32,
     current: Option<usize>,
-    bt: BondType,
-    ring_map: &mut HashMap<u32, (usize, BondType)>,
+    current_aromatic: bool,
+    explicit_bt: Option<BondType>,
+    ring_map: &mut HashMap<u32, (usize, Option<BondType>, bool)>,
     bonds: &mut Vec<Bond>,
     adj: &mut Vec<Vec<usize>>,
     atoms: &[Atom],
@@ -404,13 +575,21 @@ fn handle_ring(
     })?;
 
     match ring_map.remove(&ring_idx) {
-        Some((other, bt_open)) => {
-            // Closing: create the ring bond using the bond type recorded at open.
-            add_bond(cur, other, bt_open, bonds, adj, atoms);
+        Some((other, bt_open, open_aromatic)) => {
+            // Closing: determine bond type.
+            // An explicit bond at either end takes priority; otherwise use aromaticity.
+            let bond_type = explicit_bt.or(bt_open).unwrap_or_else(|| {
+                if open_aromatic && current_aromatic {
+                    BondType::Aromatic
+                } else {
+                    BondType::Single
+                }
+            });
+            add_bond(cur, other, bond_type, bonds, adj, atoms);
         }
         None => {
-            // Opening: record this atom and bond type for later closure.
-            ring_map.insert(ring_idx, (cur, bt));
+            // Opening: record atom index, any explicit bond type, and aromaticity.
+            ring_map.insert(ring_idx, (cur, explicit_bt, current_aromatic));
         }
     }
 
@@ -610,6 +789,145 @@ fn add_bond(
     });
     adj[a].push(b);
     adj[b].push(a);
+}
+
+// ── coordinate generation ─────────────────────────────────────────────────────
+
+/// Assign rough 3D coordinates to all atoms after SMILES parsing.
+///
+/// Algorithm: BFS from the first atom (placed at the origin).  For each
+/// unpositioned atom we call `find_appended_posit`, which computes a
+/// geometrically plausible position using the already-positioned neighbours
+/// of the parent for angular context (tetrahedral ≈109.5°, planar ≈120°,
+/// linear 180°).
+///
+/// Ring-closure atoms are already positioned when the BFS reaches them via
+/// the "other path" around the ring and are simply skipped; the ring will
+/// be slightly strained but the bond connectivity is correct, and the energy
+/// minimiser will fix the geometry.
+///
+/// Disconnected components (e.g. salt forms) are offset along the X axis so
+/// they do not overlap.
+fn assign_rough_coords(atoms: &mut Vec<Atom>, adj: &[Vec<usize>], bonds: &[Bond]) {
+    let n = atoms.len();
+    if n == 0 {
+        return;
+    }
+
+    let mut positioned = vec![false; n];
+
+    // Place first atom at the origin.
+    atoms[0].posit = Vec3::new(0., 0., 0.);
+    positioned[0] = true;
+
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    queue.push_back(0);
+
+    // Lateral offset applied to each new disconnected component.
+    let mut component_x = 0_f64;
+
+    loop {
+        // If the queue is empty, search for the next unpositioned atom
+        // (start of a new disconnected component).
+        if queue.is_empty() {
+            match (0..n).find(|&i| !positioned[i]) {
+                None => break,
+                Some(start) => {
+                    component_x += 5.;
+                    atoms[start].posit = Vec3::new(component_x, 0., 0.);
+                    positioned[start] = true;
+                    queue.push_back(start);
+                }
+            }
+        }
+
+        let u = match queue.pop_front() {
+            Some(u) => u,
+            None => continue,
+        };
+
+        let geom = geom_for_atom(u, bonds);
+        let posit_u = atoms[u].posit; // Copy — Vec3 is Copy
+
+        // Clone the neighbour list to avoid borrow conflicts while mutating atoms.
+        let neighbours: Vec<usize> = adj[u].to_vec();
+
+        for v in neighbours {
+            if positioned[v] {
+                // Already placed (either placed earlier in BFS, or a ring-closure
+                // partner placed via the other path around the ring).  Skip.
+                continue;
+            }
+
+            // Collect already-positioned neighbours of u (excluding v itself) to
+            // give find_appended_posit its angular context.
+            let adj_placed: Vec<usize> = adj[u]
+                .iter()
+                .copied()
+                .filter(|&w| w != v && positioned[w])
+                .collect();
+
+            let bt = bond_type_between(u, v, bonds);
+            let bond_len = estimate_bond_length(atoms[u].element, atoms[v].element, bt);
+
+            let p = find_appended_posit(
+                posit_u,
+                atoms,
+                &adj_placed,
+                Some(bond_len),
+                atoms[v].element,
+                geom,
+            )
+            .unwrap_or_else(|| posit_u + Vec3::new(bond_len, 0., 0.));
+
+            atoms[v].posit = p;
+            positioned[v] = true;
+            queue.push_back(v);
+        }
+    }
+}
+
+/// Determine the local geometry at atom `i` from its bond types.
+/// Triple bond → Linear; any double/aromatic bond → Planar; all single → Tetrahedral.
+fn geom_for_atom(i: usize, bonds: &[Bond]) -> BondGeom {
+    if bonds
+        .iter()
+        .any(|b| (b.atom_0 == i || b.atom_1 == i) && b.bond_type == BondType::Triple)
+    {
+        BondGeom::Linear
+    } else if bonds.iter().any(|b| {
+        (b.atom_0 == i || b.atom_1 == i)
+            && matches!(b.bond_type, BondType::Double | BondType::Aromatic)
+    }) {
+        BondGeom::Planar
+    } else {
+        BondGeom::Tetrahedral
+    }
+}
+
+/// Return the bond type between atoms `a` and `b`, defaulting to Single.
+fn bond_type_between(a: usize, b: usize, bonds: &[Bond]) -> BondType {
+    bonds
+        .iter()
+        .find(|bond| {
+            (bond.atom_0 == a && bond.atom_1 == b) || (bond.atom_0 == b && bond.atom_1 == a)
+        })
+        .map(|bond| bond.bond_type)
+        .unwrap_or(BondType::Single)
+}
+
+/// Estimate a covalent bond length (Å) from the elements' covalent radii and
+/// the bond order.  A 0.5 Å floor handles unknown elements with radius 0.
+fn estimate_bond_length(el0: Element, el1: Element, bt: BondType) -> f64 {
+    let r0 = el0.covalent_radius().max(0.5);
+    let r1 = el1.covalent_radius().max(0.5);
+    let base = r0 + r1;
+    match bt {
+        BondType::Double => base * 0.87,
+        BondType::Triple => base * 0.78,
+        BondType::Aromatic => base * 0.91,
+        _ => base,
+    }
 }
 
 /// Attempt to determine if a given string is likely to be SMILES.

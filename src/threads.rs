@@ -77,10 +77,10 @@ pub fn handle_thread_rx(state: &mut State, scene: &mut Scene, updates: &mut Engi
                             .pubchem_properties_map
                             .insert(ident.clone(), props.clone());
                     }
-                    Err(_) => {
+                    Err(e) => {
                         // Note: This is currently broken.
                         // println!("Unable to find Smiles for ident {ident_type:?}, generating one.");
-                        eprintln!("Unable to find PubChem properties for ident {ident:?}");
+                        eprintln!("Unable to find PubChem properties for ident {ident:?}: {e:?}");
                         // todo: Not saving to cache; not confident enough.
                         // mol.smiles = Some(mol.common.to_smiles());
                     }
