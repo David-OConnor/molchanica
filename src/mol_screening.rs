@@ -198,7 +198,7 @@ pub fn load_mol_batch(files: &[PathBuf]) -> io::Result<(Vec<MoleculeSmall>, usiz
     Ok((result, files_consumed))
 }
 
-/// Load `SDF` and `Mol2` files in a directory and its sub-dirs into memory.
+/// Load `SDF` and `Mol2` files in a directory and its sub-dirs into memory.f
 ///
 /// This is a convenience wrapper around [`collect_mol_files`] + [`load_mol_batch`] for
 /// callers that only need a single batch. For streaming through large directories use

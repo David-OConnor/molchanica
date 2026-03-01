@@ -4,6 +4,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    f64::consts::PI,
     io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU32, Ordering},
@@ -547,27 +548,38 @@ pub fn find_appended_posit(
         // This 0 branch should only be called for disconnected parents.
         0 => Some(posit_parent + Vec3::new(1.3, 0., 0.)),
         1 => {
-            // This neighbor is the *grandparent* to the one we're adding; what ties
-            // the parent to it. We set up the atom we're adding so it's tau/3 to this
-            // grandparent, rotated around the parent.
+            // The single placed neighbor is the *grandparent* direction from the parent.
+            // Use the geometry-appropriate bond angle so that sp (linear), sp2 (planar)
+            // and sp3 (tetrahedral) atoms all get the correct valence angle.
             let grandparent = atoms[adj_to_par[0]].posit;
 
-            // For now, pick an arbitrary orientation of the 3 methyl atoms (relative to the rest of the system)
-            // without regard for steric clashes, and let MD sort it out after.
-            // todo: choose something explicitly that avoids steric clashes?
-
-            const TETRA_ANGLE: f64 = 1.91063;
+            const TETRA_ANGLE: f64 = 1.91063; // 109.47°
+            const PLANAR_ANGLE: f64 = 2.0 * PI / 3.0; // 120.00°
 
             let bond_par_gp = (grandparent - posit_parent).to_normalized();
-            let ax_rot = bond_par_gp.any_perpendicular();
-            let rotator = Quaternion::from_axis_angle(ax_rot, TETRA_ANGLE);
 
-            // If H, shorten the bond.
-            let mut relative_dir = rotator.rotate_vec(bond_par_gp);
-            if element == Hydrogen {
-                relative_dir = (relative_dir.to_normalized()) * 1.1;
+            match geom {
+                BondGeom::Linear => {
+                    // Place directly opposite the grandparent (180°).
+                    Some(posit_parent + (-bond_par_gp))
+                }
+                BondGeom::Planar => {
+                    let ax_rot = bond_par_gp.any_perpendicular();
+                    let rotator = Quaternion::from_axis_angle(ax_rot, PLANAR_ANGLE);
+                    let relative_dir = rotator.rotate_vec(bond_par_gp);
+                    Some(posit_parent + relative_dir)
+                }
+                BondGeom::Tetrahedral => {
+                    let ax_rot = bond_par_gp.any_perpendicular();
+                    let rotator = Quaternion::from_axis_angle(ax_rot, TETRA_ANGLE);
+                    // If H, shorten the bond (only matters when bond_len is None).
+                    let mut relative_dir = rotator.rotate_vec(bond_par_gp);
+                    if element == Hydrogen {
+                        relative_dir = (relative_dir.to_normalized()) * 1.1;
+                    }
+                    Some(posit_parent + relative_dir)
+                }
             }
-            Some(posit_parent + relative_dir)
         }
         2 => {
             let neighbor_0 = atoms[adj_to_par[0]].posit;

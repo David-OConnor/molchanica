@@ -22,6 +22,8 @@ pub mod train;
 pub mod eval;
 mod gnn;
 mod mol_gen;
+mod parquet;
+mod postgres;
 mod train_md;
 mod train_test_split_indices;
 // Pub to allow access from the training entry point.

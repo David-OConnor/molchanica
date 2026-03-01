@@ -2,36 +2,559 @@
 //! to set initial geometry (e.g. from after loading from SMILES), or for correctly
 //! freeform geometry from the molecule editor.
 
-use std::collections::VecDeque;
+use std::{
+    collections::{HashSet, VecDeque},
+    f64::consts::PI,
+};
 
 use bio_files::BondType;
+use dynamics::find_tetra_posits;
 use lin_alg::f64::Vec3;
 use na_seq::Element;
 
 use crate::molecules::{
-    Bond,
+    Atom, Bond,
     common::{BondGeom, MoleculeCommon, find_appended_posit},
 };
 
-/// Determine the local geometry at atom `i` from its bond types.
-/// Triple bond → Linear; any double/aromatic bond → Planar; all single → Tetrahedral.
-fn geom_for_atom(i: usize, bonds: &[Bond]) -> BondGeom {
-    if bonds
+// ── Public impl ───────────────────────────────────────────────────────────────
+
+impl MoleculeCommon {
+    /// Assign 3D coordinates to all atoms.
+    ///
+    /// Strategy
+    /// 1. Detect all rings (SSSR via DFS back-edge + BFS shortest-path per back-edge).
+    /// 2. Place each ring as a regular polygon.  Fused rings are anchored to the
+    ///    shared edge of any already-placed ring.
+    /// 3. BFS from all placed ring atoms to position chains and substituents.
+    /// 4. Disconnected components are offset along X so they don't overlap.
+    pub fn assign_posits(&mut self) {
+        let n = self.atoms.len();
+        if n == 0 {
+            return;
+        }
+
+        let mut positioned = vec![false; n];
+        let mut component_x = 0.0_f64;
+
+        loop {
+            let start = match (0..n).find(|&i| !positioned[i]) {
+                None => break,
+                Some(s) => s,
+            };
+
+            let offset = Vec3::new(component_x, 0., 0.);
+            let component = find_component(&self.adjacency_list, start, n);
+            let rings = find_rings_sssr(&component, &self.adjacency_list);
+
+            if rings.is_empty() {
+                // Acyclic component: anchor first atom at offset, BFS does the rest.
+                self.atoms[start].posit = offset;
+                positioned[start] = true;
+            } else {
+                place_ring_systems(
+                    &rings,
+                    &mut self.atoms,
+                    &mut positioned,
+                    &self.bonds,
+                    &self.adjacency_list,
+                    offset,
+                );
+            }
+
+            // BFS from all placed atoms to reach substituents and chains.
+            let mut queue: VecDeque<usize> = component
+                .iter()
+                .copied()
+                .filter(|&a| positioned[a])
+                .collect();
+
+            bfs_place_substituents(
+                &mut queue,
+                &mut self.atoms,
+                &mut positioned,
+                &self.bonds,
+                &self.adjacency_list,
+            );
+
+            // Advance offset for the next disconnected component.
+            let max_x = component
+                .iter()
+                .map(|&i| self.atoms[i].posit.x)
+                .fold(component_x, f64::max);
+            component_x = max_x + 5.;
+        }
+
+        self.reset_posits();
+    }
+
+    /// Geometry cleanup for the editor: syncs atom_posits from atom.posit.
+    pub fn cleanup_geometry(&mut self) {
+        self.reset_posits();
+    }
+}
+
+// ── Graph utilities ───────────────────────────────────────────────────────────
+
+/// Collect all atom indices reachable from `start` (one connected component).
+fn find_component(adj: &[Vec<usize>], start: usize, n: usize) -> Vec<usize> {
+    let mut visited = vec![false; n];
+    let mut out = Vec::new();
+    let mut q = VecDeque::new();
+    visited[start] = true;
+    q.push_back(start);
+    while let Some(u) = q.pop_front() {
+        out.push(u);
+        for &v in &adj[u] {
+            if !visited[v] {
+                visited[v] = true;
+                q.push_back(v);
+            }
+        }
+    }
+    out
+}
+
+/// SSSR-like ring detection.
+///
+/// 1. DFS on the component subgraph to collect back-edges.
+/// 2. For each back-edge (u, v), BFS finds the *shortest* cycle containing it
+///    (path from v to u not using the direct edge u–v, then closing u→v).
+///
+/// Duplicate rings (same atom set) are filtered out.
+fn find_rings_sssr(component: &[usize], adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n_total = adj.len();
+    let mut visited = vec![false; n_total];
+    let mut in_stack = vec![false; n_total];
+    let mut back_edges: Vec<(usize, usize)> = Vec::new();
+
+    for &start in component {
+        if !visited[start] {
+            dfs_back_edges(
+                start,
+                usize::MAX,
+                adj,
+                &mut visited,
+                &mut in_stack,
+                &mut back_edges,
+            );
+        }
+    }
+
+    let mut rings: Vec<Vec<usize>> = Vec::new();
+    let mut seen: HashSet<Vec<usize>> = HashSet::new();
+
+    for (u, v) in back_edges {
+        let skip = (u.min(v), u.max(v));
+        if let Some(path) = bfs_shortest_path(v, u, skip, adj) {
+            let mut key = path.clone();
+            key.sort_unstable();
+            if seen.insert(key) {
+                rings.push(path);
+            }
+        }
+    }
+
+    rings
+}
+
+fn dfs_back_edges(
+    u: usize,
+    parent: usize,
+    adj: &[Vec<usize>],
+    visited: &mut Vec<bool>,
+    in_stack: &mut Vec<bool>,
+    back_edges: &mut Vec<(usize, usize)>,
+) {
+    visited[u] = true;
+    in_stack[u] = true;
+    for &v in &adj[u] {
+        if v == parent {
+            continue;
+        }
+        if in_stack[v] {
+            back_edges.push((u, v));
+        } else if !visited[v] {
+            dfs_back_edges(v, u, adj, visited, in_stack, back_edges);
+        }
+    }
+    in_stack[u] = false;
+}
+
+/// BFS shortest path from `start` to `end`, skipping `skip_edge` (stored as (lo, hi)).
+/// Returns `[start, …, end]` or `None` if unreachable.
+fn bfs_shortest_path(
+    start: usize,
+    end: usize,
+    skip_edge: (usize, usize),
+    adj: &[Vec<usize>],
+) -> Option<Vec<usize>> {
+    let n = adj.len();
+    let mut prev = vec![usize::MAX; n];
+    let mut visited = vec![false; n];
+    let mut q = VecDeque::new();
+    visited[start] = true;
+    q.push_back(start);
+
+    while let Some(u) = q.pop_front() {
+        if u == end {
+            let mut path = Vec::new();
+            let mut cur = end;
+            loop {
+                path.push(cur);
+                let p = prev[cur];
+                if p == usize::MAX {
+                    break;
+                }
+                cur = p;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        for &v in &adj[u] {
+            let e = (u.min(v), u.max(v));
+            if e == skip_edge || visited[v] {
+                continue;
+            }
+            visited[v] = true;
+            prev[v] = u;
+            q.push_back(v);
+        }
+    }
+    None
+}
+
+// ── Ring placement ────────────────────────────────────────────────────────────
+
+/// Place all rings in a component.
+///
+/// Iterates until every ring is handled:
+///  - Rings with no placed atoms → regular polygon at `offset`.
+///  - Rings with ≥ 2 adjacent placed atoms → fused ring anchored to that edge.
+///  - Rings with exactly 1 placed atom (spiro centre) → spiro placement.
+///  - Rings already fully placed → skip.
+fn place_ring_systems(
+    rings: &[Vec<usize>],
+    atoms: &mut [Atom],
+    positioned: &mut Vec<bool>,
+    bonds: &[Bond],
+    adj: &[Vec<usize>],
+    offset: Vec3,
+) {
+    // Smaller rings first — better for fused systems (e.g. 5+6 bicyclics).
+    let mut order: Vec<usize> = (0..rings.len()).collect();
+    order.sort_by_key(|&i| rings[i].len());
+
+    let mut done = vec![false; rings.len()];
+    let mut progress = true;
+
+    while progress {
+        progress = false;
+        for &ri in &order {
+            if done[ri] {
+                continue;
+            }
+            let ring = &rings[ri];
+            let placed_count = ring.iter().filter(|&&a| positioned[a]).count();
+
+            if placed_count == ring.len() {
+                done[ri] = true;
+                progress = true;
+                continue;
+            }
+
+            if placed_count == 0 {
+                place_ring_regular(ring, atoms, positioned, bonds, offset);
+                done[ri] = true;
+                progress = true;
+            } else if place_ring_fused(ring, atoms, positioned, bonds) {
+                done[ri] = true;
+                progress = true;
+            } else if placed_count == 1 {
+                // Spiro ring: one shared atom, no shared edge.  Place the two
+                // ring-neighbours of the spiro centre via tetrahedral geometry,
+                // then let place_ring_fused finish the polygon.
+                if place_ring_spiro(ring, atoms, positioned, bonds, adj) {
+                    place_ring_fused(ring, atoms, positioned, bonds);
+                    done[ri] = true;
+                    progress = true;
+                }
+            }
+        }
+    }
+}
+
+/// Place a ring as a regular N-gon centered at `center` in the XY plane.
+/// The first atom is placed at 12 o'clock; subsequent atoms go clockwise.
+fn place_ring_regular(
+    ring: &[usize],
+    atoms: &mut [Atom],
+    positioned: &mut Vec<bool>,
+    bonds: &[Bond],
+    center: Vec3,
+) {
+    let n = ring.len();
+    if n == 0 {
+        return;
+    }
+    let bond_len = avg_ring_bond_len(ring, atoms, bonds);
+    let radius = ring_circumradius(bond_len, n);
+
+    for (i, &ai) in ring.iter().enumerate() {
+        let angle = PI / 2.0 - 2.0 * PI * i as f64 / n as f64;
+        atoms[ai].posit = center + Vec3::new(radius * angle.cos(), radius * angle.sin(), 0.);
+        positioned[ai] = true;
+    }
+}
+
+/// Attempt to place a fused ring anchored to the first adjacent pair of
+/// already-placed atoms found in ring order.  Returns `true` on success.
+fn place_ring_fused(
+    ring: &[usize],
+    atoms: &mut [Atom],
+    positioned: &mut Vec<bool>,
+    bonds: &[Bond],
+) -> bool {
+    let n = ring.len();
+
+    // Find the first adjacent pair of placed atoms (including the wrap-around edge).
+    let anchor = (0..n).find_map(|i| {
+        let j = (i + 1) % n;
+        let a = ring[i];
+        let b = ring[j];
+        if positioned[a] && positioned[b] {
+            Some((i, a, b))
+        } else {
+            None
+        }
+    });
+
+    let (i0, a0, a1) = match anchor {
+        Some(x) => x,
+        None => return false,
+    };
+
+    let pos0 = atoms[a0].posit;
+    let pos1 = atoms[a1].posit;
+
+    let edge_len = (pos1 - pos0).magnitude();
+    if edge_len < 1e-6 {
+        return false;
+    }
+
+    let radius = ring_circumradius(edge_len, n);
+    let edge_mid = (pos0 + pos1) * 0.5;
+    let edge_dir = (pos1 - pos0) * (1.0 / edge_len);
+    // 90° CCW rotation in XY plane.
+    let perp = Vec3::new(-edge_dir.y, edge_dir.x, 0.0);
+
+    // Distance from edge midpoint to ring centre.
+    let half_edge = edge_len * 0.5;
+    let center_dist = (radius * radius - half_edge * half_edge).max(0.0).sqrt();
+
+    // The new ring goes on the OPPOSITE side of the edge from the existing ring's
+    // centre of mass, so fused rings extend outward rather than overlapping.
+    let (com_sum, nplaced) = ring
         .iter()
-        .any(|b| (b.atom_0 == i || b.atom_1 == i) && b.bond_type == BondType::Triple)
+        .filter(|&&a| positioned[a])
+        .fold((Vec3::new(0., 0., 0.), 0usize), |(acc, cnt), &a| {
+            (acc + atoms[a].posit, cnt + 1)
+        });
+    let existing_com = if nplaced > 0 {
+        com_sum * (1.0 / nplaced as f64)
+    } else {
+        edge_mid
+    };
+
+    let new_center = if (existing_com - edge_mid).dot(perp) > 0.0 {
+        edge_mid - perp * center_dist
+    } else {
+        edge_mid + perp * center_dist
+    };
+
+    // Determine traversal direction (CW or CCW) by matching a1's actual angle.
+    let theta0 = {
+        let d = pos0 - new_center;
+        d.y.atan2(d.x)
+    };
+    let theta1_actual = {
+        let d = pos1 - new_center;
+        d.y.atan2(d.x)
+    };
+    let step = 2.0 * PI / n as f64;
+    let step_sign: f64 =
+        if angle_diff(theta1_actual, theta0 + step) <= angle_diff(theta1_actual, theta0 - step) {
+            1.0
+        } else {
+            -1.0
+        };
+
+    for i in 0..n {
+        let ai = ring[i];
+        if positioned[ai] {
+            continue;
+        }
+        let steps = ((i as isize - i0 as isize).rem_euclid(n as isize)) as f64;
+        let angle = theta0 + steps * step * step_sign;
+        atoms[ai].posit = new_center + Vec3::new(radius * angle.cos(), radius * angle.sin(), 0.);
+        positioned[ai] = true;
+    }
+
+    true
+}
+
+/// Handles a spiro ring — a ring that shares exactly ONE atom (the spiro centre)
+/// with previously-placed rings.  `place_ring_fused` cannot proceed without a
+/// shared *edge*, so this function first seeds the two ring-atoms adjacent to
+/// the spiro centre using tetrahedral geometry, after which `place_ring_fused`
+/// can complete the polygon.
+///
+/// Returns `true` if placement was possible.
+fn place_ring_spiro(
+    ring: &[usize],
+    atoms: &mut [Atom],
+    positioned: &mut Vec<bool>,
+    bonds: &[Bond],
+    adj: &[Vec<usize>],
+) -> bool {
+    let n = ring.len();
+
+    // Find the single placed atom (spiro centre).
+    let (sc_idx, sc) = match ring.iter().enumerate().find(|&(_, &a)| positioned[a]) {
+        Some((i, &a)) => (i, a),
+        None => return false,
+    };
+
+    // Collect placed neighbours of the spiro centre (all from the already-placed ring).
+    let placed_nbrs: Vec<usize> = adj[sc]
+        .iter()
+        .copied()
+        .filter(|&nb| positioned[nb])
+        .collect();
+
+    if placed_nbrs.len() < 2 {
+        return false; // not enough context to determine orientation
+    }
+
+    let sc_pos = atoms[sc].posit;
+    let pn0 = atoms[placed_nbrs[0]].posit;
+    let pn1 = atoms[placed_nbrs[1]].posit;
+
+    // The two tetrahedral positions orthogonal to the existing ring bonds.
+    let (tp0, tp1) = find_tetra_posits(sc_pos, pn0, pn1);
+
+    let prev_ai = ring[(sc_idx + n - 1) % n];
+    let next_ai = ring[(sc_idx + 1) % n];
+
+    let len_prev = estimate_bond_length(
+        atoms[sc].element,
+        atoms[prev_ai].element,
+        bond_type_between(sc, prev_ai, bonds),
+    );
+    let len_next = estimate_bond_length(
+        atoms[sc].element,
+        atoms[next_ai].element,
+        bond_type_between(sc, next_ai, bonds),
+    );
+
+    atoms[prev_ai].posit = sc_pos + (tp0 - sc_pos).to_normalized() * len_prev;
+    positioned[prev_ai] = true;
+    atoms[next_ai].posit = sc_pos + (tp1 - sc_pos).to_normalized() * len_next;
+    positioned[next_ai] = true;
+
+    true
+}
+
+// ── BFS substituent placement ─────────────────────────────────────────────────
+
+fn bfs_place_substituents(
+    queue: &mut VecDeque<usize>,
+    atoms: &mut Vec<Atom>,
+    positioned: &mut Vec<bool>,
+    bonds: &[Bond],
+    adj: &[Vec<usize>],
+) {
+    while let Some(u) = queue.pop_front() {
+        let geom = geom_for_atom(u, bonds);
+        let posit_u = atoms[u].posit;
+        let neighbours: Vec<usize> = adj[u].to_vec();
+
+        for v in neighbours {
+            if positioned[v] {
+                continue;
+            }
+
+            let adj_placed: Vec<usize> = adj[u]
+                .iter()
+                .copied()
+                .filter(|&w| w != v && positioned[w])
+                .collect();
+
+            let bt = bond_type_between(u, v, bonds);
+            let bond_len = estimate_bond_length(atoms[u].element, atoms[v].element, bt);
+
+            // Read v's element before passing `atoms` to find_appended_posit.
+            let v_element = atoms[v].element;
+            let n_placed_before_v = adj_placed.len();
+
+            let p =
+                find_appended_posit(posit_u, atoms, &adj_placed, Some(bond_len), v_element, geom)
+                    .unwrap_or_else(|| {
+                        no_context_position(posit_u, bond_len, geom, n_placed_before_v)
+                    });
+
+            atoms[v].posit = p;
+            positioned[v] = true;
+            queue.push_back(v);
+        }
+    }
+}
+
+/// Fallback when `find_appended_posit` returns `None` (degenerate/overcrowded cases).
+/// Distributes directions evenly in the XY plane according to the local geometry,
+/// varying by `n_placed` so multiple substituents don't stack on each other.
+fn no_context_position(parent: Vec3, bond_len: f64, geom: BondGeom, n_placed: usize) -> Vec3 {
+    let (n_spokes, base_angle): (usize, f64) = match geom {
+        BondGeom::Linear => (2, 0.0),
+        BondGeom::Planar => (3, 0.0),
+        BondGeom::Tetrahedral => (4, PI / 6.0),
+    };
+    let angle = base_angle + 2.0 * PI * n_placed as f64 / n_spokes as f64;
+    parent + Vec3::new(bond_len * angle.cos(), bond_len * angle.sin(), 0.)
+}
+
+// ── Geometry helpers ──────────────────────────────────────────────────────────
+
+fn geom_for_atom(i: usize, bonds: &[Bond]) -> BondGeom {
+    let atom_bonds: Vec<&Bond> = bonds
+        .iter()
+        .filter(|b| b.atom_0 == i || b.atom_1 == i)
+        .collect();
+
+    if atom_bonds.iter().any(|b| b.bond_type == BondType::Triple) {
+        return BondGeom::Linear;
+    }
+
+    // Cumulated diene (allene-type, e.g. C=C=C): the central atom carries two
+    // double bonds and is sp-hybridised (linear), not sp2.
+    let double_count = atom_bonds
+        .iter()
+        .filter(|b| b.bond_type == BondType::Double)
+        .count();
+    if double_count >= 2 {
+        return BondGeom::Linear;
+    }
+
+    if atom_bonds
+        .iter()
+        .any(|b| matches!(b.bond_type, BondType::Double | BondType::Aromatic))
     {
-        BondGeom::Linear
-    } else if bonds.iter().any(|b| {
-        (b.atom_0 == i || b.atom_1 == i)
-            && matches!(b.bond_type, BondType::Double | BondType::Aromatic)
-    }) {
         BondGeom::Planar
     } else {
         BondGeom::Tetrahedral
     }
 }
 
-/// Return the bond type between atoms `a` and `b`, defaulting to Single.
 fn bond_type_between(a: usize, b: usize, bonds: &[Bond]) -> BondType {
     bonds
         .iter()
@@ -42,8 +565,6 @@ fn bond_type_between(a: usize, b: usize, bonds: &[Bond]) -> BondType {
         .unwrap_or(BondType::Single)
 }
 
-/// Estimate a covalent bond length (Å) from the elements' covalent radii and
-/// the bond order.  A 0.5 Å floor handles unknown elements with radius 0.
 fn estimate_bond_length(el0: Element, el1: Element, bt: BondType) -> f64 {
     let r0 = el0.covalent_radius().max(0.5);
     let r1 = el1.covalent_radius().max(0.5);
@@ -56,113 +577,33 @@ fn estimate_bond_length(el0: Element, el1: Element, bt: BondType) -> f64 {
     }
 }
 
-impl MoleculeCommon {
-    /// Assign 3D coordinates to all atoms. This can be used when parsing atoms from SMILES,
-    /// for example, as this format doesn't specify coordinates. This resets all positions to new
-    /// absolute positions, and should not be used to adjust existing geometry.
-    ///
-    /// Algorithm: BFS from the first atom (placed at the origin).  For each
-    /// unpositioned atom we call `find_appended_posit`, which computes a
-    /// geometrically plausible position using the already-positioned neighbours
-    /// of the parent for angular context (tetrahedral ≈109.5°, planar ≈120°,
-    /// linear 180°).
-    ///
-    /// Ring-closure atoms are already positioned when the BFS reaches them via
-    /// the "other path" around the ring and are simply skipped; the ring will
-    /// be slightly strained but the bond connectivity is correct, and the energy
-    /// minimiser will fix the geometry.
-    ///
-    /// Disconnected components (e.g. salt forms) are offset along the X axis so
-    /// they do not overlap.
-    pub fn assign_posits(&mut self) {
-        let n = self.atoms.len();
-        if n == 0 {
-            return;
-        }
-
-        let mut positioned = vec![false; n];
-
-        // Place first atom at the origin.
-        self.atoms[0].posit = Vec3::new(0., 0., 0.);
-        positioned[0] = true;
-
-        let mut queue: VecDeque<usize> = VecDeque::new();
-        queue.push_back(0);
-
-        // Lateral offset applied to each new disconnected component.
-        let mut component_x = 0_f64;
-
-        loop {
-            // If the queue is empty, search for the next unpositioned atom
-            // (start of a new disconnected component).
-            if queue.is_empty() {
-                match (0..n).find(|&i| !positioned[i]) {
-                    None => break,
-                    Some(start) => {
-                        component_x += 5.;
-                        self.atoms[start].posit = Vec3::new(component_x, 0., 0.);
-                        positioned[start] = true;
-                        queue.push_back(start);
-                    }
-                }
-            }
-
-            let u = match queue.pop_front() {
-                Some(u) => u,
-                None => continue,
-            };
-
-            let geom = geom_for_atom(u, &self.bonds);
-            let posit_u = self.atoms[u].posit; // Copy — Vec3 is Copy
-
-            // Clone the neighbour list to avoid borrow conflicts while mutating atoms.
-            let neighbours: Vec<usize> = self.adjacency_list[u].to_vec();
-
-            for v in neighbours {
-                if positioned[v] {
-                    // Already placed (either placed earlier in BFS, or a ring-closure
-                    // partner placed via the other path around the ring).  Skip.
-                    continue;
-                }
-
-                // Collect already-positioned neighbours of u (excluding v itself) to
-                // give find_appended_posit its angular context.
-                let adj_placed: Vec<usize> = self.adjacency_list[u]
-                    .iter()
-                    .copied()
-                    .filter(|&w| w != v && positioned[w])
-                    .collect();
-
-                let bt = bond_type_between(u, v, &self.bonds);
-                let bond_len =
-                    estimate_bond_length(self.atoms[u].element, self.atoms[v].element, bt);
-
-                let p = find_appended_posit(
-                    posit_u,
-                    &self.atoms,
-                    &adj_placed,
-                    Some(bond_len),
-                    self.atoms[v].element,
-                    geom,
-                )
-                .unwrap_or_else(|| posit_u + Vec3::new(bond_len, 0., 0.));
-
-                self.atoms[v].posit = p;
-                positioned[v] = true;
-                queue.push_back(v);
-            }
-        }
-
-        self.reset_posits();
+/// Average bond length of all edges in the ring (including the closing edge).
+fn avg_ring_bond_len(ring: &[usize], atoms: &[Atom], bonds: &[Bond]) -> f64 {
+    let n = ring.len();
+    if n < 2 {
+        return 1.5;
     }
+    let total: f64 = (0..n)
+        .map(|i| {
+            let a = ring[i];
+            let b = ring[(i + 1) % n];
+            let bt = bond_type_between(a, b, bonds);
+            estimate_bond_length(atoms[a].element, atoms[b].element, bt)
+        })
+        .sum();
+    total / n as f64
+}
 
-    /// This can be used, for example, by the editor to clean up free-form drawn geometry.
-    /// this can produce similar results to the MD engine's energy minimization function, but
-    /// is cheaper, and can work in cases where there is pathological geometry.
-    ///
-    /// Unlike `assign_posits`, this takes into account the existing positions (global and local),
-    /// and uses them as a basis for the updated positions.
-    pub fn cleanup_geometry(&mut self) {
-        self.reset_posits();
+/// Circumradius of a regular N-gon with side length `bond_len`.
+fn ring_circumradius(bond_len: f64, n: usize) -> f64 {
+    if n < 2 {
+        return bond_len;
     }
+    bond_len / (2.0 * (PI / n as f64).sin())
+}
+
+/// Smallest angular distance between two angles (radians).
+fn angle_diff(a: f64, b: f64) -> f64 {
+    let d = ((a - b) % (2.0 * PI)).abs();
+    if d > PI { 2.0 * PI - d } else { d }
 }
