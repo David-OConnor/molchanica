@@ -10,12 +10,12 @@ use crate::{
     label, mol_manip,
     mol_manip::ManipMode,
     molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
-    selection::Selection,
-    state::{PopupState, State},
-    therapeutic::pharmacophore::{
+    screening::pharmacophore::{
         FeatureRelation, PHARMACOPHORE_SCREENING_THRESH_DEFAULT, Pharmacophore,
         PharmacophoreFeatType, PharmacophoreFeature, PharmacophoreState, add_pharmacophore_feat,
     },
+    selection::Selection,
+    state::{PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
         util::color_egui_from_f32,

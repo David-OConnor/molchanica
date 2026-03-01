@@ -22,13 +22,10 @@ use rayon::prelude::*;
 use crate::{
     copy_le,
     mol_characterization::{MolCharacterization, RingType},
-    mol_screening,
     molecules::{pocket::Pocket, small::MoleculeSmall},
     parse_le,
     render::Color,
-    therapeutic::pharmacophore::PharmacophoreFeatType::{
-        AcceptorProjected, Donor, DonorProjected, Hydrophilic, Hydrophobic,
-    },
+    screening,
 };
 // #[derive(Clone, Debug)]
 // pub struct PocketBinding {
@@ -798,7 +795,7 @@ impl Pharmacophore {
         let (tx, rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let files = match mol_screening::collect_mol_files(&path) {
+            let files = match screening::collect_mol_files(&path) {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!("Error collecting molecule files from {path:?}: {e}");
@@ -821,7 +818,7 @@ impl Pharmacophore {
                     break;
                 }
 
-                let (mols, files_consumed) = match mol_screening::load_mol_batch(remaining) {
+                let (mols, files_consumed) = match screening::load_mol_batch(remaining) {
                     Ok(m) => m,
                     Err(e) => {
                         eprintln!("Error loading molecule batch: {e}");

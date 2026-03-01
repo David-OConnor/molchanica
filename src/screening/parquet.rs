@@ -21,8 +21,8 @@ use parquet::{
 };
 
 use crate::{
-    mol_screening::{collect_mol_files, load_mol_batch},
     molecules::small::MoleculeSmall,
+    screening::{collect_mol_files, load_mol_batch},
 };
 
 fn parquet_err_to_io(e: ParquetError) -> io::Error {

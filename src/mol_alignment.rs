@@ -816,7 +816,7 @@ fn align_from_rings(
 }
 
 /// Using fast and crude methods, create a starting alignment, to base future ones off.
-// pub to allow for use in mol_screening.rs
+// pub to allow for use in screening.rs
 pub fn make_initial_alignment(
     mol_template: &MoleculeSmall,
     mol_query: &MoleculeSmall,

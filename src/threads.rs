@@ -9,14 +9,14 @@ use bio_apis::{
     rcsb::{FilesAvailable, PdbDataResults},
 };
 use graphics::{EngineUpdates, Scene};
-use lin_alg::f64::Vec3;
 
 use crate::{
     molecules::MolIdent,
     render::MESH_PEP_SOLVENT_SURFACE,
+    screening::pharmacophore::PhScreeningScore,
     sfc_mesh::{MeshColors, apply_mesh_colors},
     state::State,
-    therapeutic::{TherapeuticProperties, pharmacophore::PhScreeningScore},
+    therapeutic::TherapeuticProperties,
 };
 
 /// Contains receivers for threads. We use these for longer-running processes, as to

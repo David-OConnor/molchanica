@@ -33,11 +33,8 @@ use crate::{
         PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY, Residue, common::MoleculeCommon,
         pocket::Pocket,
     },
-    therapeutic::{
-        DatasetTdc, TherapeuticProperties,
-        infer::Infer,
-        pharmacophore::{Pharmacophore, PharmacophoreFeature},
-    },
+    screening::pharmacophore::{Pharmacophore, PharmacophoreFeature},
+    therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer},
 };
 
 /// A molecule representing a small organic molecule. Omits mol-generic fields.

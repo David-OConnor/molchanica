@@ -33,13 +33,10 @@ use crate::{
     },
     orca::StateOrca,
     prefs::ToSave,
+    screening::pharmacophore::{Pharmacophore, PharmacophoreFeatType, PharmacophoreState},
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
-    therapeutic::{
-        DatasetTdc,
-        infer::Infer,
-        pharmacophore::{Pharmacophore, PharmacophoreFeatType, PharmacophoreState},
-    },
+    therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
     util::orca_avail,
 };

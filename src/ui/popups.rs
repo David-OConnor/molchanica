@@ -18,8 +18,6 @@ use crate::{
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
     mol_alignment::run_alignment,
-    mol_screening,
-    mol_screening::screen_by_alignment,
     molecules::{
         MolGenericRef, MolIdent, MolType,
         common::MoleculeCommon,
@@ -27,6 +25,8 @@ use crate::{
     },
     prefs::OpenType,
     render::MESH_POCKET_START,
+    screening,
+    screening::screen_by_alignment,
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, PopupState, State},
     ui::{
@@ -299,7 +299,7 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
                 .clicked()
             {
                 // let path = Path::new("C:/Users/the_a/Desktop/bio_misc/amber_geostd/c");
-                if let Ok((mols, _)) = mol_screening::load_mols(path, 0) {
+                if let Ok((mols, _)) = screening::load_mols(path, 0) {
                     state.volatile.alignment.mols_passed_screening = Vec::new();
 
                     let template = mols[0].clone();

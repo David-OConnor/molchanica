@@ -14,7 +14,6 @@
 
 pub mod infer;
 
-pub mod pharmacophore;
 mod solubility;
 pub mod train;
 
@@ -22,7 +21,6 @@ pub mod train;
 pub mod eval;
 mod gnn;
 mod mol_gen;
-mod parquet;
 mod postgres;
 mod train_md;
 mod train_test_split_indices;

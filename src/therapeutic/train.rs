@@ -60,6 +60,7 @@ use serde::{Deserialize, Serialize};
 use crate::therapeutic::eval::eval;
 use crate::{
     molecules::small::MoleculeSmall,
+    screening::pharmacophore::Pharmacophore,
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
@@ -67,7 +68,6 @@ use crate::{
             PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
             PHARM_VOCAB_SIZE,
         },
-        pharmacophore::Pharmacophore,
         train_test_split_indices::TrainTestSplit,
     },
 };

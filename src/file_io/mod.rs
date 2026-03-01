@@ -30,9 +30,9 @@ use crate::{
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
+    screening::pharmacophore::Pharmacophore,
     selection::Selection,
     state::State,
-    therapeutic::pharmacophore::Pharmacophore,
     util::{handle_err, handle_success},
 };
 

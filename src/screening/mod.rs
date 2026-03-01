@@ -20,6 +20,9 @@ use crate::{
     molecules::small::MoleculeSmall,
 };
 
+mod parquet;
+pub mod pharmacophore;
+
 // We load molecules from disk in batches, to prevent using too much memory. We use
 // atom count as a proxy; better than molecule count, but perhaps not as regular as bytes.
 pub const MOL_CACHE_SIZE_ATOM_COUNT: u32 = 1_000_000;

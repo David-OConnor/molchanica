@@ -9,8 +9,8 @@ use crate::{
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
+    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
-    therapeutic::pharmacophore::{Pharmacophore, PharmacophoreState},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, pharmacophore,
