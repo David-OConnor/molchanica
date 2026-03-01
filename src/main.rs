@@ -20,7 +20,6 @@ mod bond_inference;
 mod docking;
 mod drawing;
 mod file_io;
-mod forces;
 mod inputs;
 mod prefs;
 mod render;

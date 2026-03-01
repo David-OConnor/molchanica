@@ -184,6 +184,8 @@ pub fn filter_peptide_atoms(
 }
 
 /// Set up MD for selected molecules.
+///
+/// If `fast_init` is set, the water solvent, and relaxation are skipped.
 pub fn build_dynamics(
     dev: &ComputationDevice,
     mols_in: &[(FfMolType, &MoleculeCommon)],

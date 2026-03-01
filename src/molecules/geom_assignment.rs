@@ -229,10 +229,14 @@ fn bfs_shortest_path(
 /// Place all rings in a component.
 ///
 /// Iterates until every ring is handled:
-///  - Rings with no placed atoms → regular polygon at `offset`.
+///  - Rings with no placed atoms AND external connection → `place_ring_attached`.
+///  - Rings with no placed atoms AND no external connection → regular polygon at `offset`.
 ///  - Rings with ≥ 2 adjacent placed atoms → fused ring anchored to that edge.
 ///  - Rings with exactly 1 placed atom (spiro centre) → spiro placement.
 ///  - Rings already fully placed → skip.
+///
+/// Sort order: rings that share atoms with other rings (fused) come first so that
+/// pendant rings can anchor themselves to the already-placed core.
 fn place_ring_systems(
     rings: &[Vec<usize>],
     atoms: &mut [Atom],
@@ -241,9 +245,29 @@ fn place_ring_systems(
     adj: &[Vec<usize>],
     offset: Vec3,
 ) {
-    // Smaller rings first — better for fused systems (e.g. 5+6 bicyclics).
+    // How many atoms in ring[ri] also appear in some other ring?
+    // Rings with more shared atoms are more "central" (fused) and should be placed first.
+    let shared_counts: Vec<usize> = (0..rings.len())
+        .map(|ri| {
+            let set: HashSet<usize> = rings[ri].iter().copied().collect();
+            rings
+                .iter()
+                .enumerate()
+                .filter(|(rj, _)| *rj != ri)
+                .flat_map(|(_, other)| other.iter())
+                .filter(|&&a| set.contains(&a))
+                .count()
+        })
+        .collect();
+
     let mut order: Vec<usize> = (0..rings.len()).collect();
-    order.sort_by_key(|&i| rings[i].len());
+    // Primary sort: more shared atoms first (fused/central rings before pendant rings).
+    // Tie-break: smaller rings first (better for 5+6 bicyclics etc.).
+    order.sort_by(|&a, &b| {
+        shared_counts[b]
+            .cmp(&shared_counts[a])
+            .then(rings[a].len().cmp(&rings[b].len()))
+    });
 
     let mut done = vec![false; rings.len()];
     let mut progress = true;
@@ -264,9 +288,24 @@ fn place_ring_systems(
             }
 
             if placed_count == 0 {
-                place_ring_regular(ring, atoms, positioned, bonds, offset);
-                done[ri] = true;
-                progress = true;
+                // Check whether any ring atom has an already-placed *external* neighbour
+                // (i.e., a neighbour that is not in this ring but is already positioned).
+                // If so, anchor the ring to that connection; otherwise use offset.
+                let has_external = ring
+                    .iter()
+                    .any(|&a| adj[a].iter().any(|&nb| positioned[nb]));
+
+                if has_external {
+                    if place_ring_attached(ring, atoms, positioned, bonds, adj) {
+                        done[ri] = true;
+                        progress = true;
+                    }
+                    // If place_ring_attached fails (external not yet placed), defer.
+                } else {
+                    place_ring_regular(ring, atoms, positioned, bonds, offset);
+                    done[ri] = true;
+                    progress = true;
+                }
             } else if place_ring_fused(ring, atoms, positioned, bonds) {
                 done[ri] = true;
                 progress = true;
@@ -397,6 +436,101 @@ fn place_ring_fused(
         let steps = ((i as isize - i0 as isize).rem_euclid(n as isize)) as f64;
         let angle = theta0 + steps * step * step_sign;
         atoms[ai].posit = new_center + Vec3::new(radius * angle.cos(), radius * angle.sin(), 0.);
+        positioned[ai] = true;
+    }
+
+    true
+}
+
+/// Places a ring that has **no already-positioned ring atoms** but IS connected to
+/// the rest of the molecule via at least one external bond.
+///
+/// Algorithm:
+/// 1. Find the ring atom `ra` whose external (non-ring) neighbour `ext_nb` is placed.
+/// 2. Position `ra` using the same geometry logic as BFS substituent placement
+///    (`find_appended_posit` on `ext_nb`).
+/// 3. The ring centre is placed at `ra_pos + bond_dir × circumradius`, extending
+///    the ring away from `ext_nb`.
+/// 4. Remaining ring atoms are placed as a regular polygon around this centre.
+///
+/// Returns `true` on success.
+fn place_ring_attached(
+    ring: &[usize],
+    atoms: &mut [Atom],
+    positioned: &mut Vec<bool>,
+    bonds: &[Bond],
+    adj: &[Vec<usize>],
+) -> bool {
+    let n = ring.len();
+
+    // Find the first ring atom that has a placed external neighbour.
+    let (ra_idx, ra, ext_nb) = match ring.iter().enumerate().find_map(|(idx, &a)| {
+        adj[a]
+            .iter()
+            .find(|&&nb| positioned[nb])
+            .map(|&nb| (idx, a, nb))
+    }) {
+        Some(x) => x,
+        None => return false,
+    };
+
+    let ext_nb_pos = atoms[ext_nb].posit;
+
+    // All placed neighbours of ext_nb (the already-positioned atoms around it).
+    let ext_adj_placed: Vec<usize> = adj[ext_nb]
+        .iter()
+        .copied()
+        .filter(|&nb| positioned[nb])
+        .collect();
+
+    let ext_geom = geom_for_atom(ext_nb, bonds);
+    let bt = bond_type_between(ra, ext_nb, bonds);
+    let bond_len = estimate_bond_length(atoms[ra].element, atoms[ext_nb].element, bt);
+    let ra_element = atoms[ra].element;
+
+    // Place ra using the geometry of ext_nb, exactly like BFS does for substituents.
+    let ra_pos = find_appended_posit(
+        ext_nb_pos,
+        atoms,
+        &ext_adj_placed,
+        Some(bond_len),
+        ra_element,
+        ext_geom,
+    )
+    .unwrap_or_else(|| ext_nb_pos + Vec3::new(bond_len, 0., 0.));
+
+    // Direction ext_nb → ra.  The ring centre is placed further in this direction
+    // so the ring polygon extends away from the core.
+    let bond_dir = {
+        let d = ra_pos - ext_nb_pos;
+        if d.magnitude_squared() < 1e-12 {
+            Vec3::new(1., 0., 0.)
+        } else {
+            d.to_normalized()
+        }
+    };
+
+    let avg_bl = avg_ring_bond_len(ring, atoms, bonds);
+    let radius = ring_circumradius(avg_bl, n);
+    let ring_center = ra_pos + bond_dir * radius;
+
+    // Place ra (the anchor atom) on the circumcircle, then fill the rest CCW.
+    atoms[ra].posit = ra_pos;
+    positioned[ra] = true;
+
+    let ra_angle = {
+        let d = ra_pos - ring_center;
+        d.y.atan2(d.x)
+    };
+    let step = 2.0 * PI / n as f64;
+
+    for k in 1..n {
+        let ai = ring[(ra_idx + k) % n];
+        if positioned[ai] {
+            continue;
+        }
+        let angle = ra_angle + k as f64 * step;
+        atoms[ai].posit = ring_center + Vec3::new(radius * angle.cos(), radius * angle.sin(), 0.);
         positioned[ai] = true;
     }
 

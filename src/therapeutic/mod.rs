@@ -20,6 +20,7 @@ pub mod train;
 #[cfg(feature = "train")]
 pub mod eval;
 mod gnn;
+mod logp_sim;
 mod mol_gen;
 mod postgres;
 mod train_md;

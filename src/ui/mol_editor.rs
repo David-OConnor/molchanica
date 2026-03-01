@@ -295,8 +295,15 @@ pub(in crate::ui) fn editor(
             state.mol_editor.mol.common.reassign_sns();
         }
 
+        if ui.button("Cleanup geom")
+            .on_hover_text("Relax geometry; adjust atom positions to minimize energy, based on a standard small-molecule force field.")
+            .clicked() {
+            state.mol_editor.mol.common.cleanup_geometry();
+            redraw = true;
+        }
+
         if ui.button("Relax")
-            .on_hover_text("Relax geometry; adjust atom positions to minimize energy.")
+            .on_hover_text("Relax geometry; adjust atom positions to minimize energy, based on a standard small-molecule force field.")
             .clicked() {
             if state.mol_editor.md.md.is_none() {
                 match mol_editor::build_dynamics(
