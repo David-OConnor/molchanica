@@ -5,6 +5,7 @@
 /// from `bio_files::AtomGeneric` etc.
 /// These are core to the operation of this application.
 pub mod common;
+mod geom_assignment;
 pub mod lipid;
 pub mod nucleic_acid;
 pub mod pocket;

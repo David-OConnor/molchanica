@@ -7,7 +7,7 @@ use std::{
 
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use dynamics::{
-    ComputationDevice, FfMolType, MdConfig, MdState, MolDynamics, ParamError,
+    ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
@@ -300,18 +300,20 @@ pub fn build_dynamics(
 
     // // Uncomment as required for validating individual processes.
     let mut cfg = MdConfig {
-        // overrides: MdOverrides {
-        // skip_water: false,
-        // skip_water_relaxation: false,
-        // bonded_disabled: false,
-        // coulomb_disabled: false,
-        // lj_disabled: false,
-        // long_range_recip_disabled: false,
-        // thermo_disabled: false,
-        // baro_disabled: false,
-        // snapshots_during_equilibration: true,
-        // ..Default::default()
-        // },
+        overrides: MdOverrides {
+            // skip_water: false,
+            // skip_water_relaxation: false,
+            // bonded_disabled: false,
+            // coulomb_disabled: false,
+            // lj_disabled: false,
+
+            // todo temp
+            long_range_recip_disabled: true,
+            // thermo_disabled: false,
+            // baro_disabled: false,
+            // snapshots_during_equilibration: true,
+            ..Default::default()
+        },
         // max_init_relaxation_iters: None,
         ..cfg.clone()
     };

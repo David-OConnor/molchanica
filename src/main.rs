@@ -66,7 +66,7 @@ fn main() {
     #[cfg(feature = "cuda")]
     let (dev, kernel_reflections) = util::get_computation_device();
 
-    // let dev = ComputationDevice::Cpu;
+    // let dev = dynamics::ComputationDevice::Cpu;
 
     #[cfg(target_arch = "x86_64")]
     {

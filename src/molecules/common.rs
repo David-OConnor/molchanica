@@ -3,7 +3,7 @@
 //!
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU32, Ordering},
