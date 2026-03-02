@@ -366,17 +366,6 @@ pub(in crate::ui) fn query(
                         None,
                     );
 
-                    // // todo temp
-                    // println!("\n  Loaded SMILES atoms:  \n");
-                    // for a in &mol.common.atoms {
-                    //     println!("-{a}");
-                    // }
-                    //
-                    // println!("\n  Loaded SMILES bonds:  \n");
-                    // for b in &mol.common.bonds {
-                    //     println!("-{b:?}");
-                    // }
-
                     open_lig_from_input(state, mol, scene, updates);
                     redraw.ligand = true;
                 }

@@ -20,6 +20,7 @@ use na_seq::{
     Element::{Carbon, Hydrogen},
 };
 
+use crate::cam::{move_cam_to_active_mol, move_cam_to_mol};
 use crate::{
     bond_inference::create_hydrogen_bonds_two_mols,
     drawing::{
@@ -531,8 +532,30 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
 }
 
 // todo: Into a GUI util?
-pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
+pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     state.volatile.operating_mode = OperatingMode::Primary;
+
+    scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
+
+    // Update the orbit center
+    if let Some(i) = state.mol_editor.mol_i_in_state
+        && let Some(mol) = &state.ligands.get(i)
+    {
+        // This handles cam posit and orbit center.
+        move_cam_to_mol(
+            &mol.common,
+            MolType::Ligand,
+            i,
+            &mut None,
+            scene,
+            &mut state.volatile.active_mol,
+            Vec3::new_zero(),
+            updates,
+        )
+    } else {
+        scene.camera = state.volatile.primary_mode_cam.clone();
+        state.volatile.orbit_center = state.volatile.orbit_center_prev;
+    }
 
     state.mol_editor.md.md = None;
     state.mol_editor.md.running = false;
@@ -540,11 +563,6 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut
     state.mol_editor.pocket_i_in_state = None;
 
     state.volatile.mol_manip.mode = ManipMode::None;
-
-    scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
-    state.volatile.orbit_center = state.volatile.orbit_center_prev;
-
-    scene.camera = state.volatile.primary_mode_cam.clone();
 
     // Load all primary molecules into the engine.
     draw_peptide(state, scene);
@@ -554,8 +572,8 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut
 
     set_flashlight(scene);
 
-    engine_updates.entities = EntityUpdate::All;
-    engine_updates.lighting = true;
+    updates.entities = EntityUpdate::All;
+    updates.lighting = true;
 }
 
 // todo: Move to drawing_wrappers?

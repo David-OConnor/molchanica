@@ -681,10 +681,14 @@ fn alignment(
         // draw_all_ligs(state, scene);
         // engine_updates.entities = EntityUpdate::All; // todo: Just ligs.
 
+        let i_mol = state.volatile.alignment.mols_to_align[0];
         move_cam_to_mol(
-            &state.ligands[state.volatile.alignment.mols_to_align[0]].common,
+            &state.ligands[i_mol].common,
+            MolType::Ligand,
+            i_mol,
             &mut state.ui.cam_snapshot,
             scene,
+            &mut state.volatile.orbit_center,
             Vec3::new_zero(),
             engine_updates,
         )

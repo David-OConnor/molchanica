@@ -3,11 +3,13 @@ use std::sync::atomic::Ordering;
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
+use lin_alg::f64::Vec3;
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
+use crate::cam::move_cam_to_active_mol;
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
@@ -359,6 +361,13 @@ pub(in crate::ui) fn editor(
                     state.ligands[mol_i].common.reset_posits();
 
                     state.ligands[mol_i].update_characterization();
+
+                    // We've reset the positions, so reset the camera. And update the prev,
+                    // so exiting doesn't override it.
+                    // move_cam_to_active_mol(state, scene, Vec3::new_zero(), updates);
+                    // state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
+                    // state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
+
 
                 exit_edit_mode(state, scene, updates);
             }

@@ -1,7 +1,4 @@
-use egui::Ui;
-use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
-use lin_alg::f32::{Quaternion, Vec3};
-
+use crate::molecules::MolType;
 use crate::{
     molecules::{
         MoleculePeptide, common::MoleculeCommon, lipid::MoleculeLipid,
@@ -11,6 +8,9 @@ use crate::{
     selection::Selection,
     state::{State, StateUi},
 };
+use egui::Ui;
+use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
+use lin_alg::f32::{Quaternion, Vec3};
 
 // This control the clip planes in the camera frustum.
 pub const RENDER_DIST_NEAR: f32 = 0.2;
@@ -95,8 +95,11 @@ pub fn cam_reset_controls(
 
 pub fn move_cam_to_mol(
     mol: &MoleculeCommon,
+    mol_type: MolType,
+    mol_i: usize,
     cam_snapshot: &mut Option<usize>,
     scene: &mut Scene,
+    orbit_center: &mut Option<(MolType, usize)>,
     look_to_beyond: lin_alg::f64::Vec3,
     engine_updates: &mut EngineUpdates,
 ) {
@@ -114,8 +117,7 @@ pub fn move_cam_to_mol(
     set_flashlight(scene);
     engine_updates.lighting = true;
 
-    // todo: We likely need to set this too?
-    // state.volatile.orbit_center = Some((MolType::Peptide, 0));
+    *orbit_center = Some((mol_type, mol_i));
     if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
         *center = mol.centroid().into();
     }
@@ -132,19 +134,26 @@ pub fn move_cam_to_active_mol(
 ) {
     // This avoids a double borrow.
     let mut cam_ss = state.ui.cam_snapshot;
+
+    let mut oc_copy = state.volatile.orbit_center;
     let Some(mol) = &mut state.active_mol() else {
         return;
     };
 
     move_cam_to_mol(
         mol.common(),
+        mol.mol_type(),
+        state.volatile.active_mol.unwrap().1,
         &mut cam_ss,
         scene,
+        &mut oc_copy,
         look_to_beyond,
         engine_updates,
     );
 
     state.ui.cam_snapshot = cam_ss;
+
+    state.volatile.orbit_center = oc_copy;
 }
 
 const MOVE_TO_TARGET_DIST: f32 = 15.;

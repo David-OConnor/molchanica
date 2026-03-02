@@ -118,7 +118,16 @@ fn mol_picker_one(
                         pep_center
                     };
                     // Setting mol center to 0 if no mol.
-                    move_cam_to_mol(mol, cam_snapshot, scene, beyond, engine_updates)
+                    move_cam_to_mol(
+                        mol,
+                        mol_type,
+                        i_mol,
+                        cam_snapshot,
+                        scene,
+                        orbit_center,
+                        beyond,
+                        engine_updates,
+                    )
                 }
 
                 let row_h = ui.spacing().interact_size.y;
