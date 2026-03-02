@@ -20,9 +20,9 @@ use na_seq::{
     Element::{Carbon, Hydrogen},
 };
 
-use crate::cam::{move_cam_to_active_mol, move_cam_to_mol};
 use crate::{
     bond_inference::create_hydrogen_bonds_two_mols,
+    cam::{move_cam_to_active_mol, move_cam_to_mol},
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
         atoms_bonds::{

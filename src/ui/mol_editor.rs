@@ -9,9 +9,8 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
-use crate::cam::move_cam_to_active_mol;
 use crate::{
-    cam::cam_reset_controls,
+    cam::{cam_reset_controls, move_cam_to_active_mol},
     drawing::MoleculeView,
     mol_editor,
     mol_editor::{
@@ -298,7 +297,7 @@ pub(in crate::ui) fn editor(
         }
 
         if ui.button("Cleanup geom")
-            .on_hover_text("Relax geometry; adjust atom positions to minimize energy, based on a standard small-molecule force field.")
+            .on_hover_text("A fast, analytic approach to fixing unphysical geometry.")
             .clicked() {
             state.mol_editor.mol.common.cleanup_geometry();
             redraw = true;

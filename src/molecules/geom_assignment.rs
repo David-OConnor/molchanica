@@ -88,8 +88,91 @@ impl MoleculeCommon {
         self.reset_posits();
     }
 
-    /// Geometry cleanup for the editor: syncs atom_posits from atom.posit.
+    /// Geometry cleanup for the editor.
+    ///
+    /// Less aggressive than `assign_posits`: existing positions are kept whenever
+    /// the local geometry is physically reasonable.  Only atoms whose bonds to *all*
+    /// neighbours are significantly wrong (outside `[LO, HI] × expected`) are
+    /// considered "floating" and re-placed via BFS from the well-placed atoms that
+    /// surround them.
+    ///
+    /// Typical trigger: the user dragged one atom in the editor, leaving that atom
+    /// far from its neighbours while everything else is fine.
+    ///
+    /// Falls back to a full `assign_posits` when no atom can serve as an anchor
+    /// (e.g. all atoms freshly added without positions).
     pub fn cleanup_geometry(&mut self) {
+        let n = self.atoms.len();
+        if n == 0 {
+            return;
+        }
+
+        // Fraction-of-expected-bond-length range we consider "reasonable".
+        // Generous enough not to disturb minor editor distortions, strict enough
+        // to catch atoms that have been dragged far from their neighbours.
+        const LO: f64 = 0.4;
+        const HI: f64 = 2.5;
+
+        // Build per-atom anchor flags.
+        // An atom is anchored (kept in place) if at least one of its bonds is
+        // within [LO, HI] × expected length.  Isolated atoms (no bonds) are
+        // always anchored.  Atoms with *all* bonds outside the range are floating
+        // and will be re-placed by the BFS pass below.
+        let anchored: Vec<bool> = (0..n)
+            .map(|i| {
+                let mut any_ok = false;
+                let mut has_bond = false;
+
+                for b in &self.bonds {
+                    let j = if b.atom_0 == i {
+                        b.atom_1
+                    } else if b.atom_1 == i {
+                        b.atom_0
+                    } else {
+                        continue;
+                    };
+                    has_bond = true;
+
+                    let expected = estimate_bond_length(
+                        self.atoms[i].element,
+                        self.atoms[j].element,
+                        b.bond_type,
+                    );
+                    let actual = (self.atoms[i].posit - self.atoms[j].posit).magnitude();
+
+                    if actual >= expected * LO && actual <= expected * HI {
+                        any_ok = true;
+                        break; // one good bond is enough
+                    }
+                }
+
+                !has_bond || any_ok // isolated atoms count as anchored
+            })
+            .collect();
+
+        // If nothing is anchored (e.g. a fresh molecule where every atom sits at
+        // the origin), there are no reference points for a partial BFS repair;
+        // do a full re-assignment instead.
+        let any_anchored = anchored.iter().any(|&a| a);
+        if !any_anchored {
+            self.assign_posits();
+            return;
+        }
+
+        // BFS from all anchored atoms.  Floating atoms (positioned = false) are
+        // re-placed using the same geometry logic as assign_posits; anchored atoms
+        // (positioned = true from the start) are never moved.
+        let mut positioned = anchored.clone();
+        let mut queue: VecDeque<usize> = (0..n).filter(|&i| anchored[i]).collect();
+
+        bfs_place_substituents(
+            &mut queue,
+            &mut self.atoms,
+            &mut positioned,
+            &self.bonds,
+            &self.adjacency_list,
+        );
+
         self.reset_posits();
     }
 }

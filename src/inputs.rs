@@ -445,13 +445,14 @@ fn handle_physical_key(
     code: KeyCode,
     key_state: ElementState,
 ) -> bool {
+    let op_mode = state.volatile.operating_mode;
     match key_state {
         ElementState::Pressed => {
             match code {
                 KeyCode::ArrowLeft => {
                     cycle_selected(state, scene, true);
 
-                    match state.volatile.operating_mode {
+                    match op_mode {
                         OperatingMode::Primary => match state.ui.selection {
                             Selection::AtomPeptide(_)
                             | Selection::Residue(_)
@@ -475,7 +476,7 @@ fn handle_physical_key(
                 KeyCode::ArrowRight => {
                     cycle_selected(state, scene, false);
 
-                    match state.volatile.operating_mode {
+                    match op_mode {
                         OperatingMode::Primary => match state.ui.selection {
                             Selection::AtomPeptide(_)
                             | Selection::Residue(_)
@@ -511,28 +512,7 @@ fn handle_physical_key(
                             state.volatile.mol_manip.mode,
                             updates,
                         );
-
-                        //
-                        // // Exit manip mode.
-                        // state.volatile.mol_manip.mode = ManipMode::None;
-                        // state.volatile.mol_manip.pivot = None;
-                        // scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
-                        //
-                        // // Clean up things, e.g. for moving the pocket to command its mesh
-                        // // to rebuild. Note required for most other things.
-                        // // c+p from set_manip to regen the pocket mesh and volume if exiting
-                        // // manip through the esc key.
-                        // if let Some((mol_type, i)) = state.volatile.active_mol
-                        //     && mol_type == MolType::Pocket
-                        // {
-                        //     state.pockets[i].regen_mesh_vol(&mut scene.meshes, updates);
-                        //     redraw.pocket = true;
-                        // }
-                        //
-                        // if state.volatile.operating_mode == OperatingMode::MolEditor {
-                        //     sync_md(state);
-                        // }
-                    } else {
+                    } else if state.volatile.operating_mode != OperatingMode::Primary {
                         // Unselect everything.
                         state.ui.selection = Selection::None;
                         state.volatile.active_mol = None;
@@ -552,7 +532,7 @@ fn handle_physical_key(
                         updates,
                     );
                 }
-                KeyCode::BracketLeft => match state.volatile.operating_mode {
+                KeyCode::BracketLeft => match op_mode {
                     OperatingMode::Primary => {
                         state.ui.mol_view = state.ui.mol_view.prev();
 
@@ -564,7 +544,7 @@ fn handle_physical_key(
                     }
                     OperatingMode::ProteinEditor => (),
                 },
-                KeyCode::BracketRight => match state.volatile.operating_mode {
+                KeyCode::BracketRight => match op_mode {
                     OperatingMode::Primary => {
                         state.ui.mol_view = state.ui.mol_view.next();
 
@@ -576,7 +556,7 @@ fn handle_physical_key(
                     }
                     OperatingMode::ProteinEditor => (),
                 },
-                KeyCode::Semicolon => match state.volatile.operating_mode {
+                KeyCode::Semicolon => match op_mode {
                     OperatingMode::Primary => {
                         state.ui.view_sel_level = state.ui.view_sel_level.prev();
 
@@ -588,7 +568,7 @@ fn handle_physical_key(
                     }
                     OperatingMode::ProteinEditor => (),
                 },
-                KeyCode::Quote => match state.volatile.operating_mode {
+                KeyCode::Quote => match op_mode {
                     OperatingMode::Primary => {
                         state.ui.view_sel_level = state.ui.view_sel_level.next();
 
@@ -601,12 +581,17 @@ fn handle_physical_key(
                     OperatingMode::ProteinEditor => (),
                 },
                 KeyCode::KeyM => {
-                    let mol_type = match state.active_mol() {
-                        Some(m) => m.mol_type(),
-                        None => return true,
+                    let mol_type = if op_mode == OperatingMode::MolEditor {
+                        MolType::Ligand
+                    } else {
+                        match state.active_mol() {
+                            Some(m) => m.mol_type(),
+                            None => return true,
+                        }
                     };
 
                     let mut rebuild_md_editor = false;
+
                     set_manip(
                         state,
                         scene,
@@ -629,7 +614,7 @@ fn handle_physical_key(
                     let mut rebuild_md_editor = false;
 
                     let mut skip = false;
-                    if state.volatile.operating_mode == OperatingMode::MolEditor {
+                    if op_mode == OperatingMode::MolEditor {
                         if let Selection::BondLig((_, i)) = state.ui.selection {
                             let bond = &state.mol_editor.mol.common.bonds[i];
                             if bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
@@ -653,7 +638,7 @@ fn handle_physical_key(
                     }
                 }
                 KeyCode::Delete => {
-                    match state.volatile.operating_mode {
+                    match op_mode {
                         OperatingMode::Primary => {
                             // Close the active mol?
                             if let Some((mol_type, i)) = state.volatile.active_mol {
@@ -678,7 +663,7 @@ fn handle_physical_key(
                 }
                 KeyCode::Tab => {
                     // todo: This is DRY/mostly C+P from the add atom button.
-                    if state.volatile.operating_mode == OperatingMode::MolEditor {
+                    if op_mode == OperatingMode::MolEditor {
                         let (_mol_i, atom_sel_i) = match &state.ui.selection {
                             Selection::AtomLig((mol_i, i)) => (*mol_i, *i),
                             Selection::AtomsLig((mol_i, i)) => {
@@ -841,7 +826,9 @@ fn post_event_cleanup(
     redraw_mol_editor: bool,
     updates: &mut EngineUpdates,
 ) {
-    if redraw.peptide && state.volatile.operating_mode == OperatingMode::Primary {
+    let op_mode = state.volatile.operating_mode;
+
+    if redraw.peptide && op_mode == OperatingMode::Primary {
         // todo:This is overkill for certain keys. Just change the color of the one[s] in question, and set update.entities = true.
         drawing::draw_peptide(state, scene);
         updates.entities = EntityUpdate::All;
@@ -849,7 +836,7 @@ fn post_event_cleanup(
     }
 
     if redraw.ligand {
-        match state.volatile.operating_mode {
+        match op_mode {
             OperatingMode::Primary => wrappers::draw_all_ligs(state, scene),
 
             OperatingMode::MolEditor => {
@@ -865,23 +852,23 @@ fn post_event_cleanup(
         updates.entities = EntityUpdate::All;
     }
 
-    if redraw.na && state.volatile.operating_mode == OperatingMode::Primary {
+    if redraw.na && op_mode == OperatingMode::Primary {
         wrappers::draw_all_nucleic_acids(state, scene);
         updates.entities = EntityUpdate::All;
     }
 
-    if redraw.lipid && state.volatile.operating_mode == OperatingMode::Primary {
+    if redraw.lipid && op_mode == OperatingMode::Primary {
         wrappers::draw_all_lipids(state, scene);
         updates.entities = EntityUpdate::All;
     }
 
-    if redraw.pocket && state.volatile.operating_mode == OperatingMode::Primary {
+    if redraw.pocket && op_mode == OperatingMode::Primary {
         wrappers::draw_all_pockets(state, scene);
         updates.entities = EntityUpdate::All;
     }
 
     if redraw_in_place.ligand {
-        match state.volatile.operating_mode {
+        match op_mode {
             OperatingMode::Primary => {
                 redraw_inplace_helper(MolType::Ligand, state, scene, updates);
             }
@@ -898,20 +885,20 @@ fn post_event_cleanup(
         }
     }
 
-    if redraw_in_place.na && state.volatile.operating_mode == OperatingMode::Primary {
+    if redraw_in_place.na && op_mode == OperatingMode::Primary {
         redraw_inplace_helper(MolType::NucleicAcid, state, scene, updates);
     }
 
-    if redraw_in_place.lipid && state.volatile.operating_mode == OperatingMode::Primary {
+    if redraw_in_place.lipid && op_mode == OperatingMode::Primary {
         redraw_inplace_helper(MolType::Lipid, state, scene, updates);
     }
 
-    if redraw_in_place.pocket && state.volatile.operating_mode == OperatingMode::Primary {
+    if redraw_in_place.pocket && op_mode == OperatingMode::Primary {
         redraw_inplace_helper(MolType::Pocket, state, scene, updates);
         updates.entities.push_class(EntityClass::Pocket as u32);
     }
 
-    if redraw_in_place.pocket && state.volatile.operating_mode == OperatingMode::MolEditor {
+    if redraw_in_place.pocket && op_mode == OperatingMode::MolEditor {
         if let Some(pocket) = &state.mol_editor.mol.pharmacophore.pocket {
             scene
                 .entities

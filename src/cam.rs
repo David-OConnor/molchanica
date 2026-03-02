@@ -1,16 +1,16 @@
-use crate::molecules::MolType;
+use egui::Ui;
+use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
+use lin_alg::f32::{Quaternion, Vec3};
+
 use crate::{
     molecules::{
-        MoleculePeptide, common::MoleculeCommon, lipid::MoleculeLipid,
+        MolType, MoleculePeptide, common::MoleculeCommon, lipid::MoleculeLipid,
         nucleic_acid::MoleculeNucleicAcid, pocket::Pocket, small::MoleculeSmall,
     },
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
     selection::Selection,
     state::{State, StateUi},
 };
-use egui::Ui;
-use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
-use lin_alg::f32::{Quaternion, Vec3};
 
 // This control the clip planes in the camera frustum.
 pub const RENDER_DIST_NEAR: f32 = 0.2;
