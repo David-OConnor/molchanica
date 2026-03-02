@@ -38,6 +38,7 @@ pub const STATIC_ATOM_DIST_THRESH: f64 = 14.;
 // MD steps for a small molecule + water sim.
 const MD_STEPS_PER_APPLICATION_FRAME: usize = 10;
 
+/// For our non-blocking workflow. Run this once an MD run is complete.
 pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     if state.mol_dynamics.is_none() {
         eprintln!("Can't run MD cleanup; MD state is None");
@@ -48,6 +49,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     state.volatile.md_local.start = None;
 
     if let Some(p) = &state.peptide {
+        // todo: Not using the helper as that's not iter_mut()
         let ligs: Vec<_> = state
             .ligands
             .iter_mut()
@@ -109,44 +111,12 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
 
     updates.entities = EntityUpdate::All;
 }
-pub fn build_and_run_dynamics(
-    dev: &ComputationDevice,
-    mols: &[(FfMolType, &MoleculeCommon)],
-    peptide: Option<&MoleculePeptide>,
-    param_set: &FfParamSet,
-    mol_specific_params: &HashMap<String, ForceFieldParams>,
-    cfg: &MdConfig,
-    static_peptide: bool,
-    peptide_only_near_lig: Option<f64>,
-    pep_atom_set: &mut HashSet<(usize, usize)>,
-    md_local: &mut MdStateLocal,
-    md_copies: usize,
-) -> Result<MdState, ParamError> {
-    let md_state = build_dynamics(
-        dev,
-        mols,
-        peptide,
-        param_set,
-        mol_specific_params,
-        cfg,
-        static_peptide,
-        peptide_only_near_lig,
-        pep_atom_set,
-        false,
-        md_copies,
-    )?;
-
-    md_local.start = Some(Instant::now());
-    md_local.running = true;
-
-    Ok(md_state)
-}
 
 /// Filter out hetero atoms, and if necessary, atoms not close to a ligand.
 pub fn filter_peptide_atoms(
     set: &mut HashSet<(usize, usize)>,
     pep: &MoleculePeptide,
-    mols_non_pep: &[(FfMolType, &MoleculeCommon)],
+    mols_non_pep: &[(FfMolType, &MoleculeCommon, usize)],
     only_near_lig: Option<f64>,
 ) -> Vec<AtomGeneric> {
     *set = HashSet::new();
@@ -183,12 +153,42 @@ pub fn filter_peptide_atoms(
         .collect()
 }
 
-/// Set up MD for selected molecules.
+fn add_copies(mols: &mut Vec<MolDynamics>, mol: &MolDynamics, copies: usize) {
+    let offset_dirs = [X_VEC, -X_VEC, Y_VEC, -Y_VEC, Z_VEC, -Z_VEC];
+    // todo: Dedicated fn for this?
+    let offset_amt = 10.; // todo: Should depend on the mol.
+    // todo: This produces atoms in a plus configuration; not a grid! Sloppy proxy..\
+    let mut amt_i = 1; // Used to scale the distance.
+
+    for i in 0..copies {
+        let mut mol_extra = mol.clone();
+
+        let offset = offset_dirs[i % 6] * offset_amt * (amt_i + 1) as f64;
+        for atom in &mut mol_extra.atoms {
+            atom.posit += offset;
+        }
+        // todo: Sort out how to do this position properly. Grid?
+
+        // todo: Similar algorithm to how you set up water molecules; same idea.
+        mols.push(mol_extra);
+
+        if i != 0 && i.is_multiple_of(6) {
+            amt_i += 1;
+        }
+    }
+}
+
+/// Set up MD for selected molecules. A general purpose wrapper around `dynamics` API, for
+/// use in this application. Concerts molecules, atoms, and bonds into the bio_files format
+/// `dynamics` expects as input.
+///
+/// Sets up peptide-specific settings A/R.
 ///
 /// If `fast_init` is set, the water solvent, and relaxation are skipped.
 pub fn build_dynamics(
     dev: &ComputationDevice,
-    mols_in: &[(FfMolType, &MoleculeCommon)],
+    // Last part is number of copies.
+    mols_in: &[(FfMolType, &MoleculeCommon, usize)],
     peptide: Option<&MoleculePeptide>,
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
@@ -197,7 +197,6 @@ pub fn build_dynamics(
     mut peptide_only_near_lig: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
     fast_init: bool,
-    copies: usize,
 ) -> Result<MdState, ParamError> {
     println!("Setting up dynamics...");
 
@@ -208,7 +207,7 @@ pub fn build_dynamics(
 
     let mut mols = Vec::new();
 
-    for (ff_mol_type, mol) in mols_in {
+    for (ff_mol_type, mol, copies) in mols_in {
         if !mol.selected_for_md {
             continue;
         }
@@ -241,37 +240,10 @@ pub fn build_dynamics(
             mol_specific_params: msp,
         };
 
-        let mut mol_copy = None;
-        if copies > 1 {
-            mol_copy = Some(mol.clone());
-
-            // todo: Adjust the mol's position A/R.
-        }
-
-        mols.push(mol);
-
-        if copies > 1 && *ff_mol_type == FfMolType::SmallOrganic {
-            let offset_dirs = [X_VEC, -X_VEC, Y_VEC, -Y_VEC, Z_VEC, -Z_VEC];
-            // todo: Dedicated fn for this?
-            let offset_amt = 10.; // todo: Should depend on the mol.
-            // todo: This produces atoms in a plus configuration; not a grid! Sloppy proxy..\
-            let mut amt_i = 1; // Used to scale the distance.
-            for i in 0..copies - 1 {
-                let mut mol_extra = mol_copy.clone().unwrap();
-
-                let offset = offset_dirs[i % 6] * offset_amt * (amt_i + 1) as f64;
-                for atom in &mut mol_extra.atoms {
-                    atom.posit += offset;
-                }
-                // todo: Sort out how to do this position properly. Grid?
-
-                // todo: Similar algorithm to how you set up water molecules; same idea.
-                mols.push(mol_extra);
-
-                if i != 0 && i.is_multiple_of(6) {
-                    amt_i += 1;
-                }
-            }
+        if *copies > 1 && *ff_mol_type == FfMolType::SmallOrganic {
+            add_copies(&mut mols, &mol, *copies);
+        } else {
+            mols.push(mol);
         }
     }
 
@@ -333,7 +305,12 @@ pub fn build_dynamics(
 }
 
 /// Run the dynamics in one go. Blocking.
-pub fn run_dynamics(md_state: &mut MdState, dev: &ComputationDevice, dt: f32, n_steps: usize) {
+pub fn run_dynamics_blocking(
+    md_state: &mut MdState,
+    dev: &ComputationDevice,
+    dt: f32,
+    n_steps: usize,
+) {
     if n_steps == 0 {
         return;
     }
@@ -350,6 +327,7 @@ pub fn run_dynamics(md_state: &mut MdState, dev: &ComputationDevice, dt: f32, n_
 
         md_state.step(dev, dt, None);
     }
+
     println!(
         "\nMD computation time: {}",
         md_state.computation_time().unwrap()
@@ -534,53 +512,16 @@ impl State {
     }
 }
 
-/// Called directly from the UI;
+/// Called directly from the UI; non-blocking if run = false. E.g., can launch here to load to state,
+/// then call `md_step`.
 pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
     // Filter molecules for docking by if they're selected.
     // mut so we can move their posits in the initial snapshot change.
-    let ligs: Vec<_> = state
-        .ligands
-        .iter()
-        .filter(|l| l.common.selected_for_md)
-        .collect();
 
-    let lipids: Vec<_> = state
-        .lipids
-        .iter()
-        .filter(|l| l.common.selected_for_md)
-        .collect();
+    // Avoids borrow error.
+    let mut md_pep_sel = state.volatile.md_peptide_selected.clone();
 
-    let nucleic_acids: Vec<_> = state
-        .nucleic_acids
-        .iter()
-        .filter(|l| l.common.selected_for_md)
-        .collect();
-
-    let mut mols = Vec::new();
-    for m in &ligs {
-        mols.push((FfMolType::SmallOrganic, &m.common));
-    }
-    for m in &lipids {
-        mols.push((FfMolType::Lipid, &m.common));
-    }
-    for m in &nucleic_acids {
-        let mol_type = match m.na_type {
-            NucleicAcidType::Dna => FfMolType::Dna,
-            NucleicAcidType::Rna => FfMolType::Rna,
-        };
-        mols.push((mol_type, &m.common));
-    }
-
-    let peptide = match &state.peptide {
-        Some(m) => {
-            if m.common.selected_for_md {
-                Some(m)
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
+    let (mols, peptide) = get_mols_sel_for_md(&state);
 
     let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
         Some(STATIC_ATOM_DIST_THRESH)
@@ -588,105 +529,47 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         None
     };
 
-    if run {
-        match build_and_run_dynamics(
-            &state.dev,
-            &mols,
-            peptide,
-            &state.ff_param_set,
-            &state.mol_specific_params,
-            &state.to_save.md_config,
-            state.ui.md.peptide_static,
-            near_lig_thresh,
-            &mut state.volatile.md_peptide_selected,
-            &mut state.volatile.md_local,
-            state.to_save.num_md_copies,
-        ) {
-            Ok(md) => {
-                state.mol_dynamics = Some(md);
+    match build_dynamics(
+        &state.dev,
+        &mols,
+        peptide,
+        &state.ff_param_set,
+        &state.mol_specific_params,
+        &state.to_save.md_config,
+        state.ui.md.peptide_static,
+        near_lig_thresh,
+        &mut md_pep_sel,
+        fast_init,
+    ) {
+        Ok(md) => {
+            state.mol_dynamics = Some(md);
+
+            if run {
+                state.volatile.md_local.start = Some(Instant::now());
+                state.volatile.md_local.running = true;
             }
-            Err(e) => handle_err(&mut state.ui, e.descrip),
         }
-    } else {
-        match build_dynamics(
-            &state.dev,
-            &mols,
-            peptide,
-            &state.ff_param_set,
-            &state.mol_specific_params,
-            &state.to_save.md_config,
-            state.ui.md.peptide_static,
-            near_lig_thresh,
-            &mut state.volatile.md_peptide_selected,
-            fast_init,
-            state.to_save.num_md_copies,
-        ) {
-            Ok(md) => {
-                state.mol_dynamics = Some(md);
-            }
-            Err(e) => handle_err(&mut state.ui, e.descrip),
-        }
+        Err(e) => handle_err(&mut state.ui, e.descrip),
     }
+
+    state.volatile.md_peptide_selected = md_pep_sel;
 }
 
-/// Called directly from the UI;
+/// Called directly from the UI; computes energy.
 pub fn launch_md_energy_computation(
     state: &State,
     pep_atom_set: &mut HashSet<(usize, usize)>,
 ) -> Result<Snapshot, ParamError> {
     // todo: DRY with the primary MD run.
-    let ligs: Vec<_> = state
-        .ligands
-        .iter()
-        .filter(|l| l.common.selected_for_md)
-        .collect();
-
-    let lipids: Vec<_> = state
-        .lipids
-        .iter()
-        .filter(|l| l.common.selected_for_md)
-        .collect();
-
-    let nucleic_acids: Vec<_> = state
-        .nucleic_acids
-        .iter()
-        .filter(|l| l.common.selected_for_md)
-        .collect();
-
-    let mut mols_in = Vec::new();
-    for m in &ligs {
-        mols_in.push((FfMolType::SmallOrganic, &m.common));
-    }
-    for m in &lipids {
-        mols_in.push((FfMolType::Lipid, &m.common));
-    }
-    for m in &nucleic_acids {
-        let mol_type = match m.na_type {
-            NucleicAcidType::Dna => FfMolType::Dna,
-            NucleicAcidType::Rna => FfMolType::Rna,
-        };
-        mols_in.push((mol_type, &m.common));
-    }
-
-    let peptide = match &state.peptide {
-        Some(m) => {
-            if m.common.selected_for_md {
-                Some(m)
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
-
-    // todo: DRY with `build_dynamics`
+    let (mols_in, peptide) = get_mols_sel_for_md(state);
 
     let mut mols = Vec::new();
 
-    for (ff_mol_type, mol) in &mols_in {
+    for (ff_mol_type, mol, count) in &mols_in {
         let atoms_gen: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
         let bonds_gen: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
 
+        // todo: Handle count here A/R.
         let msp = match state.mol_specific_params.get(&mol.ident) {
             Some(v) => Some(v.clone()),
             None => {
@@ -745,4 +628,62 @@ pub fn launch_md_energy_computation(
     }
 
     compute_energy_snapshot(&state.dev, &mols, &state.ff_param_set)
+}
+
+/// A helper to reduce repetition
+fn get_mols_sel_for_md(
+    state: &State,
+) -> (
+    Vec<(FfMolType, &MoleculeCommon, usize)>,
+    Option<&MoleculePeptide>,
+) {
+    let ligs: Vec<_> = state
+        .ligands
+        .iter()
+        .filter(|l| l.common.selected_for_md)
+        .collect();
+
+    let lipids: Vec<_> = state
+        .lipids
+        .iter()
+        .filter(|l| l.common.selected_for_md)
+        .collect();
+
+    let nucleic_acids: Vec<_> = state
+        .nucleic_acids
+        .iter()
+        .filter(|l| l.common.selected_for_md)
+        .collect();
+
+    let mut mols_in = Vec::new();
+    for m in &ligs {
+        mols_in.push((
+            FfMolType::SmallOrganic,
+            &m.common,
+            state.to_save.num_md_copies,
+        ));
+    }
+    for m in &lipids {
+        mols_in.push((FfMolType::Lipid, &m.common, 1));
+    }
+    for m in &nucleic_acids {
+        let mol_type = match m.na_type {
+            NucleicAcidType::Dna => FfMolType::Dna,
+            NucleicAcidType::Rna => FfMolType::Rna,
+        };
+        mols_in.push((mol_type, &m.common, 1));
+    }
+
+    let peptide = match &state.peptide {
+        Some(m) => {
+            if m.common.selected_for_md {
+                Some(m)
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    (mols_in, peptide)
 }

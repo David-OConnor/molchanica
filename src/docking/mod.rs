@@ -17,7 +17,7 @@ use graphics::{EngineUpdates, Scene};
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
 
 use crate::{
-    md::{filter_peptide_atoms, post_run_cleanup, run_dynamics},
+    md::{filter_peptide_atoms, post_run_cleanup, run_dynamics_blocking},
     molecules::{MoleculePeptide, small::MoleculeSmall},
     state::State,
 };
@@ -143,7 +143,7 @@ pub fn dock(
     // todo: You need a binding energy computation each step.
 
     // Blocking for now.
-    run_dynamics(&mut md_state, &state.dev, dt, n_steps);
+    run_dynamics_blocking(&mut md_state, &state.dev, dt, n_steps);
 
     state.mol_dynamics = Some(md_state);
     // This cleanup fn requires state mol dynamics to be loaded.
@@ -246,7 +246,7 @@ fn build_dynamics_docking(
     let _ = filter_peptide_atoms(
         &mut pep_set_near,
         pep,
-        &[(FfMolType::SmallOrganic, &mol.common)],
+        &[(FfMolType::SmallOrganic, &mol.common, 1)],
         Some(near_lig_thresh),
     );
 
