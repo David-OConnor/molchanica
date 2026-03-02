@@ -138,21 +138,6 @@ pub fn event_dev_handler(
 
                 set_flashlight(scene);
                 updates.lighting = true;
-
-                // todo: Experimenting
-                // unsafe {
-                //     I_FIND_NEAREST += 1;
-                //     if I_FIND_NEAREST.is_multiple_of(RATIO_FIND_NEAREST) {
-                //         state_.volatile.nearest_mol_dist_to_cam =
-                //             find_nearest_mol_dist_to_cam(state_, &scene.camera);
-                //
-                //         if let Some(dist) = state_.volatile.nearest_mol_dist_to_cam {
-                //
-                //             let dist = max(dist as u16 + FOG_HALF_DEPTH/2 - 5, 5);
-                //             set_fog_dist(&mut scene.camera, dist);
-                //         }
-                //     }
-                // }
             }
         }
         _ => (),

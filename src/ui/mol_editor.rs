@@ -3,7 +3,6 @@ use std::sync::atomic::Ordering;
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
-use lin_alg::f64::Vec3;
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
@@ -19,7 +18,7 @@ use crate::{
         templates::Template,
     },
     mol_manip,
-    mol_manip::ManipMode,
+    mol_manip::{ManipMode, set_manip},
     molecules::{Bond, MolIdent, MolType, small::MoleculeSmall},
     render::MESH_POCKET_START,
     selection::{Selection, ViewSelLevel},
@@ -51,8 +50,6 @@ const DT_MAX: f32 = 0.0001; // No more than 0.002 for stability. currently 0.5fs
 const MAX_RELAX_ITERS: usize = 300;
 
 fn change_el_button(
-    // atoms: &mut [Atom],
-    // editor: &mut MolEditorState,
     sel: &Selection,
     el: Element,
     ui: &mut Ui,
@@ -299,6 +296,16 @@ pub(in crate::ui) fn editor(
         if ui.button("Cleanup geom")
             .on_hover_text("A fast, analytic approach to fixing unphysical geometry.")
             .clicked() {
+
+            set_manip(
+                state,
+                scene,
+                &mut Default::default(),
+                &mut false,
+                ManipMode::None,
+                updates
+            );
+
             state.mol_editor.mol.common.cleanup_geometry();
             redraw = true;
         }
@@ -306,6 +313,16 @@ pub(in crate::ui) fn editor(
         if ui.button("Relax")
             .on_hover_text("Relax geometry; adjust atom positions to minimize energy, based on a standard small-molecule force field.")
             .clicked() {
+
+            set_manip(
+                state,
+                scene,
+                &mut Default::default(),
+                &mut false,
+                ManipMode::None,
+                updates
+            );
+
             if state.mol_editor.md.md.is_none() {
                 match mol_editor::build_dynamics(
                     &state.dev,
@@ -351,21 +368,21 @@ pub(in crate::ui) fn editor(
                 .clicked()
             {
                 state.mol_editor.mol.common.reassign_sns();
-                    // Load the edited molecule back into the state.
-                    state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
-                    state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
-                    state.ligands[mol_i].pharmacophore = state.mol_editor.mol.pharmacophore.clone();
+                // Load the edited molecule back into the state.
+                state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
+                state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
+                state.ligands[mol_i].pharmacophore = state.mol_editor.mol.pharmacophore.clone();
 
-                    state.ligands[mol_i].common.build_adjacency_list();
-                    state.ligands[mol_i].common.reset_posits();
+                state.ligands[mol_i].common.build_adjacency_list();
+                state.ligands[mol_i].common.reset_posits();
 
-                    state.ligands[mol_i].update_characterization();
+                state.ligands[mol_i].update_characterization();
 
-                    // We've reset the positions, so reset the camera. And update the prev,
-                    // so exiting doesn't override it.
-                    // move_cam_to_active_mol(state, scene, Vec3::new_zero(), updates);
-                    // state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
-                    // state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
+                // We've reset the positions, so reset the camera. And update the prev,
+                // so exiting doesn't override it.
+                // move_cam_to_active_mol(state, scene, Vec3::new_zero(), updates);
+                // state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
+                // state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
 
 
                 exit_edit_mode(state, scene, updates);

@@ -91,10 +91,10 @@ impl MoleculeCommon {
     /// Geometry cleanup for the editor.
     ///
     /// Less aggressive than `assign_posits`: existing positions are kept whenever
-    /// the local geometry is physically reasonable.  Only atoms whose bonds to *all*
-    /// neighbours are significantly wrong (outside `[LO, HI] × expected`) are
-    /// considered "floating" and re-placed via BFS from the well-placed atoms that
-    /// surround them.
+    /// the local geometry is physically reasonable.  An atom is considered "floating"
+    /// (needs re-placement) when a majority of its bonds are outside
+    /// `[0.6 × expected, 1.5 × expected]`.  Floating atoms are re-placed via BFS
+    /// from the anchored atoms that surround them.
     ///
     /// Typical trigger: the user dragged one atom in the editor, leaving that atom
     /// far from its neighbours while everything else is fine.
@@ -107,21 +107,26 @@ impl MoleculeCommon {
             return;
         }
 
-        // Fraction-of-expected-bond-length range we consider "reasonable".
-        // Generous enough not to disturb minor editor distortions, strict enough
-        // to catch atoms that have been dragged far from their neighbours.
-        const LO: f64 = 0.4;
-        const HI: f64 = 2.5;
+        // Acceptable bond-length window, as a fraction of the estimated ideal.
+        // Tighter than a pure fallback-to-assign_posits call: bonds within ±40-50%
+        // of expected are kept; anything further out is flagged as wrong.
+        const LO: f64 = 0.6; // shorter than 60 % of expected → clearly too close
+        const HI: f64 = 1.5; // longer  than 150 % of expected → clearly stretched
 
         // Build per-atom anchor flags.
-        // An atom is anchored (kept in place) if at least one of its bonds is
-        // within [LO, HI] × expected length.  Isolated atoms (no bonds) are
-        // always anchored.  Atoms with *all* bonds outside the range are floating
-        // and will be re-placed by the BFS pass below.
+        //
+        // An atom is *anchored* (kept in place) when at least half of its bonds
+        // are within [LO, HI] × expected.  The "half" threshold is generous enough
+        // to keep a correctly-placed atom that happens to have one bad bond (e.g.
+        // its neighbour was dragged), while still marking an atom whose *majority*
+        // of bonds are wrong as floating.
+        //
+        // Isolated atoms (no bonds) are always anchored — there is no geometric
+        // evidence to move them.
         let anchored: Vec<bool> = (0..n)
             .map(|i| {
-                let mut any_ok = false;
-                let mut has_bond = false;
+                let mut ok = 0usize;
+                let mut total = 0usize;
 
                 for b in &self.bonds {
                     let j = if b.atom_0 == i {
@@ -131,7 +136,7 @@ impl MoleculeCommon {
                     } else {
                         continue;
                     };
-                    has_bond = true;
+                    total += 1;
 
                     let expected = estimate_bond_length(
                         self.atoms[i].element,
@@ -141,12 +146,12 @@ impl MoleculeCommon {
                     let actual = (self.atoms[i].posit - self.atoms[j].posit).magnitude();
 
                     if actual >= expected * LO && actual <= expected * HI {
-                        any_ok = true;
-                        break; // one good bond is enough
+                        ok += 1;
                     }
                 }
 
-                !has_bond || any_ok // isolated atoms count as anchored
+                // Anchored if isolated OR at least half its bonds look reasonable.
+                total == 0 || ok * 2 >= total
             })
             .collect();
 
