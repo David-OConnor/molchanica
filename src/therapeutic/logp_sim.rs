@@ -168,6 +168,8 @@ pub fn run_dynamics_logp(
     let n_steps = 500;
     run_dynamics_blocking(&mut md, &state.dev, dt, n_steps);
 
+    state.mol_dynamics = Some(md); // todo: Required to visualize?
+
     post_run_cleanup(state, scene, updates);
 
     Ok(0.)

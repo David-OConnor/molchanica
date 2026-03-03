@@ -4,7 +4,7 @@ use std::{
     time::Instant,
 };
 
-use bio_apis::{pubchem::find_cids_from_search, rcsb};
+use bio_apis::rcsb;
 use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
     Color32, ComboBox, Context, Key, RichText, Slider, TextEdit, TextFormat, TextStyle,
@@ -25,16 +25,14 @@ use crate::{
     cli,
     cli::autocomplete_cli,
     drawing::color_viridis,
-    file_io::{
-        download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
-        gemmi_path,
-    },
+    file_io::{download_mols::load_atom_coords_rcsb, gemmi_path},
     mol_editor::enter_edit_mode,
     molecules::{MolGenericRef, MolIdent},
     prefs::ControlSchemeType,
     render::set_flashlight,
     selection::{Selection, ViewSelLevel},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
+    therapeutic::logp_sim,
     threads::handle_thread_rx,
     ui::{
         misc::section_box,
@@ -42,9 +40,7 @@ use crate::{
         mol_type_tools::mol_type_toolbars,
         orca::orca_input,
         sidebar::sidebar,
-        util::{
-            color_egui_from_f32, handle_redraw, open_lig_from_input, query, update_file_dialogs,
-        },
+        util::{color_egui_from_f32, handle_redraw, query, update_file_dialogs},
         view::{ui_section_vis, view_settings},
     },
     util::{
@@ -1033,6 +1029,26 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     files in a selected folder").clicked() {
                     state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
                 }
+
+                // todo: Temp loc for LogP sim.
+                // This approach avoids a dbl borrow.
+                let small_mol = match state.active_mol() {
+                    Some(MolGenericRef::Small(m)) => Some(m.clone()),
+                    _ => None,
+                };
+
+                if let Some(m) = small_mol {
+                    if ui.button("LogP sim")
+                        .on_hover_text("Estimate LogP by performing a simulation of the molecule \
+                        in water and octanol. Broken/WIP.")
+                        .clicked()
+                    {
+                        match logp_sim::run_dynamics_logp(&m, state, scene, &mut updates) {
+                            Ok(v) => println!("Logp sim result: {v}"),
+                            Err(e) => handle_err(&mut state.ui, format!("Error running the LogP simulation: {e:?}")),
+                        }
+                    }
+                }
             });
         });
         // Prevents the UI from jumping.
@@ -1130,7 +1146,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         // -------UI above; clean-up items (based on flags) below
 
         if close_active_mol && let Some((mol_type, i)) = state.volatile.active_mol {
-                close_mol(mol_type, i, state, scene, &mut updates);
+            close_mol(mol_type, i, state, scene, &mut updates);
         }
 
         if let Err(e) = update_file_dialogs(state, scene, ui, &mut updates) {
@@ -1285,28 +1301,28 @@ pub(crate) fn cam_controls(
                 }
 
                 if arc_active &&ui
-                        .button(
-                            RichText::new("Orbit sel")
-                                .color(misc::active_color(state.ui.orbit_selected_atom)),
-                        )
-                        .on_hover_text("Toggle whether the camera orbits around the selection, or the molecule center.")
-                        .clicked()
-                    {
-                        state.ui.orbit_selected_atom = !state.ui.orbit_selected_atom;
+                    .button(
+                        RichText::new("Orbit sel")
+                            .color(misc::active_color(state.ui.orbit_selected_atom)),
+                    )
+                    .on_hover_text("Toggle whether the camera orbits around the selection, or the molecule center.")
+                    .clicked()
+                {
+                    state.ui.orbit_selected_atom = !state.ui.orbit_selected_atom;
 
-                        let center = orbit_center(state);
-                        scene.input_settings.control_scheme = ControlScheme::Arc { center };
-                    }
+                    let center = orbit_center(state);
+                    scene.input_settings.control_scheme = ControlScheme::Arc { center };
+                }
 
                 ui.add_space(COL_SPACING);
 
                 if state.ui.selection != Selection::None && ui
-                        .button(RichText::new("Cam to sel").color(COLOR_HIGHLIGHT))
-                        .on_hover_text("(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.")
-                        .clicked()
-                    {
-                        move_cam_to_sel(&mut state.ui, &state.peptide, &state.ligands, &state.nucleic_acids,
-                                        &state.lipids, &state.pockets, &mut scene.camera, engine_updates);
+                    .button(RichText::new("Cam to sel").color(COLOR_HIGHLIGHT))
+                    .on_hover_text("(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.")
+                    .clicked()
+                {
+                    move_cam_to_sel(&mut state.ui, &state.peptide, &state.ligands, &state.nucleic_acids,
+                                    &state.lipids, &state.pockets, &mut scene.camera, engine_updates);
                 }
 
                 // if state.volatile.active_mol.is_some() {

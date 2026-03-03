@@ -82,8 +82,8 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     handle_success(&mut state.ui, "MD complete".to_string());
 
     // Tricky behavior here to prevent a dbl-borrow.
-    {
-        let md = state.mol_dynamics.as_ref().unwrap();
+    let md = state.mol_dynamics.as_ref().unwrap();
+    if !md.snapshots.is_empty() {
         let snap = &md.snapshots[0];
 
         draw_water(
@@ -103,6 +103,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         // .unwrap();
         // println!("\n Water init template saved.\n ")
     }
+
     draw_peptide(state, scene);
     // todo: Draw other mols too?
     // draw_mol();
@@ -187,7 +188,7 @@ fn add_copies(mols: &mut Vec<MolDynamics>, mol: &MolDynamics, copies: usize) {
 /// If `fast_init` is set, the water solvent, and relaxation are skipped.
 pub fn build_dynamics(
     dev: &ComputationDevice,
-    // Last part is number of copies.
+    // Last item is number of copies.
     mols_in: &[(FfMolType, &MoleculeCommon, usize)],
     peptide: Option<&MoleculePeptide>,
     param_set: &FfParamSet,
@@ -205,72 +206,14 @@ pub fn build_dynamics(
         peptide_only_near_lig = None;
     }
 
-    let mut mols = Vec::new();
-
-    for (ff_mol_type, mol, copies) in mols_in {
-        if !mol.selected_for_md {
-            continue;
-        }
-
-        let atoms_gen: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
-        let bonds_gen: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
-
-        let msp = match mol_specific_params.get(&mol.ident) {
-            Some(v) => Some(v.clone()),
-            None => {
-                if *ff_mol_type == FfMolType::SmallOrganic {
-                    return Err(ParamError::new(&format!(
-                        "Missing molecule-specific parameters for  {}",
-                        mol.ident
-                    )));
-                }
-                None
-            }
-        };
-
-        let mol = MolDynamics {
-            ff_mol_type: *ff_mol_type,
-            atoms: atoms_gen,
-            atom_posits: Some(mol.atom_posits.clone()),
-            atom_init_velocities: None,
-            bonds: bonds_gen,
-            adjacency_list: Some(mol.adjacency_list.clone()),
-            static_: false,
-            bonded_only: false,
-            mol_specific_params: msp,
-        };
-
-        if *copies > 1 && *ff_mol_type == FfMolType::SmallOrganic {
-            add_copies(&mut mols, &mol, *copies);
-        } else {
-            mols.push(mol);
-        }
-    }
-
-    if let Some(p) = peptide {
-        // We assume hetero atoms are ligands, water etc, and are not part of the protein.
-        // let atoms = filter_peptide_atoms(pep_atom_set, p, ligs, peptide_only_near_lig);
-        let atoms = filter_peptide_atoms(pep_atom_set, p, mols_in, peptide_only_near_lig);
-        println!(
-            "Peptide atom count: {}. Set count: {}",
-            atoms.len(),
-            pep_atom_set.len()
-        );
-
-        let bonds = create_bonds(&atoms);
-
-        mols.push(MolDynamics {
-            ff_mol_type: FfMolType::Peptide,
-            atoms,
-            atom_posits: None,
-            atom_init_velocities: None,
-            bonds,
-            adjacency_list: None,
-            static_: static_peptide,
-            bonded_only: false,
-            mol_specific_params: None,
-        });
-    }
+    let mols = setup_mols_dyn(
+        mols_in,
+        peptide,
+        mol_specific_params,
+        pep_atom_set,
+        static_peptide,
+        peptide_only_near_lig,
+    )?;
 
     // // Uncomment as required for validating individual processes.
     let mut cfg = MdConfig {
@@ -327,11 +270,6 @@ pub fn run_dynamics_blocking(
 
         md_state.step(dev, dt, None);
     }
-
-    println!(
-        "\nMD computation time: {}",
-        md_state.computation_time().unwrap()
-    );
 
     let elapsed = start.elapsed();
     println!(
@@ -560,41 +498,7 @@ pub fn launch_md_energy_computation(
     state: &State,
     pep_atom_set: &mut HashSet<(usize, usize)>,
 ) -> Result<Snapshot, ParamError> {
-    // todo: DRY with the primary MD run.
     let (mols_in, peptide) = get_mols_sel_for_md(state);
-
-    let mut mols = Vec::new();
-
-    for (ff_mol_type, mol, count) in &mols_in {
-        let atoms_gen: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
-        let bonds_gen: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
-
-        // todo: Handle count here A/R.
-        let msp = match state.mol_specific_params.get(&mol.ident) {
-            Some(v) => Some(v.clone()),
-            None => {
-                if *ff_mol_type == FfMolType::SmallOrganic {
-                    return Err(ParamError::new(&format!(
-                        "Missing molecule-specific parameters for  {}",
-                        mol.ident
-                    )));
-                }
-                None
-            }
-        };
-
-        mols.push(MolDynamics {
-            ff_mol_type: *ff_mol_type,
-            atoms: atoms_gen,
-            atom_posits: Some(mol.atom_posits.clone()),
-            atom_init_velocities: None,
-            bonds: bonds_gen,
-            adjacency_list: Some(mol.adjacency_list.clone()),
-            static_: false,
-            bonded_only: false,
-            mol_specific_params: msp,
-        });
-    }
 
     let peptide_only_near_lig = if state.ui.md.peptide_only_near_ligs {
         Some(STATIC_ATOM_DIST_THRESH)
@@ -602,41 +506,37 @@ pub fn launch_md_energy_computation(
         None
     };
 
-    if let Some(p) = peptide {
-        // We assume hetero atoms are ligands, water etc, and are not part of the protein.
-        // let atoms = filter_peptide_atoms(pep_atom_set, p, ligs, peptide_only_near_lig);
-        let atoms = filter_peptide_atoms(pep_atom_set, p, &mols_in, peptide_only_near_lig);
-        println!(
-            "Peptide atom count: {}. Set count: {}",
-            atoms.len(),
-            pep_atom_set.len()
-        );
-
-        let bonds = create_bonds(&atoms);
-
-        mols.push(MolDynamics {
-            ff_mol_type: FfMolType::Peptide,
-            atoms,
-            atom_posits: None,
-            atom_init_velocities: None,
-            bonds,
-            adjacency_list: None,
-            static_: state.ui.md.peptide_static,
-            bonded_only: false,
-            mol_specific_params: None,
-        });
-    }
+    let mols = setup_mols_dyn(
+        &mols_in,
+        peptide,
+        &state.mol_specific_params,
+        pep_atom_set,
+        state.ui.md.peptide_static,
+        peptide_only_near_lig,
+    )?;
 
     compute_energy_snapshot(&state.dev, &mols, &state.ff_param_set)
 }
 
-/// A helper to reduce repetition
+/// A helper to reduce repetition. Loads references to mols in state that are selected for MD.
+/// Doesn't convert to MolDynamics, but sets up in a way conducive to doing so.
 fn get_mols_sel_for_md(
     state: &State,
 ) -> (
     Vec<(FfMolType, &MoleculeCommon, usize)>,
     Option<&MoleculePeptide>,
 ) {
+    let peptide = match &state.peptide {
+        Some(m) => {
+            if m.common.selected_for_md {
+                Some(m)
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
     let ligs: Vec<_> = state
         .ligands
         .iter()
@@ -655,35 +555,104 @@ fn get_mols_sel_for_md(
         .filter(|l| l.common.selected_for_md)
         .collect();
 
-    let mut mols_in = Vec::new();
+    let mut mols = Vec::new();
     for m in &ligs {
-        mols_in.push((
+        mols.push((
             FfMolType::SmallOrganic,
             &m.common,
             state.to_save.num_md_copies,
         ));
     }
+
     for m in &lipids {
-        mols_in.push((FfMolType::Lipid, &m.common, 1));
+        mols.push((FfMolType::Lipid, &m.common, 1));
     }
+
     for m in &nucleic_acids {
         let mol_type = match m.na_type {
             NucleicAcidType::Dna => FfMolType::Dna,
             NucleicAcidType::Rna => FfMolType::Rna,
         };
-        mols_in.push((mol_type, &m.common, 1));
+        mols.push((mol_type, &m.common, 1));
     }
 
-    let peptide = match &state.peptide {
-        Some(m) => {
-            if m.common.selected_for_md {
-                Some(m)
-            } else {
+    (mols, peptide)
+}
+
+fn setup_mols_dyn(
+    mols: &[(FfMolType, &MoleculeCommon, usize)],
+    peptide: Option<&MoleculePeptide>,
+    mol_specific_params: &HashMap<String, ForceFieldParams>,
+    pep_atom_set: &mut HashSet<(usize, usize)>,
+    static_peptide: bool,
+    peptide_only_near_lig: Option<f64>,
+) -> Result<Vec<MolDynamics>, ParamError> {
+    let mut res = Vec::new();
+
+    for (ff_mol_type, mol, copies) in mols {
+        if !mol.selected_for_md {
+            continue;
+        }
+
+        let atoms_gen: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
+        let bonds_gen: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
+
+        let msp = match mol_specific_params.get(&mol.ident) {
+            Some(v) => Some(v.clone()),
+            None => {
+                if *ff_mol_type == FfMolType::SmallOrganic {
+                    return Err(ParamError::new(&format!(
+                        "Missing molecule-specific parameters for  {}",
+                        mol.ident
+                    )));
+                }
                 None
             }
-        }
-        None => None,
-    };
+        };
 
-    (mols_in, peptide)
+        let mol = MolDynamics {
+            ff_mol_type: *ff_mol_type,
+            atoms: atoms_gen,
+            atom_posits: Some(mol.atom_posits.clone()),
+            atom_init_velocities: None,
+            bonds: bonds_gen,
+            adjacency_list: Some(mol.adjacency_list.clone()),
+            static_: false,
+            bonded_only: false,
+            mol_specific_params: msp,
+        };
+
+        if *copies > 1 && *ff_mol_type == FfMolType::SmallOrganic {
+            add_copies(&mut res, &mol, *copies);
+        } else {
+            res.push(mol);
+        }
+    }
+
+    if let Some(p) = peptide {
+        // We assume hetero atoms are ligands, water etc, and are not part of the protein.
+        // let atoms = filter_peptide_atoms(pep_atom_set, p, ligs, peptide_only_near_lig);
+        let atoms = filter_peptide_atoms(pep_atom_set, p, mols, peptide_only_near_lig);
+        println!(
+            "Peptide atom count: {}. Set count: {}",
+            atoms.len(),
+            pep_atom_set.len()
+        );
+
+        let bonds = create_bonds(&atoms);
+
+        res.push(MolDynamics {
+            ff_mol_type: FfMolType::Peptide,
+            atoms,
+            atom_posits: None,
+            atom_init_velocities: None,
+            bonds,
+            adjacency_list: None,
+            static_: static_peptide,
+            bonded_only: false,
+            mol_specific_params: None,
+        });
+    }
+
+    Ok(res)
 }
