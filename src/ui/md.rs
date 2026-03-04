@@ -73,7 +73,7 @@ pub fn md_setup(
 
             // ui.add_space(COL_SPACING / 2.);
 
-            if let Some(md) = &state.mol_dynamics &&
+            if let Some(md) = &state.volatile.md_local.mol_dynamics &&
                 state.ui.current_snapshot < md.snapshots.len() &&
                 !md.snapshots[state.ui.current_snapshot].water_o_posits.is_empty() {
                 if ui
@@ -156,7 +156,7 @@ pub fn md_setup(
                 }
 
                 if ready_to_run {
-                    let mut pep_md = state.volatile.md_peptide_selected.clone(); // Avoids borrow problem.
+                    let mut pep_md = state.volatile.md_local.peptide_selected.clone(); // Avoids borrow problem.
                     match launch_md_energy_computation(state, &mut pep_md) {
                         Ok(en) => {
                             let data = format!("E result. PE: {:.2}, PE NB: {:.3} PE Bonded: {:.2}",
@@ -164,7 +164,7 @@ pub fn md_setup(
                             println!("{data}");
                             handle_success(&mut state.ui, data);
 
-                            state.volatile.md_peptide_selected = pep_md;
+                            state.volatile.md_local.peptide_selected = pep_md;
 
                         }
                         Err(e) => handle_err(&mut state.ui, format!("Error computing energy: {:?}", e))
@@ -182,7 +182,7 @@ pub fn md_setup(
                     post_run_cleanup(state, scene, engine_updates);
                 }
 
-                if let Some(md) = &state.mol_dynamics {
+                if let Some(md) = &state.volatile.md_local.mol_dynamics {
                     let count = (md.step_count / 100) * 100;
 
                     ui.label(
@@ -195,7 +195,7 @@ pub fn md_setup(
                 }
             }
 
-            if let Some(md) = &state.mol_dynamics && !md.snapshots.is_empty() {
+            if let Some(md) = &state.volatile.md_local.mol_dynamics && !md.snapshots.is_empty() {
                 if button!(
                     ui,
                     "Save traj",
@@ -226,7 +226,7 @@ pub fn md_setup(
             num_field(&mut state.to_save.num_md_copies, "Copies:", 32, ui);
 
             if state.to_save.num_md_steps != num_steps_prev {
-                state.volatile.md_runtime = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
+                state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
             }
 
             ui.label("dt (ps):");
@@ -239,7 +239,7 @@ pub fn md_setup(
             {
                 if let Ok(v) = state.ui.md.dt_input.parse::<f32>() {
                     state.to_save.md_dt = v;
-                    state.volatile.md_runtime = state.to_save.num_md_steps as f32 * v;
+                    state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * v;
                 }
             }
             ui.add_space(COL_SPACING / 2.);
@@ -384,9 +384,9 @@ pub fn md_setup(
 
 
             ui.add_space(COL_SPACING / 2.);
-            ui.label(format!("Runtime: {:.1} ps", state.volatile.md_runtime));
+            ui.label(format!("Runtime: {:.1} ps", state.volatile.md_local.run_time));
 
-            if let Some(md) = &state.mol_dynamics {
+            if let Some(md) = &state.volatile.md_local.mol_dynamics {
                 if state.ui.current_snapshot < md.snapshots.len() {
                     energy_disp(&md.snapshots[state.ui.current_snapshot], ui);
                 }

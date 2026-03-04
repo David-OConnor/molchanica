@@ -172,7 +172,7 @@ pub fn view_settings(
             }
             // }
 
-            if let Some(md) = &state.mol_dynamics {
+            if let Some(md) = &state.volatile.md_local.mol_dynamics {
                 if state.ui.visibility.hide_water != water_prev {
                     let snap = &md.snapshots[0];
 

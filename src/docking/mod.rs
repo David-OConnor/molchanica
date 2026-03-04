@@ -128,7 +128,7 @@ pub fn dock(
         &state.ff_param_set,
         &state.mol_specific_params,
         &cfg,
-        &mut state.volatile.md_peptide_selected,
+        &mut state.volatile.md_local.peptide_selected,
     )?;
 
     state.volatile.md_local.start = Some(Instant::now());
@@ -145,7 +145,7 @@ pub fn dock(
     // Blocking for now.
     run_dynamics_blocking(&mut md_state, &state.dev, dt, n_steps);
 
-    state.mol_dynamics = Some(md_state);
+    state.volatile.md_local.mol_dynamics = Some(md_state);
     // This cleanup fn requires state mol dynamics to be loaded.
     post_run_cleanup(state, scene, engine_updates);
 
@@ -210,7 +210,7 @@ fn build_dynamics_docking(
     // We assume hetero atoms are ligands, water etc, and are not part of the protein.
 
     // Filter out hetero atoms.
-    let pep_atoms = filter_peptide_atoms(pep_atom_set, pep, &[], None);
+    let pep_atoms = filter_peptide_atoms(pep_atom_set, &pep.common, &[], None);
 
     // todo: Let's try using all peptide atoms, but assigning certain
     // todo AtomsDynamics to be static and bonded only.
@@ -245,7 +245,7 @@ fn build_dynamics_docking(
     let near_lig_thresh: f64 = 20.; // todo: Experiment
     let _ = filter_peptide_atoms(
         &mut pep_set_near,
-        pep,
+        &pep.common,
         &[(FfMolType::SmallOrganic, &mol.common, 1)],
         Some(near_lig_thresh),
     );

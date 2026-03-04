@@ -377,12 +377,12 @@ impl State {
     pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
         let snapshots = dynamics::load_snapshots_from_file(path)?;
 
-        if self.mol_dynamics.is_none() {
+        if self.volatile.md_local.mol_dynamics.is_none() {
             launch_md(self, false, true);
         }
 
         // todo: Also handle the case of the correct molecule not being loaded.
-        match &mut self.mol_dynamics {
+        match &mut self.volatile.md_local.mol_dynamics {
             Some(md) => md.snapshots = snapshots,
             None => handle_err(
                 &mut self.ui,
@@ -515,7 +515,7 @@ impl State {
                 }
             },
             "dcd" | "xtc" | "mdt" => {
-                if let Some(md) = &self.mol_dynamics {
+                if let Some(md) = &self.volatile.md_local.mol_dynamics {
                     let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
 
                     // This function in the `dynamics` lib will handle saving in the appropriate format

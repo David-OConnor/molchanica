@@ -5,7 +5,6 @@ use std::{
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
-    time::Instant,
 };
 
 use bincode::{Decode, Encode};
@@ -17,6 +16,7 @@ use dynamics::{ComputationDevice, MdState, params::FfParamSet};
 use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
+use crate::md::MdStateLocal;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -33,7 +33,7 @@ use crate::{
     },
     orca::StateOrca,
     prefs::ToSave,
-    screening::pharmacophore::{Pharmacophore, PharmacophoreFeatType, PharmacophoreState},
+    screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
     therapeutic::{DatasetTdc, infer::Infer},
@@ -65,7 +65,7 @@ pub struct State {
     /// This is None if Computation Device is CPU.
     #[cfg(feature = "cuda")]
     pub kernel_reflections: Option<CudaFunction>,
-    pub mol_dynamics: Option<MdState>,
+    // pub mol_dynamics: Option<MdState>,
     // todo: Combine these params in a single struct.
     pub ff_param_set: FfParamSet,
     pub mol_specific_params: HashMap<String, ForceFieldParams>,
@@ -103,7 +103,7 @@ impl Default for State {
             dev: Default::default(),
             #[cfg(feature = "cuda")]
             kernel_reflections: None,
-            mol_dynamics: Default::default(),
+            // mol_dynamics: Default::default(),
             ff_param_set: Default::default(),
             mol_specific_params: Default::default(),
             templates: Default::default(),
@@ -279,16 +279,11 @@ pub struct StateVolatile {
     /// Pre-computed from the molecule
     pub aa_seq_text: String,
     pub flags: SceneFlags,
-    /// Cached so we don't compute each UI paint. Picoseconds.
-    pub md_runtime: f32,
     pub active_mol: Option<(MolType, usize)>,
     pub mol_manip: MolManip,
     /// For restoring after temprarily disabling mouse look.
     pub control_scheme_prev: ControlScheme,
     pub orbit_center_prev: Option<(MolType, usize)>,
-    /// We maintain a set of atom indices of peptides that are used in MD. This for example, might
-    /// exclude hetero atoms and atoms not near a docking site. (mol i, atom i)
-    pub md_peptide_selected: HashSet<(usize, usize)>,
     /// Ctrl, alt, shift etc.
     pub key_modifiers: Modifiers,
     pub operating_mode: OperatingMode,
@@ -490,15 +485,6 @@ impl Default for NucleicAcidUi {
             strands: Default::default(),
         }
     }
-}
-
-// todo: Remove or augment A/R
-#[derive(Default)]
-pub struct MdStateLocal {
-    /// This flag lets us defer launch by a frame, so we can display a flag.
-    pub launching: bool,
-    pub running: bool,
-    pub start: Option<Instant>,
 }
 
 pub struct StateUiMd {

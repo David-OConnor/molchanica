@@ -60,29 +60,80 @@ fn helper_b(
     }
 }
 
+// // todo: A helper which would be nice, but I'm unable to get working.
+// fn draw_all_mol_of_type(state: &mut State, scene: &mut Scene, mol_type: MolType) {
+//     let class = mol_type.entity_type() as u32;
+//     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
+//
+//     if state.ui.visibility.hide_ligand || state.volatile.operating_mode == OperatingMode::MolEditor
+//     {
+//         scene.entities.retain(|ent| ent.class != class);
+//         return;
+//     }
+//
+//     // todo
+//     let mols = if state.volatile.md_local.draw_md_mols {
+//         &mut state.volatile.md_local.mols_small
+//     } else {
+//         &mut state.ligands
+//     };
+//
+//     let num_mols = mols.len();
+//
+//     let mut entities = Vec::new();
+//     for (i_mol, mol) in mols.iter_mut().enumerate() {
+//         let start_i_mol = ent_i_start + entities.len();
+//
+//         if let Some(m) = state.get_mol(mol_type, i_mol) {
+//             let ents_this_mol = drawing::draw_mol(
+//                 m,
+//                 i_mol,
+//                 &state.ui,
+//                 &state.volatile.active_mol,
+//                 state.volatile.mol_manip.mode,
+//                 state.volatile.operating_mode,
+//                 num_mols,
+//             );
+//
+//             // Note: This may already be set.
+//             let end_i_mol = start_i_mol + ents_this_mol.len();
+//             entities.extend(ents_this_mol);
+//
+//             mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
+//         }
+//     }
+//
+//     helper_b(
+//         state,
+//         scene,
+//         entities,
+//         class,
+//         initial_ent_count,
+//         ent_i_start,
+//         mol_type,
+//     );
+// }
+
 pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
     let class = EntityClass::Ligand as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
-    // scene
-    //     .entities
-    //     .retain(|ent| ent.class != EntityClass::Pharmacophore as u32);
-
-    if state.ui.visibility.hide_ligand {
+    if state.ui.visibility.hide_ligand || state.volatile.operating_mode == OperatingMode::MolEditor
+    {
         scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
-    // Edit small molecules only; not proteins.
-    if state.volatile.operating_mode == OperatingMode::MolEditor {
-        scene.entities.retain(|ent| ent.class != class);
-        return;
-    }
+    let mols = if state.volatile.md_local.draw_md_mols {
+        &mut state.volatile.md_local.mols_small
+    } else {
+        &mut state.ligands
+    };
 
-    let num_ligs = state.ligands.len();
+    let num_mols = mols.len();
 
     let mut entities = Vec::new();
-    for (i_mol, mol) in state.ligands.iter_mut().enumerate() {
+    for (i_mol, mol) in mols.iter_mut().enumerate() {
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol = drawing::draw_mol(
@@ -92,7 +143,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
             &state.volatile.active_mol,
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
-            num_ligs,
+            num_mols,
         );
 
         // Note: This may already be set.
@@ -121,19 +172,23 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
     let class = EntityClass::NucleicAcid as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
-    if state.ui.visibility.hide_nucleic_acids {
+    if state.ui.visibility.hide_nucleic_acids
+        || state.volatile.operating_mode == OperatingMode::MolEditor
+    {
         scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
-    // Edit small molecules only; not proteins.
-    if state.volatile.operating_mode == OperatingMode::MolEditor {
-        scene.entities.retain(|ent| ent.class != class);
-        return;
-    }
+    let mols = if state.volatile.md_local.draw_md_mols {
+        &mut state.volatile.md_local.nucleic_acids
+    } else {
+        &mut state.nucleic_acids
+    };
+
+    let num_mols = mols.len();
 
     let mut entities = Vec::new();
-    for (i_mol, mol) in state.nucleic_acids.iter_mut().enumerate() {
+    for (i_mol, mol) in mols.iter_mut().enumerate() {
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol = drawing::draw_mol(
@@ -143,7 +198,7 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
             &state.volatile.active_mol,
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
-            state.ligands.len(),
+            num_mols,
         );
 
         // Note: This may already be set.
@@ -172,19 +227,22 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
     let class = EntityClass::Lipid as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
-    if state.ui.visibility.hide_lipids {
+    if state.ui.visibility.hide_lipids || state.volatile.operating_mode == OperatingMode::MolEditor
+    {
         scene.entities.retain(|ent| ent.class != class);
         return;
     }
 
-    // Edit small molecules only; not proteins.
-    if state.volatile.operating_mode == OperatingMode::MolEditor {
-        scene.entities.retain(|ent| ent.class != class);
-        return;
-    }
+    let mols = if state.volatile.md_local.draw_md_mols {
+        &mut state.volatile.md_local.lipids
+    } else {
+        &mut state.lipids
+    };
+
+    let num_mols = mols.len();
 
     let mut entities = Vec::new();
-    for (i_mol, mol) in state.lipids.iter_mut().enumerate() {
+    for (i_mol, mol) in mols.iter_mut().enumerate() {
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol = drawing::draw_mol(
@@ -194,7 +252,7 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
             &state.volatile.active_mol,
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
-            state.ligands.len(),
+            num_mols,
         );
 
         // Note: This may already be set.

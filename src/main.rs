@@ -113,7 +113,7 @@ fn main() {
 
     {
         // Set these UI strings for numerical values up after loading prefs
-        state.volatile.md_runtime = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
+        state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
         state.ui.ph_input = state.to_save.ph.to_string();
         state.ui.md.dt_input = state.to_save.md_dt.to_string();
         state.ui.md.pressure_input = (state.to_save.md_config.pressure_target as u16).to_string();

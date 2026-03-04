@@ -638,7 +638,7 @@ pub fn make_lnp(
     result
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 /// Note: Ident under common name is the LMSD id".
 pub struct MoleculeLipid {
     // todo: If we have no other fields, use MoleculeCommon only

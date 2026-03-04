@@ -781,7 +781,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
 
 
-
             return;
         }
 
@@ -803,11 +802,28 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 enter_edit_mode(state, scene, &mut updates);
             }
 
+            // todo: Temp location for this MD mols toggle
+            {
+                let text = if state.volatile.md_local.draw_md_mols {
+                    "Draw normal mols"
+                } else {
+                    "Draw MD mols"
+                };
+
+                if state.volatile.md_local.draw_md_mols || state.volatile.md_local.mol_dynamics.is_some() {
+                    if ui.button(RichText::new(text).color(COLOR_HIGHLIGHT)).clicked() {
+                        state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
+
+                        redraw.set_all();
+                    }
+                }
+            }
+
             let metadata_loaded = false; // avoids borrow error.
 
             {
                 let mut close = false;
-                display_mol_data_peptide(state, scene, ui, &mut redraw.ligand,&mut updates);
+                display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);
 
                 if close {
                     close_peptide(state, scene, &mut updates);
@@ -977,7 +993,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
                 query(state, scene, &mut redraw, &mut reset_cam, &mut updates, ui,
                       &inp, enter_pressed);
-
             }
 
             if state.peptide.is_none() && state.active_mol().is_none() {
@@ -1300,7 +1315,7 @@ pub(crate) fn cam_controls(
                     state.to_save.control_scheme = ControlSchemeType::Arc;
                 }
 
-                if arc_active &&ui
+                if arc_active && ui
                     .button(
                         RichText::new("Orbit sel")
                             .color(misc::active_color(state.ui.orbit_selected_atom)),

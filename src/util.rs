@@ -616,7 +616,7 @@ pub fn close_peptide(state: &mut State, scene: &mut Scene, engine_updates: &mut 
     };
 
     state.peptide = None;
-    state.mol_dynamics = None;
+    state.volatile.md_local.mol_dynamics = None;
 
     scene.entities.retain(|ent| {
         ent.class != EntityClass::Protein as u32

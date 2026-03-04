@@ -9,7 +9,6 @@ use crate::{
         draw_peptide, draw_water,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
-    md::change_snapshot,
     state::State,
     ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING},
 };
@@ -65,7 +64,7 @@ pub fn dynamics_player(
     engine_updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
-    if state.mol_dynamics.is_none() {
+    if state.volatile.md_local.mol_dynamics.is_none() {
         return;
     }
 
@@ -80,7 +79,7 @@ pub fn dynamics_player(
 
         let mut changed = false;
 
-        if let Some(md) = &state.mol_dynamics {
+        if let Some(md) = &state.volatile.md_local.mol_dynamics {
             if !md.snapshots.is_empty() {
                 ui.add_space(ROW_SPACING);
 
@@ -97,59 +96,70 @@ pub fn dynamics_player(
 
             if state.ui.current_snapshot != snapshot_prev {
                 changed = true;
-                let snap = &md.snapshots[state.ui.current_snapshot];
+                // let snap = &md.snapshots[state.ui.current_snapshot];
 
-                // todo note: This will break if you change selected ligs prior to re-reunning docking.
-                let ligs_md: Vec<_> = state
-                    .ligands
-                    .iter_mut()
-                    .filter(|l| l.common.selected_for_md)
-                    .collect();
-                let ligs_len = ligs_md.len();
+                // // todo note: This will break if you change selected ligs prior to re-reunning docking.
+                // let peptides_md: Vec<_> = state
+                //     .ligands
+                //     .iter_mut()
+                //     .filter(|l| l.common.selected_for_md)
+                //     .collect();
+                // let ligs_len = ligs_md.len();
+                //
+                // let ligs_md: Vec<_> = state
+                //     .ligands
+                //     .iter_mut()
+                //     .filter(|l| l.common.selected_for_md)
+                //     .collect();
+                // let ligs_len = ligs_md.len();
+                //
+                // let lipids_md: Vec<_> = state
+                //     .lipids
+                //     .iter_mut()
+                //     .filter(|l| l.common.selected_for_md)
+                //     .collect();
+                // let lipids_len = lipids_md.len();
+                //
+                // let na_md: Vec<_> = state
+                //     .nucleic_acids
+                //     .iter_mut()
+                //     .filter(|l| l.common.selected_for_md)
+                //     .collect();
+                // let na_len = na_md.len();
 
-                let lipids_md: Vec<_> = state
-                    .lipids
-                    .iter_mut()
-                    .filter(|l| l.common.selected_for_md)
-                    .collect();
-                let lipids_len = lipids_md.len();
+                // let peptide_md = match &mut state.peptide {
+                //     Some(m) => {
+                //         if m.common.selected_for_md {
+                //             Some(m)
+                //         } else {
+                //             None
+                //         }
+                //     }
+                //     None => None,
+                // };
 
-                let na_md: Vec<_> = state
-                    .nucleic_acids
-                    .iter_mut()
-                    .filter(|l| l.common.selected_for_md)
-                    .collect();
-                let na_len = na_md.len();
-
-                let peptide_md = match &mut state.peptide {
-                    Some(m) => {
-                        if m.common.selected_for_md {
-                            Some(m)
-                        } else {
-                            None
-                        }
-                    }
-                    None => None,
-                };
-
-                change_snapshot(peptide_md, ligs_md, lipids_md, na_md, snap);
+                state.volatile.md_local.change_snapshot(
+                    // ligs_md,
+                    // lipids_md,
+                    // na_md,
+                    // snap,
+                    state.ui.current_snapshot,
+                );
                 // todo: Only if at least one lig is involved.
-                if ligs_len > 0 {
+                if !state.volatile.md_local.peptides.is_empty() {
+                    draw_peptide(state, scene);
+                }
+
+                if !state.volatile.md_local.mols_small.is_empty() {
                     draw_all_ligs(state, scene);
                 }
 
-                if lipids_len > 0 {
+                if !state.volatile.md_local.lipids.is_empty() {
                     draw_all_lipids(state, scene);
                 }
 
-                if na_len > 0 {
+                if !state.volatile.md_local.nucleic_acids.is_empty() {
                     draw_all_nucleic_acids(state, scene);
-                }
-
-                if let Some(mol) = &state.peptide {
-                    if mol.common.selected_for_md {
-                        draw_peptide(state, scene);
-                    }
                 }
 
                 // engine_updates.entities = true;
@@ -159,7 +169,7 @@ pub fn dynamics_player(
 
         // This approach avoids a double-borrow.
         if changed {
-            if let Some(md) = &state.mol_dynamics {
+            if let Some(md) = &state.volatile.md_local.mol_dynamics {
                 let snap = &md.snapshots[state.ui.current_snapshot];
 
                 draw_water(

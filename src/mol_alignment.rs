@@ -166,7 +166,7 @@ pub fn run_alignment(state: &mut State, redraw_lig: &mut bool) {
     };
 
     println!("Snaps: {:?}", md.snapshots.len());
-    state.mol_dynamics = Some(md);
+    state.volatile.md_local.mol_dynamics = Some(md);
 
     // Assume sorted score high to low
     if !alignments.is_empty() {
@@ -274,7 +274,6 @@ fn run_md(
     let mut md = build_dynamics(
         &state.dev,
         &mols_md,
-        None,
         &state.ff_param_set,
         &state.mol_specific_params,
         &cfg,

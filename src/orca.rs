@@ -65,7 +65,7 @@ impl Display for TaskType {
 }
 
 pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
-    match &mut state.mol_dynamics {
+    match &mut state.volatile.md_local.mol_dynamics {
         Some(md) => {
             md.snapshots = Vec::new();
 
@@ -97,7 +97,7 @@ pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
             }
         }
         None => {
-            // state.mol_dynamics = Some(MdState::new(
+            // state.volatile.md_local.mol_dynamics = Some(MdState::new(
             //
             // ))
         }

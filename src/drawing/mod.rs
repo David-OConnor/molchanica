@@ -1406,7 +1406,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 color_atom = blend_color(color_atom, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
             }
 
-            if state.mol_dynamics.is_some()
+            if state.volatile.md_local.mol_dynamics.is_some()
                 && state.ui.md.peptide_only_near_ligs
                 && mol.common.selected_for_md
                 && state
@@ -1415,7 +1415,11 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                     .filter(|l| l.common.selected_for_md)
                     .count()
                     != 0
-                && state.volatile.md_peptide_selected.contains(&(0, i_atom))
+                && state
+                    .volatile
+                    .md_local
+                    .peptide_selected
+                    .contains(&(0, i_atom))
             {
                 color_atom = blend_color(color_atom, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
             }
@@ -1624,7 +1628,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             color_1 = blend_color(color_1, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
         }
 
-        if state.mol_dynamics.is_some()
+        if state.volatile.md_local.mol_dynamics.is_some()
             && state.ui.md.peptide_only_near_ligs
             && mol.common.selected_for_md
             && state
@@ -1636,14 +1640,16 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         {
             if state
                 .volatile
-                .md_peptide_selected
+                .md_local
+                .peptide_selected
                 .contains(&(0, bond.atom_0))
             {
                 color_0 = blend_color(color_0, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
             }
             if state
                 .volatile
-                .md_peptide_selected
+                .md_local
+                .peptide_selected
                 .contains(&(0, bond.atom_1))
             {
                 color_1 = blend_color(color_1, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);

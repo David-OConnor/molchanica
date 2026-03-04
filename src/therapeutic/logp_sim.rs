@@ -122,18 +122,27 @@ pub fn run_dynamics_logp(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
-    let octanol = make_octanol();
+    let mut octanol = make_octanol();
+    octanol.update_ff_related(
+        &mut state.mol_specific_params,
+        &state.ff_param_set.small_mol.as_ref().unwrap(),
+        false,
+    );
 
-    let num_octanol = 500; // todo A?R
+    octanol.common.selected_for_md = true;
 
-    let num_solute = 100; // todo?
+    let mut mol = mol.clone();
+    mol.common.selected_for_md = true;
+
+    let num_octanol = 1; // todo A?R
+    let num_solute = 1; // todo?
 
     let mols = [
         (FfMolType::SmallOrganic, &octanol.common, num_octanol),
         (FfMolType::SmallOrganic, &mol.common, num_solute),
     ];
 
-    let simbox_side_len: f32 = 40.; // todo: A/R
+    let simbox_side_len: f32 = 20.; // todo: A/R
 
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
@@ -153,7 +162,6 @@ pub fn run_dynamics_logp(
     let mut md = build_dynamics(
         &state.dev,
         &mols,
-        None,
         &state.ff_param_set,
         &state.mol_specific_params,
         &cfg,
@@ -163,12 +171,16 @@ pub fn run_dynamics_logp(
         false,
     )?;
 
+    state.volatile.md_local.update_mols_for_disp(&mols);
+
     // Blocking.
     let dt = 0.002; // todo?
     let n_steps = 500;
     run_dynamics_blocking(&mut md, &state.dev, dt, n_steps);
 
-    state.mol_dynamics = Some(md); // todo: Required to visualize?
+    println!("Snaps: {:?}", md.snapshots.len());
+
+    state.volatile.md_local.mol_dynamics = Some(md); // todo: Required to visualize?
 
     post_run_cleanup(state, scene, updates);
 
