@@ -31,7 +31,7 @@ use crate::{
         draw_mol, draw_peptide, draw_pocket,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
-    md::change_snapshot_helper,
+    // md::change_snapshot_helper,
     mol_components::MolComponents,
     mol_manip::ManipMode,
     molecules::{Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, small::MoleculeSmall},
@@ -329,7 +329,8 @@ impl MolEditorState {
 
         let mol = &mut self.mol.common;
 
-        change_snapshot_helper(&mut mol.atom_posits, &mut 0, snap);
+        // todo: Sort this out, now that you removed this helper. Likely broke MD disp in editor.
+        // change_snapshot_helper(&mut mol.atom_posits, &mut 0, snap);
 
         // Since we assume they're synced:
         for (i, posit) in mol.atom_posits.iter().enumerate() {

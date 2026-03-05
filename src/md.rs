@@ -1,10 +1,5 @@
 //! An interface to dynamics library.
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::Instant,
-};
-
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
@@ -12,6 +7,12 @@ use dynamics::{
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::{Vec3, X_VEC, Y_VEC, Z_VEC};
+use std::io::ErrorKind;
+use std::{
+    collections::{HashMap, HashSet},
+    io,
+    time::Instant,
+};
 
 use crate::{
     drawing::{draw_peptide, draw_water},
@@ -56,10 +57,6 @@ pub struct MdStateLocal {
     /// We maintain independent copies of these from the primary state. These are what we display
     /// after an MD run. They may be created as copies of moleclues in the primary state.
     /// (Mol, number of copies)
-    // pub mols_peptide: Vec<(MoleculePeptide, usize)>,
-    // pub mols_small: Vec<(MoleculeSmall, usize)>,
-    // pub lipids: Vec<(MoleculeLipid, usize)>,
-    // pub nucleic_acids: Vec<(MoleculeNucleicAcid, usize)>,
     /// For now, count is only set up on construction. We have a separate molecule instance for each count.
     pub peptides: Vec<MoleculePeptide>,
     pub mols_small: Vec<MoleculeSmall>,
@@ -113,40 +110,56 @@ impl MdStateLocal {
 
     /// Set atom positions for molecules involve in dynamics to that of a snapshot. Ligs and lipids are only ones included
     /// in dynamics.
-    pub fn change_snapshot(
-        &mut self,
-        // todo: method on MdStateLocal A/R.
-        // md_state: &mut MdStateLocal,
-        // peptides: Vec<&mut MoleculePeptide>,
-        // ligs: Vec<&mut MoleculeSmall>,
-        // lipids: Vec<&mut MoleculeLipid>,
-        // nucleic_acids: Vec<&mut MoleculeNucleicAcid>,
-        // snapshot: &Snapshot,
-        snap_i: usize,
-    ) {
+    pub fn change_snapshot(&mut self, snap_i: usize) -> io::Result<()> {
         let Some(md) = &self.mol_dynamics else {
-            eprintln!("Error: Attempting to change snapshot when there is no MD state");
-            return;
+            let txt = "Error: Attempting to change snapshot when there is no MD state";
+            eprintln!("{txt}");
+            return Err(io::Error::new(ErrorKind::InvalidData, txt));
         };
 
         let snap = &md.snapshots[snap_i];
-        let mut start_i_this_mol = 0;
+
+        let posits_by_mol = snap.unflatten(&md.mol_start_indices)?;
+
+        println!("Posits by mol len: {:?}", posits_by_mol.len()); // todo temp
+
+        let mut i_posits = 0;
+
+        // This assumes we pack each mol type in the same order.
 
         for mol in &mut self.peptides {
-            change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
+                *p = posits_by_mol[i_posits][i_p].0.into(); //Posit only; discard velocity.
+            }
+            i_posits += 1;
         }
 
         for mol in &mut self.mols_small {
-            change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
+                *p = posits_by_mol[i_posits][i_p].0.into();
+            }
+            i_posits += 1;
         }
 
         for mol in &mut self.lipids {
-            change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
+                *p = posits_by_mol[i_posits][i_p].0.into();
+            }
+            i_posits += 1;
         }
 
         for mol in &mut self.nucleic_acids {
-            change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
+                *p = posits_by_mol[i_posits][i_p].0.into();
+            }
+            i_posits += 1;
         }
+
+        Ok(())
     }
 }
 
@@ -165,19 +178,19 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         // todo: Not using the helper as that's not iter_mut()
         let ligs: Vec<_> = state
             .ligands
-            .iter_mut()
+            .iter()
             .filter(|l| l.common.selected_for_md)
             .collect();
 
         let lipids: Vec<_> = state
             .lipids
-            .iter_mut()
+            .iter()
             .filter(|l| l.common.selected_for_md)
             .collect();
 
         let nucleic_acids: Vec<_> = state
             .nucleic_acids
-            .iter_mut()
+            .iter()
             .filter(|l| l.common.selected_for_md)
             .collect();
 
@@ -325,6 +338,11 @@ pub fn build_dynamics(
         peptide_only_near_lig,
     )?;
 
+    println!("Mols dyn:");
+    for mol in &mols {
+        println!("Mol: {}", mol.atoms.len());
+    }
+
     // // Uncomment as required for validating individual processes.
     let mut cfg = MdConfig {
         overrides: MdOverrides {
@@ -392,9 +410,9 @@ pub fn run_dynamics_blocking(
 /// are properly synchronized. This also handles the case of reassigning due to peptide atoms near the ligand.
 pub fn reassign_snapshot_indices(
     pep: &MoleculePeptide,
-    ligs: &[&mut MoleculeSmall],
-    lipids: &[&mut MoleculeLipid],
-    nucleic_acids: &[&mut MoleculeNucleicAcid],
+    ligs: &[&MoleculeSmall],
+    lipids: &[&MoleculeLipid],
+    nucleic_acids: &[&MoleculeNucleicAcid],
     snapshots: &mut [Snapshot],
     pep_atom_set: &HashSet<(usize, usize)>,
 ) {
@@ -489,21 +507,21 @@ pub fn reassign_snapshot_indices(
     println!("Done.");
 }
 
-/// Unflattens.
-pub fn change_snapshot_helper(
-    posits: &mut [Vec3],
-    start_i_this_mol: &mut usize,
-    snapshot: &Snapshot,
-) {
-    for (i_snap, posit) in snapshot.atom_posits.iter().enumerate() {
-        if i_snap < *start_i_this_mol || i_snap >= posits.len() + *start_i_this_mol {
-            continue;
-        }
-        posits[i_snap - *start_i_this_mol] = (*posit).into();
-    }
-
-    *start_i_this_mol += posits.len();
-}
+// /// Unflattens.
+// pub fn change_snapshot_helper(
+//     posits: &mut [Vec3],
+//     start_i_this_mol: &mut usize,
+//     snapshot: &Snapshot,
+// ) {
+//     for (i_snap, posit) in snapshot.atom_posits.iter().enumerate() {
+//         if i_snap < *start_i_this_mol || i_snap >= posits.len() + *start_i_this_mol {
+//             continue;
+//         }
+//         posits[i_snap - *start_i_this_mol] = (*posit).into();
+//     }
+//
+//     *start_i_this_mol += posits.len();
+// }
 
 impl State {
     /// Run MD for a single step if ready, and update atom positions immediately after. Blocks for
