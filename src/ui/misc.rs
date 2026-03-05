@@ -9,8 +9,10 @@ use crate::{
         draw_peptide, draw_water,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
+    md,
     state::State,
-    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING},
+    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING, handle_input},
+    util::handle_err,
 };
 
 /// A box that shows its text highlighted if a flag is set.
@@ -77,7 +79,7 @@ pub fn dynamics_player(
 
         let snapshot_prev = state.ui.current_snapshot;
 
-        let mut changed = false;
+        // let mut changed = false;
 
         if let Some(md) = &state.volatile.md_local.mol_dynamics {
             if !md.snapshots.is_empty() {
@@ -95,93 +97,18 @@ pub fn dynamics_player(
             }
 
             if state.ui.current_snapshot != snapshot_prev {
-                changed = true;
-                // let snap = &md.snapshots[state.ui.current_snapshot];
-
-                // // todo note: This will break if you change selected ligs prior to re-reunning docking.
-                // let peptides_md: Vec<_> = state
-                //     .ligands
-                //     .iter_mut()
-                //     .filter(|l| l.common.selected_for_md)
-                //     .collect();
-                // let ligs_len = ligs_md.len();
-                //
-                // let ligs_md: Vec<_> = state
-                //     .ligands
-                //     .iter_mut()
-                //     .filter(|l| l.common.selected_for_md)
-                //     .collect();
-                // let ligs_len = ligs_md.len();
-                //
-                // let lipids_md: Vec<_> = state
-                //     .lipids
-                //     .iter_mut()
-                //     .filter(|l| l.common.selected_for_md)
-                //     .collect();
-                // let lipids_len = lipids_md.len();
-                //
-                // let na_md: Vec<_> = state
-                //     .nucleic_acids
-                //     .iter_mut()
-                //     .filter(|l| l.common.selected_for_md)
-                //     .collect();
-                // let na_len = na_md.len();
-
-                // let peptide_md = match &mut state.peptide {
-                //     Some(m) => {
-                //         if m.common.selected_for_md {
-                //             Some(m)
-                //         } else {
-                //             None
-                //         }
-                //     }
-                //     None => None,
-                // };
-
-                state.volatile.md_local.change_snapshot(
-                    // ligs_md,
-                    // lipids_md,
-                    // na_md,
-                    // snap,
-                    state.ui.current_snapshot,
-                );
-                // todo: Only if at least one lig is involved.
-                if !state.volatile.md_local.peptides.is_empty() {
-                    draw_peptide(state, scene);
+                if let Err(e) = state
+                    .volatile
+                    .md_local
+                    .change_snapshot(state.ui.current_snapshot)
+                {
+                    handle_err(&mut state.ui, format!("Error changing snapshot: {e:?}"));
                 }
 
-                if !state.volatile.md_local.mols_small.is_empty() {
-                    draw_all_ligs(state, scene);
-                }
-
-                if !state.volatile.md_local.lipids.is_empty() {
-                    draw_all_lipids(state, scene);
-                }
-
-                if !state.volatile.md_local.nucleic_acids.is_empty() {
-                    draw_all_nucleic_acids(state, scene);
-                }
-
-                // engine_updates.entities = true;
+                md::draw_mols(state, scene);
                 engine_updates.entities = EntityUpdate::All;
             }
         };
-
-        // This approach avoids a double-borrow.
-        if changed {
-            if let Some(md) = &state.volatile.md_local.mol_dynamics {
-                let snap = &md.snapshots[state.ui.current_snapshot];
-
-                draw_water(
-                    scene,
-                    &snap.water_o_posits,
-                    &snap.water_h0_posits,
-                    &snap.water_h1_posits,
-                    state.ui.visibility.hide_water,
-                    // state,
-                );
-            }
-        }
     });
 }
 

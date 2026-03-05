@@ -1185,9 +1185,15 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         return;
     }
 
-    let Some(mol) = state.peptide.as_ref() else {
-        return;
-    };
+    let mol: &MoleculePeptide =
+        if state.volatile.md_local.draw_md_mols && !state.volatile.md_local.peptides.is_empty() {
+            &state.volatile.md_local.peptides[0]
+        } else {
+            let Some(m) = state.peptide.as_ref() else {
+                return;
+            };
+            m
+        };
 
     if !mol.common.visible {
         return;

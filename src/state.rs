@@ -16,11 +16,11 @@ use dynamics::{ComputationDevice, MdState, params::FfParamSet};
 use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
-use crate::md::MdStateLocal;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
     file_io::FileDialogs,
+    md::MdStateLocal,
     mol_alignment::StateAlignment,
     mol_editor::MolEditorState,
     mol_manip::MolManip,
