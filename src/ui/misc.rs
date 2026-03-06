@@ -79,8 +79,6 @@ pub fn dynamics_player(
 
         let snapshot_prev = state.ui.current_snapshot;
 
-        // let mut changed = false;
-
         if let Some(md) = &state.volatile.md_local.mol_dynamics {
             if !md.snapshots.is_empty() {
                 ui.add_space(ROW_SPACING);

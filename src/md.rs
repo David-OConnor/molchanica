@@ -8,13 +8,12 @@ use std::{
 };
 
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
-use cudarc::driver::HostSlice;
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
-use lin_alg::f64::{Vec3, X_VEC, Y_VEC, Z_VEC};
+use lin_alg::f64::{X_VEC, Y_VEC, Z_VEC};
 
 use crate::{
     drawing::{
@@ -132,8 +131,6 @@ impl MdStateLocal {
 
         let posits_by_mol = snap.unflatten(&md.mol_start_indices)?;
 
-        // println!("Posits by mol len: {:?}", posits_by_mol.len()); // todo temp
-
         let mut i_posits = 0;
 
         // This assumes we pack each mol type in the same order.
@@ -172,6 +169,93 @@ impl MdStateLocal {
 
         Ok(())
     }
+
+    /// We filter peptide hetero atoms out of the MD workflow. Adjust snapshot indices and atom positions so they
+    /// are properly synchronized. This also handles the case of reassigning due to peptide atoms near the ligand.
+    pub fn reassign_snapshot_indices(&mut self) {
+        // if !pep.common.selected_for_md {
+        if self.peptides.is_empty() {
+            return;
+        }
+
+        let Some(md) = &mut self.mol_dynamics else {
+            return;
+        };
+
+        let pep_atom_set = &self.peptide_selected;
+
+        let pep = &self.peptides[0];
+
+        println!("Re-assigning snapshot indices to match atoms excluded for MD...");
+
+        let pep_count = pep_atom_set.len();
+        let lig_atom_count = self.mols_small.len();
+        let lipid_atom_count = self.lipids.len();
+        let na_atom_count = self.nucleic_acids.len();
+
+        let pep_start_i = lig_atom_count + lipid_atom_count + na_atom_count;
+
+        // Rebuild each snapshot's atom_posits: [ligands as-is] + [full peptide with holes filled]
+        for snap in &mut md.snapshots {
+            if pep_start_i + pep_count > snap.atom_posits.len() {
+                eprintln!(
+                    "Error: Invalid index when reassigning snapshot posits. \
+            Snap atom count: {}, lig count {lig_atom_count} Pep start: {pep_start_i}, Pep count: {pep_count}",
+                    snap.atom_posits.len()
+                );
+                continue;
+            }
+
+            // Iterator over the peptide positions that actually participated in MD
+            let mut pept_md_posits = snap.atom_posits[pep_start_i..pep_start_i + pep_count]
+                .iter()
+                .cloned();
+
+            let mut pept_md_vels = snap.atom_velocities[pep_start_i..pep_start_i + pep_count]
+                .iter()
+                .cloned();
+
+            let mut new_posits = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
+            let mut new_vels = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
+
+            // Keep ligand portion unchanged
+            new_posits.extend_from_slice(&snap.atom_posits[..pep_start_i]);
+            new_vels.extend_from_slice(&snap.atom_velocities[..pep_start_i]);
+
+            // Reinsert peptide atoms in their original order
+            for (i, atom) in pep.common.atoms.iter().enumerate() {
+                let is_included = pep_atom_set.contains(&(0, i));
+
+                if is_included {
+                    new_posits.push(
+                        pept_md_posits
+                            .next()
+                            .expect("Ran out of peptide MD positions"),
+                    );
+                    new_vels.push(
+                        pept_md_vels
+                            .next()
+                            .expect("Ran out of peptide MD velocities"),
+                    );
+                } else {
+                    // Non-MD atom: use its original static position
+                    new_posits.push(atom.posit.into());
+                    new_vels.push(lin_alg::f32::Vec3::new_zero());
+                }
+            }
+
+            // todo: This is screwing things up for purposes of saving DCD files without water, as it's combining
+            // todo multiple mols into the posits.
+
+            // Replace the snapshot's positions with the reindexed set
+            snap.atom_posits = new_posits;
+            snap.atom_velocities = new_vels;
+
+            return;
+        }
+
+        println!("Done.");
+    }
 }
 
 /// For our non-blocking workflow. Run this once an MD run is complete.
@@ -185,49 +269,21 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     state.volatile.md_local.start = None;
     state.volatile.md_local.draw_md_mols = true;
 
-    if let Some(p) = &state.peptide {
-        // // todo: Not using the helper as that's not iter_mut()
-        // let ligs: Vec<_> = state
-        //     .ligands
-        //     .iter()
-        //     .filter(|l| l.common.selected_for_md)
-        //     .collect();
-        //
-        // let lipids: Vec<_> = state
-        //     .lipids
-        //     .iter()
-        //     .filter(|l| l.common.selected_for_md)
-        //     .collect();
-        //
-        // let nucleic_acids: Vec<_> = state
-        //     .nucleic_acids
-        //     .iter()
-        //     .filter(|l| l.common.selected_for_md)
-        //     .collect();
-
-        let md = state.volatile.md_local.mol_dynamics.as_mut().unwrap();
-
-        // let ligs = &state.volatile.md_local.mols_small;
-        // let nucleic_acids = &state.volatile.md_local.nucleic_acids;
-        //
-        reassign_snapshot_indices(
-            // p,
-            &state.volatile.md_local,
-            // &ligs,
-            // &lipids,
-            // &nucleic_acids,
-            &mut md.snapshots,
-            &state.volatile.md_local.peptide_selected,
-        );
-    }
-
-    handle_success(&mut state.ui, "MD complete".to_string());
+    state.volatile.md_local.reassign_snapshot_indices();
 
     state.ui.current_snapshot = 0;
+    if state.volatile.md_local.change_snapshot(0).is_err() {
+        handle_err(
+            &mut state.ui,
+            String::from("Error changing snapshot at MD completion."),
+        );
+        return;
+    }
 
-    println!("TEMP Drawing mols\n"); // todo temp
     draw_mols(state, scene);
     updates.entities = EntityUpdate::All;
+
+    handle_success(&mut state.ui, "MD complete".to_string());
 }
 
 /// Filter out hetero atoms, and if necessary, atoms not close to a ligand.
@@ -397,109 +453,6 @@ pub fn run_dynamics_blocking(
         "MD complete in {:.1} s",
         elapsed.as_millis() as f32 / 1_000.
     );
-}
-
-/// We filter peptide hetero atoms out of the MD workflow. Adjust snapshot indices and atom positions so they
-/// are properly synchronized. This also handles the case of reassigning due to peptide atoms near the ligand.
-pub fn reassign_snapshot_indices(
-    md_local: &mut MdStateLocal,
-    // pep: &MoleculePeptide,
-    // ligs: &[&MoleculeSmall],
-    // lipids: &[&MoleculeLipid],
-    // nucleic_acids: &[&MoleculeNucleicAcid],
-    snapshots: &mut [Snapshot],
-    pep_atom_set: &HashSet<(usize, usize)>,
-) {
-    // if !pep.common.selected_for_md {
-    if md_local.peptides.is_empty() {
-        return;
-    }
-
-    println!("Re-assigning snapshot indices to match atoms excluded for MD...");
-
-    let pep_count = pep_atom_set.len();
-
-    // // Count how many ligand atoms precede the peptide in the snapshot ordering.
-    // let lig_atom_count: usize = ligs
-    //     .iter()
-    //     .filter(|l| l.common.selected_for_md)
-    //     .map(|l| l.common.atoms.len())
-    //     .sum();
-    //
-    // let lipid_atom_count: usize = lipids
-    //     .iter()
-    //     .filter(|l| l.common.selected_for_md)
-    //     .map(|l| l.common.atoms.len())
-    //     .sum();
-    //
-    // let na_atom_count: usize = nucleic_acids
-    //     .iter()
-    //     .filter(|l| l.common.selected_for_md)
-    //     .map(|l| l.common.atoms.len())
-    //     .sum();
-
-    // let pep_start_i = lig_atom_count + lipid_atom_count + na_atom_count;
-
-    // Rebuild each snapshot's atom_posits: [ligands as-is] + [full peptide with holes filled]
-    for snap in snapshots {
-        if pep_start_i + pep_count > snap.atom_posits.len() {
-            eprintln!(
-                "Error: Invalid index when reassigning snapshot posits. \
-            Snap atom count: {}, lig count {lig_atom_count} Pep start: {pep_start_i}, Pep count: {pep_count}",
-                snap.atom_posits.len()
-            );
-            continue;
-        }
-
-        // Iterator over the peptide positions that actually participated in MD
-        let mut pept_md_posits = snap.atom_posits[pep_start_i..pep_start_i + pep_count]
-            .iter()
-            .cloned();
-
-        let mut pept_md_vels = snap.atom_velocities[pep_start_i..pep_start_i + pep_count]
-            .iter()
-            .cloned();
-
-        let mut new_posits = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
-        let mut new_vels = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
-
-        // Keep ligand portion unchanged
-        new_posits.extend_from_slice(&snap.atom_posits[..pep_start_i]);
-        new_vels.extend_from_slice(&snap.atom_velocities[..pep_start_i]);
-
-        // Reinsert peptide atoms in their original order
-        for (i, atom) in pep.common.atoms.iter().enumerate() {
-            let is_included = pep_atom_set.contains(&(0, i));
-
-            if is_included {
-                new_posits.push(
-                    pept_md_posits
-                        .next()
-                        .expect("Ran out of peptide MD positions"),
-                );
-                new_vels.push(
-                    pept_md_vels
-                        .next()
-                        .expect("Ran out of peptide MD velocities"),
-                );
-            } else {
-                // Non-MD atom: use its original static position
-                new_posits.push(atom.posit.into());
-                new_vels.push(lin_alg::f32::Vec3::new_zero());
-            }
-        }
-
-        // todo: This is screwing things up for purposes of saving DCD files without water, as it's combining
-        // todo multiple mols into the posits.
-
-        // Replace the snapshot's positions with the reindexed set
-        snap.atom_posits = new_posits;
-        snap.atom_velocities = new_vels;
-
-        return;
-    }
-
-    println!("Done.");
 }
 
 // /// Unflattens.

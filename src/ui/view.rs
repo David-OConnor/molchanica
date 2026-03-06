@@ -170,7 +170,6 @@ pub fn view_settings(
                     &mut redraw.peptide,
                 );
             }
-            // }
 
             if let Some(md) = &state.volatile.md_local.mol_dynamics {
                 if state.ui.visibility.hide_water != water_prev {
@@ -182,7 +181,6 @@ pub fn view_settings(
                         &snap.water_h0_posits,
                         &snap.water_h1_posits,
                         state.ui.visibility.hide_water,
-                        // state,
                     );
                 }
             }
