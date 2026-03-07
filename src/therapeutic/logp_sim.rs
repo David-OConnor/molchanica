@@ -4,16 +4,15 @@
 //!
 //! This is a lipophilicity measurement.
 
-use std::collections::{HashMap, HashSet};
-
 use bio_files::BondType;
 use dynamics::{
-    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
-    SimBoxInit, snapshot::SnapshotHandler,
+    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit,
+    snapshot::SnapshotHandler,
 };
 use graphics::{EngineUpdates, Scene};
-use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
+use lin_alg::f64::Vec3;
 use na_seq::Element::{Carbon, Hydrogen, Oxygen};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     md::{build_dynamics, post_run_cleanup, run_dynamics_blocking},
@@ -134,15 +133,15 @@ pub fn run_dynamics_logp(
     let mut mol = mol.clone();
     mol.common.selected_for_md = true;
 
-    let num_octanol = 1; // todo A?R
-    let num_solute = 1; // todo?
+    let num_octanol = 10; // todo A?R
+    let num_solute = 0; // todo?
 
     let mols = [
         (FfMolType::SmallOrganic, &octanol.common, num_octanol),
         (FfMolType::SmallOrganic, &mol.common, num_solute),
     ];
 
-    let simbox_side_len: f32 = 20.; // todo: A/R
+    let simbox_side_len: f32 = 60.; // todo: A/R
 
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
@@ -154,9 +153,14 @@ pub fn run_dynamics_logp(
         hydrogen_constraint: HydrogenConstraint::Flexible, // for now
         snapshot_handlers: vec![SnapshotHandler::default()],
         sim_box: SimBoxInit::new_cube(simbox_side_len),
+        // sim_box: SimBoxInit::Pad(20.),   // Pad
         max_init_relaxation_iters: None, // todo A/R
         neighbor_skin: 1.,
-        overrides: MdOverrides::default(),
+        overrides: MdOverrides {
+            long_range_recip_disabled: true, // todo: Temp while troubleshooting it
+            snapshots_during_equilibration: true,
+            ..Default::default()
+        },
     };
 
     let mut md = build_dynamics(

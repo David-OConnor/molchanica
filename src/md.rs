@@ -10,10 +10,10 @@ use std::{
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
-    compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
+    SimBoxInit, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
-use lin_alg::f64::{X_VEC, Y_VEC, Z_VEC};
+use lin_alg::f64::{Quaternion, Vec3};
 
 use crate::{
     drawing::{
@@ -326,35 +326,109 @@ pub fn filter_peptide_atoms(
         .collect()
 }
 
+fn mol_centroid(m: &MolDynamics) -> Vec3 {
+    let posits: Vec<Vec3> = if let Some(ap) = &m.atom_posits {
+        ap.clone()
+    } else {
+        m.atoms.iter().map(|a| a.posit).collect()
+    };
+    let n = posits.len().max(1) as f64;
+    posits.iter().fold(Vec3::new_zero(), |acc, p| acc + *p) * (1.0 / n)
+}
+
+fn mol_bounding_radius(m: &MolDynamics, center: Vec3) -> f64 {
+    let posits: Vec<Vec3> = if let Some(ap) = &m.atom_posits {
+        ap.clone()
+    } else {
+        m.atoms.iter().map(|a| a.posit).collect()
+    };
+    posits
+        .iter()
+        .map(|p| (*p - center).magnitude())
+        .fold(0.0_f64, f64::max)
+}
+
 fn add_copies(mols: &mut Vec<MolDynamics>, mol: &MolDynamics, copies: usize) {
-    let offset_dirs = [X_VEC, -X_VEC, Y_VEC, -Y_VEC, Z_VEC, -Z_VEC];
-    // todo: Dedicated fn for this?
-    let offset_amt = 10.; // todo: Should depend on the mol.
-    // todo: This produces atoms in a plus configuration; not a grid! Sloppy proxy..\
-    let mut amt_i = 1; // Used to scale the distance.
+    use rand::Rng;
 
-    for i in 0..copies {
-        let mut mol_extra = mol.clone();
+    let mut rng = rand::rng();
 
-        let offset = offset_dirs[i % 6] * offset_amt * (amt_i + 1) as f64;
-        // todo: Do you want this, or just fthe posits?
-        for atom in &mut mol_extra.atoms {
-            atom.posit += offset;
+    const VDW_MARGIN: f64 = 2.0; // Minimum gap between molecule surfaces (Angstroms)
+    const MAX_ATTEMPTS: usize = 200;
+
+    let orig_centroid = mol_centroid(mol);
+    let orig_radius = mol_bounding_radius(mol, orig_centroid);
+    // Minimum centre-to-centre distance between any two copies.
+    let min_sep = 2.0 * orig_radius + VDW_MARGIN;
+
+    // Seed the placed list with whatever is already in `mols`.
+    let mut placed: Vec<(Vec3, f64)> = mols
+        .iter()
+        .map(|m| {
+            let c = mol_centroid(m);
+            let r = mol_bounding_radius(m, c);
+            (c, r)
+        })
+        .collect();
+
+    for copy_i in 0..copies {
+        // Random unit quaternion via 4 uniform samples + normalise.
+        let rot = {
+            let w: f64 = rng.random();
+            let x: f64 = rng.random();
+            let y: f64 = rng.random();
+            let z: f64 = rng.random();
+            Quaternion::new(w, x, y, z).to_normalized()
+        };
+
+        // Search for a non-overlapping centroid position.
+        // The base radius expands as copy count grows (∝ ∛N so density stays roughly constant).
+        let base_dist = min_sep * (1.0 + copy_i as f64).cbrt();
+        let mut new_centroid = orig_centroid + Vec3::new(base_dist, 0., 0.); // fallback
+
+        'search: for attempt in 0..MAX_ATTEMPTS {
+            // Random direction on the unit sphere.
+            let dx: f64 = rng.random::<f64>() * 2.0 - 1.0;
+            let dy: f64 = rng.random::<f64>() * 2.0 - 1.0;
+            let dz: f64 = rng.random::<f64>() * 2.0 - 1.0;
+            let len = (dx * dx + dy * dy + dz * dz).sqrt();
+            if len < 1e-10 {
+                continue;
+            }
+            let dir = Vec3::new(dx / len, dy / len, dz / len);
+
+            // Expand the search shell outward with each failed attempt.
+            let dist = base_dist + attempt as f64 * orig_radius * 0.5;
+            let candidate = orig_centroid + dir * dist;
+
+            for (c, r) in &placed {
+                if (*c - candidate).magnitude() < r + orig_radius + VDW_MARGIN {
+                    continue 'search;
+                }
+            }
+
+            new_centroid = candidate;
+            break;
         }
 
-        if let Some(posits) = &mut mol_extra.atom_posits {
-            for p in posits {
-                *p += offset;
+        let translation = new_centroid - orig_centroid;
+
+        let mut mol_copy = mol.clone();
+
+        // Rotate each position about orig_centroid, then translate to the new location.
+        if let Some(posits) = &mut mol_copy.atom_posits {
+            for p in posits.iter_mut() {
+                let local = *p - orig_centroid;
+                *p = rot.rotate_vec(local) + orig_centroid + translation;
             }
         }
-        // todo: Sort out how to do this position properly. Grid?
-
-        // todo: Similar algorithm to how you set up water molecules; same idea.
-        mols.push(mol_extra);
-
-        if i != 0 && i.is_multiple_of(6) {
-            amt_i += 1;
+        for atom in &mut mol_copy.atoms {
+            let local = atom.posit - orig_centroid;
+            atom.posit = rot.rotate_vec(local) + orig_centroid + translation;
         }
+
+        placed.push((new_centroid, orig_radius));
+        mols.push(mol_copy);
     }
 }
 
@@ -392,22 +466,25 @@ pub fn build_dynamics(
         peptide_only_near_lig,
     )?;
 
-    // // Uncomment as required for validating individual processes.
+    // Uncomment as required for validating individual processes.
     let mut cfg = MdConfig {
         overrides: MdOverrides {
-            skip_water: true, // todo: While troubleshooting muti-mols
+            // skip_water: true,
             // skip_water_relaxation: false,
             // bonded_disabled: false,
-            // coulomb_disabled: false,
-            // lj_disabled: false,
+            // coulomb_disabled: true,
+            // lj_disabled: true,
 
             // todo temp
             long_range_recip_disabled: true,
             // thermo_disabled: false,
             // baro_disabled: false,
-            // snapshots_during_equilibration: true,
+            snapshots_during_equilibration: true,
             ..Default::default()
         },
+        // zero_com_drift: false,
+        // todo temp
+        // sim_box: SimBoxInit::new_cube(80.), // todo temp
         // max_init_relaxation_iters: None,
         ..cfg.clone()
     };
@@ -744,7 +821,6 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
             &snap.water_h0_posits,
             &snap.water_h1_posits,
             state.ui.visibility.hide_water,
-            // state,
         );
     }
 }
