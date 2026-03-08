@@ -350,17 +350,26 @@ fn mol_bounding_radius(m: &MolDynamics, center: Vec3) -> f64 {
 
 /// Add multiple copies of each molecule. Adds at random orientation, and with a spacing between molecules
 /// far enough as not to cause conflicts or system blow-ups.
-fn add_copies(mols: &mut Vec<MolDynamics>, mol: &MolDynamics, copies: usize) {
+///
+/// `box_dims`: if `Some((bx, by, bz))`, molecules are placed uniformly within a box of those side
+/// lengths centered at the origin, staying at least `orig_radius + VDW_MARGIN` from every wall.
+/// If `None`, an unbounded shell-expansion strategy is used instead.
+fn add_copies(
+    mols: &mut Vec<MolDynamics>,
+    mol: &MolDynamics,
+    copies: usize,
+    box_dims: Option<(f32, f32, f32)>,
+) {
     use rand::Rng;
 
     let mut rng = rand::rng();
 
     const VDW_MARGIN: f64 = 2.0; // Minimum gap between molecule surfaces (Angstroms)
-    const MAX_ATTEMPTS: usize = 200;
+    const MAX_ATTEMPTS: usize = 500;
 
     let orig_centroid = mol_centroid(mol);
     let orig_radius = mol_bounding_radius(mol, orig_centroid);
-    // Minimum centre-to-centre distance between any two copies.
+    // Minimum center-to-center distance between any two copies.
     let min_sep = 2.0 * orig_radius + VDW_MARGIN;
 
     // Seed the placed list with whatever is already in `mols`.
@@ -373,6 +382,18 @@ fn add_copies(mols: &mut Vec<MolDynamics>, mol: &MolDynamics, copies: usize) {
         })
         .collect();
 
+    // Precompute safe half-extents for the box case (None if box is too small or unset).
+    let safe_half: Option<(f64, f64, f64)> = box_dims.and_then(|(bx, by, bz)| {
+        let hx = bx as f64 / 2.0 - orig_radius - VDW_MARGIN;
+        let hy = by as f64 / 2.0 - orig_radius - VDW_MARGIN;
+        let hz = bz as f64 / 2.0 - orig_radius - VDW_MARGIN;
+        if hx > 0.0 && hy > 0.0 && hz > 0.0 {
+            Some((hx, hy, hz))
+        } else {
+            None
+        }
+    });
+
     for copy_i in 0..copies {
         // Random unit quaternion via 4 uniform samples + normalise.
         let rot = {
@@ -383,35 +404,49 @@ fn add_copies(mols: &mut Vec<MolDynamics>, mol: &MolDynamics, copies: usize) {
             Quaternion::new(w, x, y, z).to_normalized()
         };
 
-        // Search for a non-overlapping centroid position.
-        // The base radius expands as copy count grows (∝ ∛N so density stays roughly constant).
-        let base_dist = min_sep * (1.0 + copy_i as f64).cbrt();
-        let mut new_centroid = orig_centroid + Vec3::new(base_dist, 0., 0.); // fallback
-
-        'search: for attempt in 0..MAX_ATTEMPTS {
-            // Random direction on the unit sphere.
-            let dx: f64 = rng.random::<f64>() * 2.0 - 1.0;
-            let dy: f64 = rng.random::<f64>() * 2.0 - 1.0;
-            let dz: f64 = rng.random::<f64>() * 2.0 - 1.0;
-            let len = (dx * dx + dy * dy + dz * dz).sqrt();
-            if len < 1e-10 {
-                continue;
-            }
-            let dir = Vec3::new(dx / len, dy / len, dz / len);
-
-            // Expand the search shell outward with each failed attempt.
-            let dist = base_dist + attempt as f64 * orig_radius * 0.5;
-            let candidate = orig_centroid + dir * dist;
-
-            for (c, r) in &placed {
-                if (*c - candidate).magnitude() < r + orig_radius + VDW_MARGIN {
-                    continue 'search;
+        let new_centroid = if let Some((hx, hy, hz)) = safe_half {
+            // Box-constrained: sample uniformly within the safe subvolume (box centered at origin).
+            let mut result = Vec3::new_zero(); // fallback: origin
+            'box_search: for _ in 0..MAX_ATTEMPTS {
+                let candidate = Vec3::new(
+                    rng.random::<f64>() * 2.0 * hx - hx,
+                    rng.random::<f64>() * 2.0 * hy - hy,
+                    rng.random::<f64>() * 2.0 * hz - hz,
+                );
+                for (c, r) in &placed {
+                    if (*c - candidate).magnitude() < r + orig_radius + VDW_MARGIN {
+                        continue 'box_search;
+                    }
                 }
+                result = candidate;
+                break;
             }
-
-            new_centroid = candidate;
-            break;
-        }
+            result
+        } else {
+            // Unbounded: random direction + shell expansion with each failed attempt.
+            let base_dist = min_sep * (1.0 + copy_i as f64).cbrt();
+            let mut result = orig_centroid + Vec3::new(base_dist, 0., 0.); // fallback
+            'free_search: for attempt in 0..MAX_ATTEMPTS {
+                let dx: f64 = rng.random::<f64>() * 2.0 - 1.0;
+                let dy: f64 = rng.random::<f64>() * 2.0 - 1.0;
+                let dz: f64 = rng.random::<f64>() * 2.0 - 1.0;
+                let len = (dx * dx + dy * dy + dz * dz).sqrt();
+                if len < 1e-10 {
+                    continue;
+                }
+                let dir = Vec3::new(dx / len, dy / len, dz / len);
+                let dist = base_dist + attempt as f64 * orig_radius * 0.5;
+                let candidate = orig_centroid + dir * dist;
+                for (c, r) in &placed {
+                    if (*c - candidate).magnitude() < r + orig_radius + VDW_MARGIN {
+                        continue 'free_search;
+                    }
+                }
+                result = candidate;
+                break;
+            }
+            result
+        };
 
         let translation = new_centroid - orig_centroid;
 
@@ -460,12 +495,22 @@ pub fn build_dynamics(
         peptide_only_near_lig = None;
     }
 
+    // Extract explicit box side-lengths so add_copies can keep molecules inside the boundary.
+    // Only meaningful for Fixed boxes; Pad boxes are sized after molecule placement so we skip them.
+    let box_dims = match &cfg.sim_box {
+        SimBoxInit::Fixed((lo, hi)) => {
+            Some(((hi.x - lo.x), (hi.y - lo.y), (hi.z - lo.z)))
+        }
+        SimBoxInit::Pad(_) => None,
+    };
+
     let mols = setup_mols_dyn(
         mols_in,
         mol_specific_params,
         pep_atom_set,
         static_peptide,
         peptide_only_near_lig,
+        box_dims,
     )?;
 
     // Uncomment as required for validating individual processes.
@@ -652,6 +697,7 @@ pub fn launch_md_energy_computation(
         pep_atom_set,
         state.ui.md.peptide_static,
         peptide_only_near_lig,
+        None,
     )?;
 
     compute_energy_snapshot(&state.dev, &mols, &state.ff_param_set)
@@ -717,6 +763,7 @@ fn setup_mols_dyn(
     pep_atom_set: &mut HashSet<(usize, usize)>,
     static_peptide: bool,
     peptide_only_near_lig: Option<f64>,
+    box_dims: Option<(f32, f32, f32)>,
 ) -> Result<Vec<MolDynamics>, ParamError> {
     let mut res = Vec::new();
 
@@ -783,7 +830,7 @@ fn setup_mols_dyn(
         };
 
         if *ff_mol_type == FfMolType::SmallOrganic {
-            add_copies(&mut res, &mol, *copies);
+            add_copies(&mut res, &mol, *copies, box_dims);
         } else {
             res.push(mol);
         }

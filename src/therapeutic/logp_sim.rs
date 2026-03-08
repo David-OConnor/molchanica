@@ -27,14 +27,18 @@ use crate::{
     state::State,
 };
 
-const OCTANOL_BOX_SIZE: f32 = 20.; // side len, Å
-const WATER_BOX_SIZE: f32 = 35.; // Side len, Å Determines amount of water molecules.
+const OCTANOL_BOX_SIZE: f32 = 60.; // side len, Å
+const WATER_BOX_SIZE: f32 = 35.; // Side len, Å Determines amount of water molecules. 35Å -> ~1400 mols.
 
-const OCTANOL_COUNT: usize = 356;
+// const OCTANOL_COUNT: usize = 356;
+const OCTANOL_COUNT: usize = 3;
 const OCTANOL_BOX_WATER_COUNT: usize = 132;
 
 const DT: f32 = 0.002; // ps
 const NUM_STEPS: usize = 2_000; // todo: May be templ.
+
+// The conversion factor between ln and log10
+const LOG_CONV: f32 = 1. / 2.303;
 
 /// Using PubChem data as a reference. Partial charges are computed using ORCA. We us this input:
 /// ! HF 6-31G* Opt TightSCF TightOpt RESP
@@ -200,7 +204,11 @@ fn run_octanol(
 
     println!("Snaps: {:?}", md.snapshots.len());
 
-    let energy = md.snapshots[md.snapshots.len() - 1].energy_potential;
+    // todo: This is for the whole system including water molecules. Is this waht we want?
+    let energy = {
+        let snap = &md.snapshots[md.snapshots.len() - 1];
+        snap.energy_potential + snap.energy_kinetic
+    };
     println!(
         "Free energy computed for the octanol component: {:.2}",
         energy
@@ -262,7 +270,11 @@ fn run_water(
 
     println!("Snaps: {:?}", md.snapshots.len());
 
-    let energy = md.snapshots[md.snapshots.len() - 1].energy_potential;
+    // todo: This is for the whole system including water molecules. Is this waht we want?
+    let energy = {
+        let snap = &md.snapshots[md.snapshots.len() - 1];
+        snap.energy_potential + snap.energy_kinetic
+    };
     println!(
         "Free energy computed for the water component: {:.2}",
         energy
@@ -283,9 +295,16 @@ pub fn run(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
-    run_water(mol, state, scene, updates)?;
+    let e_water = 0.;
+    let e_octanol = 0.;
 
-    // run_octanol(mol, state, scene, updates)?;
+    // todo: Octanol init is slow.
+    // let e_water = run_water(mol, state, scene, updates)?;
+    let e_octanol = run_octanol(mol, state, scene, updates)?;
 
-    Ok(0.)
+    // todo: How do we calculate alchemical free energies?
+    // todo: One LLM thinkjs I shoujld calculate something across different
+    // todo lamda values (~20 of them, e.g. lamda = 0.0, 0.05, 0.1, to 1.0
+
+    Ok((e_water - e_octanol) * LOG_CONV)
 }

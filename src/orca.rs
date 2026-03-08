@@ -93,6 +93,7 @@ pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
                     hydrogen_bonds: Vec::new(),
                     temperature: 0.,
                     pressure: 0.,
+                    dh_dl: 0.,
                 })
             }
         }
