@@ -133,15 +133,15 @@ pub fn run_dynamics_logp(
     let mut mol = mol.clone();
     mol.common.selected_for_md = true;
 
-    let num_octanol = 10; // todo A?R
-    let num_solute = 0; // todo?
+    let num_octanol = 6; // todo A?R
+    let num_solute = 6; // todo?
 
     let mols = [
         (FfMolType::SmallOrganic, &octanol.common, num_octanol),
         (FfMolType::SmallOrganic, &mol.common, num_solute),
     ];
 
-    let simbox_side_len: f32 = 60.; // todo: A/R
+    let simbox_side_len: f32 = 70.; // todo: A/R
 
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
@@ -152,8 +152,8 @@ pub fn run_dynamics_logp(
         pressure_target: 1.,
         hydrogen_constraint: HydrogenConstraint::Flexible, // for now
         snapshot_handlers: vec![SnapshotHandler::default()],
-        sim_box: SimBoxInit::new_cube(simbox_side_len),
-        // sim_box: SimBoxInit::Pad(20.),   // Pad
+        // sim_box: SimBoxInit::new_cube(simbox_side_len),
+        sim_box: SimBoxInit::Pad(20.),   // Pad
         max_init_relaxation_iters: None, // todo A/R
         neighbor_skin: 1.,
         overrides: MdOverrides {

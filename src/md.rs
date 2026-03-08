@@ -348,6 +348,8 @@ fn mol_bounding_radius(m: &MolDynamics, center: Vec3) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
+/// Add multiple copies of each molecule. Adds at random orientation, and with a spacing between molecules
+/// far enough as not to cause conflicts or system blow-ups.
 fn add_copies(mols: &mut Vec<MolDynamics>, mol: &MolDynamics, copies: usize) {
     use rand::Rng;
 
@@ -484,7 +486,7 @@ pub fn build_dynamics(
         },
         // zero_com_drift: false,
         // todo temp
-        // sim_box: SimBoxInit::new_cube(80.), // todo temp
+        // sim_box: SimBoxInit::new_cube(40.), // todo temp
         // max_init_relaxation_iters: None,
         ..cfg.clone()
     };
@@ -780,7 +782,7 @@ fn setup_mols_dyn(
             mol_specific_params: msp,
         };
 
-        if *copies > 1 && *ff_mol_type == FfMolType::SmallOrganic {
+        if *ff_mol_type == FfMolType::SmallOrganic {
             add_copies(&mut res, &mol, *copies);
         } else {
             res.push(mol);
