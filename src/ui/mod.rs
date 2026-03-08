@@ -1058,7 +1058,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                         in water and octanol. Broken/WIP.")
                         .clicked()
                     {
-                        match logp_sim::run_dynamics_logp(&m, state, scene, &mut updates) {
+                        match logp_sim::run(&m, state, scene, &mut updates) {
                             Ok(v) => println!("Logp sim result: {v}"),
                             Err(e) => handle_err(&mut state.ui, format!("Error running the LogP simulation: {e:?}")),
                         }

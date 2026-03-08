@@ -277,7 +277,9 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                     })
                 };
 
-                println!("Running ORCA input:\n{}\n...", state.orca.input.make_inp());
+                println!("\nRunning ORCA input:\n\n-------\n{}\n-------\n...\n", state.orca.input.make_inp());
+
+                // todo: "TightSCF" keyword when generating MBIS charges?
 
                 match state.orca.input.run() {
                     Ok(out) => {
@@ -296,8 +298,29 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                                 // println!("Charge output: {:?}", o);
                                 // println!("Orca raw output text: \n\n{:?}\n\n\n\n", o.text);
 
-                                println!("ORCA charge generation complete. \nCharges: {:?}\n\nDipole: {:?}\n\nQuad: {:?}\n\nOcto: {:?}",
-                                         o.charges, o.dipole, o.quadrupole, o.octopole);
+                                println!("\n------\nORCA charge generation complete.\n\n Charge:");
+                                for charge in &o.charges {
+                                    println!("-{charge:?}");
+                                }
+
+                                println!("\n\nDipole:");
+                                for charge in &o.dipole {
+                                    println!("-{charge:?}");
+                                }
+
+                                println!("\n\nQuadrupole:");
+                                for charge in &o.quadrupole {
+                                    println!("-{charge:?}");
+                                }
+
+                                println!("\n\nOctopole:");
+                                for charge in &o.octopole {
+                                    println!("-{charge:?}");
+                                }
+
+                                println!("\n-------\n");
+
+
                                 // handle_success(&mut state.ui, format!("MBIS charges assigned for {}", mol.common().ident));
 
                                 if o.charges.len() != mol.common().atoms.len() {

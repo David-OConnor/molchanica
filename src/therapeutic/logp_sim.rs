@@ -1,8 +1,16 @@
-//! Creates a MD sim to measure LogP or LogD, by creating a solvent mixture of 50/50 water
-//! and octonal, along with many copies of the solute being measured. The ratio of solute which
-//! ends in the water vs octanol is the measurement result.
+//! Creates a MD sim to measure LogP or LogD. Measures a single molecule of solute in a box of
+//! water, and one in a box of water-saturated octanol. Compares the alchemical free energy of
+//! the two to estimate LogP or LogD.
 //!
-//! This is a lipophilicity measurement.
+//! This is a lipophilicity measurement, and is an important metric for a molecule's use a drug.
+//!
+//! Rough targets to start: 500-2000 water mols in the water box
+//! (What sim box size does this work out to?)
+//!
+//! 200-800 octanols in the octanol box. 27% mol water in it. So, 356 octanol + 132 water to start?
+//! 1 copy of the solute in each box.
+
+use std::collections::{HashMap, HashSet};
 
 use bio_files::BondType;
 use dynamics::{
@@ -12,7 +20,6 @@ use dynamics::{
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::Element::{Carbon, Hydrogen, Oxygen};
-use std::collections::{HashMap, HashSet};
 
 use crate::{
     md::{build_dynamics, post_run_cleanup, run_dynamics_blocking},
@@ -20,39 +27,56 @@ use crate::{
     state::State,
 };
 
-/// Using PubChem data as a reference. Could also load from SMILES.
+const OCTANOL_BOX_SIZE: f32 = 20.; // side len, Å
+const WATER_BOX_SIZE: f32 = 35.; // Side len, Å Determines amount of water molecules.
+
+const OCTANOL_COUNT: usize = 356;
+const OCTANOL_BOX_WATER_COUNT: usize = 132;
+
+const DT: f32 = 0.002; // ps
+const NUM_STEPS: usize = 2_000; // todo: May be templ.
+
+/// Using PubChem data as a reference. Partial charges are computed using ORCA. We us this input:
+/// ! HF 6-31G* Opt TightSCF TightOpt RESP
+///
+/// * xyz 0 1
+/// O       4.94420     -0.39760     -0.04630
+/// ...
+///
+/// This may be less accurate than more modern basis sets and MBIS charges, but may perform
+/// better with AMBER MD force fields.
 pub fn make_octanol() -> MoleculeSmall {
     // todo: Get a higher quality source of partial charges.
     // (El, posit, FF name, partial charge.)
     #[rustfmt::skip]
     let atoms = [
-        (Oxygen,   Vec3::new( 4.9442, -0.3976, -0.0463), "oh", -0.674109), //  1
-        (Carbon,   Vec3::new( 0.0273, -0.3598,  0.0738), "c3", -0.081901), //  2
-        (Carbon,   Vec3::new(-1.2646,  0.4624,  0.0583), "c3", -0.082301), //  3
-        (Carbon,   Vec3::new( 1.2942,  0.4958,  0.0044), "c3", -0.081815), //  4
-        (Carbon,   Vec3::new(-2.5319, -0.3950,  0.0532), "c3", -0.082398), //  5
-        (Carbon,   Vec3::new( 2.5500, -0.3747, -0.0005), "c3", -0.090847), //  6
-        (Carbon,   Vec3::new(-3.7874,  0.4741, -0.0356), "c3", -0.081866), //  7
-        (Carbon,   Vec3::new( 3.8175,  0.4679, -0.0278), "c3",  0.160930), //  8
-        (Carbon,   Vec3::new(-5.0492, -0.3730, -0.0796), "c3", -0.094776), //  9
-        (Hydrogen, Vec3::new( 0.0503, -0.9725,  0.9835), "hc",  0.048810), // 10
-        (Hydrogen, Vec3::new( 0.0176, -1.0547, -0.7753), "hc",  0.048424), // 11
-        (Hydrogen, Vec3::new(-1.2784,  1.1276,  0.9306), "hc",  0.047161), // 12
-        (Hydrogen, Vec3::new(-1.2632,  1.1063, -0.8301), "hc",  0.046766), // 13
-        (Hydrogen, Vec3::new( 1.3198,  1.1783,  0.8623), "hc",  0.047020), // 14
-        (Hydrogen, Vec3::new( 1.2714,  1.1141, -0.9010), "hc",  0.046657), // 15
-        (Hydrogen, Vec3::new(-2.5656, -1.0062,  0.9629), "hc",  0.048932), // 16
-        (Hydrogen, Vec3::new(-2.5025, -1.0845, -0.7992), "hc",  0.048553), // 17
-        (Hydrogen, Vec3::new( 2.5379, -1.0481, -0.8666), "hc",  0.048300), // 18
-        (Hydrogen, Vec3::new( 2.5665, -1.0240,  0.8838), "hc",  0.048741), // 19
-        (Hydrogen, Vec3::new(-3.8347,  1.1483,  0.8274), "hc",  0.047275), // 20
-        (Hydrogen, Vec3::new(-3.7454,  1.0998, -0.9347), "hc",  0.046915), // 21
-        (Hydrogen, Vec3::new( 3.8553,  1.1097, -0.9137), "h1",  0.042698), // 22
-        (Hydrogen, Vec3::new( 3.8880,  1.1005,  0.8622), "h1",  0.042359), // 23
-        (Hydrogen, Vec3::new(-5.1386, -0.9902,  0.8201), "hc",  0.046161), // 24
-        (Hydrogen, Vec3::new(-5.0475, -1.0346, -0.9517), "hc",  0.046535), // 25
-        (Hydrogen, Vec3::new(-5.9342,  0.2680, -0.1411), "hc",  0.045612), // 26
-        (Hydrogen, Vec3::new( 4.8901, -0.9332, -0.8561), "ho",  0.482395), // 27
+        (Oxygen,   Vec3::new( 4.9442, -0.3976, -0.0463), "oh", -0.730420), //  1
+        (Carbon,   Vec3::new( 0.0273, -0.3598,  0.0738), "c3",  0.154597), //  2
+        (Carbon,   Vec3::new(-1.2646,  0.4624,  0.0583), "c3", -0.078612), //  3
+        (Carbon,   Vec3::new( 1.2942,  0.4958,  0.0044), "c3", -0.034888), //  4
+        (Carbon,   Vec3::new(-2.5319, -0.3950,  0.0532), "c3", -0.011862), //  5
+        (Carbon,   Vec3::new( 2.5500, -0.3747, -0.0005), "c3", -0.092695), //  6
+        (Carbon,   Vec3::new(-3.7874,  0.4741, -0.0356), "c3",  0.208880), //  7
+        (Carbon,   Vec3::new( 3.8175,  0.4679, -0.0278), "c3",  0.388562), //  8
+        (Carbon,   Vec3::new(-5.0492, -0.3730, -0.0796), "c3", -0.327900), //  9
+        (Hydrogen, Vec3::new( 0.0503, -0.9725,  0.9835), "hc", -0.031046), // 10
+        (Hydrogen, Vec3::new( 0.0176, -1.0547, -0.7753), "hc", -0.034188), // 11
+        (Hydrogen, Vec3::new(-1.2784,  1.1276,  0.9306), "hc",  0.010158), // 12
+        (Hydrogen, Vec3::new(-1.2632,  1.1063, -0.8301), "hc",  0.004831), // 13
+        (Hydrogen, Vec3::new( 1.3198,  1.1783,  0.8623), "hc", -0.008392), // 14
+        (Hydrogen, Vec3::new( 1.2714,  1.1141, -0.9010), "hc",  0.001771), // 15
+        (Hydrogen, Vec3::new(-2.5656, -1.0062,  0.9629), "hc",  0.001025), // 16
+        (Hydrogen, Vec3::new(-2.5025, -1.0845, -0.7992), "hc",  0.001729), // 17
+        (Hydrogen, Vec3::new( 2.5379, -1.0481, -0.8666), "hc",  0.009347), // 18
+        (Hydrogen, Vec3::new( 2.5665, -1.0240,  0.8838), "hc",  0.029857), // 19
+        (Hydrogen, Vec3::new(-3.8347,  1.1483,  0.8274), "hc", -0.034454), // 20
+        (Hydrogen, Vec3::new(-3.7454,  1.0998, -0.9347), "hc", -0.033270), // 21
+        (Hydrogen, Vec3::new( 3.8553,  1.1097, -0.9137), "h1", -0.055477), // 22
+        (Hydrogen, Vec3::new( 3.8880,  1.1005,  0.8622), "h1",  0.018941), // 23
+        (Hydrogen, Vec3::new(-5.1386, -0.9902,  0.8201), "hc",  0.072069), // 24
+        (Hydrogen, Vec3::new(-5.0475, -1.0346, -0.9517), "hc",  0.071193), // 25
+        (Hydrogen, Vec3::new(-5.9342,  0.2680, -0.1411), "hc",  0.075105), // 26
+        (Hydrogen, Vec3::new( 4.8901, -0.9332, -0.8561), "ho",  0.425140), // 27
     ];
 
     // Serial numbers (1 ripple)
@@ -114,8 +138,8 @@ pub fn make_octanol() -> MoleculeSmall {
     MoleculeSmall::new("Octanol".to_string(), atoms, bonds, HashMap::new(), None)
 }
 
-// pub fn build_dynamics_logp(mol: &MoleculeSmall, state: &State) -> Result<MdState, ParamError> {
-pub fn run_dynamics_logp(
+/// A sim of the molecule in water-saturated Octanol. Returns free energy.
+fn run_octanol(
     mol: &MoleculeSmall,
     state: &mut State,
     scene: &mut Scene,
@@ -129,38 +153,30 @@ pub fn run_dynamics_logp(
     );
 
     octanol.common.selected_for_md = true;
-
-    let mut mol = mol.clone();
-    mol.common.selected_for_md = true;
-
-    let num_octanol = 6; // todo A?R
-    let num_solute = 6; // todo?
+    // mol.common.selected_for_md = true;
 
     let mols = [
-        (FfMolType::SmallOrganic, &octanol.common, num_octanol),
-        (FfMolType::SmallOrganic, &mol.common, num_solute),
+        (FfMolType::SmallOrganic, &octanol.common, OCTANOL_COUNT),
+        (FfMolType::SmallOrganic, &mol.common, 1),
     ];
-
-    let simbox_side_len: f32 = 70.; // todo: A/R
 
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
             thermostat: Some(0.9),
         },
-        zero_com_drift: true,
         temp_target: 310.,
         pressure_target: 1.,
-        hydrogen_constraint: HydrogenConstraint::Flexible, // for now
+        hydrogen_constraint: HydrogenConstraint::Constrained,
         snapshot_handlers: vec![SnapshotHandler::default()],
-        // sim_box: SimBoxInit::new_cube(simbox_side_len),
-        sim_box: SimBoxInit::Pad(20.),   // Pad
+        sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
+        // sim_box: SimBoxInit::Pad(5.),    // Pad
         max_init_relaxation_iters: None, // todo A/R
-        neighbor_skin: 1.,
         overrides: MdOverrides {
             long_range_recip_disabled: true, // todo: Temp while troubleshooting it
             snapshots_during_equilibration: true,
             ..Default::default()
         },
+        ..Default::default()
     };
 
     let mut md = build_dynamics(
@@ -169,7 +185,7 @@ pub fn run_dynamics_logp(
         &state.ff_param_set,
         &state.mol_specific_params,
         &cfg,
-        state.ui.md.peptide_static,
+        false,
         None,
         &mut HashSet::new(),
         false,
@@ -178,15 +194,98 @@ pub fn run_dynamics_logp(
     state.volatile.md_local.update_mols_for_disp(&mols);
 
     // Blocking.
-    let dt = 0.002; // todo?
-    let n_steps = 500;
-    run_dynamics_blocking(&mut md, &state.dev, dt, n_steps);
+    run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
+
+    // todo: Instead of running a sim, perhaps just use the one-off energy computation.
 
     println!("Snaps: {:?}", md.snapshots.len());
+
+    let energy = md.snapshots[md.snapshots.len() - 1].energy_potential;
+    println!(
+        "Free energy computed for the octanol component: {:.2}",
+        energy
+    );
 
     state.volatile.md_local.mol_dynamics = Some(md); // todo: Required to visualize?
 
     post_run_cleanup(state, scene, updates);
+
+    Ok(energy)
+}
+
+/// A sim of the molecule in water. Returns free energy.
+fn run_water(
+    mol: &MoleculeSmall,
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+) -> Result<f32, ParamError> {
+    // mol.common.selected_for_md = true;
+
+    let mols = [(FfMolType::SmallOrganic, &mol.common, 1)];
+
+    let cfg = MdConfig {
+        integrator: Integrator::VerletVelocity {
+            thermostat: Some(0.9),
+        },
+        temp_target: 310.,
+        pressure_target: 1.,
+        hydrogen_constraint: HydrogenConstraint::Constrained,
+        snapshot_handlers: vec![SnapshotHandler::default()],
+        sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
+        // sim_box: SimBoxInit::Pad(5.),    // Pad
+        max_init_relaxation_iters: None, // todo A/R
+        overrides: MdOverrides {
+            long_range_recip_disabled: true, // todo: Temp while troubleshooting it
+            snapshots_during_equilibration: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut md = build_dynamics(
+        &state.dev,
+        &mols,
+        &state.ff_param_set,
+        &state.mol_specific_params,
+        &cfg,
+        false,
+        None,
+        &mut HashSet::new(),
+        false,
+    )?;
+
+    state.volatile.md_local.update_mols_for_disp(&mols);
+
+    // Blocking.
+    run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
+
+    println!("Snaps: {:?}", md.snapshots.len());
+
+    let energy = md.snapshots[md.snapshots.len() - 1].energy_potential;
+    println!(
+        "Free energy computed for the water component: {:.2}",
+        energy
+    );
+
+    state.volatile.md_local.mol_dynamics = Some(md); // todo: Required to visualize?
+
+    // todo?
+    post_run_cleanup(state, scene, updates);
+
+    // todo: DRY between the two fns.
+    Ok(energy)
+}
+
+pub fn run(
+    mol: &MoleculeSmall,
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+) -> Result<f32, ParamError> {
+    run_water(mol, state, scene, updates)?;
+
+    // run_octanol(mol, state, scene, updates)?;
 
     Ok(0.)
 }

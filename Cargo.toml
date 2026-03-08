@@ -24,8 +24,8 @@ na_seq = "0.3.15"
 bio_apis = { version = "0.2.6", features = ["encode"] }
 bio_files = "0.4.9"
 mcubes = "0.1.7"
-#dynamics = { version = "0.1.5", features = ["encode"] }
-dynamics = { path = "../dynamics", features = ["encode"] }
+dynamics = { version = "0.1.7", features = ["encode"] }
+#dynamics = { path = "../dynamics", features = ["encode"] }
 
 # todo: A/R. For reflectionss. Remove if you split out the 3D FFT code.
 ewald = { version = "0.1.12" }
