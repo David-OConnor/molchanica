@@ -7,7 +7,10 @@ use std::{
     time::Instant,
 };
 
+use rand::Rng;
+
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
+use cudarc::driver::result::event::elapsed;
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
@@ -20,7 +23,6 @@ use crate::{
         draw_peptide, draw_water,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
-    md,
     molecules::{
         MoleculePeptide,
         common::MoleculeCommon,
@@ -360,8 +362,10 @@ fn add_copies(
     copies: usize,
     box_dims: Option<(f32, f32, f32)>,
 ) {
-    use rand::Rng;
-
+    if copies > 1 {
+        println!("Adding molecule copies...");
+    }
+    let start = Instant::now();
     let mut rng = rand::rng();
 
     const VDW_MARGIN: f64 = 2.0; // Minimum gap between molecule surfaces (Angstroms)
@@ -467,6 +471,8 @@ fn add_copies(
         placed.push((new_centroid, orig_radius));
         mols.push(mol_copy);
     }
+    let elapsed = start.elapsed().as_millis();
+    println!("Copies added in {elapsed} ms");
 }
 
 /// Set up MD for selected molecules. A general purpose wrapper around `dynamics` API, for
@@ -498,9 +504,7 @@ pub fn build_dynamics(
     // Extract explicit box side-lengths so add_copies can keep molecules inside the boundary.
     // Only meaningful for Fixed boxes; Pad boxes are sized after molecule placement so we skip them.
     let box_dims = match &cfg.sim_box {
-        SimBoxInit::Fixed((lo, hi)) => {
-            Some(((hi.x - lo.x), (hi.y - lo.y), (hi.z - lo.z)))
-        }
+        SimBoxInit::Fixed((lo, hi)) => Some(((hi.x - lo.x), (hi.y - lo.y), (hi.z - lo.z))),
         SimBoxInit::Pad(_) => None,
     };
 
@@ -527,7 +531,8 @@ pub fn build_dynamics(
             // thermo_disabled: false,
             // baro_disabled: false,
             snapshots_during_equilibration: true,
-            ..Default::default()
+            // Merge with caller-supplied overrides so flags like `skip_water` are preserved.
+            ..cfg.overrides.clone()
         },
         // zero_com_drift: false,
         // todo temp

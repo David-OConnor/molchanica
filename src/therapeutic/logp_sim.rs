@@ -10,6 +10,8 @@
 //! 200-800 octanols in the octanol box. 27% mol water in it. So, 356 octanol + 132 water to start?
 //! 1 copy of the solute in each box.
 
+// todo: Create an octanol-initialization template.
+
 use std::collections::{HashMap, HashSet};
 
 use bio_files::BondType;
@@ -27,15 +29,28 @@ use crate::{
     state::State,
 };
 
-const OCTANOL_BOX_SIZE: f32 = 60.; // side len, Å
-const WATER_BOX_SIZE: f32 = 35.; // Side len, Å Determines amount of water molecules. 35Å -> ~1400 mols.
+// add_copies uses bounding-sphere exclusion (~14 Å center-to-center for octanol).
+// Max reliably placeable per box: ≈ (box - 16)³ × 0.64 / (4/3 π 7³).
+// 55 Å → ~26 molecules; 20 is comfortably within that.
+//
+// TODO: add_copies is not designed for liquid-density packing. 20 octanol in a 55 Å box is
+// only ~4% of liquid octanol density. A proper octanol phase requires a pre-equilibrated
+// template (similar to the water template) or a lattice-based initializer.
+const OCTANOL_BOX_SIZE: f32 = 55.; // Å
+const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 TIP3P water mols; > 2× the 12 Å NB cutoff.
 
-// const OCTANOL_COUNT: usize = 356;
-const OCTANOL_COUNT: usize = 3;
-const OCTANOL_BOX_WATER_COUNT: usize = 132;
+const OCTANOL_COUNT: usize = 356;
+const WATER_RATIO_IN_OCTANOL: f32 = 0.27;
+// 27 mol% water in water-saturated 1-octanol (literature value).
+// For OCTANOL_COUNT octanol: water = OCTANOL_COUNT × 0.27/0.73 ≈ OCTANOL_COUNT × 0.37.
+const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_RATIO_IN_OCTANOL) as usize;
 
 const DT: f32 = 0.002; // ps
-const NUM_STEPS: usize = 2_000; // todo: May be templ.
+// Minimum ~100 ps (50_000 steps) for basic equilibration; production LogP needs ≥1 ns.
+// const NUM_STEPS: usize = 50_000;
+const NUM_STEPS: usize = 2_000; // todo temp while testing the initialization
+
+const TEMP_TGT: f32 = 298.15; // Standard LogP is measured at 25 °C = 298.15 K.
 
 // The conversion factor between ln and log10
 const LOG_CONV: f32 = 1. / 2.303;
@@ -149,15 +164,17 @@ fn run_octanol(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
+    // Clone so we can set selected_for_md without mutating the caller's molecule.
+    let mut mol = mol.clone();
+    mol.common.selected_for_md = true;
+
     let mut octanol = make_octanol();
     octanol.update_ff_related(
         &mut state.mol_specific_params,
         &state.ff_param_set.small_mol.as_ref().unwrap(),
         false,
     );
-
     octanol.common.selected_for_md = true;
-    // mol.common.selected_for_md = true;
 
     let mols = [
         (FfMolType::SmallOrganic, &octanol.common, OCTANOL_COUNT),
@@ -168,13 +185,12 @@ fn run_octanol(
         integrator: Integrator::VerletVelocity {
             thermostat: Some(0.9),
         },
-        temp_target: 310.,
+        temp_target: TEMP_TGT,
         pressure_target: 1.,
         hydrogen_constraint: HydrogenConstraint::Constrained,
         snapshot_handlers: vec![SnapshotHandler::default()],
         sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
-        // sim_box: SimBoxInit::Pad(5.),    // Pad
-        max_init_relaxation_iters: None, // todo A/R
+        specify_num_water: Some(OCTANOL_BOX_WATER_COUNT),
         overrides: MdOverrides {
             long_range_recip_disabled: true, // todo: Temp while troubleshooting it
             snapshots_during_equilibration: true,
@@ -228,7 +244,9 @@ fn run_water(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
-    // mol.common.selected_for_md = true;
+    // Clone so we can set selected_for_md without mutating the caller's molecule.
+    let mut mol = mol.clone();
+    mol.common.selected_for_md = true;
 
     let mols = [(FfMolType::SmallOrganic, &mol.common, 1)];
 
@@ -236,13 +254,11 @@ fn run_water(
         integrator: Integrator::VerletVelocity {
             thermostat: Some(0.9),
         },
-        temp_target: 310.,
+        temp_target: TEMP_TGT,
         pressure_target: 1.,
         hydrogen_constraint: HydrogenConstraint::Constrained,
         snapshot_handlers: vec![SnapshotHandler::default()],
         sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
-        // sim_box: SimBoxInit::Pad(5.),    // Pad
-        max_init_relaxation_iters: None, // todo A/R
         overrides: MdOverrides {
             long_range_recip_disabled: true, // todo: Temp while troubleshooting it
             snapshots_during_equilibration: true,
