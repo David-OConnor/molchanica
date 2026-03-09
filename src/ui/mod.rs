@@ -4,13 +4,13 @@ use std::{
     time::Instant,
 };
 
-use bio_apis::rcsb;
+use bio_apis::{pdbe, rcsb};
 use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
     Color32, ComboBox, Context, Key, RichText, Slider, TextEdit, TextFormat, TextStyle,
     TopBottomPanel, Ui, text::LayoutJob,
 };
-use graphics::{ControlScheme, EngineUpdates, Scene};
+use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use md::md_setup;
 use mol_data::display_mol_data;
 use na_seq::Element;
@@ -505,13 +505,26 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                         ResColoring::AminoAcid,
                         ResColoring::Position,
                         ResColoring::Hydrophobicity,
+                        ResColoring::SiftsUniprot,
                     ] {
                         ui.selectable_value(&mut state.ui.res_coloring, v, v.to_string());
                     }
                 });
 
             if state.ui.res_coloring != prev {
-                if state.peptide.is_some() {
+                if let Some(pep) = &mut state.peptide {
+                    if pep.sifts_mapping.is_none() {
+                        let ident = &pep.common.ident;
+
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let ident_for_thread = ident.clone();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(pdbe::load_uniprot_mappings(&ident_for_thread));
+                        });
+                        state.volatile.thread_receivers.sifts_mapping_avail = Some(rx);
+                    }
+
+                    // if state.peptide.is_some() {
                     state.volatile.flags.update_sas_coloring = true;
                 }
                 *redraw = true;
@@ -1167,11 +1180,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         if let Err(e) = update_file_dialogs(state, scene, ui, &mut updates) {
             handle_err(&mut state.ui, format!("Problem saving file: {e:?}"));
         }
-
-        handle_redraw(
-            state,
-            scene, &mut redraw, reset_cam, &mut updates,
-        )
     });
 
     // todo: Experimenting
@@ -1184,7 +1192,9 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
     }
 
     handle_scene_flags(state, scene, &mut updates);
-    handle_thread_rx(state, scene, &mut updates);
+    handle_thread_rx(state, scene, &mut redraw, &mut updates);
+
+    handle_redraw(state, scene, &mut redraw, reset_cam, &mut updates);
 
     // Run one or more MD steps, if a MD computation is in progress.
     state.md_step(scene, &mut updates);

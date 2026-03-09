@@ -26,6 +26,7 @@ use std::{
 use bincode::{Decode, Encode};
 // todo: TO simplify various APIs, we may need a wrapped Molecule Enum that
 // todo has a variant for each molecule type.
+use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_apis::{
     ReqError, rcsb,
     rcsb::{FilesAvailable, PdbDataResults},
@@ -388,7 +389,8 @@ pub struct MoleculePeptide {
     pub alternate_conformations: Option<Vec<String>>,
     /// Index. Ones present are displayed. Used for various UI filers like "near lig only", or "nearby sel only"
     pub atoms_filtered_to_disp: Option<Vec<usize>>,
-    // pub ff_params: Option<ForceFieldParamsIndexed>,
+    /// For color-coding based on SIFTS (From Uniprot/PDBe)
+    pub sifts_mapping: Option<SiftsUniprotMapping>,
 }
 
 impl MoleculePeptide {

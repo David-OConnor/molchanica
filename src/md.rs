@@ -7,8 +7,6 @@ use std::{
     time::Instant,
 };
 
-use rand::Rng;
-
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use cudarc::driver::result::event::elapsed;
 use dynamics::{
@@ -17,6 +15,7 @@ use dynamics::{
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
+use rand::Rng;
 
 use crate::{
     drawing::{
@@ -492,12 +491,8 @@ fn add_copies(
 
             for _ in 0..MAX_ROT_ATTEMPTS {
                 let rot = {
-                    let (w, x, y, z): (f64, f64, f64, f64) = (
-                        rng.random(),
-                        rng.random(),
-                        rng.random(),
-                        rng.random(),
-                    );
+                    let (w, x, y, z): (f64, f64, f64, f64) =
+                        (rng.random(), rng.random(), rng.random(), rng.random());
                     Quaternion::new(w, x, y, z).to_normalized()
                 };
 
@@ -556,10 +551,7 @@ fn add_copies(
 
             // If every rotation attempt failed the wall check, fall back to identity.
             if best_posits.is_empty() {
-                best_posits = orig_local
-                    .iter()
-                    .map(|&local| local + centroid)
-                    .collect();
+                best_posits = orig_local.iter().map(|&local| local + centroid).collect();
             }
 
             placed_atoms.extend_from_slice(&best_posits);
@@ -606,12 +598,8 @@ fn add_copies(
             sphere_placed.push((new_centroid, orig_radius));
 
             let rot = {
-                let (w, x, y, z): (f64, f64, f64, f64) = (
-                    rng.random(),
-                    rng.random(),
-                    rng.random(),
-                    rng.random(),
-                );
+                let (w, x, y, z): (f64, f64, f64, f64) =
+                    (rng.random(), rng.random(), rng.random(), rng.random());
                 Quaternion::new(w, x, y, z).to_normalized()
             };
             let translation = new_centroid - orig_centroid;

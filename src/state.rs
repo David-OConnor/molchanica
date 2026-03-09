@@ -554,6 +554,8 @@ pub enum ResColoring {
     Position,
     /// Also with a Viridis-style approach.
     Hydrophobicity,
+    /// SIFTS (UniProt-PDBe residue mappings; requires an API call to pdbe)
+    SiftsUniprot,
 }
 
 impl Display for ResColoring {
@@ -562,6 +564,7 @@ impl Display for ResColoring {
             Self::AminoAcid => "AA",
             Self::Position => "Posit",
             Self::Hydrophobicity => "Hydro",
+            Self::SiftsUniprot => "SIFTS",
         };
 
         write!(f, "{v}")

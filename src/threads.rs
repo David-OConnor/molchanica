@@ -5,18 +5,20 @@ use std::sync::mpsc::Receiver;
 use bio_apis::{
     ReqError,
     amber_geostd::GeostdData,
+    pdbe::SiftsUniprotMapping,
     pubchem,
     rcsb::{FilesAvailable, PdbDataResults},
 };
-use graphics::{EngineUpdates, Scene};
+use graphics::{EngineUpdates, EntityUpdate, Scene};
 
 use crate::{
-    molecules::MolIdent,
+    molecules::{MolIdent, MolType},
     render::MESH_PEP_SOLVENT_SURFACE,
     screening::pharmacophore::PhScreeningScore,
     sfc_mesh::{MeshColors, apply_mesh_colors},
     state::State,
     therapeutic::TherapeuticProperties,
+    util::RedrawFlags,
 };
 
 /// Contains receivers for threads. We use these for longer-running processes, as to
@@ -37,6 +39,7 @@ pub struct ThreadReceivers {
     pub therapeutic_properties_avail: Option<Receiver<(usize, TherapeuticProperties)>>,
     /// The first param is the index.
     pub amber_geostd_data_avail: Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
+    pub sifts_mapping_avail: Option<Receiver<Result<Vec<SiftsUniprotMapping>, ReqError>>>,
     pub peptide_mesh_coloring: Option<Receiver<Option<MeshColors>>>,
     /// Pharmacophore. Returned in batches, e.g. of a large directory.
     // /// This threads runs the whole outer loops, screening all molecules
@@ -45,7 +48,12 @@ pub struct ThreadReceivers {
 }
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
-pub fn handle_thread_rx(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+pub fn handle_thread_rx(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
     if let Some(rx) = &mut state.volatile.thread_receivers.pubchem_properties_avail {
         match rx.try_recv() {
             Ok((ident, http_result)) => {
@@ -132,6 +140,37 @@ pub fn handle_thread_rx(state: &mut State, scene: &mut Scene, updates: &mut Engi
             }
         }
         state.volatile.thread_receivers.amber_geostd_data_avail = None;
+    }
+
+    if let Some(rx) = &mut state.volatile.thread_receivers.sifts_mapping_avail
+        && let Ok(result) = rx.try_recv()
+    {
+        if let Some(pep) = &mut state.peptide {
+            match result {
+                Ok(mappings) => {
+                    match mappings.len() {
+                        0 => (),
+                        1 => pep.sifts_mapping = Some(mappings[0].clone()),
+                        _ => {
+                            println!("More than one SIFTS mapping found; choosing the first.");
+                            pep.sifts_mapping = Some(mappings[0].clone());
+                        }
+                    }
+                    // This also handles redrawing non-SAS meshes
+                    state.volatile.flags.update_sas_coloring = true;
+
+                    redraw.set(MolType::Peptide);
+                    updates.entities = EntityUpdate::All;
+
+                    println!(
+                        "SIFTS UniProt mappings with {} items loaded",
+                        mappings[0].mappings.len()
+                    );
+                }
+                Err(e) => eprintln!("Failed to load SIFTS mappings: {e:?}"),
+            }
+        }
+        state.volatile.thread_receivers.sifts_mapping_avail = None;
     }
 
     // Poll for completed mesh coloring from thread.

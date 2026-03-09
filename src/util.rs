@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::ResidueType;
 #[cfg(feature = "cudarc")]
 use cudarc::{
@@ -1435,6 +1436,7 @@ pub fn res_color(
     res_coloring: ResColoring,
     atom_res: Option<usize>,
     aa_count: usize,
+    sifts: &Option<SiftsUniprotMapping>,
 ) -> (f32, f32, f32) {
     match &res.res_type {
         ResidueType::AminoAcid(aa) => match res_coloring {
@@ -1444,9 +1446,43 @@ pub fn res_color(
                 None => aa_color(*aa),
             },
             ResColoring::Hydrophobicity => {
-                // todo: Use hte `hydropathy_doolittle` windowing fn instead?
-                // todo: That may be overkill, or used as a smoothing technique.
                 color_viridis_float(aa.hydropathicity(), HYDROPHOBICITY_MIN, HYDROPHOBICITY_MAX)
+            }
+            ResColoring::SiftsUniprot => {
+                if let Some(mapping) = sifts {
+                    // Color by position in the UniProt sequence, using viridis.
+                    // Find the full UniProt range across all segments.
+                    let unp_min = mapping
+                        .mappings
+                        .iter()
+                        .map(|m| m.unp_start)
+                        .min()
+                        .unwrap_or(1) as usize;
+
+                    let unp_max = mapping
+                        .mappings
+                        .iter()
+                        .map(|m| m.unp_end)
+                        .max()
+                        .unwrap_or(1) as usize;
+
+                    // Find which segment contains this residue by PDB serial number.
+                    let serial = res.serial_number as i32;
+                    let unp_pos = mapping.mappings.iter().find_map(|m| {
+                        if serial >= m.start.residue_number && serial <= m.end.residue_number {
+                            Some(m.unp_start + (serial - m.start.residue_number) as u32)
+                        } else {
+                            None
+                        }
+                    });
+
+                    match unp_pos {
+                        Some(pos) => color_viridis(pos as usize, unp_min, unp_max),
+                        None => aa_color(*aa),
+                    }
+                } else {
+                    aa_color(*aa)
+                }
             }
         },
         _ => COLOR_AA_NON_RESIDUE,

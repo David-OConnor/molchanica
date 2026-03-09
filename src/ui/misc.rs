@@ -4,12 +4,11 @@ use egui::{Color32, CornerRadius, Frame, Margin, RichText, Slider, Stroke, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 
-use crate::util::RedrawFlags;
 use crate::{
     md,
     state::State,
     ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING, handle_input},
-    util::handle_err,
+    util::{RedrawFlags, handle_err},
 };
 
 /// A box that shows its text highlighted if a flag is set.

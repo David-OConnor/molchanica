@@ -5,6 +5,7 @@ use std::{
     collections::HashMap, io, io::ErrorKind, path::Path, sync::atomic::Ordering, time::Instant,
 };
 
+use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::{BondType, Mol2, Pdbqt, Sdf, SdfFormat, Xyz, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState,
@@ -626,6 +627,7 @@ fn draw_atom(
             0,
             99999,
             &[],
+            &None,
             0,
             &ui.selection,
             ViewSelLevel::Atom, // Always color lipids by atom.
@@ -731,6 +733,7 @@ fn draw_bond(
         0,
         bond.atom_0,
         &[],
+        &None,
         0,
         &ui.selection,
         ViewSelLevel::Atom, // Always color ligands by atom.
@@ -746,6 +749,7 @@ fn draw_bond(
         0,
         bond.atom_1,
         &[],
+        &None,
         0,
         &ui.selection,
         ViewSelLevel::Atom, // Always color ligands by atom.

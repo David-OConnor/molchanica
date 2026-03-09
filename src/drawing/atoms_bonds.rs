@@ -1,3 +1,4 @@
+use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::BondType;
 use egui::FontFamily;
 use graphics::{Entity, TextOverlay, UP_VEC};
@@ -102,6 +103,7 @@ pub fn atom_color(
     mol_i: usize,
     item_i: usize,
     residues: &[Residue],
+    sifts: &Option<SiftsUniprotMapping>,
     aa_count: usize, // # AA residues; used for color-mapping.
     selection: &Selection,
     view_sel_level: ViewSelLevel,
@@ -129,7 +131,7 @@ pub fn atom_color(
 
             if let Some(res_i) = &atom.residue {
                 let res = &residues[*res_i];
-                color = res_color(res, res_coloring, atom.residue, aa_count);
+                color = res_color(res, res_coloring, atom.residue, aa_count, sifts);
 
                 // Todo: WOrkaround for a problem we're having with Hydrogen's showing like hetero atoms
                 // todo in residue mode. Likely due to them not having their AA set.
