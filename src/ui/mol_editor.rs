@@ -173,15 +173,18 @@ pub(in crate::ui) fn editor(
             }
         });
 
+        let mut redraw_ = Default::default(); // todo: Fix!
+
         section_box().show(ui, |ui| {
             ui.label("Vis:");
 
+            // todo: Sort out the redraw flags here now that you changed the API!
             misc::toggle_btn_inv(
                 &mut state.ui.visibility.hide_hydrogen,
                 "H",
                 "Show or hide Hydrogen atoms",
                 ui,
-                &mut redraw,
+                &mut redraw_,
             );
 
             misc::toggle_btn_inv(
@@ -189,7 +192,7 @@ pub(in crate::ui) fn editor(
                 "Pocket",
                 "Show or hide the pocket",
                 ui,
-                &mut redraw,
+                &mut redraw_,
             );
 
             misc::toggle_btn_inv(
@@ -197,7 +200,7 @@ pub(in crate::ui) fn editor(
                 "H bonds",
                 "Show or hide hydrogen bonds. For example, between a pocket and the molecule being edited.",
                 ui,
-                &mut redraw,
+                &mut redraw_,
             );
         });
 
@@ -208,7 +211,7 @@ pub(in crate::ui) fn editor(
                 "MD running",
                 "Start a molecular dynamics simulation of the selected molecules",
                 ui,
-                &mut redraw,
+                &mut redraw_,
             );
 
             if state.mol_editor.md.running {

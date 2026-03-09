@@ -350,113 +350,74 @@ fn mol_bounding_radius(m: &MolDynamics, center: Vec3) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
-/// Add multiple copies of each molecule. Adds at random orientation, and with a spacing between molecules
-/// far enough as not to cause conflicts or system blow-ups.
+/// Add multiple copies of each molecule with random orientations.
 ///
-/// `box_dims`: if `Some((bx, by, bz))`, molecules are placed uniformly within a box of those side
-/// lengths centered at the origin, staying at least `orig_radius + VDW_MARGIN` from every wall.
-/// If `None`, an unbounded shell-expansion strategy is used instead.
+/// For fixed boxes (`box_dims = Some`): uses a regular cubic grid so every copy gets a
+/// distinct cell — no origin fallback, no piling.  At each grid position we try
+/// `MAX_ROT_ATTEMPTS` random rotations and keep whichever gives the largest minimum
+/// atom-to-atom distance to already-placed atoms.  This correctly handles elongated
+/// molecules (e.g. octanol) that can pack far more tightly than their bounding sphere
+/// radius implies.  If no rotation achieves the preferred 1.5 Å clearance the best
+/// available rotation is used and the energy minimiser resolves any remaining soft
+/// overlaps.
+///
+/// For unbounded (`box_dims = None`): falls back to the original shell-expansion strategy
+/// (bounding-sphere exclusion), which is fine for dilute / Pad-box placements.
 fn add_copies(
     mols: &mut Vec<MolDynamics>,
     mol: &MolDynamics,
     copies: usize,
     box_dims: Option<(f32, f32, f32)>,
 ) {
+    use rand::seq::SliceRandom;
+
+    // Preferred minimum atom-to-atom distance between copies.
+    // Soft overlaps at this scale are resolved cleanly by the energy minimiser.
+    const MIN_ATOM_DIST_SQ: f64 = 1.5 * 1.5;
+    // Keep atom positions this far from the box walls.
+    const WALL_MARGIN: f64 = 0.5;
+    // Rotation candidates tried per grid cell.
+    const MAX_ROT_ATTEMPTS: usize = 200;
+    // Position candidates for the unbounded path.
+    const MAX_POS_ATTEMPTS: usize = 500;
+
     if copies > 1 {
-        println!("Adding molecule copies...");
+        println!("Adding {copies} molecule copies...");
     }
     let start = Instant::now();
     let mut rng = rand::rng();
 
-    const VDW_MARGIN: f64 = 2.0; // Minimum gap between molecule surfaces (Angstroms)
-    const MAX_ATTEMPTS: usize = 500;
-
     let orig_centroid = mol_centroid(mol);
     let orig_radius = mol_bounding_radius(mol, orig_centroid);
-    // Minimum center-to-center distance between any two copies.
-    let min_sep = 2.0 * orig_radius + VDW_MARGIN;
 
-    // Seed the placed list with whatever is already in `mols`.
-    let mut placed: Vec<(Vec3, f64)> = mols
+    // Atom positions relative to centroid — rotated cheaply for every candidate.
+    let orig_local: Vec<Vec3> = {
+        let posits: Vec<Vec3> = if let Some(ap) = &mol.atom_posits {
+            ap.clone()
+        } else {
+            mol.atoms.iter().map(|a| a.posit).collect()
+        };
+        posits.iter().map(|&p| p - orig_centroid).collect()
+    };
+
+    // All placed atom positions — grows as copies are committed.
+    let mut placed_atoms: Vec<Vec3> = mols
         .iter()
-        .map(|m| {
-            let c = mol_centroid(m);
-            let r = mol_bounding_radius(m, c);
-            (c, r)
+        .flat_map(|m| {
+            if let Some(ap) = &m.atom_posits {
+                ap.clone()
+            } else {
+                m.atoms.iter().map(|a| a.posit).collect::<Vec<_>>()
+            }
         })
         .collect();
 
-    // Precompute safe half-extents for the box case (None if box is too small or unset).
-    let safe_half: Option<(f64, f64, f64)> = box_dims.and_then(|(bx, by, bz)| {
-        let hx = bx as f64 / 2.0 - orig_radius - VDW_MARGIN;
-        let hy = by as f64 / 2.0 - orig_radius - VDW_MARGIN;
-        let hz = bz as f64 / 2.0 - orig_radius - VDW_MARGIN;
-        if hx > 0.0 && hy > 0.0 && hz > 0.0 {
-            Some((hx, hy, hz))
-        } else {
-            None
-        }
-    });
+    // Spatial filter: placed atoms farther than this from the candidate centroid
+    // cannot possibly clash with any new atom.
+    let search_sq = (orig_radius * 2.0 + 2.0).powi(2);
 
-    for copy_i in 0..copies {
-        // Random unit quaternion via 4 uniform samples + normalise.
-        let rot = {
-            let w: f64 = rng.random();
-            let x: f64 = rng.random();
-            let y: f64 = rng.random();
-            let z: f64 = rng.random();
-            Quaternion::new(w, x, y, z).to_normalized()
-        };
-
-        let new_centroid = if let Some((hx, hy, hz)) = safe_half {
-            // Box-constrained: sample uniformly within the safe subvolume (box centered at origin).
-            let mut result = Vec3::new_zero(); // fallback: origin
-            'box_search: for _ in 0..MAX_ATTEMPTS {
-                let candidate = Vec3::new(
-                    rng.random::<f64>() * 2.0 * hx - hx,
-                    rng.random::<f64>() * 2.0 * hy - hy,
-                    rng.random::<f64>() * 2.0 * hz - hz,
-                );
-                for (c, r) in &placed {
-                    if (*c - candidate).magnitude() < r + orig_radius + VDW_MARGIN {
-                        continue 'box_search;
-                    }
-                }
-                result = candidate;
-                break;
-            }
-            result
-        } else {
-            // Unbounded: random direction + shell expansion with each failed attempt.
-            let base_dist = min_sep * (1.0 + copy_i as f64).cbrt();
-            let mut result = orig_centroid + Vec3::new(base_dist, 0., 0.); // fallback
-            'free_search: for attempt in 0..MAX_ATTEMPTS {
-                let dx: f64 = rng.random::<f64>() * 2.0 - 1.0;
-                let dy: f64 = rng.random::<f64>() * 2.0 - 1.0;
-                let dz: f64 = rng.random::<f64>() * 2.0 - 1.0;
-                let len = (dx * dx + dy * dy + dz * dz).sqrt();
-                if len < 1e-10 {
-                    continue;
-                }
-                let dir = Vec3::new(dx / len, dy / len, dz / len);
-                let dist = base_dist + attempt as f64 * orig_radius * 0.5;
-                let candidate = orig_centroid + dir * dist;
-                for (c, r) in &placed {
-                    if (*c - candidate).magnitude() < r + orig_radius + VDW_MARGIN {
-                        continue 'free_search;
-                    }
-                }
-                result = candidate;
-                break;
-            }
-            result
-        };
-
-        let translation = new_centroid - orig_centroid;
-
-        let mut mol_copy = mol.clone();
-
-        // Rotate each position about orig_centroid, then translate to the new location.
+    // Inline helper: apply rotation + translation to a mol copy.
+    let apply_rot_trans = |mol_copy: &mut MolDynamics, rot: Quaternion, translation: Vec3| {
         if let Some(posits) = &mut mol_copy.atom_posits {
             for p in posits.iter_mut() {
                 let local = *p - orig_centroid;
@@ -467,10 +428,199 @@ fn add_copies(
             let local = atom.posit - orig_centroid;
             atom.posit = rot.rotate_vec(local) + orig_centroid + translation;
         }
+    };
 
-        placed.push((new_centroid, orig_radius));
-        mols.push(mol_copy);
+    if let Some((bx, by, bz)) = box_dims {
+        // ── Grid placement ────────────────────────────────────────────────────
+        // Build a cubic grid with n³ ≥ copies cells. Use at least n=3 (27 cells)
+        // so that even copies=1 has 27 candidates to choose from — preventing the
+        // solute from being forced onto the same (0,0,0) cell as an existing molecule.
+        let n = (copies as f64).cbrt().ceil() as usize;
+        let n = n.max(3);
+        let (sx, sy, sz) = (
+            bx as f64 / n as f64,
+            by as f64 / n as f64,
+            bz as f64 / n as f64,
+        );
+
+        let mut grid: Vec<Vec3> = (0..n)
+            .flat_map(|ix| {
+                (0..n).flat_map(move |iy| {
+                    (0..n).map(move |iz| {
+                        Vec3::new(
+                            -bx as f64 / 2.0 + (ix as f64 + 0.5) * sx,
+                            -by as f64 / 2.0 + (iy as f64 + 0.5) * sy,
+                            -bz as f64 / 2.0 + (iz as f64 + 0.5) * sz,
+                        )
+                    })
+                })
+            })
+            .collect();
+
+        let (hx, hy, hz) = (
+            bx as f64 / 2.0 - WALL_MARGIN,
+            by as f64 / 2.0 - WALL_MARGIN,
+            bz as f64 / 2.0 - WALL_MARGIN,
+        );
+
+        // Greedy cell selection: for each copy, pick the available grid cell whose
+        // centroid is furthest from all already-placed atom positions.  This ensures
+        // copies=1 (or any small count) doesn't collide with molecules from a prior
+        // add_copies call that happened to occupy the same grid center.
+        for copy_i in 0..copies {
+            // Score remaining grid cells by min-distance of centroid to placed atoms.
+            let best_cell_idx = if placed_atoms.is_empty() {
+                0 // Nothing placed yet — any cell is fine.
+            } else {
+                grid.iter()
+                    .enumerate()
+                    .map(|(i, &c)| {
+                        let min_dsq = placed_atoms
+                            .iter()
+                            .map(|&p| (c - p).magnitude_squared())
+                            .fold(f64::MAX, f64::min);
+                        (i, min_dsq)
+                    })
+                    .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)
+            };
+            let centroid = grid.remove(best_cell_idx);
+            let mut best_rot = Quaternion::new(1., 0., 0., 0.);
+            let mut best_posits: Vec<Vec3> = Vec::new();
+            let mut best_min_sq = f64::NEG_INFINITY;
+
+            for _ in 0..MAX_ROT_ATTEMPTS {
+                let rot = {
+                    let (w, x, y, z): (f64, f64, f64, f64) = (
+                        rng.random(),
+                        rng.random(),
+                        rng.random(),
+                        rng.random(),
+                    );
+                    Quaternion::new(w, x, y, z).to_normalized()
+                };
+
+                let new_posits: Vec<Vec3> = orig_local
+                    .iter()
+                    .map(|&local| rot.rotate_vec(local) + centroid)
+                    .collect();
+
+                // Wall check: all atoms must stay inside the box.
+                if !new_posits
+                    .iter()
+                    .all(|p| p.x.abs() <= hx && p.y.abs() <= hy && p.z.abs() <= hz)
+                {
+                    continue;
+                }
+
+                // Atom-level clash check against all previously placed atoms.
+                let mut min_sq = f64::MAX;
+                'check: for &np in &new_posits {
+                    for &pp in &placed_atoms {
+                        // Skip placed atoms that are too far away to clash.
+                        if (pp - centroid).magnitude_squared() > search_sq {
+                            continue;
+                        }
+                        let dsq = (np - pp).magnitude_squared();
+                        if dsq < min_sq {
+                            min_sq = dsq;
+                            if min_sq < MIN_ATOM_DIST_SQ {
+                                break 'check; // Already worse than best; try next rotation.
+                            }
+                        }
+                    }
+                }
+
+                if min_sq > best_min_sq {
+                    best_min_sq = min_sq;
+                    best_rot = rot;
+                    best_posits = new_posits;
+                }
+
+                if best_min_sq >= MIN_ATOM_DIST_SQ {
+                    break; // Clean placement found.
+                }
+            }
+
+            if best_min_sq < MIN_ATOM_DIST_SQ {
+                eprintln!(
+                    "add_copies: copy {copy_i}: best min atom dist {:.2} Å at \
+                     ({:.1},{:.1},{:.1}) — placing; energy minimiser will resolve.",
+                    best_min_sq.max(0.0).sqrt(),
+                    centroid.x,
+                    centroid.y,
+                    centroid.z,
+                );
+            }
+
+            // If every rotation attempt failed the wall check, fall back to identity.
+            if best_posits.is_empty() {
+                best_posits = orig_local
+                    .iter()
+                    .map(|&local| local + centroid)
+                    .collect();
+            }
+
+            placed_atoms.extend_from_slice(&best_posits);
+
+            let mut mol_copy = mol.clone();
+            let translation = centroid - orig_centroid;
+            apply_rot_trans(&mut mol_copy, best_rot, translation);
+            mols.push(mol_copy);
+        }
+    } else {
+        // ── Unbounded: shell expansion ────────────────────────────────────────
+        let min_sep = 2.0 * orig_radius + 2.0;
+        let mut sphere_placed: Vec<(Vec3, f64)> = mols
+            .iter()
+            .map(|m| {
+                let c = mol_centroid(m);
+                let r = mol_bounding_radius(m, c);
+                (c, r)
+            })
+            .collect();
+
+        for copy_i in 0..copies {
+            let base_dist = min_sep * (1.0 + copy_i as f64).cbrt();
+            let mut new_centroid = orig_centroid + Vec3::new(base_dist, 0., 0.);
+            'free_search: for attempt in 0..MAX_POS_ATTEMPTS {
+                let dx: f64 = rng.random::<f64>() * 2.0 - 1.0;
+                let dy: f64 = rng.random::<f64>() * 2.0 - 1.0;
+                let dz: f64 = rng.random::<f64>() * 2.0 - 1.0;
+                let len = (dx * dx + dy * dy + dz * dz).sqrt();
+                if len < 1e-10 {
+                    continue;
+                }
+                let dir = Vec3::new(dx / len, dy / len, dz / len);
+                let dist = base_dist + attempt as f64 * orig_radius * 0.5;
+                let candidate = orig_centroid + dir * dist;
+                for &(c, r) in &sphere_placed {
+                    if (c - candidate).magnitude() < r + orig_radius + 2.0 {
+                        continue 'free_search;
+                    }
+                }
+                new_centroid = candidate;
+                break;
+            }
+            sphere_placed.push((new_centroid, orig_radius));
+
+            let rot = {
+                let (w, x, y, z): (f64, f64, f64, f64) = (
+                    rng.random(),
+                    rng.random(),
+                    rng.random(),
+                    rng.random(),
+                );
+                Quaternion::new(w, x, y, z).to_normalized()
+            };
+            let translation = new_centroid - orig_centroid;
+            let mut mol_copy = mol.clone();
+            apply_rot_trans(&mut mol_copy, rot, translation);
+            mols.push(mol_copy);
+        }
     }
+
     let elapsed = start.elapsed().as_millis();
     println!("Copies added in {elapsed} ms");
 }

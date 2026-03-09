@@ -4,11 +4,8 @@ use egui::{Color32, CornerRadius, Frame, Margin, RichText, Slider, Stroke, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 
+use crate::util::RedrawFlags;
 use crate::{
-    drawing::{
-        draw_peptide, draw_water,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
-    },
     md,
     state::State,
     ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING, handle_input},
@@ -16,7 +13,13 @@ use crate::{
 };
 
 /// A box that shows its text highlighted if a flag is set.
-pub fn toggle_btn_inv(val: &mut bool, text: &str, tooltip: &str, ui: &mut Ui, redraw: &mut bool) {
+pub fn toggle_btn_inv(
+    val: &mut bool,
+    text: &str,
+    tooltip: &str,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+) {
     let color = active_color(!*val);
     if ui
         .button(RichText::new(text).color(color))
@@ -24,12 +27,19 @@ pub fn toggle_btn_inv(val: &mut bool, text: &str, tooltip: &str, ui: &mut Ui, re
         .clicked()
     {
         *val = !*val;
-        *redraw = true;
+        // todo: Don't need to redraw everything.
+        redraw.set_all();
     }
 }
 
 /// A box that shows its text highlighted if a flag is set.
-pub fn toggle_btn(val: &mut bool, text: &str, tooltip: &str, ui: &mut Ui, redraw: &mut bool) {
+pub fn toggle_btn(
+    val: &mut bool,
+    text: &str,
+    tooltip: &str,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+) {
     let color = active_color(*val);
     if ui
         .button(RichText::new(text).color(color))
@@ -37,7 +47,8 @@ pub fn toggle_btn(val: &mut bool, text: &str, tooltip: &str, ui: &mut Ui, redraw
         .clicked()
     {
         *val = !*val;
-        *redraw = true;
+        // todo: Don't need to redraw everything.
+        redraw.set_all();
     }
 }
 
@@ -72,7 +83,6 @@ pub fn dynamics_player(
 
     ui.horizontal(|ui| {
         // let prev = state.ui.peptide_atom_posits;
-
         let help_text = "Toggle between viewing the original (pre-dynamics) atom positions, and \
         ones at the selected dynamics snapshot.";
         ui.label("Show atoms:").on_hover_text(help_text);

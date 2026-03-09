@@ -94,14 +94,14 @@ pub fn view_settings(
                     "Peptide",
                     "Show or hide the protein/peptide",
                     ui,
-                    &mut redraw.peptide,
+                    redraw,
                 );
                 toggle_btn_inv(
                     &mut state.ui.visibility.hide_hetero,
                     "Hetero",
                     "Show or hide non-amino-acid atoms in the protein/peptide",
                     ui,
-                    &mut redraw.peptide,
+                    redraw,
                 );
 
                 ui.add_space(COL_SPACING / 2.);
@@ -113,7 +113,7 @@ pub fn view_settings(
                         "Sidechains",
                         "Show or sidechains in the protein/peptide",
                         ui,
-                        &mut redraw.peptide,
+                        redraw,
                     );
                 }
             }
@@ -131,7 +131,7 @@ pub fn view_settings(
                     "Pockets",
                     "Show or hide explicitly-added protein pockets for screening, docking, etc",
                     ui,
-                    &mut redraw.pocket,
+                    redraw,
                 );
             }
 
@@ -141,7 +141,7 @@ pub fn view_settings(
                 "H",
                 "Show or hide non-amino-acid atoms in the protein/peptide",
                 ui,
-                &mut redraw.peptide,
+                redraw,
             );
 
             // Hanndle the other redraws.
@@ -158,7 +158,7 @@ pub fn view_settings(
                 "Water",
                 "Show or hide water molecules",
                 ui,
-                &mut redraw.peptide,
+                redraw,
             );
 
             if !state.nucleic_acids.is_empty() {
@@ -167,7 +167,7 @@ pub fn view_settings(
                     "Nucleic acids",
                     "Show or hide nucleic acis",
                     ui,
-                    &mut redraw.peptide,
+                    redraw,
                 );
             }
 
@@ -217,22 +217,28 @@ pub fn view_settings(
             toggle_btn_inv(
                 &mut state.ui.visibility.hide_h_bonds,
                 "H bonds",
-                "Showh or hide Hydrogen bonds",
+                "Show or hide Hydrogen bonds",
                 ui,
-                &mut redraw.peptide,
+                redraw,
+            );
+
+            let prev = state.ui.visibility.labels_mol;
+            toggle_btn(
+                &mut state.ui.visibility.labels_mol,
+                "Lbl",
+                "Show or hide molecule name labels",
+                ui,
+                redraw,
             );
 
             let prev = state.ui.visibility.labels_atom_sn;
             toggle_btn(
                 &mut state.ui.visibility.labels_atom_sn,
-                "Lbl",
+                "SN",
                 "Show or hide atom serial numbers overlaid on their positions",
                 ui,
-                &mut redraw.peptide,
+                redraw,
             );
-            if state.ui.visibility.labels_atom_sn != prev {
-                redraw.set_all();
-            }
 
             let num_pharm = state
                 .ligands
@@ -246,7 +252,7 @@ pub fn view_settings(
                     "Phar",
                     "Show or hide pharmacophores",
                     ui,
-                    &mut redraw.ligand,
+                    redraw,
                 );
             }
 
@@ -274,7 +280,7 @@ pub fn view_settings(
                         "Density",
                         "Show or hide the electron density point cloud visualization",
                         ui,
-                        &mut redraw_dens,
+                        redraw,
                     );
 
                     if redraw_dens {
@@ -296,7 +302,7 @@ pub fn view_settings(
                         "Density sfc",
                         "Show or hide the electron density isosurface visualization",
                         ui,
-                        &mut redraw_dens_surface,
+                        redraw,
                     );
 
                     if !state.ui.visibility.hide_density_surface {
@@ -333,7 +339,7 @@ pub fn view_settings(
 }
 
 fn vis_helper(vis: &mut bool, name: &str, tooltip: &str, ui: &mut Ui) {
-    toggle_btn(vis, name, tooltip, ui, &mut false);
+    toggle_btn(vis, name, tooltip, ui, &mut Default::default());
 }
 
 /// For toggling on and off UI sections.

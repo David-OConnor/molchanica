@@ -36,10 +36,19 @@ use crate::{
 // TODO: add_copies is not designed for liquid-density packing. 20 octanol in a 55 Å box is
 // only ~4% of liquid octanol density. A proper octanol phase requires a pre-equilibrated
 // template (similar to the water template) or a lattice-based initializer.
-const OCTANOL_BOX_SIZE: f32 = 55.; // Å
+
+// Rough box size by octanol count:
+// 20 (8 water): 18
+// 100 (37 water): 30
+// 300: (111 water): 43
+// 356: (132 water): 46
+// 400: (148 water): 48
+
+const OCTANOL_BOX_SIZE: f32 = 44.;
 const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 TIP3P water mols; > 2× the 12 Å NB cutoff.
 
-const OCTANOL_COUNT: usize = 356;
+// const OCTANOL_COUNT: usize = 356;
+const OCTANOL_COUNT: usize = 20; // todo temp/troubleshooting
 const WATER_RATIO_IN_OCTANOL: f32 = 0.27;
 // 27 mol% water in water-saturated 1-octanol (literature value).
 // For OCTANOL_COUNT octanol: water = OCTANOL_COUNT × 0.27/0.73 ≈ OCTANOL_COUNT × 0.37.
