@@ -512,6 +512,8 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                 });
 
             if state.ui.res_coloring != prev {
+                state.volatile.flags.update_ss_mesh = true;
+
                 if let Some(pep) = &mut state.peptide {
                     if pep.sifts_mapping.is_none() {
                         let ident = &pep.common.ident;

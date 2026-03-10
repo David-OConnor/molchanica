@@ -547,9 +547,9 @@ impl MsaaSetting {
 
 #[derive(Clone, Copy, PartialEq, Default, Debug, Encode, Decode)]
 pub enum ResColoring {
-    #[default]
     /// A unique color per amino acid, to quickly differentiate them.
     AminoAcid,
+    #[default]
     /// Position in sequence, e.g. mapped using viridis
     Position,
     /// Also with a Viridis-style approach.

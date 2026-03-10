@@ -148,24 +148,25 @@ pub fn handle_thread_rx(
         if let Some(pep) = &mut state.peptide {
             match result {
                 Ok(mappings) => {
-                    match mappings.len() {
-                        0 => (),
-                        1 => pep.sifts_mapping = Some(mappings[0].clone()),
-                        _ => {
-                            println!("More than one SIFTS mapping found; choosing the first.");
-                            pep.sifts_mapping = Some(mappings[0].clone());
-                        }
-                    }
-                    // This also handles redrawing non-SAS meshes
-                    state.volatile.flags.update_sas_coloring = true;
+                    // todo temp
+                    println!("\nSIFTS mappings: {}", mappings.len());
 
+                    for m2 in &mappings {
+                        for m in &m2.mappings {
+                            println!("- {m:?}");
+                        }
+                        println!("\n");
+                    }
+
+                    println!("\n---");
+
+                    println!("{} SIFTS UniProt mappings loaded", mappings.len());
+
+                    pep.sifts_mapping = Some(mappings);
+
+                    state.volatile.flags.update_sas_coloring = true;
                     redraw.set(MolType::Peptide);
                     updates.entities = EntityUpdate::All;
-
-                    println!(
-                        "SIFTS UniProt mappings with {} items loaded",
-                        mappings[0].mappings.len()
-                    );
                 }
                 Err(e) => eprintln!("Failed to load SIFTS mappings: {e:?}"),
             }

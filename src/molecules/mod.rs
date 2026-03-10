@@ -390,7 +390,7 @@ pub struct MoleculePeptide {
     /// Index. Ones present are displayed. Used for various UI filers like "near lig only", or "nearby sel only"
     pub atoms_filtered_to_disp: Option<Vec<usize>>,
     /// For color-coding based on SIFTS (From Uniprot/PDBe)
-    pub sifts_mapping: Option<SiftsUniprotMapping>,
+    pub sifts_mapping: Option<Vec<SiftsUniprotMapping>>,
 }
 
 impl MoleculePeptide {

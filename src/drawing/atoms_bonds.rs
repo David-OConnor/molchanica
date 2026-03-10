@@ -103,7 +103,7 @@ pub fn atom_color(
     mol_i: usize,
     item_i: usize,
     residues: &[Residue],
-    sifts: &Option<SiftsUniprotMapping>,
+    sifts: Option<&[SiftsUniprotMapping]>,
     aa_count: usize, // # AA residues; used for color-mapping.
     selection: &Selection,
     view_sel_level: ViewSelLevel,

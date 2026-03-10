@@ -23,13 +23,15 @@ use std::{
     f32::consts::TAU,
 };
 
-use bio_files::{BackboneSS, SecondaryStructure};
+use bio_apis::pdbe::SiftsUniprotMapping;
+use bio_files::{BackboneSS, ResidueType, SecondaryStructure};
 use graphics::{Mesh, Vertex};
 use lin_alg::f32::Vec3 as Vec3F32;
 
 use crate::{
-    drawing::color_viridis_float,
-    molecules::{Atom, AtomRole},
+    drawing::{HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, color_viridis, color_viridis_float},
+    molecules::{Atom, AtomRole, Residue, aa_color},
+    state::ResColoring,
 };
 
 // ── Dimensions (Å) ────────────────────────────────────────────────────────────
@@ -50,6 +52,11 @@ const SHEET_ARROW_RES: usize = 1;
 
 /// Radius of the coil / loop tube.
 const COIL_RADIUS: f32 = 0.25;
+
+/// Coil / loop segments whose total Cα path length exceeds this (Å) are not drawn.
+/// This suppresses artificially long connecting tubes that appear across large structural
+/// gaps (e.g. missing residues or discontinuous chain fragments).
+const MAX_COIL_LENGTH_ANG: f32 = 30.0;
 
 // ── Tessellation ──────────────────────────────────────────────────────────────
 
@@ -271,6 +278,9 @@ fn build_segment_mesh(
     frames: &[ResidueFrame],
     ss: SecondaryStructure,
     max_residue: usize,
+    residues: &[Residue],
+    res_coloring: ResColoring,
+    sifts: Option<&[SiftsUniprotMapping]>,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<usize>,
 ) {
@@ -362,7 +372,50 @@ fn build_segment_mesh(
 
     // ── 5. Color helper ───────────────────────────────────────────────────────
     let res_color = |res_f: f32| -> Option<(u8, u8, u8, u8)> {
-        let (cr, cg, cb) = color_viridis_float(res_f, 0.0, max_residue as f32);
+        let res_i = (res_f.round() as usize).min(residues.len().saturating_sub(1));
+        let fallback = || color_viridis_float(res_f, 0.0, max_residue as f32);
+
+        let (cr, cg, cb) = match res_coloring {
+            ResColoring::Position => fallback(),
+            ResColoring::AminoAcid => match residues.get(res_i) {
+                Some(res) => match res.res_type {
+                    ResidueType::AminoAcid(aa) => aa_color(aa),
+                    _ => fallback(),
+                },
+                None => fallback(),
+            },
+            ResColoring::Hydrophobicity => match residues.get(res_i) {
+                Some(res) => match res.res_type {
+                    ResidueType::AminoAcid(aa) => color_viridis_float(
+                        aa.hydropathicity(),
+                        HYDROPHOBICITY_MIN,
+                        HYDROPHOBICITY_MAX,
+                    ),
+                    _ => fallback(),
+                },
+                None => fallback(),
+            },
+            ResColoring::SiftsUniprot => match (sifts, residues.get(res_i)) {
+                (Some(entries), Some(res)) => {
+                    let serial = res.serial_number as i32;
+                    let entry_i = entries.iter().enumerate().find_map(|(i, entry)| {
+                        entry
+                            .mappings
+                            .iter()
+                            .any(|m| {
+                                serial >= m.start.residue_number && serial <= m.end.residue_number
+                            })
+                            .then_some(i)
+                    });
+                    match entry_i {
+                        Some(i) => color_viridis(i, 0, entries.len().saturating_sub(1)),
+                        None => fallback(),
+                    }
+                }
+                _ => fallback(),
+            },
+        };
+
         Some((
             (cr * 255.0) as u8,
             (cg * 255.0) as u8,
@@ -567,7 +620,13 @@ fn extend_run(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-pub fn build_cartoon_mesh(backbone: &[BackboneSS], atoms: &[Atom]) -> Mesh {
+pub fn build_cartoon_mesh(
+    backbone: &[BackboneSS],
+    atoms: &[Atom],
+    residues: &[Residue],
+    res_coloring: ResColoring,
+    sifts: Option<&[SiftsUniprotMapping]>,
+) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
@@ -598,6 +657,9 @@ pub fn build_cartoon_mesh(backbone: &[BackboneSS], atoms: &[Atom]) -> Mesh {
             &frames,
             seg.sec_struct,
             max_residue,
+            residues,
+            res_coloring,
+            sifts,
             &mut vertices,
             &mut indices,
         );
@@ -634,10 +696,21 @@ pub fn build_cartoon_mesh(backbone: &[BackboneSS], atoms: &[Atom]) -> Mesh {
             continue;
         }
 
+        let path_len: f32 = frames
+            .windows(2)
+            .map(|w| (w[1].ca - w[0].ca).magnitude())
+            .sum();
+        if path_len > MAX_COIL_LENGTH_ANG {
+            continue;
+        }
+
         build_segment_mesh(
             &frames,
             SecondaryStructure::Coil,
             max_residue,
+            residues,
+            res_coloring,
+            sifts,
             &mut vertices,
             &mut indices,
         );

@@ -821,8 +821,13 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         state.volatile.flags.ss_mesh_created = true;
 
         if let Some(mol) = &state.peptide {
-            scene.meshes[MESH_SECONDARY_STRUCTURE] =
-                build_cartoon_mesh(&mol.secondary_structure, &mol.common.atoms);
+            scene.meshes[MESH_SECONDARY_STRUCTURE] = build_cartoon_mesh(
+                &mol.secondary_structure,
+                &mol.common.atoms,
+                &mol.residues,
+                state.ui.res_coloring,
+                mol.sifts_mapping.as_deref(),
+            );
             updates.meshes = true;
         }
     }
@@ -1436,7 +1441,7 @@ pub fn res_color(
     res_coloring: ResColoring,
     atom_res: Option<usize>,
     aa_count: usize,
-    sifts: &Option<SiftsUniprotMapping>,
+    sifts: Option<&[SiftsUniprotMapping]>,
 ) -> (f32, f32, f32) {
     match &res.res_type {
         ResidueType::AminoAcid(aa) => match res_coloring {
@@ -1449,35 +1454,21 @@ pub fn res_color(
                 color_viridis_float(aa.hydropathicity(), HYDROPHOBICITY_MIN, HYDROPHOBICITY_MAX)
             }
             ResColoring::SiftsUniprot => {
-                if let Some(mapping) = sifts {
-                    // Color by position in the UniProt sequence, using viridis.
-                    // Find the full UniProt range across all segments.
-                    let unp_min = mapping
-                        .mappings
-                        .iter()
-                        .map(|m| m.unp_start)
-                        .min()
-                        .unwrap_or(1) as usize;
-
-                    let unp_max = mapping
-                        .mappings
-                        .iter()
-                        .map(|m| m.unp_end)
-                        .max()
-                        .unwrap_or(1) as usize;
-
-                    // Find which segment contains this residue by PDB serial number.
+                if let Some(entries) = sifts {
+                    // Color each UniProt entry (accession) a distinct viridis hue.
+                    // Find which entry covers this residue's PDB serial number.
                     let serial = res.serial_number as i32;
-                    let unp_pos = mapping.mappings.iter().find_map(|m| {
-                        if serial >= m.start.residue_number && serial <= m.end.residue_number {
-                            Some(m.unp_start + (serial - m.start.residue_number) as u32)
-                        } else {
-                            None
-                        }
+                    let entry_i = entries.iter().enumerate().find_map(|(i, entry)| {
+                        entry
+                            .mappings
+                            .iter()
+                            .any(|m| {
+                                serial >= m.start.residue_number && serial <= m.end.residue_number
+                            })
+                            .then_some(i)
                     });
-
-                    match unp_pos {
-                        Some(pos) => color_viridis(pos as usize, unp_min, unp_max),
+                    match entry_i {
+                        Some(i) => color_viridis(i, 0, entries.len().saturating_sub(1)),
                         None => aa_color(*aa),
                     }
                 } else {

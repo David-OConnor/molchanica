@@ -627,7 +627,7 @@ fn draw_atom(
             0,
             99999,
             &[],
-            &None,
+            None,
             0,
             &ui.selection,
             ViewSelLevel::Atom, // Always color lipids by atom.
@@ -733,7 +733,7 @@ fn draw_bond(
         0,
         bond.atom_0,
         &[],
-        &None,
+        None,
         0,
         &ui.selection,
         ViewSelLevel::Atom, // Always color ligands by atom.
@@ -749,7 +749,7 @@ fn draw_bond(
         0,
         bond.atom_1,
         &[],
-        &None,
+        None,
         0,
         &ui.selection,
         ViewSelLevel::Atom, // Always color ligands by atom.
