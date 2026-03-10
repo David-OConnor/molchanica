@@ -976,6 +976,10 @@ pub struct FileDialogs {
     pub save: FileDialog,
     /// This is for selecting a folder; not file.
     pub screening: FileDialog,
+    /// Creating and updating Parquet molecule databases.
+    pub parquet_db_load: FileDialog,
+    pub parquet_db_save: FileDialog,
+    pub parquet_mols_dir: FileDialog,
 }
 
 impl Default for FileDialogs {
@@ -1022,12 +1026,26 @@ impl Default for FileDialogs {
             ..Default::default()
         };
 
-        let screening = FileDialog::with_config(cfg_screening);
+        let screening = FileDialog::with_config(cfg_screening.clone());
+        let parquet_mols_dir = FileDialog::with_config(cfg_screening);
+
+        let parquet_descrip = "Parquet mol DB".to_owned();
+        let cfg_parquet_db = FileDialogConfig::default()
+            .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
+            .add_save_extension(&parquet_descrip, "parquet");
+
+        let parquet_db_load =
+            FileDialog::with_config(cfg_parquet_db.clone()).default_file_filter(&parquet_descrip);
+        let parquet_db_save =
+            FileDialog::with_config(cfg_parquet_db).default_save_extension(&parquet_descrip);
 
         Self {
             load,
             save,
             screening,
+            parquet_db_save,
+            parquet_db_load,
+            parquet_mols_dir,
         }
     }
 }

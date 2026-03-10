@@ -1107,7 +1107,7 @@ impl MoleculePeptide {
 
         // todo: Speed this up?
         let end = start.elapsed().as_millis();
-        println!("Populated in {end:.1}ms");
+        println!("Populated  protein hydrogens etc in {end:.1}ms");
 
         let (atoms, bonds, residues, chains) =
             init_bonds_chains_res(&m.atoms, &bonds_, &m.residues, &m.chains, &dihedrals)?;
@@ -1231,14 +1231,48 @@ fn init_bonds_chains_res(
     chains_: &[ChainGeneric],
     dihedrals: &[Dihedral],
 ) -> io::Result<(Vec<Atom>, Vec<Bond>, Vec<Residue>, Vec<Chain>)> {
+    println!("Initializing protein atoms, bonds residues, chains...");
+    let start = Instant::now();
+
     let mut atoms: Vec<_> = atoms_.iter().map(|a| a.into()).collect();
+
+    // Build an O(n) SN → atom-index map used throughout this function instead of repeated
+    // linear scans via atom_sns_to_indices (which made all the loops below O(n²) or worse).
+    let sn_to_atom: HashMap<u32, usize> = atoms
+        .iter()
+        .enumerate()
+        .map(|(i, a): (usize, &Atom)| (a.serial_number, i))
+        .collect();
 
     let mut bonds = Vec::with_capacity(bonds_.len());
     for bond in bonds_ {
-        bonds.push(Bond::from_generic(bond, &atoms)?);
+        let atom_0 = sn_to_atom.get(&bond.atom_0_sn).copied().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "Unable to find atom0 SN when loading from generic bond: {}",
+                    bond.atom_0_sn
+                ),
+            )
+        })?;
+        let atom_1 = sn_to_atom.get(&bond.atom_1_sn).copied().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "Unable to find atom1 SN when loading from generic bond: {}",
+                    bond.atom_1_sn
+                ),
+            )
+        })?;
+        bonds.push(Bond {
+            bond_type: bond.bond_type,
+            atom_0_sn: bond.atom_0_sn,
+            atom_1_sn: bond.atom_1_sn,
+            atom_0,
+            atom_1,
+            is_backbone: false,
+        });
     }
-
-    let mut residues = Vec::with_capacity(residues_.len());
 
     let len_matches = residues_.len() == dihedrals.len();
     if !len_matches {
@@ -1249,39 +1283,105 @@ fn init_bonds_chains_res(
         );
     }
 
+    let mut residues = Vec::with_capacity(residues_.len());
     for (i, res) in residues_.iter().enumerate() {
-        let mut res = Residue::from_generic(res, &atoms)?;
+        let atom_indices: io::Result<Vec<usize>> = res
+            .atom_sns
+            .iter()
+            .map(|sn| {
+                sn_to_atom.get(sn).copied().ok_or_else(|| {
+                    io::Error::new(
+                        ErrorKind::InvalidData,
+                        "Unable to find atom SN when loading from generic res",
+                    )
+                })
+            })
+            .collect();
+        let mut r = Residue {
+            serial_number: res.serial_number,
+            res_type: res.res_type.clone(),
+            atom_sns: res.atom_sns.clone(),
+            atoms: atom_indices?,
+            dihedral: None,
+            end: res.end,
+        };
         if len_matches {
-            res.dihedral = Some(dihedrals[i].clone());
+            r.dihedral = Some(dihedrals[i].clone());
         }
-        residues.push(res);
+        residues.push(r);
     }
+
+    // Build SN → residue-index map for O(1) chain construction.
+    let sn_to_res: HashMap<u32, usize> = residues
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.serial_number, i))
+        .collect();
 
     let mut chains = Vec::with_capacity(chains_.len());
-    for c in chains_ {
-        chains.push(Chain::from_generic(c, &atoms, &residues)?);
+    for chain in chains_ {
+        let atom_indices: io::Result<Vec<usize>> = chain
+            .atom_sns
+            .iter()
+            .map(|sn| {
+                sn_to_atom.get(sn).copied().ok_or_else(|| {
+                    io::Error::new(
+                        ErrorKind::InvalidData,
+                        "Unable to find atom SN when loading from generic chain",
+                    )
+                })
+            })
+            .collect();
+        let residue_indices: io::Result<Vec<usize>> = if residues.is_empty() {
+            Ok(Vec::new())
+        } else {
+            chain
+                .residue_sns
+                .iter()
+                .map(|sn| {
+                    sn_to_res.get(sn).copied().ok_or_else(|| {
+                        io::Error::new(
+                            ErrorKind::InvalidData,
+                            "Unable to find res SN when loading from generic chain",
+                        )
+                    })
+                })
+                .collect()
+        };
+        chains.push(Chain {
+            id: chain.id.clone(),
+            residue_sns: chain.residue_sns.clone(),
+            residues: residue_indices?,
+            atom_sns: chain.atom_sns.clone(),
+            atoms: atom_indices?,
+            visible: true,
+        });
     }
 
-    // Now that chains and residues are loaded, update atoms with their back-ref index.
+    // Build reverse maps: atom SN → residue index, and atom SN → chain index.
+    // Replaces the previous O(atoms × residues) and O(atoms × chains) nested loops.
+    let mut atom_sn_to_res: HashMap<u32, usize> = HashMap::new();
+    for (res_i, res) in residues.iter().enumerate() {
+        for &sn in &res.atom_sns {
+            atom_sn_to_res.insert(sn, res_i);
+        }
+    }
+    let mut atom_sn_to_chain: HashMap<u32, usize> = HashMap::new();
+    for (chain_i, chain) in chains.iter().enumerate() {
+        for &sn in &chain.atom_sns {
+            atom_sn_to_chain.insert(sn, chain_i);
+        }
+    }
+
     for atom in &mut atoms {
-        for (i, res) in residues.iter().enumerate() {
-            if res.atom_sns.contains(&atom.serial_number) {
-                atom.residue = Some(i);
-
-                // Update which atoms are waters.
-                if residues[i].res_type == ResidueType::Water {
-                    atom.role = Some(AtomRole::Water);
-                }
-
-                break;
+        if let Some(&res_i) = atom_sn_to_res.get(&atom.serial_number) {
+            atom.residue = Some(res_i);
+            if residues[res_i].res_type == ResidueType::Water {
+                atom.role = Some(AtomRole::Water);
             }
         }
-
-        for (i, chain) in chains.iter().enumerate() {
-            if chain.atom_sns.contains(&atom.serial_number) {
-                atom.chain = Some(i);
-                break;
-            }
+        if let Some(&chain_i) = atom_sn_to_chain.get(&atom.serial_number) {
+            atom.chain = Some(chain_i);
         }
     }
 
@@ -1290,6 +1390,9 @@ fn init_bonds_chains_res(
             bond.is_backbone = true;
         }
     }
+
+    let elapsed = start.elapsed().as_millis();
+    println!("Populated protein residues etc in {elapsed} ms");
 
     Ok((atoms, bonds, residues, chains))
 }

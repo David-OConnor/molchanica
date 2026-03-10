@@ -105,6 +105,7 @@ pub fn atom_color(
     residues: &[Residue],
     sifts: Option<&[SiftsUniprotMapping]>,
     aa_count: usize, // # AA residues; used for color-mapping.
+    chain_count: usize,
     selection: &Selection,
     view_sel_level: ViewSelLevel,
     dimmed: bool,
@@ -131,7 +132,15 @@ pub fn atom_color(
 
             if let Some(res_i) = &atom.residue {
                 let res = &residues[*res_i];
-                color = res_color(res, res_coloring, atom.residue, aa_count, sifts);
+                color = res_color(
+                    res,
+                    res_coloring,
+                    atom.residue,
+                    atom.chain,
+                    aa_count,
+                    chain_count,
+                    sifts,
+                );
 
                 // Todo: WOrkaround for a problem we're having with Hydrogen's showing like hetero atoms
                 // todo in residue mode. Likely due to them not having their AA set.

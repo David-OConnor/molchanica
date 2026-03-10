@@ -825,6 +825,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 &mol.secondary_structure,
                 &mol.common.atoms,
                 &mol.residues,
+                &mol.chains,
                 state.ui.res_coloring,
                 mol.sifts_mapping.as_deref(),
             );
@@ -1440,7 +1441,9 @@ pub fn res_color(
     res: &Residue,
     res_coloring: ResColoring,
     atom_res: Option<usize>,
+    atom_chain: Option<usize>,
     aa_count: usize,
+    chain_count: usize,
     sifts: Option<&[SiftsUniprotMapping]>,
 ) -> (f32, f32, f32) {
     match &res.res_type {
@@ -1475,6 +1478,10 @@ pub fn res_color(
                     aa_color(*aa)
                 }
             }
+            ResColoring::Chain => match atom_chain {
+                Some(chain_i) => color_viridis(chain_i, 0, chain_count.saturating_sub(1)),
+                None => aa_color(*aa),
+            },
         },
         _ => COLOR_AA_NON_RESIDUE,
     }

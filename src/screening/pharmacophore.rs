@@ -790,6 +790,9 @@ impl Pharmacophore {
         let pharmacophore = self.clone();
         let path = path.to_path_buf();
 
+        // todo: based on extension or if file/foldser, either screen from a folder directly,
+        // todo: Or screen from a parquet DB.
+
         *ph_screening_in_progress = true;
 
         let (tx, rx) = mpsc::channel();

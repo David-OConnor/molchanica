@@ -14,6 +14,7 @@ use crate::{
     mol_editor,
     molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
+    screening::parquet::ParqetMolDb,
     smiles::is_smiles,
     state::{OperatingMode, State},
     ui::set_window_title,
@@ -32,6 +33,9 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.load.update(ctx);
     state.volatile.dialogs.save.update(ctx);
     state.volatile.dialogs.screening.update(ctx);
+    state.volatile.dialogs.parquet_db_load.update(ctx);
+    state.volatile.dialogs.parquet_db_save.update(ctx);
+    state.volatile.dialogs.parquet_mols_dir.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {
@@ -75,6 +79,60 @@ pub fn update_file_dialogs(
 
     if let Some(path) = &state.volatile.dialogs.screening.take_picked() {
         state.to_save.screening_path = Some(path.to_owned());
+    }
+
+    if let Some(path) = &state.volatile.dialogs.parquet_db_save.take_picked() {
+        match ParqetMolDb::new(path) {
+            Ok(db) => {
+                handle_success(
+                    &mut state.ui,
+                    format!("Created Parquet database at path {path:?}"),
+                );
+                state.volatile.parquet_dbs.push(db);
+            }
+            Err(e) => handle_err(
+                &mut state.ui,
+                format!("Error creating Parquet database: {e}"),
+            ),
+        }
+    }
+
+    if let Some(path) = &state.volatile.dialogs.parquet_db_load.take_picked() {
+        match ParqetMolDb::new(path) {
+            Ok(db) => {
+                handle_success(
+                    &mut state.ui,
+                    format!(
+                        "Loaded Parquet database from {path:?} ({} molecules)",
+                        db.index_by_ident.len()
+                    ),
+                );
+                state.volatile.parquet_dbs.push(db);
+            }
+            Err(e) => handle_err(
+                &mut state.ui,
+                format!("Error loading Parquet database: {e}"),
+            ),
+        }
+    }
+
+    if let Some(path) = &state.volatile.dialogs.parquet_mols_dir.take_picked() {
+        if let Some(i) = &state.volatile.parquet_db_active {
+            let db = &mut state.volatile.parquet_dbs[*i];
+            match db.populate(path) {
+                Ok(()) => {
+                    println!("Populated Parquet DB: {:?}", db.index_by_ident);
+                }
+                Err(e) => {
+                    eprintln!("Error populating parquet data: {e:?}")
+                }
+            }
+        } else {
+            handle_err(
+                &mut state.ui,
+                "Error: Missing the DB index to populate with mols".to_string(),
+            );
+        }
     }
 
     Ok(())

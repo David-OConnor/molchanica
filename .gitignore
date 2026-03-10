@@ -30,6 +30,9 @@ Cargo.lock
 *.dcd
 *.prmtop
 
+# Parquet mol DBs
+*.pqt
+
 # ML models
 *.pt
 *.safetensors

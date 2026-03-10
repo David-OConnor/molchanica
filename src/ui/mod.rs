@@ -10,14 +10,14 @@ use egui::{
     Color32, ComboBox, Context, Key, RichText, Slider, TextEdit, TextFormat, TextStyle,
     TopBottomPanel, Ui, text::LayoutJob,
 };
-use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use md::md_setup;
 use mol_data::display_mol_data;
 use na_seq::Element;
 use popups::load_popups;
 
 use crate::{
-    cam,
+    button, cam,
     cam::{
         FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX, VIEW_DEPTH_NEAR_MIN,
         move_cam_to_sel,
@@ -30,6 +30,7 @@ use crate::{
     molecules::{MolGenericRef, MolIdent},
     prefs::ControlSchemeType,
     render::set_flashlight,
+    screening::parquet::ParqetMolDb,
     selection::{Selection, ViewSelLevel},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
     therapeutic::logp_sim,
@@ -506,6 +507,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                         ResColoring::Position,
                         ResColoring::Hydrophobicity,
                         ResColoring::SiftsUniprot,
+                        ResColoring::Chain,
                     ] {
                         ui.selectable_value(&mut state.ui.res_coloring, v, v.to_string());
                     }
@@ -1059,6 +1061,19 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     files in a selected folder").clicked() {
                     state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
                 }
+
+
+                // todo: Temp loc for create parquet db
+                if button!(
+                    ui, "Mol DBs",
+                    COLOR_ACTION,
+                    "Open a window where you can create, read, and update Parquest databases of molecules.\
+                    This is for screening large numbers of molecules."
+
+                ).clicked() {
+                    state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
+                }
+
 
                 // todo: Temp loc for LogP sim.
                 // This approach avoids a dbl borrow.

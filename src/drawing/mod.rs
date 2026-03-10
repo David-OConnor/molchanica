@@ -568,6 +568,7 @@ pub fn draw_mol(
                     &[],
                     None,
                     0,
+                    0,
                     sel,
                     ViewSelLevel::Atom, // Always color lipids by atom.
                     false,
@@ -760,6 +761,7 @@ pub fn draw_mol(
                 &[],
                 None,
                 0,
+                0,
                 sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
                 ViewSelLevel::Atom, // Always color ligands by atom.
                 false,
@@ -774,6 +776,7 @@ pub fn draw_mol(
                 bond.atom_1,
                 &[],
                 None,
+                0,
                 0,
                 sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
                 ViewSelLevel::Atom, // Always color ligands by atom.
@@ -1275,6 +1278,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                         &mol.residues,
                         mol.sifts_mapping.as_deref(),
                         aa_count,
+                        mol.chains.len(),
                         sel,
                         state.ui.view_sel_level,
                         false,
@@ -1403,6 +1407,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                     &mol.residues,
                     mol.sifts_mapping.as_deref(),
                     aa_count,
+                    mol.chains.len(),
                     sel,
                     state.ui.view_sel_level,
                     dim_peptide,
@@ -1601,6 +1606,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 &mol.residues,
                 mol.sifts_mapping.as_deref(),
                 aa_count,
+                mol.chains.len(),
                 sel,
                 state.ui.view_sel_level,
                 dim_peptide_0,
@@ -1616,6 +1622,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 &mol.residues,
                 mol.sifts_mapping.as_deref(),
                 aa_count,
+                mol.chains.len(),
                 sel,
                 state.ui.view_sel_level,
                 dim_peptide_1,

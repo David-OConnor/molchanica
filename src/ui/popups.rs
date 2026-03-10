@@ -12,6 +12,7 @@ use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
 use crate::{
+    button,
     cam::move_cam_to_mol,
     drawing::{EntityClass, wrappers::draw_all_pockets},
     file_io::download_mols::load_atom_coords_rcsb,
@@ -26,7 +27,7 @@ use crate::{
     prefs::OpenType,
     render::MESH_POCKET_START,
     screening,
-    screening::screen_by_alignment,
+    screening::{parquet::MolMeta, screen_by_alignment},
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, PopupState, State},
     ui::{
@@ -35,6 +36,15 @@ use crate::{
     },
     util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
 };
+
+fn close_btn(ui: &mut Ui, popup: &mut bool) {
+    if ui
+        .button(RichText::new("Close").color(Color32::LIGHT_RED))
+        .clicked()
+    {
+        *popup = false;
+    }
+}
 
 /// Based on popup state, shows popups. This is the entry point for all popups.
 pub(in crate::ui) fn load_popups(
@@ -131,6 +141,12 @@ pub(in crate::ui) fn load_popups(
             lig_pocket_from_het_res(state, scene, ui, engine_updates);
         });
     }
+
+    if state.ui.popup.parquet_db {
+        popup("parquet_db", ui).show(|ui| {
+            parquet_db(state, scene, ui, engine_updates);
+        });
+    }
 }
 
 fn get_geostd(
@@ -208,12 +224,7 @@ fn get_geostd(
 
     ui.add_space(ROW_SPACING);
 
-    if ui
-        .button(RichText::new("Close").color(Color32::LIGHT_RED))
-        .clicked()
-    {
-        state.ui.popup.show_get_geostd = false;
-    }
+    close_btn(ui, &mut state.ui.popup.show_get_geostd);
 }
 
 fn associated_structures(
@@ -266,12 +277,8 @@ fn associated_structures(
         ui.add_space(ROW_SPACING);
 
         ui.add_space(ROW_SPACING);
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            state.ui.popup.show_associated_structures = false;
-        }
+
+        close_btn(ui, &mut state.ui.popup.show_associated_structures);
     }
 }
 
@@ -337,12 +344,8 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
         }
 
         ui.add_space(COL_SPACING);
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            state.ui.popup.alignment_screening = false;
-        }
+
+        close_btn(ui, &mut state.ui.popup.alignment_screening);
     });
 
     if !state.volatile.alignment.mols_passed_screening.is_empty() {
@@ -419,12 +422,8 @@ fn recent_files_popup(
     }
 
     ui.add_space(ROW_SPACING);
-    if ui
-        .button(RichText::new("Close").color(Color32::LIGHT_RED))
-        .clicked()
-    {
-        state.ui.popup.recent_files = false;
-    }
+
+    close_btn(ui, &mut state.ui.popup.recent_files);
 }
 
 pub(in crate::ui) fn metadata_popup(
@@ -567,12 +566,7 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
 
     ui.add_space(ROW_SPACING);
 
-    if ui
-        .button(RichText::new("Close").color(Color32::LIGHT_RED))
-        .clicked()
-    {
-        state.ui.popup.show_settings = false;
-    }
+    close_btn(ui, &mut state.ui.popup.show_settings);
 }
 
 fn alignment(
@@ -586,12 +580,8 @@ fn alignment(
         ui.label("Alignment:");
 
         ui.add_space(COL_SPACING);
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            state.ui.popup.alignment = false;
-        }
+
+        close_btn(ui, &mut state.ui.popup.alignment);
     });
 
     if !state.volatile.alignment.results.is_empty() {
@@ -827,12 +817,8 @@ fn lig_pocket_from_het_res(
             Color32::WHITE
         );
         ui.add_space(COL_SPACING / 2.);
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            state.ui.popup.lig_pocket_creation = false;
-        }
+
+        close_btn(ui, &mut state.ui.popup.lig_pocket_creation);
     });
 
     // .on_hover_text(
@@ -981,4 +967,114 @@ fn lig_pocket_from_het_res(
     //         );
     //     }
     // }
+}
+
+fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut EngineUpdates) {
+    ui.horizontal(|ui| {
+        label!(ui, "Parquet", Color32::WHITE);
+
+        ui.add_space(COL_SPACING);
+
+        if button!(
+        ui,
+        "Create DB",
+        COLOR_ACTION,
+        "Create a Parquet molecule database, for use with screening \
+                algorithms. Saves it to disk. Much faster than screening a folder full of molecule files directly."
+    )
+            .clicked()
+        {
+            state.volatile.dialogs.parquet_db_save.save_file();
+        }
+
+        if button!(
+        ui,
+        "Load DB",
+        COLOR_ACTION,
+        "Load a Parquet molecule database. Can use this for screening, or add more molecules to it."
+    )
+            .clicked()
+        {
+            state.volatile.dialogs.parquet_db_load.pick_file();
+        }
+
+        ui.add_space(COL_SPACING);
+
+        close_btn(ui, &mut state.ui.popup.parquet_db);
+
+    });
+
+    ui.add_space(ROW_SPACING);
+    ui.separator();
+    label!(ui, "Databases loaded", Color32::GRAY);
+
+    for (i, db) in state.volatile.parquet_dbs.iter_mut().enumerate() {
+        label!(
+            ui,
+            format!("Db: {:?} with {} indices", db.path, db.index_by_ident.len()),
+            Color32::WHITE
+        );
+
+        ui.add_space(ROW_SPACING);
+
+        ui.horizontal(|ui| {
+            if button!(
+                ui,
+                "Add mols to DB",
+                COLOR_ACTION,
+                "Add molecules to this database."
+            )
+            .clicked()
+            {
+                state.volatile.dialogs.parquet_mols_dir.pick_directory();
+                state.volatile.parquet_db_active = Some(i);
+            }
+
+            ui.add_space(COL_SPACING);
+
+            if button!(
+                ui,
+                "Load all mols",
+                COLOR_ACTION,
+                "Load all molecules in this database into memory"
+            )
+            .clicked()
+            {
+                if let Err(e) = db.load_all() {
+                    handle_err(&mut state.ui, format!("Error loading molecules: {e:?}"));
+                }
+            }
+        });
+
+        if !db.index_meta.is_empty() {
+            ui.add_space(ROW_SPACING);
+
+            // Sort by ident for stable display order.
+            let mut entries: Vec<(&String, &MolMeta)> = db.index_meta.iter().collect();
+            entries.sort_by_key(|(ident, _)| ident.as_str());
+
+            ScrollArea::vertical()
+                .id_salt(format!("parquet_mol_list_{i}"))
+                .max_height(800.)
+                .show(ui, |ui| {
+                    for (ident, meta) in &entries {
+                        ui.horizontal(|ui| {
+                            label!(ui, ident.as_str(), Color32::WHITE);
+
+                            ui.add_space(COL_SPACING);
+
+                            let smiles_preview: String = meta.smiles.chars().take(10).collect();
+                            label!(ui, smiles_preview, Color32::GRAY);
+
+                            ui.add_space(COL_SPACING);
+
+                            match meta.pubchem_cid {
+                                Some(cid) => label!(ui, format!("CID {cid}"), Color32::LIGHT_BLUE),
+                                None => label!(ui, "No CID", Color32::DARK_GRAY),
+                            };
+                        });
+                    }
+                });
+        }
+    }
 }

@@ -49,30 +49,38 @@ struct StoredMol {
     mol_data: Vec<u8>,
 }
 
-pub struct ParqetMolDb {
-    parquet_path: PathBuf,
+/// Lightweight metadata for a molecule stored in the DB — excludes the heavy `mol_data` blob.
+#[derive(Debug, Clone)]
+pub struct MolMeta {
+    pub smiles: String,
+    pub pubchem_cid: Option<u32>,
+}
 
-    // In-memory index: ident -> serialized molecule bytes.
-    index_by_ident: HashMap<String, Vec<u8>>,
+pub struct ParqetMolDb {
+    pub path: PathBuf,
+    /// ident → serialized molecule bytes (heavy; always kept in memory after indexing).
+    pub index_by_ident: HashMap<String, Vec<u8>>,
+    /// ident → lightweight metadata (smiles, pubchem_cid).
+    pub index_meta: HashMap<String, MolMeta>,
 }
 
 impl ParqetMolDb {
     /// Create / open a DB at a parquet file path.
     ///
-    /// This eagerly scans the ident and mol_data columns to build an in-memory index.
-    pub fn new(parquet_path: impl Into<PathBuf>) -> io::Result<Self> {
-        let parquet_path = parquet_path.into();
-
-        let mut db = Self {
-            parquet_path,
+    /// This eagerly scans the ident, smiles, pubchem_cid, and mol_data columns to build
+    /// in-memory indices.
+    pub fn new(path: &Path) -> io::Result<Self> {
+        let mut res = Self {
+            path: path.to_owned(),
             index_by_ident: HashMap::new(),
+            index_meta: HashMap::new(),
         };
 
-        if db.parquet_path.exists() {
-            db.rebuild_index()?;
+        if res.path.exists() {
+            res.rebuild_index()?;
         }
 
-        Ok(db)
+        Ok(res)
     }
 
     fn schema() -> Arc<Schema> {
@@ -81,6 +89,7 @@ impl ParqetMolDb {
             Field::new("smiles", DataType::Utf8, false),
             Field::new("pubchem_cid", DataType::UInt32, true),
             Field::new("drugbank_id", DataType::Utf8, true),
+            // This contains our atoms, bonds, etc. Serialized as binary.
             Field::new("mol_data", DataType::LargeBinary, false),
         ]))
     }
@@ -89,8 +98,11 @@ impl ParqetMolDb {
     /// then writes a fresh parquet file.
     ///
     /// For "append", easiest is: read existing parquet, merge, rewrite.
-    pub fn populate(&mut self, path: &Path) -> io::Result<()> {
-        let files = collect_mol_files(path)?;
+    ///
+    /// todo: Is this loading it all into memory at once? Perhaps problematic. But these data
+    /// todo aren't that large.
+    pub fn populate(&mut self, mol_path: &Path) -> io::Result<()> {
+        let files = collect_mol_files(mol_path)?;
 
         let mut rows = Vec::new();
         let mut offset = 0;
@@ -135,7 +147,7 @@ impl ParqetMolDb {
     }
 
     fn write_all_rows(&self, rows: &[StoredMol]) -> io::Result<()> {
-        let file = File::create(&self.parquet_path)?;
+        let file = File::create(&self.path)?;
         let schema = Self::schema();
 
         let props = WriterProperties::builder()
@@ -176,8 +188,9 @@ impl ParqetMolDb {
 
     fn rebuild_index(&mut self) -> io::Result<()> {
         self.index_by_ident.clear();
+        self.index_meta.clear();
 
-        let file = File::open(&self.parquet_path)?;
+        let file = File::open(&self.path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(parquet_err_to_io)?;
 
         let arrow_schema = builder.schema().clone();
@@ -185,14 +198,21 @@ impl ParqetMolDb {
         let ident_idx = arrow_schema
             .index_of("ident")
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let smiles_idx = arrow_schema
+            .index_of("smiles")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let pubchem_idx = arrow_schema
+            .index_of("pubchem_cid")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let mol_data_idx = arrow_schema
             .index_of("mol_data")
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-        // Project only the two columns we need for indexing.
+        // Project only the columns we need for indexing (schema order is preserved).
+        // Projected batch column order: ident(0), smiles(1), pubchem_cid(2), mol_data(3).
         let mask = parquet::arrow::ProjectionMask::roots(
             builder.parquet_schema(),
-            [ident_idx, mol_data_idx],
+            [ident_idx, smiles_idx, pubchem_idx, mol_data_idx],
         );
 
         let mut reader = builder
@@ -207,8 +227,22 @@ impl ParqetMolDb {
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "ident type mismatch"))?;
-            let mol_data_col = batch
+            let smiles_col = batch
                 .column(1)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "smiles type mismatch")
+                })?;
+            let pubchem_col = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "pubchem_cid type mismatch")
+                })?;
+            let mol_data_col = batch
+                .column(3)
                 .as_any()
                 .downcast_ref::<LargeBinaryArray>()
                 .ok_or_else(|| {
@@ -216,10 +250,20 @@ impl ParqetMolDb {
                 })?;
 
             for i in 0..ident_col.len() {
-                self.index_by_ident.insert(
-                    ident_col.value(i).to_string(),
-                    mol_data_col.value(i).to_vec(),
+                let ident = ident_col.value(i).to_string();
+                self.index_meta.insert(
+                    ident.clone(),
+                    MolMeta {
+                        smiles: smiles_col.value(i).to_string(),
+                        pubchem_cid: if pubchem_col.is_null(i) {
+                            None
+                        } else {
+                            Some(pubchem_col.value(i))
+                        },
+                    },
                 );
+                self.index_by_ident
+                    .insert(ident, mol_data_col.value(i).to_vec());
             }
         }
 

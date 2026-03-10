@@ -33,7 +33,10 @@ use crate::{
     },
     orca::StateOrca,
     prefs::ToSave,
-    screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
+    screening::{
+        parquet::ParqetMolDb,
+        pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
+    },
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
     therapeutic::{DatasetTdc, infer::Infer},
@@ -304,6 +307,9 @@ pub struct StateVolatile {
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
+    pub parquet_dbs: Vec<ParqetMolDb>,
+    /// Index to `parquet_dbs`.
+    pub parquet_db_active: Option<usize>,
 }
 
 impl StateVolatile {
@@ -450,6 +456,7 @@ pub struct PopupState {
     pub pharmacophore_boolean: bool,
     pub pharmacophore_screening: bool,
     pub lig_pocket_creation: bool,
+    pub parquet_db: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
@@ -556,6 +563,7 @@ pub enum ResColoring {
     Hydrophobicity,
     /// SIFTS (UniProt-PDBe residue mappings; requires an API call to pdbe)
     SiftsUniprot,
+    Chain,
 }
 
 impl Display for ResColoring {
@@ -565,6 +573,7 @@ impl Display for ResColoring {
             Self::Position => "Posit",
             Self::Hydrophobicity => "Hydro",
             Self::SiftsUniprot => "SIFTS",
+            Self::Chain => "Chain",
         };
 
         write!(f, "{v}")

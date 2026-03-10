@@ -30,7 +30,7 @@ use lin_alg::f32::Vec3 as Vec3F32;
 
 use crate::{
     drawing::{HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, color_viridis, color_viridis_float},
-    molecules::{Atom, AtomRole, Residue, aa_color},
+    molecules::{Atom, AtomRole, Chain, Residue, aa_color},
     state::ResColoring,
 };
 
@@ -56,7 +56,7 @@ const COIL_RADIUS: f32 = 0.25;
 /// Coil / loop segments whose total Cα path length exceeds this (Å) are not drawn.
 /// This suppresses artificially long connecting tubes that appear across large structural
 /// gaps (e.g. missing residues or discontinuous chain fragments).
-const MAX_COIL_LENGTH_ANG: f32 = 30.0;
+const MAX_COIL_LENGTH_ANG: f32 = 40.0;
 
 // ── Tessellation ──────────────────────────────────────────────────────────────
 
@@ -281,6 +281,8 @@ fn build_segment_mesh(
     residues: &[Residue],
     res_coloring: ResColoring,
     sifts: Option<&[SiftsUniprotMapping]>,
+    res_to_chain: &HashMap<usize, usize>,
+    chain_count: usize,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<usize>,
 ) {
@@ -413,6 +415,10 @@ fn build_segment_mesh(
                     }
                 }
                 _ => fallback(),
+            },
+            ResColoring::Chain => match res_to_chain.get(&res_i) {
+                Some(&chain_i) => color_viridis(chain_i, 0, chain_count.saturating_sub(1)),
+                None => fallback(),
             },
         };
 
@@ -624,6 +630,7 @@ pub fn build_cartoon_mesh(
     backbone: &[BackboneSS],
     atoms: &[Atom],
     residues: &[Residue],
+    chains: &[Chain],
     res_coloring: ResColoring,
     sifts: Option<&[SiftsUniprotMapping]>,
 ) -> Mesh {
@@ -631,6 +638,14 @@ pub fn build_cartoon_mesh(
     let mut indices = Vec::new();
 
     let max_residue = atoms.iter().filter_map(|a| a.residue).max().unwrap_or(1);
+
+    // Build residue-index → chain-index map for Chain coloring.
+    let res_to_chain: HashMap<usize, usize> = chains
+        .iter()
+        .enumerate()
+        .flat_map(|(chain_i, chain)| chain.residues.iter().map(move |&res_i| (res_i, chain_i)))
+        .collect();
+    let chain_count = chains.len();
 
     // ── 1. Collect all Cα positions ───────────────────────────────────────────
     let mut all_ca: HashMap<usize, Vec3F32> = HashMap::new();
@@ -660,6 +675,8 @@ pub fn build_cartoon_mesh(
             residues,
             res_coloring,
             sifts,
+            &res_to_chain,
+            chain_count,
             &mut vertices,
             &mut indices,
         );
@@ -711,6 +728,8 @@ pub fn build_cartoon_mesh(
             residues,
             res_coloring,
             sifts,
+            &res_to_chain,
+            chain_count,
             &mut vertices,
             &mut indices,
         );
