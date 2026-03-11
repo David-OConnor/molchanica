@@ -1021,7 +1021,7 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
         ui.horizontal(|ui| {
             label!(
                 ui,
-                format!("{file_name} : {} mols", db.index_by_ident.len()),
+                format!("{file_name} : {} mols", db.index_meta.len()),
                 Color32::WHITE
             );
 
@@ -1110,6 +1110,20 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
             let mut entries: Vec<(&String, &MolMeta)> = db.index_meta.iter().collect();
             entries.sort_by_key(|(ident, _)| ident.as_str());
 
+            // Column headers (outside the scroll area so they stay fixed).
+            Grid::new(format!("parquet_mol_headers_{db_i}"))
+                .num_columns(3)
+                .min_col_width(120.)
+                .spacing([COL_SPACING, 4.])
+                .show(ui, |ui| {
+                    label!(ui, "PubChem CID", Color32::GRAY);
+                    label!(ui, "SMILES", Color32::GRAY);
+                    label!(ui, "Heavy atoms", Color32::GRAY);
+                    ui.end_row();
+                });
+
+            ui.separator();
+
             ScrollArea::vertical()
                 .id_salt(format!("parquet_mol_list_{db_i}"))
                 .min_scrolled_height(400.)
@@ -1124,9 +1138,9 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
                             for (smiles, meta) in &entries {
                                 match meta.pubchem_cid {
                                     Some(cid) => {
-                                        label!(ui, format!("CID {cid}"), Color32::LIGHT_BLUE)
+                                        label!(ui, cid.to_string(), Color32::LIGHT_BLUE)
                                     }
-                                    None => label!(ui, "No CID", Color32::DARK_GRAY),
+                                    None => label!(ui, "—", Color32::DARK_GRAY),
                                 };
 
                                 let smiles_preview: String = if meta.smiles.chars().count() > 10 {
@@ -1137,7 +1151,7 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
                                 };
                                 label!(ui, smiles_preview, Color32::GRAY);
 
-                                label!(ui, format!("# {}", meta.heavy_atom_count), Color32::GRAY);
+                                label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
 
                                 ui.end_row();
                             }

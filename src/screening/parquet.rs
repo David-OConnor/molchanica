@@ -76,12 +76,12 @@ pub struct ParquetMolDb {
 impl ParquetMolDb {
     /// Create / open a DB at a parquet file path.
     ///
-    /// This eagerly scans the ident, smiles, pubchem_cid, and mol_data columns to build
-    /// in-memory indices.
+    /// Eagerly loads only the lightweight metadata columns (smiles, pubchem_cid,
+    /// heavy_atom_count) into `index_meta`. The heavy `mol_data` column is NOT loaded
+    /// here; it is read from disk on demand via `load_all` / `load_mol` / `load_mols`.
     pub fn new(path: &Path) -> io::Result<Self> {
         let mut res = Self {
             path: path.to_owned(),
-            index_by_ident: HashMap::new(),
             index_meta: HashMap::new(),
         };
 
@@ -104,13 +104,10 @@ impl ParquetMolDb {
         ]))
     }
 
-    /// Add molecules to a database. Loads recursively from a given folder (Mol2 or SDF),
-    /// then writes a fresh parquet file.
+    /// Read molecules from molecule files on disk, and loads them into a database. Loads
+    /// recursively from a given folder (Mol2 or SDF), then writes a fresh parquet file.
     ///
     /// For "append", easiest is: read existing parquet, merge, rewrite.
-    ///
-    /// todo: Is this loading it all into memory at once? Perhaps problematic. But these data
-    /// todo aren't that large.
     pub fn populate(&mut self, mol_path: &Path) -> io::Result<()> {
         let files = collect_mol_files(mol_path)?;
 
@@ -205,8 +202,9 @@ impl ParquetMolDb {
         RecordBatch::try_new(schema, cols).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
+    /// Reads only the three lightweight metadata columns from disk into `index_meta`.
+    /// The heavy `mol_data` column is intentionally excluded.
     fn rebuild_index(&mut self) -> io::Result<()> {
-        self.index_by_ident.clear();
         self.index_meta.clear();
 
         let file = File::open(&self.path)?;
@@ -223,15 +221,12 @@ impl ParquetMolDb {
         let heavy_atom_count_idx = arrow_schema
             .index_of("heavy_atom_count")
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        let mol_data_idx = arrow_schema
-            .index_of("mol_data")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-        // Project only the columns we need for indexing (schema order is preserved).
-        // Projected batch column order: smiles(0), pubchem_cid(1), heavy_atom_count(2), mol_data(3).
+        // Project metadata columns only. mol_data is NOT read here.
+        // Projected batch column order: smiles(0), pubchem_cid(1), heavy_atom_count(2).
         let mask = parquet::arrow::ProjectionMask::roots(
             builder.parquet_schema(),
-            [smiles_idx, pubchem_idx, heavy_atom_count_idx, mol_data_idx],
+            [smiles_idx, pubchem_idx, heavy_atom_count_idx],
         );
 
         let mut reader = builder
@@ -248,7 +243,6 @@ impl ParquetMolDb {
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "smiles type mismatch")
                 })?;
-
             let pubchem_col = batch
                 .column(1)
                 .as_any()
@@ -256,33 +250,20 @@ impl ParquetMolDb {
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "pubchem_cid type mismatch")
                 })?;
-
             let heavy_atom_count_col = batch
                 .column(2)
                 .as_any()
                 .downcast_ref::<UInt16Array>()
                 .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "heavy atom count type mismatch")
+                    io::Error::new(io::ErrorKind::InvalidData, "heavy_atom_count type mismatch")
                 })?;
 
-            let mol_data_col = batch
-                .column(3)
-                .as_any()
-                .downcast_ref::<LargeBinaryArray>()
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "mol_data type mismatch")
-                })?;
-
-            for i in 0..pubchem_col.len() {
-                // let ident = ident_col.value(i).to_string();
-
-                // todo: Do we have/need a unique smiles per row [mol]?
-                let smiles = smiles_col.value(i).to_owned();
-
+            for i in 0..smiles_col.len() {
+                let smiles = smiles_col.value(i).to_string();
                 self.index_meta.insert(
                     smiles.clone(),
                     MolMeta {
-                        smiles: smiles_col.value(i).to_string(),
+                        smiles,
                         pubchem_cid: if pubchem_col.is_null(i) {
                             None
                         } else {
@@ -291,36 +272,112 @@ impl ParquetMolDb {
                         heavy_atom_count: heavy_atom_count_col.value(i),
                     },
                 );
-                self.index_by_ident
-                    .insert(smiles, mol_data_col.value(i).to_vec());
             }
         }
 
         Ok(())
     }
 
-    pub fn load_mol(&self, ident: &str) -> io::Result<MoleculeSmall> {
-        let mol_data = match self.index_by_ident.get(ident) {
-            Some(d) => d,
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("Molecule not found: {ident}"),
-                ));
+    /// Read `mol_data` for a single molecule from disk by scanning for its SMILES key.
+    pub fn load_mol(&self, smiles: &str) -> io::Result<MoleculeSmall> {
+        let mols = self.load_mols(&[smiles])?;
+        mols.into_iter().next().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Molecule not found: {smiles}"),
+            )
+        })
+    }
+
+    /// Read `mol_data` for a subset of molecules (by SMILES key) in a single disk pass.
+    pub fn load_mols(&self, smiles_keys: &[&str]) -> io::Result<Vec<MoleculeSmall>> {
+        use std::collections::HashSet;
+        let targets: HashSet<&str> = smiles_keys.iter().copied().collect();
+
+        let file = File::open(&self.path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(parquet_err_to_io)?;
+
+        let arrow_schema = builder.schema().clone();
+
+        let smiles_idx = arrow_schema
+            .index_of("smiles")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        let mol_data_idx = arrow_schema
+            .index_of("mol_data")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        let mask = parquet::arrow::ProjectionMask::roots(
+            builder.parquet_schema(),
+            [smiles_idx, mol_data_idx],
+        );
+
+        let mut reader = builder
+            .with_projection(mask)
+            .with_batch_size(8192)
+            .build()
+            .map_err(parquet_err_to_io)?;
+
+        let mut result = Vec::new();
+        while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
+            let smiles_col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "smiles type mismatch")
+                })?;
+            let mol_data_col = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<LargeBinaryArray>()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "mol_data type mismatch")
+                })?;
+            for i in 0..smiles_col.len() {
+                if targets.contains(smiles_col.value(i)) {
+                    result.push(MoleculeSmall::from_bytes(mol_data_col.value(i))?);
+                }
             }
-        };
-        MoleculeSmall::from_bytes(mol_data)
+        }
+
+        Ok(result)
     }
 
+    /// Read all `mol_data` from disk and deserialize into molecules.
+    /// This is the only function that actually reads mol_data from the Parquet file.
     pub fn load_all(&self) -> io::Result<Vec<MoleculeSmall>> {
-        self.index_by_ident
-            .values()
-            .map(|bytes| MoleculeSmall::from_bytes(bytes))
-            .collect()
-    }
+        let file = File::open(&self.path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(parquet_err_to_io)?;
 
-    pub fn load_mols(&self, idents: &[&str]) -> io::Result<Vec<MoleculeSmall>> {
-        idents.iter().map(|id| self.load_mol(id)).collect()
+        let mol_data_idx = builder
+            .schema()
+            .index_of("mol_data")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        let mask = parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), [mol_data_idx]);
+
+        let mut reader = builder
+            .with_projection(mask)
+            .with_batch_size(8192)
+            .build()
+            .map_err(parquet_err_to_io)?;
+
+        let mut result = Vec::with_capacity(self.index_meta.len());
+        while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
+            let mol_data_col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<LargeBinaryArray>()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "mol_data type mismatch")
+                })?;
+            for i in 0..mol_data_col.len() {
+                result.push(MoleculeSmall::from_bytes(mol_data_col.value(i))?);
+            }
+        }
+
+        Ok(result)
     }
 }
 

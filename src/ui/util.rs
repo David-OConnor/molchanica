@@ -108,7 +108,7 @@ pub fn update_file_dialogs(
                     &mut state.ui,
                     format!(
                         "Loaded Parquet database from {path:?} ({} molecules)",
-                        db.index_by_ident.len()
+                        db.index_meta.len()
                     ),
                 );
                 state.volatile.parquet_dbs.push(db);
@@ -128,7 +128,7 @@ pub fn update_file_dialogs(
             let db = &mut state.volatile.parquet_dbs[*i];
             match db.populate(path) {
                 Ok(()) => {
-                    println!("Populated Parquet DB: {:?}", db.index_by_ident);
+                    println!("Populated Parquet DB: {} molecules", db.index_meta.len());
                 }
                 Err(e) => {
                     eprintln!("Error populating parquet data: {e:?}")
