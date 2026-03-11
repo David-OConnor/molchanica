@@ -1,10 +1,8 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
-use bio_files::{Mol2, Sdf};
 use egui::{Align, Color32, ComboBox, Layout, RichText, ScrollArea, Ui};
 use graphics::{EngineUpdates, Scene};
 
-use crate::ui::popups::db_selector;
 use crate::{
     button, drawing,
     drawing::blend_color,
@@ -18,7 +16,7 @@ use crate::{
     selection::Selection,
     state::{PopupState, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popups::db_selector,
         util::color_egui_from_f32,
     },
     util::{RedrawFlags, handle_err, make_egui_color},
@@ -470,13 +468,26 @@ pub(in crate::ui) fn pharmacophore_screen(
         label!(ui, "Pharmacophore screening", Color32::WHITE);
         ui.add_space(COL_SPACING);
 
+        // if ui
+        //     .button(RichText::new("Choose mol path"))
+        //     .on_hover_text("Choose a path which contains the molecules to screen.")
+        //     .clicked()
+        // {
+        //     // Re-using this dialog.
+        //     state.volatile.dialogs.screening.pick_directory();
+        // }
+
+        // The Parquet DB popup must load after this for it to work as intended, opening over the
+        // screening one.
         if ui
-            .button(RichText::new("Choose mol path"))
-            .on_hover_text("Choose a path which contains the molecules to screen.")
+            .button("Load or create databases")
+            .on_hover_text(
+                "Open the Parquet Database management window. This lets you create a database \
+            from molecule files, or load one from disk.",
+            )
             .clicked()
         {
-            // Re-using this dialog.
-            state.volatile.dialogs.screening.pick_directory();
+            state.ui.popup.parquet_db = true;
         }
 
         ui.add_space(COL_SPACING);
@@ -492,109 +503,110 @@ pub(in crate::ui) fn pharmacophore_screen(
 
     db_selector(state, ui);
 
-    if let Some(path) = state.to_save.screening_path.clone()
-        && let Some(ph_i) = state.pharmacophore.ph_for_screening
+    let Some(ph_i) = state.pharmacophore.ph_for_screening else {
+        return;
+    };
+
+    let Some(db_i) = state.volatile.parquet_db_active else {
+        label!(
+            ui,
+            "No database selected. Use 'Load or create databases' above.",
+            Color32::GRAY
+        );
+        return;
+    };
+
+    let db_mol_count = state.volatile.parquet_dbs[db_i].index_meta.len();
+    let db_name = state.volatile.parquet_dbs[db_i]
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_owned();
+
+    label!(
+        ui,
+        format!("Database: {db_name} ({db_mol_count} molecules)"),
+        Color32::GRAY
+    );
+    ui.add_space(ROW_SPACING);
+
+    if state.pharmacophore.screening_in_progress {
+        label!(ui, "Screening in progress", COLOR_ACTIVE);
+        ui.add_space(ROW_SPACING);
+    }
+
+    label!(ui, "Results:", Color32::GRAY);
+    ui.separator();
+
+    // We are using SMILES to index the database.
+    let mut smiles_to_load: Option<String> = None;
+
+    ScrollArea::vertical()
+        .min_scrolled_height(800.0)
+        .show(ui, |ui| {
+            let results: Vec<_> = state
+                .pharmacophore
+                .screening_results
+                .iter()
+                .map(|v| (v.smiles_or_ident.clone(), v.score))
+                .collect();
+
+            for (smiles, score) in &results {
+                ui.horizontal(|ui| {
+                    label!(ui, format!("{smiles}  score: {score:.2}"), Color32::WHITE);
+
+                    ui.add_space(COL_SPACING);
+                    if button!(
+                        ui,
+                        "Load mol",
+                        Color32::GRAY,
+                        "Load this molecule from the database to view"
+                    )
+                    .clicked()
+                    {
+                        smiles_to_load = Some(smiles.clone());
+                    }
+                });
+            }
+        });
+
+    if let Some(smiles) = smiles_to_load {
+        match state.volatile.parquet_dbs[db_i].load_mol(&smiles) {
+            Ok(mol) => {
+                state.load_mol_to_state(MoleculeGeneric::Small(mol), scene, updates, None);
+            }
+            Err(e) => handle_err(
+                &mut state.ui,
+                format!("Failed to load molecule '{smiles}' from database: {e}"),
+            ),
+        }
+    }
+
+    ui.add_space(ROW_SPACING);
+
+    if state.pharmacophore.screening_in_progress {
+        if button!(ui, "Stop", COLOR_ACTION, "Abort the screening process.").clicked() {
+            state.pharmacophore.screening_in_progress = false;
+            // Dropping the receiver causes the screening thread's next tx.send() to
+            // fail cleanly.
+            state.volatile.thread_receivers.ph_screening = None;
+            println!("Screening aborted.");
+        }
+    } else if button!(
+        ui,
+        "Run Screening",
+        COLOR_ACTION,
+        "Start the screening using the active database"
+    )
+    .clicked()
     {
-        label!(ui, format!("Path: {path:?}"), Color32::GRAY);
-
-        ui.add_space(ROW_SPACING);
-
-        if state.pharmacophore.screening_in_progress {
-            label!(ui, "Screening in progress", COLOR_ACTIVE);
-            ui.add_space(ROW_SPACING);
-        }
-
-        label!(ui, "Results:", Color32::GRAY);
-        ui.separator();
-        ScrollArea::vertical()
-            .min_scrolled_height(800.0)
-            .show(ui, |ui| {
-                // Collect paths first to avoid borrowing state.pharmacophore inside the loop.
-                let results: Vec<_> = state
-                    .pharmacophore
-                    .screening_results
-                    .iter()
-                    .map(|v| (v.1.clone(), v.3, v.4.clone()))
-                    .collect();
-
-                let mut mol_to_load: Option<(MoleculeGeneric, PathBuf)> = None;
-
-                for (ident, score, path) in &results {
-                    ui.horizontal(|ui| {
-                        label!(ui, format!("{ident}  score: {score:.2}"), Color32::WHITE);
-
-                        ui.add_space(COL_SPACING);
-                        if button!(
-                            ui,
-                            "Load mol",
-                            Color32::GRAY,
-                            "Load this molecule from disk to view, etc"
-                        )
-                        .clicked()
-                        {
-                            let ext = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("")
-                                .to_ascii_lowercase();
-
-                            let mol_result: Option<MoleculeSmall> = match ext.as_str() {
-                                "mol2" => Mol2::load(path)
-                                    .ok()
-                                    .and_then(|m| MoleculeSmall::try_from(m).ok()),
-                                "sdf" => Sdf::load(path)
-                                    .ok()
-                                    .and_then(|m| MoleculeSmall::try_from(m).ok()),
-                                _ => {
-                                    eprintln!(
-                                        "Unrecognised extension for screening result: {path:?}"
-                                    );
-                                    None
-                                }
-                            };
-
-                            if let Some(mol) = mol_result {
-                                mol_to_load = Some((MoleculeGeneric::Small(mol), path.clone()));
-                            } else {
-                                eprintln!("Failed to load screening result mol from {path:?}");
-                            }
-                        }
-                    });
-                }
-
-                if let Some((mol, path)) = mol_to_load {
-                    state.load_mol_to_state(mol, scene, updates, Some(&path));
-                }
-            });
-
-        ui.add_space(ROW_SPACING);
-
-        if state.pharmacophore.screening_in_progress {
-            if button!(ui, "Stop", COLOR_ACTION, "Abort the screening process.").clicked() {
-                state.pharmacophore.screening_in_progress = false;
-                // Dropping the receiver causes the screening thread's next tx.send() to
-                // fail, which makes it break out of its batch loop cleanly.
-                state.volatile.thread_receivers.ph_screening = None;
-                println!("Screening aborted.");
-            }
-        } else {
-            if button!(
-                ui,
-                "Run Screening",
-                COLOR_ACTION,
-                "Start the screening at this path"
-            )
-            .clicked()
-            {
-                // todo: Sort out your state of lig-basd pharmacophores vs full ones
-                let ph = &state.ligands[ph_i].pharmacophore;
-                // let ph = &state.pharmacophores[ph_i];
-                state.volatile.thread_receivers.ph_screening = Some(ph.screen_ligs(
-                    &path,
-                    PHARMACOPHORE_SCREENING_THRESH_DEFAULT,
-                    &mut state.pharmacophore.screening_in_progress,
-                ));
-            }
-        }
+        let db_path = state.volatile.parquet_dbs[db_i].path.clone();
+        let rx = state.ligands[ph_i].pharmacophore.screen_ligs(
+            &db_path,
+            PHARMACOPHORE_SCREENING_THRESH_DEFAULT,
+            &mut state.pharmacophore.screening_in_progress,
+        );
+        state.volatile.thread_receivers.ph_screening = Some(rx);
     }
 }

@@ -11,7 +11,6 @@ use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
-use crate::screening::parquet::ParquetMolDb;
 use crate::{
     button,
     cam::move_cam_to_mol,
@@ -28,7 +27,10 @@ use crate::{
     prefs::OpenType,
     render::MESH_POCKET_START,
     screening,
-    screening::{parquet::MolMeta, screen_by_alignment},
+    screening::{
+        parquet::{MolMeta, ParquetMolDb},
+        screen_by_alignment,
+    },
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, PopupState, State},
     ui::{
@@ -285,63 +287,57 @@ fn associated_structures(
 
 fn alignment_screening(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        ui.label("Choose molecules to align:");
+        ui.label("Alignment screening uses the active Parquet database.");
 
-        ui.add_space(COL_SPACING);
-
-        if ui
-            .button("Select folder")
-            .on_hover_text(
-                "Perform a fast small molecule alignment screening from all \
-                files in a selected folder",
-            )
-            .clicked()
-        {
-            state.volatile.dialogs.screening.pick_directory();
-        }
-
-        if let Some(path) = &state.to_save.screening_path {
+        if let Some(db_i) = state.volatile.parquet_db_active {
+            let mol_count = state.volatile.parquet_dbs[db_i].index_meta.len();
             ui.add_space(COL_SPACING);
+            ui.label(format!("({mol_count} molecules)"));
+            ui.add_space(COL_SPACING);
+
             if ui
                 .button(RichText::new("Run screening").color(COLOR_ACTION))
                 .clicked()
             {
-                // let path = Path::new("C:/Users/the_a/Desktop/bio_misc/amber_geostd/c");
-                if let Ok((mols, _)) = screening::load_mols(path, 0) {
-                    state.volatile.alignment.mols_passed_screening = Vec::new();
+                match state.volatile.parquet_dbs[db_i].load_all() {
+                    Ok(mut mols) => {
+                        for mol in &mut mols {
+                            mol.update_characterization();
+                        }
 
-                    let template = mols[0].clone();
-                    // todo: UI controls for these, along with path.
-                    let score_thresh = 60.;
-                    let size_diff_thresh = 0.4;
+                        state.volatile.alignment.mols_passed_screening = Vec::new();
 
-                    let result =
-                        screen_by_alignment(&template, &mols, score_thresh, size_diff_thresh);
+                        if mols.len() >= 2 {
+                            let template = mols[0].clone();
+                            let score_thresh = 60.;
+                            let size_diff_thresh = 0.4;
 
-                    // todo: COnfigure this etc
-                    let max_stored = 10_000;
-                    let mut stored = 0;
-                    for (i, _score) in result {
-                        state
-                            .volatile
-                            .alignment
-                            .mols_passed_screening
-                            .push(mols[i].clone());
+                            let result = screen_by_alignment(
+                                &template,
+                                &mols,
+                                score_thresh,
+                                size_diff_thresh,
+                            );
 
-                        stored += 1;
-                        if stored > max_stored {
-                            break;
+                            let max_stored = 10_000;
+                            for (i, _score) in result.into_iter().take(max_stored) {
+                                state
+                                    .volatile
+                                    .alignment
+                                    .mols_passed_screening
+                                    .push(mols[i].clone());
+                            }
                         }
                     }
-
-                    // result.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
-                } else {
-                    handle_err(
+                    Err(e) => handle_err(
                         &mut state.ui,
-                        format!("Failed to load molecules from {path:?}"),
-                    );
+                        format!("Failed to load molecules from database: {e}"),
+                    ),
                 }
             }
+        } else {
+            ui.add_space(COL_SPACING);
+            ui.label("No database selected.");
         }
 
         ui.add_space(COL_SPACING);

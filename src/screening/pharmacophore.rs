@@ -25,7 +25,7 @@ use crate::{
     molecules::{pocket::Pocket, small::MoleculeSmall},
     parse_le,
     render::Color,
-    screening,
+    screening::parquet::ParquetMolDb,
 };
 // #[derive(Clone, Debug)]
 // pub struct PocketBinding {
@@ -46,7 +46,14 @@ pub struct PharmacophoreState {
 
 pub const PHARMACOPHORE_SCREENING_THRESH_DEFAULT: f32 = 0.6;
 
-pub type PhScreeningScore = (usize, String, Vec<Vec3>, f32, PathBuf);
+#[derive(Clone, Debug)]
+pub struct PhScreeningScore {
+    pub index: usize,
+    pub smiles_or_ident: String, // todo: Not sure which. SMILES for now to match the dbs?
+    pub score: f32,
+    // pub mol_path: PathBuf,
+}
+// pub type PhScreeningScore = (usize, String, Vec<Vec3>, f32, PathBuf);
 
 /// Hmm: https://www.youtube.com/watch?v=Z42UiJCRDYE
 /// The u8 rep is for serialization
@@ -767,110 +774,94 @@ impl Pharmacophore {
         }
     }
 
-    /// Spawn a background thread that screens all molecules in `path` against this pharmacophore,
-    /// sending results incrementally through the returned channel.
+    /// Spawn a background thread that screens all molecules in the given Parquet DB against this
+    /// pharmacophore, sending results through the returned channel when complete.
     ///
-    /// Files are enumerated once, then loaded and scored in successive batches so only
-    /// ~[`mol_screening::MOL_CACHE_SIZE_ATOM_COUNT`] atoms worth of molecules are held in
-    /// memory at any one time.  Rayon parallelises scoring within each batch.
+    /// All molecules are loaded from the DB, characterization is computed in place, then
+    /// Rayon parallelises scoring.  Results arrive as a single `Vec<PhScreeningScore>` message.
+    /// When the thread is done the channel closes and the receiver returns `Disconnected`.
     ///
-    /// Poll the returned [`Receiver`] each frame (see `threads::handle_thread_rx`).  Results
-    /// arrive as `Vec<PhScreeningScore>` messages — one message per completed batch.  When the
-    /// thread is done the channel closes and the receiver returns `Disconnected`.
+    /// Poll the returned [`Receiver`] each frame (see `threads::handle_thread_rx`).
     pub fn screen_ligs(
         &self,
-        path: &Path,
+        db_path: &Path,
         thresh: f32,
         ph_screening_in_progress: &mut bool,
     ) -> Receiver<Vec<PhScreeningScore>> {
         println!("Pharmacophore screening started");
 
-        // Clone so the thread owns the pharmacophore, and convert the borrowed path to an
-        // owned PathBuf — both are required for `thread::spawn`'s `'static` bound.
         let pharmacophore = self.clone();
-        let path = path.to_path_buf();
-
-        // todo: based on extension or if file/foldser, either screen from a folder directly,
-        // todo: Or screen from a parquet DB.
+        let db_path = db_path.to_path_buf();
 
         *ph_screening_in_progress = true;
 
         let (tx, rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let files = match screening::collect_mol_files(&path) {
-                Ok(f) => f,
+            let db = match ParquetMolDb::new(&db_path) {
+                Ok(d) => d,
                 Err(e) => {
-                    eprintln!("Error collecting molecule files from {path:?}: {e}");
+                    eprintln!("Error opening parquet DB at {db_path:?}: {e}");
                     return;
                 }
             };
 
-            if files.is_empty() {
-                println!("No molecule files found in {path:?}");
-                return;
+            let mut mols = match db.load_all() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Error loading molecules from parquet DB: {e}");
+                    return;
+                }
+            };
+
+            println!(
+                "Pharmacophore screening: {} molecules loaded from DB",
+                mols.len()
+            );
+
+            // Characterization is not stored in the parquet binary; compute it now.
+            for mol in &mut mols {
+                mol.update_characterization();
             }
 
-            let total_files = files.len();
-            let mut file_offset = 0; // Files consumed (loaded or skipped).
-            let mut mols_screened = 0; // Molecules scored so far.
+            // Score in parallel.
+            let results: Vec<_> = mols
+                .par_iter()
+                .enumerate()
+                .filter_map(|(i, mol)| {
+                    let score = pharmacophore.score(mol);
+                    if score < thresh {
+                        None
+                    } else {
+                        // Some((i, mol.common.ident.clone(), vec![], score, db_path.clone()))
 
-            loop {
-                let remaining = &files[file_offset..];
-                if remaining.is_empty() {
-                    break;
-                }
+                        // Using smiles
 
-                let (mols, files_consumed) = match screening::load_mol_batch(remaining) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        eprintln!("Error loading molecule batch: {e}");
-                        break;
+                        let smiles = match mol.get_smiles() {
+                            Some(s) => s.to_string(),
+                            None => {
+                                eprintln!("Error: Missing smiles for mol: {:?}", mol.common.ident);
+                                return None;
+                            }
+                        };
+
+                        // We assume smiles is populated already.
+                        Some(PhScreeningScore {
+                            index: i,
+                            smiles_or_ident: smiles,
+                            score,
+                        })
                     }
-                };
+                })
+                .collect();
 
-                if mols.is_empty() {
-                    break;
-                }
+            println!(
+                "Pharmacophore screening complete: {}/{} molecules passed",
+                results.len(),
+                mols.len()
+            );
 
-                let batch_mol_offset = mols_screened;
-                mols_screened += mols.len();
-                file_offset += files_consumed;
-
-                // Score in parallel within the batch — rayon handles the parallelism, so no
-                // inner thread::spawn needed here.
-                let batch_results: Vec<_> = mols
-                    .par_iter()
-                    .enumerate()
-                    .filter_map(|(i, mol)| {
-                        let score = pharmacophore.score(mol);
-                        if score < thresh {
-                            None
-                        } else {
-                            Some((
-                                batch_mol_offset + i,
-                                mol.common.ident.clone(),
-                                vec![],
-                                score,
-                                mol.common.path.clone().unwrap_or_default(),
-                            ))
-                        }
-                    })
-                    .collect();
-
-                println!(
-                    "Screening progress: {mols_screened} mols scored \
-                     ({file_offset}/{total_files} files), {} passed this batch",
-                    batch_results.len(),
-                );
-
-                // If the receiver was dropped (UI closed etc.), stop early.
-                if tx.send(batch_results).is_err() {
-                    break;
-                }
-            }
-
-            println!("Pharmacophore screening complete.");
+            let _ = tx.send(results);
         });
 
         rx

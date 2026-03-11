@@ -27,12 +27,12 @@ use parquet::{
     file::properties::WriterProperties,
 };
 
-use crate::prefs::OpenType;
-use crate::state::State;
-use crate::util::{handle_err, handle_success};
 use crate::{
     molecules::{Atom, Bond, small::MoleculeSmall},
+    prefs::OpenType,
     screening::{collect_mol_files, load_mol_batch},
+    state::State,
+    util::{handle_err, handle_success},
 };
 
 fn parquet_err_to_io(e: ParquetError) -> io::Error {

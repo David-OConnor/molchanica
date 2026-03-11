@@ -112,6 +112,16 @@ impl MoleculeSmall {
         // For now, this works as the spot
         self.components = MolComponents::new(&self);
     }
+
+    pub fn get_smiles(&self) -> Option<&str> {
+        for ident in &self.idents {
+            if let MolIdent::Smiles(id) = ident {
+                return Some(id);
+            }
+        }
+
+        None
+    }
 }
 
 impl MolGenericTrait for MoleculeSmall {

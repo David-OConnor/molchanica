@@ -981,7 +981,8 @@ pub fn save_trajectory(dialog: &mut FileDialog) -> io::Result<()> {
 pub struct FileDialogs {
     pub load: FileDialog,
     pub save: FileDialog,
-    /// This is for selecting a folder; not file.
+    /// This is for selecting a folder containing molecule files. This is for workflows that don't involve
+    /// a database. Note: Currently unused and being deprecated in favor of databases (e.g. Parquet)
     pub screening: FileDialog,
     /// Creating and updating Parquet molecule databases.
     pub parquet_db_load: FileDialog,

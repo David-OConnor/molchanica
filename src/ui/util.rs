@@ -77,8 +77,9 @@ pub fn update_file_dialogs(
         }
     }
 
+    // Perhaps deprecated in favor of using screening databases.
     if let Some(path) = &state.volatile.dialogs.screening.take_picked() {
-        state.to_save.screening_path = Some(path.to_owned());
+        // state.to_save.screening_path = Some(path.to_owned());
     }
 
     if let Some(path) = &state.volatile.dialogs.parquet_db_save.take_picked() {
