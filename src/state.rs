@@ -34,7 +34,7 @@ use crate::{
     orca::StateOrca,
     prefs::ToSave,
     screening::{
-        parquet::ParqetMolDb,
+        parquet::ParquetMolDb,
         pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
     },
     selection::{Selection, ViewSelLevel},
@@ -307,7 +307,7 @@ pub struct StateVolatile {
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
-    pub parquet_dbs: Vec<ParqetMolDb>,
+    pub parquet_dbs: Vec<ParquetMolDb>,
     /// Index to `parquet_dbs`.
     pub parquet_db_active: Option<usize>,
 }

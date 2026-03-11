@@ -4,8 +4,8 @@ use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
 use chrono::Utc;
 use egui::{
-    Align, Color32, ComboBox, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText, ScrollArea,
-    TextEdit, Ui,
+    Align, Color32, ComboBox, Grid, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText,
+    ScrollArea, TextEdit, Ui,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -1001,19 +1001,68 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
         ui.add_space(COL_SPACING);
 
         close_btn(ui, &mut state.ui.popup.parquet_db);
-
     });
 
     ui.add_space(ROW_SPACING);
     ui.separator();
     label!(ui, "Databases loaded", Color32::GRAY);
 
-    for (i, db) in state.volatile.parquet_dbs.iter_mut().enumerate() {
-        label!(
-            ui,
-            format!("Db: {:?} with {} indices", db.path, db.index_by_ident.len()),
-            Color32::WHITE
-        );
+    let mut close_db = None;
+    for (i, db) in state.volatile.parquet_dbs.iter().enumerate() {
+        let Some(file_name) = db.path.file_name() else {
+            eprintln!("Error loading file path");
+            continue;
+        };
+
+        let file_name = file_name.to_string_lossy();
+
+        let active = state.volatile.parquet_db_active == Some(i);
+
+        ui.horizontal(|ui| {
+            label!(
+                ui,
+                format!("{file_name} : {} mols", db.index_by_ident.len()),
+                Color32::WHITE
+            );
+
+            let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
+
+            ui.add_space(COL_SPACING);
+
+            if button!(
+                ui,
+                "Select",
+                color,
+                "Select this as the active database. View or modify it."
+            )
+            .clicked()
+            {
+                state.volatile.parquet_db_active = Some(i);
+            }
+
+            if button!(ui, "Close", Color32::LIGHT_RED, "Close this database").clicked() {
+                if active {
+                    state.volatile.parquet_db_active = None
+                }
+            }
+        });
+    }
+
+    if let Some(i) = close_db {
+        state.volatile.parquet_dbs.remove(i);
+    }
+
+    // Display DB-specific data if there is an active one.
+    if let Some(db_i) = state.volatile.parquet_db_active {
+        if db_i >= state.volatile.parquet_dbs.len() {
+            handle_err(
+                &mut state.ui,
+                String::from("Error: Invalid Parquet DB active index"),
+            );
+            return;
+        }
+
+        let db = &mut state.volatile.parquet_dbs[db_i];
 
         ui.add_space(ROW_SPACING);
 
@@ -1027,7 +1076,7 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
             .clicked()
             {
                 state.volatile.dialogs.parquet_mols_dir.pick_directory();
-                state.volatile.parquet_db_active = Some(i);
+                state.volatile.parquet_db_active = Some(db_i);
             }
 
             ui.add_space(COL_SPACING);
@@ -1036,12 +1085,20 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
                 ui,
                 "Load all mols",
                 COLOR_ACTION,
-                "Load all molecules in this database into memory"
+                "Load all molecule data in this database into memory"
             )
             .clicked()
             {
-                if let Err(e) = db.load_all() {
-                    handle_err(&mut state.ui, format!("Error loading molecules: {e:?}"));
+                match db.load_all() {
+                    Ok(mols) => {
+                        // todo temp
+                        for mol in &mols {
+                            println!("MOL loaded: {:?}", mol);
+                        }
+                    }
+                    Err(e) => {
+                        handle_err(&mut state.ui, format!("Error loading molecules: {e:?}"));
+                    }
                 }
             }
         });
@@ -1054,26 +1111,37 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
             entries.sort_by_key(|(ident, _)| ident.as_str());
 
             ScrollArea::vertical()
-                .id_salt(format!("parquet_mol_list_{i}"))
+                .id_salt(format!("parquet_mol_list_{db_i}"))
+                .min_scrolled_height(400.)
                 .max_height(800.)
                 .show(ui, |ui| {
-                    for (ident, meta) in &entries {
-                        ui.horizontal(|ui| {
-                            label!(ui, ident.as_str(), Color32::WHITE);
+                    Grid::new(format!("parquet_mol_grid_{db_i}"))
+                        .num_columns(3)
+                        .striped(true)
+                        .min_col_width(120.)
+                        .spacing([COL_SPACING, 4.])
+                        .show(ui, |ui| {
+                            for (smiles, meta) in &entries {
+                                match meta.pubchem_cid {
+                                    Some(cid) => {
+                                        label!(ui, format!("CID {cid}"), Color32::LIGHT_BLUE)
+                                    }
+                                    None => label!(ui, "No CID", Color32::DARK_GRAY),
+                                };
 
-                            ui.add_space(COL_SPACING);
+                                let smiles_preview: String = if meta.smiles.chars().count() > 10 {
+                                    let s: String = meta.smiles.chars().take(10).collect();
+                                    format!("{s}...")
+                                } else {
+                                    meta.smiles.clone()
+                                };
+                                label!(ui, smiles_preview, Color32::GRAY);
 
-                            let smiles_preview: String = meta.smiles.chars().take(10).collect();
-                            label!(ui, smiles_preview, Color32::GRAY);
+                                label!(ui, format!("# {}", meta.heavy_atom_count), Color32::GRAY);
 
-                            ui.add_space(COL_SPACING);
-
-                            match meta.pubchem_cid {
-                                Some(cid) => label!(ui, format!("CID {cid}"), Color32::LIGHT_BLUE),
-                                None => label!(ui, "No CID", Color32::DARK_GRAY),
-                            };
+                                ui.end_row();
+                            }
                         });
-                    }
                 });
         }
     }

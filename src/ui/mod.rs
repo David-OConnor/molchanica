@@ -30,7 +30,7 @@ use crate::{
     molecules::{MolGenericRef, MolIdent},
     prefs::ControlSchemeType,
     render::set_flashlight,
-    screening::parquet::ParqetMolDb,
+    screening::parquet::ParquetMolDb,
     selection::{Selection, ViewSelLevel},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
     therapeutic::logp_sim,

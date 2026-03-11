@@ -14,7 +14,7 @@ use crate::{
     mol_editor,
     molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
-    screening::parquet::ParqetMolDb,
+    screening::parquet::ParquetMolDb,
     smiles::is_smiles,
     state::{OperatingMode, State},
     ui::set_window_title,
@@ -82,13 +82,17 @@ pub fn update_file_dialogs(
     }
 
     if let Some(path) = &state.volatile.dialogs.parquet_db_save.take_picked() {
-        match ParqetMolDb::new(path) {
+        match ParquetMolDb::new(path) {
             Ok(db) => {
                 handle_success(
                     &mut state.ui,
                     format!("Created Parquet database at path {path:?}"),
                 );
+
                 state.volatile.parquet_dbs.push(db);
+                if state.volatile.parquet_dbs.len() == 1 {
+                    state.volatile.parquet_db_active = Some(0);
+                }
             }
             Err(e) => handle_err(
                 &mut state.ui,
@@ -98,7 +102,7 @@ pub fn update_file_dialogs(
     }
 
     if let Some(path) = &state.volatile.dialogs.parquet_db_load.take_picked() {
-        match ParqetMolDb::new(path) {
+        match ParquetMolDb::new(path) {
             Ok(db) => {
                 handle_success(
                     &mut state.ui,
@@ -108,6 +112,9 @@ pub fn update_file_dialogs(
                     ),
                 );
                 state.volatile.parquet_dbs.push(db);
+                if state.volatile.parquet_dbs.len() == 1 {
+                    state.volatile.parquet_db_active = Some(0);
+                }
             }
             Err(e) => handle_err(
                 &mut state.ui,

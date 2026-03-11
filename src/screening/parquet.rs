@@ -1,4 +1,8 @@
 //! Small-molecule screening libraries using Apache Parquet
+//!
+//! Note: feather/ipc may have better read speeds for mol screening, as an alternative to Parquet.
+//! Note: We're currently using "SMILES" everywhere here that we list "ident", including to index
+//! rows.
 
 use std::{
     collections::HashMap,
@@ -9,7 +13,7 @@ use std::{
 };
 
 use arrow::{
-    array::{Array, ArrayRef, LargeBinaryArray, StringArray, UInt32Array},
+    array::{Array, ArrayRef, LargeBinaryArray, StringArray, UInt16Array, UInt32Array},
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -39,13 +43,18 @@ fn arrow_err_to_io(e: arrow::error::ArrowError) -> io::Error {
 /// One row in the Parquet file.
 ///
 /// Keep "search columns" separate from mol_data so you can scan/filter without
-/// deserializing every molecule.
+/// deserializing every molecule. I believe we can load data column by column, so
+/// we can load idents of various types all at once, and other metadata of interest, without
+/// loading all data.
+///
+/// todo: What other data should we include here?
 #[derive(Debug, Clone)]
 struct StoredMol {
-    ident: String,
     smiles: String,
     pubchem_cid: Option<u32>,
-    drugbank_id: Option<String>,
+    // drugbank_id: Option<String>,
+    heavy_atom_count: u16,
+    /// Atoms, bonds, etc.
     mol_data: Vec<u8>,
 }
 
@@ -54,17 +63,17 @@ struct StoredMol {
 pub struct MolMeta {
     pub smiles: String,
     pub pubchem_cid: Option<u32>,
+    pub heavy_atom_count: u16,
 }
 
-pub struct ParqetMolDb {
+pub struct ParquetMolDb {
     pub path: PathBuf,
-    /// ident → serialized molecule bytes (heavy; always kept in memory after indexing).
-    pub index_by_ident: HashMap<String, Vec<u8>>,
-    /// ident → lightweight metadata (smiles, pubchem_cid).
+    /// Lightweight metadata index loaded eagerly on open: smiles → MolMeta.
+    /// Does NOT include the heavy mol_data blob; that is read from disk on demand.
     pub index_meta: HashMap<String, MolMeta>,
 }
 
-impl ParqetMolDb {
+impl ParquetMolDb {
     /// Create / open a DB at a parquet file path.
     ///
     /// This eagerly scans the ident, smiles, pubchem_cid, and mol_data columns to build
@@ -83,12 +92,13 @@ impl ParqetMolDb {
         Ok(res)
     }
 
+    /// Keep this in sync with `StoredMol`
     fn schema() -> Arc<Schema> {
         Arc::new(Schema::new(vec![
-            Field::new("ident", DataType::Utf8, false),
             Field::new("smiles", DataType::Utf8, false),
             Field::new("pubchem_cid", DataType::UInt32, true),
-            Field::new("drugbank_id", DataType::Utf8, true),
+            // Field::new("drugbank_id", DataType::Utf8, true),
+            Field::new("heavy_atom_count", DataType::UInt16, false),
             // This contains our atoms, bonds, etc. Serialized as binary.
             Field::new("mol_data", DataType::LargeBinary, false),
         ]))
@@ -123,18 +133,25 @@ impl ParqetMolDb {
                     _ => None,
                 });
 
-                let drugbank_id = m.idents.iter().find_map(|id| match id {
-                    crate::molecules::MolIdent::DrugBank(s) => Some(s.clone()),
-                    _ => None,
-                });
+                // let drugbank_id = m.idents.iter().find_map(|id| match id {
+                //     crate::molecules::MolIdent::DrugBank(s) => Some(s.clone()),
+                //     _ => None,
+                // });
+
+                let heavy_atom_count = m
+                    .common
+                    .atoms
+                    .iter()
+                    .filter(|m_| m_.element != Element::Hydrogen)
+                    .count() as u16;
 
                 let mol_data = m.to_bytes();
 
                 rows.push(StoredMol {
-                    ident: m.common.ident.clone(),
                     smiles,
                     pubchem_cid,
-                    drugbank_id,
+                    // drugbank_id,
+                    heavy_atom_count,
                     mol_data,
                 });
             }
@@ -168,18 +185,20 @@ impl ParqetMolDb {
     }
 
     fn make_batch(rows: &[StoredMol], schema: Arc<Schema>) -> io::Result<RecordBatch> {
-        let ident_arr: StringArray = rows.iter().map(|r| Some(r.ident.as_str())).collect();
         let smiles_arr: StringArray = rows.iter().map(|r| Some(r.smiles.as_str())).collect();
         let pubchem_arr: UInt32Array = rows.iter().map(|r| r.pubchem_cid).collect();
-        let drugbank_arr: StringArray = rows.iter().map(|r| r.drugbank_id.as_deref()).collect();
+        // let drugbank_arr: StringArray = rows.iter().map(|r| r.drugbank_id.as_deref()).collect();
+
+        let heavy_count_arr: UInt16Array = rows.iter().map(|r| r.heavy_atom_count).collect();
+
         let mol_data_arr: LargeBinaryArray =
             rows.iter().map(|r| Some(r.mol_data.as_slice())).collect();
 
         let cols: Vec<ArrayRef> = vec![
-            Arc::new(ident_arr),
             Arc::new(smiles_arr),
             Arc::new(pubchem_arr),
-            Arc::new(drugbank_arr),
+            // Arc::new(drugbank_arr),
+            Arc::new(heavy_count_arr),
             Arc::new(mol_data_arr),
         ];
 
@@ -195,24 +214,24 @@ impl ParqetMolDb {
 
         let arrow_schema = builder.schema().clone();
 
-        let ident_idx = arrow_schema
-            .index_of("ident")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let smiles_idx = arrow_schema
             .index_of("smiles")
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let pubchem_idx = arrow_schema
             .index_of("pubchem_cid")
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let heavy_atom_count_idx = arrow_schema
+            .index_of("heavy_atom_count")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let mol_data_idx = arrow_schema
             .index_of("mol_data")
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         // Project only the columns we need for indexing (schema order is preserved).
-        // Projected batch column order: ident(0), smiles(1), pubchem_cid(2), mol_data(3).
+        // Projected batch column order: smiles(0), pubchem_cid(1), heavy_atom_count(2), mol_data(3).
         let mask = parquet::arrow::ProjectionMask::roots(
             builder.parquet_schema(),
-            [ident_idx, smiles_idx, pubchem_idx, mol_data_idx],
+            [smiles_idx, pubchem_idx, heavy_atom_count_idx, mol_data_idx],
         );
 
         let mut reader = builder
@@ -222,25 +241,30 @@ impl ParqetMolDb {
             .map_err(parquet_err_to_io)?;
 
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
-            let ident_col = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "ident type mismatch"))?;
             let smiles_col = batch
-                .column(1)
+                .column(0)
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "smiles type mismatch")
                 })?;
+
             let pubchem_col = batch
-                .column(2)
+                .column(1)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "pubchem_cid type mismatch")
                 })?;
+
+            let heavy_atom_count_col = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<UInt16Array>()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "heavy atom count type mismatch")
+                })?;
+
             let mol_data_col = batch
                 .column(3)
                 .as_any()
@@ -249,10 +273,14 @@ impl ParqetMolDb {
                     io::Error::new(io::ErrorKind::InvalidData, "mol_data type mismatch")
                 })?;
 
-            for i in 0..ident_col.len() {
-                let ident = ident_col.value(i).to_string();
+            for i in 0..pubchem_col.len() {
+                // let ident = ident_col.value(i).to_string();
+
+                // todo: Do we have/need a unique smiles per row [mol]?
+                let smiles = smiles_col.value(i).to_owned();
+
                 self.index_meta.insert(
-                    ident.clone(),
+                    smiles.clone(),
                     MolMeta {
                         smiles: smiles_col.value(i).to_string(),
                         pubchem_cid: if pubchem_col.is_null(i) {
@@ -260,10 +288,11 @@ impl ParqetMolDb {
                         } else {
                             Some(pubchem_col.value(i))
                         },
+                        heavy_atom_count: heavy_atom_count_col.value(i),
                     },
                 );
                 self.index_by_ident
-                    .insert(ident, mol_data_col.value(i).to_vec());
+                    .insert(smiles, mol_data_col.value(i).to_vec());
             }
         }
 
