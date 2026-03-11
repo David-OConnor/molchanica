@@ -47,7 +47,6 @@ impl State {
     pub fn open_file(
         &mut self,
         path: &Path,
-        // scene: Option<&mut Scene>,
         scene: &mut Scene,
         engine_updates: &mut EngineUpdates,
     ) -> io::Result<()> {
@@ -72,6 +71,7 @@ impl State {
             "frcmod" | "dat" => self.open_force_field(path)?,
             "dcd" | "xtc" | "mdt" => self.open_trajectory(path)?,
             // "pmp" => self.open_pharmacophore(path)?,
+            "parquet" => self.load_parquet_db(path),
             _ => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidData,
@@ -619,7 +619,14 @@ impl State {
                         handle_err(&mut self.ui, e.to_string());
                     }
                 }
-                OpenType::Trajectory => (), // A/R.
+                OpenType::Trajectory => {
+                    if let Err(e) = self.open_trajectory(&history.path) {
+                        handle_err(&mut self.ui, e.to_string());
+                    }
+                }
+                OpenType::ParquetDb => {
+                    self.load_parquet_db(&history.path);
+                }
             }
         }
     }
@@ -984,12 +991,14 @@ pub struct FileDialogs {
 
 impl Default for FileDialogs {
     fn default() -> Self {
+        let parquet_descrip = "Parquet mol DB".to_owned();
+
         let cfg_all = FileDialogConfig::default()
             .add_file_filter_extensions(
                 "All",
                 vec![
                     "cif", "mol2", "sdf", "xyz", "pdbqt", "map", "mtz", "frcmod", "dat", "prmtop",
-                    "pmp",
+                    "pmp", "parquet",
                 ],
             )
             .add_file_filter_extensions(
@@ -1004,6 +1013,7 @@ impl Default for FileDialogs {
             .add_file_filter_extensions("XTC (trajectory)", vec!["xtc"])
             .add_file_filter_extensions("MDT (trajectory)", vec!["mdt"])
             .add_file_filter_extensions("PMP (Phormacophore)", vec!["pmp"])
+            .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
             //
             .add_save_extension("Protein (CIF)", "cif")
             .add_save_extension("Mol2", "mol2")
@@ -1029,7 +1039,6 @@ impl Default for FileDialogs {
         let screening = FileDialog::with_config(cfg_screening.clone());
         let parquet_mols_dir = FileDialog::with_config(cfg_screening);
 
-        let parquet_descrip = "Parquet mol DB".to_owned();
         let cfg_parquet_db = FileDialogConfig::default()
             .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
             .add_save_extension(&parquet_descrip, "parquet");

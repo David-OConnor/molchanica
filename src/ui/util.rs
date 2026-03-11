@@ -102,25 +102,7 @@ pub fn update_file_dialogs(
     }
 
     if let Some(path) = &state.volatile.dialogs.parquet_db_load.take_picked() {
-        match ParquetMolDb::new(path) {
-            Ok(db) => {
-                handle_success(
-                    &mut state.ui,
-                    format!(
-                        "Loaded Parquet database from {path:?} ({} molecules)",
-                        db.index_meta.len()
-                    ),
-                );
-                state.volatile.parquet_dbs.push(db);
-                if state.volatile.parquet_dbs.len() == 1 {
-                    state.volatile.parquet_db_active = Some(0);
-                }
-            }
-            Err(e) => handle_err(
-                &mut state.ui,
-                format!("Error loading Parquet database: {e}"),
-            ),
-        }
+        state.load_parquet_db(path);
     }
 
     if let Some(path) = &state.volatile.dialogs.parquet_mols_dir.take_picked() {

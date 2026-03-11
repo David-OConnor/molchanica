@@ -27,6 +27,9 @@ use parquet::{
     file::properties::WriterProperties,
 };
 
+use crate::prefs::OpenType;
+use crate::state::State;
+use crate::util::{handle_err, handle_success};
 use crate::{
     molecules::{Atom, Bond, small::MoleculeSmall},
     screening::{collect_mol_files, load_mol_batch},
@@ -583,5 +586,29 @@ impl MoleculeSmall {
         }
 
         Ok(Self::new(ident, atoms, bonds, HashMap::new(), None))
+    }
+}
+
+impl State {
+    pub fn load_parquet_db(&mut self, path: &Path) {
+        match ParquetMolDb::new(path) {
+            Ok(db) => {
+                handle_success(
+                    &mut self.ui,
+                    format!(
+                        "Loaded Parquet database from {path:?} ({} molecules)",
+                        db.index_meta.len()
+                    ),
+                );
+
+                self.volatile.parquet_dbs.push(db);
+                if self.volatile.parquet_dbs.len() == 1 {
+                    self.volatile.parquet_db_active = Some(0);
+                }
+
+                self.update_history(path, OpenType::ParquetDb);
+            }
+            Err(e) => handle_err(&mut self.ui, format!("Error loading Parquet database: {e}")),
+        }
     }
 }
