@@ -4,6 +4,7 @@ use bio_files::{Mol2, Sdf};
 use egui::{Align, Color32, ComboBox, Layout, RichText, ScrollArea, Ui};
 use graphics::{EngineUpdates, Scene};
 
+use crate::ui::popups::db_selector;
 use crate::{
     button, drawing,
     drawing::blend_color,
@@ -488,6 +489,8 @@ pub(in crate::ui) fn pharmacophore_screen(
         }
     });
     ui.add_space(ROW_SPACING);
+
+    db_selector(state, ui);
 
     if let Some(path) = state.to_save.screening_path.clone()
         && let Some(ph_i) = state.pharmacophore.ph_for_screening

@@ -90,9 +90,7 @@ pub fn update_file_dialogs(
                 );
 
                 state.volatile.parquet_dbs.push(db);
-                if state.volatile.parquet_dbs.len() == 1 {
-                    state.volatile.parquet_db_active = Some(0);
-                }
+                state.volatile.parquet_db_active = Some(state.volatile.parquet_dbs.len() - 1);
             }
             Err(e) => handle_err(
                 &mut state.ui,

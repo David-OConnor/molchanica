@@ -11,6 +11,7 @@ use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
+use crate::screening::parquet::ParquetMolDb;
 use crate::{
     button,
     cam::move_cam_to_mol,
@@ -971,7 +972,7 @@ fn lig_pocket_from_het_res(
 
 fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut EngineUpdates) {
     ui.horizontal(|ui| {
-        label!(ui, "Parquet", Color32::WHITE);
+        label!(ui, "Molecule databases", Color32::WHITE);
 
         ui.add_space(COL_SPACING);
 
@@ -1003,6 +1004,64 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
         close_btn(ui, &mut state.ui.popup.parquet_db);
     });
 
+    db_selector(state, ui);
+
+    // Display DB-specific data if there is an active one.
+    if let Some(db_i) = state.volatile.parquet_db_active {
+        if db_i >= state.volatile.parquet_dbs.len() {
+            handle_err(
+                &mut state.ui,
+                String::from("Error: Invalid Parquet DB active index"),
+            );
+            return;
+        }
+
+        let db = &mut state.volatile.parquet_dbs[db_i];
+
+        ui.add_space(ROW_SPACING);
+
+        ui.horizontal(|ui| {
+            if button!(
+                ui,
+                "Add mols to DB",
+                COLOR_ACTION,
+                "Add molecules to this database."
+            )
+            .clicked()
+            {
+                state.volatile.dialogs.parquet_mols_dir.pick_directory();
+                state.volatile.parquet_db_active = Some(db_i);
+            }
+
+            ui.add_space(COL_SPACING);
+        });
+
+        //     if button!(
+        //         ui,
+        //         "Load all mols",
+        //         COLOR_ACTION,
+        //         "Load all molecule data in this database into memory"
+        //     )
+        //     .clicked()
+        //     {
+        //         match db.load_all() {
+        //             Ok(mols) => {
+        //                 // todo temp
+        //                 for mol in &mols {
+        //                     println!("MOL loaded: {:?}", mol);
+        //                 }
+        //             }
+        //             Err(e) => {
+        //                 handle_err(&mut state.ui, format!("Error loading molecules: {e:?}"));
+        //             }
+        //         }
+        //     }
+
+        db_summary_table(db, db_i, ui);
+    }
+}
+
+pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
     ui.separator();
     label!(ui, "Databases loaded", Color32::GRAY);
@@ -1041,8 +1100,21 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
             }
 
             if button!(ui, "Close", Color32::LIGHT_RED, "Close this database").clicked() {
-                if active {
-                    state.volatile.parquet_db_active = None
+                close_db = Some(i);
+
+                // Make sure this doesn't cause a jump in the selected DB.
+                if let Some(i_active) = state.volatile.parquet_db_active {
+                    if i_active == i {
+                        state.volatile.parquet_db_active = None;
+                    } else if i_active > i {
+                        state.volatile.parquet_db_active = Some(i_active - 1);
+                    }
+                }
+
+                for history in &mut state.to_save.open_history {
+                    if OpenType::ParquetDb == history.type_ && history.path == db.path {
+                        history.last_session = false;
+                    }
                 }
             }
         });
@@ -1050,113 +1122,66 @@ fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut E
 
     if let Some(i) = close_db {
         state.volatile.parquet_dbs.remove(i);
+        state.update_save_prefs(); // to save teh history change.
     }
+}
 
-    // Display DB-specific data if there is an active one.
-    if let Some(db_i) = state.volatile.parquet_db_active {
-        if db_i >= state.volatile.parquet_dbs.len() {
-            handle_err(
-                &mut state.ui,
-                String::from("Error: Invalid Parquet DB active index"),
-            );
-            return;
-        }
-
-        let db = &mut state.volatile.parquet_dbs[db_i];
-
+/// todo: More to ui::parquet A/R
+/// todo: This would make more sense in a ui::parquet module.
+fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) {
+    if !db.index_meta.is_empty() {
         ui.add_space(ROW_SPACING);
 
-        ui.horizontal(|ui| {
-            if button!(
-                ui,
-                "Add mols to DB",
-                COLOR_ACTION,
-                "Add molecules to this database."
-            )
-            .clicked()
-            {
-                state.volatile.dialogs.parquet_mols_dir.pick_directory();
-                state.volatile.parquet_db_active = Some(db_i);
-            }
+        // Sort by ident for stable display order.
+        let mut entries: Vec<(&String, &MolMeta)> = db.index_meta.iter().collect();
+        entries.sort_by_key(|(ident, _)| ident.as_str());
 
-            ui.add_space(COL_SPACING);
+        // Column headers (outside the scroll area so they stay fixed).
+        Grid::new(format!("parquet_mol_headers_{db_i}"))
+            .num_columns(3)
+            .min_col_width(120.)
+            .spacing([COL_SPACING, 4.])
+            .show(ui, |ui| {
+                label!(ui, "PubChem CID", Color32::GRAY);
+                label!(ui, "SMILES", Color32::GRAY);
+                label!(ui, "Heavy atoms", Color32::GRAY);
+                ui.end_row();
+            });
 
-            if button!(
-                ui,
-                "Load all mols",
-                COLOR_ACTION,
-                "Load all molecule data in this database into memory"
-            )
-            .clicked()
-            {
-                match db.load_all() {
-                    Ok(mols) => {
-                        // todo temp
-                        for mol in &mols {
-                            println!("MOL loaded: {:?}", mol);
+        ui.separator();
+
+        ScrollArea::vertical()
+            .id_salt(format!("parquet_mol_list_{db_i}"))
+            .min_scrolled_height(400.)
+            .max_height(800.)
+            .show(ui, |ui| {
+                Grid::new(format!("parquet_mol_grid_{db_i}"))
+                    .num_columns(3)
+                    .striped(true)
+                    .min_col_width(120.)
+                    .spacing([COL_SPACING, 4.])
+                    .show(ui, |ui| {
+                        for (smiles, meta) in &entries {
+                            match meta.pubchem_cid {
+                                Some(cid) => {
+                                    label!(ui, cid.to_string(), Color32::LIGHT_BLUE)
+                                }
+                                None => label!(ui, "—", Color32::DARK_GRAY),
+                            };
+
+                            let smiles_preview: String = if meta.smiles.chars().count() > 10 {
+                                let s: String = meta.smiles.chars().take(10).collect();
+                                format!("{s}...")
+                            } else {
+                                meta.smiles.clone()
+                            };
+                            label!(ui, smiles_preview, Color32::GRAY);
+
+                            label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
+
+                            ui.end_row();
                         }
-                    }
-                    Err(e) => {
-                        handle_err(&mut state.ui, format!("Error loading molecules: {e:?}"));
-                    }
-                }
-            }
-        });
-
-        if !db.index_meta.is_empty() {
-            ui.add_space(ROW_SPACING);
-
-            // Sort by ident for stable display order.
-            let mut entries: Vec<(&String, &MolMeta)> = db.index_meta.iter().collect();
-            entries.sort_by_key(|(ident, _)| ident.as_str());
-
-            // Column headers (outside the scroll area so they stay fixed).
-            Grid::new(format!("parquet_mol_headers_{db_i}"))
-                .num_columns(3)
-                .min_col_width(120.)
-                .spacing([COL_SPACING, 4.])
-                .show(ui, |ui| {
-                    label!(ui, "PubChem CID", Color32::GRAY);
-                    label!(ui, "SMILES", Color32::GRAY);
-                    label!(ui, "Heavy atoms", Color32::GRAY);
-                    ui.end_row();
-                });
-
-            ui.separator();
-
-            ScrollArea::vertical()
-                .id_salt(format!("parquet_mol_list_{db_i}"))
-                .min_scrolled_height(400.)
-                .max_height(800.)
-                .show(ui, |ui| {
-                    Grid::new(format!("parquet_mol_grid_{db_i}"))
-                        .num_columns(3)
-                        .striped(true)
-                        .min_col_width(120.)
-                        .spacing([COL_SPACING, 4.])
-                        .show(ui, |ui| {
-                            for (smiles, meta) in &entries {
-                                match meta.pubchem_cid {
-                                    Some(cid) => {
-                                        label!(ui, cid.to_string(), Color32::LIGHT_BLUE)
-                                    }
-                                    None => label!(ui, "—", Color32::DARK_GRAY),
-                                };
-
-                                let smiles_preview: String = if meta.smiles.chars().count() > 10 {
-                                    let s: String = meta.smiles.chars().take(10).collect();
-                                    format!("{s}...")
-                                } else {
-                                    meta.smiles.clone()
-                                };
-                                label!(ui, smiles_preview, Color32::GRAY);
-
-                                label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
-
-                                ui.end_row();
-                            }
-                        });
-                });
-        }
+                    });
+            });
     }
 }
