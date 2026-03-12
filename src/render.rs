@@ -1,4 +1,4 @@
-//! This module integraties this application with the graphics engine.
+//! This module integrates this application with the graphics engine.
 
 use std::f32::consts::TAU;
 
@@ -10,7 +10,6 @@ use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
     cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
-    docking::DockingSite,
     drawing::atoms_bonds::BOND_RADIUS_BASE,
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
@@ -164,6 +163,18 @@ pub fn render(mut state: State) {
                     specular_color: white,
                     diffuse_intensity: 30_000.,
                     specular_intensity: 30_000.,
+                    ..Default::default()
+                },
+                // A fixed light, from *below*. Dimmer to impart some degree of directionality
+                // to these primary lights, but without leaving any part of the molecules in darkness.
+                PointLight {
+                    // Note: Not quite opposite the "opposite" light, to prevent a band on
+                    // spheres.
+                    position: Vec3::new(60., -(5. + OUTSIDE_LIGHTING_OFFSET), 0.),
+                    diffuse_color: white,
+                    specular_color: white,
+                    diffuse_intensity: 15_000.,
+                    specular_intensity: 15_000.,
                     ..Default::default()
                 },
                 // A light on the docking site, if applicable.

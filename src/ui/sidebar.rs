@@ -588,6 +588,60 @@ pub(in crate::ui) fn sidebar(
                     state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
                 }
             }
+
+            if !edit_mode && let Some(MolGenericRef::Peptide(mol)) = state.active_mol() {
+                if let Some(sifts) = &mol.sifts_mapping {
+                    label!(ui, "SIFTS Mappings", Color32::WHITE);
+
+                    for sift in sifts {
+                        label!(
+                            ui,
+                            &format!("Accession: {}, Ident: {}", sift.accession, sift.identifier),
+                            Color32::GRAY
+                        );
+                        for mapping in &sift.mappings {
+                            // todo: Format as you wish
+                            ui.horizontal(|ui| {
+                                //     pub entity_id: u32,
+                                //     /// PDB chain identifier (author label), e.g. `"A"`.
+                                //     pub chain_id: String,
+                                //     /// Internal asymmetric-unit chain ID used in mmCIF files.
+                                //     pub struct_asym_id: String,
+                                //     /// First residue of this segment in the **UniProt** sequence (1-based).
+                                //     pub unp_start: u32,
+                                //     /// Last residue of this segment in the **UniProt** sequence (1-based).
+                                //     pub unp_end: u32,
+                                //     /// First residue of this segment in the **PDB** structure.
+                                //     pub start: SiftsResiduePosition,
+                                //     /// Last residue of this segment in the **PDB** structure.
+                                //     pub end: SiftsResiduePosition,
+                                //     /// Sequence identity between the PDB chain and the UniProt sequence (0–1).
+                                //     pub identity: f32,
+                                //     /// Fraction of the UniProt sequence covered by this structure (0–1).
+                                //     pub coverage: f32,
+
+                                let summary = format!(
+                                    "ID: {}, Chain: {} Asym: {} Cov: {:.2}%",
+                                    mapping.identity,
+                                    mapping.chain_id,
+                                    mapping.struct_asym_id,
+                                    mapping.coverage
+                                );
+
+                                label!(ui, summary, Color32::GRAY);
+
+                                ui.add_space(COL_SPACING);
+
+                                if button!(ui, "Select", Color32::GREEN, "Select all atoms in this")
+                                    .clicked()
+                                {
+                                    // todo
+                                }
+                            });
+                        }
+                    }
+                }
+            }
         });
 
     updates.ui_reserved_px.0 = out.response.rect.width();

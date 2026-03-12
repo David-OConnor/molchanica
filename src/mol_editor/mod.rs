@@ -630,6 +630,7 @@ fn draw_atom(
             None,
             0,
             0,
+            &[],
             &ui.selection,
             ViewSelLevel::Atom, // Always color lipids by atom.
             false,
@@ -737,6 +738,7 @@ fn draw_bond(
         None,
         0,
         0,
+        &[],
         &ui.selection,
         ViewSelLevel::Atom, // Always color ligands by atom.
         false,
@@ -754,6 +756,7 @@ fn draw_bond(
         None,
         0,
         0,
+        &[],
         &ui.selection,
         ViewSelLevel::Atom, // Always color ligands by atom.
         false,

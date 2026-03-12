@@ -24,7 +24,7 @@ use crate::{
     },
     cli,
     cli::autocomplete_cli,
-    drawing::color_viridis,
+    drawing::{MoleculeView, color_viridis},
     file_io::{download_mols::load_atom_coords_rcsb, gemmi_path},
     mol_editor::enter_edit_mode,
     molecules::{MolGenericRef, MolIdent},
@@ -164,6 +164,11 @@ fn chain_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                 .clicked()
             {
                 chain.visible = !chain.visible;
+                if state.ui.mol_view == MoleculeView::Ribbon {
+                    state.volatile.flags.update_ss_mesh = true;
+                } else {
+                    state.volatile.flags.ss_mesh_dirty = true;
+                }
                 *redraw = true;
             }
         }

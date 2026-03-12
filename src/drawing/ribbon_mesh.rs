@@ -665,8 +665,17 @@ pub fn build_cartoon_mesh(
         if frames.len() < 2 {
             continue;
         }
+        // Always mark residues covered to prevent coil renderer from picking them up.
         for f in &frames {
             covered.insert(f.res_idx);
+        }
+        // Respect chain visibility.
+        let chain_visible = frames
+            .first()
+            .and_then(|f| res_to_chain.get(&f.res_idx))
+            .map_or(true, |&ci| chains[ci].visible);
+        if !chain_visible {
+            continue;
         }
         build_segment_mesh(
             &frames,
@@ -688,6 +697,8 @@ pub fn build_cartoon_mesh(
         .keys()
         .copied()
         .filter(|r| !covered.contains(r))
+        // Respect chain visibility.
+        .filter(|r| res_to_chain.get(r).map_or(true, |&ci| chains[ci].visible))
         .collect();
     coil_residues.sort_unstable();
 

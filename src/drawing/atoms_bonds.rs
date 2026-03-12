@@ -12,7 +12,7 @@ use crate::{
         LABEL_COLOR_MOL, LABEL_COLOR_MOL_SEL, LABEL_SIZE_ATOM, LABEL_SIZE_MOL, MESH_BOND_CAP,
     },
     mol_components::MolComponents,
-    molecules::{Atom, MolType, Residue},
+    molecules::{Atom, Chain, MolType, Residue},
     render::{BACKGROUND_COLOR, Color, MESH_BOND},
     selection::{Selection, ViewSelLevel},
     state::{ResColoring, StateUi},
@@ -106,6 +106,7 @@ pub fn atom_color(
     sifts: Option<&[SiftsUniprotMapping]>,
     aa_count: usize, // # AA residues; used for color-mapping.
     chain_count: usize,
+    chains: &[Chain],
     selection: &Selection,
     view_sel_level: ViewSelLevel,
     dimmed: bool,
@@ -140,6 +141,7 @@ pub fn atom_color(
                     aa_count,
                     chain_count,
                     sifts,
+                    chains,
                 );
 
                 // Todo: WOrkaround for a problem we're having with Hydrogen's showing like hetero atoms

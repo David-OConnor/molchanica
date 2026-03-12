@@ -569,6 +569,7 @@ pub fn draw_mol(
                     None,
                     0,
                     0,
+                    &[],
                     sel,
                     ViewSelLevel::Atom, // Always color lipids by atom.
                     false,
@@ -762,6 +763,7 @@ pub fn draw_mol(
                 None,
                 0,
                 0,
+                &[],
                 sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
                 ViewSelLevel::Atom, // Always color ligands by atom.
                 false,
@@ -778,6 +780,7 @@ pub fn draw_mol(
                 None,
                 0,
                 0,
+                &[],
                 sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
                 ViewSelLevel::Atom, // Always color ligands by atom.
                 false,
@@ -1226,6 +1229,11 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
     let ui = &state.ui;
 
     if ui.mol_view == MoleculeView::Ribbon {
+        // Flush any deferred chain-visibility change into a full rebuild.
+        if state.volatile.flags.ss_mesh_dirty {
+            state.volatile.flags.update_ss_mesh = true;
+            state.volatile.flags.ss_mesh_dirty = false;
+        }
         draw_secondary_structure(
             &mut state.volatile.flags.update_ss_mesh,
             state.volatile.flags.ss_mesh_created,
@@ -1279,6 +1287,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                         mol.sifts_mapping.as_deref(),
                         aa_count,
                         mol.chains.len(),
+                        &mol.chains,
                         sel,
                         state.ui.view_sel_level,
                         false,
@@ -1408,6 +1417,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                     mol.sifts_mapping.as_deref(),
                     aa_count,
                     mol.chains.len(),
+                    &mol.chains,
                     sel,
                     state.ui.view_sel_level,
                     dim_peptide,
@@ -1607,6 +1617,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 mol.sifts_mapping.as_deref(),
                 aa_count,
                 mol.chains.len(),
+                &mol.chains,
                 sel,
                 state.ui.view_sel_level,
                 dim_peptide_0,
@@ -1623,6 +1634,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 mol.sifts_mapping.as_deref(),
                 aa_count,
                 mol.chains.len(),
+                &mol.chains,
                 sel,
                 state.ui.view_sel_level,
                 dim_peptide_1,

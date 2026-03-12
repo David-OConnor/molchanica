@@ -36,8 +36,8 @@ use crate::{
     },
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, MoleculePeptide,
-        Residue, aa_color, small::MoleculeSmall,
+        Atom, Bond, Chain, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric,
+        MoleculePeptide, Residue, aa_color, small::MoleculeSmall,
     },
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
@@ -835,7 +835,6 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
 
     if state.volatile.flags.update_sas_mesh {
         state.volatile.flags.update_sas_mesh = false;
-        state.volatile.flags.sas_mesh_created = true;
 
         if let Some(mol) = &state.peptide {
             let atoms: Vec<(Vec3F32, _)> = mol
@@ -847,58 +846,57 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 .map(|(i, a)| (mol.common.atom_posits[i].into(), a.element.vdw_radius()))
                 .collect();
 
-            scene.meshes[MESH_PEP_SOLVENT_SURFACE] = {
-                let mut precision = state.to_save.sa_surface_precision;
+            if atoms.len() > 20_000 {
+                // Skip surface mesh for large proteins to avoid vertex buffer overflow.
+            } else {
+                state.volatile.flags.sas_mesh_created = true;
 
-                // todo: Experimenting avoiding problems on large mols. We have problems with both surface
-                // todo: And dots; this mitigates surface. The dots one is re Instance Buffer max size;
-                // todo: This one addresses Vertex buffer being maximum size.
-                if atoms.len() > 10_000 {
-                    precision = 0.6;
-                } else if atoms.len() > 20_000 {
-                    precision = 0.7;
-                } else if atoms.len() > 40_000 {
-                    precision = 0.75;
+                scene.meshes[MESH_PEP_SOLVENT_SURFACE] = {
+                    let mut precision = state.to_save.sa_surface_precision;
+
+                    if atoms.len() > 10_000 {
+                        precision = 0.6;
+                    }
+
+                    make_sas_mesh(&atoms, SOLVENT_RAD, precision)
+                };
+
+                {
+                    let (tx, rx) = mpsc::channel();
+                    let mesh_for_thread = scene.meshes[MESH_PEP_SOLVENT_SURFACE].clone();
+                    let mol_for_thread = mol.common.clone();
+                    let coloring = state.ui.mesh_coloring;
+
+                    thread::spawn(move || {
+                        let mut updates = EngineUpdates::default();
+                        let colors = sfc_mesh::get_mesh_colors(
+                            &mesh_for_thread,
+                            &mol_for_thread,
+                            coloring,
+                            &mut updates,
+                        );
+                        let _ = tx.send(colors);
+                    });
+
+                    state.volatile.thread_receivers.peptide_mesh_coloring = Some(rx);
                 }
 
-                make_sas_mesh(&atoms, SOLVENT_RAD, precision)
-            };
+                // We draw the molecule here
+                if matches!(
+                    state.ui.mol_view,
+                    MoleculeView::Dots | MoleculeView::Surface
+                ) {
+                    // The dots are drawn from the mesh vertices
+                    draw_peptide(state, scene);
+                    updates.entities = EntityUpdate::All;
+                    // engine_updates.entities.push_class(EntityClass::SaSurface as u32);
+                    // engine_updates
+                    //     .entities
+                    //     .push_class(EntityClass::SaSurfaceDots as u32);
+                }
 
-            {
-                let (tx, rx) = mpsc::channel();
-                let mesh_for_thread = scene.meshes[MESH_PEP_SOLVENT_SURFACE].clone();
-                let mol_for_thread = mol.common.clone();
-                let coloring = state.ui.mesh_coloring;
-
-                thread::spawn(move || {
-                    let mut updates = EngineUpdates::default();
-                    let colors = sfc_mesh::get_mesh_colors(
-                        &mesh_for_thread,
-                        &mol_for_thread,
-                        coloring,
-                        &mut updates,
-                    );
-                    let _ = tx.send(colors);
-                });
-
-                state.volatile.thread_receivers.peptide_mesh_coloring = Some(rx);
-            }
-
-            // We draw the molecule here
-            if matches!(
-                state.ui.mol_view,
-                MoleculeView::Dots | MoleculeView::Surface
-            ) {
-                // The dots are drawn from the mesh vertices
-                draw_peptide(state, scene);
-                updates.entities = EntityUpdate::All;
-                // engine_updates.entities.push_class(EntityClass::SaSurface as u32);
-                // engine_updates
-                //     .entities
-                //     .push_class(EntityClass::SaSurfaceDots as u32);
-            }
-
-            updates.meshes = true;
+                updates.meshes = true;
+            } // else (atoms.len() <= 20_000)
         }
     }
 
@@ -1445,6 +1443,7 @@ pub fn res_color(
     aa_count: usize,
     chain_count: usize,
     sifts: Option<&[SiftsUniprotMapping]>,
+    chains: &[Chain],
 ) -> (f32, f32, f32) {
     match &res.res_type {
         ResidueType::AminoAcid(aa) => match res_coloring {
@@ -1458,21 +1457,41 @@ pub fn res_color(
             }
             ResColoring::SiftsUniprot => {
                 if let Some(entries) = sifts {
-                    // Color each UniProt entry (accession) a distinct viridis hue.
-                    // Find which entry covers this residue's PDB serial number.
+                    // Color by SIFTS entity_id: all residues sharing an entity_id get the
+                    // same hue, spaced equally along the Viridis scheme for maximum contrast.
                     let serial = res.serial_number as i32;
-                    let entry_i = entries.iter().enumerate().find_map(|(i, entry)| {
-                        entry
-                            .mappings
-                            .iter()
-                            .any(|m| {
-                                serial >= m.start.residue_number && serial <= m.end.residue_number
-                            })
-                            .then_some(i)
+                    // Resolve the chain letter for this residue so we can filter by chain_id,
+                    // avoiding false matches when multiple chains share overlapping residue
+                    // number ranges.
+                    let chain_letter: Option<&str> = atom_chain
+                        .and_then(|ci| chains.get(ci))
+                        .map(|c| c.id.as_str());
+                    // Find the entity_id of the mapping that covers this residue's chain+serial.
+                    let entity_id = entries.iter().find_map(|entry| {
+                        entry.mappings.iter().find_map(|m| {
+                            let chain_ok = chain_letter.map_or(true, |cl| m.chain_id == cl);
+                            if chain_ok
+                                && serial >= m.start.residue_number
+                                && serial <= m.end.residue_number
+                            {
+                                Some(m.entity_id)
+                            } else {
+                                None
+                            }
+                        })
                     });
-                    match entry_i {
-                        Some(i) => color_viridis(i, 0, entries.len().saturating_sub(1)),
-                        None => aa_color(*aa),
+                    if let Some(eid) = entity_id {
+                        // Collect unique entity_ids in sorted order for a stable mapping.
+                        let mut unique_ids: Vec<u32> = entries
+                            .iter()
+                            .flat_map(|e| e.mappings.iter().map(|m| m.entity_id))
+                            .collect();
+                        unique_ids.sort_unstable();
+                        unique_ids.dedup();
+                        let rank = unique_ids.iter().position(|&id| id == eid).unwrap_or(0);
+                        color_viridis(rank, 0, unique_ids.len().saturating_sub(1))
+                    } else {
+                        aa_color(*aa)
                     }
                 } else {
                     aa_color(*aa)
