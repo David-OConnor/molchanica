@@ -8,7 +8,6 @@ use std::{
 };
 
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
-use cudarc::driver::result::event::elapsed;
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
@@ -23,10 +22,10 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     molecules::{
-        MoleculePeptide,
         common::MoleculeCommon,
         lipid::MoleculeLipid,
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
+        peptide::MoleculePeptide,
         small::MoleculeSmall,
     },
     state::State,

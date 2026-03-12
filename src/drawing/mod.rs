@@ -24,8 +24,8 @@ use crate::{
     },
     mol_manip::ManipMode,
     molecules::{
-        Atom, AtomRole, Chain, HydrogenBondTwoMols, MolGenericRef, MolType, MoleculePeptide,
-        pocket::Pocket, small::MoleculeSmall,
+        Atom, AtomRole, Chain, HydrogenBondTwoMols, MolGenericRef, MolType,
+        peptide::MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
     },
     reflection::DensityPt,
     render::{
@@ -380,39 +380,48 @@ pub fn color_viridis(i: usize, min: usize, max: usize) -> Color {
     (r, g, b)
 }
 
-/// A color map using the Viridis palette that maximises contrast between *adjacent* indices.
-/// Rather than a smooth gradient, it applies a bit-reversal permutation to the rank so that
-/// neighbouring indices are placed as far apart as possible in colour space.
-/// With two items, index 0 → deep purple (t = 0) and index 1 → yellow (t = 1).
-/// Each additional item bisects the largest remaining gap, so contrast degrades gracefully
-/// as the item count grows.  Useful where adjacent indices should look different, e.g. chains.
-pub fn color_viridis_alternating(i: usize, min: usize, max: usize) -> Color {
+/// Returns a vivid colour for item `i` in `[min, max]` such that adjacent indices are as
+/// visually distinct as possible.  Uses the full HSV hue wheel at fixed high saturation and
+/// brightness so every colour is saturated and easy to differentiate.  A bit-reversal
+/// permutation maps sequential ranks to hues that are maximally far apart:
+///   rank 0 → 0° (red), rank 1 → 180° (cyan), rank 2 → 90° (yellow-green),
+///   rank 3 → 270° (violet), rank 4 → 45° (orange), …
+pub fn color_alternating_contrast(i: usize, min: usize, max: usize) -> Color {
+    const SATURATION: f32 = 0.88;
+    const VALUE: f32 = 0.92;
+
     let n = max.saturating_sub(min) + 1;
     let rank = i.saturating_sub(min);
 
-    let t: f32 = if n <= 1 {
+    // Map rank to hue in [0, 1) via bit-reversal so adjacent ranks are opposite in hue.
+    let hue_t: f32 = if n <= 1 {
         0.0
     } else {
-        // Bit width needed to address n items (= ceil(log2(n))).
         let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
-        // Reverse only the lowest `bits` bits of `rank`.
         let reversed = rank.reverse_bits() >> (usize::BITS as usize - bits);
-        let denom = (1usize << bits) - 1; // always >= 1 since bits >= 1
+        let denom = (1 << bits) - 1;
         reversed as f32 / denom as f32
     };
 
-    // Sample the Viridis LUT with linear interpolation.
-    let n_pts = VIRIDIS.len();
-    let scaled = (t * (n_pts - 1) as f32).clamp(0.0, (n_pts - 1) as f32);
-    let idx = (scaled.floor() as usize).min(n_pts - 2);
-    let frac = scaled - idx as f32;
-    let (r1, g1, b1) = VIRIDIS[idx];
-    let (r2, g2, b2) = VIRIDIS[idx + 1];
-    (
-        r1 + (r2 - r1) * frac,
-        g1 + (g2 - g1) * frac,
-        b1 + (b2 - b1) * frac,
-    )
+    // Convert HSV → RGB.
+    let h = hue_t * 360.0;
+    let c = VALUE * SATURATION;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = VALUE - c;
+    let (r, g, b) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    (r + m, g + m, b + m)
 }
 
 pub fn color_viridis_float(i: f32, min: f32, max: f32) -> Color {
@@ -604,6 +613,7 @@ pub fn draw_mol(
                     None,
                     0,
                     0,
+                    &[],
                     &[],
                     sel,
                     ViewSelLevel::Atom, // Always color lipids by atom.
@@ -799,6 +809,7 @@ pub fn draw_mol(
                 0,
                 0,
                 &[],
+                &[],
                 sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
                 ViewSelLevel::Atom, // Always color ligands by atom.
                 false,
@@ -815,6 +826,7 @@ pub fn draw_mol(
                 None,
                 0,
                 0,
+                &[],
                 &[],
                 sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
                 ViewSelLevel::Atom, // Always color ligands by atom.
@@ -1322,6 +1334,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                         mol.sifts_mapping.as_deref(),
                         aa_count,
                         mol.chains.len(),
+                        &mol.common.atoms,
                         &mol.chains,
                         sel,
                         state.ui.view_sel_level,
@@ -1452,6 +1465,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                     mol.sifts_mapping.as_deref(),
                     aa_count,
                     mol.chains.len(),
+                    &mol.common.atoms,
                     &mol.chains,
                     sel,
                     state.ui.view_sel_level,
@@ -1652,6 +1666,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 mol.sifts_mapping.as_deref(),
                 aa_count,
                 mol.chains.len(),
+                &mol.common.atoms,
                 &mol.chains,
                 sel,
                 state.ui.view_sel_level,
@@ -1669,6 +1684,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 mol.sifts_mapping.as_deref(),
                 aa_count,
                 mol.chains.len(),
+                &mol.common.atoms,
                 &mol.chains,
                 sel,
                 state.ui.view_sel_level,

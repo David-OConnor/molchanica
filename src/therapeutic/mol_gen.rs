@@ -1,6 +1,6 @@
 //! Generate small molecules based on given protein/pocket targets and/or properties
 
-use crate::molecules::{MoleculePeptide, small::MoleculeSmall};
+use crate::molecules::{peptide::MoleculePeptide, small::MoleculeSmall};
 
 /// By default:
 /// - Solubility in water > 0.~~

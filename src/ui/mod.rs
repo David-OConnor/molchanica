@@ -1,8 +1,4 @@
-use std::{
-    io::Cursor,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Instant,
-};
+use std::{io::Cursor, time::Instant};
 
 use bio_apis::{pdbe, rcsb};
 use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
@@ -30,7 +26,6 @@ use crate::{
     molecules::{MolGenericRef, MolIdent},
     prefs::ControlSchemeType,
     render::set_flashlight,
-    screening::parquet::ParquetMolDb,
     selection::{Selection, ViewSelLevel},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
     therapeutic::logp_sim,
@@ -65,8 +60,6 @@ mod recent_files;
 mod sidebar;
 pub mod util;
 mod view;
-
-static INIT_COMPLETE: AtomicBool = AtomicBool::new(false);
 
 pub(in crate::ui) const ROW_SPACING: f32 = 10.;
 pub(in crate::ui) const COL_SPACING: f32 = 30.;
@@ -436,6 +429,11 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
 
     if state.ui.view_sel_level != prev_view {
         *redraw = true;
+        if state.ui.mol_view == MoleculeView::Ribbon {
+            state.volatile.flags.update_ss_mesh = true;
+        } else {
+            state.volatile.flags.ss_mesh_dirty = true;
+        }
         // If we change from atom to res, select the prev-selected atom's res. If vice-versa,
         // select that residue's Cα.
         // state.ui.selection = Selection::None;
@@ -728,39 +726,9 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
     });
 }
 
-fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {
-    ui.heading(RichText::new(mol.common().ident.clone()).color(Color32::GOLD));
-
-    ui.label(format!("{} atoms", mol.common().atoms.len()));
-
-    if let MolGenericRef::Peptide(m) = mol {
-        if let Some(method) = m.experimental_method {
-            ui.label(method.to_str_short());
-        }
-    }
-
-    if let Some(title) = mol.common().metadata.get("_struct.title") {
-        // Limit size to prevent UI problems.
-        let mut title_abbrev: String = title.chars().take(MAX_TITLE_LEN).collect();
-
-        if title_abbrev.len() != title.len() {
-            title_abbrev += "...";
-
-            // Allow hovering to see the full title.
-            ui.label(RichText::new(title_abbrev).color(Color32::WHITE).size(12.))
-                .on_hover_text(title);
-        } else {
-            ui.label(RichText::new(title_abbrev).color(Color32::WHITE).size(12.));
-        }
-    }
-}
-
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> EngineUpdates {
-    // We perform init items here that rely on  UI context.
-    if !INIT_COMPLETE.swap(true, Ordering::AcqRel) {}
-
     let mut updates = EngineUpdates::default();
 
     // Checks each frame; takes action based on time since last save.

@@ -4,8 +4,8 @@ use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
     molecules::{
-        MolType, MoleculePeptide, common::MoleculeCommon, lipid::MoleculeLipid,
-        nucleic_acid::MoleculeNucleicAcid, pocket::Pocket, small::MoleculeSmall,
+        MolType, common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
+        peptide::MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
     },
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
     selection::Selection,

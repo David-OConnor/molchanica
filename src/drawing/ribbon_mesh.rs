@@ -29,11 +29,14 @@ use graphics::{Mesh, Vertex};
 use lin_alg::f32::Vec3 as Vec3F32;
 
 use crate::{
-    drawing::{HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, color_viridis, color_viridis_float},
+    drawing::{
+        CHARGE_MAP_MAX, CHARGE_MAP_MIN, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN,
+        color_alternating_contrast, color_viridis, color_viridis_float,
+    },
     molecules::{Atom, AtomRole, Chain, Residue, aa_color},
+    selection::ViewSelLevel,
     state::ResColoring,
 };
-
 // ── Dimensions (Å) ────────────────────────────────────────────────────────────
 
 /// Half-width of helix ribbon along the guide direction (radially in/out from helix axis).
@@ -277,12 +280,15 @@ fn emit_cap(
 fn build_segment_mesh(
     frames: &[ResidueFrame],
     ss: SecondaryStructure,
-    max_residue: usize,
+    aa_count: usize,
     residues: &[Residue],
+    atoms: &[Atom],
     res_coloring: ResColoring,
+    view_sel_level: ViewSelLevel,
+    atom_color_by_charge: bool,
     sifts: Option<&[SiftsUniprotMapping]>,
-    res_to_chain: &HashMap<usize, usize>,
     chain_count: usize,
+    chains: &[Chain],
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<usize>,
 ) {
@@ -375,10 +381,60 @@ fn build_segment_mesh(
     // ── 5. Color helper ───────────────────────────────────────────────────────
     let res_color = |res_f: f32| -> Option<(u8, u8, u8, u8)> {
         let res_i = (res_f.round() as usize).min(residues.len().saturating_sub(1));
-        let fallback = || color_viridis_float(res_f, 0.0, max_residue as f32);
+        let fallback = || color_viridis(res_i, 0, aa_count);
+
+        // Atom / Bond view level: color by element or partial charge, same as non-ribbon mode.
+        if matches!(view_sel_level, ViewSelLevel::Atom | ViewSelLevel::Bond) {
+            let (cr, cg, cb) = if atom_color_by_charge
+                && matches!(view_sel_level, ViewSelLevel::Atom)
+            {
+                // Average partial charge of all atoms in the residue.
+                if let Some(res) = residues.get(res_i) {
+                    let charges: Vec<f32> = res
+                        .atoms
+                        .iter()
+                        .filter_map(|&ai| atoms.get(ai)?.partial_charge)
+                        .collect();
+                    if charges.is_empty() {
+                        (0.5, 0.5, 0.5)
+                    } else {
+                        let avg = charges.iter().sum::<f32>() / charges.len() as f32;
+                        color_viridis_float(avg, CHARGE_MAP_MIN, CHARGE_MAP_MAX)
+                    }
+                } else {
+                    (0.5, 0.5, 0.5)
+                }
+            } else {
+                // Element color of the Cα atom for this residue.
+                let ca_element = residues
+                    .get(res_i)
+                    .and_then(|res| {
+                        res.atoms.iter().find_map(|&ai| {
+                            let a = atoms.get(ai)?;
+                            if a.role == Some(AtomRole::C_Alpha) { Some(a.element) } else { None }
+                        })
+                    });
+                match ca_element {
+                    Some(el) => el.color(),
+                    None => fallback(),
+                }
+            };
+            return Some(((cr * 255.0) as u8, (cg * 255.0) as u8, (cb * 255.0) as u8, 255u8));
+        }
+
+        // Helper: get chain index for this residue via its first atom's chain field,
+        // matching util.rs::res_color which uses atoms[res.atoms[0]].chain.
+        let res_chain_i = || -> Option<usize> {
+            residues
+                .get(res_i)?
+                .atoms
+                .first()
+                .and_then(|&ai| atoms.get(ai))
+                .and_then(|a| a.chain)
+        };
 
         let (cr, cg, cb) = match res_coloring {
-            ResColoring::Position => fallback(),
+            ResColoring::Position => color_viridis(res_i, 0, aa_count),
             ResColoring::AminoAcid => match residues.get(res_i) {
                 Some(res) => match res.res_type {
                     ResidueType::AminoAcid(aa) => aa_color(aa),
@@ -398,26 +454,37 @@ fn build_segment_mesh(
                 None => fallback(),
             },
             ResColoring::SiftsUniprot => match (sifts, residues.get(res_i)) {
-                (Some(entries), Some(res)) => {
-                    let serial = res.serial_number as i32;
-                    let entry_i = entries.iter().enumerate().find_map(|(i, entry)| {
-                        entry
-                            .mappings
-                            .iter()
-                            .any(|m| {
-                                serial >= m.start.residue_number && serial <= m.end.residue_number
-                            })
-                            .then_some(i)
+                (Some(entries), Some(_res)) => {
+                    // Match util.rs::res_color: look up chain letter via atom.chain.
+                    let chain_letter: Option<&str> = res_chain_i()
+                        .and_then(|ci| chains.get(ci))
+                        .map(|c| c.id.as_str());
+                    let entity_id = entries.iter().find_map(|entry| {
+                        entry.mappings.iter().find_map(|m| {
+                            let chain_ok = chain_letter.map_or(true, |cl| m.chain_id == cl);
+                            if chain_ok { Some(m.entity_id) } else { None }
+                        })
                     });
-                    match entry_i {
-                        Some(i) => color_viridis(i, 0, entries.len().saturating_sub(1)),
+                    match entity_id {
+                        Some(eid) => {
+                            let mut unique_ids: Vec<u32> = entries
+                                .iter()
+                                .flat_map(|e| e.mappings.iter().map(|m| m.entity_id))
+                                .collect();
+                            unique_ids.sort_unstable();
+                            unique_ids.dedup();
+                            let rank = unique_ids.iter().position(|&id| id == eid).unwrap_or(0);
+                            color_alternating_contrast(rank, 0, unique_ids.len().saturating_sub(1))
+                        }
                         None => fallback(),
                     }
                 }
                 _ => fallback(),
             },
-            ResColoring::Chain => match res_to_chain.get(&res_i) {
-                Some(&chain_i) => color_viridis(chain_i, 0, chain_count.saturating_sub(1)),
+            ResColoring::Chain => match res_chain_i() {
+                Some(chain_i) => {
+                    color_alternating_contrast(chain_i, 0, chain_count.saturating_sub(1))
+                }
                 None => fallback(),
             },
         };
@@ -632,14 +699,20 @@ pub fn build_cartoon_mesh(
     residues: &[Residue],
     chains: &[Chain],
     res_coloring: ResColoring,
+    view_sel_level: ViewSelLevel,
+    atom_color_by_charge: bool,
     sifts: Option<&[SiftsUniprotMapping]>,
 ) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
-    let max_residue = atoms.iter().filter_map(|a| a.residue).max().unwrap_or(1);
+    let aa_count = residues
+        .iter()
+        .filter(|r| matches!(r.res_type, ResidueType::AminoAcid(_)))
+        .count();
 
-    // Build residue-index → chain-index map for Chain coloring.
+    // Build residue-index → chain-index map for chain *visibility* checks only.
+    // (Coloring uses atom.chain directly, matching util.rs::res_color.)
     let res_to_chain: HashMap<usize, usize> = chains
         .iter()
         .enumerate()
@@ -680,12 +753,15 @@ pub fn build_cartoon_mesh(
         build_segment_mesh(
             &frames,
             seg.sec_struct,
-            max_residue,
+            aa_count,
             residues,
+            atoms,
             res_coloring,
+            view_sel_level,
+            atom_color_by_charge,
             sifts,
-            &res_to_chain,
             chain_count,
+            chains,
             &mut vertices,
             &mut indices,
         );
@@ -735,12 +811,15 @@ pub fn build_cartoon_mesh(
         build_segment_mesh(
             &frames,
             SecondaryStructure::Coil,
-            max_residue,
+            aa_count,
             residues,
+            atoms,
             res_coloring,
+            view_sel_level,
+            atom_color_by_charge,
             sifts,
-            &res_to_chain,
             chain_count,
+            chains,
             &mut vertices,
             &mut indices,
         );

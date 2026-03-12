@@ -30,15 +30,15 @@ use na_seq::{AaIdent, Element};
 use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_viridis, color_viridis_alternating, color_viridis_float, draw_density_point_cloud,
+        color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
         draw_peptide,
         ribbon_mesh::build_cartoon_mesh,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, Chain, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric,
-        MoleculePeptide, Residue, aa_color, small::MoleculeSmall,
+        Atom, Bond, Chain, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, Residue,
+        aa_color, peptide::MoleculePeptide, small::MoleculeSmall,
     },
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
@@ -828,6 +828,8 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 &mol.residues,
                 &mol.chains,
                 state.ui.res_coloring,
+                state.ui.view_sel_level,
+                state.ui.atom_color_by_charge,
                 mol.sifts_mapping.as_deref(),
             );
             updates.meshes = true;
@@ -1443,6 +1445,7 @@ pub fn res_color(
     aa_count: usize,
     chain_count: usize,
     sifts: Option<&[SiftsUniprotMapping]>,
+    atoms: &[Atom],
     chains: &[Chain],
 ) -> (f32, f32, f32) {
     match &res.res_type {
@@ -1463,18 +1466,22 @@ pub fn res_color(
                     // Resolve the chain letter for this residue so we can filter by chain_id,
                     // avoiding false matches when multiple chains share overlapping residue
                     // number ranges.
-                    let chain_letter: Option<&str> = res
-                        .chain
-                        .and_then(|ci| chains.get(ci))
-                        .map(|c| c.id.as_str());
 
+                    if res.atoms.is_empty() {
+                        return aa_color(*aa);
+                    }
+
+                    let chain_letter = atoms[res.atoms[0]].chain.map(|i_ch| &chains[i_ch].id);
+
+                    // For now, ignore res SN, and only color by chain.
                     // Find the entity_id of the mapping that covers this residue's chain+serial.
                     let entity_id = entries.iter().find_map(|entry| {
                         entry.mappings.iter().find_map(|m| {
-                            let chain_ok = chain_letter.map_or(true, |cl| m.chain_id == cl);
+                            let chain_ok = chain_letter.map_or(true, |cl| m.chain_id == *cl);
+
                             if chain_ok
-                                && serial >= m.start.residue_number
-                                && serial <= m.end.residue_number
+                                // && serial >= m.start.residueF_number
+                                // && serial <= m.end.residue_number
                             {
                                 Some(m.entity_id)
                             } else {
@@ -1482,6 +1489,7 @@ pub fn res_color(
                             }
                         })
                     });
+
                     if let Some(eid) = entity_id {
                         // Collect unique entity_ids in sorted order for a stable mapping.
                         let mut unique_ids: Vec<u32> = entries
@@ -1493,7 +1501,7 @@ pub fn res_color(
                         unique_ids.dedup();
 
                         let rank = unique_ids.iter().position(|&id| id == eid).unwrap_or(0);
-                        color_viridis_alternating(rank, 0, unique_ids.len().saturating_sub(1))
+                        color_alternating_contrast(rank, 0, unique_ids.len().saturating_sub(1))
                     } else {
                         aa_color(*aa)
                     }
@@ -1501,12 +1509,18 @@ pub fn res_color(
                     aa_color(*aa)
                 }
             }
-            ResColoring::Chain => match res.chain {
-                Some(chain_i) => {
-                    color_viridis_alternating(chain_i, 0, chain_count.saturating_sub(1))
+            ResColoring::Chain => {
+                if res.atoms.is_empty() {
+                    return aa_color(*aa);
                 }
-                None => aa_color(*aa),
-            },
+
+                match atoms[res.atoms[0]].chain {
+                    Some(chain_i) => {
+                        color_alternating_contrast(chain_i, 0, chain_count.saturating_sub(1))
+                    }
+                    None => aa_color(*aa),
+                }
+            }
         },
         _ => COLOR_AA_NON_RESIDUE,
     }

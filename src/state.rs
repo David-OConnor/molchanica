@@ -1,7 +1,7 @@
 //! Contains the most important application state structs.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
@@ -12,7 +12,7 @@ use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
-use dynamics::{ComputationDevice, MdState, params::FfParamSet};
+use dynamics::{ComputationDevice, params::FfParamSet};
 use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
@@ -25,9 +25,10 @@ use crate::{
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     molecules::{
-        MolGenericRef, MolGenericRefMut, MolType, MoleculePeptide,
+        MolGenericRef, MolGenericRefMut, MolType,
         lipid::{LipidShape, MoleculeLipid},
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
+        peptide::MoleculePeptide,
         pocket::Pocket,
         small::MoleculeSmall,
     },

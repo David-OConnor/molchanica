@@ -8,7 +8,7 @@
 //!
 // todo: Load Amber FF params for nucleic acids.
 
-use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io, sync::atomic::Ordering};
+use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io};
 
 use bincode::{Decode, Encode};
 use bio_files::{
@@ -25,8 +25,8 @@ use na_seq::{
 
 use crate::{
     molecules::{
-        Atom, Bond, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide, Residue,
-        common::MoleculeCommon,
+        Atom, Bond, MolGenericRef, MolGenericTrait, MolType, Residue, common::MoleculeCommon,
+        peptide::MoleculePeptide,
     },
     util::rotate_atoms_about_point,
 };
@@ -273,7 +273,6 @@ fn build_strands(
             } else {
                 ResidueEnd::Internal
             },
-            chain: None,
         };
 
         let height_offset = RISE * i_nt as f64;

@@ -11,7 +11,8 @@ use na_seq::AaIdent;
 
 use crate::{
     molecules::{
-        MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, MoleculePeptide, small::MoleculeSmall,
+        MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, peptide::MoleculePeptide,
+        small::MoleculeSmall,
     },
     render::set_flashlight,
     state::{State, StateUi},

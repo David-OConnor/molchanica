@@ -25,8 +25,9 @@ use crate::{
     },
     md::launch_md,
     molecules::{
-        MolGenericTrait, MolType, MoleculeGeneric, MoleculePeptide, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        POCKET_METADATA_KEY, common::MoleculeCommon, small::MoleculeSmall,
+        MolGenericTrait, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
+        POCKET_METADATA_KEY, common::MoleculeCommon, peptide::MoleculePeptide,
+        small::MoleculeSmall,
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},

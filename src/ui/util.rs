@@ -7,7 +7,7 @@ use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use crate::{
     cam::reset_camera,
     drawing::{
-        EntityClass, draw_peptide,
+        draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     file_io::download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
@@ -133,6 +133,10 @@ pub fn handle_redraw(
     reset_cam: bool,
     updates: &mut EngineUpdates,
 ) {
+    if redraw.peptide {
+        println!("Redraw: {:?}", redraw); // todo temp
+    }
+
     if redraw.peptide {
         draw_peptide(state, scene);
 
@@ -272,6 +276,8 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
     }
 
     reset_orbit_center(state, scene);
+    // FWD_VEC here means a "Front" look.
+    reset_camera(state, scene, &mut EngineUpdates::default(), FWD_VEC);
 
     draw_peptide(state, scene);
     draw_all_ligs(state, scene);

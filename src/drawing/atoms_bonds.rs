@@ -106,6 +106,7 @@ pub fn atom_color(
     sifts: Option<&[SiftsUniprotMapping]>,
     aa_count: usize, // # AA residues; used for color-mapping.
     chain_count: usize,
+    atoms: &[Atom],
     chains: &[Chain],
     selection: &Selection,
     view_sel_level: ViewSelLevel,
@@ -140,6 +141,7 @@ pub fn atom_color(
                     aa_count,
                     chain_count,
                     sifts,
+                    atoms,
                     chains,
                 );
 

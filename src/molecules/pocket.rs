@@ -3,7 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io,
-    io::{Cursor, ErrorKind},
+    io::ErrorKind,
     path::Path,
 };
 
@@ -23,8 +23,9 @@ use lin_alg::{
 use crate::{
     drawing::EntityClass,
     molecules::{
-        Atom, MolGenericRef, MolGenericTrait, MolType, MoleculePeptide,
+        Atom, MolGenericRef, MolGenericTrait, MolType,
         common::{MoleculeCommon, reassign_bond_indices},
+        peptide::MoleculePeptide,
         small::MoleculeSmall,
     },
     render::MESH_POCKET_START,

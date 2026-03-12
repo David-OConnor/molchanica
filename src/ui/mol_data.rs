@@ -22,7 +22,7 @@ use crate::{
     render::MESH_POCKET_START,
     selection::Selection,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, mol_descrip, popups},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popups},
     util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
 
@@ -295,12 +295,14 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     }
                     label!(ui, res.to_string(), res_color);
 
-                    if let Some(ch_i) = &res.chain {
-                        if *ch_i >= mol.chains.len() {
-                            eprintln!("Res chain out of bounds when drawing label");
-                        } else {
-                            let ch_name = &mol.chains[*ch_i].id;
-                            label!(ui, format!("Ch: {}", ch_name), Color32::WHITE);
+                    if !res.atoms.is_empty() {
+                        if let Some(i_chain) = mol.common.atoms[res.atoms[0]].chain {
+                            if i_chain >= mol.chains.len() {
+                                eprintln!("Res chain out of bounds when drawing label");
+                            } else {
+                                let ch_name = &mol.chains[i_chain].id;
+                                label!(ui, format!("Ch: {}", ch_name), Color32::WHITE);
+                            }
                         }
                     }
                 }
@@ -870,4 +872,31 @@ pub(super) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui: &mut 
     };
 
     popups::metadata_popup(&mut state.ui.popup, &common, idents.as_deref(), ui);
+}
+
+pub(in crate::ui) fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {
+    ui.heading(RichText::new(mol.common().ident.clone()).color(Color32::GOLD));
+
+    ui.label(format!("{} atoms", mol.common().atoms.len()));
+
+    if let MolGenericRef::Peptide(m) = mol {
+        if let Some(method) = m.experimental_method {
+            ui.label(method.to_str_short());
+        }
+    }
+
+    if let Some(title) = mol.common().metadata.get("_struct.title") {
+        // Limit size to prevent UI problems.
+        let mut title_abbrev: String = title.chars().take(MAX_TITLE_LEN).collect();
+
+        if title_abbrev.len() != title.len() {
+            title_abbrev += "...";
+
+            // Allow hovering to see the full title.
+            ui.label(RichText::new(title_abbrev).color(Color32::WHITE).size(12.))
+                .on_hover_text(title);
+        } else {
+            ui.label(RichText::new(title_abbrev).color(Color32::WHITE).size(12.));
+        }
+    }
 }
