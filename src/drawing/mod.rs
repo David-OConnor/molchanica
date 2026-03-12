@@ -380,6 +380,41 @@ pub fn color_viridis(i: usize, min: usize, max: usize) -> Color {
     (r, g, b)
 }
 
+/// A color map using the Viridis palette that maximises contrast between *adjacent* indices.
+/// Rather than a smooth gradient, it applies a bit-reversal permutation to the rank so that
+/// neighbouring indices are placed as far apart as possible in colour space.
+/// With two items, index 0 → deep purple (t = 0) and index 1 → yellow (t = 1).
+/// Each additional item bisects the largest remaining gap, so contrast degrades gracefully
+/// as the item count grows.  Useful where adjacent indices should look different, e.g. chains.
+pub fn color_viridis_alternating(i: usize, min: usize, max: usize) -> Color {
+    let n = max.saturating_sub(min) + 1;
+    let rank = i.saturating_sub(min);
+
+    let t: f32 = if n <= 1 {
+        0.0
+    } else {
+        // Bit width needed to address n items (= ceil(log2(n))).
+        let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
+        // Reverse only the lowest `bits` bits of `rank`.
+        let reversed = rank.reverse_bits() >> (usize::BITS as usize - bits);
+        let denom = (1usize << bits) - 1; // always >= 1 since bits >= 1
+        reversed as f32 / denom as f32
+    };
+
+    // Sample the Viridis LUT with linear interpolation.
+    let n_pts = VIRIDIS.len();
+    let scaled = (t * (n_pts - 1) as f32).clamp(0.0, (n_pts - 1) as f32);
+    let idx = (scaled.floor() as usize).min(n_pts - 2);
+    let frac = scaled - idx as f32;
+    let (r1, g1, b1) = VIRIDIS[idx];
+    let (r2, g2, b2) = VIRIDIS[idx + 1];
+    (
+        r1 + (r2 - r1) * frac,
+        g1 + (g2 - g1) * frac,
+        b1 + (b2 - b1) * frac,
+    )
+}
+
 pub fn color_viridis_float(i: f32, min: f32, max: f32) -> Color {
     const RESOLUTION: usize = 2_048;
 

@@ -622,7 +622,7 @@ pub(in crate::ui) fn sidebar(
 
                                 let summary = format!(
                                     "ID: {}, Chain: {} Asym: {} Cov: {:.2}%",
-                                    mapping.identity,
+                                    mapping.entity_id,
                                     mapping.chain_id,
                                     mapping.struct_asym_id,
                                     mapping.coverage
@@ -639,6 +639,7 @@ pub(in crate::ui) fn sidebar(
                                 }
                             });
                         }
+                        ui.add_space(ROW_SPACING);
                     }
                 }
             }

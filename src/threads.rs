@@ -149,16 +149,16 @@ pub fn handle_thread_rx(
             match result {
                 Ok(mappings) => {
                     // todo temp
-                    println!("\nSIFTS mappings: {}", mappings.len());
-
-                    for m2 in &mappings {
-                        for m in &m2.mappings {
-                            println!("- {m:?}");
-                        }
-                        println!("\n");
-                    }
-
-                    println!("\n---");
+                    // println!("\nSIFTS mappings: {}", mappings.len());
+                    //
+                    // for m2 in &mappings {
+                    //     for m in &m2.mappings {
+                    //         println!("- {m:?}");
+                    //     }
+                    //     println!("\n");
+                    // }
+                    //
+                    // println!("\n---");
 
                     println!("{} SIFTS UniProt mappings loaded", mappings.len());
 

@@ -417,6 +417,21 @@ impl MoleculePeptide {
             ..Default::default()
         };
 
+        // Back-link residues to their chain.
+        {
+            let mut residue_to_chain = HashMap::new();
+
+            for (i_chain, chain) in result.chains.iter().enumerate() {
+                for &sn in &chain.residue_sns {
+                    residue_to_chain.insert(sn, i_chain);
+                }
+            }
+
+            for res in &mut result.residues {
+                res.chain = residue_to_chain.get(&res.serial_number).copied();
+            }
+        }
+
         result.aa_seq = result.get_seq();
         result.bonds_hydrogen = create_hydrogen_bonds_single_mol(
             &result.common.atoms,
@@ -755,6 +770,8 @@ pub struct Residue {
     pub atoms: Vec<usize>, // Atom index
     pub dihedral: Option<Dihedral>,
     pub end: ResidueEnd,
+    /// A back-ref to the chain it's part of
+    pub chain: Option<usize>,
 }
 
 impl Residue {
@@ -791,6 +808,7 @@ impl Residue {
             atoms,
             dihedral: None,
             end: res.end,
+            chain: None,
         })
     }
 }
@@ -887,7 +905,7 @@ fn res_sns_to_indices(sn_tgt: u32, res_set: &[Residue]) -> Option<usize> {
 }
 
 impl Display for Residue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "#{}: {}", self.serial_number, self.res_type)?;
 
         if let Some(dihedral) = &self.dihedral {
@@ -1297,6 +1315,7 @@ fn init_bonds_chains_res(
                 })
             })
             .collect();
+
         let mut r = Residue {
             serial_number: res.serial_number,
             res_type: res.res_type.clone(),
@@ -1304,7 +1323,9 @@ fn init_bonds_chains_res(
             atoms: atom_indices?,
             dihedral: None,
             end: res.end,
+            chain: None,
         };
+
         if len_matches {
             r.dihedral = Some(dihedrals[i].clone());
         }

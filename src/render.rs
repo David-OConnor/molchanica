@@ -9,6 +9,7 @@ use graphics::{
 use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
+    cam,
     cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
     drawing::atoms_bonds::BOND_RADIUS_BASE,
     inputs,
@@ -213,6 +214,9 @@ pub fn render(mut state: State) {
     init_with_scene(&mut state, &mut scene);
 
     let msaa_samples = state.to_save.msaa as u8 as u32;
+
+    // This seems to only be required here at init if view_dist_default = view_dist_max, to set fog to 0.
+    cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1);
 
     graphics::run(
         state,

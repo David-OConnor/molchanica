@@ -30,7 +30,8 @@ use na_seq::{AaIdent, Element};
 use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
+        color_viridis, color_viridis_alternating, color_viridis_float, draw_density_point_cloud,
+        draw_peptide,
         ribbon_mesh::build_cartoon_mesh,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
@@ -1439,7 +1440,6 @@ pub fn res_color(
     res: &Residue,
     res_coloring: ResColoring,
     atom_res: Option<usize>,
-    atom_chain: Option<usize>,
     aa_count: usize,
     chain_count: usize,
     sifts: Option<&[SiftsUniprotMapping]>,
@@ -1463,9 +1463,11 @@ pub fn res_color(
                     // Resolve the chain letter for this residue so we can filter by chain_id,
                     // avoiding false matches when multiple chains share overlapping residue
                     // number ranges.
-                    let chain_letter: Option<&str> = atom_chain
+                    let chain_letter: Option<&str> = res
+                        .chain
                         .and_then(|ci| chains.get(ci))
                         .map(|c| c.id.as_str());
+
                     // Find the entity_id of the mapping that covers this residue's chain+serial.
                     let entity_id = entries.iter().find_map(|entry| {
                         entry.mappings.iter().find_map(|m| {
@@ -1486,10 +1488,12 @@ pub fn res_color(
                             .iter()
                             .flat_map(|e| e.mappings.iter().map(|m| m.entity_id))
                             .collect();
+
                         unique_ids.sort_unstable();
                         unique_ids.dedup();
+
                         let rank = unique_ids.iter().position(|&id| id == eid).unwrap_or(0);
-                        color_viridis(rank, 0, unique_ids.len().saturating_sub(1))
+                        color_viridis_alternating(rank, 0, unique_ids.len().saturating_sub(1))
                     } else {
                         aa_color(*aa)
                     }
@@ -1497,8 +1501,10 @@ pub fn res_color(
                     aa_color(*aa)
                 }
             }
-            ResColoring::Chain => match atom_chain {
-                Some(chain_i) => color_viridis(chain_i, 0, chain_count.saturating_sub(1)),
+            ResColoring::Chain => match res.chain {
+                Some(chain_i) => {
+                    color_viridis_alternating(chain_i, 0, chain_count.saturating_sub(1))
+                }
                 None => aa_color(*aa),
             },
         },

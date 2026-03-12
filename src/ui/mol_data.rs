@@ -294,6 +294,15 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                         res_color = make_egui_color(aa_color(aa));
                     }
                     label!(ui, res.to_string(), res_color);
+
+                    if let Some(ch_i) = &res.chain {
+                        if *ch_i >= mol.chains.len() {
+                            eprintln!("Res chain out of bounds when drawing label");
+                        } else {
+                            let ch_name = &mol.chains[*ch_i].id;
+                            label!(ui, format!("Ch: {}", ch_name), Color32::WHITE);
+                        }
+                    }
                 }
             }
             Selection::BondPeptide(bond_i) => {

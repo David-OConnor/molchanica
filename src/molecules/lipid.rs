@@ -332,6 +332,7 @@ fn combine_head_tail(
             atoms: (0..head_len).collect(),
             dihedral: None,
             end: ResidueEnd::Internal, // N/A
+            chain: None,
         });
         head.residues.push(Residue {
             serial_number: 1,
@@ -343,6 +344,7 @@ fn combine_head_tail(
             atoms: (head_len..offset_t1).collect(),
             dihedral: None,
             end: ResidueEnd::Internal,
+            chain: None,
         });
         head.residues.push(Residue {
             serial_number: 2,
@@ -354,6 +356,7 @@ fn combine_head_tail(
             atoms: (offset_t1..total_len).collect(),
             dihedral: None,
             end: ResidueEnd::Internal,
+            chain: None,
         });
 
         for (i, atom) in head.common.atoms.iter_mut().enumerate() {

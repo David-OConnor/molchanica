@@ -137,7 +137,6 @@ pub fn atom_color(
                     res,
                     res_coloring,
                     atom.residue,
-                    atom.chain,
                     aa_count,
                     chain_count,
                     sifts,

@@ -156,6 +156,10 @@ pub fn find_selected_atom_or_bond(
             continue;
         }
 
+        if *i_atom >= atoms_pep.len() {
+            eprintln!("Error: atom i {i_atom} out of bounds: {}", atoms_pep.len());
+            return (Selection::None, 0.0);
+        }
         let atom = &atoms_pep[*i_atom];
 
         if ui.visibility.hide_sidechains || matches!(ui.mol_view, MoleculeView::Backbone) {

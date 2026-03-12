@@ -273,6 +273,7 @@ fn build_strands(
             } else {
                 ResidueEnd::Internal
             },
+            chain: None,
         };
 
         let height_offset = RISE * i_nt as f64;
