@@ -8,7 +8,7 @@ mlp_enabled = true
 # We have it lower than idea now to improve speed.
 
 
-gnn_atom_layers = 1
+gnn_atom_layers = 0
 gnn_comp_layers = 3
 # It seems  a higher value here, to a point, is relatively cheap, and produces better results.
 gnn_spacial_layers = 7

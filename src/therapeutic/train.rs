@@ -9,6 +9,8 @@
 //!
 //! Add the `tgt` param if training on a single file. Can be a single target, or multiple.
 //! --tgt bbb_martins`
+//!
+//! Add the `--eval` tag to evaluate
 
 use std::{
     collections::{HashMap, HashSet},

@@ -496,6 +496,11 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                     state.volatile.flags.update_sas_coloring = true;
                 }
 
+                if state.ui.mol_view == MoleculeView::Ribbon {
+                    state.volatile.flags.update_ss_mesh = true;
+                } else {
+                    state.volatile.flags.ss_mesh_dirty = true;
+                }
                 *redraw = true;
             }
         }
