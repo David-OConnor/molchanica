@@ -29,23 +29,23 @@ use na_seq::Element;
 
 use crate::{
     drawing::{
-        color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
-        ribbon_mesh::build_cartoon_mesh, wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets}, EntityClass, MoleculeView,
-        COLOR_AA_NON_RESIDUE,
-        HYDROPHOBICITY_MAX,
-        HYDROPHOBICITY_MIN,
+        COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
+        color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
+        draw_peptide,
+        ribbon_mesh::build_cartoon_mesh,
+        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_manip::ManipMode,
     molecules::{
-        aa_color, peptide::MoleculePeptide, small::MoleculeSmall, Atom, Bond, Chain, MolGenericRef, MolGenericRefMut,
-        MolType, MoleculeGeneric, Residue,
+        Atom, Bond, Chain, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, Residue,
+        aa_color, peptide::MoleculePeptide, small::MoleculeSmall,
     },
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
-    render::{set_flashlight, Color, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE},
+    render::{Color, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE, set_flashlight},
     selection::Selection,
     sfc_mesh,
-    sfc_mesh::{make_sas_mesh, SOLVENT_RAD},
+    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
 };
 // todo: Move this A/R
@@ -240,6 +240,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     }
                 }
             }
+            Selection::Residues(is) => {}
             Selection::AtomsPeptide(is) => {
                 if let Some(mol) = &state.peptide {
                     let mut ctr = Vec3F32::new_zero();

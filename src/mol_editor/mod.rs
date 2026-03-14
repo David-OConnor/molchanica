@@ -1,9 +1,7 @@
 pub mod add_atoms;
 pub mod templates;
 
-use std::{
-    collections::HashMap, io, io::ErrorKind, path::Path,  time::Instant,
-};
+use std::{collections::HashMap, io, io::ErrorKind, path::Path, time::Instant};
 
 use bio_files::{BondType, Mol2, Pdbqt, Sdf, SdfFormat, Xyz, md_params::ForceFieldParams};
 use dynamics::{
@@ -22,7 +20,7 @@ use na_seq::{
 
 use crate::{
     bond_inference::create_hydrogen_bonds_two_mols,
-    cam::{move_cam_to_mol},
+    cam::move_cam_to_mol,
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
         atoms_bonds::{

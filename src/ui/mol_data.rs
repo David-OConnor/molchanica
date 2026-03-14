@@ -307,6 +307,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     }
                 }
             }
+            Selection::Residues(_) => (),
             Selection::BondPeptide(bond_i) => {
                 let Some(mol) = &state.peptide else {
                     return;

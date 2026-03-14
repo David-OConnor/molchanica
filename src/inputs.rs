@@ -2,30 +2,29 @@
 
 use bio_files::BondType;
 use graphics::{
-    event::{MouseButton, MouseScrollDelta}, winit::keyboard::{KeyCode, PhysicalKey::Code}, ControlScheme, DeviceEvent, ElementState, EngineUpdates, EntityUpdate,
-    Scene,
+    ControlScheme, DeviceEvent, ElementState, EngineUpdates, EntityUpdate, FWD_VEC, Scene,
     WindowEvent,
-    FWD_VEC,
+    event::{MouseButton, MouseScrollDelta},
+    winit::keyboard::{KeyCode, PhysicalKey::Code},
 };
 use lin_alg::f32::Vec3;
 use na_seq::Element::Carbon;
 
 use crate::{
-    cam::{move_cam_to_sel, set_fog_dist, FOG_DIST_MIN},
+    cam::{FOG_DIST_MIN, move_cam_to_sel, set_fog_dist},
     drawing,
-    drawing::{draw_pocket, wrappers, EntityClass},
+    drawing::{EntityClass, draw_pocket, wrappers},
     mol_editor,
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
-    mol_manip::{set_manip, ManipMode},
+    mol_manip::{ManipMode, set_manip},
     molecules::MolType,
     render::set_flashlight,
     selection,
-    selection::Selection,
+    selection::{Selection, cycle_selected},
     state::{OperatingMode, State},
-    util::{close_mol, RedrawFlags},
+    util::{RedrawFlags, close_mol},
 };
-use crate::selection::cycle_selected;
 
 // These are defaults; overridden by the user A/R, and saved to prefs.
 pub const MOVEMENT_SENS: f32 = 12.;

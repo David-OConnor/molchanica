@@ -1,8 +1,11 @@
 use std::{io::Cursor, time::Instant};
 
 use bio_apis::{pdbe, rcsb};
-use bio_files::{density_from_2fo_fc_rcsb_gemmi, DensityMap};
-use egui::{text::LayoutJob, Color32, ComboBox, Context, Frame, Key, RichText, Slider, TextEdit, TextFormat, TextStyle, TopBottomPanel, Ui};
+use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
+use egui::{
+    Color32, ComboBox, Context, Frame, Key, RichText, Slider, TextEdit, TextFormat, TextStyle,
+    TopBottomPanel, Ui, text::LayoutJob,
+};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use md::md_setup;
 use mol_data::display_mol_data;
@@ -12,18 +15,18 @@ use popups::load_popups;
 use crate::{
     button, cam,
     cam::{
-        move_cam_to_sel, FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX,
-        VIEW_DEPTH_NEAR_MIN,
+        FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX, VIEW_DEPTH_NEAR_MIN,
+        move_cam_to_sel,
     },
     cli,
     cli::autocomplete_cli,
-    drawing::{color_viridis, MoleculeView},
+    drawing::{MoleculeView, color_viridis},
     file_io::{download_mols::load_atom_coords_rcsb, gemmi_path},
     mol_editor::enter_edit_mode,
     molecules::{MolGenericRef, MolIdent},
     prefs::ControlSchemeType,
     render::set_flashlight,
-    selection::{Selection, ViewSelLevel},
+    selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
     therapeutic::logp_sim,
     threads::handle_thread_rx,
@@ -37,11 +40,10 @@ use crate::{
         view::{ui_section_vis, view_settings},
     },
     util::{
-        check_prefs_save, close_mol, close_peptide, handle_err, handle_scene_flags,
-        handle_success, orbit_center, RedrawFlags,
+        RedrawFlags, check_prefs_save, close_mol, close_peptide, handle_err, handle_scene_flags,
+        handle_success, orbit_center,
     },
 };
-use crate::selection::{cycle_selected, select_from_search};
 
 mod char_adme;
 mod md;
@@ -307,14 +309,15 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
         ViewSelLevel::Bond => ("Prev bond", "Next bond"),
     };
 
-
     ui.label("Find");
     if ui
         .add(TextEdit::singleline(&mut state.ui.atom_res_search).desired_width(60.))
         .changed()
     {
-        select_from_search(state);
-        redraw.peptide = true;
+        let updated = select_from_search(state);
+        if updated && let Some((mol_type, _)) = &state.volatile.active_mol {
+            redraw.set(*mol_type);
+        }
     }
 
     if state.active_mol().is_some() {

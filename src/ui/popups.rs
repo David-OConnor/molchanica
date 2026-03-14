@@ -922,7 +922,7 @@ fn lig_pocket_from_het_res(
     if let Some(res) = &create_lig_from_res {
         make_lig_from_res(state, res, scene, updates);
     }
-   }
+}
 
 fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut EngineUpdates) {
     ui.horizontal(|ui| {
