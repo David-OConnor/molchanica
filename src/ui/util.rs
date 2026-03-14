@@ -134,10 +134,6 @@ pub fn handle_redraw(
     updates: &mut EngineUpdates,
 ) {
     if redraw.peptide {
-        println!("Redraw: {:?}", redraw); // todo temp
-    }
-
-    if redraw.peptide {
         draw_peptide(state, scene);
 
         if let Some(mol) = &state.peptide {

@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use bio_files::BondType;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate};
 use lin_alg::f64::Vec3;

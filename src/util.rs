@@ -25,30 +25,29 @@ use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
 };
-use na_seq::{AaIdent, Element};
+use na_seq::Element;
 
 use crate::{
     drawing::{
-        COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
-        draw_peptide,
-        ribbon_mesh::build_cartoon_mesh,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
+        color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud, draw_peptide,
+        ribbon_mesh::build_cartoon_mesh, wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets}, EntityClass, MoleculeView,
+        COLOR_AA_NON_RESIDUE,
+        HYDROPHOBICITY_MAX,
+        HYDROPHOBICITY_MIN,
     },
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, Chain, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, Residue,
-        aa_color, peptide::MoleculePeptide, small::MoleculeSmall,
+        aa_color, peptide::MoleculePeptide, small::MoleculeSmall, Atom, Bond, Chain, MolGenericRef, MolGenericRefMut,
+        MolType, MoleculeGeneric, Residue,
     },
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
-    render::{Color, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE, set_flashlight},
-    selection::{Selection, ViewSelLevel},
+    render::{set_flashlight, Color, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE},
+    selection::Selection,
     sfc_mesh,
-    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
+    sfc_mesh::{make_sas_mesh, SOLVENT_RAD},
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
 };
-
 // todo: Move this A/R
 pub const HYDROPATHY_WINDOW_SIZE: usize = 9; // e.g. for coloring residues
 
@@ -103,205 +102,6 @@ pub fn mol_center_size(atoms: &[Atom]) -> (Vec3, f32) {
     }
 
     (sum / (atoms.len() as f64), max_dim as f32)
-}
-
-pub fn select_from_search(state: &mut State) {
-    let query = &state.ui.atom_res_search.to_lowercase();
-
-    let Some(mol) = &state.peptide else {
-        return;
-    };
-
-    match state.ui.view_sel_level {
-        ViewSelLevel::Atom => {
-            for (i, atom) in mol.common.atoms.iter().enumerate() {
-                if query == &atom.serial_number.to_string() {
-                    state.ui.selection = Selection::AtomPeptide(i);
-                    return;
-                }
-            }
-        }
-        ViewSelLevel::Residue => {
-            for (i, res) in mol.residues.iter().enumerate() {
-                if query.contains(&res.serial_number.to_string()) {
-                    state.ui.selection = Selection::Residue(i);
-                    return;
-                }
-                match &res.res_type {
-                    ResidueType::AminoAcid(aa) => {
-                        if query.contains(&aa.to_str(AaIdent::ThreeLetters).to_lowercase()) {
-                            state.ui.selection = Selection::Residue(i);
-                            return;
-                        }
-                    }
-                    ResidueType::Water => {}
-                    ResidueType::Other(name) => {
-                        if query.contains(&name.to_lowercase()) {
-                            state.ui.selection = Selection::Residue(i);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-        ViewSelLevel::Bond => {
-            for (i, bond) in mol.common.bonds.iter().enumerate() {
-                if query == &bond.atom_0_sn.to_string() || query == &bond.atom_1_sn.to_string() {
-                    state.ui.selection = Selection::AtomPeptide(i);
-                    return;
-                }
-            }
-        }
-    }
-}
-
-pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
-    let dir = if reverse { -1 } else { 1 };
-
-    // todo: DRY between atom and res.
-    match state.ui.view_sel_level {
-        ViewSelLevel::Atom => match state.ui.selection {
-            Selection::AtomPeptide(atom_i) => {
-                let Some(mol) = &state.peptide else { return };
-
-                for chain in &mol.chains {
-                    if chain.atoms.contains(&atom_i) {
-                        let mut new_atom_i = atom_i as isize;
-
-                        while new_atom_i < (mol.common.atoms.len() as isize) - 1 && new_atom_i >= 0
-                        {
-                            new_atom_i += dir;
-                            let nri = new_atom_i as usize;
-                            if chain.atoms.contains(&nri) {
-                                state.ui.selection = Selection::AtomPeptide(nri);
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-            Selection::AtomLig((mol_i, atom_i)) => {
-                let Some(mol) = state.active_mol() else {
-                    return;
-                };
-
-                let new_atom_i = atom_i as isize + dir;
-                if new_atom_i < mol.common().atoms.len() as isize && new_atom_i >= 0 {
-                    state.ui.selection = Selection::AtomLig((mol_i, new_atom_i as usize));
-                }
-            }
-            // todo: DRY!
-            Selection::AtomNucleicAcid((mol_i, atom_i)) => {
-                let Some(mol) = state.active_mol() else {
-                    return;
-                };
-
-                // todo: DRY with the above for peptide atoms.
-                let new_atom_i = atom_i as isize + dir;
-                if new_atom_i < mol.common().atoms.len() as isize && new_atom_i >= 0 {
-                    state.ui.selection = Selection::AtomNucleicAcid((mol_i, new_atom_i as usize));
-                }
-            }
-            // todo DRY
-            Selection::AtomLipid((mol_i, atom_i)) => {
-                let Some(mol) = state.active_mol() else {
-                    return;
-                };
-
-                // todo: DRY with the above for peptide atoms.
-                let new_atom_i = atom_i as isize + dir;
-                if new_atom_i < mol.common().atoms.len() as isize && new_atom_i >= 0 {
-                    state.ui.selection = Selection::AtomLipid((mol_i, new_atom_i as usize));
-                }
-            }
-            _ => {
-                // if !mol.common.atoms.is_empty() {
-                //     state.ui.selection = Selection::AtomPeptide(0);
-                // }
-            }
-        },
-        ViewSelLevel::Residue => {
-            let Some(mol) = &state.peptide else { return };
-
-            match state.ui.selection {
-                Selection::Residue(res_i) => {
-                    for chain in &mol.chains {
-                        if chain.residues.contains(&res_i) {
-                            // Pick a residue from the chain the current selection is on.
-                            let mut new_res_i = res_i as isize;
-
-                            while new_res_i < (mol.residues.len() as isize) - 1 && new_res_i >= 0 {
-                                new_res_i += dir;
-                                let nri = new_res_i as usize;
-                                if chain.residues.contains(&nri) {
-                                    state.ui.selection = Selection::Residue(nri);
-                                    break;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    if !mol.residues.is_empty() {
-                        state.ui.selection = Selection::Residue(0);
-                    }
-                }
-            }
-        }
-        ViewSelLevel::Bond => match state.ui.selection {
-            Selection::BondPeptide(bond_i) => {
-                let Some(mol) = &state.peptide else {
-                    return;
-                };
-
-                let new_bond_i = bond_i as isize + dir;
-                if new_bond_i < mol.common.bonds.len() as isize && new_bond_i >= 0 {
-                    state.ui.selection = Selection::BondPeptide(new_bond_i as usize);
-                }
-            }
-            Selection::BondLig((mol_i, bond_i)) => {
-                let Some(mol) = state.active_mol() else {
-                    return;
-                };
-
-                let new_bond_i = bond_i as isize + dir;
-                if new_bond_i < mol.common().bonds.len() as isize && new_bond_i >= 0 {
-                    state.ui.selection = Selection::BondLig((mol_i, new_bond_i as usize));
-                }
-            }
-            Selection::BondNucleicAcid((mol_i, bond_i)) => {
-                let Some(mol) = state.active_mol() else {
-                    return;
-                };
-
-                let new_bond_i = bond_i as isize + dir;
-                if new_bond_i < mol.common().bonds.len() as isize && new_bond_i >= 0 {
-                    state.ui.selection = Selection::BondNucleicAcid((mol_i, new_bond_i as usize));
-                }
-            }
-            Selection::BondLipid((mol_i, bond_i)) => {
-                let Some(mol) = state.active_mol() else {
-                    return;
-                };
-
-                let new_bond_i = bond_i as isize + dir;
-                if new_bond_i < mol.common().bonds.len() as isize && new_bond_i >= 0 {
-                    state.ui.selection = Selection::BondLipid((mol_i, new_bond_i as usize));
-                }
-            }
-            _ => (),
-        },
-    }
-
-    // Don't change the orbit center for the mol editor. Also note that its naive behavior CAO Dec 2025
-    // may attempt to center around a molecule open in the primary mode, not even a valid editor-mode atom.
-    if state.volatile.operating_mode == OperatingMode::Primary
-        && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
-    {
-        *center = orbit_center(state);
-    }
 }
 
 pub fn check_prefs_save(state: &mut State) {
@@ -1462,7 +1262,7 @@ pub fn res_color(
                 if let Some(entries) = sifts {
                     // Color by SIFTS entity_id: all residues sharing an entity_id get the
                     // same hue, spaced equally along the Viridis scheme for maximum contrast.
-                    let serial = res.serial_number as i32;
+
                     // Resolve the chain letter for this residue so we can filter by chain_id,
                     // avoiding false matches when multiple chains share overlapping residue
                     // number ranges.
@@ -1480,8 +1280,8 @@ pub fn res_color(
                             let chain_ok = chain_letter.map_or(true, |cl| m.chain_id == *cl);
 
                             if chain_ok
-                                // && serial >= m.start.residueF_number
-                                // && serial <= m.end.residue_number
+                            // && serial >= m.start.residueF_number
+                            // && serial <= m.end.residue_number
                             {
                                 Some(m.entity_id)
                             } else {

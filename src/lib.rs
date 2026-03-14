@@ -1,4 +1,3 @@
-// This feature-gate prevents having to specify `--bin molchanica` when running normally.
 #![cfg(feature = "train")]
 #![recursion_limit = "256"] // todo: Troubleshooting a strange error with the  WGPU backend.
 

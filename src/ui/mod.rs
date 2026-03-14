@@ -1,11 +1,8 @@
 use std::{io::Cursor, time::Instant};
 
 use bio_apis::{pdbe, rcsb};
-use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
-use egui::{
-    Color32, ComboBox, Context, Key, RichText, Slider, TextEdit, TextFormat, TextStyle,
-    TopBottomPanel, Ui, text::LayoutJob,
-};
+use bio_files::{density_from_2fo_fc_rcsb_gemmi, DensityMap};
+use egui::{text::LayoutJob, Color32, ComboBox, Context, Frame, Key, RichText, Slider, TextEdit, TextFormat, TextStyle, TopBottomPanel, Ui};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use md::md_setup;
 use mol_data::display_mol_data;
@@ -15,12 +12,12 @@ use popups::load_popups;
 use crate::{
     button, cam,
     cam::{
-        FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX, VIEW_DEPTH_NEAR_MIN,
-        move_cam_to_sel,
+        move_cam_to_sel, FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX,
+        VIEW_DEPTH_NEAR_MIN,
     },
     cli,
     cli::autocomplete_cli,
-    drawing::{MoleculeView, color_viridis},
+    drawing::{color_viridis, MoleculeView},
     file_io::{download_mols::load_atom_coords_rcsb, gemmi_path},
     mol_editor::enter_edit_mode,
     molecules::{MolGenericRef, MolIdent},
@@ -40,10 +37,11 @@ use crate::{
         view::{ui_section_vis, view_settings},
     },
     util::{
-        RedrawFlags, check_prefs_save, close_mol, close_peptide, cycle_selected, handle_err,
-        handle_scene_flags, handle_success, orbit_center, select_from_search,
+        check_prefs_save, close_mol, close_peptide, handle_err, handle_scene_flags,
+        handle_success, orbit_center, RedrawFlags,
     },
 };
+use crate::selection::{cycle_selected, select_from_search};
 
 mod char_adme;
 mod md;
@@ -298,18 +296,19 @@ fn draw_cli(
         }
 
         ui.add_space(COL_SPACING);
-        residue_search(state, scene, redraw, ui);
+        search_in_mol(state, scene, redraw, ui);
     });
 }
 
-fn residue_search(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags, ui: &mut Ui) {
-    let (btn_text_p, btn_text_n, search_text) = match state.ui.view_sel_level {
-        ViewSelLevel::Atom => ("Prev atom", "Next atom", "Find atom:"),
-        ViewSelLevel::Residue => ("Prev AA", "Next AA", "Find res:"),
-        ViewSelLevel::Bond => ("Prev bond", "Next bond", "Find bond:"),
+fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags, ui: &mut Ui) {
+    let (btn_text_p, btn_text_n) = match state.ui.view_sel_level {
+        ViewSelLevel::Atom => ("Prev atom", "Next atom"),
+        ViewSelLevel::Residue => ("Prev AA", "Next AA"),
+        ViewSelLevel::Bond => ("Prev bond", "Next bond"),
     };
 
-    ui.label(search_text);
+
+    ui.label("Find");
     if ui
         .add(TextEdit::singleline(&mut state.ui.atom_res_search).desired_width(60.))
         .changed()
@@ -318,7 +317,7 @@ fn residue_search(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags
         redraw.peptide = true;
     }
 
-    if state.peptide.is_some() || !state.ligands.is_empty() {
+    if state.active_mol().is_some() {
         if ui
             .button(btn_text_p)
             .on_hover_text("(Hotkey: Left arrow)")
@@ -355,18 +354,6 @@ fn residue_search(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags
                 _ => (),
             }
         }
-
-        // ui.add_space(COL_SPACING * 2.);
-        //
-        // let dock_tools_text = if state.ui.show_docking_tools {
-        //     "Hide docking tools"
-        // } else {
-        //     "Show docking tools (Broken/WIP)"
-        // };
-        //
-        // if ui.button(RichText::new(dock_tools_text)).clicked() {
-        //     state.ui.show_docking_tools = !state.ui.show_docking_tools;
-        // }
     }
 }
 
@@ -376,7 +363,7 @@ fn add_aa_seq(selection: &mut Selection, seq_text: &str, ui: &mut Ui, redraw: &m
 
     // This grey ensures that the whole viridis display range is clear, e.g. the purple
     // parse isn't blocked by our dark background.
-    egui::Frame::new()
+    Frame::new()
         // .fill(Color32::from_rgb(200, 200, 200))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

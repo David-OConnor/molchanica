@@ -922,49 +922,7 @@ fn lig_pocket_from_het_res(
     if let Some(res) = &create_lig_from_res {
         make_lig_from_res(state, res, scene, updates);
     }
-    //
-    // // Avoids dbl-borrow
-    // if let Some(data) = load_data {
-    //     handle_success(
-    //         &mut state.ui,
-    //         format!("Loaded {} from Amber Geostd", data.ident_pdbe),
-    //     );
-    //
-    //     // Crude check for success.
-    //     // let lig_count_prev = state.ligands.len();
-    //     state.load_geostd_mol_data(
-    //         &data.ident_pdbe,
-    //         true,
-    //         data.frcmod_avail,
-    //         engine_updates,
-    //         scene,
-    //     );
-    //
-    //     // Move camera to ligand; not ligand to camera, since we are generating a ligand
-    //     // that may already be docked to the protein.
-    //     // move_mol_to_cam(&mut state.ligands[i].common, &scene.camera);
-    //     if let Some(mol) = &state.peptide {
-    //         move_cam_to_active_mol(state, scene, mol.center, engine_updates);
-    //     }
-    // } else {
-    //     if let Some(res) = res_to_load {
-    //         // Use our normal "Lig from" logic.
-    //         make_lig_from_res(state, &res, scene, engine_updates);
-    //
-    //         move_cam_to_active_mol(
-    //             state,
-    //             scene,
-    //             state.ligands[0].common.centroid(),
-    //             engine_updates,
-    //         );
-    //
-    //         handle_success(
-    //             &mut state.ui,
-    //             "Unable to find FF params for this ligand; added without them".to_string(),
-    //         );
-    //     }
-    // }
-}
+   }
 
 fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut EngineUpdates) {
     ui.horizontal(|ui| {

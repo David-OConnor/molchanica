@@ -453,7 +453,6 @@ impl PharmacophoreFeature {
         i += 4;
 
         copy_le!(result, self.tolerance, i..i + 4);
-        i += 4;
 
         // todo: Oscillation field?
         // ui_selected is not serialized.

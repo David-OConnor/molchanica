@@ -2,6 +2,7 @@
 name = "molchanica"
 version = "0.2.4"
 edition = "2024"
+default-run = "molchanica"
 
 
 # For training our solubility

@@ -222,7 +222,6 @@ pub fn view_settings(
                 redraw,
             );
 
-            let prev = state.ui.visibility.labels_mol;
             toggle_btn(
                 &mut state.ui.visibility.labels_mol,
                 "Lbl",
@@ -231,7 +230,6 @@ pub fn view_settings(
                 redraw,
             );
 
-            let prev = state.ui.visibility.labels_atom_sn;
             toggle_btn(
                 &mut state.ui.visibility.labels_atom_sn,
                 "SN",

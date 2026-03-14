@@ -378,48 +378,60 @@ fn build_segment_mesh(
         n // disabled
     };
 
-    // ── 5. Color helper ───────────────────────────────────────────────────────
+    // Color helper ───────────────────────────────────────────────────────
     let res_color = |res_f: f32| -> Option<(u8, u8, u8, u8)> {
         let res_i = (res_f.round() as usize).min(residues.len().saturating_sub(1));
         let fallback = || color_viridis(res_i, 0, aa_count);
 
         // Atom / Bond view level: color by element or partial charge, same as non-ribbon mode.
         if matches!(view_sel_level, ViewSelLevel::Atom | ViewSelLevel::Bond) {
-            let (cr, cg, cb) = if atom_color_by_charge
-                && matches!(view_sel_level, ViewSelLevel::Atom)
-            {
-                // Average partial charge of all atoms in the residue.
-                if let Some(res) = residues.get(res_i) {
-                    let charges: Vec<f32> = res
-                        .atoms
-                        .iter()
-                        .filter_map(|&ai| atoms.get(ai)?.partial_charge)
-                        .collect();
-                    if charges.is_empty() {
-                        (0.5, 0.5, 0.5)
-                    } else {
-                        let avg = charges.iter().sum::<f32>() / charges.len() as f32;
-                        color_viridis_float(avg, CHARGE_MAP_MIN, CHARGE_MAP_MAX)
-                    }
-                } else {
-                    (0.5, 0.5, 0.5)
-                }
-            } else {
-                // Element color of the Cα atom for this residue.
-                let ca_element = residues
-                    .get(res_i)
-                    .and_then(|res| {
-                        res.atoms.iter().find_map(|&ai| {
-                            let a = atoms.get(ai)?;
-                            if a.role == Some(AtomRole::C_Alpha) { Some(a.element) } else { None }
-                        })
-                    });
-                match ca_element {
-                    Some(el) => el.color(),
-                    None => fallback(),
-                }
-            };
-            return Some(((cr * 255.0) as u8, (cg * 255.0) as u8, (cb * 255.0) as u8, 255u8));
+            // For now, applying by-position logic (E.g. as used by Res-level coloring elsewhere
+            // here; per-atom does not seem especially useful in ribbon mode. C+P from the res branch below.
+
+            let (cr, cg, cb) = color_viridis(res_i, 0, aa_count);
+            return Some((
+                (cr * 255.0) as u8,
+                (cg * 255.0) as u8,
+                (cb * 255.0) as u8,
+                255,
+            ));
+
+            //
+            // let (cr, cg, cb) = if atom_color_by_charge
+            //     && matches!(view_sel_level, ViewSelLevel::Atom)
+            // {
+            //     // Average partial charge of all atoms in the residue.
+            //     if let Some(res) = residues.get(res_i) {
+            //         let charges: Vec<f32> = res
+            //             .atoms
+            //             .iter()
+            //             .filter_map(|&ai| atoms.get(ai)?.partial_charge)
+            //             .collect();
+            //         if charges.is_empty() {
+            //             (0.5, 0.5, 0.5)
+            //         } else {
+            //             let avg = charges.iter().sum::<f32>() / charges.len() as f32;
+            //             color_viridis_float(avg, CHARGE_MAP_MIN, CHARGE_MAP_MAX)
+            //         }
+            //     } else {
+            //         (0.5, 0.5, 0.5)
+            //     }
+            // } else {
+            //     // Element color of the Cα atom for this residue.
+            //     let ca_element = residues
+            //         .get(res_i)
+            //         .and_then(|res| {
+            //             res.atoms.iter().find_map(|&ai| {
+            //                 let a = atoms.get(ai)?;
+            //                 if a.role == Some(AtomRole::C_Alpha) { Some(a.element) } else { None }
+            //             })
+            //         });
+            //     match ca_element {
+            //         Some(el) => el.color(),
+            //         None => fallback(),
+            //     }
+            // };
+            // return Some(((cr * 255.0) as u8, (cg * 255.0) as u8, (cb * 255.0) as u8, 255u8));
         }
 
         // Helper: get chain index for this residue via its first atom's chain field,
@@ -493,7 +505,7 @@ fn build_segment_mesh(
             (cr * 255.0) as u8,
             (cg * 255.0) as u8,
             (cb * 255.0) as u8,
-            255u8,
+            255,
         ))
     };
 
@@ -747,9 +759,11 @@ pub fn build_cartoon_mesh(
             .first()
             .and_then(|f| res_to_chain.get(&f.res_idx))
             .map_or(true, |&ci| chains[ci].visible);
+
         if !chain_visible {
             continue;
         }
+
         build_segment_mesh(
             &frames,
             seg.sec_struct,
