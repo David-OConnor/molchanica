@@ -22,7 +22,7 @@ pub const VIEW_DEPTH_NEAR_MIN: u16 = 2;
 pub const VIEW_DEPTH_NEAR_MAX: u16 = 300;
 
 // Distance between start and end of the fade. A smaller distance is a more aggressive fade.
-pub const FOG_HALF_DEPTH: u16 = 40;
+pub const FOG_HALF_DEPTH: u16 = 60;
 
 // The range to start fading distance objects, and when the fade is complete.
 pub const FOG_DIST_DEFAULT: u16 = 120;
