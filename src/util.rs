@@ -80,6 +80,20 @@ impl RedrawFlags {
             _ => unimplemented!(),
         }
     }
+
+    pub fn set_from_sel(&mut self, sel: &Selection) {
+        use Selection::*;
+        match sel {
+            AtomPeptide(_) | AtomsPeptide(_) | Residue(_) | Residues(_) | BondPeptide(_) => {
+                self.peptide = true
+            }
+            AtomLig(_) | AtomsLig(_) | BondLig(_) | BondsLig(_) => self.ligand = true,
+            AtomNucleicAcid(_) | BondNucleicAcid(_) => self.na = true,
+            AtomLipid(_) | BondLipid(_) => self.lipid = true,
+            AtomPocket(_) | BondPocket(_) => self.pocket = true,
+            None | ComponentEditor(_) => (),
+        }
+    }
 }
 
 pub fn mol_center_size(atoms: &[Atom]) -> (Vec3, f32) {

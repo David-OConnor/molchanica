@@ -309,9 +309,13 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
         ViewSelLevel::Bond => ("Prev bond", "Next bond"),
     };
 
-    ui.label("Find");
+    let help_txt = "Search in the active molecule by atom serial number, residue serial number, \
+    amino acid identifier, hetero residue name, etc.";
+
+    ui.label("Find").on_hover_text(help_txt);
     if ui
         .add(TextEdit::singleline(&mut state.ui.atom_res_search).desired_width(60.))
+        .on_hover_text(help_txt)
         .changed()
     {
         let updated = select_from_search(state);
@@ -323,39 +327,21 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
     if state.active_mol().is_some() {
         if ui
             .button(btn_text_p)
-            .on_hover_text("(Hotkey: Left arrow)")
+            .on_hover_text("(Hotkey: Left arrow). Change the selection")
             .clicked()
         {
             cycle_selected(state, scene, true);
-
-            match state.ui.selection {
-                Selection::AtomPeptide(_) | Selection::Residue(_) | Selection::BondPeptide(_) => {
-                    redraw.peptide = true
-                }
-                Selection::AtomLig(_) | Selection::BondLig(_) => redraw.ligand = true,
-                Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => redraw.na = true,
-                Selection::AtomLipid(_) | Selection::BondLipid(_) => redraw.lipid = true,
-                Selection::AtomPocket(_) | Selection::BondPocket(_) => redraw.pocket = true,
-                _ => (),
-            }
+            redraw.set_from_sel(&state.ui.selection);
         }
         // todo: DRY
 
         if ui
             .button(btn_text_n)
-            .on_hover_text("(Hotkey: Right arrow)")
+            .on_hover_text("(Hotkey: Right arrow. Change the selection)")
             .clicked()
         {
             cycle_selected(state, scene, false);
-
-            match state.ui.selection {
-                Selection::AtomPeptide(_) | Selection::Residue(_) => redraw.peptide = true,
-                Selection::AtomLig(_) | Selection::BondLig(_) => redraw.ligand = true,
-                Selection::AtomNucleicAcid(_) => redraw.na = true,
-                Selection::AtomLipid(_) => redraw.lipid = true,
-                Selection::AtomPocket(_) | Selection::BondPocket(_) => redraw.pocket = true,
-                _ => (),
-            }
+            redraw.set_from_sel(&state.ui.selection);
         }
     }
 }

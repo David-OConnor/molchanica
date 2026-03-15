@@ -7,7 +7,7 @@ use bincode::{Decode, Encode};
 use bio_files::ResidueType;
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
-use na_seq::{AaIdent, AminoAcid, Element, Element::Hydrogen, Nucleotide};
+use na_seq::{AminoAcid, Element, Element::Hydrogen};
 
 use crate::{
     drawing::MoleculeView,
@@ -118,7 +118,7 @@ impl Nearest {
 /// we use this if running this for both atoms and bonds, so we can find the closest of the two.
 ///
 /// todo: Refactor this to fix DRY among mol types.
-pub fn find_selected_atom_or_bond(
+pub fn find_sel_from_cursor_ray(
     items_pep_along_ray: &[(usize, usize)],
     items_lig_along_ray: &[(usize, usize)],
     items_na_along_ray: &[(usize, usize)],
@@ -148,7 +148,7 @@ pub fn find_selected_atom_or_bond(
         && items_lipid_along_ray.is_empty()
         && items_pocket_along_ray.is_empty()
     {
-        return (Selection::None, 0.);
+        return (Selection::None, f32::INFINITY);
     }
 
     const INIT_DIST: f32 = f32::INFINITY;
@@ -182,11 +182,19 @@ pub fn find_selected_atom_or_bond(
             continue;
         }
 
-        if *i_atom >= atoms_pep.len() {
-            eprintln!("Error: atom i {i_atom} out of bounds: {}", atoms_pep.len());
-            return (Selection::None, 0.0);
-        }
-        let atom = &atoms_pep[*i_atom];
+        // In bond mode `i_atom` is a bond index; in atom mode it's an atom index.
+        let atom = if bond_mode {
+            if *i_atom >= bonds_pep.len() {
+                continue;
+            }
+            &atoms_pep[bonds_pep[*i_atom].atom_0]
+        } else {
+            if *i_atom >= atoms_pep.len() {
+                eprintln!("Error: atom i {i_atom} out of bounds: {}", atoms_pep.len());
+                continue;
+            }
+            &atoms_pep[*i_atom]
+        };
 
         if ui.visibility.hide_sidechains || matches!(ui.mol_view, MoleculeView::Backbone) {
             if let Some(role) = atom.role
@@ -323,7 +331,7 @@ pub fn find_selected_atom_or_bond(
     // This is equivalent to our empty check above, but catches the case of the atom count being
     // empty due to hidden chains.
     if near_dist == INIT_DIST {
-        return (Selection::None, 0.);
+        return (Selection::None, f32::INFINITY);
     }
 
     let indices = nearest.indices();
@@ -765,6 +773,8 @@ fn get_atoms(mol: &MoleculeCommon) -> Vec<Atom> {
             posit: mol.atom_posits[i],
             element: a.element,
             residue: a.residue,
+            hetero: a.hetero,
+            role: a.role,
             ..Default::default()
         })
         .collect()
@@ -835,7 +845,7 @@ pub(crate) fn handle_selection_attempt(
         let atoms_along_ray_pocket =
             points_along_ray_atom(selected_ray, &pocket_atoms, dist_thresh);
 
-        find_selected_atom_or_bond(
+        find_sel_from_cursor_ray(
             &atoms_along_ray_pep,
             &atoms_along_ray_lig,
             &atoms_along_ray_na,
@@ -898,7 +908,7 @@ pub(crate) fn handle_selection_attempt(
         let atoms_along_ray_pocket =
             points_along_ray_bond(selected_ray, &pocket_bonds, &pocket_atoms, dist_thresh);
 
-        find_selected_atom_or_bond(
+        find_sel_from_cursor_ray(
             &atoms_along_ray_pep,
             &atoms_along_ray_lig,
             &atoms_along_ray_na,
@@ -1063,7 +1073,7 @@ pub fn handle_selection_attempt_mol_editor(
         let atoms_along_ray_lig =
             points_along_ray_atom(selected_ray, std::slice::from_ref(&atoms), dist_thresh);
 
-        find_selected_atom_or_bond(
+        find_sel_from_cursor_ray(
             &[],
             &atoms_along_ray_lig,
             &[],
@@ -1098,7 +1108,7 @@ pub fn handle_selection_attempt_mol_editor(
             dist_thresh,
         );
 
-        find_selected_atom_or_bond(
+        find_sel_from_cursor_ray(
             &[],
             &bonds_along_ray_lig,
             &[],
@@ -1470,6 +1480,27 @@ pub fn select_from_search(state: &mut State) -> bool {
         }
     }
 
+    // Match against a hetero residue name. We have outside of the view/select level branches,
+    // so you don't have to be in residue mode as a result.
+    if query_len >= 3
+        && let Some(pep) = &state.peptide
+        && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
+    {
+        for (i, res) in pep.residues.iter().enumerate() {
+            match &res.res_type {
+                // AA name searches are handled above.
+                ResidueType::AminoAcid(_) => (),
+                ResidueType::Water => {}
+                ResidueType::Other(name) => {
+                    if name.to_lowercase().contains(query) {
+                        state.ui.selection = Selection::Residue(i);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
     match state.ui.view_sel_level {
         ViewSelLevel::Atom => {
             for (i, atom) in mol.common().atoms.iter().enumerate() {
@@ -1498,17 +1529,6 @@ pub fn select_from_search(state: &mut State) -> bool {
                 if query.contains(&res.serial_number.to_string()) {
                     state.ui.selection = Selection::Residue(i);
                     return true;
-                }
-                match &res.res_type {
-                    // AA name searches are handled above.
-                    ResidueType::AminoAcid(aa) => (),
-                    ResidueType::Water => {}
-                    ResidueType::Other(name) => {
-                        if query.contains(&name.to_lowercase()) {
-                            state.ui.selection = Selection::Residue(i);
-                            return true;
-                        }
-                    }
                 }
             }
         }
