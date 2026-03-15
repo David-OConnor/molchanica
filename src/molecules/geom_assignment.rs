@@ -394,7 +394,7 @@ fn place_ring_systems(
                     done[ri] = true;
                     progress = true;
                 }
-            } else if place_ring_fused(ring, atoms, positioned, bonds) {
+            } else if place_ring_fused(ring, atoms, positioned) {
                 done[ri] = true;
                 progress = true;
             } else if placed_count == 1 {
@@ -402,7 +402,7 @@ fn place_ring_systems(
                 // ring-neighbours of the spiro centre via tetrahedral geometry,
                 // then let place_ring_fused finish the polygon.
                 if place_ring_spiro(ring, atoms, positioned, bonds, adj) {
-                    place_ring_fused(ring, atoms, positioned, bonds);
+                    place_ring_fused(ring, atoms, positioned);
                     done[ri] = true;
                     progress = true;
                 }
@@ -436,12 +436,7 @@ fn place_ring_regular(
 
 /// Attempt to place a fused ring anchored to the first adjacent pair of
 /// already-placed atoms found in ring order.  Returns `true` on success.
-fn place_ring_fused(
-    ring: &[usize],
-    atoms: &mut [Atom],
-    positioned: &mut Vec<bool>,
-    bonds: &[Bond],
-) -> bool {
+fn place_ring_fused(ring: &[usize], atoms: &mut [Atom], positioned: &mut Vec<bool>) -> bool {
     let n = ring.len();
 
     // Find the first adjacent pair of placed atoms (including the wrap-around edge).

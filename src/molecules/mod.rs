@@ -50,8 +50,9 @@ pub const POCKET_METADATA_VAL: &str = "true";
 // in a pharmacophore-type small molecule's pocket
 pub const PHARMACOPHORE_POCKET_ATOMS_KEY: &str = "pharmacophore_pocket_atoms";
 
-// todo: Experimenting
-pub trait MolGenericTrait {
+/// A trait-based molecule.
+// todo: Not, or barely used currently. We currently use MolGenricRef for the most part.
+pub trait MolGeneric {
     fn common(&self) -> &MoleculeCommon;
     fn common_mut(&mut self) -> &mut MoleculeCommon;
     fn to_ref(&self) -> MolGenericRef<'_>;

@@ -626,12 +626,12 @@ impl Pharmacophore {
 
         // pocket
         let pocket = if bytes[i] == 0 {
-            i += 1;
+            // i += 1;
             None
         } else {
             i += 1;
             let pocket_len = parse_le!(bytes, u32, i..i + 4) as usize;
-            i += 4;
+            // i += 4;
 
             bincode::decode_from_slice::<Pocket, _>(&bytes[i..i + pocket_len], config::standard())
                 .ok()

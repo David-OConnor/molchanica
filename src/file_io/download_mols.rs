@@ -47,32 +47,6 @@ pub fn load_sdf_pubchem(cid: u32) -> Result<MoleculeSmall, ReqError> {
     }
 }
 
-// todo: Diff between this and the 2 variant?
-pub fn load_geostd(ident: &str, load_data: &mut Option<GeostdItem>, state_ui: &mut StateUi) {
-    println!("Loading Amber Geostd data...");
-    let start = Instant::now();
-
-    match amber_geostd::find_mols(&ident) {
-        Ok(data) => match data.len() {
-            0 => handle_err(
-                state_ui,
-                "Unable to find an Amber molecule for this residue".to_string(),
-            ),
-            1 => {
-                *load_data = Some(data[0].clone());
-            }
-            _ => {
-                *load_data = Some(data[0].clone());
-                eprintln!("More than 1 geostd items available");
-            }
-        },
-        Err(e) => handle_err(state_ui, format!("Problem loading mol data online: {e:?}")),
-    }
-
-    let elapsed = start.elapsed().as_millis();
-    println!("Loaded Amber Geostd in {elapsed:.1}ms");
-}
-
 pub fn load_atom_coords_rcsb(
     ident: &str,
     state: &mut State,

@@ -302,9 +302,9 @@ pub struct StateVolatile {
     // /// If present, there must be one per vertex. Rebuild this whenever we
     // /// rebuild this mesh.
     // sa_surface_mesh_colors: Option<Vec<(u8, u8, u8)>>,
-    /// Outer the protein index. Inner: A collection of points on the surface, sufficient to
-    /// determine if a given atom is near the surface.
-    protein_sfc_mesh_coarse: Vec<Vec<f32>>,
+    // /// Outer the protein index. Inner: A collection of points on the surface, sufficient to
+    // /// determine if a given atom is near the surface.
+    // protein_sfc_mesh_coarse: Vec<Vec<f32>>,
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,

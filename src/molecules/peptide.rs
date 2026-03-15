@@ -395,7 +395,7 @@ impl MoleculePeptide {
             .collect();
 
         println!("Populating Hydrogens and dihedral angles...");
-        let mut start = Instant::now();
+        let start = Instant::now();
         // Note: These don't change here, but htis function populates them anyway, so why not.
         let dihedrals =
             populate_hydrogens_dihedrals(&mut atoms_gen, &mut res_gen, &mut chains_gen, ff_map, ph)

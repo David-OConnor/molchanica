@@ -8,7 +8,7 @@ use graphics::{Entity, Scene};
 use crate::{
     drawing,
     drawing::{EntityClass, draw_pocket},
-    molecules::{MolGenericRef, MolGenericTrait, MolType},
+    molecules::{MolGeneric, MolGenericRef, MolType},
     render::MESH_POCKET_START,
     state::{OperatingMode, State},
     util::clear_mol_entity_indices,
@@ -349,7 +349,7 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
     );
 }
 
-pub fn _draw_all_mol_of_type<T: MolGenericTrait>(
+pub fn _draw_all_mol_of_type<T: MolGeneric>(
     state: &mut State,
     scene: &mut Scene,
     mols: &mut [T],
@@ -451,7 +451,7 @@ fn update_inplace_inner_part2(
 /// This should be run in conjunction with `engine_updates.entities.push_class(EntityClass::Ligand as u32)` or similar.
 /// We update entities, then command an instance buffer update only of these updates
 /// todo: You can go even further and do it one lig and a time, instead of all ligs.
-pub fn update_all_ligs_inplace(state: &State, scene: &mut Scene) {
+pub fn _update_all_ligs_inplace(state: &State, scene: &mut Scene) {
     for (i, mol) in state.ligands.iter().enumerate() {
         let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
             eprintln!("Unable to update mol entities in place; missing entity indices");

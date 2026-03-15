@@ -11,6 +11,7 @@ use std::{
     fmt::Display,
 };
 
+use bio_files::BondType;
 use na_seq::Element::{self, *};
 
 use crate::{
@@ -63,9 +64,107 @@ impl Display for ComponentType {
 }
 
 impl ComponentType {
+    /// Return the canonical atoms and bonds for this component type.
+    ///
+    /// Atom order mirrors the order used when *building* a component in `MolComponents::new`
+    /// (key/junction atom first), so that `Connection::atom_0` / `atom_1` indices remain valid.
+    /// Bond indices are 0-based and local to the returned atom slice.
     pub fn to_atoms_bonds(&self) -> (Vec<Atom>, Vec<Bond>) {
-        // todo: Implement atom/bond synthesis for each component type.
-        (Vec::new(), Vec::new())
+        // Convenience: atom with only the element set.
+        let a = |element: Element| Atom {
+            element,
+            ..Default::default()
+        };
+        // Convenience: bond with correct indices and placeholder SNs (reassign_sns fixes these).
+        let b = |i: usize, j: usize, bond_type: BondType| Bond {
+            bond_type,
+            atom_0_sn: (i + 1) as u32,
+            atom_1_sn: (j + 1) as u32,
+            atom_0: i,
+            atom_1: j,
+            is_backbone: false,
+        };
+
+        match self {
+            // Single atom; no bonds.
+            ComponentType::Atom(el) => (vec![a(*el)], vec![]),
+
+            // Ring of `num_atoms` carbons; bond type reflects aromaticity.
+            // Atom order: follows ring closure (0-1-2-…-(n-1)-0), key atom at index 0.
+            ComponentType::Ring(ring) => {
+                let n = ring.num_atoms as usize;
+                let bt = match ring.ring_type {
+                    RingType::Aromatic => BondType::Aromatic,
+                    _ => BondType::Single,
+                };
+                let atoms: Vec<Atom> = (0..n).map(|_| a(Carbon)).collect();
+                let mut bonds: Vec<Bond> = (0..n - 1).map(|i| b(i, i + 1, bt)).collect();
+                bonds.push(b(n - 1, 0, bt)); // close the ring
+                (atoms, bonds)
+            }
+
+            // Linear carbon chain; key atom (junction) is index 0.
+            ComponentType::Chain(n) => {
+                let atoms: Vec<Atom> = (0..*n).map(|_| a(Carbon)).collect();
+                let bonds: Vec<Bond> = (0..*n - 1).map(|i| b(i, i + 1, BondType::Single)).collect();
+                (atoms, bonds)
+            }
+
+            // O(0) — H(1)
+            ComponentType::Hydroxyl => (
+                vec![a(Oxygen), a(Hydrogen)],
+                vec![b(0, 1, BondType::Single)],
+            ),
+
+            // O(0) = C(1)  (O is the key atom per component-building convention)
+            ComponentType::Carbonyl => {
+                (vec![a(Oxygen), a(Carbon)], vec![b(0, 1, BondType::Double)])
+            }
+
+            // C(0) =O(1), C(0)–O(2)–H(3)
+            ComponentType::Carboxylate => (
+                vec![a(Carbon), a(Oxygen), a(Oxygen), a(Hydrogen)],
+                vec![
+                    b(0, 1, BondType::Double), // C=O
+                    b(0, 2, BondType::Single), // C-OH
+                    b(2, 3, BondType::Single), // O-H
+                ],
+            ),
+
+            // N(0)–H(1), N(0)–H(2)  (primary amine; lone Hs that were captured)
+            ComponentType::Amine => (
+                vec![a(Nitrogen), a(Hydrogen), a(Hydrogen)],
+                vec![b(0, 1, BondType::Single), b(0, 2, BondType::Single)],
+            ),
+
+            // N(0)–H(1)  (amide N; the carbonyl C lives in a different component)
+            ComponentType::Amide => (
+                vec![a(Nitrogen), a(Hydrogen)],
+                vec![b(0, 1, BondType::Single)],
+            ),
+
+            // N(0)–H(1), N(0)–S(2), S(2)=O(3), S(2)=O(4)
+            ComponentType::Sulfonamide => (
+                vec![a(Nitrogen), a(Hydrogen), a(Sulfur), a(Oxygen), a(Oxygen)],
+                vec![
+                    b(0, 1, BondType::Single), // N-H
+                    b(0, 2, BondType::Single), // N-S
+                    b(2, 3, BondType::Double), // S=O
+                    b(2, 4, BondType::Double), // S=O
+                ],
+            ),
+
+            // N(0)–H(1), N(0)=S(2), S(2)=O(3), S(2)=O(4)  (sulfonimide has N=S)
+            ComponentType::Sulfonimide => (
+                vec![a(Nitrogen), a(Hydrogen), a(Sulfur), a(Oxygen), a(Oxygen)],
+                vec![
+                    b(0, 1, BondType::Single), // N-H
+                    b(0, 2, BondType::Double), // N=S
+                    b(2, 3, BondType::Double), // S=O
+                    b(2, 4, BondType::Double), // S=O
+                ],
+            ),
+        }
     }
 }
 
@@ -194,10 +293,7 @@ impl MolComponents {
         //     );
         // }
 
-        for (ri, ring) in char.rings.iter().enumerate() {
-            // if ring_in_system.contains(&ri) {
-            //     continue;
-            // }
+        for ring in &char.rings {
             let ring_atoms: Vec<usize> = ring
                 .atoms
                 .iter()
@@ -431,17 +527,43 @@ impl MolComponents {
     }
 
     pub fn to_atoms_bonds(&self) -> (Vec<Atom>, Vec<Bond>) {
-        let mut atoms = Vec::new();
-        let mut bonds = Vec::new();
+        let mut atoms: Vec<Atom> = Vec::new();
+        let mut bonds: Vec<Bond> = Vec::new();
 
+        // Build each component's atoms/bonds and record where in the flat array it starts.
+        let mut comp_offsets: Vec<usize> = Vec::with_capacity(self.components.len());
+        for comp in &self.components {
+            let offset = atoms.len();
+            comp_offsets.push(offset);
+
+            let (comp_atoms, comp_bonds) = comp.comp_type.to_atoms_bonds();
+
+            // Shift intra-component bond indices to the global position.
+            for cb in comp_bonds {
+                bonds.push(Bond {
+                    atom_0: cb.atom_0 + offset,
+                    atom_1: cb.atom_1 + offset,
+                    ..cb
+                });
+            }
+            atoms.extend(comp_atoms);
+        }
+
+        // Add one bond per inter-component connection.
+        // `con.atom_0/1` are positions within the respective component's local atom list,
+        // so adding the component offset gives the global index.
+        // Bond type is not stored in Connection; Single covers the common case.
         for con in &self.connections {
-            let (atoms_0, bonds_0) = self.components[con.comp_0].comp_type.to_atoms_bonds();
-            let (atoms_1, bonds_1) = self.components[con.comp_1].comp_type.to_atoms_bonds();
-
-            atoms.extend(atoms_0);
-            atoms.extend(atoms_1);
-
-            // todo: reconstruct the inter-component bond using con.atom_0 / atom_1 offsets.
+            let a0 = comp_offsets[con.comp_0] + con.atom_0;
+            let a1 = comp_offsets[con.comp_1] + con.atom_1;
+            bonds.push(Bond {
+                bond_type: BondType::Single,
+                atom_0_sn: 0, // fixed by reassign_sns below
+                atom_1_sn: 0,
+                atom_0: a0,
+                atom_1: a1,
+                is_backbone: false,
+            });
         }
 
         let mut mol = MoleculeCommon::new(String::new(), atoms, bonds, HashMap::new(), None);

@@ -29,9 +29,8 @@ use crate::{
     mol_characterization::MolCharacterization,
     mol_components::MolComponents,
     molecules::{
-        Atom, Bond, Chain, MolGenericRef, MolGenericTrait, MolIdent,
-        PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY, Residue, common::MoleculeCommon,
-        pocket::Pocket,
+        Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent, PHARMACOPHORE_POCKET_ATOMS_KEY,
+        POCKET_METADATA_KEY, Residue, common::MoleculeCommon, pocket::Pocket,
     },
     screening::pharmacophore::{Pharmacophore, PharmacophoreFeature},
     therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer},
@@ -124,7 +123,7 @@ impl MoleculeSmall {
     }
 }
 
-impl MolGenericTrait for MoleculeSmall {
+impl MolGeneric for MoleculeSmall {
     fn common(&self) -> &MoleculeCommon {
         &self.common
     }

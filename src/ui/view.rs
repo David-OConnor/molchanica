@@ -12,7 +12,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, DENS_ISO_MAX, DENS_ISO_MIN, misc,
-        misc::{section_box, toggle_btn, toggle_btn_inv},
+        misc::{active_color, section_box, toggle_btn, toggle_btn_inv},
     },
     util::{RedrawFlags, clear_mol_entity_indices},
 };
@@ -273,13 +273,21 @@ pub fn view_settings(
             if let Some(mol) = &state.peptide {
                 if let Some(dens) = &mol.elec_density {
                     let mut redraw_dens = false;
-                    toggle_btn_inv(
-                        &mut state.ui.visibility.hide_density_point_cloud,
-                        "Density",
-                        "Show or hide the electron density point cloud visualization",
-                        ui,
-                        redraw,
-                    );
+
+                    // `toggle_btn_inv`, but with out `RedrawFlags`.
+                    let color = active_color(!state.ui.visibility.hide_density_point_cloud);
+                    if ui
+                        .button(RichText::new("Density").color(color))
+                        .on_hover_text(
+                            "Show or hide the electron density point cloud visualization",
+                        )
+                        .clicked()
+                    {
+                        state.ui.visibility.hide_density_point_cloud =
+                            !state.ui.visibility.hide_density_point_cloud;
+                        // todo: Don't need to redraw everything.
+                        redraw_dens = true;
+                    }
 
                     if redraw_dens {
                         if state.ui.visibility.hide_density_point_cloud {

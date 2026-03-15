@@ -59,6 +59,7 @@ macro_rules! copy_le {
     ($dest:expr, $src:expr, $range:expr) => {{ $dest[$range].copy_from_slice(&$src.to_le_bytes()) }};
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u8)]
 pub enum PrefsPacketType {
@@ -66,6 +67,7 @@ pub enum PrefsPacketType {
     Misc = 1,
 }
 
+#[allow(unused)]
 pub struct PrefsPacketHeader {
     pub packet_type: PrefsPacketType,
     // In bytes
@@ -73,6 +75,7 @@ pub struct PrefsPacketHeader {
 }
 
 impl PrefsPacketHeader {
+    #[allow(unused)]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut result = vec![0; 5];
         result[0] = self.packet_type as u8;

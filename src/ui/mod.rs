@@ -791,15 +791,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             }
 
             let metadata_loaded = false; // avoids borrow error.
-
-            {
-                let mut close = false;
-                display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);
-
-                if close {
-                    close_peptide(state, scene, &mut updates);
-                }
-            }
+            display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);
 
             let mut dm_loaded = None; // avoids a double-borrow error.
             if let Some(mol) = &mut state.peptide {
@@ -1026,27 +1018,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
                 ).clicked() {
                     state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
-                }
-
-
-                // todo: Temp loc for LogP sim.
-                // This approach avoids a dbl borrow.
-                let small_mol = match state.active_mol() {
-                    Some(MolGenericRef::Small(m)) => Some(m.clone()),
-                    _ => None,
-                };
-
-                if let Some(m) = small_mol {
-                    if ui.button("LogP sim")
-                        .on_hover_text("Estimate LogP by performing a simulation of the molecule \
-                        in water and octanol. Broken/WIP.")
-                        .clicked()
-                    {
-                        match logp_sim::run(&m, state, scene, &mut updates) {
-                            Ok(v) => println!("Logp sim result: {v}"),
-                            Err(e) => handle_err(&mut state.ui, format!("Error running the LogP simulation: {e:?}")),
-                        }
-                    }
                 }
             });
         });

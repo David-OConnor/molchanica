@@ -108,6 +108,7 @@ impl DatasetTdc {
         .to_string()
     }
 
+    #[cfg(feature = "train")]
     /// Returns (csv file path, mols (SDF) folder)
     fn csv_mol_paths(self, path: &Path) -> io::Result<(PathBuf, PathBuf)> {
         let name = self.name();

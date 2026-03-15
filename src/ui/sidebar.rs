@@ -11,6 +11,7 @@ use crate::{
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
+    therapeutic::logp_sim,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, pharmacophore,
@@ -572,20 +573,30 @@ pub(in crate::ui) fn sidebar(
 
             // todo: UI flag to show or hide this.
             if state.ui.ui_vis.mol_char && !edit_mode {
-                let mut toggled = false; // Avoid double borrow.
+                // Avoid double borrow.
+                let mut run_logp_sim = false;
+
                 if let Some(m) = &state.active_mol() {
                     if let MolGenericRef::Small(mol) = m {
-                        // if ui
-                        //     .button(RichText::new("Close details").color(Color32::LIGHT_RED))
-                        //     .clicked()
-                        // {
-                        //     toggled = true;
-                        // }
-                        char_adme::mol_char_disp(mol, ui);
+                        char_adme::mol_char_disp(mol, ui, &mut run_logp_sim);
                     }
                 }
-                if toggled {
-                    state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
+
+                if run_logp_sim {
+                    // Some gymnastics here to avoid a borrow error.
+                    if let Some(active_mol) = state.volatile.active_mol.as_ref() {
+                        let mol = state.get_small(active_mol.1).cloned();
+
+                        if let Some(mol) = mol {
+                            match logp_sim::run(&mol, state, scene, updates) {
+                                Ok(v) => println!("Logp sim result: {v}"),
+                                Err(e) => handle_err(
+                                    &mut state.ui,
+                                    format!("Error running the LogP simulation: {e:?}"),
+                                ),
+                            }
+                        }
+                    }
                 }
             }
 

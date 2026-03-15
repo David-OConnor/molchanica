@@ -23,7 +23,7 @@ use lin_alg::{
 use crate::{
     drawing::EntityClass,
     molecules::{
-        Atom, MolGenericRef, MolGenericTrait, MolType,
+        Atom, MolGeneric, MolGenericRef, MolType,
         common::{MoleculeCommon, reassign_bond_indices},
         peptide::MoleculePeptide,
         small::MoleculeSmall,
@@ -118,7 +118,7 @@ impl<Context> Decode<Context> for Pocket {
     }
 }
 
-impl MolGenericTrait for Pocket {
+impl MolGeneric for Pocket {
     fn common(&self) -> &MoleculeCommon {
         &self.common
     }

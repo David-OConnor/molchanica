@@ -25,7 +25,7 @@ use na_seq::{
 
 use crate::{
     molecules::{
-        Atom, Bond, MolGenericRef, MolGenericTrait, MolType, Residue, common::MoleculeCommon,
+        Atom, Bond, MolGeneric, MolGenericRef, MolType, Residue, common::MoleculeCommon,
         peptide::MoleculePeptide,
     },
     util::rotate_atoms_about_point,
@@ -35,19 +35,14 @@ use crate::{
 // This is a suitable default for B-DNA. (Note: Measurement of 3.17 from bdna mmCIF file, with radius of 4.65)
 const RISE: f64 = 3.4;
 
-const N1_9_RADIUS: f64 = 4.64;
-
 // ~10.5 bp per turn, so ~34 Å per helical turn (10.5 × 3.4)
 const TWIST: f64 = 34.0_f64.to_radians();
 
 // Used for aligning bases with each other. These are distances between the heavy atoms; not the H.
 // These are all div2. First listed name is for first listed NT. I.e. A: N1 to T: N3.
 const H_BOND_AT_N1_N3_DIV2: f64 = 2.85 / 2.;
-// const H_BOND_AT_N6_O4_DIV2: f64 = 2.81 / 2.;
 // todo: Update these A/R
 const H_BOND_CG_N3_N1_DIV2: f64 = 2.83 / 2.;
-// const H_BOND_CG_N4_O6_DIV2: f64 = 2.71 / 2.;
-// const H_BOND_CG_O2_N2_DIV2: f64 = 2.82 / 2.;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Encode, Decode)]
 pub enum NucleicAcidType {
@@ -653,7 +648,7 @@ impl MoleculeNucleicAcid {
     }
 }
 
-impl MolGenericTrait for MoleculeNucleicAcid {
+impl MolGeneric for MoleculeNucleicAcid {
     fn common(&self) -> &MoleculeCommon {
         &self.common
     }

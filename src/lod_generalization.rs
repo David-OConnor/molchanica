@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! An experimental module related to viewing and conducting MD sims on multiple,
 //! or a gradual level of size and detail. For example, atom-level MD simulations
 //! for a single protein or collection of small molecules, and coarser, more zoomed-out

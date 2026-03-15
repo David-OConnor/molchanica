@@ -1,14 +1,14 @@
 use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::{
-    label,
+    button, label,
     mol_characterization::MolCharacterization,
     molecules::{MolIdent, small::MoleculeSmall},
     therapeutic::{Adme, Toxicity},
-    ui::{COL_SPACING, ROW_SPACING},
+    ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
 };
 
-fn char_basics(char: &MolCharacterization, ui: &mut Ui) {
+fn char_basics(char: &MolCharacterization, ui: &mut Ui, run_logp_sim: &mut bool) {
     // Basics
     char_item(
         ui,
@@ -139,17 +139,37 @@ fn char_basics(char: &MolCharacterization, ui: &mut Ui) {
     // };
     let log_p = char.log_p;
 
-    char_item(
-        ui,
-        &[
-            (
-                "LogP",
-                &format!("{:.2}", log_p),
-                "Partition coefficient; a proxy for lipophilicity. The higher the value, the more lipophilic, generally.",
-            ),
-            ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
-        ],
-    );
+    ui.horizontal(|ui| {
+        char_item(
+            ui,
+            &[
+                (
+                    "LogP",
+                    &format!("{:.2}", log_p),
+                    "Partition coefficient; a proxy for lipophilicity. The higher the value, the more lipophilic, generally.",
+                ),
+            ],
+        );
+
+        ui.add_space(COL_SPACING / 2.);
+
+        if button!(ui, "LogP sim", COLOR_ACTION, "Estimate LogP by performing a simulation of the molecule \
+                        in water and " )
+            .clicked()
+        {
+            *run_logp_sim = true;
+        }
+
+        ui.add_space(COL_SPACING / 2.);
+
+        char_item(
+            ui,
+            &[
+                ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
+            ],
+        );
+
+    });
 
     char_item(
         ui,
@@ -341,7 +361,7 @@ fn char_item(ui: &mut Ui, items: &[(&str, &str, &str)]) {
     });
 }
 
-pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
+pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui, run_logp_sim: &mut bool) {
     let Some(char) = &mol.characterization else {
         return;
     };
@@ -380,7 +400,7 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui) {
             ui.separator();
             ui.add_space(ROW_SPACING);
 
-            char_basics(char, ui);
+            char_basics(char, ui, run_logp_sim);
             ui.separator();
             ui.add_space(ROW_SPACING);
 
