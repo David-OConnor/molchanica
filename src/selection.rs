@@ -27,7 +27,7 @@ pub enum Selection {
     AtomPeptide(usize),
     /// Of the protein
     Residue(usize),
-    /// Of the protein - multiple residues
+    /// Of the protein; multiple residues
     Residues(Vec<usize>),
     /// Of the protein
     AtomsPeptide(Vec<usize>),
@@ -966,18 +966,38 @@ pub(crate) fn handle_selection_attempt(
     // In Residue mode, convert the winning peptide atom/bond selection to a Residue.
     // This mirrors the Atom/Bond mode logic: find the nearest atom or bond first, then classify.
     let selection = if state.ui.view_sel_level == ViewSelLevel::Residue {
+        let shift_held = state.volatile.inputs_commanded.run;
         match &selection {
-            Selection::AtomPeptide(atom_i) => pep_atoms
-                .get(*atom_i)
-                .and_then(|a| a.residue)
-                .map_or(Selection::None, Selection::Residue),
-            Selection::BondPeptide(bond_i) => state
-                .peptide
-                .as_ref()
-                .and_then(|p| p.common.bonds.get(*bond_i))
-                .and_then(|b| pep_atoms.get(b.atom_0))
-                .and_then(|a| a.residue)
-                .map_or(Selection::None, Selection::Residue),
+            Selection::AtomPeptide(atom_i) => {
+                match pep_atoms.get(*atom_i).and_then(|a| a.residue) {
+                    None => Selection::None,
+                    Some(new_res_i) => {
+                        if shift_held {
+                            residue_multi_sel_helper(&state.ui.selection, new_res_i)
+                        } else {
+                            Selection::Residue(new_res_i)
+                        }
+                    }
+                }
+            }
+            Selection::BondPeptide(bond_i) => {
+                let new_res_i = state
+                    .peptide
+                    .as_ref()
+                    .and_then(|p| p.common.bonds.get(*bond_i))
+                    .and_then(|b| pep_atoms.get(b.atom_0))
+                    .and_then(|a| a.residue);
+                match new_res_i {
+                    None => Selection::None,
+                    Some(new_res_i) => {
+                        if shift_held {
+                            residue_multi_sel_helper(&state.ui.selection, new_res_i)
+                        } else {
+                            Selection::Residue(new_res_i)
+                        }
+                    }
+                }
+            }
             _ => selection,
         }
     } else {
@@ -1156,6 +1176,25 @@ pub fn handle_selection_attempt_mol_editor(
     }
 
     *redraw = true;
+}
+
+/// Handles logic for building multi-residue selections on shift-click. Uses toggling behavior.
+fn residue_multi_sel_helper(current: &Selection, new_res_i: usize) -> Selection {
+    let mut updated = match current {
+        Selection::Residue(i) => vec![*i],
+        Selection::Residues(v) => v.clone(),
+        _ => vec![],
+    };
+    if updated.contains(&new_res_i) {
+        updated.retain(|i| i != &new_res_i);
+    } else {
+        updated.push(new_res_i);
+    }
+    match updated.len() {
+        0 => Selection::None,
+        1 => Selection::Residue(updated[0]),
+        _ => Selection::Residues(updated),
+    }
 }
 
 /// Handles logic regarding selection changes updating multi-atom lists, or reverting
@@ -1422,7 +1461,7 @@ pub fn select_from_search(state: &mut State) -> bool {
                 // todo: C+P from atom section above
                 for (i, atom) in mol.common().atoms.iter().enumerate() {
                     if query == &atom.serial_number.to_string() {
-                        state.ui.selection = Selection::AtomPeptide(i);
+                        state.ui.selection = Selection::from_atom(mol_type, mol_i, i);
                         return true;
                     }
                 }

@@ -38,7 +38,6 @@ use crate::{
     state::{OperatingMode, ResColoring, State, StateUi, Visibility},
     util::{aromatic_ring_centroid, clear_mol_entity_indices, find_neighbor_posit, orbit_center},
 };
-// const LIGAND_COLOR_ANCHOR: Color = (1., 0., 1.);
 
 pub mod atoms_bonds;
 pub mod ribbon_mesh;

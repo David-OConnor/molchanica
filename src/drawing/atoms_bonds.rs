@@ -172,6 +172,13 @@ pub fn atom_color(
                 result = COLOR_SELECTED;
             }
         }
+        Selection::Residues(sel_is) => {
+            if let Some(res_i) = atom.residue
+                && sel_is.contains(&res_i)
+            {
+                result = COLOR_SELECTED;
+            }
+        }
         Selection::AtomsPeptide(sel_is) => {
             if sel_is.contains(&item_i) {
                 result = COLOR_SELECTED;
