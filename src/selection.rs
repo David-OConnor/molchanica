@@ -1,13 +1,13 @@
 //! For determining which items the user has selected using the mouse cursor. Involves
 //! mapping 2D to 3D coordinates, and choosing the right item from what's open and visible.
 
-use std::{fmt, fmt::Display};
+use std::{fmt, fmt::Display, str::FromStr};
 
 use bincode::{Decode, Encode};
 use bio_files::ResidueType;
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
-use na_seq::{AaIdent, Element, Element::Hydrogen};
+use na_seq::{AaIdent, AminoAcid, Element, Element::Hydrogen, Nucleotide};
 
 use crate::{
     drawing::MoleculeView,
@@ -1436,6 +1436,7 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
     }
 }
 
+/// Select an atom or residue by serial number. Or select a residue by AA name.
 /// Return true if selected something.
 pub fn select_from_search(state: &mut State) -> bool {
     let query = &state.ui.atom_res_search.to_lowercase();
@@ -1446,6 +1447,28 @@ pub fn select_from_search(state: &mut State) -> bool {
 
     let mol_type = mol.mol_type();
     let mol_i = state.volatile.active_mol.unwrap().1;
+
+    // If 1 or 3 letters and alphanumeric, see if the query is an AA ident. Then
+    // select all residues with this AA.
+    let query_len = query.len();
+    if (query_len == 1 || query_len == 3)
+        && let Some(pep) = &state.peptide
+        && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
+    {
+        if let Ok(aa) = AminoAcid::from_str(&query) {
+            let mut res_sns = Vec::new();
+            for (i, res) in pep.residues.iter().enumerate() {
+                if let ResidueType::AminoAcid(aa_) = res.res_type
+                    && aa_ == aa
+                {
+                    res_sns.push(i);
+                }
+            }
+
+            state.ui.selection = Selection::Residues(res_sns);
+            return true;
+        }
+    }
 
     match state.ui.view_sel_level {
         ViewSelLevel::Atom => {
@@ -1477,12 +1500,8 @@ pub fn select_from_search(state: &mut State) -> bool {
                     return true;
                 }
                 match &res.res_type {
-                    ResidueType::AminoAcid(aa) => {
-                        if query.contains(&aa.to_str(AaIdent::ThreeLetters).to_lowercase()) {
-                            state.ui.selection = Selection::Residue(i);
-                            return true;
-                        }
-                    }
+                    // AA name searches are handled above.
+                    ResidueType::AminoAcid(aa) => (),
                     ResidueType::Water => {}
                     ResidueType::Other(name) => {
                         if query.contains(&name.to_lowercase()) {
