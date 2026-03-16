@@ -303,17 +303,14 @@ fn redraw_inplace_helper(
 
     let mol = match mol_type {
         MolType::Peptide => {
-            unimplemented!()
-            // todo: A/R
-            // wrappers::update_single_peptide_inplace(mol_i, state, scene);
-            //
-            // if mol_i >= state.ligands.len() {
-            //     eprintln!("{err}");
-            //     wrappers::draw_all_ligs(state, scene);
-            //     return;
-            // }
-            //
-            // &mut state.ligands[mol_i].common
+            wrappers::update_single_peptide_inplace(state, scene);
+
+            if state.peptide.is_none() {
+                eprintln!("{err}");
+                return;
+            }
+
+            &mut state.peptide.as_mut().unwrap().common
         }
         MolType::Ligand => {
             wrappers::update_single_ligand_inplace(mol_i, state, scene);
@@ -849,6 +846,11 @@ fn post_event_cleanup(
 
     if redraw.pocket && op_mode == OperatingMode::Primary {
         wrappers::draw_all_pockets(state, scene);
+        updates.entities = EntityUpdate::All;
+    }
+
+    if redraw_in_place.peptide && op_mode == OperatingMode::Primary {
+        drawing::draw_peptide(state, scene);
         updates.entities = EntityUpdate::All;
     }
 

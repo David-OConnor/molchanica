@@ -51,8 +51,6 @@ pub fn handle_mol_manip_in_plane(
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        return; // todo temp
-
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
@@ -301,10 +299,9 @@ pub fn handle_mol_manip_in_out(
     // Move the molecule forward and backwards relative to the camera on scroll.
     match state.volatile.mol_manip.mode {
         ManipMode::Move((mol_type, mol_i)) => {
-
             // Note: We can't use `get_mol` here due to borrow errors I don't understand.
             let mol = match op_mode {
-                    OperatingMode::Primary => match mol_type {
+                OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
                         if let Some(p) = &mut state.peptide {
                             &mut p.common

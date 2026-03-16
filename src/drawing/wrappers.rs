@@ -499,6 +499,20 @@ pub fn _update_all_pockets_inplace(state: &State, scene: &mut Scene) {
     }
 }
 
+pub fn update_single_peptide_inplace(state: &State, scene: &mut Scene) {
+    let Some(mol) = &state.peptide else {
+        eprintln!("Unable to update peptide entities in place; no peptide in state");
+        return;
+    };
+    let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
+        eprintln!("Unable to update peptide entities in place; missing entity indices");
+        return;
+    };
+
+    let mol = MolGenericRef::Peptide(mol);
+    update_inplace_inner(mol, 0, ent_i_start, ent_i_end, state, scene);
+}
+
 pub fn update_single_ligand_inplace(i: usize, state: &State, scene: &mut Scene) {
     let mol = &state.ligands[i];
     let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
