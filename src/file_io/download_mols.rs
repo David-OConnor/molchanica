@@ -15,7 +15,7 @@ use crate::{
         small::MoleculeSmall,
     },
     render::set_flashlight,
-    state::{State, StateUi},
+    state::State,
     util::handle_err,
 };
 

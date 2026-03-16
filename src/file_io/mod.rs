@@ -443,7 +443,7 @@ impl State {
             }
             "sdf" => match self.active_mol() {
                 Some(mol) => {
-                    /// V2000 only for now. Allow configuring, eventually.
+                    // V2000 only for now. Allow configuring, eventually.
                     mol.to_sdf()?.save(path, SdfFormat::V2000)?;
 
                     if mol.common().metadata.contains_key(POCKET_METADATA_KEY) {

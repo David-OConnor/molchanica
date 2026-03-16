@@ -30,7 +30,7 @@ use crate::{
     mol_components::MolComponents,
     molecules::{
         Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        POCKET_METADATA_KEY, Residue, common::MoleculeCommon, pocket::Pocket,
+        Residue, common::MoleculeCommon, pocket::Pocket,
     },
     screening::pharmacophore::{Pharmacophore, PharmacophoreFeature},
     therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer},

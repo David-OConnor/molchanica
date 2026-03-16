@@ -26,7 +26,6 @@ use crate::{
     },
     prefs::OpenType,
     render::MESH_POCKET_START,
-    screening,
     screening::{
         parquet::{MolMeta, ParquetMolDb},
         screen_by_alignment,

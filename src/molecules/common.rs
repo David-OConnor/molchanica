@@ -3,11 +3,9 @@
 //!
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     f64::consts::PI,
-    io,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU32, Ordering},
 };
 
 use bio_files::BondType;

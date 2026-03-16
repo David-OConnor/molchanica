@@ -62,7 +62,7 @@ fn mol_picker_one(
         COLOR_INACTIVE
     };
 
-    /// Frame so we can draw a colored box around the active one.
+    // Frame so we can draw a colored box around the active one.
     frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

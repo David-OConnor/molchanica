@@ -7,7 +7,7 @@ use graphics::{Entity, Scene};
 
 use crate::{
     drawing,
-    drawing::{EntityClass, draw_pocket},
+    drawing::EntityClass,
     molecules::{MolGeneric, MolGenericRef, MolType},
     render::MESH_POCKET_START,
     state::{OperatingMode, State},

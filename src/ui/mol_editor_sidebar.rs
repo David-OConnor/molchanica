@@ -1,4 +1,4 @@
-use egui::{Color32, RichText, Ui};
+use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 
 use crate::{

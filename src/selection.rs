@@ -14,7 +14,7 @@ use crate::{
     mol_editor::sync_md,
     mol_manip,
     mol_manip::ManipMode,
-    molecules::{Atom, AtomRole, Bond, Chain, MolType, Residue, common::MoleculeCommon},
+    molecules::{Atom, AtomRole, Bond, Chain, MolType, common::MoleculeCommon},
     state::{OperatingMode, State, StateUi},
     util::{RedrawFlags, orbit_center},
 };

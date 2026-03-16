@@ -28,7 +28,6 @@ use crate::{
     render::set_flashlight,
     selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},
     state::{CamSnapshot, OperatingMode, ResColoring, State},
-    therapeutic::logp_sim,
     threads::handle_thread_rx,
     ui::{
         misc::section_box,
@@ -40,8 +39,8 @@ use crate::{
         view::{ui_section_vis, view_settings},
     },
     util::{
-        RedrawFlags, check_prefs_save, close_mol, close_peptide, handle_err, handle_scene_flags,
-        handle_success, orbit_center,
+        RedrawFlags, check_prefs_save, close_mol, handle_err, handle_scene_flags, handle_success,
+        orbit_center,
     },
 };
 

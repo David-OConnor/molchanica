@@ -226,7 +226,7 @@ impl Infer {
             MAX_PHARM,
         );
 
-        // 4. Create Tensors
+        // Create Tensors
         let t_param_feats = Tensor::<InferBackend, 2>::from_data(
             TensorData::new(feat_params, [1, n_feat_params]),
             &self.device,

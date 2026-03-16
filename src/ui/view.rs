@@ -303,13 +303,18 @@ pub fn view_settings(
                     }
 
                     let mut redraw_dens_surface = false;
-                    toggle_btn_inv(
-                        &mut state.ui.visibility.hide_density_surface,
-                        "Density sfc",
-                        "Show or hide the electron density isosurface visualization",
-                        ui,
-                        redraw,
-                    );
+
+                    // This is `toggle_btn_inv`, but with out `RedrawFlags`.
+                    let color = active_color(!state.ui.visibility.hide_density_surface);
+                    if ui
+                        .button(RichText::new("Density sfc").color(color))
+                        .on_hover_text("Show or hide the electron density isosurface visualization")
+                        .clicked()
+                    {
+                        state.ui.visibility.hide_density_surface =
+                            !state.ui.visibility.hide_density_surface;
+                        redraw_dens_surface = true;
+                    }
 
                     if !state.ui.visibility.hide_density_surface {
                         let iso_prev = state.ui.density_iso_level;

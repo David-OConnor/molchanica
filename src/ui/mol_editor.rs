@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use bio_files::BondType;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
@@ -9,7 +7,7 @@ use na_seq::{
 };
 
 use crate::{
-    cam::{cam_reset_controls, move_cam_to_active_mol},
+    cam::cam_reset_controls,
     drawing::MoleculeView,
     mol_editor,
     mol_editor::{

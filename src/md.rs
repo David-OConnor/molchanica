@@ -367,8 +367,6 @@ fn add_copies(
     copies: usize,
     box_dims: Option<(f32, f32, f32)>,
 ) {
-    use rand::seq::SliceRandom;
-
     // Preferred minimum atom-to-atom distance between copies.
     // Soft overlaps at this scale are resolved cleanly by the energy minimiser.
     const MIN_ATOM_DIST_SQ: f64 = 1.5 * 1.5;

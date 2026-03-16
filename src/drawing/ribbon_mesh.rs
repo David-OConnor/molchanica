@@ -30,8 +30,8 @@ use lin_alg::f32::Vec3 as Vec3F32;
 
 use crate::{
     drawing::{
-        CHARGE_MAP_MAX, CHARGE_MAP_MIN, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN,
-        color_alternating_contrast, color_viridis, color_viridis_float,
+        HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, color_alternating_contrast, color_viridis,
+        color_viridis_float,
     },
     molecules::{Atom, AtomRole, Chain, Residue, aa_color},
     selection::ViewSelLevel,

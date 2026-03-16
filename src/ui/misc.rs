@@ -7,7 +7,7 @@ const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 use crate::{
     md,
     state::State,
-    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING, handle_input},
+    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING},
     util::{RedrawFlags, handle_err},
 };
 

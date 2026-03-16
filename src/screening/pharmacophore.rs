@@ -95,7 +95,7 @@ impl PharmacophoreFeatType {
         vec![
             Hydrophobic,
             Hydrophilic,
-            /// Has significance in Pi bonding, e.g. stacked rings.
+            // Has significance in Pi bonding, e.g. stacked rings.
             Aromatic,
             Acceptor,
             AcceptorProjected, // Directional
@@ -103,31 +103,30 @@ impl PharmacophoreFeatType {
             Cation,
             Anion,
             DonorProjected, // Directional
-            // HeavyAtom,
-            // PlanarAtom,
-            // NCNPlus,
-            // Ring,
-            // RingNonPlanar,
-            // RingPlanarProjected,
-            // Purine,
-            // Pyrimidine,
-            // Adenine,
-            // Cytosine,
-            // Guanine,
-            // Thymine,
-            // Uracil,
-            // Deoxyribose,
-            // Ribose,
-            // ExitVector,
-            // Halogen,
-            // PiRingCenter,
-            // AromaticOrPiRingNormal
-            // MetalLigator,
-            // MetalLigatorProjection
-            // Link source
-            // Link projection
-            // VolumeConstraint,
-
+                            // HeavyAtom,
+                            // PlanarAtom,
+                            // NCNPlus,
+                            // Ring,
+                            // RingNonPlanar,
+                            // RingPlanarProjected,
+                            // Purine,
+                            // Pyrimidine,
+                            // Adenine,
+                            // Cytosine,
+                            // Guanine,
+                            // Thymine,
+                            // Uracil,
+                            // Deoxyribose,
+                            // Ribose,
+                            // ExitVector,
+                            // Halogen,
+                            // PiRingCenter,
+                            // AromaticOrPiRingNormal
+                            // MetalLigator,
+                            // MetalLigatorProjection
+                            // Link source
+                            // Link projection
+                            // VolumeConstraint,
         ]
     }
 

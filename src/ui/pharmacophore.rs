@@ -8,7 +8,7 @@ use crate::{
     drawing::blend_color,
     label, mol_manip,
     mol_manip::ManipMode,
-    molecules::{MolType, MoleculeGeneric, small::MoleculeSmall},
+    molecules::{MolType, MoleculeGeneric},
     screening::pharmacophore::{
         FeatureRelation, PHARMACOPHORE_SCREENING_THRESH_DEFAULT, Pharmacophore,
         PharmacophoreFeatType, PharmacophoreFeature, PharmacophoreState, add_pharmacophore_feat,

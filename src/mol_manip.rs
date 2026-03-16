@@ -54,7 +54,7 @@ pub fn handle_mol_manip_in_plane(
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
-                            println!("Error: No peptide in state for mol manip");
+                            eprintln!("Error: No peptide in state for mol manip");
                             return;
                         }
                     }
@@ -173,7 +173,7 @@ pub fn handle_mol_manip_in_plane(
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
-                            println!("Error: No peptide in state for mol manip");
+                            eprintln!("Error: No peptide in state for mol manip");
                             return;
                         }
                     }
@@ -306,13 +306,13 @@ pub fn handle_mol_manip_in_out(
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
-                            println!("Error: No peptide in state for mol manip");
+                            eprintln!("Error: No peptide in state for mol manip");
                             return;
                         }
                     }
                     MolType::Ligand => {
                         if mol_i >= state.ligands.len() {
-                            println!("Error: Index out of bounds on ligand for mol manip");
+                            eprintln!("Error: Index out of bounds on ligand for mol manip");
                             return;
                         }
                         &mut state.ligands[mol_i].common
@@ -446,18 +446,16 @@ pub fn handle_mol_manip_in_out(
             // todo: C+P with slight changes from the mouse-move variant.
             let mol = match mol_type {
                 MolType::Peptide => {
-                    return; // todo temp
-
                     if let Some(p) = &mut state.peptide {
                         &mut p.common
                     } else {
-                        println!("Error: No peptide in state for mol manip");
+                        eprintln!("Error: No peptide in state for mol manip");
                         return;
                     }
                 }
                 MolType::Ligand => {
                     if mol_i >= state.ligands.len() {
-                        println!("Error: Index out of bounds on ligand for mol manip");
+                        eprintln!("Error: Index out of bounds on ligand for mol manip");
                         return;
                     }
 
