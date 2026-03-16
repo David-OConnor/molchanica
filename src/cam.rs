@@ -2,16 +2,17 @@ use egui::Ui;
 use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
 use lin_alg::f32::{Quaternion, Vec3};
 use na_seq::Element;
+
 use crate::{
     molecules::{
-        MolType, common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid,
-        peptide::MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
+        MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
+        nucleic_acid::MoleculeNucleicAcid, peptide::MoleculePeptide, pocket::Pocket,
+        small::MoleculeSmall,
     },
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
     selection::Selection,
     state::{State, StateUi},
 };
-use crate::molecules::MolGenericRef;
 
 // This control the clip planes in the camera frustum.
 pub const RENDER_DIST_NEAR: f32 = 0.2;
@@ -36,9 +37,12 @@ pub const FOG_DIST_MAX: u16 = 120;
 // How quickly to track the fog target: 0 = frozen, 1 = instant snap.
 // At ~10 calls/sec (ratio-6 on typical mouse events) this converges in ~0.7 s,
 // which is fast enough to feel responsive while suppressing frame-to-frame flicker.
-const FOG_FADE_ALPHA: f32 = 0.01;
+const FOG_FADE_ALPHA: f32 = 0.1;
 // Fog starts CLEAR_ZONE past the nearest atom so it is fully unobscured.
 const FOG_CLEAR_ZONE: f32 = 5.0;
+// Width of the fog gradient in the auto-fog mode (Å). Smaller = steeper/more aggressive fade.
+// At 20 the gradient spans 40 Å; at 8 it spans 16 Å.
+pub const FOG_AUTO_HALF_DEPTH: u16 = 15;
 
 /// From a fog-center distance and half-depth, compute where to place the fog start and end
 /// distances from the camera.
@@ -79,14 +83,13 @@ pub fn set_fog_from_mols(state: &State, cam: &mut Camera) {
         Some(d) => {
             let d_near = d.max(0.);
 
-            // todo... hmm.
-            let half_depth = 20;
+            let half_depth = FOG_AUTO_HALF_DEPTH;
 
             // Only enforce a floor so fog_start stays positive.
             // No upper clamp: when the camera is far away, dist grows with d_near,
             // ensuring the nearest visible atoms are never inside the fog zone.
-            let dist = ((d_near + FOG_CLEAR_ZONE) as u16 + half_depth)
-                .max(FOG_DIST_MIN + half_depth);
+            let dist =
+                ((d_near + FOG_CLEAR_ZONE) as u16 + half_depth).max(FOG_DIST_MIN + half_depth);
 
             calc_fog_dists(dist, half_depth)
         }
@@ -107,7 +110,6 @@ pub fn set_fog_from_mols(state: &State, cam: &mut Camera) {
         cam.fog_end += FOG_FADE_ALPHA * (target_end - cam.fog_end);
     }
 }
-
 
 fn find_nearest_mol_inner(mol: MolGenericRef<'_>, cam: &Camera) -> Option<f32> {
     let mut nearest = f32::INFINITY;

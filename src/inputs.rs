@@ -11,7 +11,7 @@ use lin_alg::f32::Vec3;
 use na_seq::Element::Carbon;
 
 use crate::{
-    cam::{FOG_DIST_MIN, move_cam_to_sel, set_fog_dist, set_fog_from_mols},
+    cam::{FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, move_cam_to_sel, set_fog_dist, set_fog_from_mols},
     drawing,
     drawing::{EntityClass, draw_pocket, wrappers},
     mol_editor,
@@ -25,7 +25,6 @@ use crate::{
     state::{OperatingMode, State},
     util::{RedrawFlags, close_mol},
 };
-use crate::cam::FOG_HALF_DEPTH_DEFAULT;
 
 // These are defaults; overridden by the user A/R, and saved to prefs.
 pub const MOVEMENT_SENS: f32 = 12.;
@@ -776,7 +775,11 @@ fn handle_scroll(
             state.ui.view_depth.1 = FOG_DIST_MIN;
         }
 
-        set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
+        set_fog_dist(
+            &mut scene.camera,
+            state.ui.view_depth.1,
+            FOG_HALF_DEPTH_DEFAULT,
+        );
 
         // Counteract the engine's default free look behavior. This is indirect, but good
         // enough for now.
@@ -926,13 +929,15 @@ fn post_event_cleanup(
 
         // Update fog dynamically as the camera moves, on a ratio for performance.
         // find_nearest_mol_dist_to_cam already subsamples the protein, so this is cheap.
-        static mut I_FOG: u32 = 0;
-        const FOG_RATIO: u32 = 6;
-        unsafe {
-            I_FOG += 1;
-            if I_FOG.is_multiple_of(FOG_RATIO) {
-                set_fog_from_mols(state, &mut scene.camera);
-                updates.camera = true;
+        if state.to_save.auto_fog {
+            static mut I_FOG: u32 = 0;
+            const FOG_RATIO: u32 = 6;
+            unsafe {
+                I_FOG += 1;
+                if I_FOG.is_multiple_of(FOG_RATIO) {
+                    set_fog_from_mols(state, &mut scene.camera);
+                    updates.camera = true;
+                }
             }
         }
     }

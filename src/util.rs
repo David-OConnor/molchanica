@@ -978,7 +978,6 @@ pub fn make_lig_from_res(
     state.ui.visibility.hide_ligand = false;
 }
 
-
 /// This enables GPU computation if the right compiler flag is set, and there aren't
 /// errors setting up the Cuda stream. It also handles loading cuda kernels used directly
 /// by this application. (Dynamics modules, for example, are handled by that library)

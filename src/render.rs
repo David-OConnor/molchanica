@@ -10,14 +10,15 @@ use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
     cam,
-    cam::{FOG_DIST_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists},
+    cam::{
+        FOG_DIST_DEFAULT, FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists,
+    },
     drawing::atoms_bonds::BOND_RADIUS_BASE,
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::State,
     ui::{ui_handler, util::init_with_scene},
 };
-use crate::cam::FOG_HALF_DEPTH_DEFAULT;
 
 pub type Color = (f32, f32, f32);
 
@@ -44,6 +45,11 @@ pub const MESH_SECONDARY_STRUCTURE: usize = 9; // i.e. ribobn or cartoon. todo: 
 pub const MESH_POCKET_START: usize = 10;
 
 // pub const SHELL_OPACITY: f32 = 0.01;
+
+// Fog curve shape. Higher fog_power = steeper / more abrupt cutoff.
+// Lower fog_density = dim-but-visible at the far end rather than fully opaque.
+const FOG_POWER: f32 = 6.;
+const FOG_DENSITY: f32 = 4.;
 
 // From the farthest molecule.
 pub const CAM_INIT_OFFSET: f32 = 10.;
@@ -115,10 +121,11 @@ pub fn render(mut state: State) {
         near: RENDER_DIST_NEAR,
         // orientation: Quaternion::from_axis_angle(Vec3::new(1., 0., 0.), TAU / 16.),
         orientation: Quaternion::from_axis_angle(RIGHT_VEC, 0.),
-        // This affects how aggressive the fog is in fading objects to the background.
-        // A lower value will leave objects dim, but visible.
-        fog_density: 4.,
-        fog_power: 6.,
+        // These control how aggressive the fog is in fading objects to the background.
+        // fog_power: higher = steeper curve, more abrupt cutoff.
+        // fog_density: lower = objects remain dim-but-visible rather than fully hidden.
+        fog_density: FOG_DENSITY,
+        fog_power: FOG_POWER,
         fog_start,
         fog_end,
         fog_color: [BACKGROUND_COLOR.0, BACKGROUND_COLOR.1, BACKGROUND_COLOR.2],
@@ -215,9 +222,6 @@ pub fn render(mut state: State) {
     init_with_scene(&mut state, &mut scene);
 
     let msaa_samples = state.to_save.msaa as u8 as u32;
-
-    // This seems to only be required here at init if view_dist_default = view_dist_max, to set fog to 0.
-    cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
 
     graphics::run(
         state,

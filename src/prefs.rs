@@ -277,6 +277,7 @@ pub struct ToSave {
     pub lipid: LipidUi,
     pub nucleic_acid: NucleicAcidUi,
     pub mesh_coloring: MeshColoring,
+    pub auto_fog: bool,
     // Screening path deprecated in favor of using Parquet databases.
     // pub screening_path: Option<PathBuf>,
 }
@@ -312,6 +313,7 @@ impl Default for ToSave {
             lipid: Default::default(),
             nucleic_acid: Default::default(),
             mesh_coloring: Default::default(),
+            auto_fog: false,
             // screening_path: None,
         }
     }

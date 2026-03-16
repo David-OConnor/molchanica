@@ -15,8 +15,8 @@ use popups::load_popups;
 use crate::{
     button, cam,
     cam::{
-        FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX, VIEW_DEPTH_NEAR_MIN,
-        move_cam_to_sel,
+        FOG_DIST_MAX, FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX,
+        VIEW_DEPTH_NEAR_MIN, move_cam_to_sel,
     },
     cli,
     cli::autocomplete_cli,
@@ -43,7 +43,6 @@ use crate::{
         orbit_center,
     },
 };
-use crate::cam::FOG_HALF_DEPTH_DEFAULT;
 
 mod char_adme;
 mod md;
@@ -1327,6 +1326,19 @@ pub(crate) fn cam_controls(
                     &mut state.ui.view_depth.1,
                     FOG_DIST_MIN..=FOG_DIST_MAX,
                 )).on_hover_text(hover_text);
+
+                ui.label("Auto far")
+                    .on_hover_text("Automatically adjust the far distance based on the camera's distance \
+                    from the nearest atoms.");
+                if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
+                    if state.to_save.auto_fog {
+                        for _ in 0..64 {
+                            cam::set_fog_from_mols(state, &mut scene.camera);
+                        }
+                    } else {
+                        cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
+                    }
+                }
 
                 if state.ui.view_depth != depth_prev {
                     // Interpret the slider being at min or max position to mean (effectively) unlimited.

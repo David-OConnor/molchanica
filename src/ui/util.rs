@@ -5,7 +5,8 @@ use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
-    cam::reset_camera,
+    cam,
+    cam::{FOG_HALF_DEPTH_DEFAULT, reset_camera},
     drawing::{
         draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
@@ -219,8 +220,6 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
     // todo: Workaround to allow us to apply params to the ligand once it's loaded. Unfortunate we have
     // todo to double-load prefs.
     {
-        // state.load_prefs();
-
         // A default active small molecule.
         if !state.ligands.is_empty() {
             state.volatile.active_mol = Some((MolType::Ligand, 0));
@@ -274,6 +273,20 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
     reset_orbit_center(state, scene);
     // FWD_VEC here means a "Front" look.
     reset_camera(state, scene, &mut EngineUpdates::default(), FWD_VEC);
+
+    if state.to_save.auto_fog {
+        // Pre-converge the fog lerp so it starts stable. 64 iterations is enough for
+        // FOG_FADE_ALPHA=0.1 to settle within ~1 Å of the target from any starting value.
+        for _ in 0..64 {
+            cam::set_fog_from_mols(state, &mut scene.camera);
+        }
+    } else {
+        cam::set_fog_dist(
+            &mut scene.camera,
+            state.ui.view_depth.1,
+            FOG_HALF_DEPTH_DEFAULT,
+        );
+    }
 
     draw_peptide(state, scene);
     draw_all_ligs(state, scene);
