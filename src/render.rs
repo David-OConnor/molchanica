@@ -17,6 +17,7 @@ use crate::{
     state::State,
     ui::{ui_handler, util::init_with_scene},
 };
+use crate::cam::FOG_HALF_DEPTH_DEFAULT;
 
 pub type Color = (f32, f32, f32);
 
@@ -105,7 +106,7 @@ pub fn render(mut state: State) {
     let white = [1., 1., 1., 0.5];
     let pink = [1., 0., 1., 1.];
 
-    let (fog_start, fog_end) = calc_fog_dists(FOG_DIST_DEFAULT);
+    let (fog_start, fog_end) = calc_fog_dists(FOG_DIST_DEFAULT, FOG_HALF_DEPTH_DEFAULT);
 
     let camera = Camera {
         fov_y: TAU / 8.,
@@ -216,7 +217,7 @@ pub fn render(mut state: State) {
     let msaa_samples = state.to_save.msaa as u8 as u32;
 
     // This seems to only be required here at init if view_dist_default = view_dist_max, to set fog to 0.
-    cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1);
+    cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
 
     graphics::run(
         state,

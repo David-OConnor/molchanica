@@ -43,6 +43,7 @@ use crate::{
         orbit_center,
     },
 };
+use crate::cam::FOG_HALF_DEPTH_DEFAULT;
 
 mod char_adme;
 mod md;
@@ -787,6 +788,13 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
             display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);
 
             let mut dm_loaded = None; // avoids a double-borrow error.
+
+            // todo: Placeholder functionality ot set fog
+            if ui.button("Fog dist tester").clicked() {
+                cam::set_fog_from_mols(state, &mut scene.camera);
+            }
+
+
             if let Some(mol) = &mut state.peptide {
 
                 // todo: Move these A/R. LIkely in a sub menu.
@@ -1331,7 +1339,7 @@ pub(crate) fn cam_controls(
                     // todo: Only if near changed.
                     scene.camera.update_proj_mat();
 
-                    cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1);
+                    cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
 
                     changed = true;
                 }
