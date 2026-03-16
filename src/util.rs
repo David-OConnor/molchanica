@@ -48,8 +48,6 @@ use crate::{
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
 };
-// todo: Move this A/R
-pub const HYDROPATHY_WINDOW_SIZE: usize = 9; // e.g. for coloring residues
 
 /// Used in places where we can redraw one or more of several molecule types.
 #[derive(Default, Debug)]
@@ -644,7 +642,6 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 &mol.chains,
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
-                state.ui.atom_color_by_charge,
                 mol.sifts_mapping.as_deref(),
             );
             updates.meshes = true;

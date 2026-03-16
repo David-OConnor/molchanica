@@ -285,7 +285,6 @@ fn build_segment_mesh(
     atoms: &[Atom],
     res_coloring: ResColoring,
     view_sel_level: ViewSelLevel,
-    atom_color_by_charge: bool,
     sifts: Option<&[SiftsUniprotMapping]>,
     chain_count: usize,
     chains: &[Chain],
@@ -712,7 +711,6 @@ pub fn build_cartoon_mesh(
     chains: &[Chain],
     res_coloring: ResColoring,
     view_sel_level: ViewSelLevel,
-    atom_color_by_charge: bool,
     sifts: Option<&[SiftsUniprotMapping]>,
 ) -> Mesh {
     let mut vertices = Vec::new();
@@ -772,7 +770,6 @@ pub fn build_cartoon_mesh(
             atoms,
             res_coloring,
             view_sel_level,
-            atom_color_by_charge,
             sifts,
             chain_count,
             chains,
@@ -830,7 +827,6 @@ pub fn build_cartoon_mesh(
             atoms,
             res_coloring,
             view_sel_level,
-            atom_color_by_charge,
             sifts,
             chain_count,
             chains,

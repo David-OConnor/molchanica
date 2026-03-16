@@ -487,7 +487,7 @@ pub fn _update_all_lipids_inplace(state: &State, scene: &mut Scene) {
     }
 }
 
-pub fn update_all_pockets_inplace(state: &State, scene: &mut Scene) {
+pub fn _update_all_pockets_inplace(state: &State, scene: &mut Scene) {
     for (i, mol) in state.pockets.iter().enumerate() {
         let Some((ent_i_start, ent_i_end)) = mol.common.entity_i_range else {
             eprintln!("Unable to update mol entities in place; missing entity indices");

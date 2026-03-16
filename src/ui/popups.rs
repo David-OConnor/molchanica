@@ -147,7 +147,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.parquet_db {
         popup("parquet_db", ui).show(|ui| {
-            parquet_db(state, scene, ui, engine_updates);
+            parquet_db(state, ui);
         });
     }
 }
@@ -924,7 +924,7 @@ fn lig_pocket_from_het_res(
     }
 }
 
-fn parquet_db(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut EngineUpdates) {
+fn parquet_db(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         label!(ui, "Molecule databases", Color32::WHITE);
 

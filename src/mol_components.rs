@@ -180,13 +180,6 @@ pub struct Component {
     pub atoms: Vec<usize>,
 }
 
-impl Component {
-    pub fn create(atoms: &[Atom], bonds: &[Bond]) -> Vec<Self> {
-        // todo: Bottom-up detection from raw atoms/bonds (inverse of `MolComponents::new`).
-        Vec::new()
-    }
-}
-
 /// A bond between two components; analogous to a covalent bond between individual atoms.
 ///
 /// `atom_0` / `atom_1` are indices *within* `components[comp_N].atoms`, identifying which

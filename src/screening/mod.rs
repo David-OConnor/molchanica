@@ -201,12 +201,13 @@ pub fn load_mol_batch(files: &[PathBuf]) -> io::Result<(Vec<MoleculeSmall>, usiz
     Ok((result, files_consumed))
 }
 
-/// Load `SDF` and `Mol2` files in a directory and its sub-dirs into memory.f
+/// Load `SDF` and `Mol2` files in a directory and its sub-dirs into memory.
+/// Note: Deprecated in favor of Parquet.
 ///
 /// This is a convenience wrapper around [`collect_mol_files`] + [`load_mol_batch`] for
 /// callers that only need a single batch. For streaming through large directories use
 /// those two functions directly to avoid re-traversing the directory on every call.
-pub fn load_mols(path: &Path, skip: usize) -> io::Result<(Vec<MoleculeSmall>, bool)> {
+fn _load_mols(path: &Path, skip: usize) -> io::Result<(Vec<MoleculeSmall>, bool)> {
     let files = collect_mol_files(path)?;
     let remaining = if skip < files.len() {
         &files[skip..]

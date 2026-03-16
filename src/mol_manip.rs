@@ -168,11 +168,10 @@ pub fn handle_mol_manip_in_plane(
         }
         ManipMode::Rotate((mol_type, mol_i)) => {
             // todo: DRY with above
+            // And note that we will likely get a borrow error if we use `get_mol()` here.
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        return; // todo temp
-
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
@@ -302,11 +301,11 @@ pub fn handle_mol_manip_in_out(
     // Move the molecule forward and backwards relative to the camera on scroll.
     match state.volatile.mol_manip.mode {
         ManipMode::Move((mol_type, mol_i)) => {
-            let mol = match op_mode {
-                OperatingMode::Primary => match mol_type {
-                    MolType::Peptide => {
-                        return; // todo temp
 
+            // Note: We can't use `get_mol` here due to borrow errors I don't understand.
+            let mol = match op_mode {
+                    OperatingMode::Primary => match mol_type {
+                    MolType::Peptide => {
                         if let Some(p) = &mut state.peptide {
                             &mut p.common
                         } else {
@@ -372,10 +371,6 @@ pub fn handle_mol_manip_in_out(
                 state.volatile.mol_manip.view_dir = Some(view_dir);
                 state.volatile.mol_manip.offset = Vec3::new_zero();
             }
-            // state
-            //     .volatile
-            //     .mol_manip
-            //     .enter_movement(&scene.camera, mol, ray_origin, ray_dir);
 
             if let (Some(pivot), _) = (
                 state.volatile.mol_manip.pivot,

@@ -234,7 +234,6 @@ fn align_bases(
 fn build_strands(
     seq: &[Nucleotide],
     na_type: NucleicAcidType,
-    posit_5p: Vec3,
     templates: &HashMap<String, TemplateData>,
     strands: Strands,
 ) -> io::Result<(Vec<Atom>, Vec<Bond>, Vec<Residue>)> {
@@ -567,7 +566,7 @@ impl MoleculeNucleicAcid {
             NucleicAcidType::Rna => templates_rna,
         };
 
-        let (atoms, bonds, residues) = build_strands(seq, na_type, posit_5p, templates, strands)?;
+        let (atoms, bonds, residues) = build_strands(seq, na_type, templates, strands)?;
 
         let mut metadata = HashMap::new();
         metadata.insert(
