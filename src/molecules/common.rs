@@ -404,7 +404,7 @@ impl MoleculeCommon {
         };
 
         // todo: Can't use `common` below here due to the delete_atom code and ownership.
-        let posit =find_appended_posit(
+        let posit = find_appended_posit(
             posit_parent,
             &self.atoms,
             &self.adjacency_list[i_par],

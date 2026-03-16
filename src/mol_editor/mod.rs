@@ -98,7 +98,6 @@ pub struct MolEditorState {
     pub selected_comp: Option<usize>,
 }
 
-
 impl MolEditorState {
     /// For now, sets up a pair of single-bonded carbon atoms.
     pub fn clear_mol(&mut self, sel: &mut Selection) {

@@ -231,7 +231,7 @@ fn build_dynamics_docking(
     });
 
     println!("Initializing docking MD state...");
-    let mut md_state = MdState::new(dev, &cfg, &mols, param_set)?;
+    let mut md_state = MdState::new(dev, cfg, &mols, param_set)?;
     println!("MD init done.");
 
     // todo: This is a bit awkward location-wise, but ok for now. Consider adding this directly to Dynamics,

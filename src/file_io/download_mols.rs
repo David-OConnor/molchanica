@@ -32,7 +32,7 @@ pub fn load_cif_rcsb(ident: &str) -> Result<(MmCif, String), ReqError> {
 /// Download an SDF file from DrugBank, and parse as a molecule.
 pub fn load_sdf_drugbank(ident: &str) -> Result<MoleculeSmall, ReqError> {
     match Sdf::load_drugbank(ident) {
-        Ok(m) => Ok(m.try_into().map_err(|e| ReqError::from(e))?),
+        Ok(m) => Ok(m.try_into().map_err(ReqError::from)?),
         Err(_) => Err(ReqError::Http),
     }
 }
@@ -190,7 +190,7 @@ pub fn load_geostd2(
         }
         Err(_) => handle_err(
             &mut state.ui,
-            format!("Unable to load Amber Geostd data (Server or internet problem?)"),
+            "Unable to load Amber Geostd data (Server or internet problem?".to_owned(),
         ),
     }
 }

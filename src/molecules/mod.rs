@@ -50,7 +50,8 @@ pub const POCKET_METADATA_VAL: &str = "true";
 // in a pharmacophore-type small molecule's pocket
 pub const PHARMACOPHORE_POCKET_ATOMS_KEY: &str = "pharmacophore_pocket_atoms";
 
-/// A trait-based molecule.
+/// A trait-based molecule; it can stand in for any of the specific types,
+/// for shared operations. E.g. on atoms, bonds etc.
 // todo: Not, or barely used currently. We currently use MolGenricRef for the most part.
 pub trait MolGeneric {
     fn common(&self) -> &MoleculeCommon;
@@ -726,7 +727,7 @@ impl Atom {
 
 impl From<&AtomGeneric> for Atom {
     fn from(atom: &AtomGeneric) -> Self {
-        let role = atom.type_in_res.as_ref().map(|tir| Some(AtomRole::from_type_in_res(tir)));
+        let role = atom.type_in_res.as_ref().map(AtomRole::from_type_in_res);
         // We will fill out chain and residue later, after chains and residue are loaded.
 
         Self {
@@ -813,6 +814,7 @@ pub fn build_adjacency_list(bonds: &[Bond], atoms_len: usize) -> Vec<Vec<usize>>
     result
 }
 
+#[allow(clippy::type_complexity)]
 /// A helper, shared between mmCIF parsing, and H regenerating from changed pH.
 fn init_bonds_chains_res(
     atoms_: &[AtomGeneric],

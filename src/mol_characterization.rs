@@ -1858,6 +1858,7 @@ fn assign_symmetry_classes(dmat: &[Vec<u16>], num_atoms: usize, cutoff: usize) -
     sym_class
 }
 
+#[allow(clippy::type_complexity)]
 /// Equivalent to RDKit _CreateBondDictEtc(mol, numAtoms)
 /// Returns:
 /// - bondDict: (i,j) -> bond order (f64)

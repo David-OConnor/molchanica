@@ -106,9 +106,9 @@ where
             TextEdit::singleline(&mut val_str),
         )
         .changed()
-    && let Ok(v) = val_str.parse::<T>() {
-            *val = v;
-
+        && let Ok(v) = val_str.parse::<T>()
+    {
+        *val = v;
     }
 }
 
@@ -121,11 +121,12 @@ pub fn handle_input(
 ) {
     ui.ctx().input(|ip| {
         // Check for file drop
-        if let Some(dropped_files) = ip.raw.dropped_files.first() && let Some(path) = &dropped_files.path && let Err(e) = state.open_file(path, scene, engine_updates) {
-                    handle_err(&mut state.ui, e.to_string());
-                }
-
-
+        if let Some(dropped_files) = ip.raw.dropped_files.first()
+            && let Some(path) = &dropped_files.path
+            && let Err(e) = state.open_file(path, scene, engine_updates)
+        {
+            handle_err(&mut state.ui, e.to_string());
+        }
     });
 }
 
@@ -168,9 +169,10 @@ fn chain_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
 
         for (i, chain) in mol.chains.iter().enumerate() {
             let mut color = Color32::GRAY;
-            if let Some(i_sel) = state.ui.chain_to_pick_res && i == i_sel {
-                    color = COLOR_ACTIVE
-
+            if let Some(i_sel) = state.ui.chain_to_pick_res
+                && i == i_sel
+            {
+                color = COLOR_ACTIVE
             }
             if ui
                 .button(RichText::new(chain.id.clone()).color(color))
@@ -361,9 +363,9 @@ fn add_aa_seq(selection: &mut Selection, seq_text: &str, ui: &mut Ui, redraw: &m
                     );
 
                     if let Selection::Residue(sel) = selection
-                        && i == *sel {
-                            color = Color32::from_rgb(255, 0, 0); // cheaper, but more maintenance than calling the const.
-
+                        && i == *sel
+                    {
+                        color = Color32::from_rgb(255, 0, 0); // cheaper, but more maintenance than calling the const.
                     }
 
                     if ui.label(RichText::new(aa).color(color)).clicked() {
@@ -426,12 +428,10 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                             if i >= mol.residues.len() {
                                 handle_err(&mut state.ui, "Residue bounds problem".to_string());
                                 Selection::None
+                            } else if mol.residues[i].atoms.len() <= 2 {
+                                Selection::AtomPeptide(mol.residues[i].atoms[1])
                             } else {
-                                if mol.residues[i].atoms.len() <= 2 {
-                                    Selection::AtomPeptide(mol.residues[i].atoms[1])
-                                } else {
-                                    Selection::None
-                                }
+                                Selection::None
                             }
                         }
 
@@ -653,19 +653,19 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                     TextEdit::singleline(&mut state.ui.ph_input),
                 )
                 .changed()
-            && let Ok(v) = &mut state.ui.ph_input.parse::<f32>() {
-                    state.to_save.ph = *v;
+                && let Ok(v) = &mut state.ui.ph_input.parse::<f32>() {
+                state.to_save.ph = *v;
 
-                    // Re-assign hydrogens, and redraw
-                    if let Some(mol) = &mut state.peptide && let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
-                            match mol.reassign_hydrogens(state.to_save.ph, ff_map) {
-                                Ok(_) => *redraw = true,
-                                Err(e) => {
-                                    let msg = format!("Error reassigning hydrogens: {e:?}");
-                                    handle_err(&mut state.ui, msg);
-                                }
-
+                // Re-assign hydrogens, and redraw
+                if let Some(mol) = &mut state.peptide && let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
+                    match mol.reassign_hydrogens(state.to_save.ph, ff_map) {
+                        Ok(_) => *redraw = true,
+                        Err(e) => {
+                            let msg = format!("Error reassigning hydrogens: {e:?}");
+                            handle_err(&mut state.ui, msg);
                         }
+
+                    }
 
                 }
             }
@@ -774,12 +774,12 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     "Draw MD mols"
                 };
 
-                if state.volatile.md_local.draw_md_mols || state.volatile.md_local.mol_dynamics.is_some() {
+                if state.volatile.md_local.draw_md_mols || state.volatile.md_local.mol_dynamics.is_some()
                     && ui.button(RichText::new(text).color(COLOR_HIGHLIGHT)).clicked() {
-                        state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
+                    state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
 
-                        redraw.set_all();
-                    }
+                    redraw.set_all();
+                }
 
             }
 
@@ -812,26 +812,26 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     //     }
                     // }
                     if files_avail.validation_2fo_fc && ui
-                            .button(RichText::new("Fetch elec ρ").color(COLOR_HIGHLIGHT))
-                            .on_hover_text("Load 2fo-fc electron density data from RCSB PDB. Convert to CCP4 map format and display.")
-                            .clicked()
-                        {
-                            // todo: For now, we rely on Gemmi being available on the Path.
-                            // todo: We will eventually get our own reflections loader working.
+                        .button(RichText::new("Fetch elec ρ").color(COLOR_HIGHLIGHT))
+                        .on_hover_text("Load 2fo-fc electron density data from RCSB PDB. Convert to CCP4 map format and display.")
+                        .clicked()
+                    {
+                        // todo: For now, we rely on Gemmi being available on the Path.
+                        // todo: We will eventually get our own reflections loader working.
 
-                            match density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, gemmi_path()) {
-                                Ok(dm) => {
-                                    dm_loaded = Some(dm);
-                                    handle_success(&mut state.ui, "Loaded density data from RSCB".to_owned());
-                                }
-                                Err(e) => {
-                                    let msg = format!(
-                                        "Error loading or processing RCSB 2fo-fc map for {:?}: {e:?}",
-                                        &mol.common.ident
-                                    );
-                                    handle_err(&mut state.ui, msg);
-                                }
+                        match density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, gemmi_path()) {
+                            Ok(dm) => {
+                                dm_loaded = Some(dm);
+                                handle_success(&mut state.ui, "Loaded density data from RSCB".to_owned());
                             }
+                            Err(e) => {
+                                let msg = format!(
+                                    "Error loading or processing RCSB 2fo-fc map for {:?}: {e:?}",
+                                    &mol.common.ident
+                                );
+                                handle_err(&mut state.ui, msg);
+                            }
+                        }
 
                     }
                     // todo: Add these if you end up with a way to use them. We currently use 2fo-fc only.
@@ -876,32 +876,32 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     // }
 
                     if files_avail.map && ui
-                            .button(RichText::new("Map").color(COLOR_HIGHLIGHT))
-                            .clicked()
-                        {
-                            match rcsb::load_map(&mol.common.ident) {
-                                Ok(data) => {
-                                    let mut cursor = Cursor::new(data);
-                                    match DensityMap::open(&mut cursor) {
-                                        Ok(dm) => {
-                                            dm_loaded = Some(dm);
-                                            println!("Succsesfully loaded Map rom RSCB.");
-                                        }
-                                        Err(_) => {
-                                            let msg = format!(
-                                                "Error loading RCSB Map for {:?}",
-                                                &mol.common.ident
-                                            );
-                                            handle_err(&mut state.ui, msg);
-                                        }
+                        .button(RichText::new("Map").color(COLOR_HIGHLIGHT))
+                        .clicked()
+                    {
+                        match rcsb::load_map(&mol.common.ident) {
+                            Ok(data) => {
+                                let mut cursor = Cursor::new(data);
+                                match DensityMap::open(&mut cursor) {
+                                    Ok(dm) => {
+                                        dm_loaded = Some(dm);
+                                        println!("Succsesfully loaded Map rom RSCB.");
+                                    }
+                                    Err(_) => {
+                                        let msg = format!(
+                                            "Error loading RCSB Map for {:?}",
+                                            &mol.common.ident
+                                        );
+                                        handle_err(&mut state.ui, msg);
                                     }
                                 }
-                                Err(_) => {
-                                    let msg =
-                                        format!("Error loading RCSB Map for {:?}", &mol.common.ident);
-                                    handle_err(&mut state.ui, msg);
-                                }
                             }
+                            Err(_) => {
+                                let msg =
+                                    format!("Error loading RCSB Map for {:?}", &mol.common.ident);
+                                handle_err(&mut state.ui, msg);
+                            }
+                        }
 
                     }
                 }
@@ -1062,17 +1062,17 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         ui.add_space(ROW_SPACING / 2.);
 
         if state.ui.ui_vis.aa_seq && state.peptide.is_some() {
-                add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw.peptide);
+            add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw.peptide);
 
         }
 
         if state.ui.ui_vis.smiles && let Some(mol) = &state.active_mol() &&
-                let MolGenericRef::Small(m) = mol {
-                for ident in &m.idents {
-                    if let MolIdent::Smiles(smiles) = ident {
-                        draw_smiles(smiles, ui);
-                        break;
-                    }
+            let MolGenericRef::Small(m) = mol {
+            for ident in &m.idents {
+                if let MolIdent::Smiles(smiles) = ident {
+                    draw_smiles(smiles, ui);
+                    break;
+                }
 
             }
         }
@@ -1395,13 +1395,14 @@ pub(crate) fn cam_snapshots(
                 .response
                 .on_hover_text("Set the camera to a previously-saved scene.");
 
-            if let Some(i) = state.ui.cam_snapshot && ui.button(RichText::new("❌").color(Color32::RED)).clicked() {
-                    if i < state.cam_snapshots.len() {
-                        state.cam_snapshots.remove(i);
-                    }
-                    state.ui.cam_snapshot = None;
-                    state.update_save_prefs();
-
+            if let Some(i) = state.ui.cam_snapshot
+                && ui.button(RichText::new("❌").color(Color32::RED)).clicked()
+            {
+                if i < state.cam_snapshots.len() {
+                    state.cam_snapshots.remove(i);
+                }
+                state.ui.cam_snapshot = None;
+                state.update_save_prefs();
             }
 
             if state.ui.cam_snapshot != prev_snap {

@@ -473,7 +473,7 @@ fn build_segment_mesh(
                         .map(|c| c.id.as_str());
                     let entity_id = entries.iter().find_map(|entry| {
                         entry.mappings.iter().find_map(|m| {
-                            let chain_ok = chain_letter.map_or(true, |cl| m.chain_id == cl);
+                            let chain_ok = chain_letter.is_none_or(|cl| m.chain_id == cl);
                             if chain_ok { Some(m.entity_id) } else { None }
                         })
                     });

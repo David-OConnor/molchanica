@@ -81,16 +81,15 @@ fn mol_picker_one(
                     COLOR_INACTIVE
                 };
 
-                if mol_type != MolType::Pocket {
-                    if ui
+                if mol_type != MolType::Pocket
+                    && ui
                         .button(RichText::new("MD").color(color_md))
                         .on_hover_text(
                             "Select or deselect this molecule for molecular dynamics simulation.",
                         )
                         .clicked()
-                    {
-                        mol.selected_for_md = !mol.selected_for_md;
-                    }
+                {
+                    mol.selected_for_md = !mol.selected_for_md;
                 }
 
                 let color_vis = if mol.visible {
@@ -335,10 +334,10 @@ fn mol_picker(
         close_mol(mol_type, i_mol, state, scene, updates);
     }
 
-    if recenter_orbit {
-        if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
-            *center = orbit_center(state);
-        }
+    if recenter_orbit
+        && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
+    {
+        *center = orbit_center(state);
     }
 }
 
@@ -520,22 +519,22 @@ pub(in crate::ui) fn sidebar(
                 }
 
                 let mut mol_to_save = None; // avoids dbl-borrow.
-                if let Some(mol) = state.active_mol() && ui
+                if let Some(mol) = state.active_mol()
+                    && ui
                         .button(RichText::new("Save"))
                         .on_hover_text("Save the active molecule to a file.")
                         .clicked()
-                    {
-                        mol_to_save = Some((mol.common().clone(), mol.mol_type()));
-
+                {
+                    mol_to_save = Some((mol.common().clone(), mol.mol_type()));
                 }
 
-                if let Some((mol, mol_type)) = mol_to_save && mol
+                if let Some((mol, mol_type)) = mol_to_save
+                    && mol
                         .save(mol_type, &mut state.volatile.dialogs.save)
                         .is_err()
-                    {
-                        handle_err(&mut state.ui, "Problem saving this file".to_owned());
-                    }
-
+                {
+                    handle_err(&mut state.ui, "Problem saving this file".to_owned());
+                }
             });
 
             ui.add_space(ROW_SPACING / 2.);
@@ -573,9 +572,10 @@ pub(in crate::ui) fn sidebar(
                 // Avoid double borrow.
                 let mut run_logp_sim = false;
 
-                if let Some(m) = &state.active_mol() && let MolGenericRef::Small(mol) = m {
-                        char_adme::mol_char_disp(mol, ui, &mut run_logp_sim);
-
+                if let Some(m) = &state.active_mol()
+                    && let MolGenericRef::Small(mol) = m
+                {
+                    char_adme::mol_char_disp(mol, ui, &mut run_logp_sim);
                 }
 
                 if run_logp_sim {
@@ -596,58 +596,60 @@ pub(in crate::ui) fn sidebar(
                 }
             }
 
-            if !edit_mode && let Some(MolGenericRef::Peptide(mol)) = state.active_mol() && let Some(sifts) = &mol.sifts_mapping {
-                    label!(ui, "SIFTS Mappings", Color32::WHITE);
+            if !edit_mode
+                && let Some(MolGenericRef::Peptide(mol)) = state.active_mol()
+                && let Some(sifts) = &mol.sifts_mapping
+            {
+                label!(ui, "SIFTS Mappings", Color32::WHITE);
 
-                    for sift in sifts {
-                        label!(
-                            ui,
-                            &format!("Accession: {}, Ident: {}", sift.accession, sift.identifier),
-                            Color32::GRAY
-                        );
-                        for mapping in &sift.mappings {
-                            // todo: Format as you wish
-                            ui.horizontal(|ui| {
-                                //     pub entity_id: u32,
-                                //     /// PDB chain identifier (author label), e.g. `"A"`.
-                                //     pub chain_id: String,
-                                //     /// Internal asymmetric-unit chain ID used in mmCIF files.
-                                //     pub struct_asym_id: String,
-                                //     /// First residue of this segment in the **UniProt** sequence (1-based).
-                                //     pub unp_start: u32,
-                                //     /// Last residue of this segment in the **UniProt** sequence (1-based).
-                                //     pub unp_end: u32,
-                                //     /// First residue of this segment in the **PDB** structure.
-                                //     pub start: SiftsResiduePosition,
-                                //     /// Last residue of this segment in the **PDB** structure.
-                                //     pub end: SiftsResiduePosition,
-                                //     /// Sequence identity between the PDB chain and the UniProt sequence (0–1).
-                                //     pub identity: f32,
-                                //     /// Fraction of the UniProt sequence covered by this structure (0–1).
-                                //     pub coverage: f32,
+                for sift in sifts {
+                    label!(
+                        ui,
+                        &format!("Accession: {}, Ident: {}", sift.accession, sift.identifier),
+                        Color32::GRAY
+                    );
+                    for mapping in &sift.mappings {
+                        // todo: Format as you wish
+                        ui.horizontal(|ui| {
+                            //     pub entity_id: u32,
+                            //     /// PDB chain identifier (author label), e.g. `"A"`.
+                            //     pub chain_id: String,
+                            //     /// Internal asymmetric-unit chain ID used in mmCIF files.
+                            //     pub struct_asym_id: String,
+                            //     /// First residue of this segment in the **UniProt** sequence (1-based).
+                            //     pub unp_start: u32,
+                            //     /// Last residue of this segment in the **UniProt** sequence (1-based).
+                            //     pub unp_end: u32,
+                            //     /// First residue of this segment in the **PDB** structure.
+                            //     pub start: SiftsResiduePosition,
+                            //     /// Last residue of this segment in the **PDB** structure.
+                            //     pub end: SiftsResiduePosition,
+                            //     /// Sequence identity between the PDB chain and the UniProt sequence (0–1).
+                            //     pub identity: f32,
+                            //     /// Fraction of the UniProt sequence covered by this structure (0–1).
+                            //     pub coverage: f32,
 
-                                let summary = format!(
-                                    "ID: {}, Chain: {} Asym: {} Cov: {:.2}%",
-                                    mapping.entity_id,
-                                    mapping.chain_id,
-                                    mapping.struct_asym_id,
-                                    mapping.coverage
-                                );
+                            let summary = format!(
+                                "ID: {}, Chain: {} Asym: {} Cov: {:.2}%",
+                                mapping.entity_id,
+                                mapping.chain_id,
+                                mapping.struct_asym_id,
+                                mapping.coverage
+                            );
 
-                                label!(ui, summary, Color32::GRAY);
+                            label!(ui, summary, Color32::GRAY);
 
-                                ui.add_space(COL_SPACING);
+                            ui.add_space(COL_SPACING);
 
-                                if button!(ui, "Select", Color32::GREEN, "Select all atoms in this")
-                                    .clicked()
-                                {
-                                    // todo
-                                }
-                            });
-                        }
-                        ui.add_space(ROW_SPACING);
+                            if button!(ui, "Select", Color32::GREEN, "Select all atoms in this")
+                                .clicked()
+                            {
+                                // todo
+                            }
+                        });
                     }
-
+                    ui.add_space(ROW_SPACING);
+                }
             }
         });
 

@@ -64,7 +64,7 @@ const TEMP_TGT: f32 = 298.15; // Standard LogP is measured at 25 °C = 298.15 K.
 // The conversion factor between ln and log10
 const LOG_CONV: f32 = 1. / 2.303;
 
-#[allow(clippy::doc_list_without_indentation)]
+#[allow(clippy::doc_lazy_continuation)]
 /// Using PubChem data as a reference. Partial charges are computed using ORCA. We us this input:
 /// ! HF 6-31G* Opt TightSCF TightOpt RESP
 ///

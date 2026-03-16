@@ -171,18 +171,19 @@ pub fn view_settings(
                 );
             }
 
-            if let Some(md) = &state.volatile.md_local.mol_dynamics && state.ui.visibility.hide_water != water_prev {
-                    let snap = &md.snapshots[0];
+            if let Some(md) = &state.volatile.md_local.mol_dynamics
+                && state.ui.visibility.hide_water != water_prev
+            {
+                let snap = &md.snapshots[0];
 
-                    draw_water(
-                        scene,
-                        &snap.water_o_posits,
-                        &snap.water_h0_posits,
-                        &snap.water_h1_posits,
-                        state.ui.visibility.hide_water,
-                    );
-                }
-
+                draw_water(
+                    scene,
+                    &snap.water_o_posits,
+                    &snap.water_h0_posits,
+                    &snap.water_h1_posits,
+                    state.ui.visibility.hide_water,
+                );
+            }
 
             if !state.ligands.is_empty() {
                 let color = misc::active_color(!state.ui.visibility.hide_ligand);
@@ -269,80 +270,79 @@ pub fn view_settings(
                 }
             }
 
-            if let Some(mol) = &state.peptide && let Some(dens) = &mol.elec_density {
-                    let mut redraw_dens = false;
+            if let Some(mol) = &state.peptide
+                && let Some(dens) = &mol.elec_density
+            {
+                let mut redraw_dens = false;
 
-                    // `toggle_btn_inv`, but with out `RedrawFlags`.
-                    let color = active_color(!state.ui.visibility.hide_density_point_cloud);
-                    if ui
-                        .button(RichText::new("Density").color(color))
-                        .on_hover_text(
-                            "Show or hide the electron density point cloud visualization",
-                        )
-                        .clicked()
-                    {
-                        state.ui.visibility.hide_density_point_cloud =
-                            !state.ui.visibility.hide_density_point_cloud;
-                        // todo: Don't need to redraw everything.
-                        redraw_dens = true;
+                // `toggle_btn_inv`, but with out `RedrawFlags`.
+                let color = active_color(!state.ui.visibility.hide_density_point_cloud);
+                if ui
+                    .button(RichText::new("Density").color(color))
+                    .on_hover_text("Show or hide the electron density point cloud visualization")
+                    .clicked()
+                {
+                    state.ui.visibility.hide_density_point_cloud =
+                        !state.ui.visibility.hide_density_point_cloud;
+                    // todo: Don't need to redraw everything.
+                    redraw_dens = true;
+                }
+
+                if redraw_dens {
+                    if state.ui.visibility.hide_density_point_cloud {
+                        scene
+                            .entities
+                            .retain(|ent| ent.class != EntityClass::DensityPoint as u32);
+                    } else {
+                        draw_density_point_cloud(&mut scene.entities, dens);
                     }
+                    clear_mol_entity_indices(state, None);
+                    updates.entities = EntityUpdate::All;
+                    // engine_updates.entities.push_class(EntityClass::Peptide as u32);
+                }
 
-                    if redraw_dens {
-                        if state.ui.visibility.hide_density_point_cloud {
-                            scene
-                                .entities
-                                .retain(|ent| ent.class != EntityClass::DensityPoint as u32);
-                        } else {
-                            draw_density_point_cloud(&mut scene.entities, dens);
-                        }
-                        clear_mol_entity_indices(state, None);
-                        updates.entities = EntityUpdate::All;
-                        // engine_updates.entities.push_class(EntityClass::Peptide as u32);
-                    }
+                let mut redraw_dens_surface = false;
 
-                    let mut redraw_dens_surface = false;
+                // This is `toggle_btn_inv`, but with out `RedrawFlags`.
+                let color = active_color(!state.ui.visibility.hide_density_surface);
+                if ui
+                    .button(RichText::new("Density sfc").color(color))
+                    .on_hover_text("Show or hide the electron density isosurface visualization")
+                    .clicked()
+                {
+                    state.ui.visibility.hide_density_surface =
+                        !state.ui.visibility.hide_density_surface;
+                    redraw_dens_surface = true;
+                }
 
-                    // This is `toggle_btn_inv`, but with out `RedrawFlags`.
-                    let color = active_color(!state.ui.visibility.hide_density_surface);
-                    if ui
-                        .button(RichText::new("Density sfc").color(color))
-                        .on_hover_text("Show or hide the electron density isosurface visualization")
-                        .clicked()
-                    {
-                        state.ui.visibility.hide_density_surface =
-                            !state.ui.visibility.hide_density_surface;
-                        redraw_dens_surface = true;
-                    }
+                if !state.ui.visibility.hide_density_surface {
+                    let iso_prev = state.ui.density_iso_level;
 
-                    if !state.ui.visibility.hide_density_surface {
-                        let iso_prev = state.ui.density_iso_level;
-
-                        ui.spacing_mut().slider_width = 300.;
-                        ui.add(Slider::new(
-                            &mut state.ui.density_iso_level,
-                            DENS_ISO_MIN..=DENS_ISO_MAX,
-                        ))
-                        .on_hover_text("The density value at which to draw the ISO surface");
-                        if state.ui.density_iso_level != iso_prev {
-                            state.volatile.flags.make_density_iso_mesh = true;
-                        }
-                    }
-
-                    if redraw_dens_surface {
-                        if state.ui.visibility.hide_density_surface {
-                            let _ = &mut scene
-                                .entities
-                                .retain(|ent| ent.class != EntityClass::DensitySurface as u32);
-                        } else {
-                            draw_density_surface(&mut scene.entities, state);
-                        }
-                        updates.entities = EntityUpdate::All;
-                        // engine_updates
-                        //     .entities
-                        //     .push_class(EntityClass::DensitySurface as u32);
+                    ui.spacing_mut().slider_width = 300.;
+                    ui.add(Slider::new(
+                        &mut state.ui.density_iso_level,
+                        DENS_ISO_MIN..=DENS_ISO_MAX,
+                    ))
+                    .on_hover_text("The density value at which to draw the ISO surface");
+                    if state.ui.density_iso_level != iso_prev {
+                        state.volatile.flags.make_density_iso_mesh = true;
                     }
                 }
 
+                if redraw_dens_surface {
+                    if state.ui.visibility.hide_density_surface {
+                        let _ = &mut scene
+                            .entities
+                            .retain(|ent| ent.class != EntityClass::DensitySurface as u32);
+                    } else {
+                        draw_density_surface(&mut scene.entities, state);
+                    }
+                    updates.entities = EntityUpdate::All;
+                    // engine_updates
+                    //     .entities
+                    //     .push_class(EntityClass::DensitySurface as u32);
+                }
+            }
         });
     });
 }

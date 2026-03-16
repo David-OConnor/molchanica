@@ -157,24 +157,23 @@ fn disp_bond_data(
 
     label!(ui, format!("{dist:.3} Å"), Color32::LIGHT_YELLOW);
 
-    if let Some(p) = get_params(params, mol_type) {
-        if let (Some(ff_0), Some(ff_1)) = (
+    if let Some(p) = get_params(params, mol_type)
+        && let (Some(ff_0), Some(ff_1)) = (
             atom_0.force_field_type.as_deref(),
             atom_1.force_field_type.as_deref(),
-        ) {
-            if let Some(b) = p.get_bond(&(ff_0.to_string(), ff_1.to_string()), true) {
-                ui.label(RichText::new("Param len:"));
-                label!(ui, format!("{:.3} Å", b.r_0), Color32::LIGHT_BLUE);
+        )
+        && let Some(b) = p.get_bond(&(ff_0.to_string(), ff_1.to_string()), true)
+    {
+        ui.label(RichText::new("Param len:"));
+        label!(ui, format!("{:.3} Å", b.r_0), Color32::LIGHT_BLUE);
 
-                // todo: Cache this; don't compute in the UI.
-                let m0 = atom_0.element.atomic_weight();
-                let m1 = atom_1.element.atomic_weight();
-                let mu_amu = (m0 * m1) / (m0 + m1);
-                // todo: QC this.
-                let freq = 3.2555 * (b.k_b / mu_amu).sqrt(); // 1/ps
-                ui.label(format!("Freq: {freq:.1}ps^-1"));
-            }
-        }
+        // todo: Cache this; don't compute in the UI.
+        let m0 = atom_0.element.atomic_weight();
+        let m1 = atom_1.element.atomic_weight();
+        let mu_amu = (m0 * m1) / (m0 + m1);
+        // todo: QC this.
+        let freq = 3.2555 * (b.k_b / mu_amu).sqrt(); // 1/ps
+        ui.label(format!("Freq: {freq:.1}ps^-1"));
     }
 }
 
@@ -295,14 +294,14 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     }
                     label!(ui, res.to_string(), res_color);
 
-                    if !res.atoms.is_empty() {
-                        if let Some(i_chain) = mol.common.atoms[res.atoms[0]].chain {
-                            if i_chain >= mol.chains.len() {
-                                eprintln!("Res chain out of bounds when drawing label");
-                            } else {
-                                let ch_name = &mol.chains[i_chain].id;
-                                label!(ui, format!("Ch: {}", ch_name), Color32::WHITE);
-                            }
+                    if !res.atoms.is_empty()
+                        && let Some(i_chain) = mol.common.atoms[res.atoms[0]].chain
+                    {
+                        if i_chain >= mol.chains.len() {
+                            eprintln!("Res chain out of bounds when drawing label");
+                        } else {
+                            let ch_name = &mol.chains[i_chain].id;
+                            label!(ui, format!("Ch: {}", ch_name), Color32::WHITE);
                         }
                     }
                 }
@@ -469,11 +468,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
             let res_selected = match state.ui.selection {
                 Selection::AtomPeptide(sel_i) => {
                     let atom = &pep.common.atoms[sel_i];
-                    if let Some(res_i) = &atom.residue {
-                        Some(&pep.residues[*res_i])
-                    } else {
-                        None
-                    }
+                    atom.residue.as_ref().map(|res_i| &pep.residues[*res_i])
                 }
                 Selection::Residue(sel_i) => {
                     if sel_i >= pep.residues.len() {
@@ -486,8 +481,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 _ => None,
             };
 
-            if let Some(res) = res_selected {
-                if ui
+            if let Some(res) = res_selected && ui
                     .button(
                         RichText::new(format!("Lig from {}", res.res_type))
                             .color(COLOR_ACTION),
@@ -501,7 +495,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                     // todo: I don't like this clone, but it avoids a dbl-borrow.
                     res_to_make = Some(res.clone());
                 }
-            }
+
 
             if let Some(mol) = state.active_mol() {
                 for res in &pep.het_residues {
@@ -532,14 +526,10 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 }
             }
 
-            if let Some((mol_type, _)) = state.volatile.active_mol {
-                if mol_type == MolType::Ligand {
-                    if !matches!(
+            if let Some((mol_type, _)) = state.volatile.active_mol && mol_type == MolType::Ligand &&  !matches!(
                 state.ui.selection,
                 Selection::None | Selection::AtomLig(_)
-            ) {
-
-                        if button!(
+            ) && button!(
                             ui,
                             "Move lig to sel",
                             COLOR_HIGHLIGHT,
@@ -555,10 +545,9 @@ pub(in crate::ui) fn display_mol_data_peptide(
                                 move_lig_to_sel = Some(a.clone());
                             }
                         }
-                    }
-                }
+
             }
-        }
+
     });
 
     if let Some(res) = res_to_make {
@@ -610,8 +599,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
 
     if let Some(mol) = &state.peptide {
         // todo: Temp location
-        if let Selection::AtomPeptide(sel_i) = state.ui.selection {
-            if button!(
+        if let Selection::AtomPeptide(sel_i) = state.ui.selection && button!(
                 ui,
                 "Pocket from sel",
                 COLOR_ACTION,
@@ -624,7 +612,6 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 let ident = format!("{} atom {sel_i}", mol.common.ident);
                 pocket_to_add = Some(Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, &ident));
             }
-        }
 
         if button!(
             ui,
@@ -784,53 +771,50 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
 
                     // If we have a PDBE ID, but no PubChem ID, try to find one using
                     // an intermediate SMILES representation, upon clicking the button.
-                    if pubchem_cid.is_none() {
-                        if ui.button("PubChem").clicked() {
-                            // If we already have SMILES, this saves an API call.
-                            for ident in &m.idents {
-                                if let MolIdent::Smiles(smiles) = ident {
-                                    // todo: Don't block ?
-                                    let cids = pubchem::find_cids_from_search(&smiles, true)
-                                        .unwrap_or_default();
+                    if pubchem_cid.is_none() && ui.button("PubChem").clicked() {
+                        // If we already have SMILES, this saves an API call.
+                        for ident in &m.idents {
+                            if let MolIdent::Smiles(smiles) = ident {
+                                // todo: Don't block ?
+                                let cids = pubchem::find_cids_from_search(smiles, true)
+                                    .unwrap_or_default();
 
-                                    if !cids.is_empty() {
-                                        let cid = cids[0];
-                                        update_cid = Some(cid);
-                                        pubchem::open_overview(cid);
-                                    }
-
-                                    break;
+                                if !cids.is_empty() {
+                                    let cid = cids[0];
+                                    update_cid = Some(cid);
+                                    pubchem::open_overview(cid);
                                 }
-                            }
 
-                            // This runs if we have neither CID, nor SMILES.
-                            if let Ok((cid, _smiles)) =
-                                pubchem::get_cid_from_pdbe_id(&mol.common().ident)
-                            {
-                                update_cid = Some(cid);
-                                pubchem::open_overview(cid);
+                                break;
                             }
+                        }
+
+                        // This runs if we have neither CID, nor SMILES.
+                        if let Ok((cid, _smiles)) =
+                            pubchem::get_cid_from_pdbe_id(&mol.common().ident)
+                        {
+                            update_cid = Some(cid);
+                            pubchem::open_overview(cid);
                         }
                     }
 
-                    if let Some(cid) = pubchem_cid {
-                        if ui.button("Find assoc structs").clicked() {
-                            // todo: Don't block.
-                            if m.associated_structures.is_empty() {
-                                match pubchem::load_associated_structures(cid) {
-                                    Ok(data) => {
-                                        update_assoc_st = Some(data); // Prevents a borrow problem.
-                                        state.ui.popup.show_associated_structures = true;
-                                    }
-                                    Err(_) => handle_err(
-                                        &mut state.ui,
-                                        "Unable to find structures for this ligand".to_owned(),
-                                    ),
-                                }
-                            } else {
+                    if let Some(cid) = pubchem_cid
+                        && ui.button("Find assoc structs").clicked()
+                        && m.associated_structures.is_empty()
+                    {
+                        // todo: Don't block.
+                        match pubchem::load_associated_structures(cid) {
+                            Ok(data) => {
+                                update_assoc_st = Some(data); // Prevents a borrow problem.
                                 state.ui.popup.show_associated_structures = true;
                             }
+                            Err(_) => handle_err(
+                                &mut state.ui,
+                                "Unable to find structures for this ligand".to_owned(),
+                            ),
                         }
+                    } else {
+                        state.ui.popup.show_associated_structures = true;
                     }
                 }
                 MolGenericRef::Lipid(l) => {
@@ -849,12 +833,11 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
             m.associated_structures = v;
         }
 
-        if let Some(mol) = state.active_mol_mut() {
-            if let Some(cid) = update_cid
-                && let MolGenericRefMut::Small(m) = mol
-            {
-                m.idents.push(MolIdent::PubChem(cid));
-            }
+        if let Some(mol) = state.active_mol_mut()
+            && let Some(cid) = update_cid
+            && let MolGenericRefMut::Small(m) = mol
+        {
+            m.idents.push(MolIdent::PubChem(cid));
         }
         ui.add_space(COL_SPACING);
     });
@@ -883,10 +866,10 @@ pub(in crate::ui) fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {
 
     ui.label(format!("{} atoms", mol.common().atoms.len()));
 
-    if let MolGenericRef::Peptide(m) = mol {
-        if let Some(method) = m.experimental_method {
-            ui.label(method.to_str_short());
-        }
+    if let MolGenericRef::Peptide(m) = mol
+        && let Some(method) = m.experimental_method
+    {
+        ui.label(method.to_str_short());
     }
 
     if let Some(title) = mol.common().metadata.get("_struct.title") {

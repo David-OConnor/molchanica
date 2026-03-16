@@ -926,7 +926,7 @@ impl Pharmacophore {
         // `claim_ring_index` is set for aromatic ring sites; `claim_atoms` for atom-based sites.
         // These are used for bijective matching to prevent the same ligand site from
         // satisfying multiple pharmacophore features.
-        #[allow(clippy::complexity)]
+        #[allow(clippy::type_complexity)]
         let ligand_sites =
             |ft: PharmacophoreFeatType| -> Vec<(Vec3, Vec<usize>, Option<usize>, Option<Vec3>)> {
                 use PharmacophoreFeatType::*;

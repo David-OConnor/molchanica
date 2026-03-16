@@ -1253,7 +1253,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         return;
     }
 
-    let filtered_out_by_dist = filter_pep_atoms_by_dist(&mol, &state.ui, state.active_mol());
+    let filtered_out_by_dist = filter_pep_atoms_by_dist(mol, &state.ui, state.active_mol());
 
     let start_i = scene.entities.len();
     let mut entities = Vec::new();
@@ -1750,7 +1750,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 &mut ents_new[0],
                 &mol.common.ident,
                 bond.atom_0,
-                &atom_0,
+                atom_0,
                 mol_active,
                 ui,
             );

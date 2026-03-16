@@ -135,31 +135,28 @@ fn boolean_list(feats: &[PharmacophoreFeature], relations: &mut Vec<FeatureRelat
     let mut rel_removed = None;
     for (i_rel, rel) in relations.iter().enumerate() {
         ui.horizontal(|ui| {
-            match rel {
-                FeatureRelation::Or(pair) => {
-                    // Blend to white so it's more visible against the dark UI.
-                    label!(ui, "Or", Color32::WHITE);
-                    for i in [pair.0, pair.1] {
-                        if i >= feats.len() {
-                            eprintln!("Invalid feature index in boolean list.");
-                            return;
-                        }
-
-                        let color = blend_color(feats[i].feature_type.color(), (1., 1., 1.), 0.4);
-                        let color = color_egui_from_f32(color);
-
-                        label!(ui, &format!("{}: {}", i + 1, feats[i].feature_type), color);
+            if let FeatureRelation::Or(pair) = rel {
+                // Blend to white so it's more visible against the dark UI.
+                label!(ui, "Or", Color32::WHITE);
+                for i in [pair.0, pair.1] {
+                    if i >= feats.len() {
+                        eprintln!("Invalid feature index in boolean list.");
+                        return;
                     }
 
-                    if ui
-                        .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                        .clicked()
-                    {
-                        println!("{rel:?}");
-                        rel_removed = Some(i_rel);
-                    }
+                    let color = blend_color(feats[i].feature_type.color(), (1., 1., 1.), 0.4);
+                    let color = color_egui_from_f32(color);
+
+                    label!(ui, &format!("{}: {}", i + 1, feats[i].feature_type), color);
                 }
-                _ => {}
+
+                if ui
+                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                    .clicked()
+                {
+                    println!("{rel:?}");
+                    rel_removed = Some(i_rel);
+                }
             }
         });
     }
@@ -365,8 +362,10 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
                 }
 
                 // dummy API interaction.
-                let mut redraw_flags = RedrawFlags::default();
-                redraw_flags.pocket = *redraw;
+                let mut redraw_flags = RedrawFlags {
+                    pocket: *redraw,
+                    ..Default::default()
+                };
 
                 if ui
                     .button(RichText::new("↔ pocket").color(color_move))

@@ -23,7 +23,7 @@ use crate::{
 
 /// Contains receivers for threads. We use these for longer-running processes, as to
 /// not block the UI. For example, computations, and HTTP calls.
-#[allow(clippy::complexity)]
+#[allow(clippy::type_complexity)]
 #[derive(Default)]
 pub struct ThreadReceivers {
     /// Receives thread data upon an HTTP result completion.
@@ -55,43 +55,45 @@ pub fn handle_thread_rx(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
-    if let Some(rx) = &mut state.volatile.thread_receivers.pubchem_properties_avail && let Ok((ident, http_result)) = rx.try_recv() {
-            let mut mol = None;
-            for mol_ in &mut state.ligands {
-                for ident_ in &mol_.idents {
-                    if ident_ == &ident {
-                        mol = Some(mol_);
-                        break;
-                    }
+    if let Some(rx) = &mut state.volatile.thread_receivers.pubchem_properties_avail
+        && let Ok((ident, http_result)) = rx.try_recv()
+    {
+        let mut mol = None;
+        for mol_ in &mut state.ligands {
+            for ident_ in &mol_.idents {
+                if ident_ == &ident {
+                    mol = Some(mol_);
+                    break;
                 }
             }
-
-            let Some(mol) = mol else {
-                state.volatile.thread_receivers.pubchem_properties_avail = None;
-                eprintln!("Unable to find the mol we requested PubChem properties for: {ident:?}");
-                return;
-            };
-
-            match http_result {
-                Ok(props) => {
-                    println!("Received PubChem properties over HTTP.");
-                    mol.update_idents_and_char_from_pubchem(&props);
-
-                    state
-                        .to_save
-                        .pubchem_properties_map
-                        .insert(ident.clone(), props.clone());
-                }
-                Err(e) => {
-                    // Note: This is currently broken.
-                    // println!("Unable to find Smiles for ident {ident_type:?}, generating one.");
-                    eprintln!("Unable to find PubChem properties for ident {ident:?}: {e:?}");
-                    // todo: Not saving to cache; not confident enough.
-                    // mol.smiles = Some(mol.common.to_smiles());
-                }
-            }
-            state.volatile.thread_receivers.pubchem_properties_avail = None;
         }
+
+        let Some(mol) = mol else {
+            state.volatile.thread_receivers.pubchem_properties_avail = None;
+            eprintln!("Unable to find the mol we requested PubChem properties for: {ident:?}");
+            return;
+        };
+
+        match http_result {
+            Ok(props) => {
+                println!("Received PubChem properties over HTTP.");
+                mol.update_idents_and_char_from_pubchem(&props);
+
+                state
+                    .to_save
+                    .pubchem_properties_map
+                    .insert(ident.clone(), props.clone());
+            }
+            Err(e) => {
+                // Note: This is currently broken.
+                // println!("Unable to find Smiles for ident {ident_type:?}, generating one.");
+                eprintln!("Unable to find PubChem properties for ident {ident:?}: {e:?}");
+                // todo: Not saving to cache; not confident enough.
+                // mol.smiles = Some(mol.common.to_smiles());
+            }
+        }
+        state.volatile.thread_receivers.pubchem_properties_avail = None;
+    }
 
     if state
         .volatile

@@ -40,29 +40,28 @@ pub(in crate::ui) fn mol_type_toolbars(
 
         if let Some(mol) = &state.active_mol()
             && state.peptide.is_some()
+            && let MolGenericRef::Small(_) = mol
         {
-            if let MolGenericRef::Small(_) = mol {
-                ui.add_space(COL_SPACING);
-                ui.label("Docking:");
+            ui.add_space(COL_SPACING);
+            ui.label("Docking:");
 
-                if ui
-                    .button(RichText::new("Dock").color(Color32::GOLD))
-                    .clicked()
-                {
-                    // The other views make it tough to see the ligand rel the protein.
-                    // if !matches!(state.ui.mol_view, MoleculeView::SpaceFill | MoleculeView::Surface) {
-                    //     // todo: Dim peptide?
-                    //     state.ui.mol_view = MoleculeView::Surface;
-                    // }
+            if ui
+                .button(RichText::new("Dock").color(Color32::GOLD))
+                .clicked()
+            {
+                // The other views make it tough to see the ligand rel the protein.
+                // if !matches!(state.ui.mol_view, MoleculeView::SpaceFill | MoleculeView::Surface) {
+                //     // todo: Dim peptide?
+                //     state.ui.mol_view = MoleculeView::Surface;
+                // }
 
-                    if let Err(e) = dock(
-                        state,
-                        state.volatile.active_mol.unwrap().1,
-                        scene,
-                        engine_updates,
-                    ) {
-                        handle_err(&mut state.ui, format!("Problem setting up docking: {e:?}"));
-                    }
+                if let Err(e) = dock(
+                    state,
+                    state.volatile.active_mol.unwrap().1,
+                    scene,
+                    engine_updates,
+                ) {
+                    handle_err(&mut state.ui, format!("Problem setting up docking: {e:?}"));
                 }
             }
         }
@@ -148,19 +147,18 @@ pub(in crate::ui) fn lipid_section(
                 engine_updates.entities = EntityUpdate::All;
             }
 
-            if !state.lipids.is_empty() {
-                if ui
+            if !state.lipids.is_empty()
+                && ui
                     .button(RichText::new("Close all lipids").color(Color32::LIGHT_RED))
                     .clicked()
-                {
-                    state.lipids = Vec::new();
-                    scene
-                        .entities
-                        .retain(|e| e.class != EntityClass::Lipid as u32);
-                    clear_mol_entity_indices(state, None);
+            {
+                state.lipids = Vec::new();
+                scene
+                    .entities
+                    .retain(|e| e.class != EntityClass::Lipid as u32);
+                clear_mol_entity_indices(state, None);
 
-                    engine_updates.entities = EntityUpdate::All;
-                }
+                engine_updates.entities = EntityUpdate::All;
             }
         });
     });

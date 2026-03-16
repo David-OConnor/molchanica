@@ -88,7 +88,7 @@ pub fn text_overlay_atoms(
 
     if ui.visibility.labels_mol && i_atom == 0 {
         entity.overlay_text = Some(TextOverlay {
-            text: format!("{}", mol_ident),
+            text: mol_ident.to_string(),
             size: LABEL_SIZE_MOL,
             color,
             font_family: FontFamily::Proportional,

@@ -201,11 +201,9 @@ pub fn md_setup(
                     COLOR_ACTION,
                     "Save the computed MD trajectory to a DCD file."
                 )
-                    .clicked() {
-
-                    if save_trajectory(&mut state.volatile.dialogs.save).is_err() {
+                    .clicked() && save_trajectory(&mut state.volatile.dialogs.save).is_err() {
                         handle_err(&mut state.ui, "Problem saving this file".to_owned());
-                    }
+
             }
 
             match &state.dev {
@@ -234,12 +232,11 @@ pub fn md_setup(
                     TextEdit::singleline(&mut state.ui.md.dt_input),
                 )
                 .changed()
-            {
-                if let Ok(v) = state.ui.md.dt_input.parse::<f32>() {
+            && let Ok(v) = state.ui.md.dt_input.parse::<f32>() {
                     state.to_save.md_dt = v;
                     state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * v;
                 }
-            }
+
             ui.add_space(COL_SPACING / 2.);
 
             {
@@ -267,11 +264,10 @@ pub fn md_setup(
                     })
                     .response
                     .on_hover_text(help_text).changed() {
-                    if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator {
-                        if !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
+                    if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator && !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
                             state.ui.md.langevin_γ = gamma.to_string();
                         }
-                    }
+
                 }
             }
 
@@ -281,10 +277,9 @@ pub fn md_setup(
                     if ui
                         .add_sized([22., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.langevin_γ))
                         .changed()
-                    {
-                        if let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>() {
+                    && let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>() {
                             *gamma = *v;
-                        }
+
                     }
                 }
                 Integrator::VerletVelocity { thermostat } => {
@@ -301,7 +296,6 @@ pub fn md_setup(
                 }
             }
 
-            if matches!(state.to_save.md_config.integrator, | Integrator::LangevinMiddle { gamma: _ }) {}
 
             ui.add_space(COL_SPACING / 2.);
 
@@ -313,10 +307,9 @@ pub fn md_setup(
             if ui
                 .add_sized([30., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.pressure_input))
                 .changed()
-            {
-                if let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>() {
+           && let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>() {
                     state.to_save.md_config.pressure_target = *v;
-                }
+
             }
 
             // We show this even if there is no thermostat, to set the initial temperature.
@@ -324,10 +317,9 @@ pub fn md_setup(
             if ui
                 .add_sized([30., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.temp_input))
                 .changed()
-            {
-                if let Ok(v) = &mut state.ui.md.temp_input.parse::<f32>() {
+            && let Ok(v) = &mut state.ui.md.temp_input.parse::<f32>() {
                     state.to_save.md_config.temp_target = *v;
-                }
+
             }
 
 
@@ -374,21 +366,19 @@ pub fn md_setup(
                 .add_sized([22., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.simbox_pad_input))
                 .on_hover_text(hover_text)
                 .changed()
-            {
-                if let Ok(v) = &mut state.ui.md.simbox_pad_input.parse::<f32>() {
+            && let Ok(v) = &mut state.ui.md.simbox_pad_input.parse::<f32>() {
                     state.to_save.md_config.sim_box = SimBoxInit::Pad(*v);
                 }
-            }
+
 
 
             ui.add_space(COL_SPACING / 2.);
             ui.label(format!("Runtime: {:.1} ps", state.volatile.md_local.run_time));
 
-            if let Some(md) = &state.volatile.md_local.mol_dynamics {
-                if state.ui.current_snapshot < md.snapshots.len() {
+            if let Some(md) = &state.volatile.md_local.mol_dynamics && state.ui.current_snapshot < md.snapshots.len() {
                     energy_disp(&md.snapshots[state.ui.current_snapshot], ui);
                 }
-            }
+
         });
     });
 

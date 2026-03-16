@@ -115,7 +115,7 @@ impl Infer {
         self.scaler.apply_in_place(&mut feat_params);
 
         // Extract Graph Data (New Return Signature)
-        let graph_atom_bond = GraphData::new(&mol, ff_params)?;
+        let graph_atom_bond = GraphData::new(mol, ff_params)?;
 
         let Some(comps) = &mol.components else {
             return Err(io::Error::other("Missing components in ML inference"));

@@ -203,26 +203,25 @@ pub fn reset_camera(
 
         center
     } else if let Some(mol) = state.active_mol() {
-            mol.common().centroid().into()
-            // Leaving size at its default for now.
-        } else {
-            let mut n = 0;
-            let mut centroid = Vec3::new_zero();
-            for mol in &state.ligands[0..10.min(state.ligands.len())] {
-                let c: Vec3 = mol.common.centroid().into();
-                centroid += c;
-                n += 1;
-            }
-            for mol in &state.lipids[0..10.min(state.lipids.len())] {
-                let c: Vec3 = mol.common.centroid().into();
-                centroid += c;
-                n += 1;
-            }
-            centroid /= n as f32;
-            size = 40.; // A broad view.
+        mol.common().centroid().into()
+        // Leaving size at its default for now.
+    } else {
+        let mut n = 0;
+        let mut centroid = Vec3::new_zero();
+        for mol in &state.ligands[0..10.min(state.ligands.len())] {
+            let c: Vec3 = mol.common.centroid().into();
+            centroid += c;
+            n += 1;
+        }
+        for mol in &state.lipids[0..10.min(state.lipids.len())] {
+            let c: Vec3 = mol.common.centroid().into();
+            centroid += c;
+            n += 1;
+        }
+        centroid /= n as f32;
+        size = 40.; // A broad view.
 
-            centroid
-
+        centroid
     };
 
     let dist_fm_center = size + CAM_INIT_OFFSET;

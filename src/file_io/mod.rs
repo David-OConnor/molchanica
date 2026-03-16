@@ -176,7 +176,7 @@ impl State {
 
                 let mol = MoleculePeptide::from_mmcif(
                     cif_data,
-                    &ff_map,
+                    ff_map,
                     Some(path.to_owned()),
                     self.to_save.ph,
                 )?;
@@ -587,7 +587,7 @@ impl State {
                     {
                         handle_err(&mut self.ui, e.to_string());
                     } else if let Some(p) = &history.position {
-                        self.peptide.as_mut().unwrap().common.move_to(p.clone());
+                        self.peptide.as_mut().unwrap().common.move_to(*p);
                     }
                 }
                 OpenType::Ligand => {
@@ -639,7 +639,7 @@ impl State {
             handle_err(&mut self.ui, e.to_string());
         } else if let Some(p) = &history.position {
             match self.get_mol_mut(mol_type, len) {
-                Some(mut m) => m.common_mut().move_to(p.clone()),
+                Some(mut m) => m.common_mut().move_to(*p),
                 None => eprintln!("Error loading last opened; missing mol"),
             }
         }
@@ -748,7 +748,7 @@ impl State {
                 move_mol_to_cam(mol.common_mut(), &scene.camera);
 
                 if let Some(p) = &self.ff_param_set.small_mol {
-                    mol.update_ff_related(&mut self.mol_specific_params, &p, false);
+                    mol.update_ff_related(&mut self.mol_specific_params, p, false);
 
                     mol.update_aux(
                         &self.to_save.pubchem_properties_map,
@@ -801,7 +801,7 @@ impl State {
             MoleculeGeneric::NucleicAcid(mut mol) => {
                 // if let Some(ref mut s) = scene {
                 //     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
+                move_mol_to_cam(mol.common_mut(), &scene.camera);
                 // }
 
                 let centroid = mol.common.centroid();
@@ -924,7 +924,7 @@ impl State {
 pub fn gemmi_path() -> Option<&'static Path> {
     let local_gemmi = Path::new("./gemmi");
     if local_gemmi.exists() {
-        Some(&local_gemmi)
+        Some(local_gemmi)
     } else {
         // If Gemmi is not in a folder colacated with the application, fall back
         // to the system Path.

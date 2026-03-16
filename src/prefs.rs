@@ -413,10 +413,10 @@ impl State {
         }
         for mol in &self.pockets {
             for oh in &mut self.to_save.open_history {
-                if let Some(p) = &mol.common.path {
-                    if &oh.path == p {
-                        oh.position = Some(mol.common.centroid());
-                    }
+                if let Some(p) = &mol.common.path
+                    && &oh.path == p
+                {
+                    oh.position = Some(mol.common.centroid());
                 }
             }
         }

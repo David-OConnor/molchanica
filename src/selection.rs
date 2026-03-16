@@ -617,7 +617,7 @@ fn nearest_in_group(
     }
 }
 
-#[allow(clippy::complexity)]
+#[allow(clippy::type_complexity)]
 /// Used for cursor selection. Returns (atom indices prot, atom indices lig)
 pub fn _points_along_ray_bond_(
     ray: (Vec3F32, Vec3F32),

@@ -680,7 +680,7 @@ fn apply_best_rotation_about_axis(
     (best_i_rot, best_score)
 }
 
-#[allow(clippy::complexity)]
+#[allow(clippy::type_complexity)]
 /// If there are no rings to perform an initial alignment with, choose a feature like two connected
 /// bonds near the centroid to align.
 fn align_from_similar_center(
@@ -755,7 +755,7 @@ fn align_from_similar_center(
     Some(result)
 }
 
-#[allow(clippy::complexity)]
+#[allow(clippy::type_complexity)]
 /// A crude approach to an initial alignment, by identifying rings near the molecules' center that are similar,
 /// then aligning both the position and plane. The result should be that the positions generated have
 /// these rings coplanar and with the same center. We align all ring combinations, in both directions,

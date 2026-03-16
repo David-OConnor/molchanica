@@ -70,7 +70,9 @@ impl MoleculeSmall {
     ) -> Self {
         let mut idents = Vec::new();
 
-        if let Some(id) = metadata.get("PUBCHEM_COMPOUND_CID") && let Ok(cid) = id.parse::<u32>() {
+        if let Some(id) = metadata.get("PUBCHEM_COMPOUND_CID")
+            && let Ok(cid) = id.parse::<u32>()
+        {
             idents.push(MolIdent::PubChem(cid));
         };
 
@@ -583,25 +585,24 @@ impl MoleculeSmall {
                     let (tx, rx) = mpsc::channel(); // one-shot channel
                     let ident_for_thread = ident.clone();
 
-                    if let
-                        MolIdent::PubChem(_) = ident  {
-                            println!("\nLoading PubChem properties for {ident:?} over HTTP...");
+                    if let MolIdent::PubChem(_) = ident {
+                        println!("\nLoading PubChem properties for {ident:?} over HTTP...");
 
-                            thread::spawn(move || {
-                                // Part of our borrow-checker workaround
-                                let cid: u32 = ident_for_thread.ident_inner().parse().unwrap();
-                                let data = pubchem::properties(
-                                    StructureSearchNamespace::Cid,
-                                    &cid.to_string(),
-                                );
+                        thread::spawn(move || {
+                            // Part of our borrow-checker workaround
+                            let cid: u32 = ident_for_thread.ident_inner().parse().unwrap();
+                            let data = pubchem::properties(
+                                StructureSearchNamespace::Cid,
+                                &cid.to_string(),
+                            );
 
-                                let _ = tx.send((ident_for_thread, data));
-                            });
+                            let _ = tx.send((ident_for_thread, data));
+                        });
 
-                            pubchem_ident_exists = true;
-                            *pubchem_properties_avail = Some(rx);
-                            break;
-                        }
+                        pubchem_ident_exists = true;
+                        *pubchem_properties_avail = Some(rx);
+                        break;
+                    }
                 }
             }
         }

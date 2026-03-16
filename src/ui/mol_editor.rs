@@ -266,9 +266,7 @@ pub(in crate::ui) fn editor(
         if ui
             .button(RichText::new("Save"))
             .on_hover_text("Save to a Mol2, SDF, or PDBQT file")
-            .clicked()
-        {
-            if state
+            .clicked() && state
                 .mol_editor
                 .mol
                 .common
@@ -277,7 +275,7 @@ pub(in crate::ui) fn editor(
             {
                 handle_err(&mut state.ui, "Problem saving this file".to_owned());
             }
-        }
+
         if ui
             .button(RichText::new("Load"))
             .on_hover_text("Load from a Mol2, SDF XYZ etc file")
@@ -362,8 +360,7 @@ pub(in crate::ui) fn editor(
             exit_edit_mode(state, scene, updates);
         }
 
-        if let Some(mol_i) = state.mol_editor.mol_i_in_state && mol_i < state.ligands.len() {
-            if ui
+        if let Some(mol_i) = state.mol_editor.mol_i_in_state && mol_i < state.ligands.len() && ui
                 .button(RichText::new("Exit / update").color(Color32::LIGHT_RED))
                 .on_hover_text("Exit the molecule editor, and update the loaded molecule with changes made.")
                 .clicked()
@@ -387,7 +384,6 @@ pub(in crate::ui) fn editor(
 
 
                 exit_edit_mode(state, scene, updates);
-            }
         }
 
         if ui
@@ -787,15 +783,17 @@ fn edit_tools(
     }
 
     section_box().show(ui, |ui| {
-        if &selected_idxs.len() == &1 {
+        if selected_idxs.len() == 1 {
             if ui
                 .button(RichText::new("↔ Move atom").color(color_move))
                 .on_hover_text("(Hotkey: M. M or Esc to stop) Move the selected atom")
                 .clicked()
             {
                 // dummy API interaction.
-                let mut redraw_flags = RedrawFlags::default();
-                redraw_flags.ligand = *redraw;
+                let mut redraw_flags = RedrawFlags {
+                    ligand: *redraw,
+                    ..Default::default()
+                };
 
                 mol_manip::set_manip(
                     state,
@@ -809,8 +807,7 @@ fn edit_tools(
                 *redraw = redraw_flags.ligand;
             }
 
-            if bond_mode {
-                if ui.button(RichText::new("⟳ Rot around bond").color(color_rotate))
+            if bond_mode  &&ui.button(RichText::new("⟳ Rot around bond").color(color_rotate))
                     .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the molecule around this bond")
                     .clicked() {
 
@@ -822,9 +819,12 @@ fn edit_tools(
                     if !bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
 
                         // dummy API interaction.
-                        let mut redraw_flags = RedrawFlags::default();
-                        redraw_flags.ligand = *redraw;
-                        mol_manip::set_manip(
+                        let mut redraw_flags = RedrawFlags {
+                            ligand: *redraw,
+                            ..Default::default()
+                        };
+
+                        set_manip(
                             state,
                             scene,
                             &mut redraw_flags,
@@ -835,7 +835,6 @@ fn edit_tools(
                         );
                         *redraw = redraw_flags.ligand;
                     }
-                }
             }
 
 
@@ -875,8 +874,7 @@ fn edit_tools(
                 }
             }
 
-            if let Selection::AtomLig((_, i)) = state.ui.selection {
-                if ui
+            if let Selection::AtomLig((_, i)) = state.ui.selection &&ui
                     .button(RichText::new("Del atom").color(Color32::LIGHT_RED))
                     .on_hover_text("(Hotkey: Delete) Delete the selected atom")
                     .clicked()
@@ -885,7 +883,7 @@ fn edit_tools(
                     rebuild_md = true;
                     *redraw = true;
                 }
-            }
+
         }
     });
 

@@ -249,7 +249,7 @@ fn associated_structures(
         for s in &associated_structs {
             ui.horizontal(|ui| {
                 if ui
-                    .button(RichText::new(format!("{}", s.pdb_id)).color(COLOR_HIGHLIGHT))
+                    .button(RichText::new(&s.pdb_id).color(COLOR_HIGHLIGHT))
                     .clicked()
                 {
                     rcsb::open_overview(&s.pdb_id);
@@ -257,7 +257,7 @@ fn associated_structures(
                 ui.add_space(COL_SPACING);
 
                 if ui
-                    .button(RichText::new(format!("Open this protein")).color(COLOR_HIGHLIGHT))
+                    .button(RichText::new("Open this protein").color(COLOR_HIGHLIGHT))
                     .clicked()
                 {
                     load_atom_coords_rcsb(
@@ -271,12 +271,10 @@ fn associated_structures(
                 }
             });
 
-            ui.label(RichText::new(format!("{}", s.description)));
+            ui.label(RichText::new(&s.description));
 
             ui.add_space(ROW_SPACING);
         }
-
-        ui.add_space(ROW_SPACING);
 
         ui.add_space(ROW_SPACING);
 
@@ -696,70 +694,70 @@ fn residue_selector(state: &mut State, scene: &mut Scene, ui: &mut Ui, redraw: &
 
     let mut update_arc_center = false;
 
-    if let Some(mol) = &state.peptide {
-        if let Some(chain_i) = state.ui.chain_to_pick_res {
-            if chain_i >= mol.chains.len() {
-                return;
-            }
-            let chain = &mol.chains[chain_i];
-
-            ui.add_space(ROW_SPACING);
-
-            // todo: Wrap not working in popup?
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-
-                for (i, res) in mol.residues.iter().enumerate() {
-                    if i > 800 {
-                        break; // todo: Temp workaround to display blocking
-                    }
-                    // For now, peptide residues only.
-                    if let ResidueType::Water = res.res_type {
-                        continue;
-                    }
-
-                    // Only let the user select residue from the selected chain. This should keep
-                    // it more organized, and keep UI space used down.
-                    if !chain.residues.contains(&i) {
-                        continue;
-                    }
-
-                    let name = match &res.res_type {
-                        ResidueType::AminoAcid(aa) => aa.to_str(AaIdent::OneLetter),
-                        ResidueType::Water => "Water".to_owned(),
-                        ResidueType::Other(name) => name.clone(),
-                    };
-
-                    let mut color = Color32::GRAY;
-                    if let Selection::Residue(sel_i) = state.ui.selection {
-                        if sel_i == i {
-                            color = COLOR_ACTIVE;
-                        }
-                    }
-                    if ui
-                        .button(
-                            RichText::new(format!("{} {name}", res.serial_number))
-                                .size(10.)
-                                .color(color),
-                        )
-                        .clicked()
-                    {
-                        state.ui.view_sel_level = ViewSelLevel::Residue;
-                        state.ui.selection = Selection::Residue(i);
-
-                        update_arc_center = true; // Avoids borrow error.
-
-                        *redraw = true;
-                    }
-                }
-            });
+    if let Some(mol) = &state.peptide
+        && let Some(chain_i) = state.ui.chain_to_pick_res
+    {
+        if chain_i >= mol.chains.len() {
+            return;
         }
+        let chain = &mol.chains[chain_i];
+
+        ui.add_space(ROW_SPACING);
+
+        // todo: Wrap not working in popup?
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+
+            for (i, res) in mol.residues.iter().enumerate() {
+                if i > 800 {
+                    break; // todo: Temp workaround to display blocking
+                }
+                // For now, peptide residues only.
+                if let ResidueType::Water = res.res_type {
+                    continue;
+                }
+
+                // Only let the user select residue from the selected chain. This should keep
+                // it more organized, and keep UI space used down.
+                if !chain.residues.contains(&i) {
+                    continue;
+                }
+
+                let name = match &res.res_type {
+                    ResidueType::AminoAcid(aa) => aa.to_str(AaIdent::OneLetter),
+                    ResidueType::Water => "Water".to_owned(),
+                    ResidueType::Other(name) => name.clone(),
+                };
+
+                let mut color = Color32::GRAY;
+                if let Selection::Residue(sel_i) = state.ui.selection
+                    && sel_i == i
+                {
+                    color = COLOR_ACTIVE;
+                }
+                if ui
+                    .button(
+                        RichText::new(format!("{} {name}", res.serial_number))
+                            .size(10.)
+                            .color(color),
+                    )
+                    .clicked()
+                {
+                    state.ui.view_sel_level = ViewSelLevel::Residue;
+                    state.ui.selection = Selection::Residue(i);
+
+                    update_arc_center = true; // Avoids borrow error.
+
+                    *redraw = true;
+                }
+            }
+        });
     }
 
-    if update_arc_center {
-        if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
-            *center = orbit_center(state);
-        }
+    if update_arc_center
+        && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
+    {
+        *center = orbit_center(state);
     }
 }
 

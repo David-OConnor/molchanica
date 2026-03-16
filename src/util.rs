@@ -177,9 +177,10 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
     if state.ui.orbit_selected_atom && state.volatile.operating_mode != OperatingMode::MolEditor {
         match &state.ui.selection {
             Selection::AtomPeptide(i) => {
-                if let Some(mol) = &state.peptide && let Some(a) = mol.common.atoms.get(*i) {
-                        return a.posit.into();
-
+                if let Some(mol) = &state.peptide
+                    && let Some(a) = mol.common.atoms.get(*i)
+                {
+                    return a.posit.into();
                 }
             }
             Selection::AtomLig((i_mol, i_atom)) => {
@@ -200,12 +201,9 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
 
                 let mut ctr = ZERO;
                 for i in is_atom {
-                    match mol.common.atoms.get(*i) {
-                        Some(a) => {
-                            let p: Vec3F32 = a.posit.into();
-                            ctr += p
-                        }
-                        None => (),
+                    if let Some(a) = mol.common.atoms.get(*i) {
+                        let p: Vec3F32 = a.posit.into();
+                        ctr += p
                     }
                 }
                 return ctr / is_atom.len() as f32;
@@ -285,16 +283,13 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 }
             }
             Selection::BondPeptide(i_atom) => {
-                if let Some(mol) = &state.peptide {
-                    match mol.common.bonds.get(*i_atom) {
-                        Some(bond) => {
-                            return ((mol.common.atom_posits[bond.atom_0]
-                                + mol.common.atom_posits[bond.atom_1])
-                                / 2.)
-                                .into();
-                        }
-                        None => (),
-                    }
+                if let Some(mol) = &state.peptide
+                    && let Some(bond) = mol.common.bonds.get(*i_atom)
+                {
+                    return ((mol.common.atom_posits[bond.atom_0]
+                        + mol.common.atom_posits[bond.atom_1])
+                        / 2.)
+                        .into();
                 }
             }
             Selection::BondLig((i_mol, i_bond)) => {
@@ -621,15 +616,16 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
 
         if let Some(mol) = &state.peptide
             && !state.ui.visibility.hide_density_point_cloud
-        && let Some(density) = &mol.elec_density {
-                draw_density_point_cloud(&mut scene.entities, density);
-                clear_mol_entity_indices(state, None);
-                updates.entities = EntityUpdate::All;
-                // engine_updates
-                //     .entities
-                //     .push_class(EntityClass::DensityPoint as u32);
-                return;
-            }
+            && let Some(density) = &mol.elec_density
+        {
+            draw_density_point_cloud(&mut scene.entities, density);
+            clear_mol_entity_indices(state, None);
+            updates.entities = EntityUpdate::All;
+            // engine_updates
+            //     .entities
+            //     .push_class(EntityClass::DensityPoint as u32);
+            return;
+        }
     }
 
     if state.volatile.flags.clear_density_drawing {
@@ -918,23 +914,28 @@ pub fn clear_mol_entity_indices(state: &mut State, exempt: Option<MolType>) {
     // println!("Clearing indices");
     if let Some(pep) = &mut state.peptide {
         let mut skip = false;
-        if let Some(e) = exempt && e == MolType::Ligand {
-                skip = true;
+        if let Some(e) = exempt
+            && e == MolType::Ligand
+        {
+            skip = true;
         }
         if !skip {
             pep.common.entity_i_range = None;
         }
     }
     for mol in &mut state.ligands {
-        if let Some(e) = exempt && e == MolType::Ligand {
-                break;
+        if let Some(e) = exempt
+            && e == MolType::Ligand
+        {
+            break;
         }
         mol.common.entity_i_range = None;
     }
     for mol in &mut state.nucleic_acids {
-        if let Some(e) = exempt && e == MolType::NucleicAcid {
-                break;
-
+        if let Some(e) = exempt
+            && e == MolType::NucleicAcid
+        {
+            break;
         }
         mol.common.entity_i_range = None;
     }

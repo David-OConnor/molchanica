@@ -2,8 +2,11 @@
 //! todo: Consider  moving this to bio_files. Although geometry considerations
 //! may be a better suit for here.
 
-use std::{collections::HashMap, io};
-use std::collections::hash_map::Entry;
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    io,
+};
+
 use bio_files::BondType;
 use lin_alg::f64::Vec3;
 use na_seq::Element;
