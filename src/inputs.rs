@@ -193,8 +193,8 @@ pub fn event_win_handler(
             event,
             is_synthetic: _,
         } => {
-            if let Code(code) = event.physical_key {
-                if handle_physical_key(
+            if let Code(code) = event.physical_key
+                && handle_physical_key(
                     state_,
                     scene,
                     &mut redraw,
@@ -203,9 +203,9 @@ pub fn event_win_handler(
                     &mut updates,
                     code,
                     event.state,
-                ) {
-                    return updates;
-                }
+                )
+            {
+                return updates;
             }
         }
         WindowEvent::MouseInput {
@@ -596,12 +596,12 @@ fn handle_physical_key(
                     let mut rebuild_md_editor = false;
 
                     let mut skip = false;
-                    if op_mode == OperatingMode::MolEditor {
-                        if let Selection::BondLig((_, i)) = state.ui.selection {
-                            let bond = &state.mol_editor.mol.common.bonds[i];
-                            if bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
-                                skip = true;
-                            }
+                    if op_mode == OperatingMode::MolEditor
+                        && let Selection::BondLig((_, i)) = state.ui.selection
+                    {
+                        let bond = &state.mol_editor.mol.common.bonds[i];
+                        if bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
+                            skip = true;
                         }
                     }
                     if !skip {

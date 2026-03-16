@@ -12,7 +12,7 @@
 //! Example ratios:
 //!   - E-coli membrane: PE:PG:CL: 70-80:20-25:5-10 (mol%)
 //!   - Staphy aureus: PG:CL: 80:20
-//!   -Bacillus subtilis: PE:PG:CL: 40-60%, 5-40%, 8-18%
+//!   - Bacillus subtilis: PE:PG:CL: 40-60%, 5-40%, 8-18%
 //!
 // notes for when constructing liposomes and LNPs:
 // "
@@ -518,7 +518,7 @@ pub fn make_membrane(
     let angle = Uniform::<f64>::new(0.0, TAU).unwrap();
 
     let n_rows = n_mols.isqrt();
-    let n_cols = (n_mols + n_rows - 1) / n_rows; // ceil(n_mols / n_rows)
+    let n_cols = n_mols.div_ceil(n_rows);
 
     // start in the top-left so the grid is centered on `center`
     let mut p = center
@@ -534,7 +534,7 @@ pub fn make_membrane(
 
     for i in 0..n_mols {
         // todo: DRy with above.
-        let mut mol = get_mol_from_distro(pe, pg, rng, &uni);
+        let mut mol = get_mol_from_distro(pe, pg, rng, uni);
 
         // We rotate based on the original amber orientation, to have tails up and down
         // along the Y axis.

@@ -195,8 +195,7 @@ pub fn md_setup(
                 }
             }
 
-            if let Some(md) = &state.volatile.md_local.mol_dynamics && !md.snapshots.is_empty() {
-                if button!(
+            if let Some(md) = &state.volatile.md_local.mol_dynamics && !md.snapshots.is_empty() && button!(
                     ui,
                     "Save traj",
                     COLOR_ACTION,
@@ -207,7 +206,6 @@ pub fn md_setup(
                     if save_trajectory(&mut state.volatile.dialogs.save).is_err() {
                         handle_err(&mut state.ui, "Problem saving this file".to_owned());
                     }
-                }
             }
 
             match &state.dev {

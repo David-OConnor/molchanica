@@ -36,11 +36,11 @@ use crate::{
 };
 
 fn parquet_err_to_io(e: ParquetError) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
+    io::Error::other(e)
 }
 
 fn arrow_err_to_io(e: arrow::error::ArrowError) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
+    io::Error::other(e)
 }
 
 /// One row in the Parquet file.
@@ -202,7 +202,7 @@ impl ParquetMolDb {
             Arc::new(mol_data_arr),
         ];
 
-        RecordBatch::try_new(schema, cols).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        RecordBatch::try_new(schema, cols).map_err(io::Error::other)
     }
 
     /// Reads only the three lightweight metadata columns from disk into `index_meta`.
@@ -215,15 +215,13 @@ impl ParquetMolDb {
 
         let arrow_schema = builder.schema().clone();
 
-        let smiles_idx = arrow_schema
-            .index_of("smiles")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let smiles_idx = arrow_schema.index_of("smiles").map_err(io::Error::other)?;
         let pubchem_idx = arrow_schema
             .index_of("pubchem_cid")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         let heavy_atom_count_idx = arrow_schema
             .index_of("heavy_atom_count")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         // Project metadata columns only. mol_data is NOT read here.
         // Projected batch column order: smiles(0), pubchem_cid(1), heavy_atom_count(2).
@@ -302,13 +300,11 @@ impl ParquetMolDb {
 
         let arrow_schema = builder.schema().clone();
 
-        let smiles_idx = arrow_schema
-            .index_of("smiles")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let smiles_idx = arrow_schema.index_of("smiles").map_err(io::Error::other)?;
 
         let mol_data_idx = arrow_schema
             .index_of("mol_data")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         let mask = parquet::arrow::ProjectionMask::roots(
             builder.parquet_schema(),
@@ -356,7 +352,7 @@ impl ParquetMolDb {
         let mol_data_idx = builder
             .schema()
             .index_of("mol_data")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         let mask = parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), [mol_data_idx]);
 

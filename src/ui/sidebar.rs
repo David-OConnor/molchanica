@@ -520,25 +520,22 @@ pub(in crate::ui) fn sidebar(
                 }
 
                 let mut mol_to_save = None; // avoids dbl-borrow.
-                if let Some(mol) = state.active_mol() {
-                    let color = Color32::GRAY;
-
-                    if ui
-                        .button(RichText::new("Save").color(color))
+                if let Some(mol) = state.active_mol() && ui
+                        .button(RichText::new("Save"))
                         .on_hover_text("Save the active molecule to a file.")
                         .clicked()
                     {
                         mol_to_save = Some((mol.common().clone(), mol.mol_type()));
-                    }
+
                 }
-                if let Some((mol, mol_type)) = mol_to_save {
-                    if mol
+
+                if let Some((mol, mol_type)) = mol_to_save && mol
                         .save(mol_type, &mut state.volatile.dialogs.save)
                         .is_err()
                     {
                         handle_err(&mut state.ui, "Problem saving this file".to_owned());
                     }
-                }
+
             });
 
             ui.add_space(ROW_SPACING / 2.);
@@ -576,10 +573,9 @@ pub(in crate::ui) fn sidebar(
                 // Avoid double borrow.
                 let mut run_logp_sim = false;
 
-                if let Some(m) = &state.active_mol() {
-                    if let MolGenericRef::Small(mol) = m {
+                if let Some(m) = &state.active_mol() && let MolGenericRef::Small(mol) = m {
                         char_adme::mol_char_disp(mol, ui, &mut run_logp_sim);
-                    }
+
                 }
 
                 if run_logp_sim {
@@ -600,8 +596,7 @@ pub(in crate::ui) fn sidebar(
                 }
             }
 
-            if !edit_mode && let Some(MolGenericRef::Peptide(mol)) = state.active_mol() {
-                if let Some(sifts) = &mol.sifts_mapping {
+            if !edit_mode && let Some(MolGenericRef::Peptide(mol)) = state.active_mol() && let Some(sifts) = &mol.sifts_mapping {
                     label!(ui, "SIFTS Mappings", Color32::WHITE);
 
                     for sift in sifts {
@@ -652,7 +647,7 @@ pub(in crate::ui) fn sidebar(
                         }
                         ui.add_space(ROW_SPACING);
                     }
-                }
+
             }
         });
 

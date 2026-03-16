@@ -79,6 +79,7 @@ impl Default for MdEditor {
     }
 }
 
+#[derive(Default)]
 /// For editing small organic molecules.
 pub struct MolEditorState {
     pub mol: MoleculeSmall,
@@ -97,20 +98,6 @@ pub struct MolEditorState {
     pub selected_comp: Option<usize>,
 }
 
-impl Default for MolEditorState {
-    fn default() -> Self {
-        Self {
-            mol: Default::default(),
-            // pocket: Default::default(),
-            h_bonds: Default::default(),
-            mol_i_in_state: Default::default(),
-            pocket_i_in_state: Default::default(),
-            md: Default::default(),
-            rotatable_bonds: Default::default(),
-            selected_comp: Default::default(),
-        }
-    }
-}
 
 impl MolEditorState {
     /// For now, sets up a pair of single-bonded carbon atoms.
@@ -295,7 +282,7 @@ impl MolEditorState {
         // Clear all entities for non-editor molecules. And render the initial relaxation
         // from building dynamics.
 
-        redraw(&mut scene.entities, &self, state_ui, manip_mode);
+        redraw(&mut scene.entities, self, state_ui, manip_mode);
 
         set_flashlight(scene);
         engine_updates.entities = EntityUpdate::All;
@@ -337,7 +324,7 @@ impl MolEditorState {
 
         self.md.md.as_mut().unwrap().snapshots = Vec::new();
 
-        redraw(entities, &self, state_ui, manip_mode);
+        redraw(entities, self, state_ui, manip_mode);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -355,7 +342,7 @@ impl MolEditorState {
             self.mol.common.atom_posits[i] = atom.posit.into();
         }
 
-        redraw(entities, &self, state_ui, manip_mode);
+        redraw(entities, self, state_ui, manip_mode);
         engine_updates.entities = EntityUpdate::All;
     }
 
@@ -457,7 +444,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
     state.ui.ui_vis.pharmacophore_list = true;
 
     state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
-    state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
+    state.volatile.orbit_center_prev = state.volatile.orbit_center;
 
     // This stays false under several conditions.
     let mut mol_loaded = false;

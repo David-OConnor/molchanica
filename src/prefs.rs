@@ -404,10 +404,10 @@ impl State {
         // todo: Consider the same for proteins, and other mol types.
         for mol in &self.ligands {
             for oh in &mut self.to_save.open_history {
-                if let Some(p) = &mol.common.path {
-                    if &oh.path == p {
-                        oh.position = Some(mol.common.centroid());
-                    }
+                if let Some(p) = &mol.common.path
+                    && &oh.path == p
+                {
+                    oh.position = Some(mol.common.centroid());
                 }
             }
         }
@@ -453,25 +453,25 @@ impl State {
         println!("Updating state from prefs data");
         self.reset_selections();
 
-        if let Some(mol) = &mut self.peptide {
-            if self.to_save.per_mol.contains_key(&mol.common.ident) {
-                let data = &self.to_save.per_mol[&mol.common.ident];
+        if let Some(mol) = &mut self.peptide
+            && self.to_save.per_mol.contains_key(&mol.common.ident)
+        {
+            let data = &self.to_save.per_mol[&mol.common.ident];
 
-                self.ui.chain_to_pick_res = data.chain_to_pick_res;
-                self.ui.show_docking_tools = data.show_docking_tools;
-                self.ui.res_coloring = data.res_coloring;
-                self.ui.atom_color_by_charge = data.aatom_color_by_charge;
-                self.ui.ui_vis.aa_seq = data.show_aa_seq;
+            self.ui.chain_to_pick_res = data.chain_to_pick_res;
+            self.ui.show_docking_tools = data.show_docking_tools;
+            self.ui.res_coloring = data.res_coloring;
+            self.ui.atom_color_by_charge = data.aatom_color_by_charge;
+            self.ui.ui_vis.aa_seq = data.show_aa_seq;
 
-                for (i, chain) in mol.chains.iter_mut().enumerate() {
-                    if i < data.chain_vis.len() {
-                        chain.visible = data.chain_vis[i];
-                    }
+            for (i, chain) in mol.chains.iter_mut().enumerate() {
+                if i < data.chain_vis.len() {
+                    chain.visible = data.chain_vis[i];
                 }
-
-                mol.rcsb_data = data.rcsb_data.clone();
-                mol.rcsb_files_avail = data.rcsb_files_avail.clone();
             }
+
+            mol.rcsb_data = data.rcsb_data.clone();
+            mol.rcsb_files_avail = data.rcsb_files_avail.clone();
         }
 
         self.ui.selection = self.to_save.selection.clone();

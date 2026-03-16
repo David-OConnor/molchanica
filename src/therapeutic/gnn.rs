@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     io,
-    io::ErrorKind,
+    iter::repeat_n,
 };
 
 use bio_files::{BondType, md_params::ForceFieldParams};
@@ -19,7 +19,7 @@ use na_seq::{
 use crate::{
     mol_components::{ComponentType, MolComponents, build_adjacency_list_conn},
     molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
-    therapeutic::train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS, MAX_ATOMS},
+    therapeutic::train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS},
 };
 
 // Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring,
@@ -148,7 +148,7 @@ impl GraphData {
 
             let Some(char) = &mol.characterization else {
                 eprintln!("Missing char");
-                return Err(io::Error::new(ErrorKind::Other, "Missing characterization"));
+                return Err(io::Error::other("Missing characterization"));
             };
 
             let h_bond_acc = if char.h_bond_acceptor.contains(&i) {
@@ -458,8 +458,8 @@ pub(in crate::therapeutic) fn pad_adj_and_mask(
 
     // Mask: 1.0 for atoms, 0.0 for pad
     let mut p_mask = Vec::with_capacity(max);
-    p_mask.extend(std::iter::repeat_n(1.0, n));
-    p_mask.extend(std::iter::repeat_n(0.0, max - n));
+    p_mask.extend(repeat_n(1.0, n));
+    p_mask.extend(repeat_n(0.0, max - n));
 
     //Adj: Reconstruct row-by-row to handle 2D padding
     let mut p_adj = Vec::with_capacity(max * max);
@@ -468,11 +468,11 @@ pub(in crate::therapeutic) fn pad_adj_and_mask(
         // Copy valid columns
         p_adj.extend_from_slice(&raw_adj[row_start..row_start + n]);
         // Pad columns (right side of matrix)
-        p_adj.extend(std::iter::repeat(0.0).take(max - n));
+        p_adj.extend(repeat_n(0.0, max - n));
     }
     // Pad rows (bottom of matrix)
     let remaining_rows = max - n;
-    p_adj.extend(std::iter::repeat(0.0).take(remaining_rows * max));
+    p_adj.extend(repeat_n(0.0, remaining_rows * max));
 
     (p_adj, p_mask)
 }

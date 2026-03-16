@@ -387,9 +387,8 @@ pub fn handle_cmd(
                 *redraw = true;
                 return Ok("Complete".to_owned());
             }
-
-            return Err(new_invalid("Unable to find this residue"));
         }
+        return Err(new_invalid("Unable to find this residue"));
     }
 
     if let Some(caps) = re_sel_elem.captures(&input)
@@ -415,13 +414,7 @@ pub fn handle_cmd(
         match action.as_ref() {
             "seq_view" => {
                 state.ui.ui_vis.aa_seq = match caps.get(2) {
-                    Some(action_2) => {
-                        if action_2.as_str() == "off" {
-                            false
-                        } else {
-                            true
-                        }
-                    }
+                    Some(action_2) => action_2.as_str() == "off",
                     None => true,
                 };
                 return Ok("Complete".to_owned());

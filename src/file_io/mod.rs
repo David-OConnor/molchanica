@@ -169,8 +169,7 @@ impl State {
                 let cif_data = MmCif::new(&data_str)?;
 
                 let Some(ff_map) = &self.ff_param_set.peptide_ff_q_map else {
-                    return Err(io::Error::new(
-                        ErrorKind::Other,
+                    return Err(io::Error::other(
                         "Missing FF map when opening a protein; can't validate H",
                     ));
                 };
@@ -587,10 +586,8 @@ impl State {
                         self.open_mol_from_file(&history.path, scene, &mut Default::default())
                     {
                         handle_err(&mut self.ui, e.to_string());
-                    } else {
-                        if let Some(p) = &history.position {
-                            self.peptide.as_mut().unwrap().common.move_to(p.clone());
-                        }
+                    } else if let Some(p) = &history.position {
+                        self.peptide.as_mut().unwrap().common.move_to(p.clone());
                     }
                 }
                 OpenType::Ligand => {
@@ -640,12 +637,10 @@ impl State {
     ) {
         if let Err(e) = self.open_mol_from_file(&history.path, scene, &mut Default::default()) {
             handle_err(&mut self.ui, e.to_string());
-        } else {
-            if let Some(p) = &history.position {
-                match self.get_mol_mut(mol_type, len) {
-                    Some(mut m) => m.common_mut().move_to(p.clone()),
-                    None => eprintln!("Error loading last opened; missing mol"),
-                }
+        } else if let Some(p) = &history.position {
+            match self.get_mol_mut(mol_type, len) {
+                Some(mut m) => m.common_mut().move_to(p.clone()),
+                None => eprintln!("Error loading last opened; missing mol"),
             }
         }
     }
@@ -750,13 +745,10 @@ impl State {
                     mol.common.populate_hydrogens()
                 }
 
-                // if let Some(ref mut s) = scene {
-                // move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
-                // }
+                move_mol_to_cam(mol.common_mut(), &scene.camera);
 
                 if let Some(p) = &self.ff_param_set.small_mol {
-                    mol.update_ff_related(&mut self.mol_specific_params, p, false);
+                    mol.update_ff_related(&mut self.mol_specific_params, &p, false);
 
                     mol.update_aux(
                         &self.to_save.pubchem_properties_map,
@@ -827,7 +819,7 @@ impl State {
             MoleculeGeneric::Lipid(mut mol) => {
                 // if let Some(ref mut s) = scene {
                 //     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
+                move_mol_to_cam(mol.common_mut(), &scene.camera);
                 // }
 
                 let centroid = mol.common.centroid();
@@ -844,7 +836,7 @@ impl State {
             }
             MoleculeGeneric::Pocket(mut mol) => {
                 // if let Some(ref mut s) = scene {
-                move_mol_to_cam(&mut mol.common_mut(), &scene.camera);
+                move_mol_to_cam(mol.common_mut(), &scene.camera);
                 // }
 
                 let centroid = mol.common.centroid();

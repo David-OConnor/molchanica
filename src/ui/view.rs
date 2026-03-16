@@ -171,8 +171,7 @@ pub fn view_settings(
                 );
             }
 
-            if let Some(md) = &state.volatile.md_local.mol_dynamics {
-                if state.ui.visibility.hide_water != water_prev {
+            if let Some(md) = &state.volatile.md_local.mol_dynamics && state.ui.visibility.hide_water != water_prev {
                     let snap = &md.snapshots[0];
 
                     draw_water(
@@ -183,7 +182,7 @@ pub fn view_settings(
                         state.ui.visibility.hide_water,
                     );
                 }
-            }
+
 
             if !state.ligands.is_empty() {
                 let color = misc::active_color(!state.ui.visibility.hide_ligand);
@@ -270,8 +269,7 @@ pub fn view_settings(
                 }
             }
 
-            if let Some(mol) = &state.peptide {
-                if let Some(dens) = &mol.elec_density {
+            if let Some(mol) = &state.peptide && let Some(dens) = &mol.elec_density {
                     let mut redraw_dens = false;
 
                     // `toggle_btn_inv`, but with out `RedrawFlags`.
@@ -344,7 +342,7 @@ pub fn view_settings(
                         //     .push_class(EntityClass::DensitySurface as u32);
                     }
                 }
-            }
+
         });
     });
 }

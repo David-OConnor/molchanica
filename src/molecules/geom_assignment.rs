@@ -436,7 +436,7 @@ fn place_ring_regular(
 
 /// Attempt to place a fused ring anchored to the first adjacent pair of
 /// already-placed atoms found in ring order.  Returns `true` on success.
-fn place_ring_fused(ring: &[usize], atoms: &mut [Atom], positioned: &mut Vec<bool>) -> bool {
+fn place_ring_fused(ring: &[usize], atoms: &mut [Atom], positioned: &mut [bool]) -> bool {
     let n = ring.len();
 
     // Find the first adjacent pair of placed atoms (including the wrap-around edge).
@@ -540,7 +540,7 @@ fn place_ring_fused(ring: &[usize], atoms: &mut [Atom], positioned: &mut Vec<boo
 fn place_ring_attached(
     ring: &[usize],
     atoms: &mut [Atom],
-    positioned: &mut Vec<bool>,
+    positioned: &mut [bool],
     bonds: &[Bond],
     adj: &[Vec<usize>],
 ) -> bool {
@@ -630,7 +630,7 @@ fn place_ring_attached(
 fn place_ring_spiro(
     ring: &[usize],
     atoms: &mut [Atom],
-    positioned: &mut Vec<bool>,
+    positioned: &mut [bool],
     bonds: &[Bond],
     adj: &[Vec<usize>],
 ) -> bool {
@@ -687,7 +687,7 @@ fn place_ring_spiro(
 fn bfs_place_substituents(
     queue: &mut VecDeque<usize>,
     atoms: &mut Vec<Atom>,
-    positioned: &mut Vec<bool>,
+    positioned: &mut [bool],
     bonds: &[Bond],
     adj: &[Vec<usize>],
 ) {

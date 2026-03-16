@@ -18,6 +18,7 @@ use std::{
     hash::{Hash, Hasher},
     io,
     io::Write,
+    iter::repeat_n,
     path::Path,
     str::FromStr,
     time::Instant,
@@ -707,16 +708,13 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             let n = item.graph.num_atoms.min(MAX_ATOMS);
 
             batch_elem_ids.extend_from_slice(&item.graph.elem_indices[0..n]);
-            batch_elem_ids.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
+            batch_elem_ids.extend(repeat_n(0, MAX_ATOMS - n));
 
             batch_ff_ids.extend_from_slice(&item.graph.ff_indices[0..n]);
-            batch_ff_ids.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
+            batch_ff_ids.extend(repeat_n(0, MAX_ATOMS - n));
 
             batch_scalars.extend_from_slice(&item.graph.scalars[0..n * n_scalars_per_atom]);
-            batch_scalars.extend(std::iter::repeat_n(
-                0.0,
-                (MAX_ATOMS - n) * n_scalars_per_atom,
-            ));
+            batch_scalars.extend(repeat_n(0.0, (MAX_ATOMS - n) * n_scalars_per_atom));
 
             let (p_adj, p_mask) =
                 gnn::pad_adj_and_mask(&item.graph.adj, item.graph.num_atoms, MAX_ATOMS);
@@ -735,14 +733,11 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             let n_comps = item.graph_comp.num_comps.min(MAX_COMPS);
 
             batch_comp_ids.extend_from_slice(&item.graph_comp.comp_type_indices[0..n_comps]);
-            batch_comp_ids.extend(std::iter::repeat_n(0_i32, MAX_COMPS - n_comps));
+            batch_comp_ids.extend(repeat_n(0_i32, MAX_COMPS - n_comps));
 
             batch_comp_scalars
                 .extend_from_slice(&item.graph_comp.scalars[0..n_comps * PER_COMP_SCALARS]);
-            batch_comp_scalars.extend(std::iter::repeat_n(
-                0.0_f32,
-                (MAX_COMPS - n_comps) * PER_COMP_SCALARS,
-            ));
+            batch_comp_scalars.extend(repeat_n(0.0_f32, (MAX_COMPS - n_comps) * PER_COMP_SCALARS));
 
             let (p_comp_adj, p_comp_mask) =
                 gnn::pad_adj_and_mask(&item.graph_comp.adj, item.graph_comp.num_comps, MAX_COMPS);
@@ -761,14 +756,11 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             let n_pharm = item.graph_spacial.num_nodes.min(MAX_PHARM);
 
             batch_pharm_ids.extend_from_slice(&item.graph_spacial.pharm_type_indices[0..n_pharm]);
-            batch_pharm_ids.extend(std::iter::repeat_n(0_i32, MAX_PHARM - n_pharm));
+            batch_pharm_ids.extend(repeat_n(0, MAX_PHARM - n_pharm));
 
             batch_pharm_scalars
                 .extend_from_slice(&item.graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
-            batch_pharm_scalars.extend(std::iter::repeat_n(
-                0.0_f32,
-                (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS,
-            ));
+            batch_pharm_scalars.extend(repeat_n(0., (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS));
 
             let (p_pharm_adj, p_pharm_mask) = gnn::pad_adj_and_mask(
                 &item.graph_spacial.adj,

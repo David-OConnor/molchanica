@@ -7,8 +7,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io,
-    io::ErrorKind,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{mpsc, mpsc::Receiver},
     thread,
 };
@@ -927,6 +926,7 @@ impl Pharmacophore {
         // `claim_ring_index` is set for aromatic ring sites; `claim_atoms` for atom-based sites.
         // These are used for bijective matching to prevent the same ligand site from
         // satisfying multiple pharmacophore features.
+        #[allow(clippy::complexity)]
         let ligand_sites =
             |ft: PharmacophoreFeatType| -> Vec<(Vec3, Vec<usize>, Option<usize>, Option<Vec3>)> {
                 use PharmacophoreFeatType::*;
@@ -1079,10 +1079,10 @@ impl Pharmacophore {
 
                 // Claim the matched site.
                 let (_, ref claim_atoms, claim_ring, _) = sites[si];
-                if let Some(ri) = claim_ring {
-                    if ri < claimed_rings.len() {
-                        claimed_rings[ri] = true;
-                    }
+                if let Some(ri) = claim_ring
+                    && ri < claimed_rings.len()
+                {
+                    claimed_rings[ri] = true;
                 }
                 for &a in claim_atoms {
                     if a < claimed_atoms.len() {
@@ -1236,11 +1236,8 @@ pub fn add_pharmacophore_feat(
             }
         }
         match val {
-            // Some(v) => Position::Atoms(v.to_owned()),
-            // Some(v) => Position::Atoms(v.to_owned()),
             Some(v) => v,
-            None => return Err(io::Error::new(ErrorKind::Other, "No ring found for atom.")),
-            // None => Position::Atom(atom_i),
+            None => return Err(io::Error::other("No ring found for atom.")),
         }
     } else {
         if atom_i >= mol.common.atom_posits.len() {

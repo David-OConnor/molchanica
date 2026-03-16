@@ -192,11 +192,7 @@ pub fn add_atom(
     manip_mode: ManipMode,
     components: &Option<MolComponents>,
 ) -> Option<usize> {
-    let Some((i_new_atom, i_new_bond)) =
-        mol.add_atom(i_par, element, bond_type, ff_type, bond_len, q)
-    else {
-        return None;
-    };
+    let (i_new_atom, i_new_bond) = mol.add_atom(i_par, element, bond_type, ff_type, bond_len, q)?;
 
     mol_editor::draw_atom(entities, &mol.atoms[i_new_atom], components, ui);
     mol_editor::draw_bond(

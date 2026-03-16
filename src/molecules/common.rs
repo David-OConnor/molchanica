@@ -404,18 +404,14 @@ impl MoleculeCommon {
         };
 
         // todo: Can't use `common` below here due to the delete_atom code and ownership.
-        let posit = match find_appended_posit(
+        let posit =find_appended_posit(
             posit_parent,
             &self.atoms,
             &self.adjacency_list[i_par],
             bond_len,
             element,
             geom,
-        ) {
-            Some(p) => p,
-            // Can't add an atom; already too many atoms bonded.
-            None => return None,
-        };
+        )?;
 
         let new_sn = self.next_atom_sn;
         self.next_atom_sn += 1;

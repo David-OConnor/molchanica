@@ -78,9 +78,9 @@ pub fn update_file_dialogs(
     }
 
     // Perhaps deprecated in favor of using screening databases.
-    if let Some(path) = &state.volatile.dialogs.screening.take_picked() {
-        // state.to_save.screening_path = Some(path.to_owned());
-    }
+    // if let Some(path) = &state.volatile.dialogs.screening.take_picked() {
+    // state.to_save.screening_path = Some(path.to_owned());
+    // }
 
     if let Some(path) = &state.volatile.dialogs.parquet_db_save.take_picked() {
         match ParquetMolDb::new(path) {
@@ -430,7 +430,7 @@ pub(in crate::ui) fn query(
     if inp.len() >= 5 && !inp_l.starts_with("pdb_") && !inp_l.starts_with("db") {
         let button_clicked = ui.button("Search PubChem").clicked();
         if button_clicked || enter_pressed {
-            let cids = find_cids_from_search(&inp, false);
+            let cids = find_cids_from_search(inp, false);
 
             match cids {
                 Ok(c) => {

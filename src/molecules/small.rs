@@ -70,11 +70,9 @@ impl MoleculeSmall {
     ) -> Self {
         let mut idents = Vec::new();
 
-        if let Some(id) = metadata.get("PUBCHEM_COMPOUND_CID") {
-            if let Ok(cid) = id.parse::<u32>() {
-                idents.push(MolIdent::PubChem(cid));
-            };
-        }
+        if let Some(id) = metadata.get("PUBCHEM_COMPOUND_CID") && let Ok(cid) = id.parse::<u32>() {
+            idents.push(MolIdent::PubChem(cid));
+        };
 
         if let Some(db_name) = metadata.get("DATABASE_NAME")
             && db_name.to_lowercase() == "drugbank"
@@ -420,7 +418,7 @@ impl MoleculeSmall {
         }
 
         let atom_orig_i: Vec<_> = bond_map.keys().collect();
-        let mut bonds_this: Vec<_> = bonds
+        let bonds_this: Vec<_> = bonds
             .iter()
             .filter(|b| atom_orig_i.contains(&&b.atom_0) && atom_orig_i.contains(&&b.atom_1))
             .cloned()
@@ -585,8 +583,8 @@ impl MoleculeSmall {
                     let (tx, rx) = mpsc::channel(); // one-shot channel
                     let ident_for_thread = ident.clone();
 
-                    match ident {
-                        MolIdent::PubChem(_) => {
+                    if let
+                        MolIdent::PubChem(_) = ident  {
                             println!("\nLoading PubChem properties for {ident:?} over HTTP...");
 
                             thread::spawn(move || {
@@ -604,11 +602,8 @@ impl MoleculeSmall {
                             *pubchem_properties_avail = Some(rx);
                             break;
                         }
-                        _ => (),
-                    }
                 }
             }
-            break;
         }
 
         // If we don't have a PubChemID, use SMILES if we have that. If we have a PDBe/Amber ID,
@@ -702,7 +697,7 @@ impl MoleculeSmall {
         }
 
         if !pubchem_exists {
-            self.idents.push(MolIdent::PubChem(props.cid.clone()));
+            self.idents.push(MolIdent::PubChem(props.cid));
         }
         if !smiles_exists {
             self.idents.push(MolIdent::Smiles(props.smiles.clone()));

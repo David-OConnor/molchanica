@@ -154,6 +154,7 @@ impl MoleculePeptide {
         }
     }
 
+    #[allow(clippy::complexity)]
     /// Load RCSB data, and the list of (non-coordinate) files available from the PDB. We do this
     /// in a new thread, to prevent blocking the UI, or delaying a molecule's loading.
     pub fn updates_rcsb_data(
@@ -189,6 +190,7 @@ impl MoleculePeptide {
         *pending_data = Some(rx);
     }
 
+    #[allow(clippy::complexity)]
     /// Call this periodically from the UI/event loop; it’s non-blocking.
     /// Returns if it updated, e.g. so we can update prefs.
     pub fn poll_mol_pending_data(

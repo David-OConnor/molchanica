@@ -172,13 +172,7 @@ impl State {
 
     pub fn get_mol(&self, mol_type: MolType, i: usize) -> Option<MolGenericRef<'_>> {
         match mol_type {
-            MolType::Peptide => {
-                if let Some(p) = &self.peptide {
-                    Some(MolGenericRef::Peptide(p))
-                } else {
-                    None
-                }
-            }
+            MolType::Peptide => self.peptide.as_ref().map(MolGenericRef::Peptide),
             MolType::Ligand => self.get_small(i).map(MolGenericRef::Small),
             MolType::NucleicAcid => self.get_nucleic_acid(i).map(MolGenericRef::NucleicAcid),
             MolType::Lipid => self.get_lipid(i).map(MolGenericRef::Lipid),

@@ -216,7 +216,6 @@ pub(in crate::ui) fn na_section(
                 &seq,
                 state.to_save.nucleic_acid.na_type,
                 state.to_save.nucleic_acid.strands,
-                lin_alg::f64::Vec3::new_zero(), // todo: A/R. Maybe from cam posit?
                 &state.templates.dna,
                 &state.templates.rna,
             ) {

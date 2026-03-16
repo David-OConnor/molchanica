@@ -2,9 +2,7 @@
 
 use std::time::Instant;
 
-use bio_apis::{
-    ReqError, amber_geostd, amber_geostd::GeostdItem, pubchem::StructureSearchNamespace, rcsb,
-};
+use bio_apis::{ReqError, amber_geostd, pubchem::StructureSearchNamespace, rcsb};
 use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use na_seq::AaIdent;
@@ -42,7 +40,7 @@ pub fn load_sdf_drugbank(ident: &str) -> Result<MoleculeSmall, ReqError> {
 /// Download an SDF file from PubChem, and parse as a molecule.
 pub fn load_sdf_pubchem(cid: u32) -> Result<MoleculeSmall, ReqError> {
     match Sdf::load_pubchem(StructureSearchNamespace::Cid, &cid.to_string()) {
-        Ok(m) => Ok(m.try_into().map_err(|e| ReqError::from(e))?),
+        Ok(m) => Ok(m.try_into().map_err(ReqError::from)?),
         Err(_) => Err(ReqError::Http),
     }
 }
@@ -147,21 +145,19 @@ pub fn load_geostd2(
     match amber_geostd::load_mol_files(ident) {
         Ok(data) => {
             // Load FRCmod first, then the Ligand constructor will populate that it loaded.
-            if load_frcmod {
-                if let Some(frcmod) = data.frcmod {
-                    match ForceFieldParams::from_frcmod(&frcmod) {
-                        Ok(v) => {
-                            state.mol_specific_params.insert(ident.to_uppercase(), v);
-                        }
-                        Err(e) => {
-                            handle_err(&mut state.ui, format!("FRCmod empty from geostd: {e:?}"));
-                        }
+            if load_frcmod && let Some(frcmod) = data.frcmod {
+                match ForceFieldParams::from_frcmod(&frcmod) {
+                    Ok(v) => {
+                        state.mol_specific_params.insert(ident.to_uppercase(), v);
                     }
-                    if let Some(lig) = state.active_mol_mut() {
-                        if let MolGenericRefMut::Small(l) = lig {
-                            l.frcmod_loaded = true;
-                        }
+                    Err(e) => {
+                        handle_err(&mut state.ui, format!("FRCmod empty from geostd: {e:?}"));
                     }
+                }
+                if let Some(lig) = state.active_mol_mut()
+                    && let MolGenericRefMut::Small(l) = lig
+                {
+                    l.frcmod_loaded = true;
                 }
             }
 

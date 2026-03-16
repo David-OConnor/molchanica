@@ -313,15 +313,15 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
         // Assign a stable mesh slot that doesn't overlap with standalone pockets.
         let expected_mesh_i_rel = standalone_count + lig_i;
 
-        if let Some(pocket) = &mut state.ligands[lig_i].pharmacophore.pocket {
-            if pocket.mesh_i_rel != expected_mesh_i_rel {
-                pocket.mesh_i_rel = expected_mesh_i_rel;
-                let mesh_i = MESH_POCKET_START + expected_mesh_i_rel;
-                while scene.meshes.len() <= mesh_i {
-                    scene.meshes.push(Default::default());
-                }
-                scene.meshes[mesh_i] = pocket.surface_mesh.clone();
+        if let Some(pocket) = &mut state.ligands[lig_i].pharmacophore.pocket
+            && pocket.mesh_i_rel != expected_mesh_i_rel
+        {
+            pocket.mesh_i_rel = expected_mesh_i_rel;
+            let mesh_i = MESH_POCKET_START + expected_mesh_i_rel;
+            while scene.meshes.len() <= mesh_i {
+                scene.meshes.push(Default::default());
             }
+            scene.meshes[mesh_i] = pocket.surface_mesh.clone();
         }
 
         if let Some(pocket) = &state.ligands[lig_i].pharmacophore.pocket {

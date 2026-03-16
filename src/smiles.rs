@@ -3,7 +3,7 @@
 //! may be a better suit for here.
 
 use std::{collections::HashMap, io};
-
+use std::collections::hash_map::Entry;
 use bio_files::BondType;
 use lin_alg::f64::Vec3;
 use na_seq::Element;
@@ -326,8 +326,8 @@ fn collect_ring_bonds(
         if in_stack[v] {
             // Back-edge: ring closure bond.
             let key = (u.min(v), u.max(v));
-            if !ring_bond_map.contains_key(&key) {
-                ring_bond_map.insert(key, *next_ring);
+            if let Entry::Vacant(e) = ring_bond_map.entry(key) {
+                e.insert(*next_ring);
                 *next_ring += 1;
             }
         } else if !visited[v] {
@@ -555,7 +555,7 @@ fn handle_ring(
     explicit_bt: Option<BondType>,
     ring_map: &mut HashMap<u32, (usize, Option<BondType>, bool)>,
     bonds: &mut Vec<Bond>,
-    adj: &mut Vec<Vec<usize>>,
+    adj: &mut [Vec<usize>],
     atoms: &[Atom],
 ) -> io::Result<()> {
     let cur = current.ok_or_else(|| {
@@ -569,7 +569,7 @@ fn handle_ring(
         Some((other, bt_open, open_aromatic)) => {
             // Closing: determine bond type.
             // An explicit bond at either end takes priority; otherwise use aromaticity.
-            let bond_type = explicit_bt.or(bt_open).unwrap_or_else(|| {
+            let bond_type = explicit_bt.or(bt_open).unwrap_or({
                 if open_aromatic && current_aromatic {
                     BondType::Aromatic
                 } else {
@@ -596,7 +596,7 @@ fn parse_bracket_atom(
     chars.next(); // consume '['
 
     // Optional isotope (one or more digits before the element symbol)
-    while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+    while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
         chars.next();
     }
 
@@ -611,7 +611,7 @@ fn parse_bracket_atom(
     let mut sym = String::from(first.to_ascii_uppercase());
 
     // Optional second letter (always lowercase, e.g. 'l' in Cl, 'r' in Br, 'g' in Hg)
-    if chars.peek().map_or(false, |c| c.is_ascii_lowercase()) {
+    if chars.peek().is_some_and(|c| c.is_ascii_lowercase()) {
         sym.push(chars.next().unwrap());
     }
 
@@ -623,17 +623,17 @@ fn parse_bracket_atom(
     // Optional H-count: H or Hn
     if chars.peek().copied() == Some('H') {
         chars.next();
-        while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
             chars.next();
         }
     }
 
     // Optional charge: +, -, ++, --, +n, -n
-    if chars.peek().map_or(false, |&c| c == '+' || c == '-') {
+    if chars.peek().is_some_and(|&c| c == '+' || c == '-') {
         chars.next();
         while chars
             .peek()
-            .map_or(false, |&c| c.is_ascii_digit() || c == '+' || c == '-')
+            .is_some_and(|&c| c.is_ascii_digit() || c == '+' || c == '-')
         {
             chars.next();
         }
@@ -642,7 +642,7 @@ fn parse_bracket_atom(
     // Optional atom-map: :n
     if chars.peek().copied() == Some(':') {
         chars.next();
-        while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
             chars.next();
         }
     }
@@ -766,7 +766,7 @@ fn add_bond(
     b: usize,
     bond_type: BondType,
     bonds: &mut Vec<Bond>,
-    adj: &mut Vec<Vec<usize>>,
+    adj: &mut [Vec<usize>],
     atoms: &[Atom],
 ) {
     let (lo, hi) = if a < b { (a, b) } else { (b, a) };

@@ -37,6 +37,7 @@ use crate::{
     selection::ViewSelLevel,
     state::ResColoring,
 };
+
 // ── Dimensions (Å) ────────────────────────────────────────────────────────────
 
 /// Half-width of helix ribbon along the guide direction (radially in/out from helix axis).
@@ -681,12 +682,12 @@ fn extend_run(
 ) -> Vec<usize> {
     let mut ext = Vec::with_capacity(run.len() + 2);
 
-    if let Some(&first) = run.first() {
-        if first >= 1 {
-            let p1 = first - 1;
-            if covered.contains(&p1) && ca_map.contains_key(&p1) {
-                ext.push(p1);
-            }
+    if let Some(&first) = run.first()
+        && first >= 1
+    {
+        let p1 = first - 1;
+        if covered.contains(&p1) && ca_map.contains_key(&p1) {
+            ext.push(p1);
         }
     }
 
@@ -733,10 +734,10 @@ pub fn build_cartoon_mesh(
     // ── 1. Collect all Cα positions ───────────────────────────────────────────
     let mut all_ca: HashMap<usize, Vec3F32> = HashMap::new();
     for atom in atoms {
-        if atom.role == Some(AtomRole::C_Alpha) {
-            if let Some(r) = atom.residue {
-                all_ca.entry(r).or_insert_with(|| vec3(atom));
-            }
+        if atom.role == Some(AtomRole::C_Alpha)
+            && let Some(r) = atom.residue
+        {
+            all_ca.entry(r).or_insert_with(|| vec3(atom));
         }
     }
 
@@ -756,7 +757,7 @@ pub fn build_cartoon_mesh(
         let chain_visible = frames
             .first()
             .and_then(|f| res_to_chain.get(&f.res_idx))
-            .map_or(true, |&ci| chains[ci].visible);
+            .is_none_or(|&ci| chains[ci].visible);
 
         if !chain_visible {
             continue;
@@ -785,7 +786,7 @@ pub fn build_cartoon_mesh(
         .copied()
         .filter(|r| !covered.contains(r))
         // Respect chain visibility.
-        .filter(|r| res_to_chain.get(r).map_or(true, |&ci| chains[ci].visible))
+        .filter(|r| res_to_chain.get(r).is_none_or(|&ci| chains[ci].visible))
         .collect();
     coil_residues.sort_unstable();
 

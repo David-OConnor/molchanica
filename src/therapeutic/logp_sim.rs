@@ -64,6 +64,7 @@ const TEMP_TGT: f32 = 298.15; // Standard LogP is measured at 25 °C = 298.15 K.
 // The conversion factor between ln and log10
 const LOG_CONV: f32 = 1. / 2.303;
 
+#[allow(clippy::doc_list_without_indentation)]
 /// Using PubChem data as a reference. Partial charges are computed using ORCA. We us this input:
 /// ! HF 6-31G* Opt TightSCF TightOpt RESP
 ///
@@ -180,7 +181,7 @@ fn run_octanol(
     let mut octanol = make_octanol();
     octanol.update_ff_related(
         &mut state.mol_specific_params,
-        &state.ff_param_set.small_mol.as_ref().unwrap(),
+        state.ff_param_set.small_mol.as_ref().unwrap(),
         false,
     );
     octanol.common.selected_for_md = true;

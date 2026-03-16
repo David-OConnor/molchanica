@@ -106,10 +106,9 @@ where
             TextEdit::singleline(&mut val_str),
         )
         .changed()
-    {
-        if let Ok(v) = val_str.parse::<T>() {
+    && let Ok(v) = val_str.parse::<T>() {
             *val = v;
-        }
+
     }
 }
 
@@ -122,13 +121,11 @@ pub fn handle_input(
 ) {
     ui.ctx().input(|ip| {
         // Check for file drop
-        if let Some(dropped_files) = ip.raw.dropped_files.first() {
-            if let Some(path) = &dropped_files.path {
-                if let Err(e) = state.open_file(path, scene, engine_updates) {
+        if let Some(dropped_files) = ip.raw.dropped_files.first() && let Some(path) = &dropped_files.path && let Err(e) = state.open_file(path, scene, engine_updates) {
                     handle_err(&mut state.ui, e.to_string());
                 }
-            }
-        }
+
+
     });
 }
 
@@ -171,10 +168,9 @@ fn chain_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
 
         for (i, chain) in mol.chains.iter().enumerate() {
             let mut color = Color32::GRAY;
-            if let Some(i_sel) = state.ui.chain_to_pick_res {
-                if i == i_sel {
+            if let Some(i_sel) = state.ui.chain_to_pick_res && i == i_sel {
                     color = COLOR_ACTIVE
-                }
+
             }
             if ui
                 .button(RichText::new(chain.id.clone()).color(color))
@@ -364,10 +360,10 @@ fn add_aa_seq(selection: &mut Selection, seq_text: &str, ui: &mut Ui, redraw: &m
                         (color.2 * 255.) as u8,
                     );
 
-                    if let Selection::Residue(sel) = selection {
-                        if i == *sel {
+                    if let Selection::Residue(sel) = selection
+                        && i == *sel {
                             color = Color32::from_rgb(255, 0, 0); // cheaper, but more maintenance than calling the const.
-                        }
+
                     }
 
                     if ui.label(RichText::new(aa).color(color)).clicked() {
@@ -657,22 +653,20 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                     TextEdit::singleline(&mut state.ui.ph_input),
                 )
                 .changed()
-            {
-                if let Ok(v) = &mut state.ui.ph_input.parse::<f32>() {
+            && let Ok(v) = &mut state.ui.ph_input.parse::<f32>() {
                     state.to_save.ph = *v;
 
                     // Re-assign hydrogens, and redraw
-                    if let Some(mol) = &mut state.peptide {
-                        if let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
+                    if let Some(mol) = &mut state.peptide && let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
                             match mol.reassign_hydrogens(state.to_save.ph, ff_map) {
                                 Ok(_) => *redraw = true,
                                 Err(e) => {
                                     let msg = format!("Error reassigning hydrogens: {e:?}");
                                     handle_err(&mut state.ui, msg);
                                 }
-                            }
+
                         }
-                    }
+
                 }
             }
 
@@ -696,7 +690,7 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
             section_box().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     mol_data::selected_data(
-                        &state,
+                        state,
                         &state.ui.selection,
                         ui,
                     );
@@ -781,12 +775,12 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 };
 
                 if state.volatile.md_local.draw_md_mols || state.volatile.md_local.mol_dynamics.is_some() {
-                    if ui.button(RichText::new(text).color(COLOR_HIGHLIGHT)).clicked() {
+                    && ui.button(RichText::new(text).color(COLOR_HIGHLIGHT)).clicked() {
                         state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
 
                         redraw.set_all();
                     }
-                }
+
             }
 
             let metadata_loaded = false; // avoids borrow error.
@@ -817,8 +811,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     //         }
                     //     }
                     // }
-                    if files_avail.validation_2fo_fc {
-                        if ui
+                    if files_avail.validation_2fo_fc && ui
                             .button(RichText::new("Fetch elec ρ").color(COLOR_HIGHLIGHT))
                             .on_hover_text("Load 2fo-fc electron density data from RCSB PDB. Convert to CCP4 map format and display.")
                             .clicked()
@@ -839,7 +832,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                     handle_err(&mut state.ui, msg);
                                 }
                             }
-                        }
+
                     }
                     // todo: Add these if you end up with a way to use them. We currently use 2fo-fc only.
                     // if files_avail.validation_fo_fc {
@@ -882,8 +875,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     //     }
                     // }
 
-                    if files_avail.map {
-                        if ui
+                    if files_avail.map && ui
                             .button(RichText::new("Map").color(COLOR_HIGHLIGHT))
                             .clicked()
                         {
@@ -910,7 +902,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                     handle_err(&mut state.ui, msg);
                                 }
                             }
-                        }
+
                     }
                 }
             }
@@ -1069,21 +1061,19 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
         ui.add_space(ROW_SPACING / 2.);
 
-        if state.ui.ui_vis.aa_seq {
-            if state.peptide.is_some() {
+        if state.ui.ui_vis.aa_seq && state.peptide.is_some() {
                 add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw.peptide);
-            }
+
         }
 
-        if state.ui.ui_vis.smiles {
-            if let Some(mol) = &state.active_mol() &&
+        if state.ui.ui_vis.smiles && let Some(mol) = &state.active_mol() &&
                 let MolGenericRef::Small(m) = mol {
                 for ident in &m.idents {
                     if let MolIdent::Smiles(smiles) = ident {
                         draw_smiles(smiles, ui);
                         break;
                     }
-                }
+
             }
         }
 
@@ -1405,14 +1395,13 @@ pub(crate) fn cam_snapshots(
                 .response
                 .on_hover_text("Set the camera to a previously-saved scene.");
 
-            if let Some(i) = state.ui.cam_snapshot {
-                if ui.button(RichText::new("❌").color(Color32::RED)).clicked() {
+            if let Some(i) = state.ui.cam_snapshot && ui.button(RichText::new("❌").color(Color32::RED)).clicked() {
                     if i < state.cam_snapshots.len() {
                         state.cam_snapshots.remove(i);
                     }
                     state.ui.cam_snapshot = None;
                     state.update_save_prefs();
-                }
+
             }
 
             if state.ui.cam_snapshot != prev_snap {

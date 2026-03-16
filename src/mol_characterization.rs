@@ -778,7 +778,7 @@ fn count_cycles_len(adj: &[Vec<usize>], len: usize) -> Vec<Vec<usize>> {
         cycles_set: &mut HashSet<Vec<usize>>,
     ) {
         if stack.len() == len {
-            if adj[u].iter().any(|&v| v == s) {
+            if adj[u].contains(&s) {
                 let cyc = canonical_cycle(stack);
                 cycles_set.insert(cyc);
             }

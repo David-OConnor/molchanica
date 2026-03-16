@@ -352,8 +352,8 @@ fn build_strands(
             // todo: You passing in `template` here is probably wrong, as you moved the positions!!
             // todo: Come back to this after your SS bases are correct.
             let posits_comp = align_bases(
-                &template,
-                &template_comp,
+                template,
+                template_comp,
                 nt,
                 na_type,
                 &atoms_base,
@@ -557,7 +557,6 @@ impl MoleculeNucleicAcid {
         seq: &[Nucleotide],
         na_type: NucleicAcidType,
         strands: Strands,
-        posit_5p: Vec3,
         templates_dna: &HashMap<String, TemplateData>,
         templates_rna: &HashMap<String, TemplateData>,
     ) -> io::Result<Self> {
@@ -614,7 +613,6 @@ impl MoleculeNucleicAcid {
         peptide: &MoleculePeptide,
         na_type: NucleicAcidType,
         strands: Strands,
-        posit_5p: Vec3,
         templates_dna: &HashMap<String, TemplateData>,
         templates_rna: &HashMap<String, TemplateData>,
     ) -> io::Result<Self> {
@@ -636,14 +634,7 @@ impl MoleculeNucleicAcid {
             }
         }
 
-        Self::from_seq(
-            &seq,
-            na_type,
-            strands,
-            posit_5p,
-            templates_dna,
-            templates_rna,
-        )
+        Self::from_seq(&seq, na_type, strands, templates_dna, templates_rna)
     }
 }
 

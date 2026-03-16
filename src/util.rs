@@ -172,13 +172,14 @@ pub fn _bond_angle(atoms: &[Atom], bond_0: &Bond, bond_1: &Bond) -> f64 {
 /// Based on selection status and if a molecule is open, find the center for the orbit camera. This
 /// is generally around a specific atom, or a molecule's centroid.
 pub fn orbit_center(state: &State) -> Vec3F32 {
+    const ZERO: Vec3F32 = Vec3F32::new_zero();
+
     if state.ui.orbit_selected_atom && state.volatile.operating_mode != OperatingMode::MolEditor {
         match &state.ui.selection {
             Selection::AtomPeptide(i) => {
-                if let Some(mol) = &state.peptide {
-                    if let Some(a) = mol.common.atoms.get(*i) {
+                if let Some(mol) = &state.peptide && let Some(a) = mol.common.atoms.get(*i) {
                         return a.posit.into();
-                    }
+
                 }
             }
             Selection::AtomLig((i_mol, i_atom)) => {
@@ -186,18 +187,18 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     Some(m) => m.common.atom_posits[*i_atom].into(),
                     None => {
                         eprintln!("Error: Invalid lig index for orbit center");
-                        return Vec3F32::new_zero();
+                        return ZERO;
                     }
                 };
             }
             Selection::AtomsLig((i_mol, is_atom)) => {
                 if i_mol >= &state.ligands.len() {
                     eprintln!("Error: Invalid lig index for orbit center");
-                    return Vec3F32::new_zero();
+                    return ZERO;
                 }
                 let mol = &state.ligands[*i_mol];
 
-                let mut ctr = Vec3F32::new_zero();
+                let mut ctr = ZERO;
                 for i in is_atom {
                     match mol.common.atoms.get(*i) {
                         Some(a) => {
@@ -214,7 +215,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     Some(m) => m.common.atom_posits[*i_atom].into(),
                     None => {
                         eprintln!("Error: Invalid nucleic acid index for orbit center");
-                        return Vec3F32::new_zero();
+                        return ZERO;
                     }
                 };
             }
@@ -223,7 +224,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     Some(l) => l.common.atom_posits[*i_atom].into(),
                     None => {
                         eprintln!("Error: Invalid lipid index for orbit center");
-                        return Vec3F32::new_zero();
+                        return ZERO;
                     }
                 };
             }
@@ -232,7 +233,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     Some(l) => l.common.atom_posits[*i_atom].into(),
                     None => {
                         eprintln!("Error: Invalid pocket index for orbit center");
-                        return Vec3F32::new_zero();
+                        return ZERO;
                     }
                 };
             }
@@ -242,20 +243,38 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                         Some(res) => {
                             match mol.common.atoms.get(match res.atoms.first() {
                                 Some(a) => *a, // todo: What?
-                                None => return Vec3F32::new_zero(),
+                                None => return ZERO,
                             }) {
                                 Some(a) => return a.posit.into(),
-                                None => return Vec3F32::new_zero(),
+                                None => return ZERO,
                             }
                         }
-                        None => return Vec3F32::new_zero(),
+                        None => return ZERO,
                     }
                 }
             }
-            Selection::Residues(is) => {}
+            Selection::Residues(idxs) => {
+                if let Some(mol) = &state.peptide
+                    && !idxs.is_empty()
+                {
+                    // DRY with single Residue branch.
+                    match mol.residues.get(idxs[0]) {
+                        Some(res) => {
+                            match mol.common.atoms.get(match res.atoms.first() {
+                                Some(a) => *a, // todo: What?
+                                None => return ZERO,
+                            }) {
+                                Some(a) => return a.posit.into(),
+                                None => return ZERO,
+                            }
+                        }
+                        None => return ZERO,
+                    }
+                }
+            }
             Selection::AtomsPeptide(is) => {
                 if let Some(mol) = &state.peptide {
-                    let mut ctr = Vec3F32::new_zero();
+                    let mut ctr = ZERO;
                     for i in is {
                         if let Some(a) = mol.common.atoms.get(*i) {
                             let p: Vec3F32 = a.posit.into();
@@ -290,11 +309,11 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
             Selection::BondsLig((i_mol, is_bond)) => {
                 let mol = &state.ligands[*i_mol];
 
-                let mut ctr = Vec3F32::new_zero();
+                let mut ctr = ZERO;
                 for i_bond in is_bond {
                     if *i_bond >= mol.common.bonds.len() {
                         eprintln!("Error: Bond out of bounds");
-                        return Vec3F32::new_zero();
+                        return ZERO;
                     }
 
                     let bond = &mol.common.bonds[*i_bond];
@@ -342,7 +361,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
         // Orbit around the selected molecule's centroid. Failing that, the origin.
     } else {
         let Some((mol_type, i)) = &state.volatile.orbit_center else {
-            return Vec3F32::new_zero();
+            return ZERO;
         };
 
         return match state.get_mol(*mol_type, *i) {
@@ -358,7 +377,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
         };
     }
 
-    Vec3F32::new_zero()
+    ZERO
 }
 
 /// A helper fn. Maps from a global index, to a local atom from a subset.
@@ -602,8 +621,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
 
         if let Some(mol) = &state.peptide
             && !state.ui.visibility.hide_density_point_cloud
-        {
-            if let Some(density) = &mol.elec_density {
+        && let Some(density) = &mol.elec_density {
                 draw_density_point_cloud(&mut scene.entities, density);
                 clear_mol_entity_indices(state, None);
                 updates.entities = EntityUpdate::All;
@@ -612,7 +630,6 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 //     .push_class(EntityClass::DensityPoint as u32);
                 return;
             }
-        }
     }
 
     if state.volatile.flags.clear_density_drawing {
@@ -901,28 +918,23 @@ pub fn clear_mol_entity_indices(state: &mut State, exempt: Option<MolType>) {
     // println!("Clearing indices");
     if let Some(pep) = &mut state.peptide {
         let mut skip = false;
-        if let Some(e) = exempt {
-            if e == MolType::Ligand {
+        if let Some(e) = exempt && e == MolType::Ligand {
                 skip = true;
-            }
         }
         if !skip {
             pep.common.entity_i_range = None;
         }
     }
     for mol in &mut state.ligands {
-        if let Some(e) = exempt {
-            if e == MolType::Ligand {
+        if let Some(e) = exempt && e == MolType::Ligand {
                 break;
-            }
         }
         mol.common.entity_i_range = None;
     }
     for mol in &mut state.nucleic_acids {
-        if let Some(e) = exempt {
-            if e == MolType::NucleicAcid {
+        if let Some(e) = exempt && e == MolType::NucleicAcid {
                 break;
-            }
+
         }
         mol.common.entity_i_range = None;
     }
@@ -999,7 +1011,7 @@ pub fn find_nearest_mol_dist_to_cam(state: &State, cam: &Camera) -> Option<f32> 
             }
 
             let posit: Vec3F32 = pep.common.atom_posits[i].into();
-            if cam.in_view(posit.into()).0 {
+            if cam.in_view(posit).0 {
                 let dist = (cam.position - posit).magnitude() - 4.;
                 if dist < nearest {
                     nearest = dist;
@@ -1289,7 +1301,7 @@ pub fn res_color(
                     // Find the entity_id of the mapping that covers this residue's chain+serial.
                     let entity_id = entries.iter().find_map(|entry| {
                         entry.mappings.iter().find_map(|m| {
-                            let chain_ok = chain_letter.map_or(true, |cl| m.chain_id == *cl);
+                            let chain_ok = chain_letter.is_none_or(|cl| m.chain_id == *cl);
 
                             if chain_ok
                             // && serial >= m.start.residueF_number

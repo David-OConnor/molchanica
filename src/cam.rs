@@ -34,11 +34,7 @@ pub const FOG_DIST_MAX: u16 = 120;
 
 pub fn calc_fog_dists(dist: u16) -> (f32, f32) {
     // Clamp.
-    let min = if dist > FOG_HALF_DEPTH {
-        dist - FOG_HALF_DEPTH
-    } else {
-        0
-    };
+    let min = dist.saturating_sub(FOG_HALF_DEPTH);
 
     (min as f32, (dist + FOG_HALF_DEPTH) as f32)
 }
@@ -206,8 +202,7 @@ pub fn reset_camera(
         size = mol.size;
 
         center
-    } else {
-        if let Some(mol) = state.active_mol() {
+    } else if let Some(mol) = state.active_mol() {
             mol.common().centroid().into()
             // Leaving size at its default for now.
         } else {
@@ -227,7 +222,7 @@ pub fn reset_camera(
             size = 40.; // A broad view.
 
             centroid
-        }
+
     };
 
     let dist_fm_center = size + CAM_INIT_OFFSET;

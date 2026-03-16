@@ -247,8 +247,7 @@ fn mod_color_for_ligand(
     }
 
     if let Some(slot) = cache_lig_color(el) {
-        slot.get_or_init(|| blend_color(*color, LIGAND_COLOR, LIGAND_BLEND_AMT))
-            .clone()
+        *slot.get_or_init(|| blend_color(*color, LIGAND_COLOR, LIGAND_BLEND_AMT))
     } else {
         blend_color(*color, LIGAND_COLOR, LIGAND_BLEND_AMT)
     }
@@ -460,7 +459,7 @@ pub fn draw_water(
     for i in 0..o_pos.len() {
         let mut ent = Entity::new(
             MESH_WATER_SPHERE,
-            o_pos[i].into(),
+            o_pos[i],
             Quaternion::new_identity(),
             BALL_RADIUS_WATER_O,
             Element::Oxygen.color(),
@@ -474,7 +473,7 @@ pub fn draw_water(
         for pos in [h0_pos[i], h1_pos[i]].iter() {
             let mut ent = Entity::new(
                 MESH_WATER_SPHERE,
-                (*pos).into(),
+                *pos,
                 Quaternion::new_identity(),
                 BALL_RADIUS_WATER_H,
                 Element::Hydrogen.color(),
@@ -671,7 +670,7 @@ pub fn draw_mol(
                     &mut entity,
                     &mol.common().ident,
                     i_atom,
-                    &atom,
+                    atom,
                     mol_active,
                     ui,
                 );
@@ -911,7 +910,7 @@ pub fn draw_mol(
                 &mut entities[0],
                 &mol.common().ident,
                 bond.atom_0,
-                &atom_0,
+                atom_0,
                 mol_active, // todo
                 ui,
             );
@@ -1263,13 +1262,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
     let aa_count = mol
         .residues
         .iter()
-        .filter(|r| {
-            if let ResidueType::AminoAcid(_) = r.res_type {
-                true
-            } else {
-                false
-            }
-        })
+        .filter(|r| matches!(r.res_type, ResidueType::AminoAcid(_)))
         .count();
 
     let ui = &state.ui;
@@ -1428,10 +1421,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 },
             };
 
-            if let Some(role) = atom.role {
-                if role == AtomRole::Water {
-                    radius = BALL_RADIUS_WATER_O
-                }
+            if let Some(role) = atom.role
+                && role == AtomRole::Water
+            {
+                radius = BALL_RADIUS_WATER_O
             }
 
             let dim_peptide = state.ui.visibility.dim_peptide && !atom.hetero;
@@ -1512,7 +1505,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 &mut entity,
                 &mol.common.ident,
                 i_atom,
-                &atom,
+                atom,
                 mol_active,
                 ui,
             );
@@ -1586,12 +1579,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         // Assuming water won't be bonded to the main molecule.
         if (state.ui.visibility.hide_sidechains || state.ui.mol_view == MoleculeView::Backbone)
             && let Some(role_0) = atom_0.role
+            && let Some(role_1) = atom_1.role
+            && (role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain)
         {
-            if let Some(role_1) = atom_1.role {
-                if role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain {
-                    continue;
-                }
-            }
+            continue;
         }
 
         if (state.ui.visibility.hide_hetero && atom_0.hetero && atom_1.hetero)
@@ -1695,11 +1686,11 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             );
         }
 
-        if let Selection::BondPeptide(bond_i) = ui.selection {
-            if bond_i == i_bond {
-                color_0 = COLOR_SELECTED;
-                color_1 = COLOR_SELECTED;
-            }
+        if let Selection::BondPeptide(bond_i) = ui.selection
+            && bond_i == i_bond
+        {
+            color_0 = COLOR_SELECTED;
+            color_1 = COLOR_SELECTED;
         }
 
         if atom_0.hetero && color_0 != COLOR_SELECTED {
@@ -1783,13 +1774,12 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             let atom_acceptor = &mol.common.atoms[bond.acceptor];
 
             // todo: DRY with above.
-            if state.ui.visibility.hide_sidechains || state.ui.mol_view == MoleculeView::Backbone {
-                if let Some(role_0) = atom_donor.role
-                    && let Some(role_1) = atom_acceptor.role
-                    && (role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain)
-                {
-                    continue;
-                }
+            if (state.ui.visibility.hide_sidechains || state.ui.mol_view == MoleculeView::Backbone)
+                && let Some(role_0) = atom_donor.role
+                && let Some(role_1) = atom_acceptor.role
+                && (role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain)
+            {
+                continue;
             }
 
             // todo: Should we pre-filter these atoms-to-disp by index? Would be faster, but

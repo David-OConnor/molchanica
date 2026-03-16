@@ -196,12 +196,11 @@ pub fn find_sel_from_cursor_ray(
             &atoms_pep[*i_atom]
         };
 
-        if ui.visibility.hide_sidechains || matches!(ui.mol_view, MoleculeView::Backbone) {
-            if let Some(role) = atom.role
-                && (role == AtomRole::Sidechain || role == AtomRole::H_Sidechain)
-            {
-                continue;
-            }
+        if (ui.visibility.hide_sidechains || matches!(ui.mol_view, MoleculeView::Backbone))
+            && let Some(role) = atom.role
+            && (role == AtomRole::Sidechain || role == AtomRole::H_Sidechain)
+        {
+            continue;
         }
 
         if let Some(role) = atom.role {
@@ -618,6 +617,7 @@ fn nearest_in_group(
     }
 }
 
+#[allow(clippy::complexity)]
 /// Used for cursor selection. Returns (atom indices prot, atom indices lig)
 pub fn _points_along_ray_bond_(
     ray: (Vec3F32, Vec3F32),
@@ -818,10 +818,10 @@ pub(crate) fn handle_selection_attempt(
         pocket_atoms.push(get_atoms(&mol.common));
     }
 
-    let (pep_atoms, pep_res) = match &state.peptide {
+    let pep_atoms = match &state.peptide {
         // Some(p) => (&p.common.atoms, &p.residues),
-        Some(mol) => (&get_atoms(&mol.common), &mol.residues),
-        None => (&Vec::new(), &Vec::new()),
+        Some(mol) => &get_atoms(&mol.common),
+        None => &Vec::new(),
     };
 
     // If we don't scale the selection distance appropriately, an atom etc
@@ -1081,7 +1081,7 @@ pub fn handle_selection_attempt_mol_editor(
             &[],
             &Vec::new(),
             // &Vec::new(),
-            &[atoms.clone()], // todo: Don't like this.
+            std::slice::from_ref(&atoms),
             &[],
             &[],
             &[],
@@ -1168,8 +1168,10 @@ pub fn handle_selection_attempt_mol_editor(
     };
 
     let mut rebuild_md = false;
-    let mut redraw_flags = RedrawFlags::default();
-    redraw_flags.ligand = *redraw;
+    let mut redraw_flags = RedrawFlags {
+        ligand: *redraw,
+        ..Default::default()
+    };
 
     mol_manip::set_manip(
         state,
@@ -1391,7 +1393,7 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
             match &state.ui.selection {
                 Selection::Residue(res_i) => {
                     for chain in &mol.chains {
-                        if chain.residues.contains(&res_i) {
+                        if chain.residues.contains(res_i) {
                             // Pick a residue from the chain the current selection is on.
                             let mut new_res_i = *res_i as isize;
 
@@ -1464,20 +1466,19 @@ pub fn select_from_search(state: &mut State) -> bool {
     if (query_len == 1 || query_len == 3)
         && let Some(pep) = &state.peptide
         && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
+        && let Ok(aa) = AminoAcid::from_str(query)
     {
-        if let Ok(aa) = AminoAcid::from_str(&query) {
-            let mut res_sns = Vec::new();
-            for (i, res) in pep.residues.iter().enumerate() {
-                if let ResidueType::AminoAcid(aa_) = res.res_type
-                    && aa_ == aa
-                {
-                    res_sns.push(i);
-                }
+        let mut res_sns = Vec::new();
+        for (i, res) in pep.residues.iter().enumerate() {
+            if let ResidueType::AminoAcid(aa_) = res.res_type
+                && aa_ == aa
+            {
+                res_sns.push(i);
             }
-
-            state.ui.selection = Selection::Residues(res_sns);
-            return true;
         }
+
+        state.ui.selection = Selection::Residues(res_sns);
+        return true;
     }
 
     // Match against a hetero residue name. We have outside of the view/select level branches,

@@ -774,7 +774,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
     // Clone selected molecules to release the immutable borrow of `state`
     // before the mutable borrow needed by update_mols_for_disp.
     let mols_owned: Vec<_> = {
-        let mols = get_mols_sel_for_md(&state);
+        let mols = get_mols_sel_for_md(state);
         mols.iter()
             .map(|(ff, mol, count)| (*ff, (*mol).clone(), *count))
             .collect()

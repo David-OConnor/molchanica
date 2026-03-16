@@ -1,7 +1,7 @@
 //! ML inference, e.g. for Therapeutic properties. Shares the model and relevant
 //! properties with `train.rs`.
 
-use std::{collections::HashMap, fs, io, time::Instant};
+use std::{collections::HashMap, fs, io, iter::repeat_n, time::Instant};
 
 use bio_files::md_params::ForceFieldParams;
 use burn::{
@@ -78,7 +78,7 @@ impl Infer {
         model.model = model
             .model
             .load_file(model_path, &recorder, &device)
-            .map_err(|e| io::Error::other(e))?;
+            .map_err(io::Error::other)?;
 
         Ok(model)
     }
@@ -121,7 +121,7 @@ impl Infer {
             return Err(io::Error::other("Missing components in ML inference"));
         };
 
-        let graph_comp = GraphDataComponent::new(&comps)?;
+        let graph_comp = GraphDataComponent::new(comps)?;
         let graph_spacial =
             GraphDataSpacial::new(mol).unwrap_or_else(|_| GraphDataSpacial::empty());
 
@@ -136,7 +136,7 @@ impl Infer {
         let p_el_ids = {
             let mut v = Vec::with_capacity(MAX_ATOMS);
             v.extend_from_slice(&graph_atom_bond.elem_indices[0..n]);
-            v.extend(std::iter::repeat_n(0, MAX_ATOMS - n));
+            v.extend(repeat_n(0, MAX_ATOMS - n));
 
             v
         };
@@ -144,7 +144,7 @@ impl Infer {
         let p_ff_ids = {
             let mut v = Vec::with_capacity(MAX_ATOMS);
             v.extend_from_slice(&graph_atom_bond.ff_indices[0..n]);
-            v.extend(std::iter::repeat(0).take(MAX_ATOMS - n));
+            v.extend(repeat_n(0, MAX_ATOMS - n));
 
             v
         };
@@ -152,7 +152,7 @@ impl Infer {
         let p_comp_type_ids = {
             let mut v = Vec::with_capacity(MAX_COMPS);
             v.extend_from_slice(&graph_comp.comp_type_indices[0..n_comps]);
-            v.extend(std::iter::repeat_n(0, MAX_COMPS - n_comps));
+            v.extend(repeat_n(0, MAX_COMPS - n_comps));
 
             v
         };
@@ -160,10 +160,7 @@ impl Infer {
         // -- Pad Comp Scalars (Float) --
         let mut p_comp_scalars = Vec::with_capacity(MAX_COMPS * PER_COMP_SCALARS);
         p_comp_scalars.extend_from_slice(&graph_comp.scalars[0..n_comps * PER_COMP_SCALARS]);
-        p_comp_scalars.extend(std::iter::repeat_n(
-            0.0f32,
-            (MAX_COMPS - n_comps) * PER_COMP_SCALARS,
-        ));
+        p_comp_scalars.extend(repeat_n(0.0f32, (MAX_COMPS - n_comps) * PER_COMP_SCALARS));
 
         // -- Pad Scalars (Float) --
         // Calculate dimensionality (should be 2: charge + degree)
@@ -174,10 +171,7 @@ impl Infer {
         };
         let mut p_scalars = Vec::with_capacity(MAX_ATOMS * n_scalars_per_atom);
         p_scalars.extend_from_slice(&graph_atom_bond.scalars[0..n * n_scalars_per_atom]);
-        p_scalars.extend(std::iter::repeat_n(
-            0.0,
-            (MAX_ATOMS - n) * n_scalars_per_atom,
-        ));
+        p_scalars.extend(repeat_n(0.0, (MAX_ATOMS - n) * n_scalars_per_atom));
 
         // -- Pad Adj & Mask (Float) --
         // Use the helper from train.rs
@@ -206,16 +200,13 @@ impl Infer {
         let p_pharm_ids = {
             let mut v = Vec::with_capacity(MAX_PHARM);
             v.extend_from_slice(&graph_spacial.pharm_type_indices[0..n_pharm]);
-            v.extend(std::iter::repeat_n(0_i32, MAX_PHARM - n_pharm));
+            v.extend(repeat_n(0_i32, MAX_PHARM - n_pharm));
             v
         };
 
         let mut p_pharm_scalars = Vec::with_capacity(MAX_PHARM * PER_PHARM_SCALARS);
         p_pharm_scalars.extend_from_slice(&graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
-        p_pharm_scalars.extend(std::iter::repeat_n(
-            0.0_f32,
-            (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS,
-        ));
+        p_pharm_scalars.extend(repeat_n(0.0_f32, (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS));
 
         let (padded_adj_pharm, padded_mask_pharm) =
             pad_adj_and_mask(&graph_spacial.adj, num_pharm, MAX_PHARM);

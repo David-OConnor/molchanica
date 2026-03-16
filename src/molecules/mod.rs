@@ -726,11 +726,7 @@ impl Atom {
 
 impl From<&AtomGeneric> for Atom {
     fn from(atom: &AtomGeneric) -> Self {
-        let role = match &atom.type_in_res {
-            Some(tir) => Some(AtomRole::from_type_in_res(tir)),
-            None => None,
-        };
-
+        let role = atom.type_in_res.as_ref().map(|tir| Some(AtomRole::from_type_in_res(tir)));
         // We will fill out chain and residue later, after chains and residue are loaded.
 
         Self {
