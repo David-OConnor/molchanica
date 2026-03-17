@@ -313,7 +313,7 @@ impl Default for ToSave {
             lipid: Default::default(),
             nucleic_acid: Default::default(),
             mesh_coloring: Default::default(),
-            auto_fog: false,
+            auto_fog: true,
             // screening_path: None,
         }
     }

@@ -11,6 +11,7 @@ use lin_alg::f32::Vec3;
 use na_seq::Element::Carbon;
 
 use crate::{
+    cam,
     cam::{FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, move_cam_to_sel, set_fog_dist, set_fog_from_mols},
     drawing,
     drawing::{EntityClass, draw_pocket, wrappers},
@@ -932,10 +933,12 @@ fn post_event_cleanup(
         if state.to_save.auto_fog {
             static mut I_FOG: u32 = 0;
             const FOG_RATIO: u32 = 6;
+
             unsafe {
                 I_FOG += 1;
                 if I_FOG.is_multiple_of(FOG_RATIO) {
-                    set_fog_from_mols(state, &mut scene.camera);
+                    // set_fog_from_mols(state, &mut scene.camera);
+                    cam::set_fog_linear_to_last(state, &mut scene.camera);
                     updates.camera = true;
                 }
             }

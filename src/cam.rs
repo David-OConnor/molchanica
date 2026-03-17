@@ -66,6 +66,103 @@ pub fn set_fog_dist(cam: &mut Camera, dist: u16, half_depth: u16) {
     cam.fog_end = fog_end;
 }
 
+/// Returns `(nearest, farthest)` distances (from the camera) for in-view atoms of a molecule.
+/// Returns `None` if no atoms are in the camera FOV.
+fn find_mol_dist_range_inner(mol: MolGenericRef<'_>, cam: &Camera) -> Option<(f32, f32)> {
+    let mut nearest = f32::INFINITY;
+    let mut farthest = f32::NEG_INFINITY;
+
+    if !mol.common().visible {
+        return None;
+    }
+
+    for posit_f64 in &mol.common().atom_posits {
+        let posit: Vec3 = (*posit_f64).into();
+        if cam.in_view(posit).0 {
+            let d = (cam.position - posit).magnitude();
+            if d < nearest {
+                nearest = d;
+            }
+            if d > farthest {
+                farthest = d;
+            }
+        }
+    }
+
+    if nearest != f32::INFINITY {
+        Some((nearest, farthest))
+    } else {
+        None
+    }
+}
+
+/// Sets fog to be a linear ramp between the closest atom visible, and the farthest.
+/// `fog_start` is placed at the nearest visible atom; `fog_end` at the farthest.
+/// If nothing is in view, the fog values are left unchanged.
+pub fn set_fog_linear_to_last(state: &State, cam: &mut Camera) {
+    let mut nearest = f32::INFINITY;
+    let mut farthest = f32::NEG_INFINITY;
+
+    let mut update = |range: Option<(f32, f32)>| {
+        if let Some((n, f)) = range {
+            if n < nearest {
+                nearest = n;
+            }
+            if f > farthest {
+                farthest = f;
+            }
+        }
+    };
+
+    // For the peptide use the same sparse sampling used in `find_nearest_mol_dist_to_cam`
+    // (every 20th carbon) so large proteins don't stall the update.
+    if let Some(pep) = &state.peptide {
+        let mut pep_nearest = f32::INFINITY;
+        let mut pep_farthest = f32::NEG_INFINITY;
+        for (i, _atom) in pep
+            .common
+            .atoms
+            .iter()
+            .filter(|a| a.element == Element::Carbon)
+            .enumerate()
+        {
+            if !i.is_multiple_of(20) {
+                continue;
+            }
+            let posit: Vec3 = pep.common.atom_posits[i].into();
+            if cam.in_view(posit).0 {
+                let d = (cam.position - posit).magnitude();
+                if d < pep_nearest {
+                    pep_nearest = d;
+                }
+                if d > pep_farthest {
+                    pep_farthest = d;
+                }
+            }
+        }
+        if pep_nearest != f32::INFINITY {
+            update(Some((pep_nearest, pep_farthest)));
+        }
+    }
+    for mol in &state.ligands {
+        update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
+    }
+    for mol in &state.nucleic_acids {
+        update(find_mol_dist_range_inner(
+            MolGenericRef::NucleicAcid(mol),
+            cam,
+        ));
+    }
+    for mol in &state.lipids {
+        update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
+    }
+
+    if nearest != f32::INFINITY {
+        cam.fog_start = nearest;
+        cam.fog_end = farthest;
+    }
+}
+
 /// Sets the fog distance automatically so the nearest visible atoms are clear, with an
 /// aggressive fade behind them. Call this whenever the camera or molecule positions change.
 ///

@@ -277,9 +277,10 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
     if state.to_save.auto_fog {
         // Pre-converge the fog lerp so it starts stable. 64 iterations is enough for
         // FOG_FADE_ALPHA=0.1 to settle within ~1 Å of the target from any starting value.
-        for _ in 0..64 {
-            cam::set_fog_from_mols(state, &mut scene.camera);
-        }
+        cam::set_fog_linear_to_last(state, &mut scene.camera);
+        // for _ in 0..64 {
+        //     cam::set_fog_from_mols(state, &mut scene.camera);
+        // }
     } else {
         cam::set_fog_dist(
             &mut scene.camera,

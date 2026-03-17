@@ -788,12 +788,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
             let mut dm_loaded = None; // avoids a double-borrow error.
 
-            // todo: Placeholder functionality ot set fog
-            if ui.button("Fog dist tester").clicked() {
-                cam::set_fog_from_mols(state, &mut scene.camera);
-            }
-
-
             if let Some(mol) = &mut state.peptide {
 
                 // todo: Move these A/R. LIkely in a sub menu.
@@ -1332,9 +1326,10 @@ pub(crate) fn cam_controls(
                     from the nearest atoms.");
                 if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
                     if state.to_save.auto_fog {
-                        for _ in 0..64 {
-                            cam::set_fog_from_mols(state, &mut scene.camera);
-                        }
+                        cam::set_fog_linear_to_last(state, &mut scene.camera);
+                        // for _ in 0..64 {
+                        //     cam::set_fog_from_mols(state, &mut scene.camera);
+                        // }
                     } else {
                         cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
                     }

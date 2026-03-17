@@ -227,7 +227,17 @@ pub fn render(mut state: State) {
         state,
         scene,
         ui_settings,
-        GraphicsSettings { msaa_samples },
+        GraphicsSettings {
+            msaa_samples,
+            depth_aware_halos: Some(0.04), // The default
+            // depth_aware_halos: None, // The default
+            edge_cueing: Some(2.),
+            // The contour line are having a surprising effect, and I'm not sure what the intended
+            // effect is.
+            // depth_revealing_contour_lines: Some(0.1),
+            // intersection_revealing_contour_lines: Some(1.),
+            ..Default::default()
+        },
         render_handler,
         inputs::event_dev_handler,
         inputs::event_win_handler,
