@@ -1299,8 +1299,6 @@ pub(crate) fn cam_controls(
 
                 ui.add_space(COL_SPACING);
 
-                // todo: Grey-out, instead of setting render dist. (e.g. fog)
-                let depth_prev = state.ui.view_depth;
                 ui.spacing_mut().slider_width = 60.;
 
                 let hover_text = "Don't render objects closer to the camera than this distance, in Å.";
@@ -1316,24 +1314,11 @@ pub(crate) fn cam_controls(
                 ui.label("Far:")
                     .on_hover_text(hover_text);
 
+                let depth_prev = state.ui.view_depth;
                 ui.add(Slider::new(
                     &mut state.ui.view_depth.1,
                     FOG_DIST_MIN..=FOG_DIST_MAX,
                 )).on_hover_text(hover_text);
-
-                ui.label("Auto far")
-                    .on_hover_text("Automatically adjust the far distance based on the camera's distance \
-                    from the nearest atoms.");
-                if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
-                    if state.to_save.auto_fog {
-                        cam::set_fog_linear_to_last(state, &mut scene.camera);
-                        // for _ in 0..64 {
-                        //     cam::set_fog_from_mols(state, &mut scene.camera);
-                        // }
-                    } else {
-                        cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
-                    }
-                }
 
                 if state.ui.view_depth != depth_prev {
                     // Interpret the slider being at min or max position to mean (effectively) unlimited.
@@ -1349,6 +1334,20 @@ pub(crate) fn cam_controls(
                     cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
 
                     changed = true;
+                }
+
+                ui.label("Auto far")
+                    .on_hover_text("Automatically adjust the far distance based on the camera's distance \
+                    from the nearest atoms.");
+                if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
+                    if state.to_save.auto_fog {
+                        cam::set_fog_linear_to_last(state, &mut scene.camera);
+                        // for _ in 0..64 {
+                        //     cam::set_fog_from_mols(state, &mut scene.camera);
+                        // }
+                    } else {
+                        cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
+                    }
                 }
             });
         });

@@ -44,6 +44,8 @@ const FOG_CLEAR_ZONE: f32 = 5.0;
 // At 20 the gradient spans 40 Å; at 8 it spans 16 Å.
 pub const FOG_AUTO_HALF_DEPTH: u16 = 15;
 
+const PEP_FOG_FAR_RATIO: usize = 20;
+
 /// From a fog-center distance and half-depth, compute where to place the fog start and end
 /// distances from the camera.
 pub fn calc_fog_dists(dist: u16, half_depth: u16) -> (f32, f32) {
@@ -116,9 +118,10 @@ pub fn set_fog_linear_to_last(state: &State, cam: &mut Camera) {
 
     // For the peptide use the same sparse sampling used in `find_nearest_mol_dist_to_cam`
     // (every 20th carbon) so large proteins don't stall the update.
-    if let Some(pep) = &state.peptide {
+    if let Some(pep) = &state.peptide && pep.common.visible {
         let mut pep_nearest = f32::INFINITY;
         let mut pep_farthest = f32::NEG_INFINITY;
+
         for (i, _atom) in pep
             .common
             .atoms
@@ -126,7 +129,7 @@ pub fn set_fog_linear_to_last(state: &State, cam: &mut Camera) {
             .filter(|a| a.element == Element::Carbon)
             .enumerate()
         {
-            if !i.is_multiple_of(20) {
+            if !i.is_multiple_of(PEP_FOG_FAR_RATIO) {
                 continue;
             }
             let posit: Vec3 = pep.common.atom_posits[i].into();
@@ -144,6 +147,7 @@ pub fn set_fog_linear_to_last(state: &State, cam: &mut Camera) {
             update(Some((pep_nearest, pep_farthest)));
         }
     }
+
     for mol in &state.ligands {
         update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
     }

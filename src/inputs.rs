@@ -902,7 +902,6 @@ fn post_event_cleanup(
                 &state.mol_editor.mol.common.atom_posits,
                 &state.ui.visibility,
                 &state.ui.selection,
-                // true,
                 // Don't draw the mesh; we redraw it once manipulation is complete.
                 // This prevents the original mesh position from being confusing or a
                 // visual blocker.
