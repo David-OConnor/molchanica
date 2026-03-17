@@ -12,7 +12,7 @@ use na_seq::Element::Carbon;
 
 use crate::{
     cam,
-    cam::{FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, move_cam_to_sel, set_fog_dist, set_fog_from_mols},
+    cam::{FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, move_cam_to_sel, set_fog_dist},
     drawing,
     drawing::{EntityClass, draw_pocket, wrappers},
     mol_editor,
@@ -65,53 +65,6 @@ pub fn event_dev_handler(
     let redraw_mol_editor = false;
 
     match event {
-        // Move the camera forward and back on scroll; handled by Graphics cam controls.
-        // DeviceEvent::MouseWheel { delta } => {
-        //     if handle_scroll(state_, scene, &mut updates, &mut redraw_in_place, delta) {
-        //         return updates;
-        //     }
-        // }
-        // DeviceEvent::Button { button, state } => {
-        //     #[cfg(target_os = "linux")]
-        //     let button_ = match button {
-        //         1 => MouseButton::Left,
-        //         3 => MouseButton::Right,
-        //         2 => MouseButton::Middle,
-        //         _ => MouseButton::Other(0), // Placeholder.
-        //     };
-        //     #[cfg(not(target_os = "linux"))]
-        //     let button_ = match button {
-        //         0 => MouseButton::Left,
-        //         1 => MouseButton::Right,
-        //         2 => MouseButton::Middle,
-        //         _ => MouseButton::Other(0), // Placeholder.
-        //     };
-        //     handle_mouse_button(
-        //         state_,
-        //         scene,
-        //         &mut redraw,
-        //         &mut redraw_mol_editor,
-        //         &mut updates,
-        //         button_,
-        //         state,
-        //     )
-        // }
-        // DeviceEvent::Key(key) => {
-        //     if let Code(key_code) = key.physical_key {
-        //         if handle_physical_key(
-        //             state_,
-        //             scene,
-        //             &mut redraw,
-        //             &mut redraw_in_place,
-        //             &mut redraw_mol_editor,
-        //             &mut updates,
-        //             key_code,
-        //             key.state,
-        //         ) {
-        //             return updates;
-        //         }
-        //     };
-        // }
         DeviceEvent::MouseMotion { delta } => {
             // Free look handled by the engine; handle middle-click-move here.
             if state_.ui.middle_click_down {
@@ -130,12 +83,16 @@ pub fn event_dev_handler(
                 scene.camera.position += scene.camera.orientation.rotate_vec(movement_vec);
                 updates.camera = true;
 
+                // Loose proxy that lets us trigger the inputs_present() flag.
+                state_.volatile.inputs_commanded.fwd = true;
+
                 set_flashlight(scene);
                 updates.lighting = true;
             }
 
             if state_.ui.left_click_down {
                 mol_manip::handle_mol_manip_in_plane(state_, scene, delta, &mut redraw_in_place);
+                state_.volatile.inputs_commanded.panning = true;
 
                 set_flashlight(scene);
                 updates.lighting = true;
@@ -763,12 +720,20 @@ fn handle_scroll(
     redraw_in_place: &mut RedrawFlags,
     delta: MouseScrollDelta,
 ) -> bool {
-    if state.volatile.key_modifiers.state().control_key() {
-        let scroll: f32 = match delta {
-            MouseScrollDelta::LineDelta(_, y) => y,
-            MouseScrollDelta::PixelDelta(p) => p.y as f32 / 120.0,
-        };
+    let mut scroll = match delta {
+        MouseScrollDelta::LineDelta(_, y) => y,
+        MouseScrollDelta::PixelDelta(p) => p.y as f32 / 120.,
+    };
 
+    // I'm not sure about the polarity here, but the intent is just to trigger `inputs_present()`
+    // to be true.
+    if scroll > 0. {
+        state.volatile.inputs_commanded.scroll_up = true;
+    } else {
+        state.volatile.inputs_commanded.scroll_down = true;
+    }
+
+    if state.volatile.key_modifiers.state().control_key() {
         state.ui.view_depth.1 = (state.ui.view_depth.1 as i16 + (scroll * 5.) as i16) as u16;
 
         // Overflowed from subtraction.
@@ -935,9 +900,12 @@ fn post_event_cleanup(
 
             unsafe {
                 I_FOG += 1;
-                if I_FOG.is_multiple_of(FOG_RATIO) {
-                    // set_fog_from_mols(state, &mut scene.camera);
-                    cam::set_fog_linear_to_last(state, &mut scene.camera);
+                if state.to_save.auto_fog
+                    && (I_FOG.is_multiple_of(FOG_RATIO)
+                        || state.volatile.inputs_commanded.scroll_down
+                        || state.volatile.inputs_commanded.scroll_up)
+                {
+                    cam::set_fog_dists_by_near_and_far_mols(state, &mut scene.camera);
                     updates.camera = true;
                 }
             }

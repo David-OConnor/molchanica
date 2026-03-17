@@ -4,6 +4,7 @@ use lin_alg::f32::{Quaternion, Vec3};
 use na_seq::Element;
 
 use crate::{
+    cam,
     molecules::{
         MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
         nucleic_acid::MoleculeNucleicAcid, peptide::MoleculePeptide, pocket::Pocket,
@@ -34,17 +35,17 @@ pub const FOG_DIST_DEFAULT: u16 = 120;
 pub const FOG_DIST_MIN: u16 = 1;
 pub const FOG_DIST_MAX: u16 = 120;
 
-// How quickly to track the fog target: 0 = frozen, 1 = instant snap.
-// At ~10 calls/sec (ratio-6 on typical mouse events) this converges in ~0.7 s,
-// which is fast enough to feel responsive while suppressing frame-to-frame flicker.
-const FOG_FADE_ALPHA: f32 = 0.1;
-// Fog starts CLEAR_ZONE past the nearest atom so it is fully unobscured.
-const FOG_CLEAR_ZONE: f32 = 5.0;
-// Width of the fog gradient in the auto-fog mode (Å). Smaller = steeper/more aggressive fade.
-// At 20 the gradient spans 40 Å; at 8 it spans 16 Å.
-pub const FOG_AUTO_HALF_DEPTH: u16 = 15;
-
 const PEP_FOG_FAR_RATIO: usize = 20;
+
+/// A wrapper which sets fog using either a manual, or automatic technique based on
+/// configuration.
+pub fn set_fog(state: &State, cam: &mut Camera) {
+    if state.to_save.auto_fog {
+        set_fog_dists_by_near_and_far_mols(state, cam);
+    } else {
+        set_fog_dist(cam, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
+    }
+}
 
 /// From a fog-center distance and half-depth, compute where to place the fog start and end
 /// distances from the camera.
@@ -55,7 +56,8 @@ pub fn calc_fog_dists(dist: u16, half_depth: u16) -> (f32, f32) {
     (min as f32, (dist + half_depth) as f32)
 }
 
-/// Set fog distances in the scene's Camera struct.
+/// Set fog distances in the scene's Camera struct. Used when manually setting the dist
+/// and half-depth.
 pub fn set_fog_dist(cam: &mut Camera, dist: u16, half_depth: u16) {
     let (fog_start, fog_end) = if dist == FOG_DIST_MAX {
         (0., 0.) // No fog will render.
@@ -101,7 +103,7 @@ fn find_mol_dist_range_inner(mol: MolGenericRef<'_>, cam: &Camera) -> Option<(f3
 /// Sets fog to be a linear ramp between the closest atom visible, and the farthest.
 /// `fog_start` is placed at the nearest visible atom; `fog_end` at the farthest.
 /// If nothing is in view, the fog values are left unchanged.
-pub fn set_fog_linear_to_last(state: &State, cam: &mut Camera) {
+pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
     let mut nearest = f32::INFINITY;
     let mut farthest = f32::NEG_INFINITY;
 
@@ -117,8 +119,12 @@ pub fn set_fog_linear_to_last(state: &State, cam: &mut Camera) {
     };
 
     // For the peptide use the same sparse sampling used in `find_nearest_mol_dist_to_cam`
-    // (every 20th carbon) so large proteins don't stall the update.
-    if let Some(pep) = &state.peptide && pep.common.visible {
+    // (every 20th carbon) so large proteins don't stall the update. This produces good-enough results,
+    // and is faster. We handle peptides as a special case, as they're likely to be much larger than
+    // small molecules. todo: Consider this for lipids and NAs etc A/R.
+    if let Some(pep) = &state.peptide
+        && pep.common.visible
+    {
         let mut pep_nearest = f32::INFINITY;
         let mut pep_farthest = f32::NEG_INFINITY;
 
@@ -165,131 +171,6 @@ pub fn set_fog_linear_to_last(state: &State, cam: &mut Camera) {
         cam.fog_start = nearest;
         cam.fog_end = farthest;
     }
-}
-
-/// Sets the fog distance automatically so the nearest visible atoms are clear, with an
-/// aggressive fade behind them. Call this whenever the camera or molecule positions change.
-///
-/// Rather than snapping to the computed target, the current fog values are lerped toward
-/// it each call, preventing the flicker/flash that would otherwise occur as the nearest
-/// visible atom changes frame-to-frame.
-///
-/// Strategy:
-/// - Find the closest atom in the camera FOV (`d_near`).
-/// - Leave a small clear zone past `d_near` before fog begins.
-/// - Half-depth (gradient width) is wider when a large protein is present, tighter otherwise.
-/// - If nothing is in view, gently drift back toward the defaults.
-pub fn set_fog_from_mols(state: &State, cam: &mut Camera) {
-    let (target_start, target_end) = match find_nearest_mol_dist_to_cam(state, cam) {
-        Some(d) => {
-            let d_near = d.max(0.);
-
-            let half_depth = FOG_AUTO_HALF_DEPTH;
-
-            // Only enforce a floor so fog_start stays positive.
-            // No upper clamp: when the camera is far away, dist grows with d_near,
-            // ensuring the nearest visible atoms are never inside the fog zone.
-            let dist =
-                ((d_near + FOG_CLEAR_ZONE) as u16 + half_depth).max(FOG_DIST_MIN + half_depth);
-
-            calc_fog_dists(dist, half_depth)
-        }
-        // Nothing in the FOV — drift toward the default (light) fog.
-        None => calc_fog_dists(FOG_DIST_DEFAULT, FOG_HALF_DEPTH_DEFAULT),
-    };
-
-    // Snap upward instantly (nearest atoms must never be inside the fog zone),
-    // but lerp downward slowly (prevents flicker when the nearest atom changes).
-    if target_start >= cam.fog_start {
-        cam.fog_start = target_start;
-    } else {
-        cam.fog_start += FOG_FADE_ALPHA * (target_start - cam.fog_start);
-    }
-    if target_end >= cam.fog_end {
-        cam.fog_end = target_end;
-    } else {
-        cam.fog_end += FOG_FADE_ALPHA * (target_end - cam.fog_end);
-    }
-}
-
-fn find_nearest_mol_inner(mol: MolGenericRef<'_>, cam: &Camera) -> Option<f32> {
-    let mut nearest = f32::INFINITY;
-    for posit_f64 in &mol.common().atom_posits {
-        let posit: Vec3 = (*posit_f64).into();
-        if cam.in_view(posit).0 {
-            let d = (cam.position - posit).magnitude();
-            if d < nearest {
-                nearest = d;
-            }
-        }
-    }
-    if nearest != f32::INFINITY {
-        Some(nearest)
-    } else {
-        None
-    }
-}
-
-/// todo: Experimental
-/// Find the distance of the closest molecule to the camera, in front of it. Run this regularly upon
-/// camera movement, e.g. every x steps where camera position or orientation changes.
-///
-/// Returns None if there are no molecules in the camera FOV.
-pub fn find_nearest_mol_dist_to_cam(state: &State, cam: &Camera) -> Option<f32> {
-    let mut nearest = f32::INFINITY;
-
-    // For the protein, rely on cached distances along a collection of radials.
-    if let Some(pep) = &state.peptide {
-        // todo: Very slow approach for now to demonstrate concept. Change this to use a cache!!
-        for (i, _atom) in pep
-            .common
-            .atoms
-            .iter()
-            .filter(|a| a.element == Element::Carbon)
-            .enumerate()
-        {
-            if !i.is_multiple_of(20) {
-                continue;
-            }
-
-            let posit: Vec3 = pep.common.atom_posits[i].into();
-            if cam.in_view(posit).0 {
-                let dist = (cam.position - posit).magnitude() - 4.;
-                if dist < nearest {
-                    nearest = dist;
-                }
-            }
-        }
-    }
-
-    for mol in &state.ligands {
-        if let Some(v) = find_nearest_mol_inner(MolGenericRef::Small(mol), cam)
-            && v < nearest
-        {
-            nearest = v;
-        }
-    }
-
-    for mol in &state.nucleic_acids {
-        if let Some(v) = find_nearest_mol_inner(MolGenericRef::NucleicAcid(mol), cam)
-            && v < nearest
-        {
-            nearest = v;
-        }
-    }
-
-    for mol in &state.lipids {
-        if let Some(v) = find_nearest_mol_inner(MolGenericRef::Lipid(mol), cam)
-            && v < nearest
-        {
-            nearest = v;
-        }
-    }
-
-    if nearest != f32::INFINITY {
-        return Some(nearest);
-    }
-    None
 }
 
 pub fn cam_reset_controls(
@@ -387,6 +268,7 @@ pub fn move_cam_to_active_mol(
         look_to_beyond,
         engine_updates,
     );
+    cam::set_fog(state, &mut scene.camera);
 
     state.ui.cam_snapshot = cam_ss;
 

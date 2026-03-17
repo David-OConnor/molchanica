@@ -1340,14 +1340,7 @@ pub(crate) fn cam_controls(
                     .on_hover_text("Automatically adjust the far distance based on the camera's distance \
                     from the nearest atoms.");
                 if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
-                    if state.to_save.auto_fog {
-                        cam::set_fog_linear_to_last(state, &mut scene.camera);
-                        // for _ in 0..64 {
-                        //     cam::set_fog_from_mols(state, &mut scene.camera);
-                        // }
-                    } else {
-                        cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
-                    }
+                    cam::set_fog(state, &mut scene.camera);
                 }
             });
         });

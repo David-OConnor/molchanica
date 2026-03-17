@@ -3,7 +3,7 @@ use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
-    button,
+    button, cam,
     cam::{move_cam_to_mol, move_mol_to_cam},
     label,
     mol_characterization::MolCharacterization,
@@ -127,7 +127,9 @@ fn mol_picker_one(
                         orbit_center,
                         beyond,
                         engine_updates,
-                    )
+                    );
+                    // todo: Uhoh Don't have state here, bu tneed it.
+                    // cam::set_fog(state, &mut scene.camera);
                 }
 
                 let row_h = ui.spacing().interact_size.y;

@@ -20,6 +20,7 @@ use na_seq::{
 
 use crate::{
     bond_inference::create_hydrogen_bonds_two_mols,
+    cam,
     cam::move_cam_to_mol,
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
@@ -535,7 +536,8 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engine
             &mut state.volatile.active_mol,
             Vec3::new_zero(),
             updates,
-        )
+        );
+        cam::set_fog(state, &mut scene.camera);
     } else {
         scene.camera = state.volatile.primary_mode_cam.clone();
         state.volatile.orbit_center = state.volatile.orbit_center_prev;

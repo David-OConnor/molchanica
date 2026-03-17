@@ -12,7 +12,7 @@ use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
 use crate::{
-    button,
+    button, cam,
     cam::move_cam_to_mol,
     drawing::{EntityClass, wrappers::draw_all_pockets},
     file_io::download_mols::load_atom_coords_rcsb,
@@ -675,7 +675,8 @@ fn alignment(
             &mut state.volatile.orbit_center,
             Vec3::new_zero(),
             engine_updates,
-        )
+        );
+        cam::set_fog(state, &mut scene.camera);
     }
 }
 
