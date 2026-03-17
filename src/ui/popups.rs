@@ -55,30 +55,23 @@ pub(in crate::ui) fn load_popups(
     ui: &mut Ui,
     redraw: &mut RedrawFlags,
     reset_cam: &mut bool,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
 ) {
     if state.ui.popup.show_get_geostd {
         popup("geostd", ui).show(|ui| {
-            get_geostd(state, scene, engine_updates, ui);
+            get_geostd(state, scene, updates, ui);
         });
     }
 
     if state.ui.popup.show_associated_structures {
         popup("assoc_structs", ui).show(|ui| {
-            associated_structures(
-                state,
-                scene,
-                engine_updates,
-                &mut redraw.peptide,
-                reset_cam,
-                ui,
-            );
+            associated_structures(state, scene, updates, &mut redraw.peptide, reset_cam, ui);
         });
     }
 
     if state.ui.popup.alignment {
         popup("alignment", ui).show(|ui| {
-            alignment(state, scene, &mut redraw.ligand, engine_updates, ui);
+            alignment(state, scene, &mut redraw.ligand, updates, ui);
         });
     };
 
@@ -90,7 +83,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.show_settings {
         popup("settings", ui).show(|ui| {
-            settings(state, scene, ui);
+            settings(state, scene, ui, updates);
         });
     }
 
@@ -103,7 +96,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.recent_files {
         popup("recent_files", ui).show(|ui| {
-            recent_files_popup(state, scene, ui, engine_updates);
+            recent_files_popup(state, scene, ui, updates);
         });
     }
 
@@ -128,7 +121,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.pharmacophore_screening {
         popup("pharmacophore_screen", ui).show(|ui| {
-            pharmacophore::pharmacophore_screen(state, scene, ui, engine_updates);
+            pharmacophore::pharmacophore_screen(state, scene, ui, updates);
         });
     }
 
@@ -140,7 +133,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.lig_pocket_creation {
         popup("lig_pocket_creation", ui).show(|ui| {
-            lig_pocket_from_het_res(state, scene, ui, engine_updates);
+            lig_pocket_from_het_res(state, scene, ui, updates);
         });
     }
 
@@ -462,33 +455,42 @@ pub(in crate::ui) fn metadata_popup(
         });
 }
 
-fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
+fn graphics_settings(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    updates: &mut EngineUpdates,
+) {
+    let msaa_prev = state.to_save.msaa;
+    ComboBox::from_id_salt(10)
+        .width(40.)
+        .selected_text(state.to_save.msaa.to_str())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut state.to_save.msaa,
+                MsaaSetting::None,
+                MsaaSetting::None.to_str(),
+            );
+            ui.selectable_value(
+                &mut state.to_save.msaa,
+                MsaaSetting::Four,
+                MsaaSetting::Four.to_str(),
+            );
+        });
+
+    if state.to_save.msaa != msaa_prev {
+        state.update_save_prefs();
+    }
+}
+
+fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut EngineUpdates) {
     ui.horizontal(|ui| {
         ui.heading("Settings");
         ui.add_space(COL_SPACING);
         // todo: Make this consistent with your other controls.
         ui.label("MSAA (Restart the program to take effect):");
 
-        let msaa_prev = state.to_save.msaa;
-        ComboBox::from_id_salt(10)
-            .width(40.)
-            .selected_text(state.to_save.msaa.to_str())
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut state.to_save.msaa,
-                    MsaaSetting::None,
-                    MsaaSetting::None.to_str(),
-                );
-                ui.selectable_value(
-                    &mut state.to_save.msaa,
-                    MsaaSetting::Four,
-                    MsaaSetting::Four.to_str(),
-                );
-            });
-
-        if state.to_save.msaa != msaa_prev {
-            state.update_save_prefs();
-        }
+        graphics_settings(state, scene, ui, updates);
 
         ui.add_space(COL_SPACING);
         ui.label("Cam move speed:");
