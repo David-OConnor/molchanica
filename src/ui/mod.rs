@@ -12,6 +12,7 @@ use mol_data::display_mol_data;
 use na_seq::Element;
 use popups::load_popups;
 
+use crate::cam::set_fog;
 use crate::{
     button, cam,
     cam::{
@@ -1336,9 +1337,9 @@ pub(crate) fn cam_controls(
                     changed = true;
                 }
 
-                ui.label("Auto far")
+                ui.label("Auto depth")
                     .on_hover_text("Automatically adjust the far distance based on the camera's distance \
-                    from the nearest atoms.");
+                    from the nearest atoms. Consider setting this as a default in most cases.");
                 if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
                     cam::set_fog(state, &mut scene.camera);
                 }
@@ -1347,6 +1348,7 @@ pub(crate) fn cam_controls(
 
     if changed {
         engine_updates.camera = true;
+        set_fog(state, &mut scene.camera);
 
         set_flashlight(scene);
         engine_updates.lighting = true; // flashlight.

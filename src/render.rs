@@ -114,7 +114,7 @@ pub fn render(mut state: State) {
 
     let (fog_start, fog_end) = calc_fog_dists(FOG_DIST_DEFAULT, FOG_HALF_DEPTH_DEFAULT);
 
-    let camera = Camera {
+    let mut camera = Camera {
         fov_y: TAU / 8.,
         position: Vec3::new(0., 0., -60.),
         far: RENDER_DIST_FAR,
@@ -131,6 +131,7 @@ pub fn render(mut state: State) {
         fog_color: [BACKGROUND_COLOR.0, BACKGROUND_COLOR.1, BACKGROUND_COLOR.2],
         ..Default::default()
     };
+    camera.update_proj_mat();
 
     let mut scene = Scene {
         meshes: vec![
@@ -221,23 +222,13 @@ pub fn render(mut state: State) {
 
     init_with_scene(&mut state, &mut scene);
 
-    let msaa_samples = state.to_save.msaa as u8 as u32;
+    let graphics_settings = state.graphics_settings.clone();
 
     graphics::run(
         state,
         scene,
         ui_settings,
-        GraphicsSettings {
-            msaa_samples,
-            depth_aware_halos: Some(0.04), // The default
-            // depth_aware_halos: None, // The default
-            edge_cueing: Some(2.),
-            // The contour line are having a surprising effect, and I'm not sure what the intended
-            // effect is.
-            // depth_revealing_contour_lines: Some(0.1),
-            // intersection_revealing_contour_lines: Some(1.),
-            ..Default::default()
-        },
+        graphics_settings,
         render_handler,
         inputs::event_dev_handler,
         inputs::event_win_handler,

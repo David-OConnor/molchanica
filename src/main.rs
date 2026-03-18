@@ -128,6 +128,12 @@ fn main() {
             Integrator::LangevinMiddle { gamma } => gamma.to_string(),
             _ => "0.".to_string(),
         };
+
+        // Graphics settings
+        state.graphics_settings.msaa_samples = state.to_save.msaa as u8 as u32;
+        state.graphics_settings.ambient_occlusion = state.to_save.ambient_occlusion;
+        state.graphics_settings.edge_cueing = state.to_save.edge_cueing;
+        state.graphics_settings.depth_aware_halos = state.to_save.depth_aware_halos;
     }
 
     match load_lipid_templates() {

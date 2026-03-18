@@ -23,7 +23,7 @@ use bio_apis::{
 use chrono::{DateTime, TimeZone, Utc};
 use dynamics::MdConfig;
 use graphics::{
-    ControlScheme,
+    AmbientOcclusion, ControlScheme,
     app_utils::{load, save},
 };
 use lin_alg::f64::Vec3;
@@ -244,7 +244,11 @@ pub struct ToSave {
     pub per_mol: HashMap<String, PerMolToSave>,
     pub open_history: Vec<OpenHistory>,
     pub control_scheme: ControlSchemeType,
+    // todo: Grraphics settinkgs substruct?
     pub msaa: MsaaSetting,
+    pub ambient_occlusion: AmbientOcclusion,
+    pub edge_cueing: Option<f32>,
+    pub depth_aware_halos: Option<f32>,
     /// Direct conversion from engine standard
     pub movement_speed: u8,
     /// Divide this by 100 to get engine standard.
@@ -289,6 +293,9 @@ impl Default for ToSave {
             open_history: Default::default(),
             control_scheme: ControlSchemeType::Free,
             msaa: Default::default(),
+            ambient_occlusion: Default::default(),
+            edge_cueing: Some(1.),
+            depth_aware_halos: Some(0.03),
             movement_speed: MOVEMENT_SENS as u8,
             rotation_sens: (ROTATE_SENS * 100.) as u8,
             mol_move_sens: (SENS_MOL_MOVE_SCROLL * 1_000.) as u8,

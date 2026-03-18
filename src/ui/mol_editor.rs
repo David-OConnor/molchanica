@@ -6,6 +6,7 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
+use crate::cam::set_fog;
 use crate::{
     cam::cam_reset_controls,
     drawing::MoleculeView,
@@ -123,6 +124,10 @@ pub(in crate::ui) fn editor(
             //     scene.camera.position = lin_alg::f32::Vec3::new(0., 0., -INIT_CAM_DIST);
             //     scene.camera.orientation = Quaternion::new_identity();
             // }
+
+            if cam_changed {
+                set_fog(state, &mut scene.camera);
+            }
 
             ui.add_space(COL_SPACING / 2.);
 
@@ -267,14 +272,14 @@ pub(in crate::ui) fn editor(
             .button(RichText::new("Save"))
             .on_hover_text("Save to a Mol2, SDF, or PDBQT file")
             .clicked() && state
-                .mol_editor
-                .mol
-                .common
-                .save(MolType::Ligand, &mut state.volatile.dialogs.save)
-                .is_err()
-            {
-                handle_err(&mut state.ui, "Problem saving this file".to_owned());
-            }
+            .mol_editor
+            .mol
+            .common
+            .save(MolType::Ligand, &mut state.volatile.dialogs.save)
+            .is_err()
+        {
+            handle_err(&mut state.ui, "Problem saving this file".to_owned());
+        }
 
         if ui
             .button(RichText::new("Load"))
@@ -295,14 +300,13 @@ pub(in crate::ui) fn editor(
         if ui.button("Cleanup geom")
             .on_hover_text("A fast, analytic approach to fixing unphysical geometry.")
             .clicked() {
-
             set_manip(
                 state,
                 scene,
                 &mut Default::default(),
                 &mut false,
                 ManipMode::None,
-                updates
+                updates,
             );
 
             state.mol_editor.mol.common.cleanup_geometry();
@@ -312,14 +316,13 @@ pub(in crate::ui) fn editor(
         if ui.button("Relax")
             .on_hover_text("Relax geometry; adjust atom positions to minimize energy, based on a standard small-molecule force field.")
             .clicked() {
-
             set_manip(
                 state,
                 scene,
                 &mut Default::default(),
                 &mut false,
                 ManipMode::None,
-                updates
+                updates,
             );
 
             if state.mol_editor.md.md.is_none() {
@@ -361,29 +364,29 @@ pub(in crate::ui) fn editor(
         }
 
         if let Some(mol_i) = state.mol_editor.mol_i_in_state && mol_i < state.ligands.len() && ui
-                .button(RichText::new("Exit / update").color(Color32::LIGHT_RED))
-                .on_hover_text("Exit the molecule editor, and update the loaded molecule with changes made.")
-                .clicked()
-            {
-                state.mol_editor.mol.common.reassign_sns();
-                // Load the edited molecule back into the state.
-                state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
-                state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
-                state.ligands[mol_i].pharmacophore = state.mol_editor.mol.pharmacophore.clone();
+            .button(RichText::new("Exit / update").color(Color32::LIGHT_RED))
+            .on_hover_text("Exit the molecule editor, and update the loaded molecule with changes made.")
+            .clicked()
+        {
+            state.mol_editor.mol.common.reassign_sns();
+            // Load the edited molecule back into the state.
+            state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
+            state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
+            state.ligands[mol_i].pharmacophore = state.mol_editor.mol.pharmacophore.clone();
 
-                state.ligands[mol_i].common.build_adjacency_list();
-                state.ligands[mol_i].common.reset_posits();
+            state.ligands[mol_i].common.build_adjacency_list();
+            state.ligands[mol_i].common.reset_posits();
 
-                state.ligands[mol_i].update_characterization();
+            state.ligands[mol_i].update_characterization();
 
-                // We've reset the positions, so reset the camera. And update the prev,
-                // so exiting doesn't override it.
-                // move_cam_to_active_mol(state, scene, Vec3::new_zero(), updates);
-                // state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
-                // state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
+            // We've reset the positions, so reset the camera. And update the prev,
+            // so exiting doesn't override it.
+            // move_cam_to_active_mol(state, scene, Vec3::new_zero(), updates);
+            // state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
+            // state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
 
 
-                exit_edit_mode(state, scene, updates);
+            exit_edit_mode(state, scene, updates);
         }
 
         if ui
@@ -807,34 +810,34 @@ fn edit_tools(
                 *redraw = redraw_flags.ligand;
             }
 
-            if bond_mode  &&ui.button(RichText::new("⟳ Rot around bond").color(color_rotate))
-                    .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the molecule around this bond")
-                    .clicked() {
+            if bond_mode && ui.button(RichText::new("⟳ Rot around bond").color(color_rotate))
+                .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the molecule around this bond")
+                .clicked() {
 
-                    // Note: We allow rotating around double-bonds for the purpose of building molecules, even though they're
-                    // considered to be not-rotatable in other contexts.
-                    // Don't rotate around bonds that are part of a cycle (rings).
-                    // todo: Cache this in `MoleculeSmall`?
-                    let bond = &state.mol_editor.mol.common.bonds[selected_idxs[0]];
-                    if !bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
+                // Note: We allow rotating around double-bonds for the purpose of building molecules, even though they're
+                // considered to be not-rotatable in other contexts.
+                // Don't rotate around bonds that are part of a cycle (rings).
+                // todo: Cache this in `MoleculeSmall`?
+                let bond = &state.mol_editor.mol.common.bonds[selected_idxs[0]];
+                if !bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
 
-                        // dummy API interaction.
-                        let mut redraw_flags = RedrawFlags {
-                            ligand: *redraw,
-                            ..Default::default()
-                        };
+                    // dummy API interaction.
+                    let mut redraw_flags = RedrawFlags {
+                        ligand: *redraw,
+                        ..Default::default()
+                    };
 
-                        set_manip(
-                            state,
-                            scene,
-                            &mut redraw_flags,
-                            &mut rebuild_md,
-                            // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
-                            ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
-                            engine_updates,
-                        );
-                        *redraw = redraw_flags.ligand;
-                    }
+                    set_manip(
+                        state,
+                        scene,
+                        &mut redraw_flags,
+                        &mut rebuild_md,
+                        // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
+                        ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
+                        engine_updates,
+                    );
+                    *redraw = redraw_flags.ligand;
+                }
             }
 
 
@@ -874,16 +877,15 @@ fn edit_tools(
                 }
             }
 
-            if let Selection::AtomLig((_, i)) = state.ui.selection &&ui
-                    .button(RichText::new("Del atom").color(Color32::LIGHT_RED))
-                    .on_hover_text("(Hotkey: Delete) Delete the selected atom")
-                    .clicked()
-                {
-                    state.mol_editor.remove_atom(i);
-                    rebuild_md = true;
-                    *redraw = true;
-                }
-
+            if let Selection::AtomLig((_, i)) = state.ui.selection && ui
+                .button(RichText::new("Del atom").color(Color32::LIGHT_RED))
+                .on_hover_text("(Hotkey: Delete) Delete the selected atom")
+                .clicked()
+            {
+                state.mol_editor.remove_atom(i);
+                rebuild_md = true;
+                *redraw = true;
+            }
         }
     });
 

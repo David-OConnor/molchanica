@@ -138,9 +138,12 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
             if !i.is_multiple_of(PEP_FOG_FAR_RATIO) {
                 continue;
             }
+
             let posit: Vec3 = pep.common.atom_posits[i].into();
+
             if cam.in_view(posit).0 {
                 let d = (cam.position - posit).magnitude();
+
                 if d < pep_nearest {
                     pep_nearest = d;
                 }
@@ -149,6 +152,7 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
                 }
             }
         }
+
         if pep_nearest != f32::INFINITY {
             update(Some((pep_nearest, pep_farthest)));
         }
@@ -177,7 +181,7 @@ pub fn cam_reset_controls(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
-    engine_updates: &mut EngineUpdates,
+    update: &mut EngineUpdates,
     changed: &mut bool,
 ) {
     ui.label("Cam:");
@@ -188,7 +192,7 @@ pub fn cam_reset_controls(
         .on_hover_text("Reset the camera to look at the \"front\" of the molecule. (Y axis)")
         .clicked()
     {
-        reset_camera(state, scene, engine_updates, FWD_VEC);
+        reset_camera(state, scene, update, FWD_VEC);
         *changed = true;
     }
 
@@ -197,7 +201,7 @@ pub fn cam_reset_controls(
         .on_hover_text("Reset the camera to look at the \"top\" of the molecule. (Z axis)")
         .clicked()
     {
-        reset_camera(state, scene, engine_updates, -UP_VEC);
+        reset_camera(state, scene, update, -UP_VEC);
         *changed = true;
     }
 
@@ -206,7 +210,7 @@ pub fn cam_reset_controls(
         .on_hover_text("Reset the camera to look at the \"left\" of the molecule. (X axis)")
         .clicked()
     {
-        reset_camera(state, scene, engine_updates, RIGHT_VEC);
+        reset_camera(state, scene, update, RIGHT_VEC);
         *changed = true;
     }
 }

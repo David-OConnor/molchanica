@@ -13,7 +13,7 @@ use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
 use dynamics::{ComputationDevice, params::FfParamSet};
-use graphics::{Camera, ControlScheme, InputsCommanded, event::Modifiers};
+use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
@@ -79,6 +79,7 @@ pub struct State {
     /// For pharmacophore-based screening
     /// todo: Pharmacophore state
     pub pharmacophore: PharmacophoreState,
+    pub graphics_settings: GraphicsSettings,
 }
 
 impl Default for State {
@@ -114,6 +115,18 @@ impl Default for State {
             mol_editor: Default::default(),
             orca: Default::default(),
             pharmacophore: Default::default(),
+            // Note: We override GraphicsSettings after loading from prefs.
+            graphics_settings: GraphicsSettings {
+                msaa_samples: MsaaSetting::default() as u32,
+                depth_aware_halos: Some(0.04), // The default
+                // depth_aware_halos: None, // The default
+                edge_cueing: Some(2.),
+                // The contour line are having a surprising effect, and I'm not sure what the intended
+                // effect is.
+                // depth_revealing_contour_lines: Some(0.1),
+                // intersection_revealing_contour_lines: Some(1.),
+                ..Default::default()
+            },
         }
     }
 }

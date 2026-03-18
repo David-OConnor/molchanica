@@ -5,9 +5,9 @@ use bio_files::ResidueType;
 use chrono::Utc;
 use egui::{
     Align, Color32, ComboBox, Grid, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText,
-    ScrollArea, TextEdit, Ui,
+    ScrollArea, Slider, TextEdit, Ui,
 };
-use graphics::{ControlScheme, EngineUpdates, Scene};
+use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
@@ -480,6 +480,70 @@ fn graphics_settings(
 
     if state.to_save.msaa != msaa_prev {
         state.update_save_prefs();
+
+        state.graphics_settings.msaa_samples = state.to_save.msaa as u32;
+        // Triggers a graphics re-init
+        updates.graphics_settings = Some(state.graphics_settings.clone());
+    }
+
+    ui.add_space(COL_SPACING);
+
+    ui.label("Ambient occlusion");
+    let mut ao_en = state.to_save.ambient_occlusion == AmbientOcclusion::Ssao;
+    if ui.checkbox(&mut ao_en, "").changed() {
+        state.to_save.ambient_occlusion = if ao_en {
+            AmbientOcclusion::Ssao
+        } else {
+            AmbientOcclusion::None
+        };
+
+        state.graphics_settings.ambient_occlusion = state.to_save.ambient_occlusion;
+        updates.graphics_settings = Some(state.graphics_settings.clone());
+    }
+
+    ui.add_space(COL_SPACING);
+    {
+        // todo: I don't like this constant mul.
+        let mut val = (state.to_save.edge_cueing.unwrap_or_default() * 100.) as u16;
+        let prev = val;
+        ui.spacing_mut().slider_width = 160.;
+
+        ui.label("Edge cueing:");
+        ui.add(Slider::new(&mut val, 0..=300));
+
+        if val != prev {
+            state.to_save.edge_cueing = if val == 0 {
+                None
+            } else {
+                Some(val as f32 / 100.)
+            };
+
+            state.graphics_settings.edge_cueing = state.to_save.edge_cueing;
+            updates.graphics_settings = Some(state.graphics_settings.clone());
+        }
+    }
+
+    ui.add_space(COL_SPACING);
+    // todo: DRY. Helper?
+    {
+        // todo: I don't like this constant mul.
+        let mut val = (state.to_save.depth_aware_halos.unwrap_or_default() * 1000.) as u16;
+        let prev = val;
+        ui.spacing_mut().slider_width = 160.;
+
+        ui.label("Halos:");
+        ui.add(Slider::new(&mut val, 0..=100));
+
+        if val != prev {
+            state.to_save.depth_aware_halos = if val == 0 {
+                None
+            } else {
+                Some(val as f32 / 1000.)
+            };
+
+            state.graphics_settings.depth_aware_halos = state.to_save.depth_aware_halos;
+            updates.graphics_settings = Some(state.graphics_settings.clone());
+        }
     }
 }
 
@@ -489,9 +553,15 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut Eng
         ui.add_space(COL_SPACING);
         // todo: Make this consistent with your other controls.
         ui.label("MSAA (Restart the program to take effect):");
+    });
 
+    ui.horizontal(|ui| {
         graphics_settings(state, scene, ui, updates);
+    });
 
+    ui.add_space(ROW_SPACING * 2.);
+
+    ui.horizontal(|ui| {
         ui.add_space(COL_SPACING);
         ui.label("Cam move speed:");
         if ui
