@@ -665,9 +665,7 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                             let msg = format!("Error reassigning hydrogens: {e:?}");
                             handle_err(&mut state.ui, msg);
                         }
-
                     }
-
                 }
             }
 
@@ -767,23 +765,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                 enter_edit_mode(state, scene, &mut updates);
             }
 
-            // todo: Temp location for this MD mols toggle
-            {
-                let text = if state.volatile.md_local.draw_md_mols {
-                    "Draw normal mols"
-                } else {
-                    "Draw MD mols"
-                };
-
-                if state.volatile.md_local.draw_md_mols || state.volatile.md_local.mol_dynamics.is_some()
-                    && ui.button(RichText::new(text).color(COLOR_HIGHLIGHT)).clicked() {
-                    state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
-
-                    redraw.set_all();
-                }
-
-            }
-
             let metadata_loaded = false; // avoids borrow error.
             display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);
 
@@ -834,7 +815,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                 handle_err(&mut state.ui, msg);
                             }
                         }
-
                     }
                     // todo: Add these if you end up with a way to use them. We currently use 2fo-fc only.
                     // if files_avail.validation_fo_fc {
@@ -904,7 +884,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                                 handle_err(&mut state.ui, msg);
                             }
                         }
-
                     }
                 }
             }
@@ -1065,7 +1044,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
 
         if state.ui.ui_vis.aa_seq && state.peptide.is_some() {
             add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw.peptide);
-
         }
 
         if state.ui.ui_vis.smiles && let Some(mol) = &state.active_mol() &&
@@ -1075,7 +1053,6 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
                     draw_smiles(smiles, ui);
                     break;
                 }
-
             }
         }
 

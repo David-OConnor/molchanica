@@ -4,6 +4,7 @@ use egui::{Color32, CornerRadius, Frame, Margin, RichText, Slider, Stroke, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 
+use crate::ui::COLOR_HIGHLIGHT;
 use crate::{
     md,
     state::State,
@@ -84,7 +85,27 @@ pub fn dynamics_player(
         // let prev = state.ui.peptide_atom_posits;
         let help_text = "Toggle between viewing the original (pre-dynamics) atom positions, and \
         ones at the selected dynamics snapshot.";
-        ui.label("Show atoms:").on_hover_text(help_text);
+
+        {
+            let text = if state.volatile.md_local.draw_md_mols {
+                "Draw original"
+            } else {
+                "Draw MD"
+            };
+
+            if (state.volatile.md_local.draw_md_mols
+                || state.volatile.md_local.mol_dynamics.is_some())
+                && ui
+                    .button(RichText::new(text).color(COLOR_HIGHLIGHT))
+                    .on_hover_text(help_text)
+                    .clicked()
+            {
+                state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
+
+                md::draw_mols(state, scene);
+                engine_updates.entities = EntityUpdate::All;
+            }
+        }
 
         let snapshot_prev = state.ui.current_snapshot;
 

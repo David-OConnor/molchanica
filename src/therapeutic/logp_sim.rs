@@ -16,8 +16,8 @@ use std::collections::{HashMap, HashSet};
 
 use bio_files::BondType;
 use dynamics::{
-    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit,
-    snapshot::SnapshotHandler,
+    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MolDynamics, ParamError,
+    SimBoxInit, Solvent, snapshot::SnapshotHandler,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -184,12 +184,34 @@ fn run_octanol(
         state.ff_param_set.small_mol.as_ref().unwrap(),
         false,
     );
-    octanol.common.selected_for_md = true;
 
-    let mols = [
-        (FfMolType::SmallOrganic, &octanol.common, OCTANOL_COUNT),
-        (FfMolType::SmallOrganic, &mol.common, 1),
-    ];
+    // Build a MolDynamics from the octanol MoleculeSmall so it can be used in Solvent::Custom.
+    let octanol_dyn = {
+        // let msp = state.mol_specific_params.get(&octanol.common.ident).cloned();
+        MolDynamics {
+            ff_mol_type: FfMolType::SmallOrganic,
+            atoms: octanol
+                .common
+                .atoms
+                .iter()
+                .map(|a| a.to_generic())
+                .collect(),
+            atom_posits: Some(octanol.common.atom_posits.clone()),
+            bonds: octanol
+                .common
+                .bonds
+                .iter()
+                .map(|b| b.to_generic())
+                .collect(),
+            adjacency_list: Some(octanol.common.adjacency_list.clone()),
+            // mol_specific_params: msp,
+            mol_specific_params: None,
+            ..Default::default()
+        }
+    };
+
+    // Only the solute molecule goes in `mols`; octanol is the solvent, packed via Solvent::Custom.
+    let mols = [(FfMolType::SmallOrganic, &mol.common, 1)];
 
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
@@ -200,7 +222,7 @@ fn run_octanol(
         hydrogen_constraint: HydrogenConstraint::Constrained,
         snapshot_handlers: vec![SnapshotHandler::default()],
         sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
-        specify_num_water: Some(OCTANOL_BOX_WATER_COUNT),
+        solvent: Solvent::Custom((vec![(octanol_dyn, OCTANOL_COUNT)], OCTANOL_BOX_WATER_COUNT)),
         overrides: MdOverrides {
             long_range_recip_disabled: true, // todo: Temp while troubleshooting it
             snapshots_during_equilibration: true,
@@ -222,6 +244,11 @@ fn run_octanol(
     )?;
 
     state.volatile.md_local.update_mols_for_disp(&mols);
+    // Register octanol copies so they appear in snapshot playback alongside the solute.
+    state
+        .volatile
+        .md_local
+        .update_custom_solvents_for_disp(&[(&octanol, OCTANOL_COUNT)]);
 
     // Blocking.
     run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);

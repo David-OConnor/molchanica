@@ -161,33 +161,5 @@ fn main() {
         }
     }
 
-    // match load_aa_templates() {
-    //     Ok(t) => {
-    //         state.templates.amino_acid= t;
-    //     }
-    //     Err(e) => {
-    //         handle_err(
-    //             &mut state.ui,
-    //             format!("Unable to load amino acid templates: {e}"),
-    //         );
-    //     }
-    // }
-
-    //
-    // // todo: For now
-    // for tgt in ["bbb_martins", "ld50_zhu", "solubility_aqsoldb", "herg"] {
-    //     let metrics = therapeutic::model_eval::eval(
-    //         tgt,
-    //         Path::new(&format!(
-    //             "C:/Users/the_a/Desktop/bio_misc/tdc_data/{tgt}.csv"
-    //         )),
-    //         Path::new(&format!("C:/Users/the_a/Desktop/bio_misc/tdc_data/{tgt}")),
-    //         300,
-    //         &mut state.volatile.inference_models,
-    //     )
-    //     .unwrap();
-    //     println!("Metrics {tgt}: {metrics:?}");
-    // }
-
     render(state);
 }

@@ -313,8 +313,8 @@ pub fn cam_look_at_outside(cam: &mut Camera, target: Vec3, alignment: Vec3, dist
     cam.orientation = Quaternion::from_unit_vecs(FWD_VEC, -look_vec);
 }
 
-/// Resets the camera to the *front* view, and related settings. Its behavior depends
-/// on the size and positions of open molecules.
+/// Resets the camera so that it's generally looking at most of the molecules. Its behavior depends
+/// on the size and positions of open molecules. Used by various view preset buttons, and at init.
 pub fn reset_camera(
     state: &mut State,
     scene: &mut Scene,
@@ -335,17 +335,29 @@ pub fn reset_camera(
     } else {
         let mut n = 0;
         let mut centroid = Vec3::new_zero();
+
         for mol in &state.ligands[0..10.min(state.ligands.len())] {
             let c: Vec3 = mol.common.centroid().into();
             centroid += c;
             n += 1;
         }
+
         for mol in &state.lipids[0..10.min(state.lipids.len())] {
             let c: Vec3 = mol.common.centroid().into();
             centroid += c;
             n += 1;
         }
-        centroid /= n as f32;
+
+        for mol in &state.nucleic_acids[0..10.min(state.lipids.len())] {
+            let c: Vec3 = mol.common.centroid().into();
+            centroid += c;
+            n += 1;
+        }
+
+        if n != 0 {
+            centroid /= n as f32;
+        }
+
         size = 40.; // A broad view.
 
         centroid
@@ -392,18 +404,33 @@ pub fn move_cam_to_sel(
             }
         }
         Selection::AtomLig((i_mol, i_atom)) => {
+            if *i_mol >= ligs.len() || *i_atom >= ligs[*i_mol].common.atom_posits.len() {
+                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
+                return;
+            }
             cam_look_at(cam, ligs[*i_mol].common.atom_posits[*i_atom]);
         }
         Selection::AtomNucleicAcid((i_mol, i_atom)) => {
-            // if *i_mol >= nucleic_acids.len() {
-            //     return;
-            // }
+            if *i_mol >= nucleic_acids.len()
+                || *i_atom >= nucleic_acids[*i_mol].common.atom_posits.len()
+            {
+                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
+                return;
+            }
             cam_look_at(cam, nucleic_acids[*i_mol].common.atom_posits[*i_atom]);
         }
         Selection::AtomLipid((i_mol, i_atom)) => {
+            if *i_mol >= lipids.len() || *i_atom >= lipids[*i_mol].common.atom_posits.len() {
+                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
+                return;
+            }
             cam_look_at(cam, lipids[*i_mol].common.atom_posits[*i_atom]);
         }
         Selection::AtomPocket((i_mol, i_atom)) => {
+            if *i_mol >= pockets.len() || *i_atom >= pockets[*i_mol].common.atom_posits.len() {
+                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
+                return;
+            }
             cam_look_at(cam, pockets[*i_mol].common.atom_posits[*i_atom]);
         }
         _ => {

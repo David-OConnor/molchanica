@@ -295,6 +295,7 @@ pub struct StateVolatile {
     /// For restoring after temprarily disabling mouse look.
     pub control_scheme_prev: ControlScheme,
     pub orbit_center_prev: Option<(MolType, usize)>,
+    pub auto_fog_prev: bool,
     /// Ctrl, alt, shift etc.
     pub key_modifiers: Modifiers,
     pub operating_mode: OperatingMode,

@@ -2,6 +2,7 @@ use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::cam::set_fog;
 use crate::{
     button, cam,
     cam::{move_cam_to_mol, move_mol_to_cam},
@@ -39,6 +40,7 @@ fn mol_picker_one(
     close: &mut Option<(MolType, usize)>,
     cam_snapshot: &mut Option<usize>,
     pep_center: Vec3,
+    reset_fog: &mut bool,
 ) {
     let help_text = "Make this molecule the active / selected one. Middle click to close it.";
 
@@ -128,8 +130,7 @@ fn mol_picker_one(
                         beyond,
                         engine_updates,
                     );
-                    // todo: Uhoh Don't have state here, bu tneed it.
-                    // cam::set_fog(state, &mut scene.camera);
+                    *reset_fog = true;
                 }
 
                 let row_h = ui.spacing().interact_size.y;
@@ -196,6 +197,8 @@ fn mol_picker(
         None => Vec3::new_zero(),
     };
 
+    let mut reset_fog = false;
+
     if let Some(mol) = &mut state.peptide {
         mol_picker_one(
             &mut state.volatile.active_mol,
@@ -215,6 +218,7 @@ fn mol_picker(
             &mut close,
             &mut state.ui.cam_snapshot,
             pep_center,
+            &mut reset_fog,
         );
     }
 
@@ -237,6 +241,7 @@ fn mol_picker(
             &mut close,
             &mut state.ui.cam_snapshot,
             pep_center,
+            &mut reset_fog,
         );
     }
 
@@ -259,6 +264,7 @@ fn mol_picker(
             &mut close,
             &mut state.ui.cam_snapshot,
             pep_center,
+            &mut reset_fog,
         );
     }
 
@@ -282,6 +288,7 @@ fn mol_picker(
             &mut close,
             &mut state.ui.cam_snapshot,
             pep_center,
+            &mut reset_fog,
         );
     }
 
@@ -305,6 +312,7 @@ fn mol_picker(
             &mut close,
             &mut state.ui.cam_snapshot,
             pep_center,
+            &mut reset_fog,
         );
     }
 
@@ -340,6 +348,10 @@ fn mol_picker(
         && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
     {
         *center = orbit_center(state);
+    }
+
+    if reset_fog {
+        set_fog(state, &mut scene.camera);
     }
 }
 

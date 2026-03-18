@@ -131,6 +131,7 @@ pub fn render(mut state: State) {
         fog_color: [BACKGROUND_COLOR.0, BACKGROUND_COLOR.1, BACKGROUND_COLOR.2],
         ..Default::default()
     };
+
     camera.update_proj_mat();
 
     let mut scene = Scene {

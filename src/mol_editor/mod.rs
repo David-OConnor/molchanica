@@ -445,6 +445,12 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
 
     state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
     state.volatile.orbit_center_prev = state.volatile.orbit_center;
+    state.volatile.auto_fog_prev = state.to_save.auto_fog;
+
+    // For now at least, disable auto fog when in editing mode.
+    state.to_save.auto_fog = false;
+
+    cam::set_fog(state, &mut scene.camera);
 
     // This stays false under several conditions.
     let mut mol_loaded = false;
@@ -537,11 +543,13 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engine
             Vec3::new_zero(),
             updates,
         );
-        cam::set_fog(state, &mut scene.camera);
     } else {
         scene.camera = state.volatile.primary_mode_cam.clone();
         state.volatile.orbit_center = state.volatile.orbit_center_prev;
     }
+
+    state.to_save.auto_fog = state.volatile.auto_fog_prev;
+    cam::set_fog(state, &mut scene.camera);
 
     state.mol_editor.md.md = None;
     state.mol_editor.md.running = false;

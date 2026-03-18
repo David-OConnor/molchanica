@@ -60,13 +60,18 @@ pub struct MdStateLocal {
     /// If true, render the molecules from this struct, instead of primary state molecules.
     pub draw_md_mols: bool,
     /// We maintain independent copies of these from the primary state. These are what we display
-    /// after an MD run. They may be created as copies of moleclues in the primary state.
+    /// after an MD run. They may be created as copies of molecules in the primary state.
     /// (Mol, number of copies)
     /// For now, count is only set up on construction. We have a separate molecule instance for each count.
     pub peptides: Vec<MoleculePeptide>,
     pub mols_small: Vec<MoleculeSmall>,
     pub lipids: Vec<MoleculeLipid>,
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
+    /// One entry per copy of each custom solvent species (from `Solvent::Custom`), in the same
+    /// order they were packed into the simulation.  Positions are updated from snapshots just
+    /// like other molecule types, but always *after* all regular mol types because custom solvents
+    /// are appended last to `MdState::all_mols` and therefore last in `mol_start_indices`.
+    pub custom_solvents: Vec<MoleculeSmall>,
 }
 
 impl MdStateLocal {
@@ -77,6 +82,7 @@ impl MdStateLocal {
         self.mols_small.clear();
         self.lipids.clear();
         self.nucleic_acids.clear();
+        self.custom_solvents.clear();
 
         for (ff_mol_type, mol, count) in mols {
             // todo: Pass in the full mols so we are not reproducing a copy?
@@ -114,6 +120,24 @@ impl MdStateLocal {
                     }
                 }
                 _ => eprintln!("Invalid Mol type for MD"),
+            }
+        }
+    }
+
+    /// Populate `custom_solvents` with one copy of each solvent template per packed copy,
+    /// ready for snapshot-driven position updates and drawing.
+    ///
+    /// Call this *after* `update_mols_for_disp` (which clears `custom_solvents`) and
+    /// *after* `build_dynamics`, in the same order the solvent species appear in
+    /// `Solvent::Custom`.
+    pub fn update_custom_solvents_for_disp(&mut self, solvents: &[(&MoleculeSmall, usize)]) {
+        self.custom_solvents.clear();
+        for (template, count) in solvents {
+            for _ in 0..*count {
+                self.custom_solvents.push(MoleculeSmall {
+                    common: template.common.clone(),
+                    ..Default::default()
+                });
             }
         }
     }
@@ -161,6 +185,24 @@ impl MdStateLocal {
 
         for mol in &mut self.nucleic_acids {
             // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
+            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
+                *p = posits_by_mol[i_posits][i_p].0.into();
+            }
+            i_posits += 1;
+        }
+
+        // Custom solvents are always appended last in mol_start_indices (they come after all
+        // regular mols in the packed all_mols slice), so we process them here, after all other
+        // molecule types.
+        for mol in &mut self.custom_solvents {
+            if i_posits >= posits_by_mol.len() {
+                eprintln!(
+                    "change_snapshot: ran out of mol positions while updating custom solvents \
+                     (expected {} more)",
+                    self.custom_solvents.len()
+                );
+                break;
+            }
             for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
                 *p = posits_by_mol[i_posits][i_p].0.into();
             }
@@ -986,8 +1028,27 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
         draw_peptide(state, scene);
     }
 
+    // When drawing MD molecules, custom solvents (e.g. octanol) are rendered as ligands
+    // alongside the regular solute.  We temporarily merge them into `mols_small` so that
+    // `draw_all_ligs` handles them in one unified pass, then restore the separation.
+    let custom_solvent_count = if state.volatile.md_local.draw_md_mols {
+        state.volatile.md_local.custom_solvents.len()
+    } else {
+        0
+    };
+    if custom_solvent_count > 0 {
+        // Drain into mols_small; draw_all_ligs will render all of them.
+        let custom: Vec<MoleculeSmall> = state.volatile.md_local.custom_solvents.drain(..).collect();
+        state.volatile.md_local.mols_small.extend(custom);
+    }
     if !state.volatile.md_local.mols_small.is_empty() {
         draw_all_ligs(state, scene);
+    }
+    if custom_solvent_count > 0 {
+        // Restore: the custom solvents were appended to the end of mols_small.
+        let split_at = state.volatile.md_local.mols_small.len() - custom_solvent_count;
+        state.volatile.md_local.custom_solvents =
+            state.volatile.md_local.mols_small.drain(split_at..).collect();
     }
 
     if !state.volatile.md_local.lipids.is_empty() {

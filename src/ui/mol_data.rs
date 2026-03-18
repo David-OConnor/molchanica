@@ -482,19 +482,19 @@ pub(in crate::ui) fn display_mol_data_peptide(
             };
 
             if let Some(res) = res_selected && ui
-                    .button(
-                        RichText::new(format!("Lig from {}", res.res_type))
-                            .color(COLOR_ACTION),
-                    )
-                    .on_hover_text(
-                        "Create a ligand from this residue on the peptide. This can be \
+                .button(
+                    RichText::new(format!("Lig from {}", res.res_type))
+                        .color(COLOR_ACTION),
+                )
+                .on_hover_text(
+                    "Create a ligand from this residue on the peptide. This can be \
                     saved to a Mol2 or SDF file, and used as a ligand. Molecular dynamics can be performed on it.",
-                    )
-                    .clicked()
-                {
-                    // todo: I don't like this clone, but it avoids a dbl-borrow.
-                    res_to_make = Some(res.clone());
-                }
+                )
+                .clicked()
+            {
+                // todo: I don't like this clone, but it avoids a dbl-borrow.
+                res_to_make = Some(res.clone());
+            }
 
 
             if let Some(mol) = state.active_mol() {
@@ -535,18 +535,18 @@ pub(in crate::ui) fn display_mol_data_peptide(
                             COLOR_HIGHLIGHT,
                             "Re-position the ligand to be colocated with the selected atom or residue."
                         )
-                            .clicked()
-                        {
-                            let peptide = state.peptide.as_ref().unwrap();
-                            let atom_sel = peptide.get_sel_atom(&state.ui.selection);
+                .clicked()
+            {
+                let peptide = state.peptide.as_ref().unwrap();
+                let atom_sel = peptide.get_sel_atom(&state.ui.selection);
 
-                            if let Some(a) = atom_sel {
-                                // See note on why we clone above.
-                                move_lig_to_sel = Some(a.clone());
-                            }
-                        }
-
+                if let Some(a) = atom_sel {
+                    // See note on why we clone above.
+                    move_lig_to_sel = Some(a.clone());
+                }
             }
+
+        }
 
     });
 
@@ -605,13 +605,13 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 COLOR_ACTION,
                 "Create a pocket around the selected atom. For screening, docking, pharmacophores etc."
             )
-                .clicked() {
+            .clicked() {
 
-                // todo: Rel or abs?
-                let posit = mol.common.atoms[sel_i].posit;
-                let ident = format!("{} atom {sel_i}", mol.common.ident);
-                pocket_to_add = Some(Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, &ident));
-            }
+            // todo: Rel or abs?
+            let posit = mol.common.atoms[sel_i].posit;
+            let ident = format!("{} atom {sel_i}", mol.common.ident);
+            pocket_to_add = Some(Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, &ident));
+        }
 
         if button!(
             ui,
@@ -800,20 +800,20 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
 
                     if let Some(cid) = pubchem_cid
                         && ui.button("Find assoc structs").clicked()
-                        && m.associated_structures.is_empty()
                     {
-                        // todo: Don't block.
-                        match pubchem::load_associated_structures(cid) {
-                            Ok(data) => {
-                                update_assoc_st = Some(data); // Prevents a borrow problem.
-                                state.ui.popup.show_associated_structures = true;
+                        if m.associated_structures.is_empty() {
+                            // todo: Don't block.
+                            match pubchem::load_associated_structures(cid) {
+                                Ok(data) => {
+                                    update_assoc_st = Some(data); // Prevents a borrow problem.
+                                }
+                                Err(_) => handle_err(
+                                    &mut state.ui,
+                                    "Unable to find structures for this ligand".to_owned(),
+                                ),
                             }
-                            Err(_) => handle_err(
-                                &mut state.ui,
-                                "Unable to find structures for this ligand".to_owned(),
-                            ),
                         }
-                    } else {
+
                         state.ui.popup.show_associated_structures = true;
                     }
                 }

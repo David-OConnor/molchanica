@@ -270,7 +270,6 @@ fn associated_structures(
         }
 
         ui.add_space(ROW_SPACING);
-
         close_btn(ui, &mut state.ui.popup.show_associated_structures);
     }
 }
@@ -461,6 +460,8 @@ fn graphics_settings(
     ui: &mut Ui,
     updates: &mut EngineUpdates,
 ) {
+    let mut changed = false;
+
     let msaa_prev = state.to_save.msaa;
     ComboBox::from_id_salt(10)
         .width(40.)
@@ -482,8 +483,7 @@ fn graphics_settings(
         state.update_save_prefs();
 
         state.graphics_settings.msaa_samples = state.to_save.msaa as u32;
-        // Triggers a graphics re-init
-        updates.graphics_settings = Some(state.graphics_settings.clone());
+        changed = true;
     }
 
     ui.add_space(COL_SPACING);
@@ -498,7 +498,7 @@ fn graphics_settings(
         };
 
         state.graphics_settings.ambient_occlusion = state.to_save.ambient_occlusion;
-        updates.graphics_settings = Some(state.graphics_settings.clone());
+        changed = true;
     }
 
     ui.add_space(COL_SPACING);
@@ -519,7 +519,7 @@ fn graphics_settings(
             };
 
             state.graphics_settings.edge_cueing = state.to_save.edge_cueing;
-            updates.graphics_settings = Some(state.graphics_settings.clone());
+            changed = true;
         }
     }
 
@@ -542,8 +542,14 @@ fn graphics_settings(
             };
 
             state.graphics_settings.depth_aware_halos = state.to_save.depth_aware_halos;
-            updates.graphics_settings = Some(state.graphics_settings.clone());
+            changed = true;
         }
+    }
+
+    if changed {
+        state.update_save_prefs();
+        // Triggers a graphics re-init
+        updates.graphics_settings = Some(state.graphics_settings.clone());
     }
 }
 
@@ -552,7 +558,7 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut Eng
         ui.heading("Settings");
         ui.add_space(COL_SPACING);
         // todo: Make this consistent with your other controls.
-        ui.label("MSAA (Restart the program to take effect):");
+        ui.label("Multi-sample anti-aliasing. Reduces jagged edges. Recommend to enable.");
     });
 
     ui.horizontal(|ui| {
