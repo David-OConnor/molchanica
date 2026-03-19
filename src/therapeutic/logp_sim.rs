@@ -44,15 +44,14 @@ use crate::{
 // 356: (132 water): 46
 // 400: (148 water): 48
 
-const OCTANOL_BOX_SIZE: f32 = 44.;
+const OCTANOL_BOX_SIZE: f32 = 46.; // 356 octanol + 132 water ≈ 97,230 Å³ ≈ 46³ Å³
 const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 TIP3P water mols; > 2× the 12 Å NB cutoff.
 
-// const OCTANOL_COUNT: usize = 356;
-const OCTANOL_COUNT: usize = 100; // todo temp/troubleshooting
-const WATER_RATIO_IN_OCTANOL: f32 = 0.27;
+const OCTANOL_COUNT: usize = 356;
 // 27 mol% water in water-saturated 1-octanol (literature value).
-// For OCTANOL_COUNT octanol: water = OCTANOL_COUNT × 0.27/0.73 ≈ OCTANOL_COUNT × 0.37.
-const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_RATIO_IN_OCTANOL) as usize;
+// water/(water+octanol) = 0.27  →  water = octanol × 0.27/0.73 ≈ octanol × 0.37.
+const WATER_MOL_PER_OCTANOL: f32 = 0.27 / 0.73;
+const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_MOL_PER_OCTANOL) as usize;
 
 const DT: f32 = 0.002; // ps
 // Minimum ~100 ps (50_000 steps) for basic equilibration; production LogP needs ≥1 ns.
