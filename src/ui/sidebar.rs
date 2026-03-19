@@ -2,10 +2,9 @@ use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::cam::set_fog;
 use crate::{
     button, cam,
-    cam::{move_cam_to_mol, move_mol_to_cam},
+    cam::{move_cam_to_mol, move_mol_to_cam, set_fog},
     label,
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},

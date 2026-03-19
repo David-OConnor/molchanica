@@ -4,11 +4,10 @@ use egui::{Color32, CornerRadius, Frame, Margin, RichText, Slider, Stroke, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 
-use crate::ui::COLOR_HIGHLIGHT;
 use crate::{
     md,
     state::State,
-    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, ROW_SPACING},
+    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
     util::{RedrawFlags, handle_err},
 };
 

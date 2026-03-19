@@ -153,6 +153,7 @@ pub fn handle_redraw(
     if redraw.ligand {
         match state.volatile.operating_mode {
             OperatingMode::Primary => {
+                println!("\n\n Drawing all ligs"); // todo temp
                 draw_all_ligs(state, scene);
                 // For docking light, but may be overkill here.
                 if state.active_mol().is_some() {

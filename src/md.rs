@@ -508,7 +508,16 @@ fn add_copies(
         for copy_i in 0..copies {
             // Score remaining grid cells by min-distance of centroid to placed atoms.
             let best_cell_idx = if placed_atoms.is_empty() {
-                0 // Nothing placed yet — any cell is fine.
+                // Place first molecule at the cell closest to the box centre (origin).
+                grid.iter()
+                    .enumerate()
+                    .min_by(|(_, a), (_, b)| {
+                        a.magnitude_squared()
+                            .partial_cmp(&b.magnitude_squared())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)
             } else {
                 grid.iter()
                     .enumerate()
@@ -1038,7 +1047,8 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
     };
     if custom_solvent_count > 0 {
         // Drain into mols_small; draw_all_ligs will render all of them.
-        let custom: Vec<MoleculeSmall> = state.volatile.md_local.custom_solvents.drain(..).collect();
+        let custom: Vec<MoleculeSmall> =
+            state.volatile.md_local.custom_solvents.drain(..).collect();
         state.volatile.md_local.mols_small.extend(custom);
     }
     if !state.volatile.md_local.mols_small.is_empty() {
@@ -1047,8 +1057,12 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
     if custom_solvent_count > 0 {
         // Restore: the custom solvents were appended to the end of mols_small.
         let split_at = state.volatile.md_local.mols_small.len() - custom_solvent_count;
-        state.volatile.md_local.custom_solvents =
-            state.volatile.md_local.mols_small.drain(split_at..).collect();
+        state.volatile.md_local.custom_solvents = state
+            .volatile
+            .md_local
+            .mols_small
+            .drain(split_at..)
+            .collect();
     }
 
     if !state.volatile.md_local.lipids.is_empty() {

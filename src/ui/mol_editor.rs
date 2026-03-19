@@ -6,9 +6,8 @@ use na_seq::{
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
 };
 
-use crate::cam::set_fog;
 use crate::{
-    cam::cam_reset_controls,
+    cam::{cam_reset_controls, set_fog},
     drawing::MoleculeView,
     mol_editor,
     mol_editor::{
