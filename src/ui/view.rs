@@ -223,7 +223,7 @@ pub fn view_settings(
             );
 
             toggle_btn(
-                &mut state.ui.visibility.labels_mol,
+                &mut state.ui.visibility.labels.mol,
                 "Lbl",
                 "Show or hide molecule name labels",
                 ui,
@@ -231,12 +231,22 @@ pub fn view_settings(
             );
 
             toggle_btn(
-                &mut state.ui.visibility.labels_atom_sn,
+                &mut state.ui.visibility.labels.atom_sn,
                 "SN",
                 "Show or hide atom serial numbers overlaid on their positions",
                 ui,
                 redraw,
             );
+
+            if state.peptide.is_some() {
+                toggle_btn(
+                    &mut state.ui.visibility.labels.chain,
+                    "Lbl Ch",
+                    "Show or hide chain labels. (i.e. for proteins)",
+                    ui,
+                    redraw,
+                );
+            }
 
             let num_pharm = state
                 .ligands

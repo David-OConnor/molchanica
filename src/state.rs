@@ -400,6 +400,29 @@ pub struct StateUi {
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
+pub struct LabelVis {
+    pub mol: bool,
+    pub atom_sn: bool,
+    pub atom_q: bool,
+    pub atom_detailed: bool,
+    pub bond: bool,
+    pub chain: bool,
+}
+
+impl Default for LabelVis {
+    fn default() -> Self {
+        Self {
+            mol: true,
+            atom_sn: false,
+            atom_q: false,
+            atom_detailed: false,
+            bond: false,
+            chain: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
 pub struct Visibility {
     pub hide_sidechains: bool,
     pub hide_water: bool,
@@ -416,11 +439,7 @@ pub struct Visibility {
     pub hide_density_point_cloud: bool,
     pub hide_density_surface: bool,
     pub hide_pockets: bool,
-    pub labels_mol: bool,
-    pub labels_atom_sn: bool,
-    pub labels_atom_q: bool,
-    pub labels_atom_detailed: bool,
-    pub labels_bond: bool,
+    pub labels: LabelVis,
 }
 
 impl Default for Visibility {
@@ -440,11 +459,7 @@ impl Default for Visibility {
             hide_density_point_cloud: false,
             hide_density_surface: false,
             hide_pockets: false,
-            labels_mol: true,
-            labels_atom_sn: false,
-            labels_atom_q: false,
-            labels_atom_detailed: false,
-            labels_bond: false,
+            labels: Default::default(),
         }
     }
 }

@@ -61,8 +61,10 @@ const COLOR_WATER_BOND: Color = (0.5, 0.5, 0.8);
 const COLOR_SFC_DOT: Color = (0.7, 0.7, 0.7);
 
 const LABEL_SIZE_ATOM: f32 = 16.;
+const LABEL_SIZE_CHAIN: f32 = 30.;
 const LABEL_SIZE_MOL: f32 = 40.;
 const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (255, 60, 160, 255);
+const LABEL_COLOR_CHAIN: (u8, u8, u8, u8) = (200, 100, 160, 255);
 // const LABEL_COLOR_ATOM_SEL: (u8, u8, u8, u8) = (255, 20, 20, 255);
 const LABEL_COLOR_MOL: (u8, u8, u8, u8) = (255, 120, 150, 255);
 const LABEL_COLOR_MOL_SEL: (u8, u8, u8, u8) = (255, 10, 10, 255);
@@ -139,19 +141,27 @@ static LIG_O: OnceLock<Color> = OnceLock::new();
 static LIG_H: OnceLock<Color> = OnceLock::new();
 static LIG_N: OnceLock<Color> = OnceLock::new();
 
-fn text_overlay_bonds(
+// todo: If more than a certain atom count, draw atom labels every Xth atom.
+
+/// This is a backup to drawing on atoms; for modes where atoms are not visible, but
+/// bonds are.
+fn text_overlay(
     entity: &mut Entity,
     mol_ident: &str,
     i_atom: usize,
     atom: &Atom,
     sel: bool,
+    chains: &[Chain],
+    atom_count: usize,
     ui: &StateUi,
 ) {
-    if !matches!(
-        ui.mol_view,
-        MoleculeView::BallAndStick | MoleculeView::SpaceFill
-    ) {
-        if ui.visibility.labels_atom_sn {
+    // todo: Global consts A/R
+    // If more than this many atoms, don't draw all.
+    const ATOM_LIMIT_FOR_ALL_SNS: usize = 200;
+    const ATOM_DRAW_RATIO: usize = 30;
+
+    if ui.visibility.labels.atom_sn {
+        if atom_count <= ATOM_LIMIT_FOR_ALL_SNS || i_atom.is_multiple_of(ATOM_DRAW_RATIO) {
             entity.overlay_text = Some(TextOverlay {
                 text: format!("{}", atom.serial_number),
                 size: LABEL_SIZE_ATOM,
@@ -159,21 +169,42 @@ fn text_overlay_bonds(
                 font_family: FontFamily::Proportional,
             });
         }
+    }
 
-        let color = if sel {
-            LABEL_COLOR_MOL_SEL
-        } else {
-            LABEL_COLOR_MOL
-        };
+    // todo: Only the first label on each chain!
+    if ui.visibility.labels.chain
+        && let Some(ch_i) = &atom.chain
+    {
+        if *ch_i >= chains.len() {
+            eprintln!("Error drawing chain label; chain out of bounds.");
+            return;
+        }
 
-        if ui.visibility.labels_mol && i_atom == 0 {
+        let chain = &chains[*ch_i];
+        // Only draw on the first one.
+        if i_atom == chain.atoms[0] {
             entity.overlay_text = Some(TextOverlay {
-                text: mol_ident.to_string(),
-                size: LABEL_SIZE_MOL,
-                color,
+                text: format!("{}", chain.id),
+                size: LABEL_SIZE_CHAIN,
+                color: LABEL_COLOR_ATOM,
                 font_family: FontFamily::Proportional,
             });
         }
+    }
+
+    let color = if sel {
+        LABEL_COLOR_MOL_SEL
+    } else {
+        LABEL_COLOR_MOL
+    };
+
+    if ui.visibility.labels.mol && i_atom == 0 {
+        entity.overlay_text = Some(TextOverlay {
+            text: mol_ident.to_string(),
+            size: LABEL_SIZE_MOL,
+            color,
+            font_family: FontFamily::Proportional,
+        });
     }
 }
 
@@ -666,12 +697,14 @@ pub fn draw_mol(
 
             if mode != OperatingMode::MolEditor {
                 // Note: We draw these on the bond entities if not in a view that shows atoms.
-                atoms_bonds::text_overlay_atoms(
+                text_overlay(
                     &mut entity,
                     &mol.common().ident,
                     i_atom,
                     atom,
                     mol_active,
+                    &[],
+                    mol.common().atoms.len(),
                     ui,
                 );
             }
@@ -903,15 +936,22 @@ pub fn draw_mol(
             to_hydrogen,
         );
 
-        // todo: This seems to be related to a bug where atom labels are doubled for some in sticks mode.
         // Draw atom-based labels on bonds if not in a view mode that shows atoms.
-        if !entities.is_empty() && mode != OperatingMode::MolEditor {
-            text_overlay_bonds(
+        if !entities.is_empty()
+            && mode != OperatingMode::MolEditor
+            && !matches!(
+                ui.mol_view,
+                MoleculeView::BallAndStick | MoleculeView::SpaceFill
+            )
+        {
+            text_overlay(
                 &mut entities[0],
                 &mol.common().ident,
                 bond.atom_0,
                 atom_0,
                 mol_active, // todo
+                &[],
+                mol.common().bonds.len(),
                 ui,
             );
         }
@@ -1501,12 +1541,14 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             );
 
             // Note: We draw these on the bond entities if not in a view that shows atoms.
-            atoms_bonds::text_overlay_atoms(
+            text_overlay(
                 &mut entity,
                 &mol.common.ident,
                 i_atom,
                 atom,
                 mol_active,
+                &mol.chains,
+                mol.common.atoms.len(),
                 ui,
             );
 
@@ -1745,13 +1787,20 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             to_hydrogen,
         );
 
-        if !ents_new.is_empty() {
-            text_overlay_bonds(
+        if !ents_new.is_empty()
+            && !matches!(
+                ui.mol_view,
+                MoleculeView::BallAndStick | MoleculeView::SpaceFill
+            )
+        {
+            text_overlay(
                 &mut ents_new[0],
                 &mol.common.ident,
                 bond.atom_0,
                 atom_0,
                 mol_active,
+                &mol.chains,
+                mol.common.bonds.len(),
                 ui,
             );
         }

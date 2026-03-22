@@ -8,7 +8,7 @@ use crate::{
     cam,
     cam::{FOG_HALF_DEPTH_DEFAULT, reset_camera},
     drawing::{
-        draw_peptide,
+        EntityClass, draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     file_io::download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
@@ -141,8 +141,8 @@ pub fn handle_redraw(
             set_window_title(&mol.common.ident, scene);
         }
 
-        updates.entities = EntityUpdate::All;
-        // engine_updates.entities.push_class(EntityClass::Peptide as u32);
+        // updates.entities = EntityUpdate::All;
+        updates.entities.push_class(EntityClass::Protein as u32);
 
         // For docking light, but may be overkill here.
         if state.active_mol().is_some() {
@@ -153,12 +153,11 @@ pub fn handle_redraw(
     if redraw.ligand {
         match state.volatile.operating_mode {
             OperatingMode::Primary => {
-                println!("\n\n Drawing all ligs"); // todo temp
                 draw_all_ligs(state, scene);
-                // For docking light, but may be overkill here.
-                if state.active_mol().is_some() {
-                    updates.lighting = true;
-                }
+                // // For docking light, but may be overkill here.
+                // if state.active_mol().is_some() {
+                //     updates.lighting = true;
+                // }
             }
             OperatingMode::MolEditor => mol_editor::redraw(
                 &mut scene.entities,
@@ -169,27 +168,26 @@ pub fn handle_redraw(
             OperatingMode::ProteinEditor => unimplemented!(),
         }
 
-        updates.entities = EntityUpdate::All;
-        // engine_updates.entities.push_class(EntityClass::Ligand as u32);
+        // updates.entities = EntityUpdate::All;
+        updates.entities.push_class(EntityClass::Ligand as u32);
     }
 
     if redraw.na {
         draw_all_nucleic_acids(state, scene);
-        updates.entities = EntityUpdate::All;
-        // engine_updates.entities.push_class(EntityClass::NucleicAcid as u32);
+        // updates.entities = EntityUpdate::All;
+        updates.entities.push_class(EntityClass::NucleicAcid as u32);
     }
 
     if redraw.lipid {
         draw_all_lipids(state, scene);
-        updates.entities = EntityUpdate::All;
-        // engine_updates.entities.push_class(EntityClass::Lipid as u32);
+        // updates.entities = EntityUpdate::All;
+        updates.entities.push_class(EntityClass::Lipid as u32);
     }
 
     if redraw.pocket {
         draw_all_pockets(state, scene);
-        updates.entities = EntityUpdate::All;
-
-        // engine_updates.entities.push_class(EntityClass::Pocket as u32);
+        // updates.entities = EntityUpdate::All;
+        updates.entities.push_class(EntityClass::Pocket as u32);
     }
 
     // Perform cleanup.

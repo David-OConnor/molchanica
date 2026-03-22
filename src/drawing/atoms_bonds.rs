@@ -61,41 +61,6 @@ const H_BOND_GAP_LEN: f32 = 0.15; // Å
 // Maximum length of the central strength-indicating cylinder, at strength = 1.
 const H_BOND_CENTER_LEN_MAX: f32 = 1.5; // Å
 
-// todo: For this and overlay bonds: Make teh atom color based on if the atom is selected;
-// todo not if the bond is selected.
-pub fn text_overlay_atoms(
-    entity: &mut Entity,
-    mol_ident: &str,
-    i_atom: usize,
-    atom: &Atom,
-    sel: bool,
-    ui: &StateUi,
-) {
-    if ui.visibility.labels_atom_sn {
-        entity.overlay_text = Some(TextOverlay {
-            text: format!("{}", atom.serial_number),
-            size: LABEL_SIZE_ATOM,
-            color: LABEL_COLOR_ATOM,
-            font_family: FontFamily::Proportional,
-        });
-    }
-
-    let color = if sel {
-        LABEL_COLOR_MOL_SEL
-    } else {
-        LABEL_COLOR_MOL
-    };
-
-    if ui.visibility.labels_mol && i_atom == 0 {
-        entity.overlay_text = Some(TextOverlay {
-            text: mol_ident.to_string(),
-            size: LABEL_SIZE_MOL,
-            color,
-            font_family: FontFamily::Proportional,
-        });
-    }
-}
-
 /// A general function that sets color based criteria like element, partial charge,
 /// if selected or not etc.
 pub fn atom_color(

@@ -7,10 +7,10 @@ use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use na_seq::AaIdent;
 
-use crate::drawing::EntityClass;
-use crate::file_io::load_peptide;
 use crate::{
     cam,
+    drawing::EntityClass,
+    file_io::load_peptide,
     molecules::{
         MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, peptide::MoleculePeptide,
         small::MoleculeSmall,
