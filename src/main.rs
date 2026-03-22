@@ -32,6 +32,7 @@ mod reflection;
 
 pub mod cam;
 mod drug_design;
+mod gromacs;
 mod lod_generalization;
 mod md;
 mod mol_alignment;

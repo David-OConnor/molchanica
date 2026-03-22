@@ -181,8 +181,10 @@ fn text_overlay(
         }
 
         let chain = &chains[*ch_i];
-        // Only draw on the first one.
-        if i_atom == chain.atoms[0] {
+        // Only draw on one atom in the chain. Pick one towards the middle of the sequence; this
+        // may be an OK proxy for in the middle of that chain's structure.
+        // todo: Not ideal to compute this each time.
+        if i_atom == chain.atoms[chain.atoms.len() / 2] {
             entity.overlay_text = Some(TextOverlay {
                 text: format!("{}", chain.id),
                 size: LABEL_SIZE_CHAIN,
@@ -1103,6 +1105,76 @@ fn draw_sa_surface(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene
     scene.entities.push(ent);
 }
 
+/// In ribbon/cartoon view, atoms and bonds are not drawn, so `text_overlay` never fires.
+/// This function creates tiny invisible entities at the first atom of each chain (for chain
+/// labels) and at atom 0 (for the molecule label), mirroring the logic in `text_overlay` but
+/// without the atom-SN label that makes no sense for a ribbon.
+fn ribbon_text_overlay_entities(
+    mol: &MoleculePeptide,
+    mol_active: bool,
+    ui: &StateUi,
+) -> Vec<Entity> {
+    let mut result = Vec::new();
+
+    if ui.visibility.labels.mol {
+        if let Some(&posit) = mol.common.atom_posits.first() {
+            let color = if mol_active {
+                LABEL_COLOR_MOL_SEL
+            } else {
+                LABEL_COLOR_MOL
+            };
+            let mut ent = Entity::new(
+                MESH_CUBE,
+                posit.into(),
+                Quaternion::new_identity(),
+                0.01,
+                (0., 0., 0.),
+                ATOM_SHININESS,
+            );
+            ent.overlay_text = Some(TextOverlay {
+                text: mol.common.ident.clone(),
+                size: LABEL_SIZE_MOL,
+                color,
+                font_family: FontFamily::Proportional,
+            });
+            ent.class = EntityClass::Protein as u32;
+            result.push(ent);
+        }
+    }
+
+    if ui.visibility.labels.chain {
+        for chain in &mol.chains {
+            if !chain.visible {
+                continue;
+            }
+            let Some(&first_atom_i) = chain.atoms.first() else {
+                continue;
+            };
+            let Some(&posit) = mol.common.atom_posits.get(first_atom_i) else {
+                continue;
+            };
+            let mut ent = Entity::new(
+                MESH_CUBE,
+                posit.into(),
+                Quaternion::new_identity(),
+                0.01,
+                (0., 0., 0.),
+                ATOM_SHININESS,
+            );
+            ent.overlay_text = Some(TextOverlay {
+                text: chain.id.clone(),
+                size: LABEL_SIZE_CHAIN,
+                color: LABEL_COLOR_ATOM,
+                font_family: FontFamily::Proportional,
+            });
+            ent.class = EntityClass::Protein as u32;
+            result.push(ent);
+        }
+    }
+
+    result
+}
+
 /// Secondary structure, e.g. cartoon view for proteins.
 pub fn draw_secondary_structure(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
     // If the mesh is the default cube, build it. (On demand.)
@@ -1318,6 +1390,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
             state.volatile.flags.ss_mesh_created,
             scene,
         );
+        entities.extend(ribbon_text_overlay_entities(mol, mol_active, ui));
     }
 
     // Note that this renders over a sticks model.

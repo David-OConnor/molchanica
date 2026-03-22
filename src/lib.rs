@@ -15,6 +15,7 @@ pub mod docking;
 pub mod drawing;
 pub mod drug_design;
 pub mod file_io;
+pub mod gromacs;
 pub mod inputs;
 pub mod md;
 pub mod mol_alignment;

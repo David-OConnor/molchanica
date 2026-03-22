@@ -690,7 +690,7 @@ pub fn build_dynamics(
     // Extract explicit box side-lengths so add_copies can keep molecules inside the boundary.
     // Only meaningful for Fixed boxes; Pad boxes are sized after molecule placement so we skip them.
     let box_dims = match &cfg.sim_box {
-        SimBoxInit::Fixed((lo, hi)) => Some(((hi.x - lo.x), (hi.y - lo.y), (hi.z - lo.z))),
+        SimBoxInit::Fixed((lo, hi)) => Some((hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)),
         SimBoxInit::Pad(_) => None,
     };
 

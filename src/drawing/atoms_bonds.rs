@@ -1,21 +1,17 @@
 use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::BondType;
-use egui::FontFamily;
-use graphics::{Entity, TextOverlay, UP_VEC};
+use graphics::{Entity, UP_VEC};
 use lin_alg::f32::{Quaternion, Vec3};
 use na_seq::Element;
 
 use crate::{
     drawing,
-    drawing::{
-        CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_PEPTIDE_AMT, LABEL_COLOR_ATOM,
-        LABEL_COLOR_MOL, LABEL_COLOR_MOL_SEL, LABEL_SIZE_ATOM, LABEL_SIZE_MOL, MESH_BOND_CAP,
-    },
+    drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_PEPTIDE_AMT, MESH_BOND_CAP},
     mol_components::MolComponents,
     molecules::{Atom, Chain, MolType, Residue},
     render::{BACKGROUND_COLOR, Color, MESH_BOND},
     selection::{Selection, ViewSelLevel},
-    state::{ResColoring, StateUi},
+    state::ResColoring,
     util::res_color,
 };
 
