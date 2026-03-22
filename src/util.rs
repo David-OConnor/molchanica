@@ -605,8 +605,6 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
     if state.volatile.flags.new_mol_loaded {
         state.volatile.flags.new_mol_loaded = false;
 
-        // cam::reset_camera(state, scene, engine_updates, FWD_VEC);
-
         set_flashlight(scene);
         updates.lighting = true;
     }

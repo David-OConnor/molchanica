@@ -59,7 +59,7 @@ pub const CLI_CMDS: [&str; 20] = [
 pub fn handle_cmd(
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     redraw: &mut bool,
     reset_cam: &mut bool,
 ) -> io::Result<String> {
@@ -107,14 +107,7 @@ pub fn handle_cmd(
 
     if let Some(caps) = re_fetch.captures(&input) {
         let ident = &caps[1];
-        download_mols::load_atom_coords_rcsb(
-            ident,
-            state,
-            scene,
-            engine_updates,
-            redraw,
-            reset_cam,
-        );
+        download_mols::load_atom_coords_rcsb(ident, state, scene, updates, redraw, reset_cam);
 
         return Ok(format!("Loaded {ident} molecule from RCSB PDB"));
     }
@@ -135,10 +128,10 @@ pub fn handle_cmd(
         let filename = &caps[1];
         let path = PathBuf::from_str(filename).unwrap();
 
-        state.open_mol_from_file(&path, scene, engine_updates)?;
+        state.open_mol_from_file(&path, scene, updates)?;
 
         set_flashlight(scene);
-        engine_updates.lighting = true;
+        updates.lighting = true;
 
         return Ok(format!("Loaded {filename}"));
     }
@@ -177,7 +170,7 @@ pub fn handle_cmd(
                 }
             }
             if found {
-                util::load_snap(state, scene, engine_updates);
+                util::load_snap(state, scene, updates);
             }
         }
 
@@ -268,7 +261,7 @@ pub fn handle_cmd(
     }
 
     if let Some(_caps) = re_orient.captures(&input) {
-        engine_updates.camera = true;
+        updates.camera = true;
 
         return Ok("Complete".to_owned());
     }
@@ -292,7 +285,7 @@ pub fn handle_cmd(
 
         arc_rotation(&mut scene.camera, axis, amt, mol.center.into());
 
-        engine_updates.camera = true;
+        updates.camera = true;
 
         return Ok("Complete".to_owned());
     }
@@ -310,7 +303,7 @@ pub fn handle_cmd(
 
         let movement = axis * amt;
         scene.camera.position += movement;
-        engine_updates.camera = true;
+        updates.camera = true;
 
         return Ok("Complete".to_owned());
     }
@@ -321,7 +314,7 @@ pub fn handle_cmd(
 
             if let Some(atom) = atom_sel {
                 cam_look_at(&mut scene.camera, atom.posit);
-                engine_updates.camera = true;
+                updates.camera = true;
                 state.ui.cam_snapshot = None;
             }
         }
@@ -330,8 +323,7 @@ pub fn handle_cmd(
     }
 
     if re_reset.captures(&input).is_some() {
-        reset_camera(state, scene, engine_updates, FWD_VEC);
-        engine_updates.camera = true;
+        reset_camera(state, scene, updates, FWD_VEC);
         return Ok("Complete".to_owned());
     }
 

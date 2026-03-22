@@ -1308,8 +1308,6 @@ pub(crate) fn cam_controls(
                     // todo: Only if near changed.
                     scene.camera.update_proj_mat();
 
-                    cam::set_fog_dist(&mut scene.camera, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
-
                     changed = true;
                 }
 
@@ -1317,7 +1315,7 @@ pub(crate) fn cam_controls(
                     .on_hover_text("Automatically adjust the far distance based on the camera's distance \
                     from the nearest atoms. Consider setting this as a default in most cases.");
                 if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
-                    cam::set_fog(state, &mut scene.camera);
+                    set_fog(state, &mut scene.camera);
                 }
             });
         });

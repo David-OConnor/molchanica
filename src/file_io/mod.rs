@@ -18,6 +18,7 @@ use na_seq::{AaIdent, Element};
 use rand::Rng;
 
 use crate::{
+    cam,
     cam::move_mol_to_cam,
     drawing::{
         draw_peptide,
@@ -40,6 +41,33 @@ pub mod download_mols;
 
 // When opening molecules deconflict; don't allow a mol to be closer than this to another.
 const MOL_MIN_DIST_OPEN: f64 = 12.;
+
+/// Shared between loading protein from file, and from RCSB.
+pub(in crate::file_io) fn load_peptide(
+    state: &mut State,
+    scene: &mut Scene,
+    mol: MoleculePeptide,
+) -> (String, Vec3) {
+    state.volatile.aa_seq_text = String::with_capacity(mol.common.atoms.len());
+    for aa in &mol.aa_seq {
+        state
+            .volatile
+            .aa_seq_text
+            .push_str(&aa.to_str(AaIdent::OneLetter));
+    }
+
+    state.volatile.flags.ss_mesh_created = false;
+    state.volatile.flags.sas_mesh_created = false;
+    state.volatile.flags.clear_density_drawing = true;
+
+    let centroid = mol.center;
+    let ident = mol.common.ident.clone();
+    state.peptide = Some(mol);
+
+    draw_peptide(state, scene);
+
+    (ident, centroid)
+}
 
 impl State {
     /// A single endpoint to open a number of file types. Delegates to functions that handle
@@ -709,27 +737,8 @@ impl State {
 
         let (ident, centroid) = match mol {
             MoleculeGeneric::Peptide(m) => {
-                self.volatile.aa_seq_text = String::with_capacity(m.common.atoms.len());
-                for aa in &m.aa_seq {
-                    self.volatile
-                        .aa_seq_text
-                        .push_str(&aa.to_str(AaIdent::OneLetter));
-                }
-
-                self.volatile.flags.ss_mesh_created = false;
-                self.volatile.flags.sas_mesh_created = false;
-
-                self.volatile.flags.clear_density_drawing = true;
-
-                let centroid = m.center;
-                let ident = m.common.ident.clone();
-                self.peptide = Some(m);
-
-                // if let Some(ref mut s) = scene {
-                draw_peptide(self, scene);
-                // }
-
-                (ident, centroid)
+                // Shared fn, as this is shared with loading mol from RCSB.
+                load_peptide(self, scene, m)
             }
             MoleculeGeneric::Small(mut mol) => {
                 if !mol
@@ -869,12 +878,11 @@ impl State {
         self.volatile.active_mol = Some((mol_type, mol_i));
         self.volatile.orbit_center = Some((mol_type, mol_i));
 
-        // if let Some(ref mut s) = scene {
-        //     if let ControlScheme::Arc { center } = &mut s.input_settings.control_scheme {
         if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
             *center = centroid.into();
         }
-        // }
+
+        cam::set_fog(self, &mut scene.camera);
 
         if mol_type == MolType::Peptide {
             // Mark all other peptides as not last session.

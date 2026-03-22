@@ -182,7 +182,7 @@ impl MoleculePeptide {
             let files_data = rcsb::get_files_avail(&ident);
 
             let elapsed = start.elapsed().as_millis();
-            println!("RCSB data loaded in  {elapsed:.1}ms");
+            println!("RCSB data loaded in {elapsed:.1}ms");
 
             let _ = tx.send((data, files_data));
         });

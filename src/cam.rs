@@ -272,7 +272,7 @@ pub fn move_cam_to_active_mol(
         look_to_beyond,
         engine_updates,
     );
-    cam::set_fog(state, &mut scene.camera);
+    set_fog(state, &mut scene.camera);
 
     state.ui.cam_snapshot = cam_ss;
 
@@ -318,7 +318,7 @@ pub fn cam_look_at_outside(cam: &mut Camera, target: Vec3, alignment: Vec3, dist
 pub fn reset_camera(
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     look_vec: Vec3, // unit vector the cam is pointing to.
 ) {
     let mut size = 8.; // E.g. for small organic molecules.
@@ -358,7 +358,7 @@ pub fn reset_camera(
             centroid /= n as f32;
         }
 
-        size = 40.; // A broad view.
+        updates.camera = true;
 
         centroid
     };
@@ -371,8 +371,10 @@ pub fn reset_camera(
     set_static_light(scene, center, size);
     set_flashlight(scene);
 
-    engine_updates.camera = true;
-    engine_updates.lighting = true;
+    updates.camera = true;
+    updates.lighting = true;
+
+    set_fog(state, &mut scene.camera);
 
     // todo: A/R.
     state.ui.view_depth = (VIEW_DEPTH_NEAR_MIN, FOG_DIST_DEFAULT);

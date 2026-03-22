@@ -7,7 +7,10 @@ use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use na_seq::AaIdent;
 
+use crate::drawing::EntityClass;
+use crate::file_io::load_peptide;
 use crate::{
+    cam,
     molecules::{
         MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, peptide::MoleculePeptide,
         small::MoleculeSmall,
@@ -49,7 +52,7 @@ pub fn load_atom_coords_rcsb(
     ident: &str,
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     redraw: &mut bool,
     reset_cam: &mut bool,
 ) {
@@ -57,7 +60,6 @@ pub fn load_atom_coords_rcsb(
     let start = Instant::now();
 
     match load_cif_rcsb(ident) {
-        // todo: For organization purposes, move this code out of the UI.
         Ok((cif, cif_text)) => {
             let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map else {
                 handle_err(
@@ -77,33 +79,11 @@ pub fn load_atom_coords_rcsb(
                     }
                 };
 
-            state.volatile.aa_seq_text = String::with_capacity(mol.common.atoms.len());
-            for aa in &mol.aa_seq {
-                state
-                    .volatile
-                    .aa_seq_text
-                    .push_str(&aa.to_str(AaIdent::OneLetter));
-            }
-
-            // todo: DRY from `open_molecule`. Refactor into shared code?
-
-            state.volatile.aa_seq_text = String::with_capacity(mol.common.atoms.len());
-            for aa in &mol.aa_seq {
-                state
-                    .volatile
-                    .aa_seq_text
-                    .push_str(&aa.to_str(AaIdent::OneLetter));
-            }
-
-            state.volatile.orbit_center = Some((MolType::Peptide, 0));
+            let (_ident, centroid) = load_peptide(state, scene, mol);
             if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
-                *center = mol.center.into();
+                *center = centroid.into();
             }
 
-            state.volatile.flags.ss_mesh_created = false;
-            state.volatile.flags.sas_mesh_created = false;
-            state.volatile.flags.clear_density_drawing = true;
-            state.peptide = Some(mol);
             state.cif_pdb_raw = Some(cif_text);
         }
         Err(e) => {
@@ -114,15 +94,21 @@ pub fn load_atom_coords_rcsb(
             return;
         }
     }
+
     let elapsed = start.elapsed().as_millis();
-    println!("Loading complete in {elapsed:.1}ms");
+    println!("Protein loading from RCSB complete in {elapsed:.1}ms");
 
     state.update_from_prefs();
+
+    updates.entities.push_class(EntityClass::Protein as u32);
+
+    state.volatile.active_mol = Some((MolType::Peptide, 0));
+    state.volatile.orbit_center = Some((MolType::Peptide, 0));
 
     *redraw = true;
     *reset_cam = true;
     set_flashlight(scene);
-    engine_updates.lighting = true;
+    updates.lighting = true;
 
     // todo: async
     // Only after updating from prefs (to prevent unecesasary loading) do we update data avail.

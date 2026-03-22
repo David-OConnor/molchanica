@@ -273,14 +273,8 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
 
     reset_orbit_center(state, scene);
 
-    println!("CAM posit A: {:?}", scene.camera.position);
-
     // FWD_VEC here means a "Front" look.
     reset_camera(state, scene, &mut EngineUpdates::default(), FWD_VEC);
-
-    println!("CAM posit B: {:?}", scene.camera.position);
-
-    cam::set_fog(state, &mut scene.camera);
 
     draw_peptide(state, scene);
     draw_all_ligs(state, scene);

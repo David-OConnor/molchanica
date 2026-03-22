@@ -256,11 +256,11 @@ fn mod_color_for_ligand(
 #[derive(Clone, Copy, PartialEq, Debug, Default, Encode, Decode)]
 pub enum MoleculeView {
     Backbone,
-    #[default]
     Sticks,
     BallAndStick,
     /// i.e. Van der Waals radius, or CPK.
     SpaceFill,
+    #[default]
     Ribbon,
     Surface,
     Dots,

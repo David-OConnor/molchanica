@@ -722,6 +722,7 @@ fn alignment(
 
     ui.add_space(ROW_SPACING);
     ui.separator();
+
     if state.volatile.alignment.mols_to_align.len() == 2 && ui.button("Run alignment").clicked() {
         run_alignment(state, &mut false);
 

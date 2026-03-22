@@ -12,7 +12,7 @@ fn main() {
         // Select the min supported GPU architecture.
         GpuArchitecture::Rtx3,
         &["src/cuda/cuda.cu", "src/cuda/util.cu"],
-        "mochanica",
+        "molchanica",
     );
 
     if env::var_os("CARGO_CFG_WINDOWS").is_some() {
