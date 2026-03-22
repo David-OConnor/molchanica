@@ -711,9 +711,7 @@ pub fn build_dynamics(
             // bonded_disabled: false,
             // coulomb_disabled: true,
             // lj_disabled: true,
-
-            // todo temp
-            long_range_recip_disabled: true,
+            // long_range_recip_disabled: true,
             // thermo_disabled: false,
             // baro_disabled: false,
             snapshots_during_equilibration: true,
@@ -721,8 +719,6 @@ pub fn build_dynamics(
             ..cfg.overrides.clone()
         },
         // zero_com_drift: false,
-        // todo temp
-        // sim_box: SimBoxInit::new_cube(40.), // todo temp
         // max_init_relaxation_iters: None,
         ..cfg.clone()
     };

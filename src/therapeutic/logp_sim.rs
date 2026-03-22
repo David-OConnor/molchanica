@@ -223,7 +223,7 @@ fn run_octanol(
         sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
         solvent: Solvent::Custom((vec![(octanol_dyn, OCTANOL_COUNT)], OCTANOL_BOX_WATER_COUNT)),
         overrides: MdOverrides {
-            long_range_recip_disabled: true, // todo: Temp while troubleshooting it
+            // long_range_recip_disabled: true,
             snapshots_during_equilibration: true,
             ..Default::default()
         },
@@ -296,7 +296,7 @@ fn run_water(
         snapshot_handlers: vec![SnapshotHandler::default()],
         sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
         overrides: MdOverrides {
-            long_range_recip_disabled: true, // todo: Temp while troubleshooting it
+            // long_range_recip_disabled: true,
             snapshots_during_equilibration: true,
             ..Default::default()
         },
