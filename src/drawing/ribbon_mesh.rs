@@ -165,33 +165,31 @@ fn fallback_perp(v: Vec3F32) -> Vec3F32 {
     v.cross(helper).to_normalized()
 }
 
-// ── Cross-section profile ─────────────────────────────────────────────────────
-
 #[derive(Clone, Copy)]
 struct Profile {
-    hw: f32, // half-width along binormal
-    hh: f32, // half-height along guide
+    half_width: f32,  // half-width along binormal
+    half_height: f32, // half-height along guide
 }
 
 impl Profile {
     fn coil() -> Self {
         Self {
-            hw: COIL_RADIUS,
-            hh: COIL_RADIUS,
+            half_width: COIL_RADIUS,
+            half_height: COIL_RADIUS,
         }
     }
     fn helix() -> Self {
         // Wide in guide direction (radially outward), thin in binormal.
         Self {
-            hw: HELIX_HALF_H,
-            hh: HELIX_HALF_W,
+            half_width: HELIX_HALF_H,
+            half_height: HELIX_HALF_W,
         }
     }
     fn sheet(half_w: f32) -> Self {
         // Wide along guide (across-strand, in the sheet plane), thin along binormal (sheet normal).
         Self {
-            hw: SHEET_HALF_H,
-            hh: half_w,
+            half_width: SHEET_HALF_H,
+            half_height: half_w,
         }
     }
 }
@@ -208,10 +206,10 @@ fn cross_section(
         let theta = TAU * (k as f32) / (N_PROFILE as f32);
         let cos_t = theta.cos();
         let sin_t = theta.sin();
-        let pos = center + binormal * (p.hw * cos_t) + guide * (p.hh * sin_t);
+        let pos = center + binormal * (p.half_width * cos_t) + guide * (p.half_height * sin_t);
         // Exact normal via gradient of the ellipse equation.
-        let nx = cos_t / p.hw;
-        let ny = sin_t / p.hh;
+        let nx = cos_t / p.half_width;
+        let ny = sin_t / p.half_height;
         let len = (nx * nx + ny * ny).sqrt().max(1e-8);
         let normal = (binormal * (nx / len) + guide * (ny / len)).to_normalized();
         out[k] = (pos, normal);
@@ -703,9 +701,7 @@ fn extend_run(
     ext
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-pub fn build_cartoon_mesh(
+pub fn build_ribbon_mesh(
     backbone: &[BackboneSS],
     atoms: &[Atom],
     residues: &[Residue],
@@ -722,13 +718,16 @@ pub fn build_cartoon_mesh(
         .filter(|r| matches!(r.res_type, ResidueType::AminoAcid(_)))
         .count();
 
-    // Build residue-index → chain-index map for chain *visibility* checks only.
-    // (Coloring uses atom.chain directly, matching util.rs::res_color.)
-    let res_to_chain: HashMap<usize, usize> = chains
+    // Build residue-index → chain-index map from atoms (atom.chain is authoritative;
+    // chain.residues can be incomplete for some structures).
+    let res_to_chain: HashMap<usize, usize> = atoms
         .iter()
-        .enumerate()
-        .flat_map(|(chain_i, chain)| chain.residues.iter().map(move |&res_i| (res_i, chain_i)))
+        .filter_map(|a| match (a.residue, a.chain) {
+            (Some(r), Some(c)) => Some((r, c)),
+            _ => None,
+        })
         .collect();
+
     let chain_count = chains.len();
 
     // ── 1. Collect all Cα positions ───────────────────────────────────────────
@@ -753,7 +752,7 @@ pub fn build_cartoon_mesh(
         for f in &frames {
             covered.insert(f.res_idx);
         }
-        // Respect chain visibility.
+
         let chain_visible = frames
             .first()
             .and_then(|f| res_to_chain.get(&f.res_idx))

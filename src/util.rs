@@ -32,7 +32,7 @@ use crate::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
         color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
         draw_peptide,
-        ribbon_mesh::build_cartoon_mesh,
+        ribbon_mesh::build_ribbon_mesh,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     mol_manip::ManipMode,
@@ -642,11 +642,14 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
     }
 
     if state.volatile.flags.update_ss_mesh {
+        // todo temp
+        println!("\n\nRebuilding ribbon mesh.\n\n");
+
         state.volatile.flags.update_ss_mesh = false;
         state.volatile.flags.ss_mesh_created = true;
 
         if let Some(mol) = &state.peptide {
-            scene.meshes[MESH_SECONDARY_STRUCTURE] = build_cartoon_mesh(
+            scene.meshes[MESH_SECONDARY_STRUCTURE] = build_ribbon_mesh(
                 &mol.secondary_structure,
                 &mol.common.atoms,
                 &mol.residues,
