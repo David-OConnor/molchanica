@@ -1,4 +1,5 @@
 use bio_files::BondType;
+use dynamics::Solvent;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
 use na_seq::{
@@ -217,13 +218,17 @@ pub(in crate::ui) fn editor(
             );
 
             if state.mol_editor.md.running {
-                let color = active_color(!state.mol_editor.md.skip_water);
+                let color = active_color(state.mol_editor.md.solvent != Solvent::None);
                 if ui
                     .button(RichText::new("MD Water").color(color))
                     .on_hover_text("If enabled, use the explicit solvation model. If disabled, does not model water.")
                     .clicked()
                 {
-                    state.mol_editor.md.skip_water = !state.mol_editor.md.skip_water;
+                    state.mol_editor.md.solvent = if state.mol_editor.md.solvent == Solvent::None {
+                        Solvent::WaterOpc
+                    } else {
+                        Solvent::None
+                    };
 
                     redraw = true;
                     state.mol_editor.md.rebuild_required = true;

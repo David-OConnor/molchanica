@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use bio_files::BondType;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MolDynamics, ParamError,
-    SimBoxInit, Solvent, snapshot::SnapshotHandler,
+    SimBoxInit, Solvent, TAU_TEMP_DEFAULT, snapshot::SnapshotHandler,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -214,7 +214,7 @@ fn run_octanol(
 
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
-            thermostat: Some(0.9),
+            thermostat: Some(TAU_TEMP_DEFAULT),
         },
         temp_target: TEMP_TGT,
         pressure_target: 1.,
@@ -239,7 +239,6 @@ fn run_octanol(
         false,
         None,
         &mut HashSet::new(),
-        false,
     )?;
 
     state.volatile.md_local.update_mols_for_disp(&mols);
@@ -288,7 +287,7 @@ fn run_water(
 
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
-            thermostat: Some(0.9),
+            thermostat: Some(TAU_TEMP_DEFAULT),
         },
         temp_target: TEMP_TGT,
         pressure_target: 1.,
@@ -312,7 +311,6 @@ fn run_water(
         false,
         None,
         &mut HashSet::new(),
-        false,
     )?;
 
     state.volatile.md_local.update_mols_for_disp(&mols);

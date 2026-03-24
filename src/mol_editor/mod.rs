@@ -6,7 +6,7 @@ use std::{collections::HashMap, io, io::ErrorKind, path::Path, time::Instant};
 use bio_files::{BondType, Mol2, Pdbqt, Sdf, SdfFormat, Xyz, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState,
-    MolDynamics, ParamError, TAU_TEMP_DEFAULT, params::FfParamSet, snapshot::Snapshot,
+    MolDynamics, ParamError, Solvent, TAU_TEMP_DEFAULT, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
 use lin_alg::{
@@ -58,7 +58,7 @@ pub struct MdEditor {
     // frame, including MD.
     pub time_between_runs: f32,
     pub running: bool,
-    pub skip_water: bool,
+    pub solvent: Solvent,
     pub snap: Option<Snapshot>,
     pub last_dt_run: Instant,
     pub rebuild_required: bool,
@@ -68,7 +68,7 @@ impl Default for MdEditor {
     fn default() -> Self {
         Self {
             md: Default::default(),
-            skip_water: true,
+            solvent: Solvent::None,
             mol_specific_params: Default::default(),
             dt: 0.00001,
             time_between_runs: 33.333,
@@ -848,8 +848,7 @@ pub(super) fn build_dynamics(
         },
         // todo: Which one?
         integrator: Integrator::VerletVelocity {
-            // todo: Experimenting/troubleshooting. Temp is out of control.
-            thermostat: Some(TAU_TEMP_DEFAULT * 0.1),
+            thermostat: Some(TAU_TEMP_DEFAULT),
         },
         // We run slower time steps than in typical MD steps here, so this is OK, and may
         // provide a more realistic visualization.

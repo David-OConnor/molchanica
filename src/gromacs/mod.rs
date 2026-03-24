@@ -24,7 +24,8 @@ use bio_files::{
     md_params::ForceFieldParams,
 };
 use dynamics::{
-    ComputationDevice, FfMolType, MdConfig, SimBoxInit, params::FfParamSet, snapshot::Snapshot,
+    ComputationDevice, FfMolType, MdConfig, SimBoxInit, Solvent, params::FfParamSet,
+    snapshot::Snapshot,
 };
 use lin_alg::f32::Vec3;
 use std::collections::{HashMap, HashSet};
@@ -96,8 +97,9 @@ pub fn run_dynamics(
     let box_nm = sim_box_nm(&cfg.sim_box);
 
     // Map MdConfig + explicit dt/n_steps onto MdpParams.
-    let mdp = build_mdp(cfg, dt, n_steps, fast_init);
+    let mdp = cfg.to_gromacs(n_steps, dt);
 
+    // todo: This isn't right.
     // Use the peptide (ff19SB) params as the system-wide fallback, since they cover
     // the broadest set of Amber atom types. Per-molecule params (e.g. GAFF2 for
     // ligands) are stored inside each MoleculeInput entry and take precedence.
@@ -191,57 +193,6 @@ fn sanitise_mol_name(ident: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// MDP construction
-// ---------------------------------------------------------------------------
-
-fn build_mdp(cfg: &MdConfig, dt: f32, n_steps: usize, fast_init: bool) -> MdpParams {
-    // Timestep: our internal unit is ps; GROMACS MDP also uses ps — no conversion needed.
-    let thermostat = if cfg.overrides.thermo_disabled {
-        Thermostat::No
-    } else {
-        Thermostat::VRescale
-    };
-
-    let barostat = if cfg.overrides.baro_disabled || fast_init {
-        Barostat::No
-    } else {
-        Barostat::No // NVT by default; user can switch to NPT in MdpParams post-construction
-    };
-
-    // Output frequency: save a frame roughly every 1 ps (500 × 0.002 ps/step).
-    let out_freq = if n_steps > 0 {
-        (500_usize).min(n_steps) as u32
-    } else {
-        500
-    };
-
-    // Skip water/solvent in GROMACS when fast_init is requested by not including
-    // solvent molecules in the molecule list (handled in build_molecule_inputs).
-    let constraints = if fast_init {
-        Constraints::None
-    } else {
-        Constraints::HBonds
-    };
-
-    MdpParams {
-        nsteps: n_steps as u64,
-        dt,
-        nstxout_compressed: out_freq,
-        nstenergy: out_freq,
-        nstlog: out_freq,
-        thermostat,
-        tau_t: vec![0.1],
-        ref_t: vec![cfg.temp_target],
-        barostat,
-        ref_p: cfg.pressure_target,
-        gen_vel: true,
-        gen_temp: cfg.temp_target,
-        constraints,
-        ..MdpParams::default()
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Box helper
 // ---------------------------------------------------------------------------
 
@@ -289,7 +240,7 @@ fn convert_snapshots(frames: &[GromacsFrame]) -> Vec<Snapshot> {
 
 /// Similar to `md/launch_md`
 /// todo: Launch in a thread
-// pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
+// pub fn launch_md(state: &mut State, run: bool) {
 pub fn launch_md(state: &mut State) {
     let start = Instant::now();
 

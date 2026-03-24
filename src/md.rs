@@ -10,7 +10,7 @@ use std::{
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
-    SimBoxInit, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
+    SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
@@ -678,7 +678,6 @@ pub fn build_dynamics(
     mut static_peptide: bool,
     mut peptide_only_near_lig: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
-    fast_init: bool,
 ) -> Result<MdState, ParamError> {
     println!("Setting up dynamics...");
 
@@ -722,11 +721,6 @@ pub fn build_dynamics(
         // max_init_relaxation_iters: None,
         ..cfg.clone()
     };
-
-    if fast_init {
-        cfg.overrides.skip_water = true;
-        cfg.max_init_relaxation_iters = None;
-    }
 
     println!("Initializing MD state...");
     let md_state = MdState::new(dev, &cfg, &mols, param_set)?;
@@ -840,16 +834,25 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         None
     };
 
+    let cfg = if fast_init {
+        &MdConfig {
+            solvent: Solvent::None,
+            max_init_relaxation_iters: None,
+            ..state.to_save.md_config.clone()
+        }
+    } else {
+        &state.to_save.md_config
+    };
+
     match build_dynamics(
         &state.dev,
         &mols,
         &state.ff_param_set,
         &state.mol_specific_params,
-        &state.to_save.md_config,
+        cfg,
         state.ui.md.peptide_static,
         near_lig_thresh,
         &mut md_pep_sel,
-        fast_init,
     ) {
         Ok(md) => {
             state.volatile.md_local.mol_dynamics = Some(md);

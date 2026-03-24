@@ -20,7 +20,7 @@ use std::{
 };
 
 use dynamics::{
-    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
+    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError, Solvent,
 };
 use lin_alg::{
     f32::Vec3 as Vec3F32,
@@ -280,7 +280,6 @@ fn run_md(
         false,
         None,
         &mut HashSet::new(),
-        false,
     )?;
 
     let mut bonds_q_by_atom = Vec::with_capacity(mol_query.atoms.len());
@@ -456,8 +455,8 @@ pub fn align(
                 // max_init_relaxation_iters: Some(300), // todo: A/R
                 max_init_relaxation_iters: None,
                 temp_target: TEMP,
+                solvent: Solvent::None,
                 overrides: MdOverrides {
-                    skip_water: true,
                     snapshots_during_energy_min: true,
                     ..Default::default()
                 },
