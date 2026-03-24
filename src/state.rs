@@ -42,7 +42,7 @@ use crate::{
     sfc_mesh::MeshColoring,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
-    util::orca_avail,
+    util::{gromacs_avail, orca_avail},
 };
 
 pub struct State {
@@ -305,6 +305,8 @@ pub struct StateVolatile {
     pub orbit_center: Option<(MolType, usize)>,
     /// ORCA is available on the system path.
     pub orca_avail: bool,
+    /// GROMACS is available on the system path.
+    pub gromacs_avail: bool,
     // /// Per-protein. Computed as required; None before then.
     // hydropathy_data: Option<Vec<Vec<(usize, usize)>>>,
     // /// If present, there must be one per vertex. Rebuild this whenever we
@@ -326,6 +328,7 @@ impl StateVolatile {
         Self {
             prefs_dir: env::current_dir().unwrap(),
             orca_avail: orca_avail(),
+            gromacs_avail: gromacs_avail(),
             ..Default::default()
         }
     }

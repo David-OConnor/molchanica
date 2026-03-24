@@ -40,6 +40,17 @@ pub fn md_setup(
     misc::section_box().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label("MD:");
+
+            if state.volatile.gromacs_avail {
+                label!(ui, "GROMACS ready", Color32::LIGHT_GREEN)
+                    .on_hover_text("GROMACS is installed and available; ready to run");
+            } else {
+                label!(ui, "GROMACS unavail", Color32::LIGHT_RED)
+                    .on_hover_text("Can't find GROMACS. Is it installed? Is it available on the system path?");
+            }
+
+            ui.add_space(COL_SPACING / 2.0);
+
             if let Some(mol) = &mut state.peptide {
                 // flag_btn(&mut mol.common.selected_for_md, &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
 

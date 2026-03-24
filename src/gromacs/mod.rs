@@ -15,6 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use bio_files::gromacs::GromacsFrame;
 use bio_files::{
     AtomGeneric, BondGeneric,
     gromacs::{
@@ -70,6 +71,8 @@ pub fn run_dynamics(
         static_peptide = false;
         peptide_only_near_lig = None;
     }
+
+    // todo: Run this in a thread.
 
     // Build molecule entries for GROMACS input.
     let molecules = match build_molecule_inputs(
@@ -260,7 +263,7 @@ fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
 }
 
 /// Convert GROMACS trajectory frames into `Snapshot` values.
-fn convert_snapshots(frames: &[bio_files::gromacs::GromacsFrame]) -> Vec<Snapshot> {
+fn convert_snapshots(frames: &[GromacsFrame]) -> Vec<Snapshot> {
     frames
         .iter()
         .map(|frame| {

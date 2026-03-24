@@ -1304,7 +1304,8 @@ pub const PTX: &str = include_str!("../molchanica.ptx");
 /// using a naive approach
 pub fn orca_avail() -> bool {
     let mut child = match Command::new("orca")
-        .arg("--help") // or "--version" if your ORCA supports it
+        // Note--help isn't a valid command, but seems to work anyway for our purposes
+        .arg("--help")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1333,4 +1334,25 @@ pub fn orca_avail() -> bool {
     let _ = child.wait();
 
     false
+}
+
+/// Checks if GROMACS is available on the system patghg.
+pub fn gromacs_avail() -> bool {
+    match Command::new("gmx")
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            println!("\n\n\nOUTPUT: {:?}", output); // todo temp
+
+            output.status.success()
+                && (stdout.contains("GROMACS version") || stderr.contains("GROMACS version"))
+        }
+        Err(_) => false,
+    }
 }
