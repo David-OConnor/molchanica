@@ -11,7 +11,7 @@ use crate::{
     cam::move_cam_to_active_mol,
     drawing::EntityClass,
     file_io::save_trajectory,
-    label,
+    gromacs, label,
     md::{launch_md, launch_md_energy_computation, post_run_cleanup},
     state::State,
     ui::{
@@ -108,11 +108,11 @@ pub fn md_setup(
                 ui,
                 "Run MD",
                 COLOR_ACTION,
-                "Run a molecular dynamics simulation on all molecules selected."
+                "Run a molecular dynamics simulation on all molecules selected, using the Dynamics library."
             )
                 .clicked() {
 
-                clear_cli_out(&mut state.ui); // todo: Not working; not loaded until next frame.
+                clear_cli_out(&mut state.ui);
                 let mut ready_to_run = true;
 
                 // Check that we have FF params and mol-specific parameters.
@@ -138,6 +138,46 @@ pub fn md_setup(
 
                     // We will wait a frame so we can display the message above.
                     state.volatile.md_local.launching = true;
+                }
+            }
+
+            if state.volatile.gromacs_avail && button!(
+                ui,
+                "Run GROMACS",
+                COLOR_ACTION,
+                "Run a molecular dynamics simulation on all molecules selected, using GROMACS"
+            )
+                .clicked() {
+
+                clear_cli_out(&mut state.ui);
+                let mut ready_to_run = true;
+
+                // todo: QC if you want this here for GROMACS
+                // Check that we have FF params and mol-specific parameters.
+                for lig in &state.ligands {
+                    if !lig.common.selected_for_md {
+                        continue;
+                    }
+                    if !lig.ff_params_loaded || !lig.frcmod_loaded {
+                        state.ui.popup.show_get_geostd = true;
+                        ready_to_run = false;
+                    }
+                }
+
+                if ready_to_run {
+                    let center = match &state.peptide {
+                        Some(m) => m.center,
+                        None => Vec3::new(0., 0., 0.),
+                    };
+                    // todo: Set a loading indicator, and trigger the build next GUI frame.
+                    move_cam_to_active_mol(state, scene, center, engine_updates);
+
+                    handle_success(&mut state.ui, "Running MD with GROMACS...".to_string());
+
+                    // We will wait a frame so we can display the message above.
+
+                    gromacs::launch_md(state)
+
                 }
             }
 

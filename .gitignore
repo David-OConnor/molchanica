@@ -54,8 +54,9 @@ Cargo.lock
 # Release packages
 *.zip
 
-# Orca files
+# Orca and GROMACS intermediary files
 /orca_temp
+/gromacs_temp
 
 *.water_init_template
 

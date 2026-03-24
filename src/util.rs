@@ -1348,8 +1348,6 @@ pub fn gromacs_avail() -> bool {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
 
-            println!("\n\n\nOUTPUT: {:?}", output); // todo temp
-
             output.status.success()
                 && (stdout.contains("GROMACS version") || stderr.contains("GROMACS version"))
         }

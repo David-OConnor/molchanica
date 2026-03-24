@@ -1,10 +1,11 @@
-//! GROMACS integration — an optional replacement for the `dynamics`-based MD pipeline.
+//! GROMACS integration - can create GROMACS inputs, and parse outputs from data structures and visualization
+//! in this program. Uses the `bio_files` lib for implementation details..
 //!
 //! [`run_dynamics`] is the entry point. Its signature mirrors
 //! [`crate::md::build_dynamics`] + [`crate::md::run_dynamics_blocking`], but
 //! instead of running our own integrator it:
 //!
-//! 1. Converts Molchanica molecules and `MdConfig` into a [`bio_files::gromacs::GromacsInput`].
+//! 1. Converts Molchanica molecules and `MdConfig` into a [`GromacsInput`].
 //! 2. Writes `.gro`, `.top`, `.mdp` files and executes `gmx grompp` + `gmx mdrun`.
 //! 3. Parses the resulting trajectory and returns it as `Vec<Snapshot>` — the same
 //!    type used by the `dynamics` crate — so the rest of the application can play it
@@ -12,8 +13,6 @@
 //!
 //! For how data structures flow into this function see `md.rs`, which performs the
 //! same pre-processing for the built-in `dynamics` pipeline.
-
-use std::collections::{HashMap, HashSet};
 
 use bio_files::gromacs::GromacsFrame;
 use bio_files::{
@@ -28,7 +27,11 @@ use dynamics::{
     ComputationDevice, FfMolType, MdConfig, SimBoxInit, params::FfParamSet, snapshot::Snapshot,
 };
 use lin_alg::f32::Vec3;
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
+use crate::md::{STATIC_ATOM_DIST_THRESH, get_mols_sel_for_md};
+use crate::state::State;
 use crate::{md::filter_peptide_atoms, molecules::common::MoleculeCommon};
 
 /// Run a GROMACS MD simulation and return the trajectory as `Vec<Snapshot>`.
@@ -282,4 +285,71 @@ fn convert_snapshots(frames: &[GromacsFrame]) -> Vec<Snapshot> {
             }
         })
         .collect()
+}
+
+/// Similar to `md/launch_md`
+/// todo: Launch in a thread
+// pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
+pub fn launch_md(state: &mut State) {
+    let start = Instant::now();
+
+    // Filter molecules for docking by if they're selected.
+    // mut so we can move their posits in the initial snapshot change.
+
+    // Avoids borrow error.
+    let mut md_pep_sel = state.volatile.md_local.peptide_selected.clone();
+
+    // Clone selected molecules to release the immutable borrow of `state`
+    // before the mutable borrow needed by update_mols_for_disp.
+    let mols_owned: Vec<_> = {
+        let mols = get_mols_sel_for_md(state);
+        mols.iter()
+            .map(|(ff, mol, count)| (*ff, (*mol).clone(), *count))
+            .collect()
+    };
+
+    let mols: Vec<(FfMolType, &MoleculeCommon, usize)> = mols_owned
+        .iter()
+        .map(|(ff, mol, count)| (*ff, mol, *count))
+        .collect();
+
+    state.volatile.md_local.update_mols_for_disp(&mols);
+
+    let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
+        Some(STATIC_ATOM_DIST_THRESH)
+    } else {
+        None
+    };
+
+    let snaps = run_dynamics(
+        &state.dev,
+        &mols,
+        &state.ff_param_set,
+        &state.mol_specific_params,
+        &state.to_save.md_config,
+        state.ui.md.peptide_static,
+        near_lig_thresh,
+        &mut md_pep_sel,
+        false,
+        state.to_save.md_dt,
+        state.to_save.num_md_steps as usize,
+    );
+
+    // match run_dynamics(
+    // ) {
+    //     Ok(md) => {
+    //         state.volatile.md_local.mol_dynamics = Some(md);
+    //
+    //         if run {
+    //             state.volatile.md_local.start = Some(Instant::now());
+    //             state.volatile.md_local.running = true;
+    //         }
+    //     }
+    //     Err(e) => handle_err(&mut state.ui, e.descrip),
+    // }
+
+    state.volatile.md_local.peptide_selected = md_pep_sel;
+
+    let elapsed = start.elapsed().as_millis();
+    println!("GROMACS run complete in {elapsed} ms");
 }

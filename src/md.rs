@@ -892,7 +892,7 @@ pub fn launch_md_energy_computation(
 
 /// A helper to reduce repetition. Loads references to mols in state that are selected for MD.
 /// Doesn't convert to MolDynamics, but sets up in a way conducive to doing so.
-fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, usize)> {
+pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, usize)> {
     // todo: Quantities only currently apply to ligands.
 
     let mut res = Vec::new();
