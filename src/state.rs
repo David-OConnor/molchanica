@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     env, fmt,
-    fmt::{Display, Formatter},
+    fmt::{Display, Formatter, write},
     path::PathBuf,
 };
 
@@ -521,6 +521,26 @@ impl Default for NucleicAcidUi {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Default, Encode, Decode)]
+pub enum MdBackend {
+    #[default]
+    Dynamics,
+    Gromacs,
+    Orca,
+}
+
+impl Display for MdBackend {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::Dynamics => "Dyanmics",
+            Self::Gromacs => "GROMACS",
+            Self::Orca => "ORCA",
+        };
+
+        write!(f, "{v}")
+    }
+}
+
 pub struct StateUiMd {
     /// The state we store for this is a float, so we need to store state text too.
     pub dt_input: String,
@@ -528,6 +548,7 @@ pub struct StateUiMd {
     pub pressure_input: String,
     pub simbox_pad_input: String,
     pub langevin_γ: String,
+    pub temp_tau: String,
     /// Only perform MD on peptide atoms near a ligand.
     pub peptide_only_near_ligs: bool,
     /// Peptide atoms don't move, but exert forces.
@@ -542,6 +563,7 @@ impl Default for StateUiMd {
             pressure_input: Default::default(),
             simbox_pad_input: Default::default(),
             langevin_γ: Default::default(),
+            temp_tau: Default::default(),
             peptide_only_near_ligs: true,
             peptide_static: true,
         }

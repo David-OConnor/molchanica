@@ -130,6 +130,14 @@ fn main() {
             _ => "0.".to_string(),
         };
 
+        state.ui.md.temp_tau = match state.to_save.md_config.integrator {
+            Integrator::VerletVelocity { thermostat } => match thermostat {
+                Some(tau) => tau.to_string(),
+                None => "0.".to_string(),
+            },
+            _ => "0.".to_string(),
+        };
+
         // Graphics settings
         state.graphics_settings.msaa_samples = state.to_save.msaa as u8 as u32;
         state.graphics_settings.ambient_occlusion = state.to_save.ambient_occlusion;

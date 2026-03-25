@@ -36,8 +36,8 @@ use crate::{
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
     state::{
-        CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, State, UiVisibility,
-        Visibility,
+        CamSnapshot, LipidUi, MdBackend, MsaaSetting, NucleicAcidUi, ResColoring, State,
+        UiVisibility, Visibility,
     },
 };
 
@@ -261,8 +261,8 @@ pub struct ToSave {
     pub num_md_steps: u32,
     /// todo: We may move this to be per-molecule, etc.
     pub num_md_copies: usize,
-    /// ps (10^-12). Typical values are 0.001 or 0.002.
     pub md_dt: f32,
+    pub md_backend: MdBackend,
     pub ph: f32,
     pub selection: Selection,
     pub cam_snapshots: Vec<CamSnapshot>,
@@ -305,6 +305,7 @@ impl Default for ToSave {
             num_md_steps: 100,
             num_md_copies: 1,
             md_dt: 0.002,
+            md_backend: Default::default(),
             ph: 7.4,
             selection: Default::default(),
             cam_snapshots: Default::default(),

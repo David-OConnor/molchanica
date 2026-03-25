@@ -54,6 +54,7 @@ and either installing the CUDA toolkit, or disabling CUDA.
 - Visualize ligand docking
 - Edit small molecules in 3D with integrated dynamics
 - Visualize electron density from crystallography and Cryo-Em data
+- Run [GROMACS](https://www.gromacs.org/) MD, and view trajectories using the same GUI as our native MD.
 - Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed).
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
   and more.

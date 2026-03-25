@@ -13,20 +13,15 @@ use crate::{
     file_io::save_trajectory,
     gromacs, label,
     md::{launch_md, launch_md_energy_computation, post_run_cleanup},
-    state::State,
+    state::{MdBackend, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, flag_btn, misc,
-        num_field,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        flag_btn, misc, num_field,
     },
     util::{clear_cli_out, handle_err, handle_success},
 };
 
-pub fn md_setup(
-    state: &mut State,
-    scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
-    ui: &mut Ui,
-) {
+pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
     // This sequencing code is above the UI code below, so it's deferred a frame after any actions.
     if state.volatile.md_local.launching {
         state.volatile.md_local.launching = false;
@@ -41,12 +36,14 @@ pub fn md_setup(
         ui.horizontal_wrapped(|ui| {
             ui.label("MD:");
 
-            if state.volatile.gromacs_avail {
-                label!(ui, "GROMACS ready", Color32::LIGHT_GREEN)
-                    .on_hover_text("GROMACS is installed and available; ready to run");
-            } else {
-                label!(ui, "GROMACS unavail", Color32::LIGHT_RED)
-                    .on_hover_text("Can't find GROMACS. Is it installed? Is it available on the system path?");
+            match &state.dev {
+                ComputationDevice::Cpu => {
+                    ui.label(RichText::new("CPU"));
+                }
+                #[cfg(feature = "cuda")]
+                ComputationDevice::Gpu(_) => {
+                    ui.label(RichText::new("GPU").color(Color32::LIGHT_GREEN));
+                }
             }
 
             ui.add_space(COL_SPACING / 2.0);
@@ -101,84 +98,74 @@ pub fn md_setup(
 
                 // todo: Setting water class isn't working for this update.
                 // engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::WaterModel as u32]);
-                engine_updates.entities = EntityUpdate::All;
+                updates.entities = EntityUpdate::All;
             }
 
             if button!(
                 ui,
-                "Run MD",
+                "Run",
                 COLOR_ACTION,
-                "Run a molecular dynamics simulation on all molecules selected, using the Dynamics library."
+                "Run a molecular dynamics simulation on all molecules selected, using the selected dynamics package."
             )
                 .clicked() {
+                start_md(state, scene, updates)
+            }
 
-                clear_cli_out(&mut state.ui);
-                let mut ready_to_run = true;
+            {
+                let help_text = "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
+                ui.label("Integrator:").on_hover_text(help_text);
 
-                // Check that we have FF params and mol-specific parameters.
-                for lig in &state.ligands {
-                    if !lig.common.selected_for_md {
-                        continue;
+                let prev = state.to_save.md_config.integrator.clone();
+                if ComboBox::from_id_salt(4)
+                    .width(80.)
+                    .selected_text(state.to_save.md_config.integrator.to_string())
+                    .show_ui(ui, |ui| {
+                        // todo: More A/R
+                        // todo: What should gamma be? And make it customizable in UI and state.
+                        // todo: Langevin mid thermostat is out of control, and I'm not sure how
+                        // todo to fix it.
+                        // todo: For tau and gamma, consider using defaults from dynamics.
+
+                        // todo temp; allow for enabling/disabling therm.
+                        for v in &[
+                            Integrator::LangevinMiddle { gamma: LANGEVIN_GAMMA_DEFAULT },
+                            Integrator::VerletVelocity { thermostat: Some(TAU_TEMP_DEFAULT) },
+                        ] {
+                            ui.selectable_value(&mut state.to_save.md_config.integrator, v.clone(), v.to_string());
+                        }
+                    })
+                    .response
+                    .on_hover_text(help_text).changed() {
+                    if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator && !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
+                        state.ui.md.langevin_γ = gamma.to_string();
                     }
-                    if !lig.ff_params_loaded || !lig.frcmod_loaded {
-                        state.ui.popup.show_get_geostd = true;
-                        ready_to_run = false;
-                    }
-                }
 
-                if ready_to_run {
-                    let center = match &state.peptide {
-                        Some(m) => m.center,
-                        None => Vec3::new(0., 0., 0.),
-                    };
-                    // todo: Set a loading indicator, and trigger the build next GUI frame.
-                    move_cam_to_active_mol(state, scene, center, engine_updates);
-
-                    handle_success(&mut state.ui, "Running MD. Initializing water, and relaxing the molecules...".to_string());
-
-                    // We will wait a frame so we can display the message above.
-                    state.volatile.md_local.launching = true;
                 }
             }
 
-            if state.volatile.gromacs_avail && button!(
-                ui,
-                "Run GROMACS",
-                COLOR_ACTION,
-                "Run a molecular dynamics simulation on all molecules selected, using GROMACS"
-            )
-                .clicked() {
-
-                clear_cli_out(&mut state.ui);
-                let mut ready_to_run = true;
-
-                // todo: QC if you want this here for GROMACS
-                // Check that we have FF params and mol-specific parameters.
-                for lig in &state.ligands {
-                    if !lig.common.selected_for_md {
-                        continue;
-                    }
-                    if !lig.ff_params_loaded || !lig.frcmod_loaded {
-                        state.ui.popup.show_get_geostd = true;
-                        ready_to_run = false;
-                    }
+            if state.volatile.gromacs_avail || state.volatile.orca_avail {
+                let mut backends = vec![MdBackend::Dynamics];
+                if state.volatile.gromacs_avail {
+                    backends.push(MdBackend::Gromacs);
                 }
 
-                if ready_to_run {
-                    let center = match &state.peptide {
-                        Some(m) => m.center,
-                        None => Vec3::new(0., 0., 0.),
-                    };
-                    // todo: Set a loading indicator, and trigger the build next GUI frame.
-                    move_cam_to_active_mol(state, scene, center, engine_updates);
+                // todo: For now, we launch Orca MD from its own UI section, but we may
+                // todo wish to move it here.
+                // if state.volatile.orca_avail {
+                //     backends.push(MdBackend::Orca);
+                // }
 
-                    handle_success(&mut state.ui, "Running MD with GROMACS...".to_string());
-
-                    // We will wait a frame so we can display the message above.
-
-                    gromacs::launch_md(state)
-
-                }
+                ComboBox::from_id_salt(523)
+                    .width(80.)
+                    .selected_text(state.to_save.md_backend.to_string())
+                    .show_ui(ui, |ui| {
+                        for v in backends {
+                            ui.selectable_value(&mut state.to_save.md_backend, v.clone(), v.to_string());
+                        }
+                    })
+                    .response
+                    .on_hover_text("Select the backend to perform MD: Dynamics (Native), GROMACS, or ORCA. If GROMACS or ORCA is \
+                    showing, it means we've found their program on the system path.");
             }
 
             // todo: WIP
@@ -230,7 +217,7 @@ pub fn md_setup(
                     .on_hover_text("Stop the in-progress simulation")
                     .clicked()
                 {
-                    post_run_cleanup(state, scene, engine_updates);
+                    post_run_cleanup(state, scene, updates);
                 }
 
                 if let Some(md) = &state.volatile.md_local.mol_dynamics {
@@ -252,19 +239,9 @@ pub fn md_setup(
                     COLOR_ACTION,
                     "Save the computed MD trajectory to a DCD file."
                 )
-                    .clicked() && save_trajectory(&mut state.volatile.dialogs.save).is_err() {
-                        handle_err(&mut state.ui, "Problem saving this file".to_owned());
+                .clicked() && save_trajectory(&mut state.volatile.dialogs.save).is_err() {
+                handle_err(&mut state.ui, "Problem saving this file".to_owned());
 
-            }
-
-            match &state.dev {
-                ComputationDevice::Cpu => {
-                    ui.label(RichText::new("CPU"));
-                }
-                #[cfg(feature = "cuda")]
-                ComputationDevice::Gpu(_) => {
-                    ui.label(RichText::new("GPU").color(Color32::LIGHT_GREEN));
-                }
             }
 
             let num_steps_prev = state.to_save.num_md_steps;
@@ -283,96 +260,12 @@ pub fn md_setup(
                     TextEdit::singleline(&mut state.ui.md.dt_input),
                 )
                 .changed()
-            && let Ok(v) = state.ui.md.dt_input.parse::<f32>() {
-                    state.to_save.md_dt = v;
-                    state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * v;
-                }
+                && let Ok(v) = state.ui.md.dt_input.parse::<f32>() {
+                state.to_save.md_dt = v;
+                state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * v;
+            }
 
             ui.add_space(COL_SPACING / 2.);
-
-            {
-                let help_text = "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
-                ui.label("Integrator:").on_hover_text(help_text);
-
-                let prev = state.to_save.md_config.integrator.clone();
-                if ComboBox::from_id_salt(4)
-                    .width(80.)
-                    .selected_text(state.to_save.md_config.integrator.to_string())
-                    .show_ui(ui, |ui| {
-                        // todo: More A/R
-                        // todo: What should gamma be? And make it customizable in UI and state.
-                        // todo: Langevin mid thermostat is out of control, and I'm not sure how
-                        // todo to fix it.
-                        // todo: For tau and gamma, consider using defaults from dynamics.
-
-                        // todo temp; allow for enabling/disabling therm.
-                        for v in &[
-                            Integrator::LangevinMiddle { gamma: LANGEVIN_GAMMA_DEFAULT },
-                            Integrator::VerletVelocity { thermostat: Some(TAU_TEMP_DEFAULT) },
-                        ] {
-                            ui.selectable_value(&mut state.to_save.md_config.integrator, v.clone(), v.to_string());
-                        }
-                    })
-                    .response
-                    .on_hover_text(help_text).changed() {
-                    if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator && !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
-                            state.ui.md.langevin_γ = gamma.to_string();
-                        }
-
-                }
-            }
-
-            match &mut state.to_save.md_config.integrator {
-                Integrator::LangevinMiddle { gamma } => {
-                    ui.label("γ:");
-                    if ui
-                        .add_sized([22., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.langevin_γ))
-                        .changed()
-                    && let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>() {
-                            *gamma = *v;
-
-                    }
-                }
-                Integrator::VerletVelocity { thermostat } => {
-                    let help_text = "Enable or disable the thermostat";
-                    ui.label("Therm:").on_hover_text(help_text);
-                    let mut v = thermostat.is_some();
-                    if ui.checkbox(&mut v, "").on_hover_text(help_text).changed() {
-                        *thermostat = if v {
-                            Some(1.0)
-                        } else {
-                            None
-                        };
-                    }
-                }
-            }
-
-
-            ui.add_space(COL_SPACING / 2.);
-
-            // todo: A/R
-            // ui.checkbox(&mut state.to_save.md_config.zero_com_drift, "Zero drift")
-            //     .on_hover_text("Zero the center-of-mass of items in the simulation.");
-
-            ui.label("Pres (bar):");
-            if ui
-                .add_sized([30., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.pressure_input))
-                .changed()
-           && let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>() {
-                    state.to_save.md_config.pressure_target = *v;
-
-            }
-
-            // We show this even if there is no thermostat, to set the initial temperature.
-            ui.label("Temp (K):");
-            if ui
-                .add_sized([30., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.temp_input))
-                .changed()
-            && let Ok(v) = &mut state.ui.md.temp_input.parse::<f32>() {
-                    state.to_save.md_config.temp_target = *v;
-
-            }
-
 
             {
                 let help_text = "Set to Constrained to allow higher time steps; Flexible may more more accurate.";
@@ -417,9 +310,9 @@ pub fn md_setup(
                 .add_sized([22., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.simbox_pad_input))
                 .on_hover_text(hover_text)
                 .changed()
-            && let Ok(v) = &mut state.ui.md.simbox_pad_input.parse::<f32>() {
-                    state.to_save.md_config.sim_box = SimBoxInit::Pad(*v);
-                }
+                && let Ok(v) = &mut state.ui.md.simbox_pad_input.parse::<f32>() {
+                state.to_save.md_config.sim_box = SimBoxInit::Pad(*v);
+            }
 
 
 
@@ -427,13 +320,100 @@ pub fn md_setup(
             ui.label(format!("Runtime: {:.1} ps", state.volatile.md_local.run_time));
 
             if let Some(md) = &state.volatile.md_local.mol_dynamics && state.ui.current_snapshot < md.snapshots.len() {
-                    energy_disp(&md.snapshots[state.ui.current_snapshot], ui);
-                }
-
+                energy_disp(&md.snapshots[state.ui.current_snapshot], ui);
+            }
         });
+
+        ui.add_space(ROW_SPACING);
+        ui.horizontal(|ui| {
+            temp_pressure(state, ui,);
+        })
     });
 
-    misc::dynamics_player(state, scene, engine_updates, ui);
+    misc::dynamics_player(state, scene, updates, ui);
+}
+
+fn temp_pressure(state: &mut State, ui: &mut Ui) {
+    // We show this even if there is no thermostat, to set the initial temperature.
+    ui.label("Temp (K):");
+    if ui
+        .add_sized(
+            [30., Ui::available_height(ui)],
+            TextEdit::singleline(&mut state.ui.md.temp_input),
+        )
+        .changed()
+        && let Ok(v) = &mut state.ui.md.temp_input.parse::<f32>()
+    {
+        state.to_save.md_config.temp_target = *v;
+    }
+
+    match &mut state.to_save.md_config.integrator {
+        Integrator::LangevinMiddle { gamma } => {
+            let help_text = "Thermostat time constant for use with the Langevin (stochastic) integrator. \
+            0.5 1/ps is a good default.";
+
+            ui.label("Therm γ (1/ps):").on_hover_text(help_text);
+            if ui
+                .add_sized(
+                    [22., Ui::available_height(ui)],
+                    TextEdit::singleline(&mut state.ui.md.langevin_γ),
+                )
+                .on_hover_text(help_text)
+                .changed()
+                && let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>()
+            {
+                *gamma = *v;
+            }
+        }
+        Integrator::VerletVelocity { thermostat } => {
+            let help_text = "Enable or disable the thermostat";
+            ui.label("Therm:").on_hover_text(help_text);
+            let mut therm_en = thermostat.is_some();
+            if ui
+                .checkbox(&mut therm_en, "")
+                .on_hover_text(help_text)
+                .changed()
+            {
+                *thermostat = if therm_en { Some(1.0) } else { None };
+            }
+
+            if let Some(tau) = thermostat {
+                let help_text = "Thermostat time constant for use with the CSVR (velocity-rescaling) integrator. \
+                0.1ps is a good default.";
+
+                ui.label("Therm 𝜏 (ps):").on_hover_text(help_text);
+                if ui
+                    .add_sized(
+                        [22., Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.temp_tau),
+                    )
+                    .on_hover_text(help_text)
+                    .changed()
+                    && let Ok(v) = &mut state.ui.md.temp_tau.parse::<f64>()
+                {
+                    *tau = *v;
+                }
+            }
+        }
+    }
+
+    ui.add_space(COL_SPACING / 2.);
+
+    // todo: A/R
+    // ui.checkbox(&mut state.to_save.md_config.zero_com_drift, "Zero drift")
+    //     .on_hover_text("Zero the center-of-mass of items in the simulation.");
+
+    ui.label("Pres (bar):");
+    if ui
+        .add_sized(
+            [30., Ui::available_height(ui)],
+            TextEdit::singleline(&mut state.ui.md.pressure_input),
+        )
+        .changed()
+        && let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>()
+    {
+        state.to_save.md_config.pressure_target = *v;
+    }
 }
 
 pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
@@ -482,4 +462,50 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
 
     ui.label("P: ");
     label!(ui, format!("{:.1} bar", snap.pressure), Color32::GOLD);
+}
+
+fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    clear_cli_out(&mut state.ui);
+    let mut ready_to_run = true;
+
+    // Check that we have FF params and mol-specific parameters.
+    for lig in &state.ligands {
+        if !lig.common.selected_for_md {
+            continue;
+        }
+        if !lig.ff_params_loaded || !lig.frcmod_loaded {
+            state.ui.popup.show_get_geostd = true;
+            ready_to_run = false;
+        }
+    }
+
+    if !ready_to_run {
+        return;
+    }
+
+    let center = match &state.peptide {
+        Some(m) => m.center,
+        None => Vec3::new(0., 0., 0.),
+    };
+    // todo: Set a loading indicator, and trigger the build next GUI frame.
+    move_cam_to_active_mol(state, scene, center, updates);
+
+    match state.to_save.md_backend {
+        MdBackend::Dynamics => {
+            handle_success(
+                &mut state.ui,
+                "Running MD. Initializing water, and relaxing the molecules...".to_string(),
+            );
+
+            // We will wait a frame so we can display the message above.
+            state.volatile.md_local.launching = true;
+        }
+        MdBackend::Gromacs => {
+            handle_success(&mut state.ui, "\nRunning MD with GROMACS...".to_string());
+            // We will wait a frame so we can display the message above.
+            gromacs::launch_md(state)
+        }
+        // todo: For now, we launch ORCA MD from the ORCA UI.
+        MdBackend::Orca => {}
+    }
 }

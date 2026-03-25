@@ -14,26 +14,30 @@
 //! For how data structures flow into this function see `md.rs`, which performs the
 //! same pre-processing for the built-in `dynamics` pipeline.
 
-use bio_files::gromacs::GromacsFrame;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
+
 use bio_files::{
     AtomGeneric, BondGeneric,
     gromacs::{
-        GromacsInput, MdpParams, MoleculeInput,
+        GromacsFrame, GromacsInput, MdpParams, MoleculeInput, WaterModel,
         mdp::{Barostat, Constraints, Thermostat},
     },
     md_params::ForceFieldParams,
 };
 use dynamics::{
-    ComputationDevice, FfMolType, MdConfig, SimBoxInit, Solvent, params::FfParamSet,
+    ComputationDevice, FfMolType, MdConfig, MdState, SimBoxInit, Solvent, params::FfParamSet,
     snapshot::Snapshot,
 };
 use lin_alg::f32::Vec3;
-use std::collections::{HashMap, HashSet};
-use std::time::Instant;
 
-use crate::md::{STATIC_ATOM_DIST_THRESH, get_mols_sel_for_md};
-use crate::state::State;
-use crate::{md::filter_peptide_atoms, molecules::common::MoleculeCommon};
+use crate::{
+    md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
+    molecules::common::MoleculeCommon,
+    state::State,
+};
 
 /// Run a GROMACS MD simulation and return the trajectory as `Vec<Snapshot>`.
 ///
@@ -70,7 +74,7 @@ pub fn run_dynamics(
     fast_init: bool,
     dt: f32,
     n_steps: usize,
-) -> Vec<Snapshot> {
+) -> (Vec<Snapshot>, Vec<usize>) {
     if mols_in.is_empty() {
         static_peptide = false;
         peptide_only_near_lig = None;
@@ -89,9 +93,20 @@ pub fn run_dynamics(
         Ok(m) => m,
         Err(e) => {
             eprintln!("GROMACS: failed to build molecule inputs: {e}");
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
     };
+
+    // Compute mol_start_indices from the MoleculeInput list before moving it.
+    // Each copy of each molecule gets its own entry (matching how MdState packs atoms).
+    let mut offset = 0usize;
+    let mut mol_start_indices = Vec::new();
+    for m in &molecules {
+        for _ in 0..m.count {
+            mol_start_indices.push(offset);
+            offset += m.atoms.len();
+        }
+    }
 
     // Determine simulation box dimensions (nm).
     let box_nm = sim_box_nm(&cfg.sim_box);
@@ -105,18 +120,29 @@ pub fn run_dynamics(
     // ligands) are stored inside each MoleculeInput entry and take precedence.
     let ff_global = param_set.peptide.clone();
 
+    let water_model = match &cfg.solvent {
+        Solvent::None => None,
+        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => {
+            Some(WaterModel::Opc)
+        }
+    };
+
     let input = GromacsInput {
         mdp,
         molecules,
         box_nm,
         ff_global,
+        water_model,
     };
 
     match input.run() {
-        Ok(out) => convert_snapshots(&out.trajectory),
+        Ok(out) => (
+            convert_snapshots(&out.trajectory, out.solute_atom_count),
+            mol_start_indices,
+        ),
         Err(e) => {
-            eprintln!("GROMACS run failed: {e}");
-            Vec::new()
+            eprintln!("\nGROMACS run failed: \n{e}");
+            (Vec::new(), Vec::new())
         }
     }
 }
@@ -217,21 +243,49 @@ fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
 }
 
 /// Convert GROMACS trajectory frames into `Snapshot` values.
-fn convert_snapshots(frames: &[GromacsFrame]) -> Vec<Snapshot> {
+///
+/// `solute_atom_count` is the number of non-water atoms (computed before solvation).
+/// Atoms beyond that index are OPC water molecules, laid out as groups of 4:
+/// OW, HW1, HW2, MW (virtual site). MW positions are discarded since `Snapshot`
+/// has no field for them and the virtual site carries no mass.
+fn convert_snapshots(frames: &[GromacsFrame], solute_atom_count: usize) -> Vec<Snapshot> {
+    // OPC water has 4 sites per molecule (OW, HW1, HW2, MW virtual site).
+    const OPC_SITES_PER_MOL: usize = 4;
+
     frames
         .iter()
         .map(|frame| {
-            let atom_posits: Vec<Vec3> = frame
-                .atom_posits
+            let n = frame.atom_posits.len();
+            let solute_end = solute_atom_count.min(n);
+
+            let atom_posits: Vec<Vec3> = frame.atom_posits[..solute_end]
                 .iter()
                 .map(|p| Vec3::new(p.x as f32, p.y as f32, p.z as f32))
                 .collect();
 
+            let water_block = &frame.atom_posits[solute_end..];
+            let n_water_mols = water_block.len() / OPC_SITES_PER_MOL;
+
+            let mut water_o_posits = Vec::with_capacity(n_water_mols);
+            let mut water_h0_posits = Vec::with_capacity(n_water_mols);
+            let mut water_h1_posits = Vec::with_capacity(n_water_mols);
+
+            for i in 0..n_water_mols {
+                let base = i * OPC_SITES_PER_MOL;
+                let to_vec3 =
+                    |p: &lin_alg::f64::Vec3| Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+                water_o_posits.push(to_vec3(&water_block[base]));
+                water_h0_posits.push(to_vec3(&water_block[base + 1]));
+                water_h1_posits.push(to_vec3(&water_block[base + 2]));
+                // base + 3 is the MW virtual site — no Snapshot field for it.
+            }
+
             Snapshot {
-                // `frame.time` is in ps; Snapshot.time is also in ps.
                 time: frame.time,
                 atom_posits,
-                // Velocities, energies, etc. are not extracted from the GRO trajectory.
+                water_o_posits,
+                water_h0_posits,
+                water_h1_posits,
                 ..Snapshot::default()
             }
         })
@@ -272,7 +326,7 @@ pub fn launch_md(state: &mut State) {
         None
     };
 
-    let snaps = run_dynamics(
+    let (snaps, mol_start_indices) = run_dynamics(
         &state.dev,
         &mols,
         &state.ff_param_set,
@@ -286,18 +340,17 @@ pub fn launch_md(state: &mut State) {
         state.to_save.num_md_steps as usize,
     );
 
-    // match run_dynamics(
-    // ) {
-    //     Ok(md) => {
-    //         state.volatile.md_local.mol_dynamics = Some(md);
-    //
-    //         if run {
-    //             state.volatile.md_local.start = Some(Instant::now());
-    //             state.volatile.md_local.running = true;
-    //         }
-    //     }
-    //     Err(e) => handle_err(&mut state.ui, e.descrip),
-    // }
+    // Store the GROMACS trajectory so the UI can play it back via change_snapshot.
+    // We build a minimal MdState — only mol_start_indices and snapshots are needed
+    // for playback; the integrator fields are left at Default since we do not call
+    // md_step on this state.
+    if !snaps.is_empty() {
+        let mut md = MdState::default();
+        md.mol_start_indices = mol_start_indices;
+        md.snapshots = snaps;
+        state.volatile.md_local.mol_dynamics = Some(md);
+        state.volatile.md_local.draw_md_mols = true;
+    }
 
     state.volatile.md_local.peptide_selected = md_pep_sel;
 
