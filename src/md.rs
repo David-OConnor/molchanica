@@ -2,11 +2,14 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
+    fmt::{Display, Formatter},
     io,
     io::ErrorKind,
     time::Instant,
 };
 
+use bincode::{Decode, Encode};
 use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
@@ -333,7 +336,7 @@ pub fn filter_peptide_atoms(
     set: &mut HashSet<(usize, usize)>,
     pep: &MoleculeCommon,
     mols_non_pep: &[(FfMolType, &MoleculeCommon, usize)],
-    only_near_lig: Option<f64>,
+    near_lig_thresh: Option<f64>,
 ) -> Vec<AtomGeneric> {
     *set = HashSet::new();
 
@@ -341,7 +344,7 @@ pub fn filter_peptide_atoms(
         .iter()
         .enumerate()
         .filter_map(|(i, a)| {
-            let pass = if let Some(thresh) = only_near_lig {
+            let pass = if let Some(thresh) = near_lig_thresh {
                 let mut closest_dist = f64::MAX;
                 for lig in mols_non_pep {
                     for p in &lig.1.atom_posits {
@@ -676,15 +679,15 @@ pub fn build_dynamics(
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     cfg: &MdConfig,
     mut static_peptide: bool,
-    mut peptide_only_near_lig: Option<f64>,
+    mut near_lig_thresh: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
 ) -> Result<MdState, ParamError> {
     println!("Setting up dynamics...");
 
-    if mols_in.is_empty() {
-        static_peptide = false;
-        peptide_only_near_lig = None;
-    }
+    // if mols_in.is_empty() {
+    //     static_peptide = false;
+    //     peptide_only_near_lig = None;
+    // }
 
     // Extract explicit box side-lengths so add_copies can keep molecules inside the boundary.
     // Only meaningful for Fixed boxes; Pad boxes are sized after molecule placement so we skip them.
@@ -698,7 +701,7 @@ pub fn build_dynamics(
         mol_specific_params,
         pep_atom_set,
         static_peptide,
-        peptide_only_near_lig,
+        near_lig_thresh,
         box_dims,
     )?;
 
@@ -864,7 +867,6 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         }
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }
-
     state.volatile.md_local.peptide_selected = md_pep_sel;
 }
 
@@ -952,7 +954,7 @@ fn setup_mols_dyn(
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
     static_peptide: bool,
-    peptide_only_near_lig: Option<f64>,
+    near_lig_thresh: Option<f64>,
     box_dims: Option<(f32, f32, f32)>,
 ) -> Result<Vec<MolDynamics>, ParamError> {
     let mut res = Vec::new();
@@ -968,7 +970,7 @@ fn setup_mols_dyn(
         if *ff_mol_type == FfMolType::Peptide {
             // We assume hetero atoms are ligands, water etc, and are not part of the protein.
             // let atoms = filter_peptide_atoms(pep_atom_set, p, ligs, peptide_only_near_lig);
-            let atoms = filter_peptide_atoms(pep_atom_set, mol, mols, peptide_only_near_lig);
+            let atoms = filter_peptide_atoms(pep_atom_set, mol, mols, near_lig_thresh);
             println!(
                 "Peptide atom count: {}. Set count: {}",
                 atoms.len(),
@@ -1085,5 +1087,25 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
             &snap.water_h1_posits,
             state.ui.visibility.hide_water,
         );
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Default, Encode, Decode)]
+pub enum MdBackend {
+    #[default]
+    Dynamics,
+    Gromacs,
+    Orca,
+}
+
+impl Display for MdBackend {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::Dynamics => "Dynamics",
+            Self::Gromacs => "GROMACS",
+            Self::Orca => "ORCA",
+        };
+
+        write!(f, "{v}")
     }
 }

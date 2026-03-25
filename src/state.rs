@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     env, fmt,
-    fmt::{Display, Formatter, write},
+    fmt::{Display, Formatter},
     path::PathBuf,
 };
 
@@ -518,26 +518,6 @@ impl Default for NucleicAcidUi {
             na_type: Default::default(),
             strands: Default::default(),
         }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Default, Encode, Decode)]
-pub enum MdBackend {
-    #[default]
-    Dynamics,
-    Gromacs,
-    Orca,
-}
-
-impl Display for MdBackend {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let v = match self {
-            Self::Dynamics => "Dyanmics",
-            Self::Gromacs => "GROMACS",
-            Self::Orca => "ORCA",
-        };
-
-        write!(f, "{v}")
     }
 }
 

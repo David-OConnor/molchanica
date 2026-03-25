@@ -4,6 +4,7 @@ use bio_apis::pubchem::find_cids_from_search;
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
+use crate::gromacs::make_gromacs_input;
 use crate::{
     cam,
     cam::{FOG_HALF_DEPTH_DEFAULT, reset_camera},
@@ -12,7 +13,7 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     file_io::download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
-    mol_editor,
+    gromacs, mol_editor,
     molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
     screening::parquet::ParquetMolDb,
@@ -37,6 +38,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.parquet_db_load.update(ctx);
     state.volatile.dialogs.parquet_db_save.update(ctx);
     state.volatile.dialogs.parquet_mols_dir.update(ctx);
+    state.volatile.dialogs.save_md.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {
@@ -121,6 +123,18 @@ pub fn update_file_dialogs(
                 &mut state.ui,
                 "Error: Missing the DB index to populate with mols".to_string(),
             );
+        }
+    }
+
+    if let Some(path) = &state.volatile.dialogs.save_md.take_picked() {
+        match gromacs::save_input_files(state, path) {
+            Ok(_) => {
+                handle_success(
+                    &mut state.ui,
+                    "Saved MD files in GROMACS format".to_string(),
+                );
+            }
+            Err(e) => handle_err(&mut state.ui, format!("Error saving MD files: {e}")),
         }
     }
 

@@ -988,6 +988,8 @@ pub struct FileDialogs {
     pub parquet_db_load: FileDialog,
     pub parquet_db_save: FileDialog,
     pub parquet_mols_dir: FileDialog,
+    /// E.g. GROMACS files ready to be run in a sim. (.top, .mdp, .gro); choose a folder to save these in.
+    pub save_md: FileDialog,
 }
 
 impl Default for FileDialogs {
@@ -1046,8 +1048,15 @@ impl Default for FileDialogs {
 
         let parquet_db_load =
             FileDialog::with_config(cfg_parquet_db.clone()).default_file_filter(&parquet_descrip);
+
         let parquet_db_save =
             FileDialog::with_config(cfg_parquet_db).default_save_extension(&parquet_descrip);
+
+        let cfg_save_md = FileDialogConfig {
+            title: Some("Select a folder to save MD files".to_string()),
+            ..Default::default()
+        };
+        let save_md = FileDialog::with_config(cfg_save_md.clone());
 
         Self {
             load,
@@ -1056,6 +1065,7 @@ impl Default for FileDialogs {
             parquet_db_save,
             parquet_db_load,
             parquet_mols_dir,
+            save_md,
         }
     }
 }

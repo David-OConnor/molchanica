@@ -32,12 +32,13 @@ use crate::{
     docking::DockingSite,
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
+    md::MdBackend,
     molecules::{MolIdent, MolType},
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
     state::{
-        CamSnapshot, LipidUi, MdBackend, MsaaSetting, NucleicAcidUi, ResColoring, State,
-        UiVisibility, Visibility,
+        CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, State, UiVisibility,
+        Visibility,
     },
 };
 

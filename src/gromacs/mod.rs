@@ -14,30 +14,121 @@
 //! For how data structures flow into this function see `md.rs`, which performs the
 //! same pre-processing for the built-in `dynamics` pipeline.
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::Instant,
-};
-
 use bio_files::{
     AtomGeneric, BondGeneric,
-    gromacs::{
-        GromacsFrame, GromacsInput, MdpParams, MoleculeInput, WaterModel,
-        mdp::{Barostat, Constraints, Thermostat},
-    },
+    gromacs::{GromacsFrame, GromacsInput, MoleculeInput, WaterModel},
     md_params::ForceFieldParams,
 };
-use dynamics::{
-    ComputationDevice, FfMolType, MdConfig, MdState, SimBoxInit, Solvent, params::FfParamSet,
-    snapshot::Snapshot,
-};
+use dynamics::{FfMolType, MdState, SimBoxInit, Solvent, snapshot::Snapshot};
 use lin_alg::f32::Vec3;
+use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    io,
+    time::Instant,
+};
 
 use crate::{
     md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
     molecules::common::MoleculeCommon,
     state::State,
 };
+
+pub fn make_gromacs_input(
+    state: &State,
+) -> io::Result<(GromacsInput, Vec<(FfMolType, MoleculeCommon, usize)>)> {
+    // Filter molecules for docking by if they're selected.
+    // mut so we can move their posits in the initial snapshot change.
+
+    // Avoids borrow error.
+    let mut md_pep_sel = state.volatile.md_local.peptide_selected.clone();
+
+    // Clone selected molecules to release the immutable borrow of `state`
+    // before the mutable borrow needed by update_mols_for_disp.
+    let mols_owned: Vec<_> = {
+        let mols = get_mols_sel_for_md(state);
+        mols.iter()
+            .map(|(ff, mol, count)| (*ff, (*mol).clone(), *count))
+            .collect()
+    };
+
+    let mols: Vec<(FfMolType, &MoleculeCommon, usize)> = mols_owned
+        .iter()
+        .map(|(ff, mol, count)| (*ff, mol, *count))
+        .collect();
+
+    let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
+        Some(STATIC_ATOM_DIST_THRESH)
+    } else {
+        None
+    };
+
+    // if mols.is_empty() {
+    //     state.ui.md.peptide_static = false;
+    //     peptide_only_near_lig = None;
+    // }
+
+    // Build molecule entries for GROMACS input.
+    let molecules = match build_molecule_inputs(
+        &mols,
+        &state.mol_specific_params,
+        &mut md_pep_sel,
+        state.ui.md.peptide_static,
+        near_lig_thresh,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("GROMACS: failed to build molecule inputs: {e}");
+            return Err(io::Error::new(io::ErrorKind::Other, e));
+        }
+    };
+
+    // Compute mol_start_indices from the MoleculeInput list before moving it.
+    // Each copy of each molecule gets its own entry (matching how MdState packs atoms).
+    let mut offset = 0usize;
+    let mut mol_start_indices = Vec::new();
+    for m in &molecules {
+        for _ in 0..m.count {
+            mol_start_indices.push(offset);
+            offset += m.atoms.len();
+        }
+    }
+
+    let cfg = &state.to_save.md_config;
+
+    // Determine simulation box dimensions (nm).
+    let box_nm = sim_box_nm(&cfg.sim_box);
+
+    // Map MdConfig + explicit dt/n_steps onto MdpParams.
+    let mdp = state
+        .to_save
+        .md_config
+        .to_gromacs(state.to_save.num_md_steps as usize, state.to_save.md_dt);
+
+    // todo: This isn't right.
+    // Use the peptide (ff19SB) params as the system-wide fallback, since they cover
+    // the broadest set of Amber atom types. Per-molecule params (e.g. GAFF2 for
+    // ligands) are stored inside each MoleculeInput entry and take precedence.
+    let ff_global = state.ff_param_set.peptide.clone();
+
+    let water_model = match &cfg.solvent {
+        Solvent::None => None,
+        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => {
+            Some(WaterModel::Opc)
+        }
+    };
+
+    Ok((
+        GromacsInput {
+            mdp,
+            molecules,
+            box_nm,
+            ff_global,
+            water_model,
+        },
+        mols_owned,
+    ))
+}
 
 /// Run a GROMACS MD simulation and return the trajectory as `Vec<Snapshot>`.
 ///
@@ -62,84 +153,32 @@ use crate::{
 /// - `fast_init` — if `true`, skip water and initial energy relaxation
 /// - `dt` — timestep in **ps**
 /// - `n_steps` — total number of MD steps
-pub fn run_dynamics(
-    _dev: &ComputationDevice,
-    mols_in: &[(FfMolType, &MoleculeCommon, usize)],
-    param_set: &FfParamSet,
-    mol_specific_params: &HashMap<String, ForceFieldParams>,
-    cfg: &MdConfig,
-    mut static_peptide: bool,
-    mut peptide_only_near_lig: Option<f64>,
-    pep_atom_set: &mut HashSet<(usize, usize)>,
-    fast_init: bool,
-    dt: f32,
-    n_steps: usize,
-) -> (Vec<Snapshot>, Vec<usize>) {
-    if mols_in.is_empty() {
-        static_peptide = false;
-        peptide_only_near_lig = None;
-    }
-
-    // todo: Run this in a thread.
-
-    // Build molecule entries for GROMACS input.
-    let molecules = match build_molecule_inputs(
-        mols_in,
-        mol_specific_params,
-        pep_atom_set,
-        static_peptide,
-        peptide_only_near_lig,
-    ) {
-        Ok(m) => m,
+pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
+    let (input, mols) = match make_gromacs_input(state) {
+        Ok(input) => input,
         Err(e) => {
-            eprintln!("GROMACS: failed to build molecule inputs: {e}");
+            eprintln!("Error creating GROMACS input");
             return (Vec::new(), Vec::new());
         }
     };
 
-    // Compute mol_start_indices from the MoleculeInput list before moving it.
-    // Each copy of each molecule gets its own entry (matching how MdState packs atoms).
-    let mut offset = 0usize;
-    let mut mol_start_indices = Vec::new();
-    for m in &molecules {
-        for _ in 0..m.count {
-            mol_start_indices.push(offset);
-            offset += m.atoms.len();
-        }
-    }
-
-    // Determine simulation box dimensions (nm).
-    let box_nm = sim_box_nm(&cfg.sim_box);
-
-    // Map MdConfig + explicit dt/n_steps onto MdpParams.
-    let mdp = cfg.to_gromacs(n_steps, dt);
-
-    // todo: This isn't right.
-    // Use the peptide (ff19SB) params as the system-wide fallback, since they cover
-    // the broadest set of Amber atom types. Per-molecule params (e.g. GAFF2 for
-    // ligands) are stored inside each MoleculeInput entry and take precedence.
-    let ff_global = param_set.peptide.clone();
-
-    let water_model = match &cfg.solvent {
-        Solvent::None => None,
-        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => {
-            Some(WaterModel::Opc)
-        }
-    };
-
-    let input = GromacsInput {
-        mdp,
-        molecules,
-        box_nm,
-        ff_global,
-        water_model,
-    };
+    let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
+        mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
+    state.volatile.md_local.update_mols_for_disp(&mols_ref);
+    // todo: Run this in a thread.
 
     match input.run() {
-        Ok(out) => (
-            convert_snapshots(&out.trajectory, out.solute_atom_count),
-            mol_start_indices,
-        ),
+        Ok(out) => {
+            let snapshots = convert_snapshots(&out.trajectory, out.solute_atom_count);
+            let mol_start_indices = if let Some(md_state) = &state.volatile.md_local.mol_dynamics {
+                md_state.mol_start_indices.clone()
+            } else {
+                eprintln!("\nMissing MD state local when running GROMACS MD. Uhoh!: \n");
+                Vec::new()
+            };
+
+            (snapshots, mol_start_indices)
+        }
         Err(e) => {
             eprintln!("\nGROMACS run failed: \n{e}");
             (Vec::new(), Vec::new())
@@ -157,7 +196,7 @@ fn build_molecule_inputs(
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
     static_peptide: bool,
-    peptide_only_near_lig: Option<f64>,
+    near_lig_thresh: Option<f64>,
 ) -> Result<Vec<MoleculeInput>, String> {
     use bio_files::create_bonds;
 
@@ -170,7 +209,7 @@ fn build_molecule_inputs(
 
         let (atoms, bonds, name) = if *ff_mol_type == FfMolType::Peptide {
             // Apply the same peptide filtering as the built-in pipeline.
-            let atoms = filter_peptide_atoms(pep_atom_set, mol, mols_in, peptide_only_near_lig);
+            let atoms = filter_peptide_atoms(pep_atom_set, mol, mols_in, near_lig_thresh);
             let bonds = create_bonds(&atoms);
             (atoms, bonds, "PEP".to_string())
         } else {
@@ -217,10 +256,6 @@ fn sanitise_mol_name(ident: &str) -> String {
         .collect();
     if s.is_empty() { "MOL".to_string() } else { s }
 }
-
-// ---------------------------------------------------------------------------
-// Box helper
-// ---------------------------------------------------------------------------
 
 /// Convert `SimBoxInit` (Å) to GROMACS box dimensions (nm).
 ///
@@ -294,51 +329,10 @@ fn convert_snapshots(frames: &[GromacsFrame], solute_atom_count: usize) -> Vec<S
 
 /// Similar to `md/launch_md`
 /// todo: Launch in a thread
-// pub fn launch_md(state: &mut State, run: bool) {
 pub fn launch_md(state: &mut State) {
     let start = Instant::now();
 
-    // Filter molecules for docking by if they're selected.
-    // mut so we can move their posits in the initial snapshot change.
-
-    // Avoids borrow error.
-    let mut md_pep_sel = state.volatile.md_local.peptide_selected.clone();
-
-    // Clone selected molecules to release the immutable borrow of `state`
-    // before the mutable borrow needed by update_mols_for_disp.
-    let mols_owned: Vec<_> = {
-        let mols = get_mols_sel_for_md(state);
-        mols.iter()
-            .map(|(ff, mol, count)| (*ff, (*mol).clone(), *count))
-            .collect()
-    };
-
-    let mols: Vec<(FfMolType, &MoleculeCommon, usize)> = mols_owned
-        .iter()
-        .map(|(ff, mol, count)| (*ff, mol, *count))
-        .collect();
-
-    state.volatile.md_local.update_mols_for_disp(&mols);
-
-    let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
-        Some(STATIC_ATOM_DIST_THRESH)
-    } else {
-        None
-    };
-
-    let (snaps, mol_start_indices) = run_dynamics(
-        &state.dev,
-        &mols,
-        &state.ff_param_set,
-        &state.mol_specific_params,
-        &state.to_save.md_config,
-        state.ui.md.peptide_static,
-        near_lig_thresh,
-        &mut md_pep_sel,
-        false,
-        state.to_save.md_dt,
-        state.to_save.num_md_steps as usize,
-    );
+    let (snaps, mol_start_indices) = run_dynamics(state);
 
     // Store the GROMACS trajectory so the UI can play it back via change_snapshot.
     // We build a minimal MdState — only mol_start_indices and snapshots are needed
@@ -352,8 +346,12 @@ pub fn launch_md(state: &mut State) {
         state.volatile.md_local.draw_md_mols = true;
     }
 
-    state.volatile.md_local.peptide_selected = md_pep_sel;
-
     let elapsed = start.elapsed().as_millis();
     println!("GROMACS run complete in {elapsed} ms");
+}
+
+/// Save .gro, .mdp, and .top files to disk, from our MD state, molecules etc.
+pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
+    let (inp, _) = make_gromacs_input(state)?;
+    inp.save(path)
 }

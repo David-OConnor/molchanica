@@ -15,8 +15,8 @@ use popups::load_popups;
 use crate::{
     button, cam,
     cam::{
-        FOG_DIST_MAX, FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX,
-        VIEW_DEPTH_NEAR_MIN, move_cam_to_sel, set_fog,
+        FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX, VIEW_DEPTH_NEAR_MIN,
+        move_cam_to_sel, set_fog,
     },
     cli,
     cli::autocomplete_cli,

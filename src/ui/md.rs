@@ -1,19 +1,21 @@
+use bio_files::gromacs::GromacsInput;
 use dynamics::{
     ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig,
-    SimBoxInit, TAU_TEMP_DEFAULT, snapshot::Snapshot,
+    SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT, snapshot::Snapshot,
 };
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::gromacs::make_gromacs_input;
 use crate::{
     button,
     cam::move_cam_to_active_mol,
     drawing::EntityClass,
     file_io::save_trajectory,
     gromacs, label,
-    md::{launch_md, launch_md_energy_computation, post_run_cleanup},
-    state::{MdBackend, State},
+    md::{MdBackend, launch_md, launch_md_energy_computation, post_run_cleanup},
+    state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         flag_btn, misc, num_field,
@@ -81,6 +83,14 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
             // ui.add_space(COL_SPACING / 2.);
 
+            // todo loc
+            if ui.button("Save MD")
+                .on_hover_text("Save MD state in GROMACS format: .gro (Molecules used for MD), \
+                .mdp (MD configuration), and .top (Force field parameters / topology) files")
+                .clicked() {
+                state.volatile.dialogs.save_md.pick_directory();
+            }
+
             if let Some(md) = &state.volatile.md_local.mol_dynamics &&
                 state.ui.current_snapshot < md.snapshots.len() &&
                 !md.snapshots[state.ui.current_snapshot].water_o_posits.is_empty() {
@@ -116,17 +126,10 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 ui.label("Integrator:").on_hover_text(help_text);
 
                 let prev = state.to_save.md_config.integrator.clone();
-                if ComboBox::from_id_salt(4)
+                ComboBox::from_id_salt(4)
                     .width(80.)
                     .selected_text(state.to_save.md_config.integrator.to_string())
                     .show_ui(ui, |ui| {
-                        // todo: More A/R
-                        // todo: What should gamma be? And make it customizable in UI and state.
-                        // todo: Langevin mid thermostat is out of control, and I'm not sure how
-                        // todo to fix it.
-                        // todo: For tau and gamma, consider using defaults from dynamics.
-
-                        // todo temp; allow for enabling/disabling therm.
                         for v in &[
                             Integrator::LangevinMiddle { gamma: LANGEVIN_GAMMA_DEFAULT },
                             Integrator::VerletVelocity { thermostat: Some(TAU_TEMP_DEFAULT) },
@@ -135,15 +138,27 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                         }
                     })
                     .response
-                    .on_hover_text(help_text).changed() {
-                    if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator && !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
-                        state.ui.md.langevin_γ = gamma.to_string();
-                    }
+                    .on_hover_text(help_text);
 
+                if state.to_save.md_config.integrator != prev {
+                    if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator &&
+                        !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
+                        state.ui.md.langevin_γ = gamma.to_string();
+                      }
+
+                    if let Integrator::VerletVelocity { thermostat } = state.to_save.md_config.integrator &&
+                        !matches!(prev, Integrator::VerletVelocity {thermostat:  _}) {
+                        if let Some(tau) = thermostat {
+                            state.ui.md.temp_tau = tau.to_string();
+                        }
+                    }
                 }
             }
 
             if state.volatile.gromacs_avail || state.volatile.orca_avail {
+                ui.add_space(COL_SPACING / 2.);
+                ui.label("Backend:");
+
                 let mut backends = vec![MdBackend::Dynamics];
                 if state.volatile.gromacs_avail {
                     backends.push(MdBackend::Gromacs);
@@ -274,8 +289,8 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     .width(80.)
                     .selected_text(state.to_save.md_config.hydrogen_constraint.to_string())
                     .show_ui(ui, |ui| {
-                        // todo: More A/R
-                        for v in &[HydrogenConstraint::Constrained, HydrogenConstraint::Flexible] {
+                        // todo: Don't hard-code shake tol
+                        for v in &[HydrogenConstraint::Constrained { shake_tolerance: SHAKE_TOL_DEFAULT}, HydrogenConstraint::Flexible] {
                             ui.selectable_value(&mut state.to_save.md_config.hydrogen_constraint, *v, v.to_string());
                         }
                     })
@@ -324,7 +339,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
             }
         });
 
-        ui.add_space(ROW_SPACING);
+        ui.add_space(ROW_SPACING / 2.);
         ui.horizontal(|ui| {
             temp_pressure(state, ui,);
         })
@@ -374,14 +389,18 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
                 .on_hover_text(help_text)
                 .changed()
             {
-                *thermostat = if therm_en { Some(1.0) } else { None };
+                *thermostat = if therm_en {
+                    Some(TAU_TEMP_DEFAULT)
+                } else {
+                    None
+                };
             }
 
             if let Some(tau) = thermostat {
                 let help_text = "Thermostat time constant for use with the CSVR (velocity-rescaling) integrator. \
                 0.1ps is a good default.";
 
-                ui.label("Therm 𝜏 (ps):").on_hover_text(help_text);
+                ui.label("Therm tau (ps):").on_hover_text(help_text);
                 if ui
                     .add_sized(
                         [22., Ui::available_height(ui)],
