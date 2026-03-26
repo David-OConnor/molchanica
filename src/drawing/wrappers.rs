@@ -125,7 +125,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
     }
 
     let mols = if state.volatile.md_local.draw_md_mols {
-        &mut state.volatile.md_local.mols_small
+        &mut state.volatile.md_local.small
     } else {
         &mut state.ligands
     };

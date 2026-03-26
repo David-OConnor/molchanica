@@ -1,20 +1,21 @@
-use bio_files::gromacs::GromacsInput;
 use dynamics::{
-    ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig,
-    SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT, snapshot::Snapshot,
+    ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
+    LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT,
+    snapshot::Snapshot,
 };
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
+use lin_alg::f32::Vec3 as Vec3F32;
 use lin_alg::f64::Vec3;
 
+use crate::md::clear_snaps;
+use crate::ui::util::query;
 use crate::{
     button,
     cam::move_cam_to_active_mol,
     drawing::EntityClass,
     file_io::save_trajectory,
-    gromacs,
-    gromacs::make_gromacs_input,
-    label,
+    gromacs, label,
     md::{MdBackend, launch_md, launch_md_energy_computation, post_run_cleanup},
     state::State,
     ui::{
@@ -95,6 +96,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
             if let Some(md) = &state.volatile.md_local.mol_dynamics &&
                 state.ui.current_snapshot < md.snapshots.len() &&
                 !md.snapshots[state.ui.current_snapshot].water_o_posits.is_empty() {
+
                 if ui
                     .button(RichText::new("Clear water"))
                     .on_hover_text("Clear all rendered water molecules from the display")
@@ -105,6 +107,19 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                         .retain(|ent| ent.class != EntityClass::WaterModel as u32);
                 }
 
+                if !md.snapshots.is_empty() &&
+                    ui
+                        .button(RichText::new("Clear Traj"))
+                        .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
+                        .clicked() {
+
+                    clear_snaps(state);
+                    state.ui.current_snapshot = 0;
+
+                    scene
+                        .entities
+                        .retain(|ent| ent.class != EntityClass::WaterModel as u32);
+                }
 
 
                 // todo: Setting water class isn't working for this update.
@@ -146,7 +161,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator &&
                         !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
                         state.ui.md.langevin_γ = gamma.to_string();
-                      }
+                    }
 
                     if let Integrator::VerletVelocity { thermostat } = state.to_save.md_config.integrator &&
                         !matches!(prev, Integrator::VerletVelocity {thermostat:  _}) {
@@ -293,7 +308,11 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     .selected_text(state.to_save.md_config.hydrogen_constraint.to_string())
                     .show_ui(ui, |ui| {
                         // todo: Don't hard-code shake tol
-                        for v in &[HydrogenConstraint::ConstrainedLinear { shake_tolerance: SHAKE_TOL_DEFAULT}, HydrogenConstraint::Flexible] {
+                        for v in &[
+                            HydrogenConstraint::Linear { order: LINCS_ORDER_DEFAULT, iter: LINCS_ITER_DEFAULT },
+                            HydrogenConstraint::Shake { shake_tolerance: SHAKE_TOL_DEFAULT},
+                            HydrogenConstraint::Flexible
+                        ] {
                             ui.selectable_value(&mut state.to_save.md_config.hydrogen_constraint, *v, v.to_string());
                         }
                     })
@@ -320,20 +339,6 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 }
             }
 
-
-            let hover_text = "Set the minimum distance to pad the molecule in water atoms. Large values \
-            can be more realistic, but significantly increase computation time.";
-            ui.label("Solvent pad (Å):").on_hover_text(hover_text);
-            if ui
-                .add_sized([22., Ui::available_height(ui)], TextEdit::singleline(&mut state.ui.md.simbox_pad_input))
-                .on_hover_text(hover_text)
-                .changed()
-                && let Ok(v) = &mut state.ui.md.simbox_pad_input.parse::<f32>() {
-                state.to_save.md_config.sim_box = SimBoxInit::Pad(*v);
-            }
-
-
-
             ui.add_space(COL_SPACING / 2.);
             ui.label(format!("Runtime: {:.1} ps", state.volatile.md_local.run_time));
 
@@ -343,7 +348,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
         });
 
         ui.add_space(ROW_SPACING / 2.);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             temp_pressure(state, ui,);
         })
     });
@@ -435,6 +440,146 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
         && let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>()
     {
         state.to_save.md_config.pressure_target = *v;
+    }
+
+    // Sim box controls.
+    sim_box(state, ui)
+}
+
+fn sim_box(state: &mut State, ui: &mut Ui) {
+    {
+        ui.label("Box (Å):");
+
+        // Select Fixed or Pad
+        let txt = if matches!(state.to_save.md_config.sim_box, SimBoxInit::Fixed(_)) {
+            "Fixed"
+        } else {
+            "Pad"
+        };
+
+        let prev = state.to_save.md_config.sim_box.clone();
+        ComboBox::from_id_salt(10)
+            .width(80.)
+            .selected_text(txt)
+            .show_ui(ui, |ui| {
+                for v in &[
+                    (SimBoxInit::Pad(12.), "Pad"),
+                    (
+                        SimBoxInit::Fixed((Vec3F32::new_zero(), Vec3F32::new_zero())),
+                        "Fixed",
+                    ),
+                ] {
+                    ui.selectable_value(&mut state.to_save.md_config.sim_box, v.0.clone(), v.1);
+                }
+            });
+
+        if state.to_save.md_config.sim_box != prev {
+            state
+                .ui
+                .md
+                .sync(&state.to_save.md_config, state.to_save.md_dt);
+        }
+
+        match &mut state.to_save.md_config.sim_box {
+            SimBoxInit::Pad(pad_v) => {
+                let hover_text = "Set the minimum distance to pad the molecule in solvent atoms. Large values \
+            can be more realistic, but significantly increase computation time. This also sets the periodic boundary \
+            condition wrapping, and extent of the simulated area.";
+
+                ui.label("Pad (Å):").on_hover_text(hover_text);
+                if ui
+                    .add_sized(
+                        [22., Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.simbox_pad_input),
+                    )
+                    .on_hover_text(hover_text)
+                    .changed()
+                    && let Ok(v) = &mut state.ui.md.simbox_pad_input.parse::<f32>()
+                {
+                    *pad_v = *v;
+                }
+            }
+            SimBoxInit::Fixed((start, end)) => {
+                let hover_text = "Set the fixed simulation box bounds in Å. Min values define one corner of the box, \
+             and max values define the opposite corner.";
+
+                let coord_width = 32.;
+
+                if ui
+                    .add_sized(
+                        [22., Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.simbox_x_min_input),
+                    )
+                    .on_hover_text(hover_text)
+                    .changed()
+                    && let Ok(v) = state.ui.md.simbox_x_min_input.parse::<f32>()
+                {
+                    start.x = v;
+                }
+
+                if ui
+                    .add_sized(
+                        [coord_width, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.simbox_y_min_input),
+                    )
+                    .on_hover_text(hover_text)
+                    .changed()
+                    && let Ok(v) = state.ui.md.simbox_y_min_input.parse::<f32>()
+                {
+                    start.y = v;
+                }
+
+                if ui
+                    .add_sized(
+                        [coord_width, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.simbox_z_min_input),
+                    )
+                    .on_hover_text(hover_text)
+                    .changed()
+                    && let Ok(v) = state.ui.md.simbox_z_min_input.parse::<f32>()
+                {
+                    start.z = v;
+                }
+
+                ui.label("-");
+
+                if ui
+                    .add_sized(
+                        [coord_width, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.simbox_x_max_input),
+                    )
+                    .on_hover_text(hover_text)
+                    .changed()
+                    && let Ok(v) = state.ui.md.simbox_x_max_input.parse::<f32>()
+                {
+                    end.x = v;
+                }
+
+                if ui
+                    .add_sized(
+                        [coord_width, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.simbox_y_max_input),
+                    )
+                    .on_hover_text(hover_text)
+                    .changed()
+                    && let Ok(v) = state.ui.md.simbox_y_max_input.parse::<f32>()
+                {
+                    end.y = v;
+                }
+
+                if ui
+                    .add_sized(
+                        [coord_width, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.simbox_z_max_input),
+                    )
+                    .on_hover_text(hover_text)
+                    .changed()
+                    && let Ok(v) = state.ui.md.simbox_z_max_input.parse::<f32>()
+                {
+                    end.z = v;
+                }
+            }
+        }
     }
 }
 

@@ -23,10 +23,13 @@ use std::{
 
 use bio_files::{
     AtomGeneric, BondGeneric,
-    gromacs::{GromacsFrame, GromacsInput, MoleculeInput, WaterModel},
+    gromacs::{GromacsFrame, GromacsInput, MoleculeInput, solvate::WaterModel},
     md_params::ForceFieldParams,
 };
-use dynamics::{FfMolType, MdState, SimBoxInit, Solvent, snapshot::Snapshot};
+use dynamics::{
+    FfMolType, MdState, SimBoxInit, Solvent, WATER_TEMPLATE_60A, WaterInitTemplate,
+    snapshot::Snapshot,
+};
 use lin_alg::f32::Vec3;
 
 use crate::{
@@ -84,17 +87,6 @@ pub fn make_gromacs_input(
         }
     };
 
-    // Compute mol_start_indices from the MoleculeInput list before moving it.
-    // Each copy of each molecule gets its own entry (matching how MdState packs atoms).
-    let mut offset = 0usize;
-    let mut mol_start_indices = Vec::new();
-    for m in &molecules {
-        for _ in 0..m.count {
-            mol_start_indices.push(offset);
-            offset += m.atoms.len();
-        }
-    }
-
     let cfg = &state.to_save.md_config;
 
     // Determine simulation box dimensions (nm).
@@ -130,9 +122,9 @@ pub fn make_gromacs_input(
 
     let water_model = match &cfg.solvent {
         Solvent::None => None,
-        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => {
-            Some(WaterModel::Opc)
-        }
+        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => Some(
+            WaterModel::Opc(WaterInitTemplate::from_bytes(WATER_TEMPLATE_60A)?.to_gromacs()),
+        ),
     };
 
     Ok((
@@ -179,6 +171,18 @@ pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
         }
     };
 
+    // Compute mol_start_indices from the actual molecules being passed to GROMACS.
+    // Each copy of each molecule gets its own entry; offsets are over solute atoms only
+    // (water is handled separately in convert_snapshots and not indexed here).
+    let mut offset = 0usize;
+    let mut mol_start_indices = Vec::new();
+    for m in &input.molecules {
+        for _ in 0..m.count {
+            mol_start_indices.push(offset);
+            offset += m.atoms.len();
+        }
+    }
+
     let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
         mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
     state.volatile.md_local.update_mols_for_disp(&mols_ref);
@@ -187,13 +191,6 @@ pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
     match input.run() {
         Ok(out) => {
             let snapshots = convert_snapshots(&out.trajectory, out.solute_atom_count);
-            let mol_start_indices = if let Some(md_state) = &state.volatile.md_local.mol_dynamics {
-                md_state.mol_start_indices.clone()
-            } else {
-                eprintln!("\nMissing MD state local when running GROMACS MD. Uhoh!: \n");
-                Vec::new()
-            };
-
             (snapshots, mol_start_indices)
         }
         Err(e) => {

@@ -54,7 +54,7 @@ mod threads;
 
 use std::time::Instant;
 
-use dynamics::{Integrator, SimBoxInit, params::FfParamSet};
+use dynamics::{Integrator, MdConfig, SimBoxInit, params::FfParamSet};
 use molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
@@ -117,13 +117,11 @@ fn main() {
         // Set these UI strings for numerical values up after loading prefs
         state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
         state.ui.ph_input = state.to_save.ph.to_string();
-        state.ui.md.dt_input = state.to_save.md_dt.to_string();
-        state.ui.md.pressure_input = (state.to_save.md_config.pressure_target as u16).to_string();
-        state.ui.md.temp_input = (state.to_save.md_config.temp_target as u16).to_string();
-        state.ui.md.simbox_pad_input = match state.to_save.md_config.sim_box {
-            SimBoxInit::Pad(p) => (p as u16).to_string(),
-            SimBoxInit::Fixed(_) => "0".to_string(), // We currently don't use this.
-        };
+
+        state
+            .ui
+            .md
+            .sync(&state.to_save.md_config, state.to_save.md_dt);
 
         state.ui.md.langevin_γ = match state.to_save.md_config.integrator {
             Integrator::LangevinMiddle { gamma } => gamma.to_string(),

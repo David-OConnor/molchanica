@@ -451,10 +451,7 @@ pub fn align(
                 integrator: Integrator::VerletVelocity {
                     thermostat: Some(TEMP_COEFF),
                 },
-                // hydrogen_constraint: HydrogenConstraint::Flexible,
-                hydrogen_constraint: HydrogenConstraint::ConstrainedLinear {
-                    shake_tolerance: SHAKE_TOL_DEFAULT,
-                },
+                hydrogen_constraint: Default::default(),
                 // max_init_relaxation_iters: Some(300), // todo: A/R
                 max_init_relaxation_iters: None,
                 temp_target: TEMP,

@@ -118,57 +118,79 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
         }
     };
 
-    // For the peptide use the same sparse sampling used in `find_nearest_mol_dist_to_cam`
-    // (every 20th carbon) so large proteins don't stall the update. This produces good-enough results,
-    // and is faster. We handle peptides as a special case, as they're likely to be much larger than
-    // small molecules. todo: Consider this for lipids and NAs etc A/R.
-    if let Some(pep) = &state.peptide
-        && pep.common.visible
-    {
-        let mut pep_nearest = f32::INFINITY;
-        let mut pep_farthest = f32::NEG_INFINITY;
+    let md = &state.volatile.md_local;
 
-        for (i, _atom) in pep
-            .common
-            .atoms
-            .iter()
-            .filter(|a| a.element == Element::Carbon)
-            .enumerate()
+    if md.draw_md_mols {
+        for mol in &md.peptides {
+            update(find_mol_dist_range_inner(MolGenericRef::Peptide(mol), cam));
+        }
+
+        for mol in &md.small {
+            update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
+        }
+
+        for mol in &md.nucleic_acids {
+            update(find_mol_dist_range_inner(
+                MolGenericRef::NucleicAcid(mol),
+                cam,
+            ));
+        }
+        for mol in &md.lipids {
+            update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
+        }
+    } else {
+        // For the peptide use the same sparse sampling used in `find_nearest_mol_dist_to_cam`
+        // (every 20th carbon) so large proteins don't stall the update. This produces good-enough results,
+        // and is faster. We handle peptides as a special case, as they're likely to be much larger than
+        // small molecules. todo: Consider this for lipids and NAs etc A/R.
+        if let Some(pep) = &state.peptide
+            && pep.common.visible
         {
-            if !i.is_multiple_of(PEP_FOG_FAR_RATIO) {
-                continue;
+            let mut pep_nearest = f32::INFINITY;
+            let mut pep_farthest = f32::NEG_INFINITY;
+
+            for (i, _atom) in pep
+                .common
+                .atoms
+                .iter()
+                .filter(|a| a.element == Element::Carbon)
+                .enumerate()
+            {
+                if !i.is_multiple_of(PEP_FOG_FAR_RATIO) {
+                    continue;
+                }
+
+                let posit: Vec3 = pep.common.atom_posits[i].into();
+
+                if cam.in_view(posit).0 {
+                    let d = (cam.position - posit).magnitude();
+
+                    if d < pep_nearest {
+                        pep_nearest = d;
+                    }
+                    if d > pep_farthest {
+                        pep_farthest = d;
+                    }
+                }
             }
 
-            let posit: Vec3 = pep.common.atom_posits[i].into();
-
-            if cam.in_view(posit).0 {
-                let d = (cam.position - posit).magnitude();
-
-                if d < pep_nearest {
-                    pep_nearest = d;
-                }
-                if d > pep_farthest {
-                    pep_farthest = d;
-                }
+            if pep_nearest != f32::INFINITY {
+                update(Some((pep_nearest, pep_farthest)));
             }
         }
 
-        if pep_nearest != f32::INFINITY {
-            update(Some((pep_nearest, pep_farthest)));
+        for mol in &state.ligands {
+            update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
         }
-    }
-
-    for mol in &state.ligands {
-        update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
-    }
-    for mol in &state.nucleic_acids {
-        update(find_mol_dist_range_inner(
-            MolGenericRef::NucleicAcid(mol),
-            cam,
-        ));
-    }
-    for mol in &state.lipids {
-        update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
+        for mol in &state.nucleic_acids {
+            update(find_mol_dist_range_inner(
+                MolGenericRef::NucleicAcid(mol),
+                cam,
+            ));
+        }
+        for mol in &state.lipids {
+            update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
+        }
     }
 
     if nearest != f32::INFINITY {

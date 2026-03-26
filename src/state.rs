@@ -12,7 +12,7 @@ use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
-use dynamics::{ComputationDevice, params::FfParamSet};
+use dynamics::{ComputationDevice, MdConfig, SimBoxInit, params::FfParamSet};
 use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
@@ -527,6 +527,12 @@ pub struct StateUiMd {
     pub temp_input: String,
     pub pressure_input: String,
     pub simbox_pad_input: String,
+    pub simbox_x_min_input: String,
+    pub simbox_y_min_input: String,
+    pub simbox_z_min_input: String,
+    pub simbox_x_max_input: String,
+    pub simbox_y_max_input: String,
+    pub simbox_z_max_input: String,
     pub langevin_γ: String,
     pub temp_tau: String,
     /// Only perform MD on peptide atoms near a ligand.
@@ -542,10 +548,39 @@ impl Default for StateUiMd {
             temp_input: Default::default(),
             pressure_input: Default::default(),
             simbox_pad_input: Default::default(),
+            simbox_x_min_input: Default::default(),
+            simbox_y_min_input: Default::default(),
+            simbox_z_min_input: Default::default(),
+            simbox_x_max_input: Default::default(),
+            simbox_y_max_input: Default::default(),
+            simbox_z_max_input: Default::default(),
             langevin_γ: Default::default(),
             temp_tau: Default::default(),
             peptide_only_near_ligs: true,
             peptide_static: true,
+        }
+    }
+}
+
+impl StateUiMd {
+    pub fn sync(&mut self, md_cfg: &MdConfig, dt: f32) {
+        self.dt_input = dt.to_string();
+        self.pressure_input = (md_cfg.pressure_target as u16).to_string();
+        self.temp_input = (md_cfg.temp_target as u16).to_string();
+
+        match md_cfg.sim_box {
+            SimBoxInit::Pad(p) => {
+                self.simbox_pad_input = (p as u16).to_string();
+            }
+            SimBoxInit::Fixed((start, end)) => {
+                self.simbox_x_min_input = format!("{:.1}", start.x);
+                self.simbox_y_min_input = format!("{:.1}", start.y);
+                self.simbox_z_min_input = format!("{:.1}", start.z);
+
+                self.simbox_x_max_input = format!("{:.1}", end.x);
+                self.simbox_y_max_input = format!("{:.1}", end.y);
+                self.simbox_z_max_input = format!("{:.1}", end.z);
+            }
         }
     }
 }

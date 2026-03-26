@@ -67,7 +67,7 @@ pub struct MdStateLocal {
     /// (Mol, number of copies)
     /// For now, count is only set up on construction. We have a separate molecule instance for each count.
     pub peptides: Vec<MoleculePeptide>,
-    pub mols_small: Vec<MoleculeSmall>,
+    pub small: Vec<MoleculeSmall>,
     pub lipids: Vec<MoleculeLipid>,
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
     /// One entry per copy of each custom solvent species (from `Solvent::Custom`), in the same
@@ -82,7 +82,7 @@ impl MdStateLocal {
     /// appropriate mode for viewing.
     pub fn update_mols_for_disp(&mut self, mols: &[(FfMolType, &MoleculeCommon, usize)]) {
         self.peptides.clear();
-        self.mols_small.clear();
+        self.small.clear();
         self.lipids.clear();
         self.nucleic_acids.clear();
         self.custom_solvents.clear();
@@ -100,7 +100,7 @@ impl MdStateLocal {
                 }
                 FfMolType::SmallOrganic => {
                     for _ in 0..*count {
-                        self.mols_small.push(MoleculeSmall {
+                        self.small.push(MoleculeSmall {
                             common: (*mol).clone(),
                             ..Default::default()
                         });
@@ -170,7 +170,7 @@ impl MdStateLocal {
             i_posits += 1;
         }
 
-        for mol in &mut self.mols_small {
+        for mol in &mut self.small {
             // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
             for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
                 *p = posits_by_mol[i_posits][i_p].0.into();
@@ -234,7 +234,7 @@ impl MdStateLocal {
         println!("Re-assigning snapshot indices to match atoms excluded for MD...");
 
         let pep_count = pep_atom_set.len();
-        let lig_atom_count = self.mols_small.len();
+        let lig_atom_count = self.small.len();
         let lipid_atom_count = self.lipids.len();
         let na_atom_count = self.nucleic_acids.len();
 
@@ -763,22 +763,6 @@ pub fn run_dynamics_blocking(
     );
 }
 
-// /// Unflattens.
-// pub fn change_snapshot_helper(
-//     posits: &mut [Vec3],
-//     start_i_this_mol: &mut usize,
-//     snapshot: &Snapshot,
-// ) {
-//     for (i_snap, posit) in snapshot.atom_posits.iter().enumerate() {
-//         if i_snap < *start_i_this_mol || i_snap >= posits.len() + *start_i_this_mol {
-//             continue;
-//         }
-//         posits[i_snap - *start_i_this_mol] = (*posit).into();
-//     }
-//
-//     *start_i_this_mol += posits.len();
-// }
-
 impl State {
     /// Run MD for a single step if ready, and update atom positions immediately after. Blocks for
     /// a fixed number of steps only; intended to be run each frame until complete.
@@ -1050,20 +1034,16 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
         // Drain into mols_small; draw_all_ligs will render all of them.
         let custom: Vec<MoleculeSmall> =
             state.volatile.md_local.custom_solvents.drain(..).collect();
-        state.volatile.md_local.mols_small.extend(custom);
+        state.volatile.md_local.small.extend(custom);
     }
-    if !state.volatile.md_local.mols_small.is_empty() {
+    if !state.volatile.md_local.small.is_empty() {
         draw_all_ligs(state, scene);
     }
     if custom_solvent_count > 0 {
         // Restore: the custom solvents were appended to the end of mols_small.
-        let split_at = state.volatile.md_local.mols_small.len() - custom_solvent_count;
-        state.volatile.md_local.custom_solvents = state
-            .volatile
-            .md_local
-            .mols_small
-            .drain(split_at..)
-            .collect();
+        let split_at = state.volatile.md_local.small.len() - custom_solvent_count;
+        state.volatile.md_local.custom_solvents =
+            state.volatile.md_local.small.drain(split_at..).collect();
     }
 
     if !state.volatile.md_local.lipids.is_empty() {
@@ -1108,4 +1088,27 @@ impl Display for MdBackend {
 
         write!(f, "{v}")
     }
+}
+
+/// Removes all MD snapshots, and performs related cleanup.
+pub fn clear_snaps(state: &mut State) {
+    let Some(md) = &mut state.volatile.md_local.mol_dynamics else {
+        let txt = "Error: Attempting to change snapshot when there is no MD state";
+        eprintln!("{txt}");
+        return;
+        // return Err(io::Error::new(ErrorKind::InvalidData, txt));
+    };
+
+    md.snapshots = Vec::new();
+    md.mol_start_indices = Vec::new();
+
+    state.volatile.md_local.peptides = Vec::new();
+    state.volatile.md_local.small = Vec::new();
+    state.volatile.md_local.lipids = Vec::new();
+    state.volatile.md_local.nucleic_acids = Vec::new();
+    state.volatile.md_local.custom_solvents = Vec::new();
+
+    state.ui.current_snapshot = 0;
+
+    state.volatile.md_local.draw_md_mols = false;
 }

@@ -218,9 +218,7 @@ fn run_octanol(
         },
         temp_target: TEMP_TGT,
         pressure_target: 1.,
-        hydrogen_constraint: HydrogenConstraint::ConstrainedLinear {
-            shake_tolerance: SHAKE_TOL_DEFAULT,
-        },
+        hydrogen_constraint: Default::default(),
         snapshot_handlers: vec![SnapshotHandler::default()],
         sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
         solvent: Solvent::Custom((vec![(octanol_dyn, OCTANOL_COUNT)], OCTANOL_BOX_WATER_COUNT)),
@@ -293,9 +291,7 @@ fn run_water(
         },
         temp_target: TEMP_TGT,
         pressure_target: 1.,
-        hydrogen_constraint: HydrogenConstraint::ConstrainedLinear {
-            shake_tolerance: SHAKE_TOL_DEFAULT,
-        },
+        hydrogen_constraint: HydrogenConstraint::default(),
         snapshot_handlers: vec![SnapshotHandler::default()],
         sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
         overrides: MdOverrides {
