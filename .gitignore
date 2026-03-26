@@ -57,6 +57,9 @@ Cargo.lock
 # Orca and GROMACS intermediary files
 /orca_temp
 /gromacs_temp
+*.mdp
+*.top
+*.gro
 
 *.water_init_template
 

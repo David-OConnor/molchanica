@@ -20,7 +20,8 @@ use std::{
 };
 
 use dynamics::{
-    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError, Solvent,
+    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
+    SHAKE_TOL_DEFAULT, Solvent,
 };
 use lin_alg::{
     f32::Vec3 as Vec3F32,
@@ -28,8 +29,6 @@ use lin_alg::{
 };
 use na_seq::{Element, Element::*};
 use rayon::prelude::*;
-
-use dynamics::SHAKE_TOL_DEFAULT;
 
 // For initial rotation. Higher values take longer, but provide more precise results.
 pub const RING_ALIGN_ROT_COUNT: u16 = 1_000;
@@ -453,7 +452,7 @@ pub fn align(
                     thermostat: Some(TEMP_COEFF),
                 },
                 // hydrogen_constraint: HydrogenConstraint::Flexible,
-                hydrogen_constraint: HydrogenConstraint::Constrained {
+                hydrogen_constraint: HydrogenConstraint::ConstrainedLinear {
                     shake_tolerance: SHAKE_TOL_DEFAULT,
                 },
                 // max_init_relaxation_iters: Some(300), // todo: A/R

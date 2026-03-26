@@ -7,13 +7,14 @@ use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::gromacs::make_gromacs_input;
 use crate::{
     button,
     cam::move_cam_to_active_mol,
     drawing::EntityClass,
     file_io::save_trajectory,
-    gromacs, label,
+    gromacs,
+    gromacs::make_gromacs_input,
+    label,
     md::{MdBackend, launch_md, launch_md_energy_computation, post_run_cleanup},
     state::State,
     ui::{
@@ -131,6 +132,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     .selected_text(state.to_save.md_config.integrator.to_string())
                     .show_ui(ui, |ui| {
                         for v in &[
+                            Integrator::Leapfrog { thermostat: Some(TAU_TEMP_DEFAULT) },
                             Integrator::LangevinMiddle { gamma: LANGEVIN_GAMMA_DEFAULT },
                             Integrator::VerletVelocity { thermostat: Some(TAU_TEMP_DEFAULT) },
                         ] {
@@ -282,6 +284,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
             ui.add_space(COL_SPACING / 2.);
 
+            // todo: Dropdown to select shake vs linear vs no.
             {
                 let help_text = "Set to Constrained to allow higher time steps; Flexible may more more accurate.";
                 ui.label("H:").on_hover_text(help_text);
@@ -290,7 +293,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     .selected_text(state.to_save.md_config.hydrogen_constraint.to_string())
                     .show_ui(ui, |ui| {
                         // todo: Don't hard-code shake tol
-                        for v in &[HydrogenConstraint::Constrained { shake_tolerance: SHAKE_TOL_DEFAULT}, HydrogenConstraint::Flexible] {
+                        for v in &[HydrogenConstraint::ConstrainedLinear { shake_tolerance: SHAKE_TOL_DEFAULT}, HydrogenConstraint::Flexible] {
                             ui.selectable_value(&mut state.to_save.md_config.hydrogen_constraint, *v, v.to_string());
                         }
                     })
@@ -363,24 +366,7 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     }
 
     match &mut state.to_save.md_config.integrator {
-        Integrator::LangevinMiddle { gamma } => {
-            let help_text = "Thermostat time constant for use with the Langevin (stochastic) integrator. \
-            0.5 1/ps is a good default.";
-
-            ui.label("Therm γ (1/ps):").on_hover_text(help_text);
-            if ui
-                .add_sized(
-                    [22., Ui::available_height(ui)],
-                    TextEdit::singleline(&mut state.ui.md.langevin_γ),
-                )
-                .on_hover_text(help_text)
-                .changed()
-                && let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>()
-            {
-                *gamma = *v;
-            }
-        }
-        Integrator::VerletVelocity { thermostat } => {
+        Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
             let help_text = "Enable or disable the thermostat";
             ui.label("Therm:").on_hover_text(help_text);
             let mut therm_en = thermostat.is_some();
@@ -397,7 +383,7 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
             }
 
             if let Some(tau) = thermostat {
-                let help_text = "Thermostat time constant for use with the CSVR (velocity-rescaling) integrator. \
+                let help_text = "Thermostat time constant for use with a non-Langevin integrator. \
                 0.1ps is a good default.";
 
                 ui.label("Therm tau (ps):").on_hover_text(help_text);
@@ -412,6 +398,23 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
                 {
                     *tau = *v;
                 }
+            }
+        }
+        Integrator::LangevinMiddle { gamma } => {
+            let help_text = "Thermostat time constant for use with the Langevin (stochastic) integrator. \
+            0.5 1/ps is a good default.";
+
+            ui.label("Therm γ (1/ps):").on_hover_text(help_text);
+            if ui
+                .add_sized(
+                    [22., Ui::available_height(ui)],
+                    TextEdit::singleline(&mut state.ui.md.langevin_γ),
+                )
+                .on_hover_text(help_text)
+                .changed()
+                && let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>()
+            {
+                *gamma = *v;
             }
         }
     }

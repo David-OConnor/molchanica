@@ -14,6 +14,13 @@
 //! For how data structures flow into this function see `md.rs`, which performs the
 //! same pre-processing for the built-in `dynamics` pipeline.
 
+use std::{
+    collections::{HashMap, HashSet},
+    io,
+    path::Path,
+    time::Instant,
+};
+
 use bio_files::{
     AtomGeneric, BondGeneric,
     gromacs::{GromacsFrame, GromacsInput, MoleculeInput, WaterModel},
@@ -21,12 +28,6 @@ use bio_files::{
 };
 use dynamics::{FfMolType, MdState, SimBoxInit, Solvent, snapshot::Snapshot};
 use lin_alg::f32::Vec3;
-use std::path::Path;
-use std::{
-    collections::{HashMap, HashSet},
-    io,
-    time::Instant,
-};
 
 use crate::{
     md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
@@ -105,11 +106,27 @@ pub fn make_gromacs_input(
         .md_config
         .to_gromacs(state.to_save.num_md_steps as usize, state.to_save.md_dt);
 
-    // todo: This isn't right.
-    // Use the peptide (ff19SB) params as the system-wide fallback, since they cover
-    // the broadest set of Amber atom types. Per-molecule params (e.g. GAFF2 for
-    // ligands) are stored inside each MoleculeInput entry and take precedence.
-    let ff_global = state.ff_param_set.peptide.clone();
+    // todo: I'm not sure about this. What if the same FF type is used for multiple molecules.
+    // todo: Test adn assess.
+    // Merge all loaded FF tables into a single global fallback so that mass/LJ
+    // lookups succeed for any molecule type (peptide, small organic, DNA, etc.).
+    // Entries from earlier sources win on conflicts; order: small_mol first so GAFF2
+    // atom-type masses are not clobbered by the heavier protein FF tables.
+    let ff_global = [
+        state.ff_param_set.small_mol.as_ref(),
+        state.ff_param_set.peptide.as_ref(),
+        state.ff_param_set.dna.as_ref(),
+        state.ff_param_set.rna.as_ref(),
+        state.ff_param_set.lipids.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .fold(None::<ForceFieldParams>, |acc, ff| {
+        Some(match acc {
+            None => ff.clone(),
+            Some(merged) => merged.merge_with(ff),
+        })
+    });
 
     let water_model = match &cfg.solvent {
         Solvent::None => None,

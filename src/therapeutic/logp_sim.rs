@@ -218,7 +218,7 @@ fn run_octanol(
         },
         temp_target: TEMP_TGT,
         pressure_target: 1.,
-        hydrogen_constraint: HydrogenConstraint::Constrained {
+        hydrogen_constraint: HydrogenConstraint::ConstrainedLinear {
             shake_tolerance: SHAKE_TOL_DEFAULT,
         },
         snapshot_handlers: vec![SnapshotHandler::default()],
@@ -293,7 +293,7 @@ fn run_water(
         },
         temp_target: TEMP_TGT,
         pressure_target: 1.,
-        hydrogen_constraint: HydrogenConstraint::Constrained {
+        hydrogen_constraint: HydrogenConstraint::ConstrainedLinear {
             shake_tolerance: SHAKE_TOL_DEFAULT,
         },
         snapshot_handlers: vec![SnapshotHandler::default()],

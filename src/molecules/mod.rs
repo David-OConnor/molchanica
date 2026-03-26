@@ -720,6 +720,7 @@ impl Atom {
             element: self.element,
             partial_charge: self.partial_charge,
             force_field_type: self.force_field_type.clone(),
+            hetero: self.hetero,
             ..Default::default()
         }
     }
