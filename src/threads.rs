@@ -9,6 +9,7 @@ use bio_apis::{
     pubchem,
     rcsb::{FilesAvailable, PdbDataResults},
 };
+use dynamics::snapshot::Snapshot;
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 
 use crate::{
@@ -46,6 +47,8 @@ pub struct ThreadReceivers {
     // /// This threads runs the whole outer loops, screening all molecules
     // pub ph_screening_outer: Option<Receiver<Vec<PhScreeningScore>>>,
     pub ph_screening: Option<Receiver<Vec<PhScreeningScore>>>,
+    /// GROMACS MD run. Carries `(snapshots, mol_start_indices, elapsed_ms)`.
+    pub gromacs_md_avail: Option<Receiver<(Vec<Snapshot>, Vec<usize>, u128)>>,
 }
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
@@ -191,5 +194,16 @@ pub fn handle_thread_rx(
                 }
             }
         }
+    }
+
+    let gromacs_result = state
+        .volatile
+        .thread_receivers
+        .gromacs_md_avail
+        .as_ref()
+        .and_then(|rx| rx.try_recv().ok());
+    if let Some((snaps, mol_start_indices, elapsed_ms)) = gromacs_result {
+        state.volatile.thread_receivers.gromacs_md_avail = None;
+        crate::gromacs::on_gromacs_md_complete(state, snaps, mol_start_indices, elapsed_ms);
     }
 }

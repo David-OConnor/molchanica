@@ -1,5 +1,7 @@
-//! GROMACS integration - can create GROMACS inputs, and parse outputs from data structures and visualization
-//! in this program. Uses the `bio_files` lib for implementation details..
+//! GROMACS integration - can create GROMACS inputs, and parse outputs (Trajectory, energy etc)
+//! from data structures and visualization
+//! in this program. Uses the `bio_files` lib's `gromacs` functionality; this module interfaces
+//! Molchanica data structure's to its API.
 //!
 //! [`run_dynamics`] is the entry point. Its signature mirrors
 //! [`crate::md::build_dynamics`] + [`crate::md::run_dynamics_blocking`], but
@@ -18,6 +20,8 @@ use std::{
     collections::{HashMap, HashSet},
     io,
     path::Path,
+    sync::mpsc,
+    thread,
     time::Instant,
 };
 
@@ -32,6 +36,7 @@ use dynamics::{
 };
 use lin_alg::f32::Vec3;
 
+use crate::util::handle_success;
 use crate::{
     md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
     molecules::common::MoleculeCommon,
@@ -185,8 +190,8 @@ pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
 
     let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
         mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
+
     state.volatile.md_local.update_mols_for_disp(&mols_ref);
-    // todo: Run this in a thread.
 
     match input.run() {
         Ok(out) => {
@@ -199,10 +204,6 @@ pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Molecule input construction
-// ---------------------------------------------------------------------------
 
 /// Convert Molchanica molecule data into `Vec<MoleculeInput>` for GROMACS.
 fn build_molecule_inputs(
@@ -341,17 +342,59 @@ fn convert_snapshots(frames: &[GromacsFrame], solute_atom_count: usize) -> Vec<S
         .collect()
 }
 
-/// Similar to `md/launch_md`
-/// todo: Launch in a thread
+/// Similar to `md/launch_md`. Prepares GROMACS input on the calling thread, then
+/// spawns a background thread for the blocking `gmx` execution. Results are
+/// delivered via [`crate::threads::ThreadReceivers::gromacs_md_avail`] and
+/// processed by [`on_gromacs_md_complete`].
 pub fn launch_md(state: &mut State) {
-    let start = Instant::now();
+    let (input, mols) = match make_gromacs_input(state) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Error creating GROMACS input: {e}");
+            return;
+        }
+    };
 
-    let (snaps, mol_start_indices) = run_dynamics(state);
+    let mut offset = 0usize;
+    let mut mol_start_indices = Vec::new();
+    for m in &input.molecules {
+        for _ in 0..m.count {
+            mol_start_indices.push(offset);
+            offset += m.atoms.len();
+        }
+    }
 
-    // Store the GROMACS trajectory so the UI can play it back via change_snapshot.
-    // We build a minimal MdState — only mol_start_indices and snapshots are needed
-    // for playback; the integrator fields are left at Default since we do not call
-    // md_step on this state.
+    let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
+        mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
+    state.volatile.md_local.update_mols_for_disp(&mols_ref);
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let start = Instant::now();
+        match input.run() {
+            Ok(out) => {
+                let snaps = convert_snapshots(&out.trajectory, out.solute_atom_count);
+                let elapsed = start.elapsed().as_millis();
+                let _ = tx.send((snaps, mol_start_indices, elapsed));
+            }
+            Err(e) => {
+                eprintln!("\nGROMACS run failed: \n{e}");
+                let _ = tx.send((Vec::new(), mol_start_indices, 0));
+            }
+        }
+    });
+
+    state.volatile.thread_receivers.gromacs_md_avail = Some(rx);
+}
+
+/// Called by [`crate::threads::handle_thread_rx`] when the background GROMACS
+/// thread completes. Updates state snapshots and notifies the UI.
+pub fn on_gromacs_md_complete(
+    state: &mut State,
+    snaps: Vec<Snapshot>,
+    mol_start_indices: Vec<usize>,
+    elapsed_ms: u128,
+) {
     if !snaps.is_empty() {
         let mut md = MdState::default();
         md.mol_start_indices = mol_start_indices;
@@ -359,9 +402,10 @@ pub fn launch_md(state: &mut State) {
         state.volatile.md_local.mol_dynamics = Some(md);
         state.volatile.md_local.draw_md_mols = true;
     }
-
-    let elapsed = start.elapsed().as_millis();
-    println!("GROMACS run complete in {elapsed} ms");
+    handle_success(
+        &mut state.ui,
+        format!("GROMACS run complete in {elapsed_ms} ms"),
+    );
 }
 
 /// Save .gro, .mdp, and .top files to disk, from our MD state, molecules etc.
