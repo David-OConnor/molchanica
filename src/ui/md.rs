@@ -1,30 +1,24 @@
-use bio_files::gromacs::OutputControl;
-use dynamics::snapshot::SnapshotHandlers;
 use dynamics::{
     ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT,
-    snapshot::Snapshot,
+    snapshot::{Snapshot, SnapshotHandlers},
 };
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 
-use crate::mol_editor::sync_md;
 use crate::{
     button,
     drawing::EntityClass,
     file_io::save_trajectory,
     label, md,
-    md::{
-        MdBackend, clear_snaps, launch_md, launch_md_energy_computation, post_run_cleanup,
-        start_md_energy_computation,
-    },
+    md::{MdBackend, clear_snaps, launch_md, post_run_cleanup, start_md_energy_computation},
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         flag_btn, misc, num_field,
     },
-    util::{clear_cli_out, handle_err, handle_success},
+    util::handle_err,
 };
 
 pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
@@ -663,13 +657,39 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     label!(ui, format!("{:.1} bar", en.pressure), Color32::GOLD);
 }
 
+fn num_field_option<T>(val: &mut Option<T>, label: &str, width: u16, ui: &mut Ui)
+where
+    T: std::fmt::Display + std::str::FromStr + Default + PartialEq,
+{
+    if !label.is_empty() {
+        ui.label(label);
+    }
+    let mut s = val
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "0".to_string());
+    if ui
+        .add_sized(
+            [width as f32, Ui::available_height(ui)],
+            TextEdit::singleline(&mut s),
+        )
+        .changed()
+        && let Ok(v) = s.parse::<T>()
+    {
+        *val = if v == T::default() { None } else { Some(v) };
+    }
+}
+
 fn output_control(state: &mut State, ui: &mut Ui) {
     let mut sync_ui = false;
+    const W: u16 = 44;
+    let sh_def = SnapshotHandlers::default();
+    // Use memory's default ratio as the shared fallback for all handler types.
+    let default_file = sh_def.memory.map(|v| v as u32);
 
-    const INPUT_WIDTH: u16 = 32;
-
+    // Memory
     {
-        let help = "Save snapshots/frames in memory.";
+        let help = "Save snapshots in memory.";
         ui.label("Mem:").on_hover_text(help);
         if ui
             .checkbox(&mut state.ui.md.mem_enabled, "")
@@ -677,19 +697,116 @@ fn output_control(state: &mut State, ui: &mut Ui) {
             .changed()
         {
             state.to_save.md_config.snapshot_handlers.memory = if state.ui.md.mem_enabled {
-                SnapshotHandlers::default().memory
+                sh_def.memory
             } else {
                 None
             };
-
             sync_ui = true;
         }
-
         if state.to_save.md_config.snapshot_handlers.memory.is_some() {
             num_field_option(
                 &mut state.to_save.md_config.snapshot_handlers.memory,
-                "Steps:",
-                INPUT_WIDTH,
+                "R:",
+                W,
+                ui,
+            );
+        }
+    }
+
+    // DCD
+    {
+        let help = "Save trajectory to a DCD file.";
+        ui.label("DCD:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.dcd_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            state.to_save.md_config.snapshot_handlers.dcd = if state.ui.md.dcd_enabled {
+                sh_def.memory
+            } else {
+                None
+            };
+            sync_ui = true;
+        }
+
+        if state.to_save.md_config.snapshot_handlers.dcd.is_some() {
+            num_field_option(
+                &mut state.to_save.md_config.snapshot_handlers.dcd,
+                "",
+                W,
+                ui,
+            );
+        }
+    }
+
+    // TRR (coords / velocities / forces)
+    {
+        let help = "Save trajectory to a TRR file (coords, velocities, forces).";
+        ui.label("TRR:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.trr_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            let g = &mut state.to_save.md_config.snapshot_handlers.gromacs;
+            if state.ui.md.trr_enabled {
+                g.nstxout = default_file;
+                g.nstvout = default_file;
+                g.nstfout = default_file;
+            } else {
+                g.nstxout = None;
+                g.nstvout = None;
+                g.nstfout = None;
+            }
+            sync_ui = true;
+        }
+        if state.ui.md.trr_enabled {
+            let g = &mut state.to_save.md_config.snapshot_handlers.gromacs;
+            num_field_option(&mut g.nstxout, "Pos:", W, ui);
+            num_field_option(&mut g.nstvout, "V:", W, ui);
+            num_field_option(&mut g.nstfout, "F:", W, ui);
+        }
+    }
+
+    // XTC
+    {
+        let help = "Save compressed coordinates to an XTC file.";
+        ui.label("XTC:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.xtc_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            state
+                .to_save
+                .md_config
+                .snapshot_handlers
+                .gromacs
+                .nstxout_compressed = if state.ui.md.xtc_enabled {
+                default_file
+            } else {
+                None
+            };
+            sync_ui = true;
+        }
+        if state
+            .to_save
+            .md_config
+            .snapshot_handlers
+            .gromacs
+            .nstxout_compressed
+            .is_some()
+        {
+            num_field_option(
+                &mut state
+                    .to_save
+                    .md_config
+                    .snapshot_handlers
+                    .gromacs
+                    .nstxout_compressed,
+                "",
+                W,
                 ui,
             );
         }

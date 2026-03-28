@@ -549,14 +549,6 @@ pub struct StateUiMd {
     pub trr_enabled: bool,
     pub dcd_enabled: bool,
     pub xtc_enabled: bool,
-    /// Output control ratios
-    pub ratio_mem: String,
-    pub ratio_trr_coords: String,
-    pub ratio_trr_vel: String,
-    pub ratio_trr_force: String,
-    pub ratio_energy: String,
-    pub ratio_xtc: String,
-    pub ratio_dcd: String,
 }
 
 impl Default for StateUiMd {
@@ -576,7 +568,6 @@ impl Default for StateUiMd {
             temp_tau: Default::default(),
             peptide_only_near_ligs: true,
             peptide_static: true,
-
             mem_enabled: true,
             trr_enabled: true,
             dcd_enabled: false,
