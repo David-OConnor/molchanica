@@ -388,10 +388,13 @@ pub fn align(
     for alignment in &mut alignments_init {
         // Compute an initial strain energy.
         // todo: You must mark the mol in question as selected for MD, or this won't work.
+
         let energy = launch_md_energy_computation(state, &mut HashSet::new());
-        if let Ok(energy) = energy {
+        if let Ok(snap) = energy
+            && let Some(en) = &snap.energy_data
+        {
             alignment.avg_potential_e_query =
-                energy.energy_potential / alignment.posits_query.len() as f32;
+                en.energy_potential / alignment.posits_query.len() as f32;
         }
 
         alignment.volume = calc_volume(
@@ -485,7 +488,16 @@ pub fn align(
 
                 let energy_t = 0.; // todo: A/R
                 // let energy_t = launch_md_energy_computation(state, &mut HashSet::new());
-                let energy_q = md_this_align.snapshots.last().unwrap().energy_potential;
+                // let energy_q = md_this_align
+                //     .snapshots
+                //     .last()
+                //     .as_ref()
+                //     .unwrap()
+                //     .energy_data
+                //     .unwrap()
+                //     .energy_potential;
+                //
+                let energy_q = 0.; // todo temp. Errors with energy above
 
                 let avg_potential_e_template = energy_t / posits_t.len() as f32;
 

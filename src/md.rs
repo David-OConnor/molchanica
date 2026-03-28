@@ -20,10 +20,12 @@ use lin_alg::f64::{Quaternion, Vec3};
 use rand::Rng;
 
 use crate::{
+    cam::move_cam_to_active_mol,
     drawing::{
         draw_peptide, draw_water,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
+    gromacs,
     molecules::{
         common::MoleculeCommon,
         lipid::MoleculeLipid,
@@ -32,7 +34,7 @@ use crate::{
         small::MoleculeSmall,
     },
     state::State,
-    util::{handle_err, handle_success},
+    util::{clear_cli_out, handle_err, handle_success},
 };
 
 // Å. Static atoms must be at least this close to a dynamic atom at the start of MD to be counted.
@@ -256,16 +258,25 @@ impl MdStateLocal {
                 .iter()
                 .cloned();
 
-            let mut pept_md_vels = snap.atom_velocities[pep_start_i..pep_start_i + pep_count]
-                .iter()
-                .cloned();
+            // Owned iterator over the peptide's MD velocities, when available.
+            let mut pept_md_vel_iter = snap.atom_velocities.as_ref().map(|vels| {
+                vels[pep_start_i..pep_start_i + pep_count]
+                    .to_vec()
+                    .into_iter()
+            });
 
             let mut new_posits = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
-            let mut new_vels = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
+
+            // Mirror the Option: only build a velocity Vec when velocities are present.
+            let mut new_vels: Option<Vec<lin_alg::f32::Vec3>> =
+                snap.atom_velocities.as_ref().map(|vels| {
+                    let mut v = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
+                    v.extend_from_slice(&vels[..pep_start_i]);
+                    v
+                });
 
             // Keep ligand portion unchanged
             new_posits.extend_from_slice(&snap.atom_posits[..pep_start_i]);
-            new_vels.extend_from_slice(&snap.atom_velocities[..pep_start_i]);
 
             // Reinsert peptide atoms in their original order
             for (i, atom) in pep.common.atoms.iter().enumerate() {
@@ -277,20 +288,19 @@ impl MdStateLocal {
                             .next()
                             .expect("Ran out of peptide MD positions"),
                     );
-                    new_vels.push(
-                        pept_md_vels
-                            .next()
-                            .expect("Ran out of peptide MD velocities"),
-                    );
+
+                    if let (Some(v), Some(it)) = (&mut new_vels, &mut pept_md_vel_iter) {
+                        v.push(it.next().expect("Ran out of peptide MD velocities"));
+                    }
                 } else {
                     // Non-MD atom: use its original static position
                     new_posits.push(atom.posit.into());
-                    new_vels.push(lin_alg::f32::Vec3::new_zero());
+
+                    if let Some(ref mut v) = new_vels {
+                        v.push(lin_alg::f32::Vec3::new_zero());
+                    }
                 }
             }
-
-            // todo: This is screwing things up for purposes of saving DCD files without water, as it's combining
-            // todo multiple mols into the posits.
 
             // Replace the snapshot's positions with the reindexed set
             snap.atom_posits = new_posits;
@@ -1106,4 +1116,80 @@ pub fn clear_snaps(state: &mut State) {
     state.ui.current_snapshot = 0;
 
     state.volatile.md_local.draw_md_mols = false;
+}
+
+/// For the UI functions to launch MD, and run energy computations.
+fn ready_to_run_helper(state: &mut State) -> bool {
+    clear_cli_out(&mut state.ui);
+    let mut ready_to_run = true;
+
+    // Check that we have FF params and mol-specific parameters.
+    for lig in &state.ligands {
+        if !lig.common.selected_for_md {
+            continue;
+        }
+
+        if !lig.ff_params_loaded || !lig.frcmod_loaded {
+            state.ui.popup.show_get_geostd = true;
+            ready_to_run = false;
+        }
+    }
+
+    ready_to_run
+}
+/// Launched from the UI; initiates MD.
+pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    if !ready_to_run_helper(state) {
+        return;
+    }
+
+    let center = match &state.peptide {
+        Some(m) => m.center,
+        None => Vec3::new(0., 0., 0.),
+    };
+    // todo: Set a loading indicator, and trigger the build next GUI frame.
+    move_cam_to_active_mol(state, scene, center, updates);
+
+    match state.to_save.md_backend {
+        MdBackend::Dynamics => {
+            handle_success(
+                &mut state.ui,
+                "Running MD. Initializing water, and relaxing the molecules...".to_string(),
+            );
+
+            // We will wait a frame so we can display the message above.
+            state.volatile.md_local.launching = true;
+        }
+        MdBackend::Gromacs => {
+            handle_success(&mut state.ui, "\nRunning MD with GROMACS...".to_string());
+            // We will wait a frame so we can display the message above.
+            gromacs::launch_md(state)
+        }
+        // todo: For now, we launch ORCA MD from the ORCA UI.
+        MdBackend::Orca => {}
+    }
+}
+
+pub fn start_md_energy_computation(state: &mut State) {
+    // todo: WIP
+    if !ready_to_run_helper(state) {
+        return;
+    }
+
+    let mut pep_md = state.volatile.md_local.peptide_selected.clone(); // Avoids borrow problem.
+    match launch_md_energy_computation(state, &mut pep_md) {
+        Ok(snap) => {
+            if let Some(en) = &snap.energy_data {
+                let data = format!(
+                    "E result. PE: {:.2}, PE NB: {:.3} PE Bonded: {:.2}",
+                    en.energy_potential, en.energy_potential_nonbonded, en.energy_potential_bonded
+                );
+                println!("{data}");
+                handle_success(&mut state.ui, data);
+
+                state.volatile.md_local.peptide_selected = pep_md;
+            }
+        }
+        Err(e) => handle_err(&mut state.ui, format!("Error computing energy: {:?}", e)),
+    }
 }

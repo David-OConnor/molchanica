@@ -32,15 +32,15 @@ use bio_files::{
 };
 use dynamics::{
     FfMolType, MdState, SimBoxInit, Solvent, WATER_TEMPLATE_60A, WaterInitTemplate,
-    snapshot::Snapshot,
+    snapshot::{Snapshot, gromacs_frames_to_ss},
 };
 use lin_alg::f32::Vec3;
 
-use crate::util::handle_success;
 use crate::{
     md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
     molecules::common::MoleculeCommon,
     state::State,
+    util::handle_success,
 };
 
 pub fn make_gromacs_input(
@@ -139,66 +139,67 @@ pub fn make_gromacs_input(
     ))
 }
 
-/// Run a GROMACS MD simulation and return the trajectory as `Vec<Snapshot>`.
-///
-/// This is conceptually equivalent to calling `md::build_dynamics` followed by
-/// `md::run_dynamics_blocking`, but delegates execution to the external `gmx`
-/// binary instead of our own integrator.
-///
-/// # Arguments
-///
-/// Arguments mirror `md::build_dynamics` for drop-in use by the UI layer:
-///
-/// - `_dev` — unused (GROMACS handles device selection internally)
-/// - `mols_in` — `(ff_mol_type, molecule, copy_count)` triples
-/// - `param_set` — global Amber force-field parameter set
-/// - `mol_specific_params` — per-ligand GAFF2 parameters keyed by molecule ident
-/// - `cfg` — MD configuration (timestep, temperature, box, etc.)
-/// - `static_peptide` — if `true`, the peptide atoms are held fixed
-/// - `peptide_only_near_lig` — if `Some(thresh)`, include only peptide atoms
-///   within `thresh` Å of any ligand atom
-/// - `pep_atom_set` — populated with the `(mol_i, atom_i)` pairs of included
-///   peptide atoms (same semantics as in `md.rs`)
-/// - `fast_init` — if `true`, skip water and initial energy relaxation
-/// - `dt` — timestep in **ps**
-/// - `n_steps` — total number of MD steps
-pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
-    let (input, mols) = match make_gromacs_input(state) {
-        Ok(input) => input,
-        Err(e) => {
-            eprintln!("Error creating GROMACS input");
-            return (Vec::new(), Vec::new());
-        }
-    };
-
-    // Compute mol_start_indices from the actual molecules being passed to GROMACS.
-    // Each copy of each molecule gets its own entry; offsets are over solute atoms only
-    // (water is handled separately in convert_snapshots and not indexed here).
-    let mut offset = 0usize;
-    let mut mol_start_indices = Vec::new();
-    for m in &input.molecules {
-        for _ in 0..m.count {
-            mol_start_indices.push(offset);
-            offset += m.atoms.len();
-        }
-    }
-
-    let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
-        mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
-
-    state.volatile.md_local.update_mols_for_disp(&mols_ref);
-
-    match input.run() {
-        Ok(out) => {
-            let snapshots = convert_snapshots(&out.trajectory, out.solute_atom_count);
-            (snapshots, mol_start_indices)
-        }
-        Err(e) => {
-            eprintln!("\nGROMACS run failed: \n{e}");
-            (Vec::new(), Vec::new())
-        }
-    }
-}
+// todo: Replaced by `launch_dynamics`?
+// /// Run a GROMACS MD simulation and return the trajectory as `Vec<Snapshot>`.
+// ///
+// /// This is conceptually equivalent to calling `md::build_dynamics` followed by
+// /// `md::run_dynamics_blocking`, but delegates execution to the external `gmx`
+// /// binary instead of our own integrator.
+// ///
+// /// # Arguments
+// ///
+// /// Arguments mirror `md::build_dynamics` for drop-in use by the UI layer:
+// ///
+// /// - `_dev` — unused (GROMACS handles device selection internally)
+// /// - `mols_in` — `(ff_mol_type, molecule, copy_count)` triples
+// /// - `param_set` — global Amber force-field parameter set
+// /// - `mol_specific_params` — per-ligand GAFF2 parameters keyed by molecule ident
+// /// - `cfg` — MD configuration (timestep, temperature, box, etc.)
+// /// - `static_peptide` — if `true`, the peptide atoms are held fixed
+// /// - `peptide_only_near_lig` — if `Some(thresh)`, include only peptide atoms
+// ///   within `thresh` Å of any ligand atom
+// /// - `pep_atom_set` — populated with the `(mol_i, atom_i)` pairs of included
+// ///   peptide atoms (same semantics as in `md.rs`)
+// /// - `fast_init` — if `true`, skip water and initial energy relaxation
+// /// - `dt` — timestep in **ps**
+// /// - `n_steps` — total number of MD steps
+// pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
+//     let (input, mols) = match make_gromacs_input(state) {
+//         Ok(input) => input,
+//         Err(e) => {
+//             eprintln!("Error creating GROMACS input");
+//             return (Vec::new(), Vec::new());
+//         }
+//     };
+//
+//     // Compute mol_start_indices from the actual molecules being passed to GROMACS.
+//     // Each copy of each molecule gets its own entry; offsets are over solute atoms only
+//     // (water is handled separately in convert_snapshots and not indexed here).
+//     let mut offset = 0;
+//     let mut mol_start_indices = Vec::new();
+//     for m in &input.molecules {
+//         for _ in 0..m.count {
+//             mol_start_indices.push(offset);
+//             offset += m.atoms.len();
+//         }
+//     }
+//
+//     let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
+//         mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
+//
+//     state.volatile.md_local.update_mols_for_disp(&mols_ref);
+//
+//     match input.run() {
+//         Ok(out) => {
+//             let snapshots = gromacs_frames_to_ss(&out.trajectory, out.solute_atom_count);
+//             (snapshots, mol_start_indices)
+//         }
+//         Err(e) => {
+//             eprintln!("\nGROMACS run failed: \n{e}");
+//             (Vec::new(), Vec::new())
+//         }
+//     }
+// }
 
 /// Convert Molchanica molecule data into `Vec<MoleculeInput>` for GROMACS.
 fn build_molecule_inputs(
@@ -287,59 +288,6 @@ fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
     }
 }
 
-/// Convert GROMACS trajectory frames into `Snapshot` values.
-/// This converts positions in nm and velocities in nm/ps to Å, and Å/ps
-///
-/// `solute_atom_count` is the number of non-water atoms (computed before solvation).
-/// Atoms beyond that index are OPC water molecules, laid out as groups of 4:
-/// OW, HW1, HW2, MW (virtual site). MW positions are discarded since `Snapshot`
-/// has no field for them and the virtual site carries no mass.
-fn convert_snapshots(frames: &[GromacsFrame], solute_atom_count: usize) -> Vec<Snapshot> {
-    // OPC water has 4 sites per molecule (OW, HW1, HW2, MW virtual site).
-    const OPC_SITES_PER_MOL: usize = 4;
-
-    frames
-        .iter()
-        .map(|frame| {
-            let n = frame.atom_posits.len();
-            let solute_end = solute_atom_count.min(n);
-
-            let atom_posits: Vec<Vec3> = frame.atom_posits[..solute_end]
-                .iter()
-                .map(|p| Vec3::new((p.x * 10.0) as f32, (p.y * 10.0) as f32, (p.z * 10.0) as f32))
-                .collect();
-
-            let water_block = &frame.atom_posits[solute_end..];
-            let n_water_mols = water_block.len() / OPC_SITES_PER_MOL;
-
-            let mut water_o_posits = Vec::with_capacity(n_water_mols);
-            let mut water_h0_posits = Vec::with_capacity(n_water_mols);
-            let mut water_h1_posits = Vec::with_capacity(n_water_mols);
-
-            for i in 0..n_water_mols {
-                let base = i * OPC_SITES_PER_MOL;
-                let to_vec3 = |p: &lin_alg::f64::Vec3| {
-                    Vec3::new((p.x * 10.0) as f32, (p.y * 10.0) as f32, (p.z * 10.0) as f32)
-                };
-
-                water_o_posits.push(to_vec3(&water_block[base]));
-                water_h0_posits.push(to_vec3(&water_block[base + 1]));
-                water_h1_posits.push(to_vec3(&water_block[base + 2]));
-                // base + 3 is the MW virtual site — no Snapshot field for it.
-            }
-
-            Snapshot {
-                time: frame.time,
-                atom_posits,
-                water_o_posits,
-                water_h0_posits,
-                water_h1_posits,
-                ..Snapshot::default()
-            }
-        })
-        .collect()
-}
-
 /// Similar to `md/launch_md`. Prepares GROMACS input on the calling thread, then
 /// spawns a background thread for the blocking `gmx` execution. Results are
 /// delivered via [`crate::threads::ThreadReceivers::gromacs_md_avail`] and
@@ -353,7 +301,7 @@ pub fn launch_md(state: &mut State) {
         }
     };
 
-    let mut offset = 0usize;
+    let mut offset = 0;
     let mut mol_start_indices = Vec::new();
     for m in &input.molecules {
         for _ in 0..m.count {
@@ -367,11 +315,12 @@ pub fn launch_md(state: &mut State) {
     state.volatile.md_local.update_mols_for_disp(&mols_ref);
 
     let (tx, rx) = mpsc::channel();
+
     thread::spawn(move || {
         let start = Instant::now();
         match input.run() {
             Ok(out) => {
-                let snaps = convert_snapshots(&out.trajectory, out.solute_atom_count);
+                let snaps = gromacs_frames_to_ss(&out.trajectory, out.solute_atom_count);
                 let elapsed = start.elapsed().as_millis();
                 let _ = tx.send((snaps, mol_start_indices, elapsed));
             }

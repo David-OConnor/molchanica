@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use bio_files::BondType;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MolDynamics, ParamError,
-    SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT, snapshot::SnapshotHandler,
+    SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -219,7 +219,7 @@ fn run_octanol(
         temp_target: TEMP_TGT,
         pressure_target: 1.,
         hydrogen_constraint: Default::default(),
-        snapshot_handlers: vec![SnapshotHandler::default()],
+        snapshot_handlers: SnapshotHandlers::default(),
         sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
         solvent: Solvent::Custom((vec![(octanol_dyn, OCTANOL_COUNT)], OCTANOL_BOX_WATER_COUNT)),
         overrides: MdOverrides {
@@ -258,7 +258,11 @@ fn run_octanol(
     // todo: This is for the whole system including water molecules. Is this waht we want?
     let energy = {
         let snap = &md.snapshots[md.snapshots.len() - 1];
-        snap.energy_potential + snap.energy_kinetic
+        if let Some(en) = &snap.energy_data {
+            en.energy_potential + en.energy_kinetic
+        } else {
+            0.
+        }
     };
     println!(
         "Free energy computed for the octanol component: {:.2}",
@@ -292,7 +296,7 @@ fn run_water(
         temp_target: TEMP_TGT,
         pressure_target: 1.,
         hydrogen_constraint: HydrogenConstraint::default(),
-        snapshot_handlers: vec![SnapshotHandler::default()],
+        snapshot_handlers: SnapshotHandlers::default(),
         sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
         overrides: MdOverrides {
             // long_range_recip_disabled: true,
@@ -323,7 +327,8 @@ fn run_water(
     // todo: This is for the whole system including water molecules. Is this waht we want?
     let energy = {
         let snap = &md.snapshots[md.snapshots.len() - 1];
-        snap.energy_potential + snap.energy_kinetic
+        snap.energy_data.as_ref().unwrap().energy_potential
+            + snap.energy_data.as_ref().unwrap().energy_kinetic
     };
     println!(
         "Free energy computed for the water component: {:.2}",

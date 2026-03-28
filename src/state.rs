@@ -307,6 +307,10 @@ pub struct StateVolatile {
     pub orca_avail: bool,
     /// GROMACS is available on the system path.
     pub gromacs_avail: bool,
+    /// For handling MTZ electron density measurements
+    pub gemmi_avail: bool,
+    /// For reading and writing XTC files.
+    pub mdtraj_avail: bool,
     // /// Per-protein. Computed as required; None before then.
     // hydropathy_data: Option<Vec<Vec<(usize, usize)>>>,
     // /// If present, there must be one per vertex. Rebuild this whenever we
@@ -539,6 +543,20 @@ pub struct StateUiMd {
     pub peptide_only_near_ligs: bool,
     /// Peptide atoms don't move, but exert forces.
     pub peptide_static: bool,
+    /// Output control settings which don't directly map to `OutputControl`, but
+    /// change them.
+    pub mem_enabled: bool,
+    pub trr_enabled: bool,
+    pub dcd_enabled: bool,
+    pub xtc_enabled: bool,
+    /// Output control ratios
+    pub ratio_mem: String,
+    pub ratio_trr_coords: String,
+    pub ratio_trr_vel: String,
+    pub ratio_trr_force: String,
+    pub ratio_energy: String,
+    pub ratio_xtc: String,
+    pub ratio_dcd: String,
 }
 
 impl Default for StateUiMd {
@@ -558,11 +576,24 @@ impl Default for StateUiMd {
             temp_tau: Default::default(),
             peptide_only_near_ligs: true,
             peptide_static: true,
+            
+            mem_enabled: true,
+            trr_enabled: true,
+            dcd_enabled: false,
+            xtc_enabled: true,
+            ratio_mem: Default::default(),
+            ratio_trr_coords: Default::default(),
+            ratio_trr_vel: Default::default(),
+            ratio_trr_force: Default::default(),
+            ratio_xtc: Default::default(),
+            ratio_dcd: Default::default(),
+        }
         }
     }
 }
 
 impl StateUiMd {
+    /// Updates these variables based on state.
     pub fn sync(&mut self, md_cfg: &MdConfig, dt: f32) {
         self.dt_input = dt.to_string();
         self.pressure_input = (md_cfg.pressure_target as u16).to_string();
@@ -581,6 +612,45 @@ impl StateUiMd {
                 self.simbox_y_max_input = format!("{:.1}", end.y);
                 self.simbox_z_max_input = format!("{:.1}", end.z);
             }
+        }
+
+        let sh = &md_cfg.snapshot_handlers;
+
+        self.mem_enabled = sh.memory.is_some();
+        if let Some(r) = sh.memory {
+            self.ratio_mem = r.to_string();
+        }
+
+        self.dcd_enabled = sh.dcd.is_some();
+        if let Some(r) = sh.dcd {
+            self.ratio_dcd = r.to_string();
+        }
+
+        self.xtc_enabled = sh.xtc.is_some();
+        if let Some(r) = sh.xtc {
+            self.ratio_xtc = r.to_string();
+        }
+
+        if let Some(gc) = &sh.gromacs {
+            self.trr_enabled =
+                gc.nstxout.is_some() || gc.nstvout.is_some() || gc.nstfout.is_some();
+            if let Some(r) = gc.nstxout {
+                self.ratio_trr_coords = r.to_string();
+            }
+            if let Some(r) = gc.nstvout {
+                self.ratio_trr_vel = r.to_string();
+            }
+            if let Some(r) = gc.nstfout {
+                self.ratio_trr_force = r.to_string();
+            }
+
+            self.energy_enabled = gc.nstenergy.is_some();
+            if let Some(r) = gc.nstenergy {
+                self.ratio_energy = r.to_string();
+            }
+        } else {
+            self.trr_enabled = false;
+            self.energy_enabled = false;
         }
     }
 }

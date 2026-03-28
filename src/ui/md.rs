@@ -1,3 +1,5 @@
+use bio_files::gromacs::OutputControl;
+use dynamics::snapshot::SnapshotHandlers;
 use dynamics::{
     ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT,
@@ -6,16 +8,17 @@ use dynamics::{
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
-use lin_alg::f64::Vec3;
 
-use crate::md::clear_snaps;
+use crate::mol_editor::sync_md;
 use crate::{
     button,
-    cam::move_cam_to_active_mol,
     drawing::EntityClass,
     file_io::save_trajectory,
-    gromacs, label,
-    md::{MdBackend, launch_md, launch_md_energy_computation, post_run_cleanup},
+    label, md,
+    md::{
+        MdBackend, clear_snaps, launch_md, launch_md_energy_computation, post_run_cleanup,
+        start_md_energy_computation,
+    },
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
@@ -37,7 +40,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
     misc::section_box().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label("MD:");
+            ui.label(RichText::new("MD setup:").color(Color32::WHITE));
 
             match &state.dev {
                 ComputationDevice::Cpu => {
@@ -133,7 +136,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 "Run a molecular dynamics simulation on all molecules selected, using the selected dynamics package."
             )
                 .clicked() {
-                start_md(state, scene, updates)
+                md::start_md(state, scene, updates)
             }
 
             if state.volatile.gromacs_avail || state.volatile.orca_avail {
@@ -164,42 +167,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 showing, it means we've found their program on the system path.");
             }
 
-            {
-                let help_text = "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
-                ui.label("Integrator:").on_hover_text(help_text);
 
-                let prev = state.to_save.md_config.integrator.clone();
-                ComboBox::from_id_salt(4)
-                    .width(80.)
-                    .selected_text(state.to_save.md_config.integrator.to_string())
-                    .show_ui(ui, |ui| {
-                        for v in &[
-                            Integrator::Leapfrog { thermostat: Some(TAU_TEMP_DEFAULT) },
-                            Integrator::LangevinMiddle { gamma: LANGEVIN_GAMMA_DEFAULT },
-                            Integrator::VerletVelocity { thermostat: Some(TAU_TEMP_DEFAULT) },
-                        ] {
-                            ui.selectable_value(&mut state.to_save.md_config.integrator, v.clone(), v.to_string());
-                        }
-                    })
-                    .response
-                    .on_hover_text(help_text);
-
-                if state.to_save.md_config.integrator != prev {
-                    if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator &&
-                        !matches!(prev, Integrator::LangevinMiddle {gamma: _}) {
-                        state.ui.md.langevin_γ = gamma.to_string();
-                    }
-
-                    if let Integrator::VerletVelocity { thermostat } = state.to_save.md_config.integrator &&
-                        !matches!(prev, Integrator::VerletVelocity {thermostat:  _}) {
-                        if let Some(tau) = thermostat {
-                            state.ui.md.temp_tau = tau.to_string();
-                        }
-                    }
-                }
-            }
-
-            // todo: WIP
             if button!(
                 ui,
                 "Compute E",
@@ -207,39 +175,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 "Compute and display instantaneous energy of selected molecules."
             )
                 .clicked() {
-
-                // todo: DRY with teh run_md button above. C+P
-                clear_cli_out(&mut state.ui); // todo: Not working; not loaded until next frame.
-                let mut ready_to_run = true;
-
-                // Check that we have FF params and mol-specific parameters.
-                for lig in &state.ligands {
-                    if !lig.common.selected_for_md {
-                        continue;
-                    }
-
-                    if !lig.ff_params_loaded || !lig.frcmod_loaded {
-                        state.ui.popup.show_get_geostd = true;
-                        ready_to_run = false;
-                    }
-                }
-
-                if ready_to_run {
-                    let mut pep_md = state.volatile.md_local.peptide_selected.clone(); // Avoids borrow problem.
-                    match launch_md_energy_computation(state, &mut pep_md) {
-                        Ok(en) => {
-                            let data = format!("E result. PE: {:.2}, PE NB: {:.3} PE Bonded: {:.2}",
-                                               en.energy_potential, en.energy_potential_nonbonded, en.energy_potential_bonded);
-                            println!("{data}");
-                            handle_success(&mut state.ui, data);
-
-                            state.volatile.md_local.peptide_selected = pep_md;
-
-                        }
-                        Err(e) => handle_err(&mut state.ui, format!("Error computing energy: {:?}", e))
-                    }
-
-                }
+                start_md_energy_computation(state);
             }
 
             if state.volatile.md_local.running {
@@ -278,46 +214,15 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
             let num_steps_prev = state.to_save.num_md_steps;
             num_field(&mut state.to_save.num_md_steps, "Steps:", 50, ui);
 
+            // todo: Copies must be moved to be a per-molecule basis.
             num_field(&mut state.to_save.num_md_copies, "Copies:", 32, ui);
+
+            output_control(state, ui);
 
             if state.to_save.num_md_steps != num_steps_prev {
                 state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
             }
 
-            ui.label("dt (ps):");
-            if ui
-                .add_sized(
-                    [46., Ui::available_height(ui)],
-                    TextEdit::singleline(&mut state.ui.md.dt_input),
-                )
-                .changed()
-                && let Ok(v) = state.ui.md.dt_input.parse::<f32>() {
-                state.to_save.md_dt = v;
-                state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * v;
-            }
-
-            ui.add_space(COL_SPACING / 2.);
-
-            // todo: Dropdown to select shake vs linear vs no.
-            {
-                let help_text = "Set to Constrained to allow higher time steps; Flexible may more more accurate.";
-                ui.label("H:").on_hover_text(help_text);
-                ComboBox::from_id_salt(5)
-                    .width(80.)
-                    .selected_text(state.to_save.md_config.hydrogen_constraint.to_string())
-                    .show_ui(ui, |ui| {
-                        // todo: Don't hard-code shake tol
-                        for v in &[
-                            HydrogenConstraint::Linear { order: LINCS_ORDER_DEFAULT, iter: LINCS_ITER_DEFAULT },
-                            HydrogenConstraint::Shake { shake_tolerance: SHAKE_TOL_DEFAULT},
-                            HydrogenConstraint::Flexible
-                        ] {
-                            ui.selectable_value(&mut state.to_save.md_config.hydrogen_constraint, *v, v.to_string());
-                        }
-                    })
-                    .response
-                    .on_hover_text(help_text);
-            }
             ui.add_space(COL_SPACING / 2.);
 
             // todo: Add snapshot cfg
@@ -325,38 +230,160 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
             // int_field_usize(&mut state.to_save.md_config.snapshot_ratio_file, "Snapshot ratio:", ui);
 
-            let mut relax = state.to_save.md_config.max_init_relaxation_iters.is_some();
-            let relax_prev = relax;
-            ui.label("Relax:");
-            ui.checkbox(&mut relax, "").on_hover_text("Perform an initial relaxation of atom positions prior to starting MD. \
-            This minimizes energy, and can take some time.");
-            if relax != relax_prev {
-                if relax {
-                    state.to_save.md_config.max_init_relaxation_iters = MdConfig::default().max_init_relaxation_iters;
-                } else {
-                    state.to_save.md_config.max_init_relaxation_iters = None;
-                }
-            }
 
             ui.add_space(COL_SPACING / 2.);
             ui.label(format!("Runtime: {:.1} ps", state.volatile.md_local.run_time));
+        });
 
-            if let Some(md) = &state.volatile.md_local.mol_dynamics && state.ui.current_snapshot < md.snapshots.len() {
-                energy_disp(&md.snapshots[state.ui.current_snapshot], ui);
-            }
+        ui.add_space(ROW_SPACING / 2.);
+        ui.horizontal_wrapped(|ui| {
+            integrator_cfg(state, ui,);
         });
 
         ui.add_space(ROW_SPACING / 2.);
         ui.horizontal_wrapped(|ui| {
             temp_pressure(state, ui,);
-        })
+        });
+
+        if let Some(md) = &state.volatile.md_local.mol_dynamics && state.ui.current_snapshot < md.snapshots.len() {
+            ui.add_space(ROW_SPACING / 2.);
+
+            ui.horizontal_wrapped(|ui| {
+                energy_disp(&md.snapshots[state.ui.current_snapshot], ui);
+            });
+        }
     });
 
     misc::dynamics_player(state, scene, updates, ui);
 }
 
+/// Section for integrator config, various modelling parameters etc
+fn integrator_cfg(state: &mut State, ui: &mut Ui) {
+    ui.label(RichText::new("Integrator:").color(Color32::WHITE));
+    ui.add_space(COL_SPACING / 2.);
+
+    {
+        let help_text =
+            "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
+        ui.label("Integrator:").on_hover_text(help_text);
+
+        let prev = state.to_save.md_config.integrator.clone();
+        ComboBox::from_id_salt(4)
+            .width(80.)
+            .selected_text(state.to_save.md_config.integrator.to_string())
+            .show_ui(ui, |ui| {
+                for v in &[
+                    Integrator::Leapfrog {
+                        thermostat: Some(TAU_TEMP_DEFAULT),
+                    },
+                    Integrator::LangevinMiddle {
+                        gamma: LANGEVIN_GAMMA_DEFAULT,
+                    },
+                    Integrator::VerletVelocity {
+                        thermostat: Some(TAU_TEMP_DEFAULT),
+                    },
+                ] {
+                    ui.selectable_value(
+                        &mut state.to_save.md_config.integrator,
+                        v.clone(),
+                        v.to_string(),
+                    );
+                }
+            })
+            .response
+            .on_hover_text(help_text);
+
+        if state.to_save.md_config.integrator != prev {
+            if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator
+                && !matches!(prev, Integrator::LangevinMiddle { gamma: _ })
+            {
+                state.ui.md.langevin_γ = gamma.to_string();
+            }
+
+            if let Integrator::VerletVelocity { thermostat } = state.to_save.md_config.integrator
+                && !matches!(prev, Integrator::VerletVelocity { thermostat: _ })
+            {
+                if let Some(tau) = thermostat {
+                    state.ui.md.temp_tau = tau.to_string();
+                }
+            }
+        }
+    }
+
+    ui.add_space(COL_SPACING / 2.);
+
+    ui.label("dt (ps):");
+    if ui
+        .add_sized(
+            [46., Ui::available_height(ui)],
+            TextEdit::singleline(&mut state.ui.md.dt_input),
+        )
+        .changed()
+        && let Ok(v) = state.ui.md.dt_input.parse::<f32>()
+    {
+        state.to_save.md_dt = v;
+        state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * v;
+    }
+
+    ui.add_space(COL_SPACING / 2.);
+
+    {
+        let help_text =
+            "Set to Constrained to allow higher time steps; Flexible may more more accurate.";
+        ui.label("H:").on_hover_text(help_text);
+        ComboBox::from_id_salt(5)
+            .width(80.)
+            .selected_text(state.to_save.md_config.hydrogen_constraint.to_string())
+            .show_ui(ui, |ui| {
+                // todo: Don't hard-code shake tol
+                for v in &[
+                    HydrogenConstraint::Linear {
+                        order: LINCS_ORDER_DEFAULT,
+                        iter: LINCS_ITER_DEFAULT,
+                    },
+                    HydrogenConstraint::Shake {
+                        shake_tolerance: SHAKE_TOL_DEFAULT,
+                    },
+                    HydrogenConstraint::Flexible,
+                ] {
+                    ui.selectable_value(
+                        &mut state.to_save.md_config.hydrogen_constraint,
+                        *v,
+                        v.to_string(),
+                    );
+                }
+            })
+            .response
+            .on_hover_text(help_text);
+    }
+
+    ui.add_space(COL_SPACING / 2.);
+
+    {
+        let mut relax = state.to_save.md_config.max_init_relaxation_iters.is_some();
+        let relax_prev = relax;
+        ui.label("Relax:");
+        ui.checkbox(&mut relax, "").on_hover_text(
+            "Perform an initial relaxation of atom positions prior to starting MD. \
+            This minimizes energy, and can take some time.",
+        );
+        if relax != relax_prev {
+            if relax {
+                state.to_save.md_config.max_init_relaxation_iters =
+                    MdConfig::default().max_init_relaxation_iters;
+            } else {
+                state.to_save.md_config.max_init_relaxation_iters = None;
+            }
+        }
+    }
+}
+
+/// Section for temp/pressure/ambient data
 fn temp_pressure(state: &mut State, ui: &mut Ui) {
     // We show this even if there is no thermostat, to set the initial temperature.
+    ui.label(RichText::new("Ambient:").color(Color32::WHITE));
+    ui.add_space(COL_SPACING / 2.);
+
     ui.label("Temp (K):");
     if ui
         .add_sized(
@@ -458,7 +485,7 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
 
         let prev = state.to_save.md_config.sim_box.clone();
         ComboBox::from_id_salt(10)
-            .width(80.)
+            .width(60.)
             .selected_text(txt)
             .show_ui(ui, |ui| {
                 for v in &[
@@ -478,6 +505,8 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
                 .md
                 .sync(&state.to_save.md_config, state.to_save.md_dt);
         }
+
+        ui.add_space(COL_SPACING / 2.);
 
         match &mut state.to_save.md_config.sim_box {
             SimBoxInit::Pad(pad_v) => {
@@ -583,95 +612,317 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
 }
 
 pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
+    let Some(en) = &snap.energy_data else { return };
+
+    ui.label(RichText::new("Energy (current snap):").color(Color32::WHITE));
     ui.add_space(COL_SPACING / 2.);
+
     ui.label("E (kcal/mol) KE: ");
-    ui.label(RichText::new(format!("{:.1}", snap.energy_kinetic)).color(Color32::GOLD));
+    ui.label(RichText::new(format!("{:.1}", en.energy_kinetic)).color(Color32::GOLD));
 
     ui.label("KE/atom: ");
     // todo: Don't continuously run these computations!
     let atom_count = (snap.water_o_posits.len() * 3) as f32 + snap.atom_posits.len() as f32;
-    let ke_per_atom = snap.energy_kinetic / atom_count;
+    let ke_per_atom = en.energy_kinetic / atom_count;
     label!(ui, format!("{:.2}", ke_per_atom), Color32::GOLD);
 
     ui.label("PE: ");
-    label!(ui, format!("{:.2}", snap.energy_potential), Color32::GOLD);
+    label!(ui, format!("{:.2}", en.energy_potential), Color32::GOLD);
 
     ui.label("PE NB: ");
     label!(
         ui,
-        format!("{:.2}", snap.energy_potential_nonbonded),
+        format!("{:.2}", en.energy_potential_nonbonded),
         Color32::GOLD
     );
 
     ui.label("PE/atom: ");
     // todo: Don't continuously run this!
-    let pe_per_atom = snap.energy_potential / atom_count;
+    let pe_per_atom = en.energy_potential / atom_count;
     label!(ui, format!("{:.3}", pe_per_atom), Color32::GOLD);
 
     ui.label("E tot: ");
     // todo: Don't continuously run this!
-    let e = snap.energy_potential + snap.energy_kinetic;
+    let e = en.energy_potential + en.energy_kinetic;
     label!(ui, format!("{:.3}", e), Color32::GOLD);
 
     ui.label("PE between mols:");
     // todo: One pair only for now
-    if snap.energy_potential_between_mols.len() >= 2 {
+    if en.energy_potential_between_mols.len() >= 2 {
         // todo: Which index?
         ui.label(
-            RichText::new(format!("{:.2}", snap.energy_potential_between_mols[1]))
+            RichText::new(format!("{:.2}", en.energy_potential_between_mols[1]))
                 .color(Color32::GOLD),
         );
     }
 
     ui.label("Temp: ");
-    label!(ui, format!("{:.1} K", snap.temperature), Color32::GOLD);
+    label!(ui, format!("{:.1} K", en.temperature), Color32::GOLD);
 
     ui.label("P: ");
-    label!(ui, format!("{:.1} bar", snap.pressure), Color32::GOLD);
+    label!(ui, format!("{:.1} bar", en.pressure), Color32::GOLD);
 }
 
-fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    clear_cli_out(&mut state.ui);
-    let mut ready_to_run = true;
+fn output_control(state: &mut State, ui: &mut Ui) {
+    // Helper constant for ratio text-box width.
+    const RATIO_W: f32 = 34.;
 
-    // Check that we have FF params and mol-specific parameters.
-    for lig in &state.ligands {
-        if !lig.common.selected_for_md {
-            continue;
-        }
-        if !lig.ff_params_loaded || !lig.frcmod_loaded {
-            state.ui.popup.show_get_geostd = true;
-            ready_to_run = false;
+    let mut sync = false;
+
+    let help = "Save snapshots/frames in memory.";
+    ui.label("Mem:").on_hover_text(help);
+    if ui
+        .checkbox(&mut state.ui.md.mem_enabled, "")
+        .on_hover_text(help)
+        .changed()
+    {
+        state.to_save.md_config.snapshot_handlers.memory = if state.ui.md.mem_enabled {
+            SnapshotHandlers::default().memory
+        } else {
+            None
+        };
+    }
+
+    if let Some(ratio) = &mut state.to_save.md_config.snapshot_handlers.memory {
+        ui.label("-");
+        if ui
+            .add_sized(
+                [RATIO_W, Ui::available_height(ui)],
+                TextEdit::singleline(&mut state.ui.md.ratio_mem),
+            )
+            .on_hover_text("Save every Nth step to memory")
+            .changed()
+            && let Ok(v) = state.ui.md.ratio_mem.parse::<usize>()
+        {
+            *ratio = v;
         }
     }
 
-    if !ready_to_run {
-        return;
+    ui.add_space(COL_SPACING / 2.);
+
+    // --- TRR (position / velocity / force each have their own ratio) ---
+    {
+        let help = "Save frames to TRR format (full-precision coordinates, velocities, forces; \
+            used by GROMACS). Each field sets the write interval in steps (0 = off).";
+        ui.label("TRR:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.trr_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            let gc = state
+                .to_save
+                .md_config
+                .snapshot_handlers
+                .gromacs
+                .get_or_insert_with(Default::default);
+
+            if state.ui.md.trr_enabled {
+                // Enable with defaults if all three are currently None.
+                if gc.nstxout.is_none() && gc.nstvout.is_none() && gc.nstfout.is_none() {
+                    let default = OutputControl::default();
+
+                    gc.nstxout = default.nstxout;
+                    gc.nstvout = default.nstvout;
+                    gc.nstfout = default.nstfout;
+                    changed = true;
+                }
+            } else {
+                gc.nstxout = None;
+                gc.nstvout = None;
+                gc.nstfout = None;
+            }
+        }
+
+        if state.ui.md.trr_enabled {
+            let gc = state
+                .to_save
+                .md_config
+                .snapshot_handlers
+                .gromacs
+                .get_or_insert_with(Default::default);
+
+            ui.label("pos:");
+            let pos_active = gc.nstxout.is_some();
+            let mut pos_en = pos_active;
+
+            if ui.checkbox(&mut pos_en, "").changed() {
+                gc.nstxout = if pos_en { Some(100) } else { None };
+            }
+            if let Some(r) = &mut gc.nstxout {
+                if ui
+                    .add_sized(
+                        [RATIO_W, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.ratio_trr_coords),
+                    )
+                    .on_hover_text("Write coordinates every N steps")
+                    .changed()
+                    && let Ok(v) = state.ui.md.ratio_trr_coords.parse::<u32>()
+                {
+                    *r = v;
+                }
+            }
+
+            ui.label("vel:");
+            let mut vel_en = gc.nstvout.is_some();
+            if ui.checkbox(&mut vel_en, "").changed() {
+                gc.nstvout = if vel_en { Some(100) } else { None };
+            }
+            if let Some(r) = &mut gc.nstvout {
+                if ui
+                    .add_sized(
+                        [RATIO_W, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.ratio_trr_vel),
+                    )
+                    .on_hover_text("Write velocities every N steps")
+                    .changed()
+                    && let Ok(v) = state.ui.md.ratio_trr_vel.parse::<u32>()
+                {
+                    *r = v;
+                }
+            }
+
+            ui.label("f:");
+            let mut f_en = gc.nstfout.is_some();
+            if ui.checkbox(&mut f_en, "").changed() {
+                gc.nstfout = if f_en { Some(100) } else { None };
+            }
+            if let Some(r) = &mut gc.nstfout {
+                if ui
+                    .add_sized(
+                        [RATIO_W, Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.md.ratio_trr_force),
+                    )
+                    .on_hover_text("Write forces every N steps")
+                    .changed()
+                    && let Ok(v) = state.ui.md.ratio_trr_force.parse::<u32>()
+                {
+                    *r = v;
+                }
+            }
+        }
     }
 
-    let center = match &state.peptide {
-        Some(m) => m.center,
-        None => Vec3::new(0., 0., 0.),
-    };
-    // todo: Set a loading indicator, and trigger the build next GUI frame.
-    move_cam_to_active_mol(state, scene, center, updates);
+    ui.add_space(COL_SPACING / 2.);
 
-    match state.to_save.md_backend {
-        MdBackend::Dynamics => {
-            handle_success(
-                &mut state.ui,
-                "Running MD. Initializing water, and relaxing the molecules...".to_string(),
-            );
+    // --- XTC ---
+    {
+        let help = "Save frames to XTC format (compressed coordinates; used by GROMACS). \
+            Requires mdtraj (pip install mdtraj).";
+        ui.label("XTC:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.xtc_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            let gc = state
+                .to_save
+                .md_config
+                .snapshot_handlers
+                .gromacs
+                .get_or_insert_with(Default::default);
 
-            // We will wait a frame so we can display the message above.
-            state.volatile.md_local.launching = true;
+            state.to_save.md_config.snapshot_handlers.xtc = if state.ui.md.xtc_enabled {
+                Some(100)
+            } else {
+                None
+            };
         }
-        MdBackend::Gromacs => {
-            handle_success(&mut state.ui, "\nRunning MD with GROMACS...".to_string());
-            // We will wait a frame so we can display the message above.
-            gromacs::launch_md(state)
+
+        if let Some(ratio) = &mut state.to_save.md_config.snapshot_handlers.xtc {
+            ui.label("-");
+            if ui
+                .add_sized(
+                    [RATIO_W, Ui::available_height(ui)],
+                    TextEdit::singleline(&mut state.ui.md.ratio_xtc),
+                )
+                .on_hover_text("Write XTC frame every N steps")
+                .changed()
+                && let Ok(v) = state.ui.md.ratio_xtc.parse::<usize>()
+            {
+                *ratio = v;
+            }
         }
-        // todo: For now, we launch ORCA MD from the ORCA UI.
-        MdBackend::Orca => {}
+    }
+
+    ui.add_space(COL_SPACING / 2.);
+
+    // --- DCD ---
+    {
+        let help =
+            "Save frames to DCD format (full-precision coordinates; used by CHARMM, NAMD, OpenMM).";
+        ui.label("DCD:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.dcd_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            state.to_save.md_config.snapshot_handlers.dcd = if state.ui.md.dcd_enabled {
+                Some(100)
+            } else {
+                None
+            };
+        }
+
+        if let Some(ratio) = &mut state.to_save.md_config.snapshot_handlers.dcd {
+            ui.label("-");
+            if ui
+                .add_sized(
+                    [RATIO_W, Ui::available_height(ui)],
+                    TextEdit::singleline(&mut state.ui.md.ratio_dcd),
+                )
+                .on_hover_text("Write DCD frame every N steps")
+                .changed()
+                && let Ok(v) = state.ui.md.ratio_dcd.parse::<usize>()
+            {
+                *ratio = v;
+            }
+        }
+    }
+
+    ui.add_space(COL_SPACING / 2.);
+
+    // --- Energy (EDR) ---
+    {
+        let help = "Write energy data to .edr every N steps.";
+        ui.label("EDR:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.energy_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            let gc = state
+                .to_save
+                .md_config
+                .snapshot_handlers
+                .gromacs
+                .get_or_insert_with(Default::default);
+            gc.nstenergy = if state.ui.md.energy_enabled {
+                Some(100)
+            } else {
+                None
+            };
+        }
+
+        let gc = state
+            .to_save
+            .md_config
+            .snapshot_handlers
+            .gromacs
+            .get_or_insert_with(Default::default);
+        if let Some(r) = &mut gc.nstenergy {
+            ui.label("-");
+            if ui
+                .add_sized(
+                    [RATIO_W, Ui::available_height(ui)],
+                    TextEdit::singleline(&mut state.ui.md.ratio_energy),
+                )
+                .on_hover_text("Write energy every N steps")
+                .changed()
+                && let Ok(v) = state.ui.md.ratio_energy.parse::<u32>()
+            {
+                *r = v;
+            }
+        }
     }
 }

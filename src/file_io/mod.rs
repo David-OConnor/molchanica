@@ -97,7 +97,7 @@ impl State {
             // todo: lib, .dat etc as required. Using Amber force fields and its format
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
-            "dcd" | "xtc" | "mdt" | "trr" => self.open_trajectory(path)?,
+            "dcd" | "xtc" | "trr" => self.open_trajectory(path)?,
             // "pmp" => self.open_pharmacophore(path)?,
             "parquet" => self.load_parquet_db(path),
             _ => {
@@ -399,10 +399,13 @@ impl State {
         Ok(())
     }
 
-    /// Open a DTD (or perhaps more later) file. This is a trajectory of a MD run.
-    /// todo: We have our own native format as well; support that too.
+    /// Open a DCD (or perhaps more later) file. This is a trajectory of a MD run.
     pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
-        let snapshots = dynamics::load_snapshots_from_file(path)?;
+        // todo: Update this to use our new interface. Should open an interface to this
+        // todo file, and allow loading specific snaps/frames on demand.
+
+        // let snapshots = dynamics::load_snapshots_from_file(path)?;
+        let snapshots = Vec::new();
 
         if self.volatile.md_local.mol_dynamics.is_none() {
             launch_md(self, false, true);
@@ -541,16 +544,20 @@ impl State {
                     ));
                 }
             },
-            "dcd" | "xtc" | "mdt" | "trr" => {
+            "dcd" | "xtc" | "trr" => {
                 if let Some(md) = &self.volatile.md_local.mol_dynamics {
-                    // This function in the `dynamics` lib will handle saving in the appropriate format
-                    // for the given file extension.
-                    if md.save_snapshots_to_file(path, ratio).is_err() {
-                        return Err(io::Error::new(
-                            ErrorKind::InvalidData,
-                            "Probably saving the MD trajectory to a file.",
-                        ));
-                    }
+                    //
+                    // // This function in the `dynamics` lib will handle saving in the appropriate format
+                    // // for the given file extension.
+                    // if md.save_snapshots_to_file(path).is_err() {
+                    //     return Err(io::Error::new(
+                    //         ErrorKind::InvalidData,
+                    //         "Probably saving the MD trajectory to a file.",
+                    //     ));
+                    // }
+                    return Err(io::Error::other(
+                        "Manually saving snapshots removed for now at least.",
+                    ));
                 } else {
                     return Err(io::Error::new(
                         ErrorKind::InvalidData,
@@ -999,7 +1006,7 @@ impl Default for FileDialogs {
                 "All",
                 vec![
                     "cif", "mol2", "sdf", "xyz", "pdbqt", "map", "mtz", "frcmod", "dat", "prmtop",
-                    "pmp", "parquet",
+                    "pmp", "parquet", "trr", "xtc", "dcd",
                 ],
             )
             .add_file_filter_extensions(
@@ -1010,10 +1017,11 @@ impl Default for FileDialogs {
             .add_file_filter_extensions("Density", vec!["map", "mtz", "cif"])
             .add_file_filter_extensions("Mol dynamics", vec!["frcmod", "dat", "lib", "prmtop"])
             //
-            .add_file_filter_extensions("DCD (trajectory)", vec!["dcd"])
+            .add_file_filter_extensions("TRR (trajectory)", vec!["trr"])
             .add_file_filter_extensions("XTC (trajectory)", vec!["xtc"])
-            .add_file_filter_extensions("MDT (trajectory)", vec!["mdt"])
-            .add_file_filter_extensions("PMP (Phormacophore)", vec!["pmp"])
+            .add_file_filter_extensions("DCD (trajectory)", vec!["dcd"])
+            //
+            .add_file_filter_extensions("PMP (Pharmacophore)", vec!["pmp"])
             .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
             //
             .add_save_extension("Protein (CIF)", "cif")
@@ -1024,11 +1032,12 @@ impl Default for FileDialogs {
             .add_save_extension("Map", "map")
             .add_save_extension("MTZ", "mtz")
             .add_save_extension("Prmtop", "prmtop")
-            .add_save_extension("DCD", "dcd")
+            //
             .add_save_extension("TRR", "trr")
             .add_save_extension("XTC", "xtc")
-            .add_save_extension("MDT", "mdt") // Our own trajectory format
-            .add_save_extension("Phormacophore", "pmp"); // Our own phormacophore format
+            .add_save_extension("DCD", "dcd")
+            //
+            .add_save_extension("Pharmacophore", "pmp"); // Our own phormacophore format
 
         let load = FileDialog::with_config(cfg_all.clone()).default_file_filter("All");
         let save = FileDialog::with_config(cfg_all).default_save_extension("Protein");
