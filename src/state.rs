@@ -576,18 +576,11 @@ impl Default for StateUiMd {
             temp_tau: Default::default(),
             peptide_only_near_ligs: true,
             peptide_static: true,
-            
+
             mem_enabled: true,
             trr_enabled: true,
             dcd_enabled: false,
             xtc_enabled: true,
-            ratio_mem: Default::default(),
-            ratio_trr_coords: Default::default(),
-            ratio_trr_vel: Default::default(),
-            ratio_trr_force: Default::default(),
-            ratio_xtc: Default::default(),
-            ratio_dcd: Default::default(),
-        }
         }
     }
 }
@@ -617,41 +610,11 @@ impl StateUiMd {
         let sh = &md_cfg.snapshot_handlers;
 
         self.mem_enabled = sh.memory.is_some();
-        if let Some(r) = sh.memory {
-            self.ratio_mem = r.to_string();
-        }
-
+        self.trr_enabled = sh.gromacs.nstxout.is_some()
+            || sh.gromacs.nstvout.is_some()
+            || sh.gromacs.nstfout.is_some();
+        self.xtc_enabled = sh.gromacs.nstxout_compressed.is_some();
         self.dcd_enabled = sh.dcd.is_some();
-        if let Some(r) = sh.dcd {
-            self.ratio_dcd = r.to_string();
-        }
-
-        self.xtc_enabled = sh.xtc.is_some();
-        if let Some(r) = sh.xtc {
-            self.ratio_xtc = r.to_string();
-        }
-
-        if let Some(gc) = &sh.gromacs {
-            self.trr_enabled =
-                gc.nstxout.is_some() || gc.nstvout.is_some() || gc.nstfout.is_some();
-            if let Some(r) = gc.nstxout {
-                self.ratio_trr_coords = r.to_string();
-            }
-            if let Some(r) = gc.nstvout {
-                self.ratio_trr_vel = r.to_string();
-            }
-            if let Some(r) = gc.nstfout {
-                self.ratio_trr_force = r.to_string();
-            }
-
-            self.energy_enabled = gc.nstenergy.is_some();
-            if let Some(r) = gc.nstenergy {
-                self.ratio_energy = r.to_string();
-            }
-        } else {
-            self.trr_enabled = false;
-            self.energy_enabled = false;
-        }
     }
 }
 

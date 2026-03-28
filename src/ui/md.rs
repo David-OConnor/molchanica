@@ -664,265 +664,41 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
 }
 
 fn output_control(state: &mut State, ui: &mut Ui) {
-    // Helper constant for ratio text-box width.
-    const RATIO_W: f32 = 34.;
+    let mut sync_ui = false;
 
-    let mut sync = false;
+    const INPUT_WIDTH: u16 = 32;
 
-    let help = "Save snapshots/frames in memory.";
-    ui.label("Mem:").on_hover_text(help);
-    if ui
-        .checkbox(&mut state.ui.md.mem_enabled, "")
-        .on_hover_text(help)
-        .changed()
     {
-        state.to_save.md_config.snapshot_handlers.memory = if state.ui.md.mem_enabled {
-            SnapshotHandlers::default().memory
-        } else {
-            None
-        };
-    }
-
-    if let Some(ratio) = &mut state.to_save.md_config.snapshot_handlers.memory {
-        ui.label("-");
+        let help = "Save snapshots/frames in memory.";
+        ui.label("Mem:").on_hover_text(help);
         if ui
-            .add_sized(
-                [RATIO_W, Ui::available_height(ui)],
-                TextEdit::singleline(&mut state.ui.md.ratio_mem),
-            )
-            .on_hover_text("Save every Nth step to memory")
-            .changed()
-            && let Ok(v) = state.ui.md.ratio_mem.parse::<usize>()
-        {
-            *ratio = v;
-        }
-    }
-
-    ui.add_space(COL_SPACING / 2.);
-
-    // --- TRR (position / velocity / force each have their own ratio) ---
-    {
-        let help = "Save frames to TRR format (full-precision coordinates, velocities, forces; \
-            used by GROMACS). Each field sets the write interval in steps (0 = off).";
-        ui.label("TRR:").on_hover_text(help);
-        if ui
-            .checkbox(&mut state.ui.md.trr_enabled, "")
+            .checkbox(&mut state.ui.md.mem_enabled, "")
             .on_hover_text(help)
             .changed()
         {
-            let gc = state
-                .to_save
-                .md_config
-                .snapshot_handlers
-                .gromacs
-                .get_or_insert_with(Default::default);
-
-            if state.ui.md.trr_enabled {
-                // Enable with defaults if all three are currently None.
-                if gc.nstxout.is_none() && gc.nstvout.is_none() && gc.nstfout.is_none() {
-                    let default = OutputControl::default();
-
-                    gc.nstxout = default.nstxout;
-                    gc.nstvout = default.nstvout;
-                    gc.nstfout = default.nstfout;
-                    changed = true;
-                }
-            } else {
-                gc.nstxout = None;
-                gc.nstvout = None;
-                gc.nstfout = None;
-            }
-        }
-
-        if state.ui.md.trr_enabled {
-            let gc = state
-                .to_save
-                .md_config
-                .snapshot_handlers
-                .gromacs
-                .get_or_insert_with(Default::default);
-
-            ui.label("pos:");
-            let pos_active = gc.nstxout.is_some();
-            let mut pos_en = pos_active;
-
-            if ui.checkbox(&mut pos_en, "").changed() {
-                gc.nstxout = if pos_en { Some(100) } else { None };
-            }
-            if let Some(r) = &mut gc.nstxout {
-                if ui
-                    .add_sized(
-                        [RATIO_W, Ui::available_height(ui)],
-                        TextEdit::singleline(&mut state.ui.md.ratio_trr_coords),
-                    )
-                    .on_hover_text("Write coordinates every N steps")
-                    .changed()
-                    && let Ok(v) = state.ui.md.ratio_trr_coords.parse::<u32>()
-                {
-                    *r = v;
-                }
-            }
-
-            ui.label("vel:");
-            let mut vel_en = gc.nstvout.is_some();
-            if ui.checkbox(&mut vel_en, "").changed() {
-                gc.nstvout = if vel_en { Some(100) } else { None };
-            }
-            if let Some(r) = &mut gc.nstvout {
-                if ui
-                    .add_sized(
-                        [RATIO_W, Ui::available_height(ui)],
-                        TextEdit::singleline(&mut state.ui.md.ratio_trr_vel),
-                    )
-                    .on_hover_text("Write velocities every N steps")
-                    .changed()
-                    && let Ok(v) = state.ui.md.ratio_trr_vel.parse::<u32>()
-                {
-                    *r = v;
-                }
-            }
-
-            ui.label("f:");
-            let mut f_en = gc.nstfout.is_some();
-            if ui.checkbox(&mut f_en, "").changed() {
-                gc.nstfout = if f_en { Some(100) } else { None };
-            }
-            if let Some(r) = &mut gc.nstfout {
-                if ui
-                    .add_sized(
-                        [RATIO_W, Ui::available_height(ui)],
-                        TextEdit::singleline(&mut state.ui.md.ratio_trr_force),
-                    )
-                    .on_hover_text("Write forces every N steps")
-                    .changed()
-                    && let Ok(v) = state.ui.md.ratio_trr_force.parse::<u32>()
-                {
-                    *r = v;
-                }
-            }
-        }
-    }
-
-    ui.add_space(COL_SPACING / 2.);
-
-    // --- XTC ---
-    {
-        let help = "Save frames to XTC format (compressed coordinates; used by GROMACS). \
-            Requires mdtraj (pip install mdtraj).";
-        ui.label("XTC:").on_hover_text(help);
-        if ui
-            .checkbox(&mut state.ui.md.xtc_enabled, "")
-            .on_hover_text(help)
-            .changed()
-        {
-            let gc = state
-                .to_save
-                .md_config
-                .snapshot_handlers
-                .gromacs
-                .get_or_insert_with(Default::default);
-
-            state.to_save.md_config.snapshot_handlers.xtc = if state.ui.md.xtc_enabled {
-                Some(100)
+            state.to_save.md_config.snapshot_handlers.memory = if state.ui.md.mem_enabled {
+                SnapshotHandlers::default().memory
             } else {
                 None
             };
+
+            sync_ui = true;
         }
 
-        if let Some(ratio) = &mut state.to_save.md_config.snapshot_handlers.xtc {
-            ui.label("-");
-            if ui
-                .add_sized(
-                    [RATIO_W, Ui::available_height(ui)],
-                    TextEdit::singleline(&mut state.ui.md.ratio_xtc),
-                )
-                .on_hover_text("Write XTC frame every N steps")
-                .changed()
-                && let Ok(v) = state.ui.md.ratio_xtc.parse::<usize>()
-            {
-                *ratio = v;
-            }
+        if state.to_save.md_config.snapshot_handlers.memory.is_some() {
+            num_field_option(
+                &mut state.to_save.md_config.snapshot_handlers.memory,
+                "Steps:",
+                INPUT_WIDTH,
+                ui,
+            );
         }
     }
 
-    ui.add_space(COL_SPACING / 2.);
-
-    // --- DCD ---
-    {
-        let help =
-            "Save frames to DCD format (full-precision coordinates; used by CHARMM, NAMD, OpenMM).";
-        ui.label("DCD:").on_hover_text(help);
-        if ui
-            .checkbox(&mut state.ui.md.dcd_enabled, "")
-            .on_hover_text(help)
-            .changed()
-        {
-            state.to_save.md_config.snapshot_handlers.dcd = if state.ui.md.dcd_enabled {
-                Some(100)
-            } else {
-                None
-            };
-        }
-
-        if let Some(ratio) = &mut state.to_save.md_config.snapshot_handlers.dcd {
-            ui.label("-");
-            if ui
-                .add_sized(
-                    [RATIO_W, Ui::available_height(ui)],
-                    TextEdit::singleline(&mut state.ui.md.ratio_dcd),
-                )
-                .on_hover_text("Write DCD frame every N steps")
-                .changed()
-                && let Ok(v) = state.ui.md.ratio_dcd.parse::<usize>()
-            {
-                *ratio = v;
-            }
-        }
-    }
-
-    ui.add_space(COL_SPACING / 2.);
-
-    // --- Energy (EDR) ---
-    {
-        let help = "Write energy data to .edr every N steps.";
-        ui.label("EDR:").on_hover_text(help);
-        if ui
-            .checkbox(&mut state.ui.md.energy_enabled, "")
-            .on_hover_text(help)
-            .changed()
-        {
-            let gc = state
-                .to_save
-                .md_config
-                .snapshot_handlers
-                .gromacs
-                .get_or_insert_with(Default::default);
-            gc.nstenergy = if state.ui.md.energy_enabled {
-                Some(100)
-            } else {
-                None
-            };
-        }
-
-        let gc = state
-            .to_save
-            .md_config
-            .snapshot_handlers
-            .gromacs
-            .get_or_insert_with(Default::default);
-        if let Some(r) = &mut gc.nstenergy {
-            ui.label("-");
-            if ui
-                .add_sized(
-                    [RATIO_W, Ui::available_height(ui)],
-                    TextEdit::singleline(&mut state.ui.md.ratio_energy),
-                )
-                .on_hover_text("Write energy every N steps")
-                .changed()
-                && let Ok(v) = state.ui.md.ratio_energy.parse::<u32>()
-            {
-                *r = v;
-            }
-        }
+    if sync_ui {
+        state
+            .ui
+            .md
+            .sync(&state.to_save.md_config, state.to_save.md_dt);
     }
 }
