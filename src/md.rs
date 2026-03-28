@@ -678,16 +678,11 @@ pub fn build_dynamics(
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     cfg: &MdConfig,
-    mut static_peptide: bool,
-    mut near_lig_thresh: Option<f64>,
+    static_peptide: bool,
+    near_lig_thresh: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
 ) -> Result<MdState, ParamError> {
     println!("Setting up dynamics...");
-
-    // if mols_in.is_empty() {
-    //     static_peptide = false;
-    //     peptide_only_near_lig = None;
-    // }
 
     // Extract explicit box side-lengths so add_copies can keep molecules inside the boundary.
     // Only meaningful for Fixed boxes; Pad boxes are sized after molecule placement so we skip them.

@@ -9,7 +9,6 @@ use lin_alg::f32::Vec3 as Vec3F32;
 use lin_alg::f64::Vec3;
 
 use crate::md::clear_snaps;
-use crate::ui::util::query;
 use crate::{
     button,
     cam::move_cam_to_active_mol,
@@ -137,6 +136,34 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 start_md(state, scene, updates)
             }
 
+            if state.volatile.gromacs_avail || state.volatile.orca_avail {
+                ui.add_space(COL_SPACING / 2.);
+                ui.label("Backend:");
+
+                let mut backends = vec![MdBackend::Dynamics];
+                if state.volatile.gromacs_avail {
+                    backends.push(MdBackend::Gromacs);
+                }
+
+                // todo: For now, we launch Orca MD from its own UI section, but we may
+                // todo wish to move it here.
+                // if state.volatile.orca_avail {
+                //     backends.push(MdBackend::Orca);
+                // }
+
+                ComboBox::from_id_salt(523)
+                    .width(80.)
+                    .selected_text(state.to_save.md_backend.to_string())
+                    .show_ui(ui, |ui| {
+                        for v in backends {
+                            ui.selectable_value(&mut state.to_save.md_backend, v.clone(), v.to_string());
+                        }
+                    })
+                    .response
+                    .on_hover_text("Select the backend to perform MD: Dynamics (Native), GROMACS, or ORCA. If GROMACS or ORCA is \
+                showing, it means we've found their program on the system path.");
+            }
+
             {
                 let help_text = "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
                 ui.label("Integrator:").on_hover_text(help_text);
@@ -170,34 +197,6 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                         }
                     }
                 }
-            }
-
-            if state.volatile.gromacs_avail || state.volatile.orca_avail {
-                ui.add_space(COL_SPACING / 2.);
-                ui.label("Backend:");
-
-                let mut backends = vec![MdBackend::Dynamics];
-                if state.volatile.gromacs_avail {
-                    backends.push(MdBackend::Gromacs);
-                }
-
-                // todo: For now, we launch Orca MD from its own UI section, but we may
-                // todo wish to move it here.
-                // if state.volatile.orca_avail {
-                //     backends.push(MdBackend::Orca);
-                // }
-
-                ComboBox::from_id_salt(523)
-                    .width(80.)
-                    .selected_text(state.to_save.md_backend.to_string())
-                    .show_ui(ui, |ui| {
-                        for v in backends {
-                            ui.selectable_value(&mut state.to_save.md_backend, v.clone(), v.to_string());
-                        }
-                    })
-                    .response
-                    .on_hover_text("Select the backend to perform MD: Dynamics (Native), GROMACS, or ORCA. If GROMACS or ORCA is \
-                    showing, it means we've found their program on the system path.");
             }
 
             // todo: WIP
@@ -269,7 +268,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     ui,
                     "Save traj",
                     COLOR_ACTION,
-                    "Save the computed MD trajectory to a DCD file."
+                    "Save the computed MD trajectory to a DCD or TRR file."
                 )
                 .clicked() && save_trajectory(&mut state.volatile.dialogs.save).is_err() {
                 handle_err(&mut state.ui, "Problem saving this file".to_owned());

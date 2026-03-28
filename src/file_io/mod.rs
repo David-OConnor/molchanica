@@ -97,7 +97,7 @@ impl State {
             // todo: lib, .dat etc as required. Using Amber force fields and its format
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
-            "dcd" | "xtc" | "mdt" => self.open_trajectory(path)?,
+            "dcd" | "xtc" | "mdt" | "trr" => self.open_trajectory(path)?,
             // "pmp" => self.open_pharmacophore(path)?,
             "parquet" => self.load_parquet_db(path),
             _ => {
@@ -541,10 +541,8 @@ impl State {
                     ));
                 }
             },
-            "dcd" | "xtc" | "mdt" => {
+            "dcd" | "xtc" | "mdt" | "trr" => {
                 if let Some(md) = &self.volatile.md_local.mol_dynamics {
-                    let ratio = 2; // todo: A/R. Let the user adjust with a UI input.
-
                     // This function in the `dynamics` lib will handle saving in the appropriate format
                     // for the given file extension.
                     if md.save_snapshots_to_file(path, ratio).is_err() {
@@ -1027,6 +1025,7 @@ impl Default for FileDialogs {
             .add_save_extension("MTZ", "mtz")
             .add_save_extension("Prmtop", "prmtop")
             .add_save_extension("DCD", "dcd")
+            .add_save_extension("TRR", "trr")
             .add_save_extension("XTC", "xtc")
             .add_save_extension("MDT", "mdt") // Our own trajectory format
             .add_save_extension("Phormacophore", "pmp"); // Our own phormacophore format

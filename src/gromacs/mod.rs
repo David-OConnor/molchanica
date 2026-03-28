@@ -72,11 +72,6 @@ pub fn make_gromacs_input(
         None
     };
 
-    // if mols.is_empty() {
-    //     state.ui.md.peptide_static = false;
-    //     peptide_only_near_lig = None;
-    // }
-
     // Build molecule entries for GROMACS input.
     let molecules = match build_molecule_inputs(
         &mols,
@@ -293,6 +288,7 @@ fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
 }
 
 /// Convert GROMACS trajectory frames into `Snapshot` values.
+/// This converts positions in nm and velocities in nm/ps to Å, and Å/ps
 ///
 /// `solute_atom_count` is the number of non-water atoms (computed before solvation).
 /// Atoms beyond that index are OPC water molecules, laid out as groups of 4:
@@ -310,7 +306,7 @@ fn convert_snapshots(frames: &[GromacsFrame], solute_atom_count: usize) -> Vec<S
 
             let atom_posits: Vec<Vec3> = frame.atom_posits[..solute_end]
                 .iter()
-                .map(|p| Vec3::new(p.x as f32, p.y as f32, p.z as f32))
+                .map(|p| Vec3::new((p.x * 10.0) as f32, (p.y * 10.0) as f32, (p.z * 10.0) as f32))
                 .collect();
 
             let water_block = &frame.atom_posits[solute_end..];
@@ -322,8 +318,10 @@ fn convert_snapshots(frames: &[GromacsFrame], solute_atom_count: usize) -> Vec<S
 
             for i in 0..n_water_mols {
                 let base = i * OPC_SITES_PER_MOL;
-                let to_vec3 =
-                    |p: &lin_alg::f64::Vec3| Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+                let to_vec3 = |p: &lin_alg::f64::Vec3| {
+                    Vec3::new((p.x * 10.0) as f32, (p.y * 10.0) as f32, (p.z * 10.0) as f32)
+                };
+
                 water_o_posits.push(to_vec3(&water_block[base]));
                 water_h0_posits.push(to_vec3(&water_block[base + 1]));
                 water_h1_posits.push(to_vec3(&water_block[base + 2]));
@@ -402,6 +400,7 @@ pub fn on_gromacs_md_complete(
         state.volatile.md_local.mol_dynamics = Some(md);
         state.volatile.md_local.draw_md_mols = true;
     }
+
     handle_success(
         &mut state.ui,
         format!("GROMACS run complete in {elapsed_ms} ms"),

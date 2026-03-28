@@ -1338,12 +1338,7 @@ pub fn orca_avail() -> bool {
 
 /// Checks if GROMACS is available on the system patghg.
 pub fn gromacs_avail() -> bool {
-    match Command::new("gmx")
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-    {
+    match Command::new("gmx").arg("-version").output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);

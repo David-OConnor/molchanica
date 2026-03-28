@@ -88,6 +88,18 @@ fn main() {
         ..Default::default()
     };
 
+    if state.volatile.orca_avail {
+        println!("\nORCA is available");
+    } else {
+        println!("\nORCA is not available");
+    }
+
+    if state.volatile.gromacs_avail {
+        println!("GROMACS is available\n");
+    } else {
+        println!("GROMACS is not available\n");
+    }
+
     #[cfg(feature = "cuda")]
     if let Some(k) = kernel_reflections {
         state.kernel_reflections = Some(k);
