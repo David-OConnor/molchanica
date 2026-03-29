@@ -380,7 +380,8 @@ pub fn on_gromacs_md_complete(
                 "Problem running GROMACS; check the logs or terminal for details.".to_string()
             });
 
-        handle_err(&mut state.ui, msg);
+        state.ui.cmd_line_output = msg;
+        state.ui.cmd_line_out_is_err = true;
 
         eprintln!("GROMACS error data: \n------\n{}\n------\n", out.log_text);
         return;

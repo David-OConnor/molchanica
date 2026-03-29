@@ -98,6 +98,7 @@ pub enum OpenType {
     Map,
     Frcmod,
     Trajectory,
+    MdParams,
     ParquetDb,
 }
 
@@ -112,6 +113,7 @@ impl Display for OpenType {
             Self::Map => "Density map",
             Self::Frcmod => "Frcmod",
             Self::Trajectory => "MD Trajectory",
+            Self::MdParams => "MD Params",
             Self::ParquetDb => "Parquet DB",
         };
         write!(f, "{v}")

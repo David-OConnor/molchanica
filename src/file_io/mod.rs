@@ -7,10 +7,12 @@ use std::{
     time::Instant,
 };
 
+use bio_files::gromacs::MdpParams;
 use bio_files::{
     DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz, md_params::ForceFieldParams, sdf::Sdf,
 };
 use chrono::Utc;
+use dynamics::MdConfig;
 use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -97,7 +99,8 @@ impl State {
             // todo: lib, .dat etc as required. Using Amber force fields and its format
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
-            "dcd" | "xtc" | "trr" => self.open_trajectory(path)?,
+            "trr" | "xtc" | "dcd" => self.open_trajectory(path)?,
+            "mdp" => self.open_mdp(path)?,
             // "pmp" => self.open_pharmacophore(path)?,
             "parquet" => self.load_parquet_db(path),
             _ => {
@@ -401,7 +404,7 @@ impl State {
 
     /// Open a DCD (or perhaps more later) file. This is a trajectory of a MD run.
     pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
-        // todo: Update this to use our new interface. Should open an interface to this
+        // todo: March 2026: Update this to use our new interface. Should open an interface to this
         // todo file, and allow loading specific snaps/frames on demand.
 
         // let snapshots = dynamics::load_snapshots_from_file(path)?;
@@ -426,8 +429,24 @@ impl State {
         Ok(())
     }
 
+    /// Open a GROMACS MD params file. This configures MD run params.
+    pub fn open_mdp(&mut self, path: &Path) -> io::Result<()> {
+        self.to_save.md_config = MdConfig::load_from_mdp(path)?;
+
+        // todo temp
+        println!(
+            "\nTemp: Loaded MdConfig from MDP: {:?}\n\n",
+            self.to_save.md_config
+        );
+
+        self.update_history(path, OpenType::MdParams);
+        self.update_save_prefs();
+
+        Ok(())
+    }
+
     /// A pharmacophore that is stored independently, i.e. without an associated ligand file.
-    /// todo: FOr now at least, deprecated as a dedicated file type
+    /// todo: FOr now at least, deprecated as a dedicated file type, in favor of Mol2 or SDF annotations.
     pub fn _open_pharmacophore(&mut self, path: &Path) -> io::Result<()> {
         let mut file = File::open(path)?;
         let mut buf = Vec::new();
@@ -654,6 +673,7 @@ impl State {
                         handle_err(&mut self.ui, e.to_string());
                     }
                 }
+                OpenType::MdParams => {} // We don't re-load these directly; stored in ToSave.
                 OpenType::ParquetDb => {
                     self.load_parquet_db(&history.path);
                 }
@@ -1006,7 +1026,7 @@ impl Default for FileDialogs {
                 "All",
                 vec![
                     "cif", "mol2", "sdf", "xyz", "pdbqt", "map", "mtz", "frcmod", "dat", "prmtop",
-                    "pmp", "parquet", "trr", "xtc", "dcd",
+                    "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
                 ],
             )
             .add_file_filter_extensions(
@@ -1023,6 +1043,7 @@ impl Default for FileDialogs {
             //
             .add_file_filter_extensions("PMP (Pharmacophore)", vec!["pmp"])
             .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
+            .add_file_filter_extensions("MDP (MD params)", vec!["mdp"])
             //
             .add_save_extension("Protein (CIF)", "cif")
             .add_save_extension("Mol2", "mol2")
@@ -1036,6 +1057,7 @@ impl Default for FileDialogs {
             .add_save_extension("TRR", "trr")
             .add_save_extension("XTC", "xtc")
             .add_save_extension("DCD", "dcd")
+            .add_save_extension("MDP (MD params)", "mdp")
             //
             .add_save_extension("Pharmacophore", "pmp"); // Our own phormacophore format
 
