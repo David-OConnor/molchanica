@@ -134,6 +134,7 @@ pub fn make_gromacs_input(
             box_nm,
             ff_global,
             water_model,
+            minimize_energy: cfg.max_init_relaxation_iters.is_some(),
         },
         mols_owned,
     ))

@@ -477,6 +477,8 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     // ui.checkbox(&mut state.to_save.md_config.zero_com_drift, "Zero drift")
     //     .on_hover_text("Zero the center-of-mass of items in the simulation.");
 
+    // todo: Option to enable/disable barostat with check.
+
     let help = "The target pressure, in bar, for the barostat to maintain. The sim box changes size in \
     order to meet this.";
     ui.label("Pres (bar):").on_hover_text(help);
@@ -489,7 +491,7 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
         .changed()
         && let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>()
     {
-        state.to_save.md_config.pressure_target = *v;
+        state.to_save.md_config.pressure_target = Some(*v);
     }
 
     // Sim box controls.

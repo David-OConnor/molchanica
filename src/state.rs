@@ -588,17 +588,19 @@ impl StateUiMd {
         self.temp_input = md_cfg.temp_target.to_string();
 
         let (temp_tau, langevin_γ) = match md_cfg.integrator {
-            Integrator::Leapfrog { thermostat } => match thermostat {
-                Some(tau) => (tau, LANGEVIN_GAMMA_DEFAULT),
-                None => (TAU_TEMP_DEFAULT, LANGEVIN_GAMMA_DEFAULT),
-            },
+            Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
+                match thermostat {
+                    Some(tau) => (tau, LANGEVIN_GAMMA_DEFAULT),
+                    None => (TAU_TEMP_DEFAULT, LANGEVIN_GAMMA_DEFAULT),
+                }
+            }
             Integrator::LangevinMiddle { gamma } => (TAU_TEMP_DEFAULT, gamma),
         };
 
         self.temp_tau = temp_tau.to_string();
         self.langevin_γ = langevin_γ.to_string();
 
-        self.pressure_input = (md_cfg.pressure_target as u16).to_string();
+        self.pressure_input = md_cfg.pressure_target.unwrap_or_default().to_string();
 
         match md_cfg.sim_box {
             SimBoxInit::Pad(p) => {

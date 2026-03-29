@@ -7,9 +7,9 @@ use std::{
     time::Instant,
 };
 
-use bio_files::gromacs::MdpParams;
 use bio_files::{
-    DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz, md_params::ForceFieldParams, sdf::Sdf,
+    DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz, gromacs::MdpParams,
+    md_params::ForceFieldParams, sdf::Sdf,
 };
 use chrono::Utc;
 use dynamics::MdConfig;
@@ -435,7 +435,7 @@ impl State {
 
         // todo temp
         println!(
-            "\nTemp: Loaded MdConfig from MDP: {:?}\n\n",
+            "\nLoaded MdConfig from MDP: {:?}\n\n",
             self.to_save.md_config
         );
 
