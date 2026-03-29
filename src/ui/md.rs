@@ -707,21 +707,27 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     let e = en.energy_potential + en.energy_kinetic;
     label!(ui, format!("{:.3}", e), Color32::GOLD);
 
-    ui.label("PE between mols:");
-    // todo: One pair only for now
-    if en.energy_potential_between_mols.len() >= 2 {
-        // todo: Which index?
-        ui.label(
-            RichText::new(format!("{:.2}", en.energy_potential_between_mols[1]))
-                .color(Color32::GOLD),
-        );
-    }
+    // ui.label("PE between mols:");
+    // // todo: One pair only for now
+    // if en.energy_potential_between_mols.len() >= 2 {
+    //     // todo: Which index?
+    //     ui.label(
+    //         RichText::new(format!("{:.2}", en.energy_potential_between_mols[1]))
+    //             .color(Color32::GOLD),
+    //     );
+    // }
 
     ui.label("Temp: ");
     label!(ui, format!("{:.1} K", en.temperature), Color32::GOLD);
 
     ui.label("P: ");
     label!(ui, format!("{:.1} bar", en.pressure), Color32::GOLD);
+
+    ui.label("Vol: ");
+    label!(ui, format!("{:.1} Å^3", en.density), Color32::GOLD);
+
+    ui.label("Dens: ");
+    label!(ui, format!("{:.1} amu/Å^3", en.density), Color32::GOLD);
 }
 
 fn num_field_option<T>(val: &mut Option<T>, label: &str, width: u16, ui: &mut Ui)

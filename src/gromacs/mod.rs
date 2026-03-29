@@ -388,7 +388,7 @@ pub fn on_gromacs_md_complete(
         return;
     }
 
-    let snaps = gromacs_frames_to_ss(&out.trajectory, out.solute_atom_count);
+    let snaps = gromacs_frames_to_ss(&out);
 
     if !snaps.is_empty() {
         let mut md = MdState::default();
