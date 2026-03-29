@@ -3,10 +3,12 @@ use dynamics::{
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT,
     snapshot::{Snapshot, SnapshotHandlers},
 };
+use egui::ImageData::Color;
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 
+use crate::prefs::ToSave;
 use crate::{
     button,
     drawing::EntityClass,
@@ -81,12 +83,25 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
             // ui.add_space(COL_SPACING / 2.);
 
-            // todo loc
             if ui.button("Save MD")
                 .on_hover_text("Save MD state in GROMACS format: .gro (Molecules used for MD), \
                 .mdp (MD configuration), and .top (Force field parameters / topology) files")
                 .clicked() {
                 state.volatile.dialogs.save_md.pick_directory();
+            }
+
+            if ui.button(RichText::new("Reset").color(Color32::LIGHT_RED))
+                .on_hover_text("Reset all MD settings to defaults.")
+                .clicked() {
+
+                state.to_save.md_config = Default::default();
+
+                let to_save_default = ToSave::default();
+
+                state.to_save.md_dt = to_save_default.md_dt;
+                state.to_save.num_md_steps = to_save_default.num_md_steps;
+
+                state.ui.md.sync(&state.to_save.md_config, state.to_save.md_dt);
             }
 
             if let Some(md) = &state.volatile.md_local.mol_dynamics &&
@@ -194,22 +209,24 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 }
             }
 
-            if let Some(md) = &state.volatile.md_local.mol_dynamics && !md.snapshots.is_empty() && button!(
-                    ui,
-                    "Save traj",
-                    COLOR_ACTION,
-                    "Save the computed MD trajectory to a DCD or TRR file."
-                )
-                .clicked() && save_trajectory(&mut state.volatile.dialogs.save).is_err() {
-                handle_err(&mut state.ui, "Problem saving this file".to_owned());
-
-            }
+            // if let Some(md) = &state.volatile.md_local.mol_dynamics && !md.snapshots.is_empty() && button!(
+            //         ui,
+            //         "Save traj",
+            //         COLOR_ACTION,
+            //         "Save the computed MD trajectory to a DCD or TRR file."
+            //     )
+            //     .clicked() && save_trajectory(&mut state.volatile.dialogs.save).is_err() {
+            //     handle_err(&mut state.ui, "Problem saving this file".to_owned());
+            //
+            // }
 
             let num_steps_prev = state.to_save.num_md_steps;
             num_field(&mut state.to_save.num_md_steps, "Steps:", 50, ui);
 
             // todo: Copies must be moved to be a per-molecule basis.
             num_field(&mut state.to_save.num_md_copies, "Copies:", 32, ui);
+
+            ui.add_space(COL_SPACING / 2.);
 
             output_control(state, ui);
 
@@ -230,8 +247,17 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
         });
 
         ui.add_space(ROW_SPACING / 2.);
+
+        let help = "Cutoff distances for non-bonded forces, in Å. For Coulomb, transitions between short-range, and \
+        long-range reciprical forces at this distance. For LJ, may represent a hard-cutoff. See the appropriate docs for \
+        the backend used, details vary.";
         ui.horizontal_wrapped(|ui| {
-            integrator_cfg(state, ui,);
+            integrator_cfg(state, ui);
+
+            ui.add_space(COL_SPACING / 2.);
+            ui.label("Cutoffs (Å).").on_hover_text(help);
+            num_field(&mut state.to_save.md_config.coulomb_cutoff, "Coulomb:", 20, ui);
+            num_field(&mut state.to_save.md_config.lj_cutoff, "LJ:", 20, ui);
         });
 
         ui.add_space(ROW_SPACING / 2.);
@@ -306,12 +332,14 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
 
     ui.add_space(COL_SPACING / 2.);
 
-    ui.label("dt (ps):");
+    let help = "The simulation time step, in picoseconds. 0.001 to 0.002 are good defaults. Higher than 0.002 is risky.";
+    ui.label("dt (ps):").on_hover_text(help);
     if ui
         .add_sized(
             [46., Ui::available_height(ui)],
             TextEdit::singleline(&mut state.ui.md.dt_input),
         )
+        .on_hover_text(help)
         .changed()
         && let Ok(v) = state.ui.md.dt_input.parse::<f32>()
     {
@@ -450,12 +478,15 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     // ui.checkbox(&mut state.to_save.md_config.zero_com_drift, "Zero drift")
     //     .on_hover_text("Zero the center-of-mass of items in the simulation.");
 
-    ui.label("Pres (bar):");
+    let help = "The target pressure, in bar, for the barostat to maintain. The sim box changes size in \
+    order to meet this.";
+    ui.label("Pres (bar):").on_hover_text(help);
     if ui
         .add_sized(
             [30., Ui::available_height(ui)],
             TextEdit::singleline(&mut state.ui.md.pressure_input),
         )
+        .on_hover_text(help)
         .changed()
         && let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>()
     {
@@ -468,7 +499,9 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
 
 fn sim_box(state: &mut State, ui: &mut Ui) {
     {
-        ui.label("Box (Å):");
+        let help = "Set the sim box size. Affects wrapping, SPME logic, and \
+        solvent initialization and behavior.";
+        ui.label("Box (Å):").on_hover_text(help);
 
         // Select Fixed or Pad
         let txt = if matches!(state.to_save.md_config.sim_box, SimBoxInit::Fixed(_)) {
@@ -681,6 +714,10 @@ where
 }
 
 fn output_control(state: &mut State, ui: &mut Ui) {
+    ui.label("Output.").on_hover_text("These settings control which formats, and how often \
+    to save the output trajectory to. 'Mem' only affects the Dyanmics backend. TRR positions are required to display \
+    GROMACS trajectories in the UI automatically");
+
     let mut sync_ui = false;
     const W: u16 = 44;
     let sh_def = SnapshotHandlers::default();
@@ -706,33 +743,6 @@ fn output_control(state: &mut State, ui: &mut Ui) {
         if state.to_save.md_config.snapshot_handlers.memory.is_some() {
             num_field_option(
                 &mut state.to_save.md_config.snapshot_handlers.memory,
-                "R:",
-                W,
-                ui,
-            );
-        }
-    }
-
-    // DCD
-    {
-        let help = "Save trajectory to a DCD file.";
-        ui.label("DCD:").on_hover_text(help);
-        if ui
-            .checkbox(&mut state.ui.md.dcd_enabled, "")
-            .on_hover_text(help)
-            .changed()
-        {
-            state.to_save.md_config.snapshot_handlers.dcd = if state.ui.md.dcd_enabled {
-                sh_def.memory
-            } else {
-                None
-            };
-            sync_ui = true;
-        }
-
-        if state.to_save.md_config.snapshot_handlers.dcd.is_some() {
-            num_field_option(
-                &mut state.to_save.md_config.snapshot_handlers.dcd,
                 "",
                 W,
                 ui,
@@ -761,11 +771,20 @@ fn output_control(state: &mut State, ui: &mut Ui) {
             }
             sync_ui = true;
         }
+
         if state.ui.md.trr_enabled {
             let g = &mut state.to_save.md_config.snapshot_handlers.gromacs;
             num_field_option(&mut g.nstxout, "Pos:", W, ui);
             num_field_option(&mut g.nstvout, "V:", W, ui);
             num_field_option(&mut g.nstfout, "F:", W, ui);
+        }
+
+        let g = &mut state.to_save.md_config.snapshot_handlers.gromacs;
+
+        let en_prev = g.nstenergy;
+        num_field_option(&mut g.nstenergy, "En:", W, ui);
+        if g.nstenergy != en_prev {
+            g.nstcalcenergy = g.nstenergy;
         }
     }
 
@@ -805,6 +824,33 @@ fn output_control(state: &mut State, ui: &mut Ui) {
                     .snapshot_handlers
                     .gromacs
                     .nstxout_compressed,
+                "",
+                W,
+                ui,
+            );
+        }
+    }
+
+    // DCD
+    {
+        let help = "Save trajectory to a DCD file.";
+        ui.label("DCD:").on_hover_text(help);
+        if ui
+            .checkbox(&mut state.ui.md.dcd_enabled, "")
+            .on_hover_text(help)
+            .changed()
+        {
+            state.to_save.md_config.snapshot_handlers.dcd = if state.ui.md.dcd_enabled {
+                sh_def.memory
+            } else {
+                None
+            };
+            sync_ui = true;
+        }
+
+        if state.to_save.md_config.snapshot_handlers.dcd.is_some() {
+            num_field_option(
+                &mut state.to_save.md_config.snapshot_handlers.dcd,
                 "",
                 W,
                 ui,
