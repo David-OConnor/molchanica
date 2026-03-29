@@ -27,7 +27,7 @@ use std::{
 
 use bio_files::{
     AtomGeneric, BondGeneric,
-    gromacs::{GromacsFrame, GromacsInput, MoleculeInput, solvate::WaterModel},
+    gromacs::{GromacsFrame, GromacsInput, GromacsOutput, MoleculeInput, solvate::WaterModel},
     md_params::ForceFieldParams,
 };
 use dynamics::{
@@ -40,7 +40,7 @@ use crate::{
     md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
     molecules::common::MoleculeCommon,
     state::State,
-    util::handle_success,
+    util::{handle_err, handle_success},
 };
 
 pub fn make_gromacs_input(
@@ -320,13 +320,19 @@ pub fn launch_md(state: &mut State) {
         let start = Instant::now();
         match input.run() {
             Ok(out) => {
-                let snaps = gromacs_frames_to_ss(&out.trajectory, out.solute_atom_count);
                 let elapsed = start.elapsed().as_millis();
-                let _ = tx.send((snaps, mol_start_indices, elapsed));
+                let _ = tx.send((out, mol_start_indices, elapsed));
             }
             Err(e) => {
-                eprintln!("\nGROMACS run failed: \n{e}");
-                let _ = tx.send((Vec::new(), mol_start_indices, 0));
+                let elapsed = start.elapsed().as_millis();
+
+                // Create an output with the error text, so we can display details in the UI.
+                let out = GromacsOutput {
+                    log_text: e.to_string(),
+                    ..Default::default()
+                };
+
+                let _ = tx.send((out, mol_start_indices, elapsed));
             }
         }
     });
@@ -334,14 +340,54 @@ pub fn launch_md(state: &mut State) {
     state.volatile.thread_receivers.gromacs_md_avail = Some(rx);
 }
 
+fn extract_gromacs_fatal_error(log_text: &str) -> Option<String> {
+    let mut lines = log_text.lines();
+
+    while let Some(line) = lines.next() {
+        if line.trim() == "Fatal error:" {
+            let msg = lines
+                .by_ref()
+                .take_while(|line| !line.trim().is_empty())
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            if msg.is_empty() {
+                return None;
+            }
+
+            return Some(msg);
+        }
+    }
+
+    None
+}
+
 /// Called by [`crate::threads::handle_thread_rx`] when the background GROMACS
 /// thread completes. Updates state snapshots and notifies the UI.
 pub fn on_gromacs_md_complete(
     state: &mut State,
-    snaps: Vec<Snapshot>,
+    out: &GromacsOutput,
     mol_start_indices: Vec<usize>,
     elapsed_ms: u128,
 ) {
+    if out.log_text.contains("Fatal error") {
+        let msg = extract_gromacs_fatal_error(&out.log_text)
+            .map(|err| {
+                format!("Problem running GROMACS: {err}. Check the logs or terminal for details.")
+            })
+            .unwrap_or_else(|| {
+                "Problem running GROMACS; check the logs or terminal for details.".to_string()
+            });
+
+        handle_err(&mut state.ui, msg);
+
+        eprintln!("GROMACS error data: \n------\n{}\n------\n", out.log_text);
+        return;
+    }
+
+    let snaps = gromacs_frames_to_ss(&out.trajectory, out.solute_atom_count);
+
     if !snaps.is_empty() {
         let mut md = MdState::default();
         md.mol_start_indices = mol_start_indices;

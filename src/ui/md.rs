@@ -3,18 +3,17 @@ use dynamics::{
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT,
     snapshot::{Snapshot, SnapshotHandlers},
 };
-use egui::ImageData::Color;
-use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
+use egui::{Color32, ComboBox, ImageData::Color, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 
-use crate::prefs::ToSave;
 use crate::{
     button,
     drawing::EntityClass,
     file_io::save_trajectory,
     label, md,
     md::{MdBackend, clear_snaps, launch_md, post_run_cleanup, start_md_energy_computation},
+    prefs::ToSave,
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
@@ -83,8 +82,8 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
             // ui.add_space(COL_SPACING / 2.);
 
-            if ui.button("Save MD")
-                .on_hover_text("Save MD state in GROMACS format: .gro (Molecules used for MD), \
+            if ui.button("Save Cfg")
+                .on_hover_text("Save MD configuration in GROMACS format: .gro (Molecules used for MD), \
                 .mdp (MD configuration), and .top (Force field parameters / topology) files")
                 .clicked() {
                 state.volatile.dialogs.save_md.pick_directory();
@@ -714,7 +713,7 @@ where
 }
 
 fn output_control(state: &mut State, ui: &mut Ui) {
-    ui.label("Output.").on_hover_text("These settings control which formats, and how often \
+    ui.label("Out.").on_hover_text("These settings control which formats, and how often \
     to save the output trajectory to. 'Mem' only affects the Dyanmics backend. TRR positions are required to display \
     GROMACS trajectories in the UI automatically");
 

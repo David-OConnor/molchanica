@@ -10,7 +10,7 @@ use std::{
 };
 
 use bincode::{Decode, Encode};
-use bio_files::{AtomGeneric, create_bonds, md_params::ForceFieldParams};
+use bio_files::{AtomGeneric, create_bonds, gromacs::GromacsOutput, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
@@ -77,6 +77,7 @@ pub struct MdStateLocal {
     /// like other molecule types, but always *after* all regular mol types because custom solvents
     /// are appended last to `MdState::all_mols` and therefore last in `mol_start_indices`.
     pub custom_solvents: Vec<MoleculeSmall>,
+    pub gromacs_output: Option<GromacsOutput>,
 }
 
 impl MdStateLocal {
@@ -1161,7 +1162,7 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
             state.volatile.md_local.launching = true;
         }
         MdBackend::Gromacs => {
-            handle_success(&mut state.ui, "\nRunning MD with GROMACS...".to_string());
+            handle_success(&mut state.ui, "Running MD with GROMACS...".to_string());
             // We will wait a frame so we can display the message above.
             gromacs::launch_md(state)
         }
