@@ -13,8 +13,8 @@ use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
 use dynamics::{
-    ComputationDevice, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig, SimBoxInit, TAU_TEMP_DEFAULT,
-    params::FfParamSet,
+    ComputationDevice, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig, PRESSURE_DEFAULT, SimBoxInit,
+    TAU_PRESSURE_DEFAULT, TAU_TEMP_DEFAULT, params::FfParamSet,
 };
 use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
@@ -531,10 +531,12 @@ impl Default for NucleicAcidUi {
 pub struct StateUiMd {
     /// The state we store for this is a float, so we need to store state text too.
     pub dt_input: String,
-    pub temp_input: String,
+    pub temp_tgt: String,
     pub temp_tau: String,
     pub langevin_γ: String,
-    pub pressure_input: String,
+    pub pressure_tgt: String,
+    pub pressure_tau: String,
+    //
     pub simbox_pad_input: String,
     pub simbox_x_min_input: String,
     pub simbox_y_min_input: String,
@@ -542,7 +544,6 @@ pub struct StateUiMd {
     pub simbox_x_max_input: String,
     pub simbox_y_max_input: String,
     pub simbox_z_max_input: String,
-
     //
     /// Only perform MD on peptide atoms near a ligand.
     pub peptide_only_near_ligs: bool,
@@ -560,8 +561,10 @@ impl Default for StateUiMd {
     fn default() -> Self {
         Self {
             dt_input: Default::default(),
-            temp_input: Default::default(),
-            pressure_input: Default::default(),
+            temp_tgt: Default::default(),
+            temp_tau: Default::default(),
+            pressure_tgt: Default::default(),
+            pressure_tau: Default::default(),
             simbox_pad_input: Default::default(),
             simbox_x_min_input: Default::default(),
             simbox_y_min_input: Default::default(),
@@ -570,7 +573,6 @@ impl Default for StateUiMd {
             simbox_y_max_input: Default::default(),
             simbox_z_max_input: Default::default(),
             langevin_γ: Default::default(),
-            temp_tau: Default::default(),
             peptide_only_near_ligs: true,
             peptide_static: true,
             mem_enabled: true,
@@ -585,7 +587,7 @@ impl StateUiMd {
     /// Updates these variables based on state.
     pub fn sync(&mut self, md_cfg: &MdConfig, dt: f32) {
         self.dt_input = dt.to_string();
-        self.temp_input = md_cfg.temp_target.to_string();
+        self.temp_tgt = md_cfg.temp_target.to_string();
 
         let (temp_tau, langevin_γ) = match md_cfg.integrator {
             Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
@@ -600,7 +602,13 @@ impl StateUiMd {
         self.temp_tau = temp_tau.to_string();
         self.langevin_γ = langevin_γ.to_string();
 
-        self.pressure_input = md_cfg.pressure_target.unwrap_or_default().to_string();
+        let (p_tau, p_tgt) = match &md_cfg.barostat_cfg {
+            Some(bc) => (bc.tau, bc.pressure_target),
+            None => (TAU_PRESSURE_DEFAULT, PRESSURE_DEFAULT),
+        };
+
+        self.pressure_tau = p_tau.to_string();
+        self.pressure_tgt = p_tgt.to_string();
 
         match md_cfg.sim_box {
             SimBoxInit::Pad(p) => {

@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use bio_files::BondType;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MolDynamics, ParamError,
-    SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
+    SimBoxInit, Solvent, TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -59,7 +59,6 @@ const DT: f32 = 0.002; // ps
 const NUM_STEPS: usize = 2_000; // todo temp while testing the initialization
 
 const TEMP_TGT: f32 = 298.15; // Standard LogP is measured at 25 °C = 298.15 K.
-const PRESSURE_TGT: f32 = 1.; // Bar
 
 // The conversion factor between ln and log10
 const LOG_CONV: f32 = 1. / 2.303;
@@ -218,7 +217,7 @@ fn run_octanol(
             thermostat: Some(TAU_TEMP_DEFAULT),
         },
         temp_target: TEMP_TGT,
-        pressure_target: Some(PRESSURE_TGT),
+        barostat_cfg: Some(Default::default()),
         hydrogen_constraint: Default::default(),
         snapshot_handlers: SnapshotHandlers::default(),
         sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
@@ -295,7 +294,7 @@ fn run_water(
             thermostat: Some(TAU_TEMP_DEFAULT),
         },
         temp_target: TEMP_TGT,
-        pressure_target: Some(PRESSURE_TGT),
+        barostat_cfg: Some(Default::default()),
         hydrogen_constraint: HydrogenConstraint::default(),
         snapshot_handlers: SnapshotHandlers::default(),
         sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),

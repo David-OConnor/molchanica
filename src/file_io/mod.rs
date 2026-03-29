@@ -433,6 +433,8 @@ impl State {
     pub fn open_mdp(&mut self, path: &Path) -> io::Result<()> {
         self.to_save.md_config = MdConfig::load_from_mdp(path)?;
 
+        self.ui.md.sync(&self.to_save.md_config, self.to_save.md_dt);
+
         // todo temp
         println!(
             "\nLoaded MdConfig from MDP: {:?}\n\n",

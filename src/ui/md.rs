@@ -1,3 +1,4 @@
+use bio_files::gromacs::mdp::BarostatCfg;
 use dynamics::{
     ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT,
@@ -405,18 +406,7 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     ui.label(RichText::new("Ambient:").color(Color32::WHITE));
     ui.add_space(COL_SPACING / 2.);
 
-    ui.label("Temp (K):");
-    if ui
-        .add_sized(
-            [30., Ui::available_height(ui)],
-            TextEdit::singleline(&mut state.ui.md.temp_input),
-        )
-        .changed()
-        && let Ok(v) = &mut state.ui.md.temp_input.parse::<f32>()
-    {
-        state.to_save.md_config.temp_target = *v;
-    }
-
+    let mut therm_en_ = false;
     match &mut state.to_save.md_config.integrator {
         Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
             let help_text = "Enable or disable the thermostat";
@@ -451,6 +441,8 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
                     *tau = *v;
                 }
             }
+
+            therm_en_ = therm_en;
         }
         Integrator::LangevinMiddle { gamma } => {
             let help_text = "Thermostat time constant for use with the Langevin (stochastic) integrator. \
@@ -468,6 +460,22 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
             {
                 *gamma = *v;
             }
+
+            therm_en_ = true;
+        }
+    }
+
+    if therm_en_ {
+        ui.label("Temp (K):");
+        if ui
+            .add_sized(
+                [30., Ui::available_height(ui)],
+                TextEdit::singleline(&mut state.ui.md.temp_tgt),
+            )
+            .changed()
+            && let Ok(v) = &mut state.ui.md.temp_tgt.parse::<f32>()
+        {
+            state.to_save.md_config.temp_target = *v;
         }
     }
 
@@ -477,21 +485,46 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     // ui.checkbox(&mut state.to_save.md_config.zero_com_drift, "Zero drift")
     //     .on_hover_text("Zero the center-of-mass of items in the simulation.");
 
-    // todo: Option to enable/disable barostat with check.
+    let help = "Enable or disable the barostat";
+    ui.label("Baro:").on_hover_text(help);
+    let mut baro_en = state.to_save.md_config.barostat_cfg.is_some();
+    if ui.checkbox(&mut baro_en, "").on_hover_text(help).changed() {
+        state.to_save.md_config.barostat_cfg = if baro_en {
+            Some(dynamics::BarostatCfg::default())
+        } else {
+            None
+        };
+    }
 
-    let help = "The target pressure, in bar, for the barostat to maintain. The sim box changes size in \
+    if let Some(bc) = &mut state.to_save.md_config.barostat_cfg {
+        let help = "The target pressure, in bar, for the barostat to maintain. The sim box changes size in \
     order to meet this.";
-    ui.label("Pres (bar):").on_hover_text(help);
-    if ui
-        .add_sized(
-            [30., Ui::available_height(ui)],
-            TextEdit::singleline(&mut state.ui.md.pressure_input),
-        )
-        .on_hover_text(help)
-        .changed()
-        && let Ok(v) = &mut state.ui.md.pressure_input.parse::<f32>()
-    {
-        state.to_save.md_config.pressure_target = Some(*v);
+        ui.label("Pres (bar):").on_hover_text(help);
+        if ui
+            .add_sized(
+                [22., Ui::available_height(ui)],
+                TextEdit::singleline(&mut state.ui.md.pressure_tgt),
+            )
+            .on_hover_text(help)
+            .changed()
+            && let Ok(v) = &mut state.ui.md.pressure_tgt.parse::<f32>()
+        {
+            bc.pressure_target = *v;
+        }
+
+        let help_text = "Barostat time constant. 5ps is a good default.";
+        ui.label("Baro tau (ps):").on_hover_text(help_text);
+        if ui
+            .add_sized(
+                [22., Ui::available_height(ui)],
+                TextEdit::singleline(&mut state.ui.md.pressure_tau),
+            )
+            .on_hover_text(help_text)
+            .changed()
+            && let Ok(v) = &mut state.ui.md.pressure_tau.parse::<f32>()
+        {
+            bc.tau = *v;
+        }
     }
 
     // Sim box controls.
