@@ -19,6 +19,7 @@ use dynamics::{
 use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
+use crate::trajectory::Trajectory;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -61,6 +62,7 @@ pub struct State {
     // of their small-molecule-based state approach.
     // pub pharmacophores: Vec<Pharmacophore>,
     pub pockets: Vec<Pocket>,
+    pub trajectories: Vec<Trajectory>,
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
     pub to_save: ToSave,

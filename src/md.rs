@@ -1194,3 +1194,18 @@ pub fn start_md_energy_computation(state: &mut State) {
         Err(e) => handle_err(&mut state.ui, format!("Error computing energy: {:?}", e)),
     }
 }
+
+/// Populate energy on snapshots that are between ones that have eneryg, for display purposes.
+pub fn carry_over_snap_energy(snaps: &mut [Snapshot]) {
+    let mut last_en = None;
+    for snap in snaps {
+        match &mut snap.energy_data {
+            Some(e) => last_en = Some(e.clone()),
+            None => {
+                if last_en.is_some() {
+                    snap.energy_data = last_en.clone();
+                }
+            }
+        }
+    }
+}

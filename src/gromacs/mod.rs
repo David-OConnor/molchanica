@@ -36,6 +36,7 @@ use dynamics::{
 };
 use lin_alg::f32::Vec3;
 
+use crate::md::carry_over_snap_energy;
 use crate::{
     md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
     molecules::common::MoleculeCommon,
@@ -388,7 +389,9 @@ pub fn on_gromacs_md_complete(
         return;
     }
 
-    let snaps = gromacs_frames_to_ss(&out);
+    let mut snaps = gromacs_frames_to_ss(&out);
+
+    carry_over_snap_energy(&mut snaps);
 
     if !snaps.is_empty() {
         let mut md = MdState::default();

@@ -690,12 +690,14 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     ui.label("PE: ");
     label!(ui, format!("{:.2}", en.energy_potential), Color32::GOLD);
 
-    ui.label("PE NB: ");
-    label!(
-        ui,
-        format!("{:.2}", en.energy_potential_nonbonded),
-        Color32::GOLD
-    );
+    if en.energy_potential_nonbonded.abs() > 0.0001 {
+        ui.label("PE NB: ");
+        label!(
+            ui,
+            format!("{:.2}", en.energy_potential_nonbonded),
+            Color32::GOLD
+        );
+    }
 
     ui.label("PE/atom: ");
     // todo: Don't continuously run this!
@@ -705,7 +707,7 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     ui.label("E tot: ");
     // todo: Don't continuously run this!
     let e = en.energy_potential + en.energy_kinetic;
-    label!(ui, format!("{:.3}", e), Color32::GOLD);
+    label!(ui, format!("{:.2}", e), Color32::GOLD);
 
     // ui.label("PE between mols:");
     // // todo: One pair only for now
@@ -724,10 +726,14 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     label!(ui, format!("{:.1} bar", en.pressure), Color32::GOLD);
 
     ui.label("Vol: ");
-    label!(ui, format!("{:.1} Å^3", en.density), Color32::GOLD);
+    label!(
+        ui,
+        format!("{:.1} k Å^3", en.volume / 1_000.),
+        Color32::GOLD
+    );
 
     ui.label("Dens: ");
-    label!(ui, format!("{:.1} amu/Å^3", en.density), Color32::GOLD);
+    label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
 }
 
 fn num_field_option<T>(val: &mut Option<T>, label: &str, width: u16, ui: &mut Ui)
