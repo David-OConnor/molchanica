@@ -19,7 +19,6 @@ use dynamics::{
 use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
-use crate::trajectory::Trajectory;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
@@ -46,6 +45,7 @@ use crate::{
     sfc_mesh::MeshColoring,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
+    trajectory::Trajectory,
     util::{gromacs_avail, orca_avail},
 };
 
@@ -107,13 +107,13 @@ impl Default for State {
             lipids: Default::default(),
             // pharmacophores: Default::default(),
             pockets: Default::default(),
+            trajectories: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),
             to_save_prev: Default::default(),
             dev: Default::default(),
             #[cfg(feature = "cuda")]
             kernel_reflections: None,
-            // mol_dynamics: Default::default(),
             ff_param_set: Default::default(),
             mol_specific_params: Default::default(),
             templates: Default::default(),

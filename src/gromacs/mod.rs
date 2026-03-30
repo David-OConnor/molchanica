@@ -36,9 +36,10 @@ use dynamics::{
 };
 use lin_alg::f32::Vec3;
 
-use crate::md::carry_over_snap_energy;
 use crate::{
-    md::{STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md},
+    md::{
+        STATIC_ATOM_DIST_THRESH, carry_over_snap_energy, filter_peptide_atoms, get_mols_sel_for_md,
+    },
     molecules::common::MoleculeCommon,
     state::State,
     util::{handle_err, handle_success},

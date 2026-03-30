@@ -327,12 +327,7 @@ similar in the path, e.g.:
 ### Errata
 
 - Only one protein can be loaded at a time
-- Currently, the Langevin middle integrator, and constrained H inject energy into the system.
-- Loading map (electron density) files that are very large (e.g. high detail, especially Map files directly available
-  on RCSB, vice created from 2fo-fc) may crash the program.
 - Opening electron density files in general can be slow. This can lead to the program starting slowly if it was
-  last shut down with electron density data open.
-- The GUI doesn't handle proteins with many chains well.
 - Minimizing may pause molecular dynamics computations.
 - On some displays (Ones with pixel scaling), dragging the MD time slider may also move the camera. To workaround, click
   the slider instead of dragging.

@@ -51,7 +51,7 @@ mod tautomers;
 mod tests;
 mod therapeutic;
 mod threads;
-mod trajectory
+mod trajectory;
 
 use std::time::Instant;
 

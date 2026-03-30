@@ -1,6 +1,7 @@
 use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
+use molchanica::ui::num_field;
 
 use crate::{
     button, cam,
@@ -12,6 +13,7 @@ use crate::{
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
     therapeutic::logp_sim,
+    trajectory::{FrameSlice, MAX_FRAMES_TO_ATTEMPT_LOADING, close_traj},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, pharmacophore,
@@ -570,6 +572,9 @@ pub(in crate::ui) fn sidebar(
             } else {
                 mol_picker(state, scene, ui, redraw, updates);
             }
+
+            traj_items(state, ui);
+
             ui.add_space(ROW_SPACING);
 
             if state.ui.ui_vis.pharmacophore_list && edit_mode {
@@ -667,4 +672,114 @@ pub(in crate::ui) fn sidebar(
         });
 
     updates.ui_reserved_px.0 = out.response.rect.width();
+}
+
+/// Let the user view open trajectories, and possibly change frames etc from them.
+fn traj_items(state: &mut State, ui: &mut Ui) {
+    if state.trajectories.is_empty() {
+        return;
+    }
+    ui.add_space(ROW_SPACING);
+
+    ui.label("MD Trajectories");
+    ui.separator();
+
+    let mut close = None;
+    for (i, traj) in state.trajectories.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&traj.display_name).color(Color32::WHITE));
+
+            ui.add_space(COL_SPACING);
+
+            if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
+                && traj.num_frames != 0
+                && button!(
+                    ui,
+                    "Load all",
+                    COLOR_ACTION,
+                    "Load all frames/snapshots from the trajectory into memory"
+                )
+                .clicked()
+            {
+                match traj.load_snaps(FrameSlice::Index {
+                    start: None,
+                    end: None,
+                }) {
+                    Ok(snaps) => {
+                        // todo: Evaluate if you want snapshot viewing to be tied to MD state.
+                        // todo: You likely want it decoupled, but perhaps in a new MdViewer state
+                        // todo: that's associated with atoms/molecules.
+                        if let Some(md) = &mut state.volatile.md_local.mol_dynamics {
+                            md.snapshots = snaps;
+                        }
+                    }
+                    Err(e) => {
+                        handle_err(
+                            &mut state.ui,
+                            format!("Error loading snapshots from trajectory: {:?}", e),
+                        );
+                    }
+                }
+            }
+
+            // todo: Allow time or frame indices.
+            ui.label("Load frames:");
+
+            // todo: Allow end and start to be unbounded in UI, setting their val to None.
+            num_field(&mut traj.ui_start_i, "Start:", 34, ui);
+            num_field(&mut traj.ui_end_i, "End:", 34, ui);
+
+            // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
+            if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
+                && traj.num_frames < traj.ui_end_i
+                && button!(
+                    ui,
+                    "Load range",
+                    COLOR_ACTION,
+                    "Load frames/snapshots from the selected indices into memory"
+                )
+                .clicked()
+            {
+                let start = if traj.ui_start_i == 0 {
+                    None
+                } else {
+                    Some(traj.ui_start_i)
+                };
+                let end = if traj.ui_end_i == 0 {
+                    None
+                } else {
+                    Some(traj.ui_end_i)
+                };
+
+                // todo: For now, 0 means unbounded.
+                match traj.load_snaps(FrameSlice::Index { start, end }) {
+                    Ok(snaps) => {
+                        if let Some(md) = &mut state.volatile.md_local.mol_dynamics {
+                            md.snapshots = snaps;
+                        }
+                    }
+                    Err(e) => {
+                        handle_err(
+                            &mut state.ui,
+                            format!("Error loading snapshots from trajectory: {:?}", e),
+                        );
+                    }
+                }
+            }
+
+            if ui
+                .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                .on_hover_text("Close this trajectory.")
+                .clicked()
+            {
+                close = Some(i);
+            }
+        });
+    }
+
+    if let Some(i) = close {
+        close_traj(state, i);
+    }
+
+    ui.separator();
 }

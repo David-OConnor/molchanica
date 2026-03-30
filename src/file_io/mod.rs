@@ -36,6 +36,7 @@ use crate::{
     screening::pharmacophore::Pharmacophore,
     selection::Selection,
     state::State,
+    trajectory::Trajectory,
     util::{handle_err, handle_success},
 };
 
@@ -402,26 +403,10 @@ impl State {
         Ok(())
     }
 
-    /// Open a DCD (or perhaps more later) file. This is a trajectory of a MD run.
+    /// Open a MD trajectory. E.g. TRR, DCD, XTC file. This is a trajectory of a MD run.
     pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
-        // todo: March 2026: Update this to use our new interface. Should open an interface to this
-        // todo file, and allow loading specific snaps/frames on demand.
-
-        // let snapshots = dynamics::load_snapshots_from_file(path)?;
-        let snapshots = Vec::new();
-
-        if self.volatile.md_local.mol_dynamics.is_none() {
-            launch_md(self, false, true);
-        }
-
-        // todo: Also handle the case of the correct molecule not being loaded.
-        match &mut self.volatile.md_local.mol_dynamics {
-            Some(md) => md.snapshots = snapshots,
-            None => handle_err(
-                &mut self.ui,
-                "Error loading trajectory: Unable to build MD ".to_owned(),
-            ),
-        }
+        let traj = Trajectory::new(path);
+        self.trajectories.push(traj);
 
         self.update_history(path, OpenType::Trajectory);
         self.update_save_prefs();
