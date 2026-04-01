@@ -26,7 +26,7 @@ use bio_files::{
     AtomGeneric, BondGeneric, BondType, ChainGeneric, Mol2, Pdbqt, ResidueEnd, ResidueGeneric,
     ResidueType, Sdf, Xyz,
 };
-use dynamics::Dihedral;
+use dynamics::{Dihedral, FfMolType};
 use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use peptide::MoleculePeptide;
@@ -117,6 +117,19 @@ impl MolType {
             Lipid => (255, 0, 255),
             Pocket => (255, 255, 255),
             Water => (0, 0, 0),
+        }
+    }
+}
+
+impl From<FfMolType> for MolType {
+    fn from(m: FfMolType) -> Self {
+        use MolType::*;
+        match m {
+            FfMolType::Peptide => Peptide,
+            FfMolType::SmallOrganic => Ligand,
+            FfMolType::Dna | FfMolType::Rna => NucleicAcid,
+            FfMolType::Lipid => Lipid,
+            FfMolType::Carbohydrate => Ligand, // placeholder
         }
     }
 }

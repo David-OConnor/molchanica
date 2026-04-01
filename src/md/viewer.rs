@@ -8,7 +8,7 @@ use graphics::Scene;
 
 use crate::{
     drawing::{
-        draw_mol, draw_peptide, draw_water,
+        EntityClass, draw_mol, draw_peptide, draw_water,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     mol_manip::ManipMode,
@@ -207,56 +207,23 @@ impl SnapshotViewer {
     //     }
     // }
 
-    // /// Update the molecules stored here; we render these instead of the primary state molecules, if in an
-    // /// appropriate mode for viewing.
-    // pub fn update_mols_for_disp(&mut self, mols: &[(FfMolType, &MoleculeCommon, usize)]) {
-    //     self.mols.clear();
-    //
-    //     // self.peptides.clear();
-    //     // self.small.clear();
-    //     // self.lipids.clear();
-    //     // self.nucleic_acids.clear();
-    //     // self.custom_solvents.clear();
-    //
-    //     for (ff_mol_type, mol, count) in mols {
-    //         // todo: Pass in the full mols so we are not reproducing a copy?
-    //         match ff_mol_type {
-    //             FfMolType::Peptide => {
-    //                 for _ in 0..*count {
-    //                     self.peptides.push(MoleculePeptide {
-    //                         common: (*mol).clone(),
-    //                         ..Default::default()
-    //                     });
-    //                 }
-    //             }
-    //             FfMolType::SmallOrganic => {
-    //                 for _ in 0..*count {
-    //                     self.small.push(MoleculeSmall {
-    //                         common: (*mol).clone(),
-    //                         ..Default::default()
-    //                     });
-    //                 }
-    //             }
-    //             FfMolType::Dna | FfMolType::Rna => {
-    //                 for _ in 0..*count {
-    //                     self.nucleic_acids.push(MoleculeNucleicAcid {
-    //                         common: (*mol).clone(),
-    //                         ..Default::default()
-    //                     });
-    //                 }
-    //             }
-    //             FfMolType::Lipid => {
-    //                 for _ in 0..*count {
-    //                     self.lipids.push(MoleculeLipid {
-    //                         common: (*mol).clone(),
-    //                         ..Default::default()
-    //                     });
-    //                 }
-    //             }
-    //             _ => eprintln!("Invalid Mol type for MD"),
-    //         }
-    //     }
-    // }
+    /// Update the molecules stored here; we render these instead of the primary state molecules, if in an
+    /// appropriate mode for viewing.
+    pub fn update_mols_for_disp(&mut self, mols: &[(FfMolType, &MoleculeCommon, usize)]) {
+        self.mols = Vec::new();
+        let mut snap_atom_i = 0;
+
+        for (mol_type, m, _count) in mols {
+            let len_this_mol = m.atoms.len();
+            self.mols.push(ViewerMolecule {
+                mol_type: MolType::from(*mol_type),
+                mol: (*m).clone(),
+                range: (snap_atom_i, len_this_mol),
+            });
+
+            snap_atom_i += len_this_mol;
+        }
+    }
 }
 
 /// Draw all molecules from the loaded MD run.
@@ -264,9 +231,9 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
     // todo: Only if at least one lig is involved.
 
     // todo: Once small mools are working, add the rest.
-    // let mut small = Vec::new();
+    let mut lig_entities = Vec::new();
 
-    for mol in &state.volatile.md_local.viewer.mols {
+    for (i_mol, mol) in state.volatile.md_local.viewer.mols.iter().enumerate() {
         match mol.mol_type {
             MolType::Peptide => {
                 // todo
@@ -277,24 +244,26 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
                     common: mol.mol.clone(),
                     ..Default::default()
                 };
-                // small.push(mol_small);
-                // todo: QC this whole fn.
 
                 println!("Drawing mol at range: {:?}", mol.range); // todo temp
 
-                draw_mol(
+                lig_entities.extend(draw_mol(
                     MolGenericRef::Small(&mol_small),
-                    0,
+                    i_mol,
                     &state.ui,
                     &None,
                     ManipMode::None,
                     OperatingMode::Primary,
-                    0,
-                );
+                    state.volatile.md_local.viewer.mols.len(),
+                ));
             }
             _ => {}
         }
     }
+
+    let lig_class = EntityClass::Ligand as u32;
+    scene.entities.retain(|ent| ent.class != lig_class);
+    scene.entities.extend(lig_entities);
 
     // draw_all_ligs(state, scene, Some(&small));
 

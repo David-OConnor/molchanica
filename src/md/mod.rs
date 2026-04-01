@@ -80,6 +80,7 @@ impl MdStateLocal {
         traj_count: usize,
     ) {
         self.viewer.snapshots = snaps;
+        self.viewer.mols = Vec::new();
         self.draw_md_mols = true;
 
         // todo: This will only work for the case of a single small molecule.
@@ -106,16 +107,8 @@ impl MdStateLocal {
     /// Removes all MD snapshots, and performs related cleanup.
     pub fn clear_snaps(&mut self) {
         self.viewer.snapshots = Vec::new();
-        // self.viewer.mol_start_indices = Vec::new();
         self.viewer.current_snapshot = None;
-
         self.viewer.mols = Vec::new();
-        // self.viewer.peptides = Vec::new();
-        // self.viewer.small = Vec::new();
-        // self.viewer.lipids = Vec::new();
-        // self.viewer.nucleic_acids = Vec::new();
-        // self.viewer.custom_solvents = Vec::new();
-
         self.draw_md_mols = false;
     }
 }
@@ -133,14 +126,28 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     md.start = None;
     md.draw_md_mols = true;
 
-    // todo: Put back A/R
-    // md.viewer.reassign_snapshot_indices();
-
     // Copy snapshots from MD state to the viewer.
     md.viewer.snapshots = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
 
     // todo: Put back the equivalent here, I believe
     // md.viewer.mol_start_indices = md.mol_dynamics.as_ref().unwrap().mol_start_indices.clone();
+
+    // todo: Apply to all molecule types.
+    // todo note: This must be in the same order you added.
+    // todo: Dedicaed fn as before?
+
+    // // Moves molecules used for MD into the viewer.
+    // for mol in &state.ligands {
+    //     if !mol.common.selected_for_md {
+    //         continue;
+    //     }
+    //
+    //     md.viewer.mols.push(ViewerMolecule {
+    //         mol_type: MolType::Ligand,
+    //         mol: mol.common.clone(),
+    //         range: (0, mol.common.atoms.len()),
+    //     });
+    // }
 
     md.viewer.current_snapshot = None;
 
@@ -635,7 +642,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         .map(|(ff, mol, count)| (*ff, mol, *count))
         .collect();
 
-    // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
+    state.volatile.md_local.viewer.update_mols_for_disp(&mols);
 
     let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
         Some(STATIC_ATOM_DIST_THRESH)

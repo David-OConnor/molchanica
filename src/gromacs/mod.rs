@@ -304,6 +304,12 @@ pub fn launch_md(state: &mut State) {
         }
     };
 
+    //Adjusting the middle mol part of the tuple to be a borrow for our API.
+
+    let mols_: Vec<_> = mols.iter().map(|m| (m.0, &m.1, m.2)).collect();
+
+    state.volatile.md_local.viewer.update_mols_for_disp(&mols_);
+
     let mut offset = 0;
     let mut mol_start_indices = Vec::new();
     for m in &input.molecules {
@@ -315,12 +321,6 @@ pub fn launch_md(state: &mut State) {
 
     let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
         mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
-
-    // state
-    //     .volatile
-    //     .md_local
-    //     .viewer
-    //     .update_mols_for_disp(&mols_ref);
 
     let (tx, rx) = mpsc::channel();
 
