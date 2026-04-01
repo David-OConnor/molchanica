@@ -23,7 +23,7 @@ use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
     file_io::FileDialogs,
-    md::MdStateLocal,
+    md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
     mol_editor::MolEditorState,
     mol_manip::MolManip,
@@ -45,8 +45,7 @@ use crate::{
     sfc_mesh::MeshColoring,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
-    trajectory::Trajectory,
-    util::{gromacs_avail, orca_avail},
+    util::{gromacs_avail, mdtraj_avail, orca_avail},
 };
 
 pub struct State {
@@ -338,6 +337,7 @@ impl StateVolatile {
             prefs_dir: env::current_dir().unwrap(),
             orca_avail: orca_avail(),
             gromacs_avail: gromacs_avail(),
+            mdtraj_avail: mdtraj_avail(),
             ..Default::default()
         }
     }
@@ -381,7 +381,6 @@ pub struct StateUi {
     pub orbit_selected_atom: bool,
     // todo: Re-implement A/R
     // binding_energy_disp: Option<BindingEnergy>,
-    pub current_snapshot: usize,
     /// A flag so we know to update the flashlight upon loading a new model; this should be done within
     /// a callback.
     pub show_docking_tools: bool,

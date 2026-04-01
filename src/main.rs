@@ -51,11 +51,10 @@ mod tautomers;
 mod tests;
 mod therapeutic;
 mod threads;
-mod trajectory;
 
 use std::time::Instant;
 
-use dynamics::{Integrator, MdConfig, SimBoxInit, params::FfParamSet};
+use dynamics::{Integrator, params::FfParamSet};
 use molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
@@ -89,17 +88,10 @@ fn main() {
         ..Default::default()
     };
 
-    if state.volatile.orca_avail {
-        println!("\nORCA is available");
-    } else {
-        println!("\nORCA is not available");
-    }
-
-    if state.volatile.gromacs_avail {
-        println!("GROMACS is available\n");
-    } else {
-        println!("GROMACS is not available\n");
-    }
+    println!(
+        "\nAuxillary programs available: ORCA: {}, GROMACS: {}, MdTraj: {}\n",
+        state.volatile.orca_avail, state.volatile.gromacs_avail, state.volatile.mdtraj_avail
+    );
 
     #[cfg(feature = "cuda")]
     if let Some(k) = kernel_reflections {

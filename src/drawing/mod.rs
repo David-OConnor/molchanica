@@ -1351,15 +1351,23 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
         return;
     }
 
-    let mol: &MoleculePeptide =
-        if state.volatile.md_local.draw_md_mols && !state.volatile.md_local.peptides.is_empty() {
-            &state.volatile.md_local.peptides[0]
-        } else {
-            let Some(m) = state.peptide.as_ref() else {
-                return;
-            };
-            m
+    // let mol: &MoleculePeptide = if state.volatile.md_local.draw_md_mols
+    //     && !state.volatile.md_local.viewer.peptides.is_empty()
+    // {
+    //     &state.volatile.md_local.viewer.peptides[0]
+    // } else {
+    //     let Some(m) = state.peptide.as_ref() else {
+    //         return;
+    //     };
+    //     m
+    // };
+
+    let mol = {
+        let Some(m) = state.peptide.as_ref() else {
+            return;
         };
+        m
+    }; // todo tmep
 
     if !mol.common.visible {
         return;
@@ -1586,23 +1594,25 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 color_atom = blend_color(color_atom, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
             }
 
-            if state.volatile.md_local.mol_dynamics.is_some()
-                && state.ui.md.peptide_only_near_ligs
-                && mol.common.selected_for_md
-                && state
-                    .ligands
-                    .iter()
-                    .filter(|l| l.common.selected_for_md)
-                    .count()
-                    != 0
-                && state
-                    .volatile
-                    .md_local
-                    .peptide_selected
-                    .contains(&(0, i_atom))
-            {
-                color_atom = blend_color(color_atom, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
-            }
+            // todo: Come back to this.
+            // if state.volatile.md_local.mol_dynamics.is_some()
+            //     && state.ui.md.peptide_only_near_ligs
+            //     && mol.common.selected_for_md
+            //     && state
+            //         .ligands
+            //         .iter()
+            //         .filter(|l| l.common.selected_for_md)
+            //         .count()
+            //         != 0
+            //     && state
+            //         .volatile
+            //         .md_local
+            //         .viewer
+            //         .peptide_selected
+            //         .contains(&(0, i_atom))
+            // {
+            //     color_atom = blend_color(color_atom, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
+            // }
 
             let mut entity = Entity::new(
                 mesh,
@@ -1825,23 +1835,26 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
                 .filter(|l| l.common.selected_for_md)
                 .count()
                 != 0
+        // todo: Come back to this.
         {
-            if state
-                .volatile
-                .md_local
-                .peptide_selected
-                .contains(&(0, bond.atom_0))
-            {
-                color_0 = blend_color(color_0, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
-            }
-            if state
-                .volatile
-                .md_local
-                .peptide_selected
-                .contains(&(0, bond.atom_1))
-            {
-                color_1 = blend_color(color_1, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
-            }
+            // if state
+            //     .volatile
+            //     .md_local
+            //     .viewer
+            //     .peptide_selected
+            //     .contains(&(0, bond.atom_0))
+            // {
+            //     color_0 = blend_color(color_0, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
+            // }
+            // if state
+            //     .volatile
+            //     .md_local
+            //     .viewer
+            //     .peptide_selected
+            //     .contains(&(0, bond.atom_1))
+            // {
+            //     color_1 = blend_color(color_1, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
+            // }
         }
 
         let to_hydrogen =

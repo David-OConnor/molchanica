@@ -6,11 +6,15 @@
 // todo any code from Molchanica, the answer is yes.
 
 use std::{
-    collections::HashMap,
     io,
     path::{Path, PathBuf},
 };
 
+use bio_files::{
+    FrameSlice,
+    dcd::{DcdMetadata, read_dcd},
+    gromacs::output::{TrrMetadata, read_trr},
+};
 use dynamics::snapshot::Snapshot;
 
 use crate::{prefs::OpenType, state::State};
@@ -19,20 +23,23 @@ use crate::{prefs::OpenType, state::State};
 // todo: What should this be?
 pub const MAX_FRAMES_TO_ATTEMPT_LOADING: usize = 100_000;
 
-/// A ay to allow users to slice by either physical time or frame index.
-/// Times are in ps.
-///
-/// None values means unbounded on that side.
-#[derive(Clone, Copy, Debug)]
-pub enum FrameSlice {
-    Time {
-        start: Option<f64>,
-        end: Option<f64>,
-    },
-    Index {
-        start: Option<usize>,
-        end: Option<usize>,
-    },
+/// This affects how we operate on files.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TrajFormat {
+    Trr,
+    Xtc,
+    Dcd,
+}
+
+impl TrajFormat {
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        Some(match ext.to_lowercase().as_str() {
+            "trr" => TrajFormat::Trr,
+            "xtc" => TrajFormat::Xtc,
+            "dcd" => TrajFormat::Dcd,
+            _ => return None,
+        })
+    }
 }
 
 /// Represents a MD trajectory file on disk. We use this to load snapshots into memory, and
@@ -50,6 +57,7 @@ pub enum FrameSlice {
 /// Warning: DCD is not a well-defined format.
 #[derive(Clone, Debug)]
 pub struct Trajectory {
+    format: TrajFormat,
     pub path: PathBuf,
     /// e.g. derived from filename.
     pub display_name: String,
@@ -61,7 +69,8 @@ pub struct Trajectory {
     pub end_time: f32,              // Not in the file directly; we calculate this.
     // todo: Evaluate how you want to handle this. One or more ranges?
     // todo: Time frames?
-    pub frames_open: Vec<usize>,
+    // pub frames_open: Vec<usize>,
+    pub frames_open: Option<FrameSlice>,
     /// This is an odd place for UI input box items, but it will do for now.
     /// Integers are OK directly, but we need an intermediate String for floats.
     pub ui_start_i: usize,
@@ -72,8 +81,17 @@ pub struct Trajectory {
 impl Trajectory {
     /// Load this into memory including metadata, but don't load any frames. Supports
     /// TRR, XTC, and DCD formats.
-    pub fn new(path: &Path) -> Self {
-        Self {
+    pub fn new(path: &Path) -> io::Result<Self> {
+        let format = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(TrajFormat::from_extension)
+            .ok_or_else(|| {
+                io::Error::other("Error determining trajectory format from extension")
+            })?;
+
+        let mut result = Self {
+            format,
             path: path.to_owned(),
             // i.e. `traj.trr`.
             display_name: path
@@ -86,20 +104,65 @@ impl Trajectory {
             save_interval_steps: 0,
             dt: 0.,
             end_time: 0.,
-            frames_open: Vec::new(),
+            frames_open: None,
             ui_start_i: 0,
             ui_end_i: 0,
             ui_start_time: String::new(),
             ui_end_time: String::new(),
+        };
+
+        match format {
+            TrajFormat::Trr => {
+                let md = TrrMetadata::read(path)?;
+
+                result.num_atoms = md.num_atoms;
+                result.num_frames = md.num_frames;
+                result.start_step = md.start_step;
+                result.save_interval_steps = md.save_interval_steps;
+                result.dt = md.dt;
+                result.end_time = md.end_time;
+            }
+            TrajFormat::Dcd => {
+                let md = DcdMetadata::read(path)?;
+
+                result.num_atoms = md.num_atoms;
+                result.num_frames = md.num_frames;
+                result.start_step = md.start_step;
+                result.save_interval_steps = md.save_interval_steps;
+                result.dt = md.dt;
+                result.end_time = md.end_time;
+            }
+            TrajFormat::Xtc => {
+                return Err(io::Error::other(
+                    "Error determining trajectory format from extension; assuming TRR",
+                ));
+            }
         }
+
+        Ok(result)
     }
 
-    /// Start and end are in ps.
-    /// todo: Shouljd they be in indices instead? Allow coth?
-    pub fn load_snaps(&self, slice: FrameSlice) -> io::Result<Vec<Snapshot>> {
-        let mut snaps = Vec::new();
+    pub fn load_snaps(&mut self, slice: FrameSlice) -> io::Result<Vec<Snapshot>> {
+        Ok(match self.format {
+            TrajFormat::Trr => {
+                self.frames_open = Some(slice);
 
-        Ok(snaps)
+                read_trr(&self.path, slice)?
+                    .into_iter()
+                    .map(|f| Snapshot::from(f))
+                    .collect()
+            }
+
+            TrajFormat::Xtc => return Err(io::Error::from(io::ErrorKind::InvalidInput)),
+            TrajFormat::Dcd => {
+                self.frames_open = Some(slice);
+
+                read_dcd(&self.path, slice)?
+                    .into_iter()
+                    .map(|f| Snapshot::from(f))
+                    .collect()
+            }
+        })
     }
 }
 

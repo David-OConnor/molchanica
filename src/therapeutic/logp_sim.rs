@@ -241,12 +241,13 @@ fn run_octanol(
         &mut HashSet::new(),
     )?;
 
-    state.volatile.md_local.update_mols_for_disp(&mols);
-    // Register octanol copies so they appear in snapshot playback alongside the solute.
-    state
-        .volatile
-        .md_local
-        .update_custom_solvents_for_disp(&[(&octanol, OCTANOL_COUNT)]);
+    // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
+    // // Register octanol copies so they appear in snapshot playback alongside the solute.
+    // state
+    //     .volatile
+    //     .md_local
+    //     .viewer
+    //     .update_custom_solvents_for_disp(&[(&octanol, OCTANOL_COUNT)]);
 
     // Blocking.
     run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
@@ -317,7 +318,7 @@ fn run_water(
         &mut HashSet::new(),
     )?;
 
-    state.volatile.md_local.update_mols_for_disp(&mols);
+    // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
 
     // Blocking.
     run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);

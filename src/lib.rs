@@ -36,6 +36,5 @@ pub mod state;
 pub mod tautomers;
 pub mod therapeutic;
 pub mod threads;
-mod trajectory;
 pub mod ui;
 pub mod util;

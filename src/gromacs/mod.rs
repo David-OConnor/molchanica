@@ -315,7 +315,12 @@ pub fn launch_md(state: &mut State) {
 
     let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
         mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
-    state.volatile.md_local.update_mols_for_disp(&mols_ref);
+
+    // state
+    //     .volatile
+    //     .md_local
+    //     .viewer
+    //     .update_mols_for_disp(&mols_ref);
 
     let (tx, rx) = mpsc::channel();
 
@@ -395,10 +400,17 @@ pub fn on_gromacs_md_complete(
     carry_over_snap_energy(&mut snaps);
 
     if !snaps.is_empty() {
-        let mut md = MdState::default();
-        md.mol_start_indices = mol_start_indices;
-        md.snapshots = snaps;
-        state.volatile.md_local.mol_dynamics = Some(md);
+        // let mut md = MdState::default();
+
+        // md.mol_start_indices = mol_start_indices;
+        // md.snapshots = snaps;
+        // state.volatile.md_local.mol_dynamics = Some(md);
+
+        state.volatile.md_local.viewer.snapshots = snaps;
+
+        // todo: A/R post viewer revamp.
+        // state.volatile.md_local.mol_start_indices = mol_start_indices;
+
         state.volatile.md_local.draw_md_mols = true;
     }
 

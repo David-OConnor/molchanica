@@ -1,26 +1,23 @@
-use bio_files::gromacs::mdp::BarostatCfg;
 use dynamics::{
     ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
-    LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, TAU_TEMP_DEFAULT,
-    snapshot::{Snapshot, SnapshotHandlers},
+    LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    snapshot::SnapshotHandlers,
 };
-use egui::{Color32, ComboBox, ImageData::Color, RichText, TextEdit, Ui};
+use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 
 use crate::{
     button,
     drawing::EntityClass,
-    file_io::save_trajectory,
-    label, md,
-    md::{MdBackend, clear_snaps, launch_md, post_run_cleanup, start_md_energy_computation},
+    md,
+    md::{MdBackend, launch_md, post_run_cleanup, start_md_energy_computation},
     prefs::ToSave,
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        flag_btn, misc, num_field,
+        flag_btn, md_viewer, misc, num_field,
     },
-    util::handle_err,
 };
 
 pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
@@ -93,7 +90,6 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
             if ui.button(RichText::new("Reset").color(Color32::LIGHT_RED))
                 .on_hover_text("Reset all MD settings to defaults.")
                 .clicked() {
-
                 state.to_save.md_config = Default::default();
 
                 let to_save_default = ToSave::default();
@@ -104,38 +100,27 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                 state.ui.md.sync(&state.to_save.md_config, state.to_save.md_dt);
             }
 
-            if let Some(md) = &state.volatile.md_local.mol_dynamics &&
-                state.ui.current_snapshot < md.snapshots.len() &&
-                !md.snapshots[state.ui.current_snapshot].water_o_posits.is_empty() {
-
-                if ui
-                    .button(RichText::new("Clear water"))
-                    .on_hover_text("Clear all rendered water molecules from the display")
-                    .clicked() {
-
-                    scene
-                        .entities
-                        .retain(|ent| ent.class != EntityClass::WaterModel as u32);
-                }
-
-                if !md.snapshots.is_empty() &&
-                    ui
-                        .button(RichText::new("Clear Traj"))
-                        .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
-                        .clicked() {
-
-                    clear_snaps(state);
-                    state.ui.current_snapshot = 0;
-
-                    scene
-                        .entities
-                        .retain(|ent| ent.class != EntityClass::WaterModel as u32);
-                }
-
+            if let Some(ss) = state.volatile.md_local.viewer.get_active_snap() && ss.water_o_posits.is_empty() && ui
+                .button(RichText::new("Clear water"))
+                .on_hover_text("Clear all rendered water molecules from the display")
+                .clicked() {
+                scene
+                    .entities
+                    .retain(|ent| ent.class != EntityClass::WaterModel as u32);
 
                 // todo: Setting water class isn't working for this update.
                 // engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::WaterModel as u32]);
                 updates.entities = EntityUpdate::All;
+            }
+
+
+            if !state.volatile.md_local.viewer.snapshots.is_empty() &&
+                ui
+                    .button(RichText::new("Clear Traj"))
+                    .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
+                    .clicked() {
+
+                state.volatile.md_local.clear_snaps();
             }
 
             if button!(
@@ -262,19 +247,19 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
         ui.add_space(ROW_SPACING / 2.);
         ui.horizontal_wrapped(|ui| {
-            temp_pressure(state, ui,);
+            temp_pressure(state, ui);
         });
 
-        if let Some(md) = &state.volatile.md_local.mol_dynamics && state.ui.current_snapshot < md.snapshots.len() {
+        if let Some(ss) = state.volatile.md_local.viewer.get_active_snap() {
             ui.add_space(ROW_SPACING / 2.);
 
             ui.horizontal_wrapped(|ui| {
-                energy_disp(&md.snapshots[state.ui.current_snapshot], ui);
+                md_viewer::energy_disp(ss, ui);
             });
         }
     });
 
-    misc::dynamics_player(state, scene, updates, ui);
+    md_viewer::dynamics_viewer(state, scene, updates, ui);
 }
 
 /// Section for integrator config, various modelling parameters etc
@@ -378,6 +363,33 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
             .response
             .on_hover_text(help_text);
     }
+
+    {
+        let help_text = "Set the solvent";
+        ui.label("Solvent:").on_hover_text(help_text);
+        ComboBox::from_id_salt(6)
+            .width(80.)
+            .selected_text(state.to_save.md_config.solvent.to_string())
+            .show_ui(ui, |ui| {
+                // todo: Don't hard-code shake tol
+                for v in &[
+                    Solvent::None,
+                    Solvent::WaterOpc,
+                    // todo: Custom
+                    // Solvent::Custom(),
+                ] {
+                    ui.selectable_value(
+                        &mut state.to_save.md_config.solvent,
+                        v.clone(),
+                        v.to_string(),
+                    );
+                }
+            })
+            .response
+            .on_hover_text(help_text);
+    }
+
+    ui.add_space(COL_SPACING / 2.);
 
     ui.add_space(COL_SPACING / 2.);
 
@@ -670,70 +682,6 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
             }
         }
     }
-}
-
-pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
-    let Some(en) = &snap.energy_data else { return };
-
-    ui.label(RichText::new("Energy (current snap):").color(Color32::WHITE));
-    ui.add_space(COL_SPACING / 2.);
-
-    ui.label("E (kcal/mol) KE: ");
-    ui.label(RichText::new(format!("{:.1}", en.energy_kinetic)).color(Color32::GOLD));
-
-    ui.label("KE/atom: ");
-    // todo: Don't continuously run these computations!
-    let atom_count = (snap.water_o_posits.len() * 3) as f32 + snap.atom_posits.len() as f32;
-    let ke_per_atom = en.energy_kinetic / atom_count;
-    label!(ui, format!("{:.2}", ke_per_atom), Color32::GOLD);
-
-    ui.label("PE: ");
-    label!(ui, format!("{:.2}", en.energy_potential), Color32::GOLD);
-
-    if en.energy_potential_nonbonded.abs() > 0.0001 {
-        ui.label("PE NB: ");
-        label!(
-            ui,
-            format!("{:.2}", en.energy_potential_nonbonded),
-            Color32::GOLD
-        );
-    }
-
-    ui.label("PE/atom: ");
-    // todo: Don't continuously run this!
-    let pe_per_atom = en.energy_potential / atom_count;
-    label!(ui, format!("{:.3}", pe_per_atom), Color32::GOLD);
-
-    ui.label("E tot: ");
-    // todo: Don't continuously run this!
-    let e = en.energy_potential + en.energy_kinetic;
-    label!(ui, format!("{:.2}", e), Color32::GOLD);
-
-    // ui.label("PE between mols:");
-    // // todo: One pair only for now
-    // if en.energy_potential_between_mols.len() >= 2 {
-    //     // todo: Which index?
-    //     ui.label(
-    //         RichText::new(format!("{:.2}", en.energy_potential_between_mols[1]))
-    //             .color(Color32::GOLD),
-    //     );
-    // }
-
-    ui.label("Temp: ");
-    label!(ui, format!("{:.1} K", en.temperature), Color32::GOLD);
-
-    ui.label("P: ");
-    label!(ui, format!("{:.1} bar", en.pressure), Color32::GOLD);
-
-    ui.label("Vol: ");
-    label!(
-        ui,
-        format!("{:.1} k Å^3", en.volume / 1_000.),
-        Color32::GOLD
-    );
-
-    ui.label("Dens: ");
-    label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
 }
 
 fn num_field_option<T>(val: &mut Option<T>, label: &str, width: u16, ui: &mut Ui)

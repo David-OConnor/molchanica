@@ -4,8 +4,6 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fmt::{Display, Formatter},
-    io,
-    io::ErrorKind,
     time::Instant,
 };
 
@@ -18,15 +16,14 @@ use dynamics::{
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
 use rand::Rng;
+use viewer::SnapshotViewer;
 
 use crate::{
     cam::move_cam_to_active_mol,
-    drawing::{
-        draw_peptide, draw_water,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
-    },
     gromacs,
+    md::viewer::ViewerMolecule,
     molecules::{
+        MolType,
         common::MoleculeCommon,
         lipid::MoleculeLipid,
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
@@ -36,6 +33,9 @@ use crate::{
     state::State,
     util::{clear_cli_out, handle_err, handle_success},
 };
+
+pub mod trajectory;
+pub mod viewer;
 
 // Å. Static atoms must be at least this close to a dynamic atom at the start of MD to be counted.
 // Set this wide to take into account motion.
@@ -51,6 +51,7 @@ const MD_STEPS_PER_APPLICATION_FRAME: usize = 10;
 
 #[derive(Default)]
 pub struct MdStateLocal {
+    /// MD state, for when running using the Dynamics engine.
     pub mol_dynamics: Option<MdState>,
     /// This flag lets us defer launch by a frame, so we can display a flag.
     pub launching: bool,
@@ -58,277 +59,92 @@ pub struct MdStateLocal {
     pub start: Option<Instant>,
     /// Cached so we don't compute each UI paint. Picoseconds.
     pub run_time: f32,
-    /// We maintain a set of atom indices of peptides that are used in MD. This for example, might
-    /// exclude hetero atoms and atoms not near a docking site. (mol i, atom i)
-    pub peptide_selected: HashSet<(usize, usize)>,
     // todo: Consider if you want a dedicated MD playback operating mode. For now, this flag
     /// If true, render the molecules from this struct, instead of primary state molecules.
     pub draw_md_mols: bool,
-    /// We maintain independent copies of these from the primary state. These are what we display
-    /// after an MD run. They may be created as copies of molecules in the primary state.
-    /// (Mol, number of copies)
-    /// For now, count is only set up on construction. We have a separate molecule instance for each count.
-    pub peptides: Vec<MoleculePeptide>,
-    pub small: Vec<MoleculeSmall>,
-    pub lipids: Vec<MoleculeLipid>,
-    pub nucleic_acids: Vec<MoleculeNucleicAcid>,
-    /// One entry per copy of each custom solvent species (from `Solvent::Custom`), in the same
-    /// order they were packed into the simulation.  Positions are updated from snapshots just
-    /// like other molecule types, but always *after* all regular mol types because custom solvents
-    /// are appended last to `MdState::all_mols` and therefore last in `mol_start_indices`.
-    pub custom_solvents: Vec<MoleculeSmall>,
     pub gromacs_output: Option<GromacsOutput>,
+    pub viewer: SnapshotViewer,
+    // todo: putting back for now
+    /// We maintain a set of atom indices of peptides that are used in MD. This for example, might
+    /// exclude hetero atoms and atoms not near a docking site. (mol i, atom i)
+    pub peptide_selected: HashSet<(usize, usize)>,
 }
 
 impl MdStateLocal {
-    /// Update the molecules stored here; we render these instead of the primary state molecules, if in an
-    /// appropriate mode for viewing.
-    pub fn update_mols_for_disp(&mut self, mols: &[(FfMolType, &MoleculeCommon, usize)]) {
-        self.peptides.clear();
-        self.small.clear();
-        self.lipids.clear();
-        self.nucleic_acids.clear();
-        self.custom_solvents.clear();
+    /// todo: WIP, regarding how we pass in atoms and molecules.
+    pub fn replace_snaps(
+        &mut self,
+        snaps: Vec<Snapshot>,
+        peptides: &Option<MoleculePeptide>,
+        mols_small: &[MoleculeSmall],
+        traj_count: usize,
+    ) {
+        self.viewer.snapshots = snaps;
+        self.draw_md_mols = true;
 
-        for (ff_mol_type, mol, count) in mols {
-            // todo: Pass in the full mols so we are not reproducing a copy?
-            match ff_mol_type {
-                FfMolType::Peptide => {
-                    for _ in 0..*count {
-                        self.peptides.push(MoleculePeptide {
-                            common: (*mol).clone(),
-                            ..Default::default()
-                        });
-                    }
-                }
-                FfMolType::SmallOrganic => {
-                    for _ in 0..*count {
-                        self.small.push(MoleculeSmall {
-                            common: (*mol).clone(),
-                            ..Default::default()
-                        });
-                    }
-                }
-                FfMolType::Dna | FfMolType::Rna => {
-                    for _ in 0..*count {
-                        self.nucleic_acids.push(MoleculeNucleicAcid {
-                            common: (*mol).clone(),
-                            ..Default::default()
-                        });
-                    }
-                }
-                FfMolType::Lipid => {
-                    for _ in 0..*count {
-                        self.lipids.push(MoleculeLipid {
-                            common: (*mol).clone(),
-                            ..Default::default()
-                        });
-                    }
-                }
-                _ => eprintln!("Invalid Mol type for MD"),
-            }
-        }
-    }
+        // todo: This will only work for the case of a single small molecule.
 
-    /// Populate `custom_solvents` with one copy of each solvent template per packed copy,
-    /// ready for snapshot-driven position updates and drawing.
-    ///
-    /// Call this *after* `update_mols_for_disp` (which clears `custom_solvents`) and
-    /// *after* `build_dynamics`, in the same order the solvent species appear in
-    /// `Solvent::Custom`.
-    pub fn update_custom_solvents_for_disp(&mut self, solvents: &[(&MoleculeSmall, usize)]) {
-        self.custom_solvents.clear();
-        for (template, count) in solvents {
-            for _ in 0..*count {
-                self.custom_solvents.push(MoleculeSmall {
-                    common: template.common.clone(),
-                    ..Default::default()
-                });
-            }
-        }
-    }
+        // todo: NAive attempt to load mols based on atom count.
+        // todo: Next step: Prioritize GRO, or amber etc equivalent file formats
+        // todo as priority for these matches.
+        // todo: You need a better approach to trhis in general.
+        for mol in mols_small {
+            // if mol.common.atoms.len() == traj_count {
+            //     println!("Found a match for small mol basedd on atom count");
+            //     // self.viewer.small = vec![mol.clone()];
+            // }
 
-    /// Set atom positions for molecules involve in dynamics to that of a snapshot. Ligs and lipids are only ones included
-    /// in dynamics.
-    pub fn change_snapshot(&mut self, snap_i: usize) -> io::Result<()> {
-        let Some(md) = &self.mol_dynamics else {
-            let txt = "Error: Attempting to change snapshot when there is no MD state";
-            eprintln!("{txt}");
-            return Err(io::Error::new(ErrorKind::InvalidData, txt));
-        };
-
-        let snap = &md.snapshots[snap_i];
-
-        let posits_by_mol = snap.unflatten(&md.mol_start_indices)?;
-
-        let mut i_posits = 0;
-
-        // This assumes we pack each mol type in the same order.
-
-        for mol in &mut self.peptides {
-            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
-            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
-                *p = posits_by_mol[i_posits][i_p].0.into(); //Posit only; discard velocity.
-            }
-            i_posits += 1;
-        }
-
-        for mol in &mut self.small {
-            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
-            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
-                *p = posits_by_mol[i_posits][i_p].0.into();
-            }
-            i_posits += 1;
-        }
-
-        for mol in &mut self.lipids {
-            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
-            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
-                *p = posits_by_mol[i_posits][i_p].0.into();
-            }
-            i_posits += 1;
-        }
-
-        for mol in &mut self.nucleic_acids {
-            // change_snapshot_helper(&mut mol.common.atom_posits, &mut start_i_this_mol, snap);
-            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
-                *p = posits_by_mol[i_posits][i_p].0.into();
-            }
-            i_posits += 1;
-        }
-
-        // Custom solvents are always appended last in mol_start_indices (they come after all
-        // regular mols in the packed all_mols slice), so we process them here, after all other
-        // molecule types.
-        for mol in &mut self.custom_solvents {
-            if i_posits >= posits_by_mol.len() {
-                eprintln!(
-                    "change_snapshot: ran out of mol positions while updating custom solvents \
-                     (expected {} more)",
-                    self.custom_solvents.len()
-                );
-                break;
-            }
-            for (i_p, p) in mol.common.atom_posits.iter_mut().enumerate() {
-                *p = posits_by_mol[i_posits][i_p].0.into();
-            }
-            i_posits += 1;
-        }
-
-        Ok(())
-    }
-
-    /// We filter peptide hetero atoms out of the MD workflow. Adjust snapshot indices and atom positions so they
-    /// are properly synchronized. This also handles the case of reassigning due to peptide atoms near the ligand.
-    pub fn reassign_snapshot_indices(&mut self) {
-        // if !pep.common.selected_for_md {
-        if self.peptides.is_empty() {
-            return;
-        }
-
-        let Some(md) = &mut self.mol_dynamics else {
-            return;
-        };
-
-        let pep_atom_set = &self.peptide_selected;
-
-        let pep = &self.peptides[0];
-
-        println!("Re-assigning snapshot indices to match atoms excluded for MD...");
-
-        let pep_count = pep_atom_set.len();
-        let lig_atom_count = self.small.len();
-        let lipid_atom_count = self.lipids.len();
-        let na_atom_count = self.nucleic_acids.len();
-
-        let pep_start_i = lig_atom_count + lipid_atom_count + na_atom_count;
-
-        // Rebuild each snapshot's atom_posits: [ligands as-is] + [full peptide with holes filled]
-        for snap in &mut md.snapshots {
-            if pep_start_i + pep_count > snap.atom_posits.len() {
-                eprintln!(
-                    "Error: Invalid index when reassigning snapshot posits. \
-            Snap atom count: {}, lig count {lig_atom_count} Pep start: {pep_start_i}, Pep count: {pep_count}",
-                    snap.atom_posits.len()
-                );
-                continue;
-            }
-
-            // Iterator over the peptide positions that actually participated in MD
-            let mut pept_md_posits = snap.atom_posits[pep_start_i..pep_start_i + pep_count]
-                .iter()
-                .cloned();
-
-            // Owned iterator over the peptide's MD velocities, when available.
-            let mut pept_md_vel_iter = snap.atom_velocities.as_ref().map(|vels| {
-                vels[pep_start_i..pep_start_i + pep_count]
-                    .to_vec()
-                    .into_iter()
+            // todo: Quick + Dirty for initial testing.
+            self.viewer.mols.push(ViewerMolecule {
+                mol_type: MolType::Ligand,
+                mol: mol.common.clone(),
+                range: (0, mol.common.atoms.len()),
             });
-
-            let mut new_posits = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
-
-            // Mirror the Option: only build a velocity Vec when velocities are present.
-            let mut new_vels: Option<Vec<lin_alg::f32::Vec3>> =
-                snap.atom_velocities.as_ref().map(|vels| {
-                    let mut v = Vec::with_capacity(pep_start_i + pep.common.atoms.len());
-                    v.extend_from_slice(&vels[..pep_start_i]);
-                    v
-                });
-
-            // Keep ligand portion unchanged
-            new_posits.extend_from_slice(&snap.atom_posits[..pep_start_i]);
-
-            // Reinsert peptide atoms in their original order
-            for (i, atom) in pep.common.atoms.iter().enumerate() {
-                let is_included = pep_atom_set.contains(&(0, i));
-
-                if is_included {
-                    new_posits.push(
-                        pept_md_posits
-                            .next()
-                            .expect("Ran out of peptide MD positions"),
-                    );
-
-                    if let (Some(v), Some(it)) = (&mut new_vels, &mut pept_md_vel_iter) {
-                        v.push(it.next().expect("Ran out of peptide MD velocities"));
-                    }
-                } else {
-                    // Non-MD atom: use its original static position
-                    new_posits.push(atom.posit.into());
-
-                    if let Some(ref mut v) = new_vels {
-                        v.push(lin_alg::f32::Vec3::new_zero());
-                    }
-                }
-            }
-
-            // Replace the snapshot's positions with the reindexed set
-            snap.atom_posits = new_posits;
-            snap.atom_velocities = new_vels;
-
-            return;
         }
+    }
 
-        println!("Done.");
+    /// Removes all MD snapshots, and performs related cleanup.
+    pub fn clear_snaps(&mut self) {
+        self.viewer.snapshots = Vec::new();
+        // self.viewer.mol_start_indices = Vec::new();
+        self.viewer.current_snapshot = None;
+
+        self.viewer.mols = Vec::new();
+        // self.viewer.peptides = Vec::new();
+        // self.viewer.small = Vec::new();
+        // self.viewer.lipids = Vec::new();
+        // self.viewer.nucleic_acids = Vec::new();
+        // self.viewer.custom_solvents = Vec::new();
+
+        self.draw_md_mols = false;
     }
 }
 
-/// For our non-blocking workflow. Run this once an MD run is complete.
+/// For our non-blocking workflow. Run this once an MD run using the `Dynamics` engine is complete.
 pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    if state.volatile.md_local.mol_dynamics.is_none() {
+    let md = &mut state.volatile.md_local;
+    if md.mol_dynamics.is_none() {
+        // if md.mol_dynamics.is_none() {
         eprintln!("Can't run MD cleanup; MD state is None");
         return;
-    }
+    };
 
-    state.volatile.md_local.running = false;
-    state.volatile.md_local.start = None;
-    state.volatile.md_local.draw_md_mols = true;
+    md.running = false;
+    md.start = None;
+    md.draw_md_mols = true;
 
-    state.volatile.md_local.reassign_snapshot_indices();
+    // todo: Put back A/R
+    // md.viewer.reassign_snapshot_indices();
 
-    state.ui.current_snapshot = 0;
-    if state.volatile.md_local.change_snapshot(0).is_err() {
+    // Copy snapshots from MD state to the viewer.
+    md.viewer.snapshots = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
+
+    // todo: Put back the equivalent here, I believe
+    // md.viewer.mol_start_indices = md.mol_dynamics.as_ref().unwrap().mol_start_indices.clone();
+
+    md.viewer.current_snapshot = None;
+
+    if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
         handle_err(
             &mut state.ui,
             String::from("Error changing snapshot at MD completion."),
@@ -336,7 +152,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         return;
     }
 
-    draw_mols(state, scene);
+    viewer::draw_mols(state, scene);
     updates.entities = EntityUpdate::All;
 
     handle_success(&mut state.ui, "MD complete".to_string());
@@ -819,7 +635,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         .map(|(ff, mol, count)| (*ff, mol, *count))
         .collect();
 
-    state.volatile.md_local.update_mols_for_disp(&mols);
+    // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
 
     let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
         Some(STATIC_ATOM_DIST_THRESH)
@@ -1021,61 +837,6 @@ fn setup_mols_dyn(
     Ok(res)
 }
 
-/// Draw all molecules from the MD run.
-pub fn draw_mols(state: &mut State, scene: &mut Scene) {
-    // todo: Only if at least one lig is involved.
-    if !state.volatile.md_local.peptides.is_empty() {
-        draw_peptide(state, scene);
-    }
-
-    // When drawing MD molecules, custom solvents (e.g. octanol) are rendered as ligands
-    // alongside the regular solute.  We temporarily merge them into `mols_small` so that
-    // `draw_all_ligs` handles them in one unified pass, then restore the separation.
-    let custom_solvent_count = if state.volatile.md_local.draw_md_mols {
-        state.volatile.md_local.custom_solvents.len()
-    } else {
-        0
-    };
-    if custom_solvent_count > 0 {
-        // Drain into mols_small; draw_all_ligs will render all of them.
-        let custom: Vec<MoleculeSmall> =
-            state.volatile.md_local.custom_solvents.drain(..).collect();
-        state.volatile.md_local.small.extend(custom);
-    }
-    if !state.volatile.md_local.small.is_empty() {
-        draw_all_ligs(state, scene);
-    }
-    if custom_solvent_count > 0 {
-        // Restore: the custom solvents were appended to the end of mols_small.
-        let split_at = state.volatile.md_local.small.len() - custom_solvent_count;
-        state.volatile.md_local.custom_solvents =
-            state.volatile.md_local.small.drain(split_at..).collect();
-    }
-
-    if !state.volatile.md_local.lipids.is_empty() {
-        draw_all_lipids(state, scene);
-    }
-
-    if !state.volatile.md_local.nucleic_acids.is_empty() {
-        draw_all_nucleic_acids(state, scene);
-    }
-
-    // Asymmetry here: We don't store a copy of water molecules in MdStateLocal,
-    // so we draw them from the snap directly. For other mol steps, we update local
-    // mol posits with posits from the snap before running this.
-    if let Some(md) = &state.volatile.md_local.mol_dynamics {
-        let snap = &md.snapshots[state.ui.current_snapshot];
-
-        draw_water(
-            scene,
-            &snap.water_o_posits,
-            &snap.water_h0_posits,
-            &snap.water_h1_posits,
-            state.ui.visibility.hide_water,
-        );
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Default, Encode, Decode)]
 pub enum MdBackend {
     #[default]
@@ -1094,29 +855,6 @@ impl Display for MdBackend {
 
         write!(f, "{v}")
     }
-}
-
-/// Removes all MD snapshots, and performs related cleanup.
-pub fn clear_snaps(state: &mut State) {
-    let Some(md) = &mut state.volatile.md_local.mol_dynamics else {
-        let txt = "Error: Attempting to change snapshot when there is no MD state";
-        eprintln!("{txt}");
-        return;
-        // return Err(io::Error::new(ErrorKind::InvalidData, txt));
-    };
-
-    md.snapshots = Vec::new();
-    md.mol_start_indices = Vec::new();
-
-    state.volatile.md_local.peptides = Vec::new();
-    state.volatile.md_local.small = Vec::new();
-    state.volatile.md_local.lipids = Vec::new();
-    state.volatile.md_local.nucleic_acids = Vec::new();
-    state.volatile.md_local.custom_solvents = Vec::new();
-
-    state.ui.current_snapshot = 0;
-
-    state.volatile.md_local.draw_md_mols = false;
 }
 
 /// For the UI functions to launch MD, and run energy computations.

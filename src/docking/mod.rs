@@ -120,16 +120,16 @@ pub fn dock(
 
     // todo: Examine and revamp which peptide atoms are included in the sim.
 
-    let mut md_state = build_dynamics_docking(
-        &state.dev,
-        mol,
-        Some(pep),
-        starting_vel.into(),
-        &state.ff_param_set,
-        &state.mol_specific_params,
-        &cfg,
-        &mut state.volatile.md_local.peptide_selected,
-    )?;
+    // let mut md_state = build_dynamics_docking(
+    //     &state.dev,
+    //     mol,
+    //     Some(pep),
+    //     starting_vel.into(),
+    //     &state.ff_param_set,
+    //     &state.mol_specific_params,
+    //     &cfg,
+    //     &mut state.volatile.md_local.viewer.peptide_selected,
+    // )?;
 
     state.volatile.md_local.start = Some(Instant::now());
     // state.volatile.md_local.running = true;
@@ -143,9 +143,9 @@ pub fn dock(
     // todo: You need a binding energy computation each step.
 
     // Blocking for now.
-    run_dynamics_blocking(&mut md_state, &state.dev, dt, n_steps);
+    // run_dynamics_blocking(&mut md_state, &state.dev, dt, n_steps);
 
-    state.volatile.md_local.mol_dynamics = Some(md_state);
+    // state.volatile.md_local.mol_dynamics = Some(md_state);
     // This cleanup fn requires state mol dynamics to be loaded.
     post_run_cleanup(state, scene, engine_updates);
 

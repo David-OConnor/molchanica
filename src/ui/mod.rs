@@ -46,6 +46,7 @@ use crate::{
 
 mod char_adme;
 mod md;
+mod md_viewer;
 pub mod misc;
 mod mol_data;
 mod mol_editor;

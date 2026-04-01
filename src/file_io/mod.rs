@@ -8,8 +8,7 @@ use std::{
 };
 
 use bio_files::{
-    DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz, gromacs::MdpParams,
-    md_params::ForceFieldParams, sdf::Sdf,
+    DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz, md_params::ForceFieldParams, sdf::Sdf,
 };
 use chrono::Utc;
 use dynamics::MdConfig;
@@ -26,7 +25,7 @@ use crate::{
         draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
-    md::launch_md,
+    md::trajectory::Trajectory,
     molecules::{
         MolGeneric, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY,
         common::MoleculeCommon, peptide::MoleculePeptide, small::MoleculeSmall,
@@ -36,7 +35,6 @@ use crate::{
     screening::pharmacophore::Pharmacophore,
     selection::Selection,
     state::State,
-    trajectory::Trajectory,
     util::{handle_err, handle_success},
 };
 
@@ -405,7 +403,7 @@ impl State {
 
     /// Open a MD trajectory. E.g. TRR, DCD, XTC file. This is a trajectory of a MD run.
     pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
-        let traj = Trajectory::new(path);
+        let traj = Trajectory::new(path)?;
         self.trajectories.push(traj);
 
         self.update_history(path, OpenType::Trajectory);

@@ -1341,10 +1341,20 @@ pub fn gromacs_avail() -> bool {
     match Command::new("gmx").arg("-version").output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
 
-            output.status.success()
-                && (stdout.contains("GROMACS version") || stderr.contains("GROMACS version"))
+            output.status.success() && (stdout.contains("GROMACS version"))
+        }
+        Err(_) => false,
+    }
+}
+
+/// Checks if GROMACS is available on the system patghg.
+pub fn mdtraj_avail() -> bool {
+    match Command::new("mdconvert").arg("-h").output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            output.status.success() && (stdout.contains("DCD, XTC"))
         }
         Err(_) => false,
     }

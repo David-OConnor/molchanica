@@ -1,22 +1,22 @@
+use bio_files::FrameSlice;
 use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
-use molchanica::ui::num_field;
 
 use crate::{
-    button, cam,
+    button,
     cam::{move_cam_to_mol, move_mol_to_cam, set_fog},
     label,
+    md::trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, close_traj},
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
     therapeutic::logp_sim,
-    trajectory::{FrameSlice, MAX_FRAMES_TO_ATTEMPT_LOADING, close_traj},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, pharmacophore,
+        COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, num_field, pharmacophore,
     },
     util::{RedrawFlags, close_mol, handle_err, orbit_center},
 };
@@ -706,12 +706,12 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
                     end: None,
                 }) {
                     Ok(snaps) => {
-                        // todo: Evaluate if you want snapshot viewing to be tied to MD state.
-                        // todo: You likely want it decoupled, but perhaps in a new MdViewer state
-                        // todo: that's associated with atoms/molecules.
-                        if let Some(md) = &mut state.volatile.md_local.mol_dynamics {
-                            md.snapshots = snaps;
-                        }
+                        state.volatile.md_local.replace_snaps(
+                            snaps,
+                            &state.peptide,
+                            &state.ligands,
+                            traj.num_atoms,
+                        );
                     }
                     Err(e) => {
                         handle_err(
@@ -751,12 +751,14 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
                     Some(traj.ui_end_i)
                 };
 
-                // todo: For now, 0 means unbounded.
                 match traj.load_snaps(FrameSlice::Index { start, end }) {
                     Ok(snaps) => {
-                        if let Some(md) = &mut state.volatile.md_local.mol_dynamics {
-                            md.snapshots = snaps;
-                        }
+                        state.volatile.md_local.replace_snaps(
+                            snaps,
+                            &state.peptide,
+                            &state.ligands,
+                            traj.num_atoms,
+                        );
                     }
                     Err(e) => {
                         handle_err(
@@ -775,6 +777,21 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
                 close = Some(i);
             }
         });
+
+        let mut txt = format!(
+            "Atoms: {}, Frames: {}, start step: {}, interval: {}, dt: {}ps, end time: {}ps",
+            traj.num_atoms,
+            traj.num_frames,
+            traj.start_step,
+            traj.save_interval_steps,
+            traj.dt,
+            traj.end_time,
+        );
+
+        if let Some(slice) = &traj.frames_open {
+            txt.push_str(&format!(", open: {slice}"))
+        }
+        ui.label(RichText::new(txt).color(Color32::LIGHT_BLUE));
     }
 
     if let Some(i) = close {

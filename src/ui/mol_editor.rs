@@ -25,7 +25,7 @@ use crate::{
     state::{State, StateUi},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
-        md::energy_disp,
+        md_viewer::energy_disp,
         misc,
         misc::{active_color, section_box},
         mol_data::selected_data,

@@ -8,7 +8,7 @@ use graphics::{Entity, Scene};
 use crate::{
     drawing,
     drawing::EntityClass,
-    molecules::{MolGeneric, MolGenericRef, MolType},
+    molecules::{MolGeneric, MolGenericRef, MolType, small::MoleculeSmall},
     render::MESH_POCKET_START,
     state::{OperatingMode, State},
     util::clear_mol_entity_indices,
@@ -114,6 +114,7 @@ fn helper_b(
 //     );
 // }
 
+// pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, specify: Option<&[MoleculeSmall]>) {
 pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
     let class = EntityClass::Ligand as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
@@ -124,11 +125,14 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
         return;
     }
 
-    let mols = if state.volatile.md_local.draw_md_mols {
-        &mut state.volatile.md_local.small
-    } else {
-        &mut state.ligands
-    };
+    // let mols = if state.volatile.md_local.draw_md_mols {
+    //     &mut state.volatile.md_local.viewer.small
+    // } else {
+    //     &mut state.ligands
+    // };
+
+    // todo temp
+    let mols = &mut state.ligands;
 
     let num_mols = mols.len();
 
@@ -179,11 +183,13 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
         return;
     }
 
-    let mols = if state.volatile.md_local.draw_md_mols {
-        &mut state.volatile.md_local.nucleic_acids
-    } else {
-        &mut state.nucleic_acids
-    };
+    // let mols = if state.volatile.md_local.draw_md_mols {
+    //     &mut state.volatile.md_local.viewer.nucleic_acids
+    // } else {
+    //     &mut state.nucleic_acids
+    // };
+
+    let mols = &mut state.nucleic_acids; // todo temp
 
     let num_mols = mols.len();
 
@@ -233,11 +239,13 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
         return;
     }
 
-    let mols = if state.volatile.md_local.draw_md_mols {
-        &mut state.volatile.md_local.lipids
-    } else {
-        &mut state.lipids
-    };
+    // let mols = if state.volatile.md_local.draw_md_mols {
+    //     &mut state.volatile.md_local.viewer.lipids
+    // } else {
+    //     &mut state.lipids
+    // };
+
+    let mols = &mut state.lipids; // todo temp
 
     let num_mols = mols.len();
 

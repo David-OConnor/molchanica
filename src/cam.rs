@@ -118,26 +118,33 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
         }
     };
 
-    let md = &state.volatile.md_local;
+    let viewer = &state.volatile.md_local.viewer;
 
-    if md.draw_md_mols {
-        for mol in &md.peptides {
-            update(find_mol_dist_range_inner(MolGenericRef::Peptide(mol), cam));
-        }
+    if state.volatile.md_local.draw_md_mols {
+        for mol in &viewer.mols {
 
-        for mol in &md.small {
-            update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
+            // todo: Come back to this!
+            // update(find_mol_dist_range_inner(MolGenericRef::Small(mol.mol), cam));
         }
 
-        for mol in &md.nucleic_acids {
-            update(find_mol_dist_range_inner(
-                MolGenericRef::NucleicAcid(mol),
-                cam,
-            ));
-        }
-        for mol in &md.lipids {
-            update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
-        }
+        //
+        // for mol in &viewer.peptides {
+        //     update(find_mol_dist_range_inner(MolGenericRef::Peptide(mol), cam));
+        // }
+        //
+        // for mol in &viewer.small {
+        //     update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
+        // }
+        //
+        // for mol in &viewer.nucleic_acids {
+        //     update(find_mol_dist_range_inner(
+        //         MolGenericRef::NucleicAcid(mol),
+        //         cam,
+        //     ));
+        // }
+        // for mol in &viewer.lipids {
+        //     update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
+        // }
     } else {
         // For the peptide use the same sparse sampling used in `find_nearest_mol_dist_to_cam`
         // (every 20th carbon) so large proteins don't stall the update. This produces good-enough results,

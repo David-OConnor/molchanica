@@ -1,14 +1,11 @@
 //! Misc utility-related UI functionality.
 
-use egui::{Color32, CornerRadius, Frame, Margin, RichText, Slider, Stroke, Ui};
-use graphics::{EngineUpdates, EntityUpdate, Scene};
+use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 
 use crate::{
-    md,
-    state::State,
-    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
-    util::{RedrawFlags, handle_err},
+    ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE},
+    util::RedrawFlags,
 };
 
 /// A box that shows its text highlighted if a flag is set.
@@ -68,75 +65,6 @@ pub fn active_color_sel(val: bool) -> Color32 {
     } else {
         COLOR_INACTIVE
     }
-}
-
-pub fn dynamics_player(
-    state: &mut State,
-    scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
-    ui: &mut Ui,
-) {
-    if state.volatile.md_local.mol_dynamics.is_none() {
-        return;
-    }
-
-    ui.horizontal(|ui| {
-        // let prev = state.ui.peptide_atom_posits;
-        let help_text = "Toggle between viewing the original (pre-dynamics) atom positions, and \
-        ones at the selected dynamics snapshot.";
-
-        {
-            let text = if state.volatile.md_local.draw_md_mols {
-                "Draw original"
-            } else {
-                "Draw MD"
-            };
-
-            if (state.volatile.md_local.draw_md_mols
-                || state.volatile.md_local.mol_dynamics.is_some())
-                && ui
-                    .button(RichText::new(text).color(COLOR_HIGHLIGHT))
-                    .on_hover_text(help_text)
-                    .clicked()
-            {
-                state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
-
-                md::draw_mols(state, scene);
-                engine_updates.entities = EntityUpdate::All;
-            }
-        }
-
-        let snapshot_prev = state.ui.current_snapshot;
-
-        if let Some(md) = &state.volatile.md_local.mol_dynamics {
-            if !md.snapshots.is_empty() {
-                ui.add_space(ROW_SPACING);
-
-                ui.spacing_mut().slider_width = ui.available_width() - 100.;
-                ui.add(Slider::new(
-                    &mut state.ui.current_snapshot,
-                    0..=md.snapshots.len() - 1,
-                ));
-                ui.label(format!(
-                    "{:.2} ps",
-                    state.ui.current_snapshot as f32 * state.to_save.md_dt
-                ));
-            }
-
-            if state.ui.current_snapshot != snapshot_prev {
-                if let Err(e) = state
-                    .volatile
-                    .md_local
-                    .change_snapshot(state.ui.current_snapshot)
-                {
-                    handle_err(&mut state.ui, format!("Error changing snapshot: {e:?}"));
-                }
-
-                md::draw_mols(state, scene);
-                engine_updates.entities = EntityUpdate::All;
-            }
-        };
-    });
 }
 
 // A container that highlights a section of UI code, to make it visually distinct from neighboring areas.
