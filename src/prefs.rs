@@ -100,6 +100,7 @@ pub enum OpenType {
     Trajectory,
     MdParams,
     ParquetDb,
+    MdMols,
 }
 
 impl Display for OpenType {
@@ -115,6 +116,7 @@ impl Display for OpenType {
             Self::Trajectory => "MD Trajectory",
             Self::MdParams => "MD Params",
             Self::ParquetDb => "Parquet DB",
+            Self::MdMols => "MD Mols",
         };
         write!(f, "{v}")
     }

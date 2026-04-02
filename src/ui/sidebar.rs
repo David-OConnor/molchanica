@@ -424,8 +424,8 @@ fn manip_toolbar(
                 "(Hotkey: M. M or Esc to stop)) Move the active molecule by clicking and dragging with /
                 the mouse. Scroll to move it forward and back."
             ).clicked() {
-                set_manip(state, scene, redraw,&mut false,
-                          ManipMode::Move((active_mol_type, active_mol_i)),engine_updates);
+                set_manip(state, scene, redraw, &mut false,
+                          ManipMode::Move((active_mol_type, active_mol_i)), engine_updates);
             }
 
             if button!(
@@ -435,8 +435,8 @@ fn manip_toolbar(
                 "(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll."
             ).clicked() {
                 set_manip(state,
-                          scene,redraw,&mut false,
-                          ManipMode::Rotate((active_mol_type, active_mol_i)),engine_updates,);
+                          scene, redraw, &mut false,
+                          ManipMode::Rotate((active_mol_type, active_mol_i)), engine_updates, );
             }
         }
 
@@ -574,6 +574,7 @@ pub(in crate::ui) fn sidebar(
             }
 
             traj_items(state, ui);
+            md_viewer_mappings(state, ui);
 
             ui.add_space(ROW_SPACING);
 
@@ -706,12 +707,7 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
                     end: None,
                 }) {
                     Ok(snaps) => {
-                        state.volatile.md_local.replace_snaps(
-                            snaps,
-                            &state.peptide,
-                            &state.ligands,
-                            traj.num_atoms,
-                        );
+                        state.volatile.md_local.replace_snaps(snaps);
                     }
                     Err(e) => {
                         handle_err(
@@ -753,12 +749,7 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
 
                 match traj.load_snaps(FrameSlice::Index { start, end }) {
                     Ok(snaps) => {
-                        state.volatile.md_local.replace_snaps(
-                            snaps,
-                            &state.peptide,
-                            &state.ligands,
-                            traj.num_atoms,
-                        );
+                        state.volatile.md_local.replace_snaps(snaps);
                     }
                     Err(e) => {
                         handle_err(
@@ -796,6 +787,58 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
 
     if let Some(i) = close {
         close_traj(state, i);
+    }
+
+    ui.separator();
+}
+
+/// Selected from loaded molecule maps, which map to atrajectory atoms. This might be loaded, for
+/// example, from a .gro file.
+fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
+    if state.volatile.md_local.viewer.mol_sets.is_empty() {
+        return;
+    }
+
+    ui.label("MD mol sets");
+    ui.separator();
+
+    let mut close = None;
+
+    for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(Color32::LIGHT_BLUE));
+
+            if button!(
+            ui,
+            "Set",
+            COLOR_ACTION,
+            "Load this set of molecules into the MD trajectory atoms. This affects\
+        how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
+        ).clicked() {
+                state.volatile.md_local.viewer.mol_set_active = Some(i);
+
+            }
+
+            if ui
+                .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                .on_hover_text("Close this trajectory.")
+                .clicked()
+            {
+                close = Some(i);
+            }
+
+        });
+    }
+
+    if let Some(i) = close {
+        state.volatile.md_local.viewer.mol_sets.remove(i);
+
+        state.volatile.md_local.viewer.mol_set_active =
+            match state.volatile.md_local.viewer.mol_set_active {
+                Some(active) if active == i => None,
+                Some(active) if active > i => Some(active - 1),
+                other => other,
+            };
     }
 
     ui.separator();

@@ -121,11 +121,11 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
     let viewer = &state.volatile.md_local.viewer;
 
     if state.volatile.md_local.draw_md_mols {
-        for mol in &viewer.mols {
+        // for mol in &viewer.mols {
 
-            // todo: Come back to this!
-            // update(find_mol_dist_range_inner(MolGenericRef::Small(mol.mol), cam));
-        }
+        // todo: Come back to this!
+        // update(find_mol_dist_range_inner(MolGenericRef::Small(mol.mol), cam));
+        // }
 
         //
         // for mol in &viewer.peptides {

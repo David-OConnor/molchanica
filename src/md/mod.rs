@@ -72,43 +72,16 @@ pub struct MdStateLocal {
 
 impl MdStateLocal {
     /// todo: WIP, regarding how we pass in atoms and molecules.
-    pub fn replace_snaps(
-        &mut self,
-        snaps: Vec<Snapshot>,
-        peptides: &Option<MoleculePeptide>,
-        mols_small: &[MoleculeSmall],
-        traj_count: usize,
-    ) {
+    pub fn replace_snaps(&mut self, snaps: Vec<Snapshot>) {
         self.viewer.snapshots = snaps;
-        self.viewer.mols = Vec::new();
         self.draw_md_mols = true;
-
-        // todo: This will only work for the case of a single small molecule.
-
-        // todo: NAive attempt to load mols based on atom count.
-        // todo: Next step: Prioritize GRO, or amber etc equivalent file formats
-        // todo as priority for these matches.
-        // todo: You need a better approach to trhis in general.
-        for mol in mols_small {
-            // if mol.common.atoms.len() == traj_count {
-            //     println!("Found a match for small mol basedd on atom count");
-            //     // self.viewer.small = vec![mol.clone()];
-            // }
-
-            // todo: Quick + Dirty for initial testing.
-            self.viewer.mols.push(ViewerMolecule {
-                mol_type: MolType::Ligand,
-                mol: mol.common.clone(),
-                range: (0, mol.common.atoms.len()),
-            });
-        }
     }
 
     /// Removes all MD snapshots, and performs related cleanup.
     pub fn clear_snaps(&mut self) {
         self.viewer.snapshots = Vec::new();
         self.viewer.current_snapshot = None;
-        self.viewer.mols = Vec::new();
+        self.viewer.mol_set_active = None;
         self.draw_md_mols = false;
     }
 }
@@ -642,7 +615,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         .map(|(ff, mol, count)| (*ff, mol, *count))
         .collect();
 
-    state.volatile.md_local.viewer.update_mols_for_disp(&mols);
+    state.volatile.md_local.viewer.add_mols_for_disp(&mols);
 
     let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
         Some(STATIC_ATOM_DIST_THRESH)

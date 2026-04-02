@@ -90,7 +90,11 @@ impl State {
             "sdf" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" => {
                 self.open_mol_from_file(path, scene, engine_updates)?
             }
-            "gro" => self.open_mol_from_file(path, scene, engine_updates)?, // todo
+            "gro" => {
+                self.volatile.md_local.viewer.load_gro(path)?;
+
+                self.update_history(path, OpenType::MdMols);
+            }
             "prmtop" => {
                 // todo
             }
@@ -129,7 +133,6 @@ impl State {
     pub fn open_mol_from_file(
         &mut self,
         path: &Path,
-        // scene: Option<&mut Scene>,
         scene: &mut Scene,
         engine_updates: &mut EngineUpdates,
     ) -> io::Result<()> {
@@ -663,6 +666,12 @@ impl State {
                 OpenType::ParquetDb => {
                     self.load_parquet_db(&history.path);
                 }
+                OpenType::MdMols => {
+                    // todo: Update when you support more formats.
+                    if let Err(e) = self.volatile.md_local.viewer.load_gro(&history.path) {
+                        handle_err(&mut self.ui, e.to_string());
+                    }
+                } // GRO viewer mols;
             }
         }
     }

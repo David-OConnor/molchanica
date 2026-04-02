@@ -308,7 +308,7 @@ pub fn launch_md(state: &mut State) {
 
     let mols_: Vec<_> = mols.iter().map(|m| (m.0, &m.1, m.2)).collect();
 
-    state.volatile.md_local.viewer.update_mols_for_disp(&mols_);
+    state.volatile.md_local.viewer.add_mols_for_disp(&mols_);
 
     let mut offset = 0;
     let mut mol_start_indices = Vec::new();
