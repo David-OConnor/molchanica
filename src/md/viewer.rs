@@ -39,6 +39,50 @@ pub struct ViewerMolSet {
     pub path: Option<PathBuf>,
     pub name: String,
     pub mols: Vec<ViewerMolecule>,
+    /// Derivative of mols. Used to compare to atom counts in trajectories.
+    pub atom_count: usize,
+    /// Derived from all molecule ranges in the set
+    pub range_covered: (usize, usize),
+    /// A range overlap is probably a fault of some sort in the ranges here.
+    pub range_overlaps: bool,
+}
+
+impl ViewerMolSet {
+    /// This constructor computes the derivative values.
+    pub fn new(path: Option<PathBuf>, name: String, mols: Vec<ViewerMolecule>) -> Self {
+        let atom_count = mols.iter().map(|m| m.mol.atoms.len()).sum();
+
+        let range_covered = if mols.is_empty() {
+            (0, 0)
+        } else {
+            let start = mols.iter().map(|m| m.range.0).min().unwrap();
+            let end = mols.iter().map(|m| m.range.1).max().unwrap();
+            (start, end)
+        };
+
+        let mut sorted_ranges = mols.iter().map(|m| m.range).collect::<Vec<_>>();
+        sorted_ranges.sort_by_key(|r| r.0);
+
+        let mut range_overlaps = false;
+        for pair in sorted_ranges.windows(2) {
+            let a = pair[0];
+            let b = pair[1];
+
+            if b.0 < a.1 {
+                range_overlaps = true;
+                break;
+            }
+        }
+
+        Self {
+            path,
+            name,
+            mols,
+            atom_count,
+            range_covered,
+            range_overlaps,
+        }
+    }
 }
 
 #[derive(Default)]

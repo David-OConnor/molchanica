@@ -806,7 +806,14 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
 
     for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(Color32::LIGHT_BLUE));
+
+            let (active, color) = if Some(i) == state.volatile.md_local.viewer.mol_set_active {
+                (true, COLOR_ACTIVE)
+            } else {
+                (false, Color32::WHITE)
+            };
+
+            ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(color));
 
             if button!(
             ui,
@@ -815,8 +822,11 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
             "Load this set of molecules into the MD trajectory atoms. This affects\
         how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
         ).clicked() {
-                state.volatile.md_local.viewer.mol_set_active = Some(i);
-
+                state.volatile.md_local.viewer.mol_set_active = if active {
+                    None }
+                else {
+                    Some(i)
+                };
             }
 
             if ui
