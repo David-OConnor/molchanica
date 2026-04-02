@@ -90,6 +90,7 @@ impl State {
             "sdf" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" => {
                 self.open_mol_from_file(path, scene, engine_updates)?
             }
+            "gro" => self.open_mol_from_file(path, scene, engine_updates)?, // todo
             "prmtop" => {
                 // todo
             }
@@ -1018,6 +1019,7 @@ impl Default for FileDialogs {
                 "Molecule (small)",
                 vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
             )
+            .add_file_filter_extensions("GROMACS molecule input", vec!["gro"])
             .add_file_filter_extensions("Protein (CIF)", vec!["cif"])
             .add_file_filter_extensions("Density", vec!["map", "mtz", "cif"])
             .add_file_filter_extensions("Mol dynamics", vec!["frcmod", "dat", "lib", "prmtop"])
@@ -1035,6 +1037,7 @@ impl Default for FileDialogs {
             .add_save_extension("SDF", "sdf")
             .add_save_extension("XYZ", "xyz")
             .add_save_extension("Pdbqt", "pdbqt")
+            .add_save_extension("GRO", "gro")
             .add_save_extension("Map", "map")
             .add_save_extension("MTZ", "mtz")
             .add_save_extension("Prmtop", "prmtop")
