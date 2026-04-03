@@ -14,7 +14,7 @@ use graphics::Scene;
 use lin_alg::f64::Vec3;
 
 use crate::{
-    drawing::{EntityClass, draw_mol, draw_water},
+    drawing::{EntityClass, MoleculeView, draw_mol, draw_water},
     mol_manip::ManipMode,
     molecules::{Atom, MolGenericRef, MolType, common::MoleculeCommon, small::MoleculeSmall},
     state::{OperatingMode, State},
@@ -119,21 +119,21 @@ impl SnapshotViewer {
         }
     }
 
-    pub fn get_active_mol_set(&self) -> Option<&Vec<ViewerMolecule>> {
+    pub fn get_active_mol_set(&self) -> Option<&ViewerMolSet> {
         let i = self.mol_set_active?;
 
         if i < self.mol_sets.len() {
-            Some(&self.mol_sets[i].mols)
+            Some(&self.mol_sets[i])
         } else {
             None
         }
     }
 
-    pub fn get_active_mol_set_mut(&mut self) -> Option<&mut Vec<ViewerMolecule>> {
+    pub fn get_active_mol_set_mut(&mut self) -> Option<&mut ViewerMolSet> {
         let i = self.mol_set_active?;
 
         if i < self.mol_sets.len() {
-            Some(&mut self.mol_sets[i].mols)
+            Some(&mut self.mol_sets[i])
         } else {
             None
         }
@@ -142,14 +142,14 @@ impl SnapshotViewer {
     /// Update each molecule's atom positions to that in the chosen snapshot.
     pub fn change_snapshot(&mut self, snap_i: usize) -> io::Result<()> {
         let mol_start_indices = {
-            let Some(mols) = self.get_active_mol_set() else {
+            let Some(set) = self.get_active_mol_set() else {
                 return Err(io::Error::new(
                     ErrorKind::NotFound,
                     "No active mol set when changing snap.",
                 ));
             };
 
-            mols.iter().map(|m| m.range.0).collect::<Vec<_>>()
+            set.mols.iter().map(|m| m.range.0).collect::<Vec<_>>()
         };
 
         let posits_by_mol = {
@@ -170,7 +170,7 @@ impl SnapshotViewer {
             ));
         };
 
-        for (i_posits, mol) in mols.iter_mut().enumerate() {
+        for (i_posits, mol) in mols.mols.iter_mut().enumerate() {
             for (i_p, p) in mol.mol.atom_posits.iter_mut().enumerate() {
                 *p = posits_by_mol[i_posits][i_p].0.into();
             }
@@ -236,21 +236,24 @@ impl SnapshotViewer {
             mols.push(ViewerMolecule {
                 mol_type: MolType::Ligand, // todo: Detect from residue name A/R.
                 mol,
-                range: (snap_atom_i, count),
+                range: (snap_atom_i, snap_atom_i + count),
             });
 
             snap_atom_i += count;
         }
 
-        self.mol_sets.push(ViewerMolSet {
-            path: Some(path.to_owned()),
-            name: path
-                .file_name()
+        self.mol_sets.push(ViewerMolSet::new(
+            Some(path.to_owned()),
+            path.file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default()
                 .to_owned(),
             mols,
-        });
+        ));
+
+        if self.mol_sets.len() == 1 {
+            self.mol_set_active = Some(0)
+        }
 
         Ok(())
     }
@@ -386,11 +389,8 @@ impl SnapshotViewer {
             snap_atom_i += len_this_mol;
         }
 
-        self.mol_sets.push(ViewerMolSet {
-            path: None,
-            name: "MD run memory".to_owned(),
-            mols: mols_,
-        });
+        self.mol_sets
+            .push(ViewerMolSet::new(None, "MD run memory".to_owned(), mols_));
     }
 }
 
@@ -401,7 +401,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
     // todo: Once small mools are working, add the rest.
     let mut lig_entities = Vec::new();
 
-    let Some(mols) = state.volatile.md_local.viewer.get_active_mol_set() else {
+    let Some(set) = state.volatile.md_local.viewer.get_active_mol_set() else {
         handle_err(
             &mut state.ui,
             "Can't draw atoms from MD; no active mol set".to_string(),
@@ -409,7 +409,12 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
         return;
     };
 
-    for (i_mol, mol) in mols.iter().enumerate() {
+    // MD molecules have no bonds and need atom-level rendering regardless of global mol_view.
+    let prev_mol_view = state.ui.mol_view;
+    state.ui.mol_view = MoleculeView::BallAndStick;
+
+    let num_mols = set.mols.len();
+    for (i_mol, mol) in set.mols.iter().enumerate() {
         match mol.mol_type {
             MolType::Peptide => {
                 // todo
@@ -428,12 +433,14 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
                     &None,
                     ManipMode::None,
                     OperatingMode::Primary,
-                    mols.len(),
+                    num_mols,
                 ));
             }
             _ => {}
         }
     }
+
+    state.ui.mol_view = prev_mol_view;
 
     let lig_class = EntityClass::Ligand as u32;
     scene.entities.retain(|ent| ent.class != lig_class);

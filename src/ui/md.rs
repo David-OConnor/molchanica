@@ -121,6 +121,11 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     .clicked() {
 
                 state.volatile.md_local.clear_snaps();
+
+                // todo: Make this call part of clear_snaps?
+                for traj in &mut state.trajectories {
+                    traj.frames_open = None;
+                }
             }
 
             if button!(

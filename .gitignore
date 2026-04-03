@@ -28,6 +28,8 @@ Cargo.lock
 *.opc
 *.OL24
 *.dcd
+*.trr
+*.xtc
 *.prmtop
 
 # Parquet mol DBs
@@ -57,6 +59,7 @@ Cargo.lock
 # Orca and GROMACS intermediary files
 /orca_temp
 /gromacs_temp
+/gromacs_out
 *.mdp
 *.top
 *.gro

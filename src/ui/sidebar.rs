@@ -770,7 +770,7 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
         });
 
         let mut txt = format!(
-            "Atoms: {}, Frames: {}, start step: {}, interval: {}, dt: {}ps, end time: {}ps",
+            "Atoms: {}, Frames: {}, step: {}, inter: {}, dt: {}ps, end: {}ps",
             traj.num_atoms,
             traj.num_frames,
             traj.start_step,
@@ -782,7 +782,31 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
         if let Some(slice) = &traj.frames_open {
             txt.push_str(&format!(", open: {slice}"))
         }
-        ui.label(RichText::new(txt).color(Color32::LIGHT_BLUE));
+        ui.label(RichText::new(txt).color(Color32::WHITE));
+
+        match state.volatile.md_local.viewer.get_active_mol_set() {
+            Some(set) => {
+                if set.atom_count == traj.num_atoms {
+                    label!(
+                        ui,
+                        format!(
+                            "Set loaded with correct atom count. {} mols",
+                            set.mols.len()
+                        ),
+                        COLOR_ACTIVE
+                    );
+                } else {
+                    label!(
+                        ui,
+                        format!("Mol set mismatch. {} atoms in set", set.atom_count),
+                        Color32::YELLOW
+                    );
+                }
+            }
+            None => {
+                label!(ui, "No mol set loaded", Color32::LIGHT_RED);
+            }
+        }
     }
 
     if let Some(i) = close {
@@ -815,6 +839,12 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
 
             ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(color));
 
+            ui.label(RichText::new(format!("Atoms: {} | Range: {}-{}", set.atom_count, set.range_covered.0, set.range_covered.1)).color(color));
+
+            if set.range_overlaps {
+                ui.label(RichText::new("Warning: Mol ranges overlap").color(Color32::LIGHT_RED));
+            }
+
             if button!(
             ui,
             "Set",
@@ -831,13 +861,27 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
 
             if ui
                 .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .on_hover_text("Close this trajectory.")
+                .on_hover_text("Close this molecule set.")
                 .clicked()
             {
                 close = Some(i);
             }
 
         });
+
+        for mol in &set.mols {
+            label!(
+                ui,
+                format!(
+                    "{} | Atoms: {} Range: {}-{}",
+                    mol.mol.ident,
+                    mol.mol.atoms.len(),
+                    mol.range.0,
+                    mol.range.1,
+                ),
+                Color32::WHITE
+            );
+        }
     }
 
     if let Some(i) = close {

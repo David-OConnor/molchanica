@@ -1020,8 +1020,8 @@ impl Default for FileDialogs {
             .add_file_filter_extensions(
                 "All",
                 vec![
-                    "cif", "mol2", "sdf", "xyz", "pdbqt", "map", "mtz", "frcmod", "dat", "prmtop",
-                    "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
+                    "cif", "mol2", "sdf", "xyz", "pdbqt", "gro", "map", "mtz", "frcmod", "dat",
+                    "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
                 ],
             )
             .add_file_filter_extensions(
