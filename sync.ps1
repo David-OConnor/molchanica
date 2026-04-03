@@ -13,3 +13,5 @@ if ($Message) {
 } else {
     git commit
 }
+
+git push

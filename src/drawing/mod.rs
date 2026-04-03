@@ -597,6 +597,11 @@ pub fn draw_mol(
                 continue;
             }
 
+            // M/EP site on rigid water molecules; don't draw.
+            if atom.type_in_res_general == Some("MW".to_string()) {
+                continue;
+            }
+
             let mut color = (0., 0., 0.);
             let mut manip_active = false;
 

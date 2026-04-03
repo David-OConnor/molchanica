@@ -8,15 +8,19 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bio_files::gromacs::gro::Gro;
+use bio_files::{AtomGeneric, bond_inference, gromacs::gro::Gro};
 use dynamics::{FfMolType, snapshot::Snapshot};
 use graphics::Scene;
 use lin_alg::f64::Vec3;
+use na_seq::Element;
 
 use crate::{
-    drawing::{EntityClass, MoleculeView, draw_mol, draw_water},
+    drawing::{MoleculeView, draw_mol, draw_water},
     mol_manip::ManipMode,
-    molecules::{Atom, MolGenericRef, MolType, common::MoleculeCommon, small::MoleculeSmall},
+    molecules::{
+        Atom, Bond, MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
+        nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
+    },
     state::{OperatingMode, State},
     util::handle_err,
 };
@@ -119,6 +123,14 @@ impl SnapshotViewer {
         }
     }
 
+    pub fn get_snap_mut(&mut self, i: usize) -> Option<&mut Snapshot> {
+        if i < self.snapshots.len() {
+            Some(&mut self.snapshots[i])
+        } else {
+            None
+        }
+    }
+
     pub fn get_active_mol_set(&self) -> Option<&ViewerMolSet> {
         let i = self.mol_set_active?;
 
@@ -152,6 +164,66 @@ impl SnapshotViewer {
             set.mols.iter().map(|m| m.range.0).collect::<Vec<_>>()
         };
 
+        // We have 2 ways of populating water positions: Directly (E.g. from an in-memory Dynamics run),
+        // or by constructing after.
+        // Collect water positions under a shared borrow, then push under a mutable borrow.
+        let water_posits: Vec<(Vec3, Vec3, Vec3)> = {
+            let needs_water = self
+                .get_snap(snap_i)
+                .map_or(false, |s| s.water_o_posits.is_empty());
+
+            if needs_water {
+                if let Some(set) = self.get_active_mol_set() {
+                    set.mols
+                        .iter()
+                        .filter(|mol| mol.mol_type == MolType::Water)
+                        .filter_map(|mol| {
+                            let mut ow = None;
+                            let mut hw1 = None;
+                            let mut hw2 = None;
+
+                            for (i, atom) in mol.mol.atoms.iter().enumerate() {
+                                match atom.type_in_res_general.as_deref() {
+                                    Some("OW") => ow = Some(mol.mol.atom_posits[i]),
+                                    Some("HW1") => hw1 = Some(mol.mol.atom_posits[i]),
+                                    Some("HW2") => hw2 = Some(mol.mol.atom_posits[i]),
+                                    _ => {}
+                                }
+                            }
+
+                            match (ow, hw1, hw2) {
+                                (Some(o), Some(h0), Some(h1)) => Some((o, h0, h1)),
+                                _ => {
+                                    eprintln!(
+                                        "Water mol missing atom(s): OW={}, HW1={}, HW2={}",
+                                        ow.is_some(),
+                                        hw1.is_some(),
+                                        hw2.is_some()
+                                    );
+                                    None
+                                }
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        };
+
+        if !water_posits.is_empty() {
+            if snap_i < self.snapshots.len() {
+                let snap = &mut self.snapshots[snap_i];
+                for (o, h0, h1) in water_posits {
+                    snap.water_o_posits.push(o.into());
+                    snap.water_h0_posits.push(h0.into());
+                    snap.water_h1_posits.push(h1.into());
+                }
+            }
+        }
+
         let posits_by_mol = {
             let Some(snap) = self.get_snap(snap_i) else {
                 return Err(io::Error::new(
@@ -170,8 +242,16 @@ impl SnapshotViewer {
             ));
         };
 
+        let pbm_len = posits_by_mol.len();
+
         for (i_posits, mol) in mols.mols.iter_mut().enumerate() {
             for (i_p, p) in mol.mol.atom_posits.iter_mut().enumerate() {
+                if i_posits >= pbm_len {
+                    eprintln!(
+                        "Error: Posits by mol in viewer out of bounds. i: {i_posits} Posits by mol len: {pbm_len}"
+                    );
+                }
+
                 *p = posits_by_mol[i_posits][i_p].0.into();
             }
         }
@@ -185,23 +265,26 @@ impl SnapshotViewer {
     pub fn load_gro(&mut self, path: &Path) -> io::Result<()> {
         let gro = Gro::load(path)?;
 
-        // Group atoms by mol_name, preserving first-seen order.
-        let mut mol_order: Vec<String> = Vec::new();
-        let mut mol_atom_groups: HashMap<String, Vec<usize>> = HashMap::new();
+        // Group atoms by (mol_id, mol_name), preserving first-seen order.
+        // mol_id (the GRO resid) is unique per molecule instance, so e.g. each SOL water
+        // gets its own entry rather than all being merged into one giant "SOL".
+        let mut mol_order: Vec<(u32, String)> = Vec::new();
+        let mut mol_atom_groups: HashMap<(u32, String), Vec<usize>> = HashMap::new();
 
         for (i, atom) in gro.atoms.iter().enumerate() {
-            if !mol_atom_groups.contains_key(&atom.mol_name) {
-                mol_order.push(atom.mol_name.clone());
-                mol_atom_groups.insert(atom.mol_name.clone(), Vec::new());
+            let key = (atom.mol_id, atom.mol_name.clone());
+            if !mol_atom_groups.contains_key(&key) {
+                mol_order.push(key.clone());
+                mol_atom_groups.insert(key.clone(), Vec::new());
             }
-            mol_atom_groups.get_mut(&atom.mol_name).unwrap().push(i);
+            mol_atom_groups.get_mut(&key).unwrap().push(i);
         }
 
         let mut mols = Vec::new();
         let mut snap_atom_i = 0;
 
-        for name in &mol_order {
-            let indices = &mol_atom_groups[name];
+        for (mol_id, mol_name) in &mol_order {
+            let indices = &mol_atom_groups[&(*mol_id, mol_name.clone())];
             let mut atoms = Vec::new();
             let mut atom_posits = Vec::new();
 
@@ -225,16 +308,45 @@ impl SnapshotViewer {
                 atom_posits.push(posit);
             }
 
+            // Infer covalent bonds from atom distances.
+            let atom_generics: Vec<AtomGeneric> = atoms
+                .iter()
+                .zip(atom_posits.iter())
+                .map(|(a, posit)| AtomGeneric {
+                    serial_number: a.serial_number,
+                    posit: *posit,
+                    element: a.element,
+                    ..Default::default()
+                })
+                .collect();
+
+            let bond_generics = bond_inference::create_bonds(&atom_generics);
+            let bonds: Vec<Bond> = bond_generics
+                .iter()
+                .filter_map(|bg| Bond::from_generic(bg, &atoms).ok())
+                .collect();
+
             let count = atoms.len();
-            let mol = MoleculeCommon {
-                ident: name.clone(),
+            let mut mol = MoleculeCommon {
+                ident: mol_name.clone(),
                 atoms,
+                bonds,
                 atom_posits,
                 ..Default::default()
             };
+            mol.build_adjacency_list();
+
+            // todo: Determine, using type in res or similar, if it's a NA or lipid
+            let mol_type = if is_water(&mol) {
+                MolType::Water
+            } else {
+                MolType::Ligand
+            };
+
+            println!("Mol type: {:?}", mol_type);
 
             mols.push(ViewerMolecule {
-                mol_type: MolType::Ligand, // todo: Detect from residue name A/R.
+                mol_type,
                 mol,
                 range: (snap_atom_i, snap_atom_i + count),
             });
@@ -396,10 +508,7 @@ impl SnapshotViewer {
 
 /// Draw all molecules from the loaded MD run.
 pub fn draw_mols(state: &mut State, scene: &mut Scene) {
-    // todo: Only if at least one lig is involved.
-
-    // todo: Once small mools are working, add the rest.
-    let mut lig_entities = Vec::new();
+    let mut ents = Vec::new();
 
     let Some(set) = state.volatile.md_local.viewer.get_active_mol_set() else {
         handle_err(
@@ -414,20 +523,26 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
     state.ui.mol_view = MoleculeView::BallAndStick;
 
     let num_mols = set.mols.len();
+
     for (i_mol, mol) in set.mols.iter().enumerate() {
         match mol.mol_type {
             MolType::Peptide => {
-                // todo
+                // let mol_ = MoleculeSmall {
+                //     common: mol.mol.clone(),
+                //     ..Default::default()
+                // };
+
+                // todo: This won't work. Probably modify draw_peptide etc.
                 // draw_peptide(state, scene);
             }
             MolType::Ligand => {
-                let mol_small = MoleculeSmall {
+                let mol_ = MoleculeSmall {
                     common: mol.mol.clone(),
                     ..Default::default()
                 };
 
-                lig_entities.extend(draw_mol(
-                    MolGenericRef::Small(&mol_small),
+                ents.extend(draw_mol(
+                    MolGenericRef::Small(&mol_),
                     i_mol,
                     &state.ui,
                     &None,
@@ -436,68 +551,49 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
                     num_mols,
                 ));
             }
+            MolType::NucleicAcid => {
+                let mol_ = MoleculeNucleicAcid {
+                    common: mol.mol.clone(),
+                    ..Default::default()
+                };
+
+                ents.extend(draw_mol(
+                    MolGenericRef::NucleicAcid(&mol_),
+                    i_mol,
+                    &state.ui,
+                    &None,
+                    ManipMode::None,
+                    OperatingMode::Primary,
+                    num_mols,
+                ));
+            }
+            MolType::Lipid => {
+                let mol_ = MoleculeLipid {
+                    common: mol.mol.clone(),
+                    ..Default::default()
+                };
+
+                ents.extend(draw_mol(
+                    MolGenericRef::Lipid(&mol_),
+                    i_mol,
+                    &state.ui,
+                    &None,
+                    ManipMode::None,
+                    OperatingMode::Primary,
+                    num_mols,
+                ));
+            }
+            MolType::Water => {
+                // Update the snap's water positions based on this mol.
+            }
             _ => {}
         }
     }
 
     state.ui.mol_view = prev_mol_view;
 
-    let lig_class = EntityClass::Ligand as u32;
-    scene.entities.retain(|ent| ent.class != lig_class);
-    scene.entities.extend(lig_entities);
-
-    // draw_all_ligs(state, scene, Some(&small));
-
-    //
-    // if !state.volatile.md_local.viewer.peptides.is_empty() {
-    //     draw_peptide(state, scene);
-    // }
-    //
-    // // When drawing MD molecules, custom solvents (e.g. octanol) are rendered as ligands
-    // // alongside the regular solute.  We temporarily merge them into `mols_small` so that
-    // // `draw_all_ligs` handles them in one unified pass, then restore the separation.
-    // let custom_solvent_count = if state.volatile.md_local.draw_md_mols {
-    //     state.volatile.md_local.viewer.custom_solvents.len()
-    // } else {
-    //     0
-    // };
-    // if custom_solvent_count > 0 {
-    //     // Drain into mols_small; draw_all_ligs will render all of them.
-    //     let custom: Vec<MoleculeSmall> = state
-    //         .volatile
-    //         .md_local
-    //         .viewer
-    //         .custom_solvents
-    //         .drain(..)
-    //         .collect();
-    //     state.volatile.md_local.viewer.small.extend(custom);
-    // }
-    // if !state.volatile.md_local.viewer.small.is_empty() {
-    //     draw_all_ligs(state, scene);
-    // }
-    // if custom_solvent_count > 0 {
-    //     // Restore: the custom solvents were appended to the end of mols_small.
-    //     let split_at = state.volatile.md_local.viewer.small.len() - custom_solvent_count;
-    //     state.volatile.md_local.viewer.custom_solvents = state
-    //         .volatile
-    //         .md_local
-    //         .viewer
-    //         .small
-    //         .drain(split_at..)
-    //         .collect();
-    // }
-    //
-    // if !state.volatile.md_local.viewer.lipids.is_empty() {
-    //     draw_all_lipids(state, scene);
-    // }
-    //
-    // if !state.volatile.md_local.viewer.nucleic_acids.is_empty() {
-    //     draw_all_nucleic_acids(state, scene);
-    // }
-    //
-    // // Asymmetry here: We don't store a copy of water molecules in MdStateLocal,
-    // // so we draw them from the snap directly. For other mol steps, we update local
-    // // mol posits with posits from the snap before running this.
+    scene.entities.clear();
+    scene.entities.extend(ents);
 
     if let Some(snap) = state.volatile.md_local.viewer.get_active_snap() {
         draw_water(
@@ -508,4 +604,33 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
             state.ui.visibility.hide_water,
         );
     }
+}
+
+pub fn is_water(mol: &MoleculeCommon) -> bool {
+    if mol.ident.to_lowercase().contains("sol") {
+        return true;
+    }
+
+    let mut h_count = 0;
+    let mut o_count = 0;
+    let mut other_count = 0;
+
+    for atom in &mol.atoms {
+        if atom.type_in_res_general == Some("MW".to_owned()) {
+            return true;
+        }
+
+        match atom.element {
+            Element::Hydrogen => h_count += 1,
+            Element::Oxygen => o_count += 1,
+            _ => other_count += 1,
+        }
+    }
+
+    // todo: Make sure the M/EP site isn't spoiling this.
+    if h_count == 2 && o_count == 1 && other_count == 0 {
+        return true;
+    }
+
+    false
 }

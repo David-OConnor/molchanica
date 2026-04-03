@@ -690,13 +690,11 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(&traj.display_name).color(Color32::WHITE));
 
-            ui.add_space(COL_SPACING);
-
             if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
                 && traj.num_frames != 0
                 && button!(
                     ui,
-                    "Load all",
+                    "Load all frames",
                     COLOR_ACTION,
                     "Load all frames/snapshots from the trajectory into memory"
                 )
@@ -718,12 +716,10 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
                 }
             }
 
-            // todo: Allow time or frame indices.
-            ui.label("Load frames:");
-
             // todo: Allow end and start to be unbounded in UI, setting their val to None.
-            num_field(&mut traj.ui_start_i, "Start:", 34, ui);
-            num_field(&mut traj.ui_end_i, "End:", 34, ui);
+            num_field(&mut traj.ui_start_i, "", 34, ui);
+            ui.label("-");
+            num_field(&mut traj.ui_end_i, "", 34, ui);
 
             // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
             if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
@@ -769,7 +765,7 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
             }
         });
 
-        let mut txt = format!(
+        let txt = format!(
             "Atoms: {}, Frames: {}, step: {}, inter: {}, dt: {}ps, end: {}ps",
             traj.num_atoms,
             traj.num_frames,
@@ -778,11 +774,11 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
             traj.dt,
             traj.end_time,
         );
+        ui.label(RichText::new(txt).color(Color32::WHITE));
 
         if let Some(slice) = &traj.frames_open {
-            txt.push_str(&format!(", open: {slice}"))
+            label!(ui, format!("Open: {slice}"), COLOR_ACTIVE);
         }
-        ui.label(RichText::new(txt).color(Color32::WHITE));
 
         match state.volatile.md_local.viewer.get_active_mol_set() {
             Some(set) => {
@@ -869,7 +865,9 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
 
         });
 
-        for mol in &set.mols {
+        let max_count = 5;
+        for mol in set.mols.iter().take(max_count) {
+            // todo: Consider a total solvent count, and group those together
             label!(
                 ui,
                 format!(
@@ -881,6 +879,9 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
                 ),
                 Color32::WHITE
             );
+        }
+        if set.mols.len() >= max_count {
+            label!(ui, "...", Color32::WHITE);
         }
     }
 

@@ -13,7 +13,7 @@ use crate::{
 pub(in crate::ui) fn dynamics_viewer(
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
     ui.horizontal(|ui| {
@@ -39,7 +39,7 @@ pub(in crate::ui) fn dynamics_viewer(
                 state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
 
                 viewer::draw_mols(state, scene);
-                engine_updates.entities = EntityUpdate::All;
+                updates.entities = EntityUpdate::All;
             }
         }
 
@@ -60,6 +60,7 @@ pub(in crate::ui) fn dynamics_viewer(
             }
 
             let posit = state.volatile.md_local.viewer.slider_posit_ui;
+
             if posit != slider_posit_prev && posit <= state.volatile.md_local.viewer.snapshots.len()
             {
                 state.volatile.md_local.viewer.current_snapshot = Some(posit);
@@ -69,7 +70,7 @@ pub(in crate::ui) fn dynamics_viewer(
                 }
 
                 viewer::draw_mols(state, scene);
-                engine_updates.entities = EntityUpdate::All;
+                updates.entities = EntityUpdate::All;
             }
         }
     });

@@ -5,15 +5,14 @@ use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 
 use crate::{
-    cam,
-    cam::{FOG_HALF_DEPTH_DEFAULT, reset_camera},
+    cam::reset_camera,
     drawing::{
         EntityClass, draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     file_io::download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
     gromacs,
-    gromacs::make_gromacs_input,
+    md::viewer,
     mol_editor,
     molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
@@ -149,6 +148,17 @@ pub fn handle_redraw(
     reset_cam: bool,
     updates: &mut EngineUpdates,
 ) {
+    if state.volatile.md_local.draw_md_mols
+        && (redraw.peptide || redraw.ligand || redraw.lipid || redraw.na)
+    {
+        viewer::draw_mols(state, scene);
+        println!("Redrawing MD"); // todo temp to make sure not spamming
+
+        updates.entities = EntityUpdate::All;
+        *redraw = Default::default();
+        return;
+    }
+
     if redraw.peptide {
         draw_peptide(state, scene);
 
@@ -166,6 +176,7 @@ pub fn handle_redraw(
     }
 
     if redraw.ligand {
+        println!("Drawing mols ligs!!"); // todo temp
         match state.volatile.operating_mode {
             OperatingMode::Primary => {
                 draw_all_ligs(state, scene);
@@ -209,6 +220,8 @@ pub fn handle_redraw(
     if reset_cam {
         reset_camera(state, scene, updates, FWD_VEC);
     }
+
+    *redraw = Default::default();
 }
 
 /// Handles the case of opening a ligand remotely using the text input.
