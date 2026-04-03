@@ -57,7 +57,7 @@ impl TrajFormat {
 /// Warning: DCD is not a well-defined format.
 #[derive(Clone, Debug)]
 pub struct Trajectory {
-    format: TrajFormat,
+    pub format: TrajFormat,
     pub path: PathBuf,
     /// e.g. derived from filename.
     pub display_name: String,

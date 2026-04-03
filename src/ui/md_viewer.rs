@@ -21,6 +21,8 @@ pub(in crate::ui) fn dynamics_viewer(
         let help_text = "Toggle between viewing the original (pre-dynamics) atom positions, and \
         ones at the selected dynamics snapshot.";
 
+        let ready = state.volatile.md_local.viewer.mols_and_traj_synced();
+
         {
             let text = if state.volatile.md_local.draw_md_mols {
                 "Draw original"
@@ -29,8 +31,7 @@ pub(in crate::ui) fn dynamics_viewer(
             };
 
             if (state.volatile.md_local.draw_md_mols
-                || !state.volatile.md_local.viewer.snapshots.is_empty()
-                || state.volatile.md_local.mol_dynamics.is_some())
+                || (!state.volatile.md_local.viewer.snapshots.is_empty() && ready))
                 && ui
                     .button(RichText::new(text).color(COLOR_HIGHLIGHT))
                     .on_hover_text(help_text)
@@ -41,6 +42,18 @@ pub(in crate::ui) fn dynamics_viewer(
                 viewer::draw_mols(state, scene);
                 updates.entities = EntityUpdate::All;
             }
+        }
+
+        if !ready {
+            let txt = if state.volatile.md_local.viewer.snapshots.is_empty() {
+                "Not ready for MD playback; no snapshots/frames loaded."
+            } else {
+                "Not ready for MD playback; trajectory and mol set atom count mismatch."
+            };
+
+            label!(ui, txt, Color32::GRAY);
+
+            return;
         }
 
         let slider_posit_prev = state.volatile.md_local.viewer.slider_posit_ui;
@@ -66,7 +79,7 @@ pub(in crate::ui) fn dynamics_viewer(
                 state.volatile.md_local.viewer.current_snapshot = Some(posit);
 
                 if let Err(e) = state.volatile.md_local.viewer.change_snapshot(posit) {
-                    handle_err(&mut state.ui, format!("Error changing snapshot: {e:?}"));
+                    handle_err(&mut state.ui, format!("Error changing MD snapshot: {e:?}"));
                 }
 
                 viewer::draw_mols(state, scene);

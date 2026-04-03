@@ -831,7 +831,7 @@ fn output_control(state: &mut State, ui: &mut Ui) {
     }
 
     // DCD
-    {
+    if state.to_save.md_backend != MdBackend::Gromacs {
         let help = "Save trajectory to a DCD file.";
         ui.label("DCD:").on_hover_text(help);
         if ui

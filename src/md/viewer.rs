@@ -16,6 +16,7 @@ use na_seq::Element;
 
 use crate::{
     drawing::{MoleculeView, draw_mol, draw_water},
+    label,
     mol_manip::ManipMode,
     molecules::{
         Atom, Bond, MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
@@ -343,8 +344,6 @@ impl SnapshotViewer {
                 MolType::Ligand
             };
 
-            println!("Mol type: {:?}", mol_type);
-
             mols.push(ViewerMolecule {
                 mol_type,
                 mol,
@@ -503,6 +502,21 @@ impl SnapshotViewer {
 
         self.mol_sets
             .push(ViewerMolSet::new(None, "MD run memory".to_owned(), mols_));
+    }
+
+    /// A metric to determine if we're ready to view MD atoms. Checks that there's an active snapshot,
+    /// an active mol set, and that their atom counts match.
+    pub fn mols_and_traj_synced(&self) -> bool {
+        let Some(set) = &self.get_active_mol_set() else {
+            return false;
+        };
+
+        // Using the first snap as a proxy
+        if self.snapshots.is_empty() {
+            return false;
+        }
+
+        self.snapshots[0].atom_posits.len() == set.atom_count
     }
 }
 

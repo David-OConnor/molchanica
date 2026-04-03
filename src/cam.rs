@@ -352,7 +352,7 @@ pub fn reset_camera(
 ) {
     let mut size = 8.; // E.g. for small organic molecules.
 
-    let center = if let Some(mol) = &state.peptide {
+    let mut center = if let Some(mol) = &state.peptide {
         // We cache center and size, due to the potential large number of molecules.
         let center = mol.center.into();
         size = mol.size;
@@ -391,6 +391,28 @@ pub fn reset_camera(
 
         centroid
     };
+
+    if state.volatile.md_local.draw_md_mols {
+        // In lieu of having easy access to a sim box, we compute a sampled average.
+        let mut c = Vec3::new_zero();
+
+        if !state.volatile.md_local.viewer.snapshots.is_empty() {
+            const SKIP: usize = 50;
+
+            let mut count = 0;
+            for at in state.volatile.md_local.viewer.snapshots[0]
+                .atom_posits
+                .iter()
+                .skip(SKIP)
+            {
+                c = c + *at;
+                count += 1;
+            }
+
+            c /= count as f32;
+        }
+        center = c;
+    }
 
     let dist_fm_center = size + CAM_INIT_OFFSET;
 
