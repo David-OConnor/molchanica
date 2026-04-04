@@ -18,9 +18,16 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         flag_btn, md_viewer, misc, num_field,
     },
+    util::RedrawFlags,
 };
 
-pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
+pub fn md_setup(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+) {
     // This sequencing code is above the UI code below, so it's deferred a frame after any actions.
     if state.volatile.md_local.launching {
         state.volatile.md_local.launching = false;
@@ -120,7 +127,7 @@ pub fn md_setup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
                     .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
                     .clicked() {
 
-                state.volatile.md_local.clear_snaps();
+                state.volatile.md_local.clear_snaps(&mut scene.entities, updates, redraw);
 
                 // todo: Make this call part of clear_snaps?
                 for traj in &mut state.trajectories {

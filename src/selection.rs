@@ -799,6 +799,12 @@ pub(crate) fn handle_selection_attempt(
 
     // todo: Lots of DRY here!
 
+    // todo: Handle MD viewer selection, but it will take some work.
+    // todo: For now, abort.
+    if state.volatile.md_local.draw_md_mols {
+        return;
+    }
+
     let mut lig_atoms = Vec::new();
     for mol in &state.ligands {
         lig_atoms.push(get_atoms(&mol.common));

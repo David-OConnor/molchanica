@@ -352,6 +352,11 @@ pub fn reset_camera(
 ) {
     let mut size = 8.; // E.g. for small organic molecules.
 
+    // This is a rough way to do it.
+    if state.volatile.md_local.draw_md_mols {
+        size = 60.;
+    }
+
     let mut center = if let Some(mol) = &state.peptide {
         // We cache center and size, due to the potential large number of molecules.
         let center = mol.center.into();

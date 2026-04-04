@@ -1,16 +1,20 @@
 use bio_files::FrameSlice;
 use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
-use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
+use graphics::{ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
     button,
-    cam::{move_cam_to_mol, move_mol_to_cam, set_fog},
+    cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
     label,
-    md::trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, close_traj},
+    md::{
+        trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, close_traj},
+        viewer,
+    },
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
+    prefs::OpenType,
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
     therapeutic::logp_sim,
@@ -573,8 +577,8 @@ pub(in crate::ui) fn sidebar(
                 mol_picker(state, scene, ui, redraw, updates);
             }
 
-            traj_items(state, ui);
-            md_viewer_mappings(state, ui);
+            traj_items(state, scene, updates, ui, redraw);
+            md_viewer_mappings(state, scene, updates, ui, redraw);
 
             ui.add_space(ROW_SPACING);
 
@@ -676,7 +680,13 @@ pub(in crate::ui) fn sidebar(
 }
 
 /// Let the user view open trajectories, and possibly change frames etc from them.
-fn traj_items(state: &mut State, ui: &mut Ui) {
+fn traj_items(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+) {
     if state.trajectories.is_empty() {
         return;
     }
@@ -686,6 +696,8 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
     ui.separator();
 
     let mut close = None;
+    let mut snaps_loaded = false;
+
     for (i, traj) in state.trajectories.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             ui.label(RichText::new(&traj.display_name).color(Color32::WHITE));
@@ -706,6 +718,8 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
                 }) {
                     Ok(snaps) => {
                         state.volatile.md_local.replace_snaps(snaps);
+
+                        snaps_loaded = true;
                     }
                     Err(e) => {
                         handle_err(
@@ -746,6 +760,7 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
                 match traj.load_snaps(FrameSlice::Index { start, end }) {
                     Ok(snaps) => {
                         state.volatile.md_local.replace_snaps(snaps);
+                        snaps_loaded = true;
                     }
                     Err(e) => {
                         handle_err(
@@ -805,16 +820,32 @@ fn traj_items(state: &mut State, ui: &mut Ui) {
         }
     }
 
+    ui.separator();
+
     if let Some(i) = close {
         close_traj(state, i);
     }
 
-    ui.separator();
+    // We have this as the function calls in this branch which call state have a borrow
+    // error otherwise; the flag setting is convenience.
+    if snaps_loaded {
+        reset_camera(state, scene, updates, FWD_VEC);
+        viewer::draw_mols(state, scene);
+
+        updates.entities = EntityUpdate::All;
+        redraw.set_all();
+    }
 }
 
 /// Selected from loaded molecule maps, which map to atrajectory atoms. This might be loaded, for
 /// example, from a .gro file.
-fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
+fn md_viewer_mappings(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+) {
     if state.volatile.md_local.viewer.mol_sets.is_empty() {
         return;
     }
@@ -823,6 +854,7 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
     ui.separator();
 
     let mut close = None;
+    let mut set_clicked = false;
 
     for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
         ui.horizontal(|ui| {
@@ -853,6 +885,8 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
                 else {
                     Some(i)
                 };
+
+                set_clicked = true;
             }
 
             if ui
@@ -885,16 +919,23 @@ fn md_viewer_mappings(state: &mut State, ui: &mut Ui) {
         }
     }
 
-    if let Some(i) = close {
-        state.volatile.md_local.viewer.mol_sets.remove(i);
+    ui.separator();
 
-        state.volatile.md_local.viewer.mol_set_active =
-            match state.volatile.md_local.viewer.mol_set_active {
-                Some(active) if active == i => None,
-                Some(active) if active > i => Some(active - 1),
-                other => other,
-            };
+    if let Some(i) = close {
+        state
+            .volatile
+            .md_local
+            .viewer
+            .close_mol_set(&mut state.to_save.open_history, i);
     }
 
-    ui.separator();
+    if set_clicked {
+        // We have this as the function calls in this branch which call state have a borrow
+        // error otherwise; the flag setting is convenience.
+        reset_camera(state, scene, updates, FWD_VEC);
+        viewer::draw_mols(state, scene);
+
+        updates.entities = EntityUpdate::All;
+        redraw.set_all();
+    }
 }

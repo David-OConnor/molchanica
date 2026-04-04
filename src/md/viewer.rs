@@ -22,6 +22,7 @@ use crate::{
         Atom, Bond, MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
         nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
     },
+    prefs::{OpenHistory, OpenType},
     state::{OperatingMode, State},
     util::handle_err,
 };
@@ -517,6 +518,31 @@ impl SnapshotViewer {
         }
 
         self.snapshots[0].atom_posits.len() == set.atom_count
+    }
+
+    pub fn close_mol_set(&mut self, history: &mut Vec<OpenHistory>, i: usize) {
+        if i >= self.mol_sets.len() {
+            eprintln!("Error: Attempting to close mol set not opened");
+            return;
+        }
+
+        self.mol_set_active = match self.mol_set_active {
+            Some(active) if active == i => None,
+            Some(active) if active > i => Some(active - 1),
+            other => other,
+        };
+
+        let set = &self.mol_sets[i];
+        for history in history {
+            if let Some(p) = &set.path
+                && OpenType::MdMols == history.type_
+                && &history.path == p
+            {
+                history.last_session = false;
+            }
+        }
+
+        self.mol_sets.remove(i);
     }
 }
 

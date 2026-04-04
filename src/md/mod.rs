@@ -13,25 +13,18 @@ use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
-use graphics::{EngineUpdates, EntityUpdate, Scene};
+use graphics::{EngineUpdates, Entity, EntityUpdate, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
 use rand::Rng;
 use viewer::SnapshotViewer;
 
 use crate::{
     cam::move_cam_to_active_mol,
+    drawing::EntityClass,
     gromacs,
-    md::viewer::ViewerMolecule,
-    molecules::{
-        MolType,
-        common::MoleculeCommon,
-        lipid::MoleculeLipid,
-        nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
-        peptide::MoleculePeptide,
-        small::MoleculeSmall,
-    },
+    molecules::{common::MoleculeCommon, nucleic_acid::NucleicAcidType},
     state::State,
-    util::{clear_cli_out, handle_err, handle_success},
+    util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
 };
 
 pub mod trajectory;
@@ -73,16 +66,34 @@ pub struct MdStateLocal {
 impl MdStateLocal {
     /// todo: WIP, regarding how we pass in atoms and molecules.
     pub fn replace_snaps(&mut self, snaps: Vec<Snapshot>) {
-        self.viewer.snapshots = snaps;
         self.draw_md_mols = true;
+
+        self.viewer.snapshots = snaps;
+
+        if !self.viewer.snapshots.is_empty() {
+            if self.viewer.change_snapshot(0).is_err() {
+                eprintln!("Error changing snapshots when replacing");
+            }
+        }
     }
 
     /// Removes all MD snapshots, and performs related cleanup.
-    pub fn clear_snaps(&mut self) {
+    pub fn clear_snaps(
+        &mut self,
+        ents: &mut Vec<Entity>,
+        updates: &mut EngineUpdates,
+        redraw: &mut RedrawFlags,
+    ) {
         self.viewer.snapshots = Vec::new();
         self.viewer.current_snapshot = None;
         self.viewer.mol_set_active = None;
         self.draw_md_mols = false;
+
+        // todo: Clear ligand A/r.
+        ents.retain(|ent| ent.class != EntityClass::WaterModel as u32);
+
+        redraw.set_all();
+        // updates.entities = EntityUpdate::All;
     }
 }
 

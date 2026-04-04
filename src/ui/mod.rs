@@ -1026,7 +1026,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         mol_type_toolbars(state, scene, &mut updates, ui);
 
         if state.ui.ui_vis.dynamics {
-            md_setup(state, scene, &mut updates, ui);
+            md_setup(state, scene, &mut updates, ui, &mut redraw);
         }
         if state.ui.ui_vis.orca {
             orca_input(state, &mut redraw.ligand, ui);
