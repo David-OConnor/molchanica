@@ -8,8 +8,10 @@ use std::{
 };
 
 use bio_files::{
-    DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz, md_params::ForceFieldParams, sdf::Sdf,
+    DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz,
     gromacs::gro::{AtomGro, Gro},
+    md_params::ForceFieldParams,
+    sdf::Sdf,
 };
 use chrono::Utc;
 use dynamics::MdConfig;
@@ -1133,10 +1135,8 @@ impl Default for FileDialogs {
         };
         let save_md = FileDialog::with_config(cfg_save_md.clone());
 
-        let cfg_save_gro = FileDialogConfig::default()
-            .add_save_extension("GRO", "gro");
-        let save_gro = FileDialog::with_config(cfg_save_gro)
-            .default_save_extension("GRO");
+        let cfg_save_gro = FileDialogConfig::default().add_save_extension("GRO", "gro");
+        let save_gro = FileDialog::with_config(cfg_save_gro).default_save_extension("GRO");
 
         Self {
             load,

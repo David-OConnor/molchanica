@@ -156,7 +156,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         .md_local
         .mol_dynamics
         .as_ref()
-        .map(|md| md.run_index)
+        .and_then(|md| md.run_index)
         .unwrap_or(0);
     let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
     // The mol set we just added is the last one in the viewer.
@@ -684,7 +684,11 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
     ) {
         Ok(md) => {
             let num_water = md.water.len();
-            state.volatile.md_local.viewer.add_mols_for_disp(&mols, num_water);
+            state
+                .volatile
+                .md_local
+                .viewer
+                .add_mols_for_disp(&mols, num_water);
             state.volatile.md_local.mol_dynamics = Some(md);
 
             if run {

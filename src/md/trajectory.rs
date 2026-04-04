@@ -204,15 +204,15 @@ impl Trajectory {
                     FrameSlice::Index { start, end } => {
                         let s = start.unwrap_or(0);
                         let e = end.unwrap_or(snaps.len().saturating_sub(1));
-                        snaps.get(s..=e.min(snaps.len().saturating_sub(1)))
+                        snaps
+                            .get(s..=e.min(snaps.len().saturating_sub(1)))
                             .unwrap_or(&[])
                             .to_vec()
                     }
                     FrameSlice::Time { start, end } => snaps
                         .iter()
                         .filter(|s| {
-                            start.map_or(true, |t| s.time >= t)
-                                && end.map_or(true, |t| s.time <= t)
+                            start.map_or(true, |t| s.time >= t) && end.map_or(true, |t| s.time <= t)
                         })
                         .cloned()
                         .collect(),

@@ -3,7 +3,6 @@ use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::util::handle_success;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -22,7 +21,7 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, mol_editor_sidebar, num_field, pharmacophore,
     },
-    util::{RedrawFlags, close_mol, handle_err, orbit_center},
+    util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
 
 /// Abstracts over all molecule types. (Currently not protein though)

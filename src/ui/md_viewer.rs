@@ -1,14 +1,14 @@
-use crate::util::RedrawFlags;
+use dynamics::snapshot::Snapshot;
+use egui::{Color32, RichText, Slider, Ui};
+use graphics::{EngineUpdates, Scene};
+
 use crate::{
     label,
     md::viewer,
     state::State,
     ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING},
-    util::handle_err,
+    util::{RedrawFlags, handle_err},
 };
-use dynamics::snapshot::Snapshot;
-use egui::{Color32, RichText, Slider, Ui};
-use graphics::{EngineUpdates, Scene};
 
 pub(in crate::ui) fn dynamics_viewer(
     state: &mut State,

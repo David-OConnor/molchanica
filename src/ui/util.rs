@@ -150,7 +150,10 @@ pub fn update_file_dialogs(
                 match save_mol_set_as_gro(&mol_sets[i], &path) {
                     Ok(()) => handle_success(
                         &mut state.ui,
-                        format!("Saved mol set as GRO: {:?}", path.file_name().unwrap_or_default()),
+                        format!(
+                            "Saved mol set as GRO: {:?}",
+                            path.file_name().unwrap_or_default()
+                        ),
                     ),
                     Err(e) => handle_err(&mut state.ui, format!("Error saving GRO: {e}")),
                 }
