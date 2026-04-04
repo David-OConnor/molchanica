@@ -1,7 +1,4 @@
-use dynamics::snapshot::Snapshot;
-use egui::{Color32, RichText, Slider, Ui};
-use graphics::{EngineUpdates, Scene};
-
+use crate::util::RedrawFlags;
 use crate::{
     label,
     md::viewer,
@@ -9,11 +6,15 @@ use crate::{
     ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING},
     util::handle_err,
 };
+use dynamics::snapshot::Snapshot;
+use egui::{Color32, RichText, Slider, Ui};
+use graphics::{EngineUpdates, Scene};
 
 pub(in crate::ui) fn dynamics_viewer(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
     ui: &mut Ui,
 ) {
     ui.horizontal(|ui| {
@@ -40,6 +41,23 @@ pub(in crate::ui) fn dynamics_viewer(
                 state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
 
                 viewer::draw_mols(state, scene, updates);
+            }
+        }
+
+        if !state.volatile.md_local.viewer.snapshots.is_empty()
+            && ui
+                .button(RichText::new("Clear Traj"))
+                .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
+                .clicked()
+        {
+            state
+                .volatile
+                .md_local
+                .clear_snaps(&mut scene.entities, updates, redraw);
+
+            // todo: Make this call part of clear_snaps?
+            for traj in &mut state.trajectories {
+                traj.frames_open = None;
             }
         }
 

@@ -3,6 +3,7 @@ use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::util::handle_success;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -733,7 +734,8 @@ fn traj_items(
 
             // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
             if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
-                && traj.num_frames < traj.ui_end_i
+                && traj.ui_end_i < traj.num_frames
+                && traj.ui_start_i < traj.ui_end_i
                 && button!(
                     ui,
                     "Load range",
@@ -777,7 +779,7 @@ fn traj_items(
         });
 
         let txt = format!(
-            "Atoms: {}, Frames: {}, step: {}, inter: {}, dt: {}ps, end: {}ps",
+            "At: {}, Fr: {}, step: {}, inter: {}, dt: {}ps, end: {}ps",
             traj.num_atoms,
             traj.num_frames,
             traj.start_step,
@@ -829,6 +831,14 @@ fn traj_items(
         viewer::draw_mols(state, scene, updates);
 
         redraw.set_all();
+
+        handle_success(
+            &mut state.ui,
+            format!(
+                "Loaded {} frames into the viewer",
+                state.volatile.md_local.viewer.snapshots.len()
+            ),
+        );
     }
 }
 
@@ -862,7 +872,7 @@ fn md_viewer_mappings(
 
             ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(color));
 
-            ui.label(RichText::new(format!("Atoms: {} | Range: {}-{}", set.atom_count, set.range_covered.0, set.range_covered.1)).color(color));
+            ui.label(RichText::new(format!("At: {} | Rng: {}-{}", set.atom_count, set.range_covered.0, set.range_covered.1)).color(color));
 
             if set.range_overlaps {
                 ui.label(RichText::new("Warning: Mol ranges overlap").color(Color32::LIGHT_RED));
@@ -872,7 +882,7 @@ fn md_viewer_mappings(
             ui,
             "Set",
             COLOR_ACTION,
-            "Load this set of molecules into the MD trajectory atoms. This affects\
+            "Load this set of molecules into the MD trajectory atoms. This affects \
         how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
         ).clicked() {
                 state.volatile.md_local.viewer.mol_set_active = if active {
@@ -882,6 +892,14 @@ fn md_viewer_mappings(
                 };
 
                 set_clicked = true;
+                handle_success(&mut state.ui, format!("Set {} as the active mol set", set.name));
+            }
+
+            if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
+                let name = format!("{}.gro", set.name.replace(' ', "_"));
+                state.volatile.dialogs.save_gro.config_mut().default_file_name = name;
+                state.volatile.dialogs.save_gro_mol_set_i = Some(i);
+                state.volatile.dialogs.save_gro.save_file();
             }
 
             if ui

@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fmt::{Display, Formatter},
+    path::Path,
     time::Instant,
 };
 
@@ -21,7 +22,9 @@ use viewer::SnapshotViewer;
 use crate::{
     cam::move_cam_to_active_mol,
     drawing::EntityClass,
+    file_io::save_mol_set_as_gro,
     gromacs,
+    md::trajectory::Trajectory,
     molecules::{common::MoleculeCommon, nucleic_acid::NucleicAcidType},
     state::State,
     util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
@@ -110,7 +113,8 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     md.draw_md_mols = true;
 
     // Copy snapshots from MD state to the viewer.
-    md.viewer.snapshots = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
+    let snaps = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
+    md.viewer.snapshots = snaps.clone();
 
     // todo: Put back the equivalent here, I believe
     // md.viewer.mol_start_indices = md.mol_dynamics.as_ref().unwrap().mol_start_indices.clone();
@@ -133,6 +137,34 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     // }
 
     md.viewer.current_snapshot = None;
+
+    // Register an in-memory Trajectory so the run appears in the trajectory
+    // sidebar and water molecules are visible in the mol-set list.
+    let run_n = state
+        .trajectories
+        .iter()
+        .filter(|t| t.path.is_none())
+        .count();
+    state.trajectories.push(Trajectory::new_in_memory(
+        snaps,
+        format!("In-memory run {}", run_n + 1),
+    ));
+
+    // Auto-save the mol set as a GRO file alongside the trajectory files.
+    let run_index = state
+        .volatile
+        .md_local
+        .mol_dynamics
+        .as_ref()
+        .map(|md| md.run_index)
+        .unwrap_or(0);
+    let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
+    // The mol set we just added is the last one in the viewer.
+    if let Some(mol_set) = state.volatile.md_local.viewer.mol_sets.last() {
+        if let Err(e) = save_mol_set_as_gro(mol_set, &gro_path) {
+            eprintln!("Error auto-saving GRO: {e:?}");
+        }
+    }
 
     if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
         handle_err(
@@ -517,7 +549,7 @@ pub fn build_dynamics(
     )?;
 
     // Uncomment as required for validating individual processes.
-    let mut cfg = MdConfig {
+    let cfg = MdConfig {
         overrides: MdOverrides {
             // skip_water: true,
             // skip_water_relaxation: false,
@@ -624,8 +656,6 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         .map(|(ff, mol, count)| (*ff, mol, *count))
         .collect();
 
-    state.volatile.md_local.viewer.add_mols_for_disp(&mols);
-
     let near_lig_thresh = if state.ui.md.peptide_only_near_ligs {
         Some(STATIC_ATOM_DIST_THRESH)
     } else {
@@ -653,6 +683,8 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         &mut md_pep_sel,
     ) {
         Ok(md) => {
+            let num_water = md.water.len();
+            state.volatile.md_local.viewer.add_mols_for_disp(&mols, num_water);
             state.volatile.md_local.mol_dynamics = Some(md);
 
             if run {

@@ -10,7 +10,10 @@ use crate::{
         draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
-    file_io::download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
+    file_io::{
+        download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
+        save_mol_set_as_gro,
+    },
     gromacs,
     md::viewer,
     mol_editor,
@@ -39,6 +42,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.parquet_db_save.update(ctx);
     state.volatile.dialogs.parquet_mols_dir.update(ctx);
     state.volatile.dialogs.save_md.update(ctx);
+    state.volatile.dialogs.save_gro.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {
@@ -135,6 +139,22 @@ pub fn update_file_dialogs(
                 );
             }
             Err(e) => handle_err(&mut state.ui, format!("Error saving MD files: {e}")),
+        }
+    }
+
+    if let Some(path) = state.volatile.dialogs.save_gro.take_picked() {
+        let i = state.volatile.dialogs.save_gro_mol_set_i.take();
+        if let Some(i) = i {
+            let mol_sets = &state.volatile.md_local.viewer.mol_sets;
+            if i < mol_sets.len() {
+                match save_mol_set_as_gro(&mol_sets[i], &path) {
+                    Ok(()) => handle_success(
+                        &mut state.ui,
+                        format!("Saved mol set as GRO: {:?}", path.file_name().unwrap_or_default()),
+                    ),
+                    Err(e) => handle_err(&mut state.ui, format!("Error saving GRO: {e}")),
+                }
+            }
         }
     }
 

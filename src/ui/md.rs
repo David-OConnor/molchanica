@@ -120,21 +120,6 @@ pub fn md_setup(
                 updates.entities = EntityUpdate::All;
             }
 
-
-            if !state.volatile.md_local.viewer.snapshots.is_empty() &&
-                ui
-                    .button(RichText::new("Clear Traj"))
-                    .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
-                    .clicked() {
-
-                state.volatile.md_local.clear_snaps(&mut scene.entities, updates, redraw);
-
-                // todo: Make this call part of clear_snaps?
-                for traj in &mut state.trajectories {
-                    traj.frames_open = None;
-                }
-            }
-
             if button!(
                 ui,
                 "Run",
@@ -271,7 +256,7 @@ pub fn md_setup(
         }
     });
 
-    md_viewer::dynamics_viewer(state, scene, updates, ui);
+    md_viewer::dynamics_viewer(state, scene, updates, redraw, ui);
 }
 
 /// Section for integrator config, various modelling parameters etc
