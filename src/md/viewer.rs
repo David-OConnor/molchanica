@@ -10,7 +10,7 @@ use std::{
 
 use bio_files::{AtomGeneric, bond_inference, gromacs::gro::Gro};
 use dynamics::{FfMolType, snapshot::Snapshot};
-use graphics::Scene;
+use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::Element;
 
@@ -547,7 +547,7 @@ impl SnapshotViewer {
 }
 
 /// Draw all molecules from the loaded MD run.
-pub fn draw_mols(state: &mut State, scene: &mut Scene) {
+pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     let mut ents = Vec::new();
 
     let Some(set) = state.volatile.md_local.viewer.get_active_mol_set() else {
@@ -634,6 +634,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene) {
 
     scene.entities.clear();
     scene.entities.extend(ents);
+    updates.entities = EntityUpdate::All;
 
     if let Some(snap) = state.volatile.md_local.viewer.get_active_snap() {
         draw_water(

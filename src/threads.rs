@@ -10,7 +10,7 @@ use bio_apis::{
     rcsb::{FilesAvailable, PdbDataResults},
 };
 use bio_files::gromacs::GromacsOutput;
-use graphics::{EngineUpdates, EntityUpdate, Scene};
+use graphics::{EngineUpdates, Scene};
 
 use crate::{
     molecules::{MolIdent, MolType},
@@ -164,7 +164,6 @@ pub fn handle_thread_rx(
 
                     state.volatile.flags.update_sas_coloring = true;
                     redraw.set(MolType::Peptide);
-                    updates.entities = EntityUpdate::All;
                 }
                 Err(e) => eprintln!("Failed to load SIFTS mappings: {e:?}"),
             }

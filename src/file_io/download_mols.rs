@@ -79,7 +79,7 @@ pub fn load_atom_coords_rcsb(
                     }
                 };
 
-            let (_ident, centroid) = load_peptide(state, scene, mol);
+            let (_ident, centroid) = load_peptide(state, scene, mol, updates);
             if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
                 *center = centroid.into();
             }

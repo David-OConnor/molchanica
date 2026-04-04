@@ -72,7 +72,7 @@ pub(in crate::ui) fn mol_type_toolbars(
 pub(in crate::ui) fn lipid_section(
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
     if state.to_save.lipid.lipid_to_add >= state.templates.lipid.len() {
@@ -143,8 +143,7 @@ pub(in crate::ui) fn lipid_section(
                 //
                 // state.lipids.push(mol);
 
-                draw_all_lipids(state, scene);
-                engine_updates.entities = EntityUpdate::All;
+                draw_all_lipids(state, scene, updates);
             }
 
             if !state.lipids.is_empty()
@@ -158,7 +157,7 @@ pub(in crate::ui) fn lipid_section(
                     .retain(|e| e.class != EntityClass::Lipid as u32);
                 clear_mol_entity_indices(state, None);
 
-                engine_updates.entities = EntityUpdate::All;
+                updates.entities = EntityUpdate::All;
             }
         });
     });
@@ -229,8 +228,7 @@ pub(in crate::ui) fn na_section(
 
             state.nucleic_acids.push(mol);
 
-            draw_all_nucleic_acids(state, scene);
-            updates.entities.push_class(EntityClass::NucleicAcid as u32);
+            draw_all_nucleic_acids(state, scene, updates);
         }
     });
 }

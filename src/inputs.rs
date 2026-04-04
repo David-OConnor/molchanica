@@ -275,7 +275,7 @@ fn redraw_inplace_helper(
 
             if mol_i >= state.ligands.len() {
                 eprintln!("{err}");
-                wrappers::draw_all_ligs(state, scene);
+                wrappers::draw_all_ligs(state, scene, updates);
                 return;
             }
 
@@ -286,7 +286,7 @@ fn redraw_inplace_helper(
 
             if mol_i >= state.nucleic_acids.len() {
                 eprintln!("{err}");
-                wrappers::draw_all_nucleic_acids(state, scene);
+                wrappers::draw_all_nucleic_acids(state, scene, updates);
                 return;
             }
 
@@ -297,7 +297,7 @@ fn redraw_inplace_helper(
 
             if mol_i >= state.lipids.len() {
                 eprintln!("{err}");
-                wrappers::draw_all_lipids(state, scene);
+                wrappers::draw_all_lipids(state, scene, updates);
                 return;
             }
 
@@ -308,7 +308,7 @@ fn redraw_inplace_helper(
 
             if mol_i >= state.pockets.len() {
                 eprintln!("{err}");
-                wrappers::draw_all_pockets(state, scene);
+                wrappers::draw_all_pockets(state, scene, updates);
                 return;
             }
 
@@ -781,15 +781,12 @@ fn post_event_cleanup(
     let op_mode = state.volatile.operating_mode;
 
     if redraw.peptide && op_mode == OperatingMode::Primary {
-        // todo:This is overkill for certain keys. Just change the color of the one[s] in question, and set update.entities = true.
-        drawing::draw_peptide(state, scene);
-        updates.entities = EntityUpdate::All;
-        // updates.entities.push_class(EntityClass::Peptide as u32);
+        drawing::draw_peptide(state, scene, updates);
     }
 
     if redraw.ligand {
         match op_mode {
-            OperatingMode::Primary => wrappers::draw_all_ligs(state, scene),
+            OperatingMode::Primary => wrappers::draw_all_ligs(state, scene, updates),
 
             OperatingMode::MolEditor => {
                 mol_editor::redraw(
@@ -797,31 +794,27 @@ fn post_event_cleanup(
                     &state.mol_editor,
                     &state.ui,
                     state.volatile.mol_manip.mode,
+                    updates,
                 );
             }
             OperatingMode::ProteinEditor => (),
         }
-        updates.entities = EntityUpdate::All;
     }
 
     if redraw.na && op_mode == OperatingMode::Primary {
-        wrappers::draw_all_nucleic_acids(state, scene);
-        updates.entities = EntityUpdate::All;
+        wrappers::draw_all_nucleic_acids(state, scene, updates);
     }
 
     if redraw.lipid && op_mode == OperatingMode::Primary {
-        wrappers::draw_all_lipids(state, scene);
-        updates.entities = EntityUpdate::All;
+        wrappers::draw_all_lipids(state, scene, updates);
     }
 
     if redraw.pocket && op_mode == OperatingMode::Primary {
-        wrappers::draw_all_pockets(state, scene);
-        updates.entities = EntityUpdate::All;
+        wrappers::draw_all_pockets(state, scene, updates);
     }
 
     if redraw_in_place.peptide && op_mode == OperatingMode::Primary {
-        drawing::draw_peptide(state, scene);
-        updates.entities = EntityUpdate::All;
+        drawing::draw_peptide(state, scene, updates);
     }
 
     if redraw_in_place.ligand {
@@ -835,8 +828,8 @@ fn post_event_cleanup(
                     &state.mol_editor,
                     &state.ui,
                     state.volatile.mol_manip.mode,
+                    updates,
                 );
-                updates.entities.push_class(EntityClass::Ligand as u32);
             }
             OperatingMode::ProteinEditor => (),
         }
@@ -883,8 +876,8 @@ fn post_event_cleanup(
             &state.mol_editor,
             &state.ui,
             state.volatile.mol_manip.mode,
+            updates,
         );
-        updates.entities = EntityUpdate::All;
     }
 
     // We handle the flashlight elsewhere, as this event handler only fires upon events; not while

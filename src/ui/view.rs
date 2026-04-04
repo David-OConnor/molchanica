@@ -190,18 +190,16 @@ pub fn view_settings(
                 if ui.button(RichText::new("Lig").color(color)).clicked() {
                     state.ui.visibility.hide_ligand = !state.ui.visibility.hide_ligand;
 
-                    draw_all_ligs(state, scene);
-                    updates.entities = EntityUpdate::All;
+                    draw_all_ligs(state, scene, updates);
                     updates.lighting = true; // docking light.
                 }
             }
             if !state.nucleic_acids.is_empty() {
-                let color = misc::active_color(!state.ui.visibility.hide_ligand);
+                let color = active_color(!state.ui.visibility.hide_ligand);
                 if ui.button(RichText::new("NA").color(color)).clicked() {
                     state.ui.visibility.hide_ligand = !state.ui.visibility.hide_ligand;
 
-                    draw_all_nucleic_acids(state, scene);
-                    updates.entities = EntityUpdate::All;
+                    draw_all_nucleic_acids(state, scene, updates);
                 }
             }
             if !state.lipids.is_empty() {
@@ -209,8 +207,7 @@ pub fn view_settings(
                 if ui.button(RichText::new("Lipid").color(color)).clicked() {
                     state.ui.visibility.hide_lipids = !state.ui.visibility.hide_lipids;
 
-                    draw_all_lipids(state, scene);
-                    updates.entities = EntityUpdate::All;
+                    draw_all_lipids(state, scene, updates);
                 }
             }
 
@@ -345,12 +342,8 @@ pub fn view_settings(
                             .entities
                             .retain(|ent| ent.class != EntityClass::DensitySurface as u32);
                     } else {
-                        draw_density_surface(&mut scene.entities, state);
+                        draw_density_surface(&mut scene.entities, state, updates);
                     }
-                    updates.entities = EntityUpdate::All;
-                    // engine_updates
-                    //     .entities
-                    //     .push_class(EntityClass::DensitySurface as u32);
                 }
             }
         });

@@ -1,6 +1,6 @@
 use dynamics::snapshot::Snapshot;
 use egui::{Color32, RichText, Slider, Ui};
-use graphics::{EngineUpdates, EntityUpdate, Scene};
+use graphics::{EngineUpdates, Scene};
 
 use crate::{
     label,
@@ -39,8 +39,7 @@ pub(in crate::ui) fn dynamics_viewer(
             {
                 state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
 
-                viewer::draw_mols(state, scene);
-                updates.entities = EntityUpdate::All;
+                viewer::draw_mols(state, scene, updates);
             }
         }
 
@@ -82,8 +81,7 @@ pub(in crate::ui) fn dynamics_viewer(
                     handle_err(&mut state.ui, format!("Error changing MD snapshot: {e:?}"));
                 }
 
-                viewer::draw_mols(state, scene);
-                updates.entities = EntityUpdate::All;
+                viewer::draw_mols(state, scene, updates);
             }
         }
     });

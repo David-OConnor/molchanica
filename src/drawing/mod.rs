@@ -6,7 +6,7 @@ use std::{fmt, fmt::Display, io, io::ErrorKind, str::FromStr, sync::OnceLock};
 use bincode::{Decode, Encode};
 use bio_files::{BondType, ResidueType};
 use egui::{Color32, FontFamily};
-use graphics::{ControlScheme, EngineUpdates, Entity, Scene, TextOverlay, UP_VEC};
+use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOverlay, UP_VEC};
 use lin_alg::{
     f32::{Quaternion, Vec3},
     f64::Vec3 as Vec3F64,
@@ -1039,7 +1039,11 @@ pub fn draw_density_point_cloud(entities: &mut Vec<Entity>, density: &[DensityPt
 
 /// An isosurface of electron density,
 /// as loaded from .map files or similar.
-pub fn draw_density_surface(entities: &mut Vec<Entity>, state: &mut State) {
+pub fn draw_density_surface(
+    entities: &mut Vec<Entity>,
+    state: &mut State,
+    updates: &mut EngineUpdates,
+) {
     entities.retain(|ent| ent.class != EntityClass::DensitySurface as u32);
     clear_mol_entity_indices(state, None);
 
@@ -1054,6 +1058,8 @@ pub fn draw_density_surface(entities: &mut Vec<Entity>, state: &mut State) {
     ent.class = EntityClass::DensitySurface as u32;
     ent.opacity = DENSITY_ISO_OPACITY;
     entities.push(ent);
+
+    updates.entities = EntityUpdate::All;
 }
 
 /// The dots view of solvent-accessible-surface
@@ -1332,7 +1338,7 @@ pub fn filter_pep_atoms_by_dist<'a>(
 
 /// Refreshes entities with the model passed.
 /// Sensitive to various view configuration parameters.
-pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
+pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     // todo: You may wish to integrate Cartoon into this workflow.
     let initial_ent_count = scene.entities.len();
 
@@ -1973,6 +1979,9 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene) {
     } else {
         eprintln!("Uhoh!")
     }
+
+    updates.entities = EntityUpdate::All;
+    // updates.entities.push_class(EntityClass::Peptide as u32);
 
     if scene.entities.len() != initial_ent_count {
         clear_mol_entity_indices(state, None);

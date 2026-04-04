@@ -493,10 +493,9 @@ pub fn close_mol(
     i: usize,
     state: &mut State,
     scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
 ) {
     state.volatile.mol_manip.mode = ManipMode::None;
-    engine_updates.entities = EntityUpdate::All;
 
     let Some(mol) = state.get_mol(mol_type, i) else {
         eprintln!("Error: Out of bounds when closing a mol");
@@ -515,7 +514,7 @@ pub fn close_mol(
 
     match mol_type {
         MolType::Peptide => {
-            close_peptide(state, scene, engine_updates);
+            close_peptide(state, scene, updates);
         }
         MolType::Ligand => {
             state.ligands.remove(i);
@@ -526,7 +525,7 @@ pub fn close_mol(
                 state.volatile.active_mol = Some((MolType::Ligand, state.ligands.len() - 1));
             }
 
-            draw_all_ligs(state, scene);
+            draw_all_ligs(state, scene, updates);
 
             state.update_save_prefs();
         }
@@ -541,7 +540,7 @@ pub fn close_mol(
                     Some((MolType::NucleicAcid, state.nucleic_acids.len() - 1));
             }
 
-            draw_all_nucleic_acids(state, scene);
+            draw_all_nucleic_acids(state, scene, updates);
         }
         MolType::Lipid => {
             state.lipids.remove(i);
@@ -552,7 +551,7 @@ pub fn close_mol(
                 state.volatile.active_mol = Some((MolType::Lipid, state.lipids.len() - 1));
             }
 
-            draw_all_lipids(state, scene);
+            draw_all_lipids(state, scene, updates);
         }
         MolType::Pocket => {
             state.pockets.remove(i);
@@ -563,7 +562,7 @@ pub fn close_mol(
                 state.volatile.active_mol = Some((MolType::Pocket, state.pockets.len() - 1));
             }
 
-            draw_all_pockets(state, scene);
+            draw_all_pockets(state, scene, updates);
         }
         MolType::Water => (),
     }
@@ -716,12 +715,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                     MoleculeView::Dots | MoleculeView::Surface
                 ) {
                     // The dots are drawn from the mesh vertices
-                    draw_peptide(state, scene);
-                    updates.entities = EntityUpdate::All;
-                    // engine_updates.entities.push_class(EntityClass::SaSurface as u32);
-                    // engine_updates
-                    //     .entities
-                    //     .push_class(EntityClass::SaSurfaceDots as u32);
+                    draw_peptide(state, scene, updates);
                 }
 
                 updates.meshes = true;

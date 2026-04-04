@@ -1,6 +1,6 @@
 use bio_files::FrameSlice;
 use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
-use graphics::{ControlScheme, EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{
@@ -14,7 +14,6 @@ use crate::{
     mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
-    prefs::OpenType,
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
     therapeutic::logp_sim,
@@ -109,9 +108,6 @@ fn mol_picker_one(
                     mol.visible = !mol.visible;
 
                     *redraw = true; // todo Overkill; only need to redraw (or even just clear) one.
-                    // todo: Generalize.
-                    engine_updates.entities = EntityUpdate::All;
-                    // engine_updates.entities.push_class(mol_type.entity_class() as u32);
                 }
 
                 if ui
@@ -830,9 +826,8 @@ fn traj_items(
     // error otherwise; the flag setting is convenience.
     if snaps_loaded {
         reset_camera(state, scene, updates, FWD_VEC);
-        viewer::draw_mols(state, scene);
+        viewer::draw_mols(state, scene, updates);
 
-        updates.entities = EntityUpdate::All;
         redraw.set_all();
     }
 }
@@ -933,9 +928,12 @@ fn md_viewer_mappings(
         // We have this as the function calls in this branch which call state have a borrow
         // error otherwise; the flag setting is convenience.
         reset_camera(state, scene, updates, FWD_VEC);
-        viewer::draw_mols(state, scene);
+        viewer::draw_mols(state, scene, updates);
 
-        updates.entities = EntityUpdate::All;
         redraw.set_all();
+
+        if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
+            handle_err(&mut state.ui, "Error changing snaps".to_string());
+        }
     }
 }

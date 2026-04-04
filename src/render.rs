@@ -221,7 +221,8 @@ pub fn render(mut state: State) {
         icon_path: Some("resources/icon.png".to_owned()),
     };
 
-    init_with_scene(&mut state, &mut scene);
+    let mut updates = EngineUpdates::default(); // todo: Dummy/not used?
+    init_with_scene(&mut state, &mut scene, &mut updates);
 
     let graphics_settings = state.graphics_settings.clone();
 

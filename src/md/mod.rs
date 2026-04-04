@@ -13,7 +13,7 @@ use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
-use graphics::{EngineUpdates, Entity, EntityUpdate, Scene};
+use graphics::{EngineUpdates, Entity, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
 use rand::Rng;
 use viewer::SnapshotViewer;
@@ -93,7 +93,6 @@ impl MdStateLocal {
         ents.retain(|ent| ent.class != EntityClass::WaterModel as u32);
 
         redraw.set_all();
-        // updates.entities = EntityUpdate::All;
     }
 }
 
@@ -143,8 +142,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         return;
     }
 
-    viewer::draw_mols(state, scene);
-    updates.entities = EntityUpdate::All;
+    viewer::draw_mols(state, scene, updates);
 
     handle_success(&mut state.ui, "MD complete".to_string());
 }

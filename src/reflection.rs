@@ -451,7 +451,7 @@ impl DensityRect {
 }
 
 /// Populate the electron-density mesh (isosurface). This assumes the density_rect is already set up.
-pub fn make_density_mesh(state: &mut State, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
+pub fn make_density_mesh(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     let Some(mol) = &state.peptide else {
         return;
     };
@@ -501,14 +501,13 @@ pub fn make_density_mesh(state: &mut State, scene: &mut Scene, engine_updates: &
                 indices: mesh.indices,
                 material: 0,
             };
+            updates.meshes = true;
 
             if !state.ui.visibility.hide_density_surface {
-                draw_density_surface(&mut scene.entities, state);
+                draw_density_surface(&mut scene.entities, state, updates);
             }
 
-            engine_updates.meshes = true;
-            engine_updates.entities = EntityUpdate::All;
-            // engine_updates.entities.push_class(EntityClass::SaSurface as u32);
+            // _updates.entities.push_class(EntityClass::SaSurface as u32);
         }
         Err(e) => util::handle_err(&mut state.ui, e.to_string()),
     }

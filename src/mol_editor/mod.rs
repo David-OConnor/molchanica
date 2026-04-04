@@ -257,7 +257,7 @@ impl MolEditorState {
         &mut self,
         mol: &MoleculeSmall,
         scene: &mut Scene,
-        engine_updates: &mut EngineUpdates,
+        updates: &mut EngineUpdates,
         state_ui: &mut StateUi,
         manip_mode: ManipMode,
     ) {
@@ -268,7 +268,7 @@ impl MolEditorState {
         self.mol.common.update_next_sn();
 
         // Load the initial relaxation into atom positions.
-        self.load_atom_posits_from_md(&mut scene.entities, state_ui, engine_updates, manip_mode);
+        self.load_atom_posits_from_md(&mut scene.entities, state_ui, updates, manip_mode);
 
         // self.mol.smiles = Some(self.mol.common.to_smiles());
         // todo: Update SMILES For our editor molecule here, once we get our smiles-gen code working reliably.
@@ -282,11 +282,10 @@ impl MolEditorState {
         // Clear all entities for non-editor molecules. And render the initial relaxation
         // from building dynamics.
 
-        redraw(&mut scene.entities, self, state_ui, manip_mode);
+        redraw(&mut scene.entities, self, state_ui, manip_mode, updates);
 
         set_flashlight(scene);
-        engine_updates.entities = EntityUpdate::All;
-        engine_updates.lighting = true;
+        updates.lighting = true;
     }
 
     fn move_to_origin(&mut self) {
@@ -304,7 +303,7 @@ impl MolEditorState {
         &mut self,
         entities: &mut Vec<Entity>,
         state_ui: &StateUi,
-        engine_updates: &mut EngineUpdates,
+        updates: &mut EngineUpdates,
         manip_mode: ManipMode,
     ) {
         let Some(snap) = self.md.md.as_ref().unwrap().snapshots.last() else {
@@ -324,8 +323,7 @@ impl MolEditorState {
 
         self.md.md.as_mut().unwrap().snapshots = Vec::new();
 
-        redraw(entities, self, state_ui, manip_mode);
-        engine_updates.entities = EntityUpdate::All;
+        redraw(entities, self, state_ui, manip_mode, updates);
     }
 
     /// Load the latest md_posits into atom positions, and update entities.
@@ -333,7 +331,7 @@ impl MolEditorState {
         &mut self,
         entities: &mut Vec<Entity>,
         state_ui: &StateUi,
-        engine_updates: &mut EngineUpdates,
+        updates: &mut EngineUpdates,
         manip_mode: ManipMode,
     ) {
         let Some(md) = &self.md.md else { return };
@@ -342,8 +340,7 @@ impl MolEditorState {
             self.mol.common.atom_posits[i] = atom.posit.into();
         }
 
-        redraw(entities, self, state_ui, manip_mode);
-        engine_updates.entities = EntityUpdate::All;
+        redraw(entities, self, state_ui, manip_mode, updates);
     }
 
     /// Run MD for a single step if ready, and update atom positions immediately after.
@@ -433,7 +430,7 @@ impl MolEditorState {
 }
 
 // todo: Into a GUI util?
-pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
+pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     state.volatile.operating_mode = OperatingMode::MolEditor;
 
     // Rebuilt shortly.
@@ -464,7 +461,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
             state.mol_editor.load_mol(
                 &state.ligands[i],
                 scene,
-                engine_updates,
+                updates,
                 &mut state.ui,
                 state.volatile.mol_manip.mode,
             );
@@ -514,12 +511,12 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, engine_updates: &mu
         &state.mol_editor,
         &state.ui,
         state.volatile.mol_manip.mode,
+        updates,
     );
 
     set_static_light(scene, Vec3F32::new_zero(), STATIC_LIGHT_MOL_SIZE);
     set_flashlight(scene);
-    engine_updates.entities = EntityUpdate::All;
-    engine_updates.lighting = true;
+    updates.lighting = true;
 }
 
 // todo: Into a GUI util?
@@ -559,14 +556,13 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engine
     state.volatile.mol_manip.mode = ManipMode::None;
 
     // Load all primary molecules into the engine.
-    draw_peptide(state, scene);
-    draw_all_ligs(state, scene);
-    draw_all_nucleic_acids(state, scene);
-    draw_all_lipids(state, scene);
+    draw_peptide(state, scene, updates);
+    draw_all_ligs(state, scene, updates);
+    draw_all_nucleic_acids(state, scene, updates);
+    draw_all_lipids(state, scene, updates);
 
     set_flashlight(scene);
 
-    updates.entities = EntityUpdate::All;
     updates.lighting = true;
 }
 
@@ -577,6 +573,7 @@ pub fn redraw(
     editor: &MolEditorState,
     ui: &StateUi,
     manip_mode: ManipMode,
+    updates: &mut EngineUpdates,
 ) {
     *entities = Vec::new();
 
@@ -600,6 +597,7 @@ pub fn redraw(
             &manip_mode,
         ));
     }
+    updates.entities = EntityUpdate::All;
 }
 
 /// Tailored function to prevent having to redraw the whole mol.

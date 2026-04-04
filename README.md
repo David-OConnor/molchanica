@@ -292,6 +292,12 @@ what is selected, and the nature of information displayed. For example, in *Bond
 elements of the atoms connected, and the expected oscillation frequency of the bond. In *Atom* mode, you can see
 dihedral angles, the atom name as part of its residue, the atom's force field name, and its partial charge.
 
+### MD playback
+
+Molchanica can play back molecular dynamics trajectories run from other programs, including GROMACS, OpenMM, and NAMD.
+
+![MD playback/viewer, minimal example](/screenshots/md_viewer_march_2026.png)
+
 ### Adding nucleic acids and lipids
 
 You can add DNA, RNA, and lipids in various configurations without loading files; this program can create

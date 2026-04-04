@@ -524,8 +524,8 @@ pub(in crate::ui) fn editor(
             &state.mol_editor,
             &state.ui,
             state.volatile.mol_manip.mode,
+            updates,
         );
-        updates.entities = EntityUpdate::All;
     }
 }
 

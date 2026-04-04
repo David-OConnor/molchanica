@@ -3,12 +3,12 @@
 
 // todo: Drawing module A/R.
 
-use graphics::{Entity, Scene};
+use graphics::{EngineUpdates, Entity, Scene};
 
 use crate::{
     drawing,
     drawing::EntityClass,
-    molecules::{MolGeneric, MolGenericRef, MolType, small::MoleculeSmall},
+    molecules::{MolGeneric, MolGenericRef, MolType},
     render::MESH_POCKET_START,
     state::{OperatingMode, State},
     util::clear_mol_entity_indices,
@@ -115,7 +115,7 @@ fn helper_b(
 // }
 
 // pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, specify: Option<&[MoleculeSmall]>) {
-pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
+pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     let class = EntityClass::Ligand as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
@@ -157,6 +157,8 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
         mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
     }
 
+    updates.entities.push_class(EntityClass::Ligand as u32);
+
     helper_b(
         state,
         scene,
@@ -169,7 +171,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene) {
 }
 
 // todo: You need to generalize your drawing code so you have less repetition, and it's more consistent.
-pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
+pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     // draw_all_mol_of_type(state, scene, &mut state.nucleic_acids, MolType::nucleic_acid, state.ui.visibility.hide_nucleic_acids);
     // return;
 
@@ -213,6 +215,9 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
 
         mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
     }
+    //
+    // updates.entities = EntityUpdate::All;
+    updates.entities.push_class(EntityClass::NucleicAcid as u32);
 
     helper_b(
         state,
@@ -226,7 +231,7 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene) {
 }
 
 // todo: You need to generalize your drawing code so you have less repetition, and it's more consistent.
-pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
+pub fn draw_all_lipids(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     // draw_all_mol_of_type(state, scene, &mut state.lipids, MolType::Lipid, state.ui.visibility.hide_lipids);
     // return;
 
@@ -270,6 +275,9 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
         mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
     }
 
+    // updates.entities = EntityUpdate::All;
+    updates.entities.push_class(EntityClass::Lipid as u32);
+
     helper_b(
         state,
         scene,
@@ -282,8 +290,7 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene) {
 }
 
 // todo: You need to generalize your drawing code so you have less repetition, and it's more consistent.
-// pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, draw_mesh: bool) {
-pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
+pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     let class = EntityClass::Pocket as u32;
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
@@ -345,6 +352,8 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene) {
             entities.extend(ents);
         }
     }
+
+    updates.entities.push_class(EntityClass::Pocket as u32);
 
     helper_b(
         state,

@@ -422,7 +422,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
     scene: &mut Scene,
     ui: &mut Ui,
     redraw_lig: &mut bool,
-    engine_updates: &mut EngineUpdates,
+    updates: &mut EngineUpdates,
 ) {
     // These variables prevent double borrows.
     let mut res_to_make = None;
@@ -551,7 +551,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
     });
 
     if let Some(res) = res_to_make {
-        make_lig_from_res(state, &res, scene, engine_updates);
+        make_lig_from_res(state, &res, scene, updates);
         // if let Some(pep) = &state.peptide {
         //     move_cam_to_active_mol(state, scene, pep.center, engine_updates);
         // }
@@ -564,7 +564,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
             let mol = &mut state.ligands[i]; // can't use `get`; borrow error.
             if let Some(pep) = &state.peptide {
                 move_mol_to_res(&mut MolGenericRefMut::Small(mol), pep, &res);
-                move_cam_to_active_mol(state, scene, pep.center, engine_updates);
+                move_cam_to_active_mol(state, scene, pep.center, updates);
             }
         }
 
@@ -579,7 +579,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
             Some(p) => p.center,
             None => Vec3::new_zero(),
         };
-        move_cam_to_active_mol(state, scene, center, engine_updates);
+        move_cam_to_active_mol(state, scene, center, updates);
 
         move_cam = true;
 
@@ -592,7 +592,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
             None => Vec3::new_zero(),
         };
 
-        move_cam_to_active_mol(state, scene, center, engine_updates);
+        move_cam_to_active_mol(state, scene, center, updates);
     }
 
     let mut pocket_to_add = None;
@@ -634,11 +634,10 @@ pub(in crate::ui) fn display_mol_data_peptide(
             scene.meshes.push(Default::default());
         }
         scene.meshes[target_mesh_i] = pocket.surface_mesh.clone();
-        draw_all_pockets(state, scene);
-        state.pockets.push(pocket);
+        updates.meshes = true;
 
-        engine_updates.meshes = true;
-        engine_updates.entities = EntityUpdate::All;
+        draw_all_pockets(state, scene, updates);
+        state.pockets.push(pocket);
     }
 }
 

@@ -730,9 +730,11 @@ fn alignment(
         state.ligands[state.volatile.alignment.mols_to_align[0]]
             .common
             .visible = true;
+
         state.ligands[state.volatile.alignment.mols_to_align[1]]
             .common
             .visible = true;
+
         state.ui.color_by_mol = true;
 
         for (i, mol) in state.ligands.iter_mut().enumerate() {
@@ -741,8 +743,6 @@ fn alignment(
         }
 
         *redraw_lig = true;
-        // draw_all_ligs(state, scene);
-        // engine_updates.entities = EntityUpdate::All; // todo: Just ligs.
 
         let i_mol = state.volatile.alignment.mols_to_align[0];
         move_cam_to_mol(
@@ -990,10 +990,9 @@ fn lig_pocket_from_het_res(
 
         state.pockets.push(pocket);
         state.volatile.active_mol = Some((MolType::Pocket, state.pockets.len() - 1));
-        draw_all_pockets(state, scene);
+        draw_all_pockets(state, scene, updates);
 
         updates.meshes = true;
-        updates.entities.push_class(EntityClass::Pocket as u32);
     }
 
     if let Some(res) = &create_lig_from_res {

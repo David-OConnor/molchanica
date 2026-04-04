@@ -2,12 +2,12 @@ use std::{collections::HashMap, fs::File, io, io::Write};
 
 use bio_apis::pubchem::find_cids_from_search;
 use egui::{Color32, Ui};
-use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use graphics::{EngineUpdates, FWD_VEC, Scene};
 
 use crate::{
     cam::reset_camera,
     drawing::{
-        EntityClass, draw_peptide,
+        draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     file_io::download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
@@ -151,23 +151,19 @@ pub fn handle_redraw(
     if state.volatile.md_local.draw_md_mols
         && (redraw.peptide || redraw.ligand || redraw.lipid || redraw.na)
     {
-        viewer::draw_mols(state, scene);
+        viewer::draw_mols(state, scene, updates);
         println!("Redrawing MD"); // todo temp to make sure not spamming
 
-        updates.entities = EntityUpdate::All;
         *redraw = Default::default();
         return;
     }
 
     if redraw.peptide {
-        draw_peptide(state, scene);
+        draw_peptide(state, scene, updates);
 
         if let Some(mol) = &state.peptide {
             set_window_title(&mol.common.ident, scene);
         }
-
-        // updates.entities = EntityUpdate::All;
-        updates.entities.push_class(EntityClass::Protein as u32);
 
         // For docking light, but may be overkill here.
         if state.active_mol().is_some() {
@@ -176,44 +172,31 @@ pub fn handle_redraw(
     }
 
     if redraw.ligand {
-        println!("Drawing mols ligs!!"); // todo temp
         match state.volatile.operating_mode {
             OperatingMode::Primary => {
-                draw_all_ligs(state, scene);
-                // // For docking light, but may be overkill here.
-                // if state.active_mol().is_some() {
-                //     updates.lighting = true;
-                // }
+                draw_all_ligs(state, scene, updates);
             }
             OperatingMode::MolEditor => mol_editor::redraw(
                 &mut scene.entities,
                 &state.mol_editor,
                 &state.ui,
                 state.volatile.mol_manip.mode,
+                updates,
             ),
             OperatingMode::ProteinEditor => unimplemented!(),
         }
-
-        // updates.entities = EntityUpdate::All;
-        updates.entities.push_class(EntityClass::Ligand as u32);
     }
 
     if redraw.na {
-        draw_all_nucleic_acids(state, scene);
-        // updates.entities = EntityUpdate::All;
-        updates.entities.push_class(EntityClass::NucleicAcid as u32);
+        draw_all_nucleic_acids(state, scene, updates);
     }
 
     if redraw.lipid {
-        draw_all_lipids(state, scene);
-        // updates.entities = EntityUpdate::All;
-        updates.entities.push_class(EntityClass::Lipid as u32);
+        draw_all_lipids(state, scene, updates);
     }
 
     if redraw.pocket {
-        draw_all_pockets(state, scene);
-        // updates.entities = EntityUpdate::All;
-        updates.entities.push_class(EntityClass::Pocket as u32);
+        draw_all_pockets(state, scene, updates);
     }
 
     // Perform cleanup.
@@ -238,7 +221,7 @@ pub fn open_lig_from_input(
 
 /// Contains functionality we wish to run at program load, but can't do until the scene is loaded.
 /// Run this near the top of the UI initialization.
-pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
+pub fn init_with_scene(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     // We must have loaded prefs prior to this, so we know which file to open.
     state.load_last_opened(scene);
     // todo trouble: It's somewhere around here, saving the inited-from-load atom posits, overwriting
@@ -302,11 +285,11 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene) {
     // FWD_VEC here means a "Front" look.
     reset_camera(state, scene, &mut EngineUpdates::default(), FWD_VEC);
 
-    draw_peptide(state, scene);
-    draw_all_ligs(state, scene);
-    draw_all_nucleic_acids(state, scene);
-    draw_all_lipids(state, scene);
-    draw_all_pockets(state, scene);
+    draw_peptide(state, scene, updates);
+    draw_all_ligs(state, scene, updates);
+    draw_all_nucleic_acids(state, scene, updates);
+    draw_all_lipids(state, scene, updates);
+    draw_all_pockets(state, scene, updates);
 
     set_flashlight(scene);
 }

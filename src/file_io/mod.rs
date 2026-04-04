@@ -48,6 +48,7 @@ pub(in crate::file_io) fn load_peptide(
     state: &mut State,
     scene: &mut Scene,
     mol: MoleculePeptide,
+    updates: &mut EngineUpdates,
 ) -> (String, Vec3) {
     state.volatile.aa_seq_text = String::with_capacity(mol.common.atoms.len());
     for aa in &mol.aa_seq {
@@ -65,7 +66,7 @@ pub(in crate::file_io) fn load_peptide(
     let ident = mol.common.ident.clone();
     state.peptide = Some(mol);
 
-    draw_peptide(state, scene);
+    draw_peptide(state, scene, updates);
 
     (ident, centroid)
 }
@@ -758,7 +759,7 @@ impl State {
         let (ident, centroid) = match mol {
             MoleculeGeneric::Peptide(m) => {
                 // Shared fn, as this is shared with loading mol from RCSB.
-                load_peptide(self, scene, m)
+                load_peptide(self, scene, m, updates)
             }
             MoleculeGeneric::Small(mut mol) => {
                 if !mol
@@ -823,7 +824,7 @@ impl State {
 
                 self.ligands.push(mol);
 
-                draw_all_ligs(self, scene);
+                draw_all_ligs(self, scene, updates);
 
                 (ident, centroid)
             }
@@ -838,10 +839,7 @@ impl State {
 
                 self.nucleic_acids.push(mol);
 
-                // if let Some(ref mut s) = scene {
-                //     draw_all_nucleic_acids(self, s);
-                draw_all_nucleic_acids(self, scene);
-                // }
+                draw_all_nucleic_acids(self, scene, updates);
 
                 (ident, centroid)
             }
@@ -858,7 +856,7 @@ impl State {
 
                 // if let Some(ref mut s) = scene {
                 //     draw_all_lipids(self, s);
-                draw_all_lipids(self, scene);
+                draw_all_lipids(self, scene, updates);
                 // }
 
                 (ident, centroid)
@@ -886,8 +884,7 @@ impl State {
                     pocket.volume.spheres[0].center
                 );
 
-                draw_all_pockets(self, scene);
-                // }
+                draw_all_pockets(self, scene, updates);
 
                 (ident, centroid)
             }
