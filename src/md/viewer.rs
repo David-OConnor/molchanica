@@ -56,17 +56,32 @@ pub struct ViewerMolSet {
 impl ViewerMolSet {
     /// This constructor computes the derivative values.
     pub fn new(path: Option<PathBuf>, name: String, mols: Vec<ViewerMolecule>) -> Self {
-        let atom_count = mols.iter().map(|m| m.mol.atoms.len()).sum();
+        let mut result = Self {
+            path,
+            name,
+            mols,
+            atom_count: 0,
+            range_covered: (0, 0),
+            range_overlaps: false,
+        };
 
-        let range_covered = if mols.is_empty() {
+        result.update_derivative_vals();
+
+        result
+    }
+
+    pub fn update_derivative_vals(&mut self) {
+        let atom_count = self.mols.iter().map(|m| m.mol.atoms.len()).sum();
+
+        let range_covered = if self.mols.is_empty() {
             (0, 0)
         } else {
-            let start = mols.iter().map(|m| m.range.0).min().unwrap();
-            let end = mols.iter().map(|m| m.range.1).max().unwrap();
+            let start = self.mols.iter().map(|m| m.range.0).min().unwrap();
+            let end = self.mols.iter().map(|m| m.range.1).max().unwrap();
             (start, end)
         };
 
-        let mut sorted_ranges = mols.iter().map(|m| m.range).collect::<Vec<_>>();
+        let mut sorted_ranges = self.mols.iter().map(|m| m.range).collect::<Vec<_>>();
         sorted_ranges.sort_by_key(|r| r.0);
 
         let mut range_overlaps = false;
@@ -80,14 +95,9 @@ impl ViewerMolSet {
             }
         }
 
-        Self {
-            path,
-            name,
-            mols,
-            atom_count,
-            range_covered,
-            range_overlaps,
-        }
+        self.atom_count = atom_count;
+        self.range_covered = range_covered;
+        self.range_overlaps = range_overlaps;
     }
 }
 

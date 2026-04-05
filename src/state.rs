@@ -492,6 +492,7 @@ pub struct PopupState {
     pub pharmacophore_screening: bool,
     pub lig_pocket_creation: bool,
     pub parquet_db: bool,
+    pub md_mol_set_editor: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
@@ -556,6 +557,7 @@ pub struct StateUiMd {
     pub trr_enabled: bool,
     pub dcd_enabled: bool,
     pub xtc_enabled: bool,
+    pub set_editor_active_set: Option<usize>,
 }
 
 impl Default for StateUiMd {
@@ -580,6 +582,7 @@ impl Default for StateUiMd {
             trr_enabled: true,
             dcd_enabled: false,
             xtc_enabled: true,
+            set_editor_active_set: Default::default(),
         }
     }
 }

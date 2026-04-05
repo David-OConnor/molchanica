@@ -1,9 +1,13 @@
 use dynamics::snapshot::Snapshot;
 use egui::{Color32, RichText, Slider, Ui};
-use graphics::{EngineUpdates, Scene};
+use graphics::{EngineUpdates, FWD_VEC, Scene};
 
+use crate::cam::reset_camera;
+use crate::ui::popups::close_btn;
+use crate::ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE};
+use crate::util::handle_success;
 use crate::{
-    label,
+    button, label,
     md::viewer,
     state::State,
     ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING},
@@ -167,4 +171,175 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
 
     ui.label("Dens: ");
     label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
+}
+
+/// Create and edit MD molecule sets; these are associated with trajectories; they map a trajectory's
+/// flat atom index to molecules, for display purposes.
+///
+/// Sets are stored in the .gro format; GROMACS's text-based format for this. This window lets you create
+/// new sets, and edit existing ones.
+pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        label!(
+            ui,
+            "Edit and add molecule sets for MD playback",
+            Color32::WHITE
+        );
+        close_btn(ui, &mut state.ui.popup.md_mol_set_editor);
+    });
+    label!(
+        ui,
+        "To open a set (e.g. .gro) format, open it like you would any other file format",
+        Color32::GRAY
+    );
+
+    if !state.volatile.md_local.viewer.mol_sets.is_empty() {
+        for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
+            let active = Some(i) == state.ui.md.set_editor_active_set;
+            let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
+
+            if button!(ui, "Set", color, "Toggle if this is the active set.").clicked() {
+                state.ui.md.set_editor_active_set = if active { None } else { Some(i) };
+            }
+        }
+    } else {
+        label!(ui, "(No sets open)", Color32::GRAY);
+    }
+
+    match state.ui.md.set_editor_active_set {
+        Some(i) => {}
+        None => {}
+    }
+
+    ui.add_space(ROW_SPACING);
+}
+
+/// Selected from loaded molecule maps, which map to atrajectory atoms. This might be loaded, for
+/// example, from a .gro file.
+pub(in crate::ui) fn md_viewer_mappings(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+) {
+    let empty = state.volatile.md_local.viewer.mol_sets.is_empty();
+    if empty && !state.trajectories.is_empty() {
+        return;
+    }
+
+    ui.label("MD mol sets");
+    ui.separator();
+
+    // We show this if sets are empty, but trajectories are not.
+    if button!(
+        ui,
+        "Edit mol sets",
+        Color32::WHITE,
+        "Add or edit molecule sets associated with MD trajectories. This lets you add open molecules,\
+        and adjust which trajectory index range each is associated with."
+    ).clicked() {
+        state.ui.popup.md_mol_set_editor = !state.ui.popup.md_mol_set_editor;
+    }
+
+    if empty {
+        return;
+    }
+
+    let mut close = None;
+    let mut set_clicked = false;
+
+    for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
+        ui.horizontal(|ui| {
+
+            let (active, color) = if Some(i) == state.volatile.md_local.viewer.mol_set_active {
+                (true, COLOR_ACTIVE)
+            } else {
+                (false, Color32::WHITE)
+            };
+
+            ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(color));
+
+            ui.label(RichText::new(format!("At: {} | Rng: {}-{}", set.atom_count, set.range_covered.0, set.range_covered.1)).color(color));
+
+            if set.range_overlaps {
+                ui.label(RichText::new("Warning: Mol ranges overlap").color(Color32::LIGHT_RED));
+            }
+
+            if button!(
+            ui,
+            "Set",
+            COLOR_ACTION,
+            "Load this set of molecules into the MD trajectory atoms. This affects \
+        how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
+        ).clicked() {
+                state.volatile.md_local.viewer.mol_set_active = if active {
+                    None }
+                else {
+                    Some(i)
+                };
+
+                set_clicked = true;
+                handle_success(&mut state.ui, format!("Set {} as the active mol set", set.name));
+            }
+
+            if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
+                let name = format!("{}.gro", set.name.replace(' ', "_"));
+                state.volatile.dialogs.save_gro.config_mut().default_file_name = name;
+                state.volatile.dialogs.save_gro_mol_set_i = Some(i);
+                state.volatile.dialogs.save_gro.save_file();
+            }
+
+            if ui
+                .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                .on_hover_text("Close this molecule set.")
+                .clicked()
+            {
+                close = Some(i);
+            }
+
+        });
+
+        let max_count = 5;
+        for mol in set.mols.iter().take(max_count) {
+            // todo: Consider a total solvent count, and group those together
+            label!(
+                ui,
+                format!(
+                    "{} | Atoms: {} Range: {}-{}",
+                    mol.mol.ident,
+                    mol.mol.atoms.len(),
+                    mol.range.0,
+                    mol.range.1,
+                ),
+                Color32::WHITE
+            );
+        }
+        if set.mols.len() >= max_count {
+            label!(ui, "...", Color32::WHITE);
+        }
+    }
+
+    ui.separator();
+
+    if let Some(i) = close {
+        state
+            .volatile
+            .md_local
+            .viewer
+            .close_mol_set(&mut state.to_save.open_history, i);
+    }
+
+    if set_clicked {
+        // We have this as the function calls in this branch which call state have a borrow
+        // error otherwise; the flag setting is convenience.
+        reset_camera(state, scene, updates, FWD_VEC);
+        viewer::draw_mols(state, scene, updates);
+
+        redraw.set_all();
+
+        if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
+            handle_err(&mut state.ui, "Error changing snaps".to_string());
+        }
+    }
 }

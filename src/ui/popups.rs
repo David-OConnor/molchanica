@@ -11,6 +11,7 @@ use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
+use crate::ui::md_viewer;
 use crate::{
     button, cam,
     cam::move_cam_to_mol,
@@ -39,7 +40,7 @@ use crate::{
     util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
 };
 
-fn close_btn(ui: &mut Ui, popup: &mut bool) {
+pub(in crate::ui) fn close_btn(ui: &mut Ui, popup: &mut bool) {
     if ui
         .button(RichText::new("Close").color(Color32::LIGHT_RED))
         .clicked()
@@ -140,6 +141,12 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.parquet_db {
         popup("parquet_db", ui).show(|ui| {
             parquet_db(state, ui);
+        });
+    }
+
+    if state.ui.popup.md_mol_set_editor {
+        popup("md_mol_set_editor", ui).show(|ui| {
+            md_viewer::md_mol_set_editor(state, ui);
         });
     }
 }

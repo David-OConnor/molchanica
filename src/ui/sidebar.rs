@@ -1,8 +1,10 @@
 use bio_files::FrameSlice;
+use cudarc::driver::HostSlice;
 use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::ui::md_viewer;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -574,7 +576,7 @@ pub(in crate::ui) fn sidebar(
             }
 
             traj_items(state, scene, updates, ui, redraw);
-            md_viewer_mappings(state, scene, updates, ui, redraw);
+            md_viewer::md_viewer_mappings(state, scene, updates, ui, redraw);
 
             ui.add_space(ROW_SPACING);
 
@@ -854,119 +856,5 @@ fn traj_items(
                 state.volatile.md_local.viewer.snapshots.len()
             ),
         );
-    }
-}
-
-/// Selected from loaded molecule maps, which map to atrajectory atoms. This might be loaded, for
-/// example, from a .gro file.
-fn md_viewer_mappings(
-    state: &mut State,
-    scene: &mut Scene,
-    updates: &mut EngineUpdates,
-    ui: &mut Ui,
-    redraw: &mut RedrawFlags,
-) {
-    if state.volatile.md_local.viewer.mol_sets.is_empty() {
-        return;
-    }
-
-    ui.label("MD mol sets");
-    ui.separator();
-
-    let mut close = None;
-    let mut set_clicked = false;
-
-    for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
-        ui.horizontal(|ui| {
-
-            let (active, color) = if Some(i) == state.volatile.md_local.viewer.mol_set_active {
-                (true, COLOR_ACTIVE)
-            } else {
-                (false, Color32::WHITE)
-            };
-
-            ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(color));
-
-            ui.label(RichText::new(format!("At: {} | Rng: {}-{}", set.atom_count, set.range_covered.0, set.range_covered.1)).color(color));
-
-            if set.range_overlaps {
-                ui.label(RichText::new("Warning: Mol ranges overlap").color(Color32::LIGHT_RED));
-            }
-
-            if button!(
-            ui,
-            "Set",
-            COLOR_ACTION,
-            "Load this set of molecules into the MD trajectory atoms. This affects \
-        how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
-        ).clicked() {
-                state.volatile.md_local.viewer.mol_set_active = if active {
-                    None }
-                else {
-                    Some(i)
-                };
-
-                set_clicked = true;
-                handle_success(&mut state.ui, format!("Set {} as the active mol set", set.name));
-            }
-
-            if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
-                let name = format!("{}.gro", set.name.replace(' ', "_"));
-                state.volatile.dialogs.save_gro.config_mut().default_file_name = name;
-                state.volatile.dialogs.save_gro_mol_set_i = Some(i);
-                state.volatile.dialogs.save_gro.save_file();
-            }
-
-            if ui
-                .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .on_hover_text("Close this molecule set.")
-                .clicked()
-            {
-                close = Some(i);
-            }
-
-        });
-
-        let max_count = 5;
-        for mol in set.mols.iter().take(max_count) {
-            // todo: Consider a total solvent count, and group those together
-            label!(
-                ui,
-                format!(
-                    "{} | Atoms: {} Range: {}-{}",
-                    mol.mol.ident,
-                    mol.mol.atoms.len(),
-                    mol.range.0,
-                    mol.range.1,
-                ),
-                Color32::WHITE
-            );
-        }
-        if set.mols.len() >= max_count {
-            label!(ui, "...", Color32::WHITE);
-        }
-    }
-
-    ui.separator();
-
-    if let Some(i) = close {
-        state
-            .volatile
-            .md_local
-            .viewer
-            .close_mol_set(&mut state.to_save.open_history, i);
-    }
-
-    if set_clicked {
-        // We have this as the function calls in this branch which call state have a borrow
-        // error otherwise; the flag setting is convenience.
-        reset_camera(state, scene, updates, FWD_VEC);
-        viewer::draw_mols(state, scene, updates);
-
-        redraw.set_all();
-
-        if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
-            handle_err(&mut state.ui, "Error changing snaps".to_string());
-        }
     }
 }
