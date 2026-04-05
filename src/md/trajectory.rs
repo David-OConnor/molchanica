@@ -281,9 +281,9 @@ pub fn close_traj(state: &mut State, i: usize) {
 
     let traj = &state.trajectories[i];
 
-    if let TrajectorySource::File(path) = traj.source {
+    if let TrajectorySource::File(path) = &traj.source {
         for history in &mut state.to_save.open_history {
-            if history.type_ == OpenType::Trajectory && history.path == path {
+            if history.type_ == OpenType::Trajectory && &history.path == path {
                 history.last_session = false;
             }
         }

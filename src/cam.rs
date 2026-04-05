@@ -405,6 +405,7 @@ pub fn reset_camera(
             const SKIP: usize = 50;
 
             let mut count = 0;
+            // note: Does not include water fields in snapshots.
             for at in state.volatile.md_local.viewer.snapshots[0]
                 .atom_posits
                 .iter()
@@ -414,7 +415,9 @@ pub fn reset_camera(
                 count += 1;
             }
 
-            c /= count as f32;
+            if count != 0 {
+                c /= count as f32;
+            }
         }
         center = c;
     }
