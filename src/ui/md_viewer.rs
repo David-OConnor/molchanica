@@ -241,11 +241,26 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             "Edit and add molecule sets for MD playback",
             Color32::WHITE
         );
+        ui.add_space(COL_SPACING);
+
+        if button!(ui, "New", COLOR_ACTION, "Create a new empty molecule set.").clicked() {
+            let name = format!("Set {}", state.volatile.md_local.viewer.mol_sets.len() + 1);
+            state
+                .volatile
+                .md_local
+                .viewer
+                .mol_sets
+                .push(viewer::ViewerMolSet::new(None, name, vec![]));
+            state.ui.md.set_editor_active_set =
+                Some(state.volatile.md_local.viewer.mol_sets.len() - 1);
+        }
+        ui.add_space(COL_SPACING);
+
         close_btn(ui, &mut state.ui.popup.md_mol_set_editor);
     });
     label!(
         ui,
-        "To open a set (e.g. .gro), open it like any other file. Use this editor to map molecules to trajectory atom ranges.",
+        "Select a set to edit. To open a set from a file (e.g. .gro), open it like any other file. Use this editor to map molecules to trajectory atom ranges.",
         Color32::GRAY
     );
 
@@ -394,71 +409,6 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
         state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
     }
 
-    // --- Fill rest with water ---
-    ui.separator();
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Fill rest with water:").color(Color32::from_rgb(100, 180, 255)));
-        ui.label("Final atom idx:");
-        ui.add_sized(
-            [64., Ui::available_height(ui)],
-            TextEdit::singleline(&mut state.ui.md.water_fill_end_input),
-        );
-
-        let fill_clicked = button!(
-            ui,
-            "Fill",
-            COLOR_ACTION,
-            "Remove all current water mols and repopulate from the last non-water atom index up \
-            to the given final index. The range must be divisible by 3 (OW + HW1 + HW2)."
-        )
-        .clicked();
-
-        if fill_clicked {
-            match state.ui.md.water_fill_end_input.trim().parse::<usize>() {
-                Err(_) => {
-                    handle_err(&mut state.ui, "Final atom index must be a positive integer.".to_owned());
-                }
-                Ok(final_idx) => {
-                    // Start = last non-water range end (or 0).
-                    let water_start = state.volatile.md_local.viewer.mol_sets[set_i]
-                        .mols
-                        .iter()
-                        .filter(|m| m.mol_type != MolType::Water)
-                        .map(|m| m.range.1)
-                        .max()
-                        .unwrap_or(0);
-
-                    let span = final_idx.saturating_sub(water_start);
-                    if span % 3 != 0 {
-                        handle_err(
-                            &mut state.ui,
-                            format!(
-                                "Range {water_start}–{final_idx} ({span} atoms) is not divisible by 3 (OW + HW1 + HW2)."
-                            ),
-                        );
-                    } else {
-                        // Remove existing water.
-                        state.volatile.md_local.viewer.mol_sets[set_i]
-                            .mols
-                            .retain(|m| m.mol_type != MolType::Water);
-
-                        // Add one ViewerMolecule per water molecule.
-                        let n_water = span / 3;
-                        for k in 0..n_water {
-                            let start = water_start + k * 3;
-                            state.volatile.md_local.viewer.mol_sets[set_i]
-                                .mols
-                                .push(make_water_mol(start));
-                        }
-
-                        state.volatile.md_local.viewer.mol_sets[set_i]
-                            .update_derivative_vals();
-                    }
-                }
-            }
-        }
-    });
-
     // Always keep derivative vals up-to-date for range edits (num_field writes in-place).
     state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
 
@@ -587,6 +537,66 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             .push(mol);
         state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
     }
+
+    // --- Fill rest with water ---
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Fill rest with water:").color(Color32::from_rgb(100, 180, 255)));
+        ui.label("Final atom idx:");
+        ui.add_sized(
+            [64., Ui::available_height(ui)],
+            TextEdit::singleline(&mut state.ui.md.water_fill_end_input),
+        );
+
+        let fill_clicked = button!(
+            ui,
+            "Fill",
+            COLOR_ACTION,
+            "Remove all current water mols and repopulate from the last non-water atom index up \
+            to the given final index. The range must be divisible by 3 (OW + HW1 + HW2)."
+        )
+        .clicked();
+
+        if fill_clicked {
+            match state.ui.md.water_fill_end_input.trim().parse::<usize>() {
+                Err(_) => {
+                    handle_err(
+                        &mut state.ui,
+                        "Final atom index must be a positive integer.".to_owned(),
+                    );
+                }
+                Ok(final_idx) => {
+                    // Start = last non-water range end (or 0).
+                    let water_start = state.volatile.md_local.viewer.mol_sets[set_i]
+                        .mols
+                        .iter()
+                        .filter(|m| m.mol_type != MolType::Water)
+                        .map(|m| m.range.1)
+                        .max()
+                        .unwrap_or(0);
+
+                    let span = final_idx.saturating_sub(water_start);
+                    // Round up to the nearest whole water molecule (3 atoms each).
+                    let n_water = (span + 2) / 3;
+
+                    // Remove existing water.
+                    state.volatile.md_local.viewer.mol_sets[set_i]
+                        .mols
+                        .retain(|m| m.mol_type != MolType::Water);
+
+                    // Add one ViewerMolecule per water molecule.
+                    for k in 0..n_water {
+                        let start = water_start + k * 3;
+                        state.volatile.md_local.viewer.mol_sets[set_i]
+                            .mols
+                            .push(make_water_mol(start));
+                    }
+
+                    state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
+                }
+            }
+        }
+    });
 
     ui.separator();
     if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
