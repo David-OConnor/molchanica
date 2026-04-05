@@ -558,6 +558,8 @@ pub struct StateUiMd {
     pub dcd_enabled: bool,
     pub xtc_enabled: bool,
     pub set_editor_active_set: Option<usize>,
+    /// Text input for the "fill rest with water" final atom index.
+    pub water_fill_end_input: String,
 }
 
 impl Default for StateUiMd {
@@ -583,6 +585,7 @@ impl Default for StateUiMd {
             dcd_enabled: false,
             xtc_enabled: true,
             set_editor_active_set: Default::default(),
+            water_fill_end_input: Default::default(),
         }
     }
 }

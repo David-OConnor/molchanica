@@ -1,17 +1,20 @@
 use dynamics::snapshot::Snapshot;
-use egui::{Color32, RichText, Slider, Ui};
+use egui::{Color32, RichText, ScrollArea, Slider, TextEdit, Ui};
 use graphics::{EngineUpdates, FWD_VEC, Scene};
+use na_seq::Element;
 
-use crate::cam::reset_camera;
-use crate::ui::popups::close_btn;
-use crate::ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE};
-use crate::util::handle_success;
 use crate::{
-    button, label,
-    md::viewer,
+    button,
+    cam::reset_camera,
+    label,
+    md::{viewer, viewer::ViewerMolecule},
+    molecules::{Atom, MolType, common::MoleculeCommon},
     state::State,
-    ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING},
-    util::{RedrawFlags, handle_err},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        num_field, popups::close_btn,
+    },
+    util::{RedrawFlags, handle_err, handle_success},
 };
 
 pub(in crate::ui) fn dynamics_viewer(
@@ -173,6 +176,59 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
 }
 
+fn mol_type_label(t: MolType) -> &'static str {
+    match t {
+        MolType::Peptide => "Protein",
+        MolType::Ligand => "Ligand",
+        MolType::NucleicAcid => "Nucleic Acid",
+        MolType::Lipid => "Lipid",
+        MolType::Water => "Water",
+        MolType::Pocket => "Pocket",
+    }
+}
+
+/// Build a single water `ViewerMolecule` whose range starts at `start_i`.
+fn make_water_mol(start_i: usize) -> ViewerMolecule {
+    let zero = lin_alg::f64::Vec3::default();
+    let atoms = vec![
+        Atom {
+            serial_number: start_i as u32,
+            posit: zero,
+            type_in_res_general: Some("OW".to_owned()),
+            hetero: true,
+            element: Element::Oxygen,
+            ..Default::default()
+        },
+        Atom {
+            serial_number: (start_i + 1) as u32,
+            posit: zero,
+            type_in_res_general: Some("HW1".to_owned()),
+            hetero: true,
+            element: Element::Hydrogen,
+            ..Default::default()
+        },
+        Atom {
+            serial_number: (start_i + 2) as u32,
+            posit: zero,
+            type_in_res_general: Some("HW2".to_owned()),
+            hetero: true,
+            element: Element::Hydrogen,
+            ..Default::default()
+        },
+    ];
+    let atom_posits = vec![zero; 3];
+    ViewerMolecule {
+        mol_type: MolType::Water,
+        mol: MoleculeCommon {
+            ident: "SOL".to_owned(),
+            atoms,
+            atom_posits,
+            ..Default::default()
+        },
+        range: (start_i, start_i + 3),
+    }
+}
+
 /// Create and edit MD molecule sets; these are associated with trajectories; they map a trajectory's
 /// flat atom index to molecules, for display purposes.
 ///
@@ -189,26 +245,365 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     });
     label!(
         ui,
-        "To open a set (e.g. .gro) format, open it like you would any other file format",
+        "To open a set (e.g. .gro), open it like any other file. Use this editor to map molecules to trajectory atom ranges.",
         Color32::GRAY
     );
 
-    if !state.volatile.md_local.viewer.mol_sets.is_empty() {
+    ui.add_space(ROW_SPACING);
+
+    // --- Set selection ---
+    if state.volatile.md_local.viewer.mol_sets.is_empty() {
+        label!(ui, "(No sets open)", Color32::GRAY);
+        return;
+    }
+
+    ui.horizontal(|ui| {
         for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
             let active = Some(i) == state.ui.md.set_editor_active_set;
             let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
-
-            if button!(ui, "Set", color, "Toggle if this is the active set.").clicked() {
+            if button!(ui, &set.name, color, "Select this set to edit.").clicked() {
                 state.ui.md.set_editor_active_set = if active { None } else { Some(i) };
             }
         }
-    } else {
-        label!(ui, "(No sets open)", Color32::GRAY);
+    });
+
+    let Some(set_i) = state.ui.md.set_editor_active_set else {
+        return;
+    };
+
+    if set_i >= state.volatile.md_local.viewer.mol_sets.len() {
+        state.ui.md.set_editor_active_set = None;
+        return;
     }
 
-    match state.ui.md.set_editor_active_set {
-        Some(i) => {}
-        None => {}
+    ui.separator();
+    ui.label(RichText::new("Molecules in set (sorted by range):").color(Color32::WHITE));
+
+    // --- Edit current mols in the set (sorted by range, water grouped) ---
+    let mols_len = state.volatile.md_local.viewer.mol_sets[set_i].mols.len();
+
+    // Sorted indices, non-water only (water shown as a group below).
+    let mut sorted_indices: Vec<usize> = (0..mols_len)
+        .filter(|&j| {
+            state.volatile.md_local.viewer.mol_sets[set_i].mols[j].mol_type != MolType::Water
+        })
+        .collect();
+    sorted_indices.sort_by_key(|&j| {
+        state.volatile.md_local.viewer.mol_sets[set_i].mols[j]
+            .range
+            .0
+    });
+
+    let water_count = state.volatile.md_local.viewer.mol_sets[set_i]
+        .mols
+        .iter()
+        .filter(|m| m.mol_type == MolType::Water)
+        .count();
+    let (water_range_start, water_range_end) = {
+        let set = &state.volatile.md_local.viewer.mol_sets[set_i];
+        let starts = set
+            .mols
+            .iter()
+            .filter(|m| m.mol_type == MolType::Water)
+            .map(|m| m.range.0);
+        let ends = set
+            .mols
+            .iter()
+            .filter(|m| m.mol_type == MolType::Water)
+            .map(|m| m.range.1);
+        (starts.min().unwrap_or(0), ends.max().unwrap_or(0))
+    };
+
+    let mut remove_j: Option<usize> = None;
+    let mut clear_water = false;
+
+    if mols_len == 0 {
+        label!(ui, "(No molecules in this set)", Color32::GRAY);
+    }
+
+    // Scrollable list of non-water mols + water summary row.
+    ScrollArea::vertical()
+        .id_salt("mol_set_editor_scroll")
+        .max_height(260.)
+        .show(ui, |ui| {
+            for &j in &sorted_indices {
+                let mol = &mut state.volatile.md_local.viewer.mol_sets[set_i].mols[j];
+                ui.horizontal(|ui| {
+                    label!(
+                        ui,
+                        format!(
+                            "{} [{}] ({} atoms)",
+                            mol.mol.ident,
+                            mol_type_label(mol.mol_type),
+                            mol.mol.atoms.len()
+                        ),
+                        Color32::WHITE
+                    );
+                    num_field(&mut mol.range.0, "Start:", 54, ui);
+                    num_field(&mut mol.range.1, "End:", 54, ui);
+                    if ui
+                        .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                        .on_hover_text("Remove from set")
+                        .clicked()
+                    {
+                        remove_j = Some(j);
+                    }
+                });
+            }
+
+            // Water summary row.
+            if water_count > 0 {
+                ui.horizontal(|ui| {
+                    label!(
+                        ui,
+                        format!(
+                            "Water: {} mols | Start: {} End: {}",
+                            water_count, water_range_start, water_range_end
+                        ),
+                        Color32::from_rgb(100, 180, 255)
+                    );
+                    if button!(
+                        ui,
+                        "Clear water",
+                        Color32::LIGHT_RED,
+                        "Remove all water molecules from this set."
+                    )
+                    .clicked()
+                    {
+                        clear_water = true;
+                    }
+                });
+            }
+        });
+
+    if state.volatile.md_local.viewer.mol_sets[set_i].range_overlaps {
+        label!(ui, "Warning: Mol ranges overlap", Color32::LIGHT_RED);
+    }
+
+    if let Some(j) = remove_j {
+        state.volatile.md_local.viewer.mol_sets[set_i]
+            .mols
+            .remove(j);
+    }
+    if clear_water {
+        state.volatile.md_local.viewer.mol_sets[set_i]
+            .mols
+            .retain(|m| m.mol_type != MolType::Water);
+    }
+    if remove_j.is_some() || clear_water {
+        state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
+    }
+
+    // --- Fill rest with water ---
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Fill rest with water:").color(Color32::from_rgb(100, 180, 255)));
+        ui.label("Final atom idx:");
+        ui.add_sized(
+            [64., Ui::available_height(ui)],
+            TextEdit::singleline(&mut state.ui.md.water_fill_end_input),
+        );
+
+        let fill_clicked = button!(
+            ui,
+            "Fill",
+            COLOR_ACTION,
+            "Remove all current water mols and repopulate from the last non-water atom index up \
+            to the given final index. The range must be divisible by 3 (OW + HW1 + HW2)."
+        )
+        .clicked();
+
+        if fill_clicked {
+            match state.ui.md.water_fill_end_input.trim().parse::<usize>() {
+                Err(_) => {
+                    handle_err(&mut state.ui, "Final atom index must be a positive integer.".to_owned());
+                }
+                Ok(final_idx) => {
+                    // Start = last non-water range end (or 0).
+                    let water_start = state.volatile.md_local.viewer.mol_sets[set_i]
+                        .mols
+                        .iter()
+                        .filter(|m| m.mol_type != MolType::Water)
+                        .map(|m| m.range.1)
+                        .max()
+                        .unwrap_or(0);
+
+                    let span = final_idx.saturating_sub(water_start);
+                    if span % 3 != 0 {
+                        handle_err(
+                            &mut state.ui,
+                            format!(
+                                "Range {water_start}–{final_idx} ({span} atoms) is not divisible by 3 (OW + HW1 + HW2)."
+                            ),
+                        );
+                    } else {
+                        // Remove existing water.
+                        state.volatile.md_local.viewer.mol_sets[set_i]
+                            .mols
+                            .retain(|m| m.mol_type != MolType::Water);
+
+                        // Add one ViewerMolecule per water molecule.
+                        let n_water = span / 3;
+                        for k in 0..n_water {
+                            let start = water_start + k * 3;
+                            state.volatile.md_local.viewer.mol_sets[set_i]
+                                .mols
+                                .push(make_water_mol(start));
+                        }
+
+                        state.volatile.md_local.viewer.mol_sets[set_i]
+                            .update_derivative_vals();
+                    }
+                }
+            }
+        }
+    });
+
+    // Always keep derivative vals up-to-date for range edits (num_field writes in-place).
+    state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
+
+    ui.separator();
+    ui.label(RichText::new("Add from open molecules:").color(Color32::WHITE));
+    label!(
+        ui,
+        "Clicking Add places the molecule after the current last range. Edit the range fields above as needed.",
+        Color32::GRAY
+    );
+
+    // Next suggested range start: after the current last range end.
+    let next_range_start = state.volatile.md_local.viewer.mol_sets[set_i]
+        .mols
+        .iter()
+        .map(|m| m.range.1)
+        .max()
+        .unwrap_or(0);
+
+    // Collect any pending add to apply after reads (avoids borrow conflict).
+    let mut to_add: Option<ViewerMolecule> = None;
+
+    // Protein
+    if let Some(pep) = &state.peptide {
+        let atom_count = pep.common.atoms.len();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Protein:").color(Color32::CYAN));
+            if button!(
+                ui,
+                format!("{} ({} atoms)", pep.common.ident, atom_count),
+                COLOR_ACTION,
+                "Add this protein to the mol set"
+            )
+            .clicked()
+            {
+                to_add = Some(ViewerMolecule {
+                    mol_type: MolType::Peptide,
+                    mol: pep.common.clone(),
+                    range: (next_range_start, next_range_start + atom_count),
+                });
+            }
+        });
+    }
+
+    // Ligands / small mols
+    if !state.ligands.is_empty() {
+        ui.label(RichText::new("Ligands:").color(Color32::GREEN));
+        for lig in state.ligands.iter() {
+            let atom_count = lig.common.atoms.len();
+            let common = lig.common.clone();
+            ui.horizontal(|ui| {
+                if button!(
+                    ui,
+                    format!("{} ({} atoms)", common.ident, atom_count),
+                    COLOR_ACTION,
+                    "Add this ligand to the mol set"
+                )
+                .clicked()
+                    && to_add.is_none()
+                {
+                    to_add = Some(ViewerMolecule {
+                        mol_type: MolType::Ligand,
+                        mol: common,
+                        range: (next_range_start, next_range_start + atom_count),
+                    });
+                }
+            });
+        }
+    }
+
+    // Nucleic acids
+    if !state.nucleic_acids.is_empty() {
+        ui.label(RichText::new("Nucleic Acids:").color(Color32::YELLOW));
+        for na in state.nucleic_acids.iter() {
+            let atom_count = na.common.atoms.len();
+            let common = na.common.clone();
+            ui.horizontal(|ui| {
+                if button!(
+                    ui,
+                    format!("{} ({} atoms)", common.ident, atom_count),
+                    COLOR_ACTION,
+                    "Add this nucleic acid to the mol set"
+                )
+                .clicked()
+                    && to_add.is_none()
+                {
+                    to_add = Some(ViewerMolecule {
+                        mol_type: MolType::NucleicAcid,
+                        mol: common,
+                        range: (next_range_start, next_range_start + atom_count),
+                    });
+                }
+            });
+        }
+    }
+
+    // Lipids
+    if !state.lipids.is_empty() {
+        ui.label(RichText::new("Lipids:").color(Color32::from_rgb(255, 128, 255)));
+        for lip in state.lipids.iter() {
+            let atom_count = lip.common.atoms.len();
+            let common = lip.common.clone();
+            ui.horizontal(|ui| {
+                if button!(
+                    ui,
+                    format!("{} ({} atoms)", common.ident, atom_count),
+                    COLOR_ACTION,
+                    "Add this lipid to the mol set"
+                )
+                .clicked()
+                    && to_add.is_none()
+                {
+                    to_add = Some(ViewerMolecule {
+                        mol_type: MolType::Lipid,
+                        mol: common,
+                        range: (next_range_start, next_range_start + atom_count),
+                    });
+                }
+            });
+        }
+    }
+
+    if let Some(mol) = to_add {
+        state.volatile.md_local.viewer.mol_sets[set_i]
+            .mols
+            .push(mol);
+        state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
+    }
+
+    ui.separator();
+    if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
+        let name = format!(
+            "{}.gro",
+            state.volatile.md_local.viewer.mol_sets[set_i]
+                .name
+                .replace(' ', "_")
+        );
+        state
+            .volatile
+            .dialogs
+            .save_gro
+            .config_mut()
+            .default_file_name = name;
+        state.volatile.dialogs.save_gro_mol_set_i = Some(set_i);
+        state.volatile.dialogs.save_gro.save_file();
     }
 
     ui.add_space(ROW_SPACING);
@@ -228,13 +623,17 @@ pub(in crate::ui) fn md_viewer_mappings(
         return;
     }
 
+    ui.horizontal(|ui| {
+
+
     ui.label("MD mol sets");
-    ui.separator();
+
+        ui.add_space(COL_SPACING);
 
     // We show this if sets are empty, but trajectories are not.
     if button!(
         ui,
-        "Edit mol sets",
+        "Edit sets",
         Color32::WHITE,
         "Add or edit molecule sets associated with MD trajectories. This lets you add open molecules,\
         and adjust which trajectory index range each is associated with."
@@ -242,9 +641,13 @@ pub(in crate::ui) fn md_viewer_mappings(
         state.ui.popup.md_mol_set_editor = !state.ui.popup.md_mol_set_editor;
     }
 
+    });
+
     if empty {
         return;
     }
+
+    ui.separator();
 
     let mut close = None;
     let mut set_clicked = false;
@@ -301,7 +704,9 @@ pub(in crate::ui) fn md_viewer_mappings(
         });
 
         let max_count = 5;
-        for mol in set.mols.iter().take(max_count) {
+        let mut sorted_mols: Vec<&_> = set.mols.iter().collect();
+        sorted_mols.sort_by_key(|m| m.range.0);
+        for mol in sorted_mols.iter().take(max_count) {
             // todo: Consider a total solvent count, and group those together
             label!(
                 ui,

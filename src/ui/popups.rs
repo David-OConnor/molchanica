@@ -11,7 +11,6 @@ use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
-use crate::ui::md_viewer;
 use crate::{
     button, cam,
     cam::move_cam_to_mol,
@@ -35,7 +34,8 @@ use crate::{
     state::{MsaaSetting, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        mol_data::metadata, pharmacophore, rama_plot, recent_files, recent_files::NUM_TO_SHOW,
+        md_viewer, mol_data::metadata, pharmacophore, rama_plot, recent_files,
+        recent_files::NUM_TO_SHOW,
     },
     util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
 };
