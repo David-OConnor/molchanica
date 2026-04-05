@@ -24,7 +24,7 @@ use crate::{
     drawing::EntityClass,
     file_io::save_mol_set_as_gro,
     gromacs,
-    md::trajectory::Trajectory,
+    md::trajectory::{TrajFormat, Trajectory},
     molecules::{common::MoleculeCommon, nucleic_acid::NucleicAcidType},
     state::State,
     util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
@@ -74,8 +74,9 @@ impl MdStateLocal {
         self.viewer.snapshots = snaps;
 
         if !self.viewer.snapshots.is_empty() {
-            if self.viewer.change_snapshot(0).is_err() {
-                eprintln!("Error changing snapshots when replacing");
+            self.viewer.current_snapshot = Some(0);
+            if let Err(e) = self.viewer.change_snapshot(0) {
+                eprintln!("Error changing snapshots when replacing: {e:?}");
             }
         }
     }
@@ -116,38 +117,20 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     let snaps = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
     md.viewer.snapshots = snaps.clone();
 
-    // todo: Put back the equivalent here, I believe
-    // md.viewer.mol_start_indices = md.mol_dynamics.as_ref().unwrap().mol_start_indices.clone();
-
-    // todo: Apply to all molecule types.
-    // todo note: This must be in the same order you added.
-    // todo: Dedicaed fn as before?
-
-    // // Moves molecules used for MD into the viewer.
-    // for mol in &state.ligands {
-    //     if !mol.common.selected_for_md {
-    //         continue;
-    //     }
-    //
-    //     md.viewer.mols.push(ViewerMolecule {
-    //         mol_type: MolType::Ligand,
-    //         mol: mol.common.clone(),
-    //         range: (0, mol.common.atoms.len()),
-    //     });
-    // }
-
-    md.viewer.current_snapshot = None;
+    md.viewer.current_snapshot = Some(0);
 
     // Register an in-memory Trajectory so the run appears in the trajectory
     // sidebar and water molecules are visible in the mol-set list.
     let run_n = state
         .trajectories
         .iter()
-        .filter(|t| t.path.is_none())
+        .filter(|t| t.format != TrajFormat::InMemory)
         .count();
+
     state.trajectories.push(Trajectory::new_in_memory(
         snaps,
         format!("In-memory run {}", run_n + 1),
+        state.to_save.md_dt,
     ));
 
     // Auto-save the mol set as a GRO file alongside the trajectory files.
@@ -158,6 +141,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         .as_ref()
         .and_then(|md| md.run_index)
         .unwrap_or(0);
+
     let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
     // The mol set we just added is the last one in the viewer.
     if let Some(mol_set) = state.volatile.md_local.viewer.mol_sets.last() {

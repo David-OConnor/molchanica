@@ -8,7 +8,7 @@ use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
     label,
     md::{
-        trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, close_traj},
+        trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, TrajectorySource, close_traj},
         viewer,
     },
     mol_characterization::MolCharacterization,
@@ -699,6 +699,7 @@ fn traj_items(
             ui.label(RichText::new(&traj.display_name).color(Color32::WHITE));
 
             if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
+                && matches!(traj.source, TrajectorySource::File(_))
                 && traj.num_frames != 0
                 && button!(
                     ui,
@@ -714,7 +715,6 @@ fn traj_items(
                 }) {
                     Ok(snaps) => {
                         state.volatile.md_local.replace_snaps(snaps);
-
                         snaps_loaded = true;
                     }
                     Err(e) => {
@@ -726,6 +726,21 @@ fn traj_items(
                 }
             }
 
+            // Load memory-only trajectories by replacing viewer snaps with theirs, but without
+            // loading anything from disk.
+            if let TrajectorySource::Memory(snaps) = &traj.source
+                && button!(
+                    ui,
+                    "View frames",
+                    COLOR_ACTION,
+                    "View all frames from this in-memory trajectory."
+                )
+                .clicked()
+            {
+                state.volatile.md_local.replace_snaps(snaps.clone());
+                snaps_loaded = true;
+            }
+
             // todo: Allow end and start to be unbounded in UI, setting their val to None.
             num_field(&mut traj.ui_start_i, "", 34, ui);
             ui.label("-");
@@ -733,11 +748,12 @@ fn traj_items(
 
             // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
             if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
+                && matches!(traj.source, TrajectorySource::File(_))
                 && traj.ui_end_i < traj.num_frames
                 && traj.ui_start_i < traj.ui_end_i
                 && button!(
                     ui,
-                    "Load range",
+                    "Load rng",
                     COLOR_ACTION,
                     "Load frames/snapshots from the selected indices into memory"
                 )

@@ -716,7 +716,7 @@ fn output_control(state: &mut State, ui: &mut Ui) {
     let default_file = sh_def.memory.map(|v| v as u32);
 
     // Memory
-    {
+    if state.to_save.md_backend == MdBackend::Dynamics {
         let help = "Save snapshots in memory.";
         ui.label("Mem:").on_hover_text(help);
         if ui

@@ -26,19 +26,15 @@ use std::{
 };
 
 use bio_files::{
-    AtomGeneric, BondGeneric,
-    gromacs::{GromacsFrame, GromacsInput, GromacsOutput, MoleculeInput, solvate::WaterModel},
+    AtomGeneric, BondGeneric, FrameSlice,
+    gromacs::{GromacsInput, GromacsOutput, MoleculeInput, solvate::WaterModel},
     md_params::ForceFieldParams,
 };
-use dynamics::{
-    FfMolType, MdState, SimBoxInit, Solvent, WATER_TEMPLATE_60A, WaterInitTemplate,
-    snapshot::{Snapshot, gromacs_frames_to_ss},
-};
-use lin_alg::f32::Vec3;
+use dynamics::{FfMolType, SimBoxInit, Solvent, WATER_TEMPLATE_60A, WaterInitTemplate};
 
 use crate::{
     md::{
-        STATIC_ATOM_DIST_THRESH, carry_over_snap_energy, filter_peptide_atoms, get_mols_sel_for_md,
+        STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md, trajectory::Trajectory,
     },
     molecules::common::MoleculeCommon,
     state::State,
@@ -296,19 +292,13 @@ fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
 /// delivered via [`crate::threads::ThreadReceivers::gromacs_md_avail`] and
 /// processed by [`on_gromacs_md_complete`].
 pub fn launch_md(state: &mut State) {
-    let (input, mols) = match make_gromacs_input(state) {
+    let (input, _mols) = match make_gromacs_input(state) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("Error creating GROMACS input: {e}");
             return;
         }
     };
-
-    //Adjusting the middle mol part of the tuple to be a borrow for our API.
-
-    let mols_: Vec<_> = mols.iter().map(|m| (m.0, &m.1, m.2)).collect();
-
-    state.volatile.md_local.viewer.add_mols_for_disp(&mols_, 0);
 
     let mut offset = 0;
     let mut mol_start_indices = Vec::new();
@@ -318,9 +308,6 @@ pub fn launch_md(state: &mut State) {
             offset += m.atoms.len();
         }
     }
-
-    let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
-        mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
 
     let (tx, rx) = mpsc::channel();
 
@@ -376,7 +363,7 @@ fn extract_gromacs_fatal_error(log_text: &str) -> Option<String> {
 pub fn on_gromacs_md_complete(
     state: &mut State,
     out: &GromacsOutput,
-    mol_start_indices: Vec<usize>,
+    _mol_start_indices: Vec<usize>,
     elapsed_ms: u128,
 ) {
     if out.log_text.contains("Fatal error") {
@@ -395,24 +382,33 @@ pub fn on_gromacs_md_complete(
         return;
     }
 
-    let mut snaps = gromacs_frames_to_ss(&out);
-
-    carry_over_snap_energy(&mut snaps);
-
-    if !snaps.is_empty() {
-        // let mut md = MdState::default();
-
-        // md.mol_start_indices = mol_start_indices;
-        // md.snapshots = snaps;
-        // state.volatile.md_local.mol_dynamics = Some(md);
-
-        state.volatile.md_local.viewer.snapshots = snaps;
-
-        // todo: A/R post viewer revamp.
-        // state.volatile.md_local.mol_start_indices = mol_start_indices;
-
-        state.volatile.md_local.draw_md_mols = true;
+    // Load the solvated input GRO as the mol set for trajectory playback.
+    if let Some(gro_path) = &out.gro_path {
+        if let Err(e) = state.volatile.md_local.viewer.load_gro(gro_path) {
+            eprintln!("Error loading GRO after GROMACS run: {e}");
+        }
     }
+
+    // Load the TRR trajectory: register it and immediately show all frames.
+    if let Some(trr_path) = &out.trr_path {
+        match Trajectory::new(trr_path) {
+            Ok(mut traj) => {
+                match traj.load_snaps(FrameSlice::Index {
+                    start: None,
+                    end: None,
+                }) {
+                    Ok(snaps) => {
+                        state.volatile.md_local.replace_snaps(snaps);
+                        state.trajectories.push(traj);
+                    }
+                    Err(e) => eprintln!("Error loading TRR frames after GROMACS run: {e}"),
+                }
+            }
+            Err(e) => eprintln!("Error opening TRR after GROMACS run: {e}"),
+        }
+    }
+
+    state.volatile.md_local.draw_md_mols = true;
 
     handle_success(
         &mut state.ui,

@@ -641,21 +641,22 @@ impl SnapshotViewer {
         }
 
         let snap = &self.snapshots[0];
+        let n = snap.atom_posits.len();
 
-        if set.path.is_some() {
-            // File-based trajectory: all atoms (including water) are in atom_posits.
-            snap.atom_posits.len() == set.atom_count
-        } else {
-            // In-memory dynamics: non-water in atom_posits, water tracked separately.
-            let non_water_count: usize = set
-                .mols
-                .iter()
-                .filter(|m| m.mol_type != MolType::Water)
-                .map(|m| m.mol.atoms.len())
-                .sum();
-
-            snap.atom_posits.len() == non_water_count
+        // File-based snapshots store all atoms (including water) in atom_posits.
+        if n == set.atom_count {
+            return true;
         }
+
+        // In-memory dynamics snapshots store only non-water atoms in atom_posits.
+        let non_water_count: usize = set
+            .mols
+            .iter()
+            .filter(|m| m.mol_type != MolType::Water)
+            .map(|m| m.mol.atoms.len())
+            .sum();
+
+        n == non_water_count
     }
 
     pub fn close_mol_set(&mut self, history: &mut Vec<OpenHistory>, i: usize) {

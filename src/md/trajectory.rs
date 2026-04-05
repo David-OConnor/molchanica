@@ -45,6 +45,12 @@ impl TrajFormat {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum TrajectorySource {
+    File(PathBuf),
+    Memory(Vec<Snapshot>),
+}
+
 /// Represents a MD trajectory — either a file on disk or a set of snapshots held
 /// entirely in memory (e.g. from a Dynamics-engine run).
 ///
@@ -58,8 +64,7 @@ impl TrajFormat {
 #[derive(Clone, Debug)]
 pub struct Trajectory {
     pub format: TrajFormat,
-    /// `None` for in-memory trajectories.
-    pub path: Option<PathBuf>,
+    pub source: TrajectorySource,
     /// e.g. derived from filename, or "In-memory run N".
     pub display_name: String,
     pub num_atoms: usize,           // In DCD header. Each TRR and XTC frame.
@@ -69,8 +74,6 @@ pub struct Trajectory {
     pub dt: f32,                    // In DCD. ps?
     pub end_time: f32,              // Not in the file directly; we calculate this.
     pub frames_open: Option<FrameSlice>,
-    /// Populated only for `InMemory` trajectories.
-    pub snapshots: Option<Vec<Snapshot>>,
     /// This is an odd place for UI input box items, but it will do for now.
     /// Integers are OK directly, but we need an intermediate String for floats.
     pub ui_start_i: usize,
@@ -93,7 +96,7 @@ impl Trajectory {
 
         let mut result = Self {
             format,
-            path: Some(path.to_owned()),
+            source: TrajectorySource::File(path.into()),
             display_name: path
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -105,7 +108,6 @@ impl Trajectory {
             dt: 0.,
             end_time: 0.,
             frames_open: None,
-            snapshots: None,
             ui_start_i: 0,
             ui_end_i: 0,
             ui_start_time: String::new(),
@@ -151,7 +153,7 @@ impl Trajectory {
     /// Create an in-memory trajectory from a set of snapshots, e.g. from a
     /// completed Dynamics-engine run.  All frames are immediately available;
     /// no file I/O is required.
-    pub fn new_in_memory(snapshots: Vec<Snapshot>, display_name: String) -> Self {
+    pub fn new_in_memory(snapshots: Vec<Snapshot>, display_name: String, sim_dt: f32) -> Self {
         let num_frames = snapshots.len();
         let first = snapshots.first();
         let last = snapshots.last();
@@ -163,6 +165,7 @@ impl Trajectory {
         } else {
             0.
         };
+
         // Total atom count including water for display purposes.
         let num_atoms = first
             .map(|s| {
@@ -175,16 +178,19 @@ impl Trajectory {
 
         Self {
             format: TrajFormat::InMemory,
-            path: None,
+            source: TrajectorySource::Memory(snapshots),
             display_name,
             num_atoms,
             num_frames,
             start_step,
-            save_interval_steps: 0,
+            save_interval_steps: if sim_dt > 0. && dt > 0. {
+                (dt / sim_dt).round() as usize
+            } else {
+                0
+            },
             dt,
             end_time,
             frames_open: None,
-            snapshots: Some(snapshots),
             ui_start_i: 0,
             ui_end_i: num_frames.saturating_sub(1),
             ui_start_time: String::new(),
@@ -199,7 +205,12 @@ impl Trajectory {
 
         match self.format {
             TrajFormat::InMemory => {
-                let snaps = self.snapshots.as_deref().unwrap_or(&[]);
+                let TrajectorySource::Memory(snaps) = &self.source else {
+                    return Err(io::Error::other(
+                        "Error: TrajFormat In memory, but source is not memory.",
+                    ));
+                };
+
                 let filtered = match slice {
                     FrameSlice::Index { start, end } => {
                         let s = start.unwrap_or(0);
@@ -221,24 +232,39 @@ impl Trajectory {
             }
 
             TrajFormat::Trr => {
-                let path = self.path.as_deref().unwrap();
-                Ok(read_trr(path, slice)?
+                let TrajectorySource::File(path) = &self.source else {
+                    return Err(io::Error::other(
+                        "Error: TrajFormat not in memory, but not in memory source",
+                    ));
+                };
+
+                Ok(read_trr(&path, slice)?
                     .into_iter()
                     .map(Snapshot::from)
                     .collect())
             }
 
             TrajFormat::Xtc => {
-                let path = self.path.as_deref().unwrap();
-                Ok(read_xtc(path, slice)?
+                let TrajectorySource::File(path) = &self.source else {
+                    return Err(io::Error::other(
+                        "Error: TrajFormat not in memory, but not in memory source",
+                    ));
+                };
+
+                Ok(read_xtc(&path, slice)?
                     .into_iter()
                     .map(Snapshot::from)
                     .collect())
             }
 
             TrajFormat::Dcd => {
-                let path = self.path.as_deref().unwrap();
-                Ok(read_dcd(path, slice)?
+                let TrajectorySource::File(path) = &self.source else {
+                    return Err(io::Error::other(
+                        "Error: TrajFormat not in memory, but not in memory source",
+                    ));
+                };
+
+                Ok(read_dcd(&path, slice)?
                     .into_iter()
                     .map(Snapshot::from)
                     .collect())
@@ -255,9 +281,9 @@ pub fn close_traj(state: &mut State, i: usize) {
 
     let traj = &state.trajectories[i];
 
-    if let Some(path) = &traj.path {
+    if let TrajectorySource::File(path) = traj.source {
         for history in &mut state.to_save.open_history {
-            if history.type_ == OpenType::Trajectory && &history.path == path {
+            if history.type_ == OpenType::Trajectory && history.path == path {
                 history.last_session = false;
             }
         }
