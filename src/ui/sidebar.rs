@@ -796,7 +796,7 @@ fn traj_items(
         });
 
         let txt = format!(
-            "At: {}, Fr: {}, step: {}, inter: {}, dt: {}ps, end: {}ps",
+            "At: {}, Fr: {}, step: {:.3}, inter: {}, dt: {:.3}ps, end: {:.1}ps",
             traj.num_atoms,
             traj.num_frames,
             traj.start_step,

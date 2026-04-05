@@ -9,7 +9,9 @@ use std::{
 };
 
 use bincode::{Decode, Encode};
-use bio_files::{AtomGeneric, create_bonds, gromacs::GromacsOutput, md_params::ForceFieldParams};
+use bio_files::{
+    AtomGeneric, bond_inference, create_bonds, gromacs::GromacsOutput, md_params::ForceFieldParams,
+};
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
@@ -25,7 +27,7 @@ use crate::{
     file_io::save_mol_set_as_gro,
     gromacs,
     md::trajectory::{TrajFormat, Trajectory},
-    molecules::{Atom, common::MoleculeCommon, nucleic_acid::NucleicAcidType},
+    molecules::{Atom, Bond, common::MoleculeCommon, nucleic_acid::NucleicAcidType},
     state::State,
     util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
 };
@@ -675,19 +677,28 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             // and may gain or lose H during prepare_peptide. Using the original atom count
             // causes the viewer's atom_posits to mismatch the trajectory snapshot length,
             // producing out-of-bounds errors in change_snapshot.
-            let viewer_mol_data: Vec<(FfMolType, MoleculeCommon, usize)> = mols
+            let n_input_mols = mols.len();
+            let mut viewer_mol_data: Vec<(FfMolType, MoleculeCommon, usize)> = mols
                 .iter()
                 .enumerate()
                 .map(|(i, (ff, m, count))| {
+                    // Non-peptide mols (small organics, lipids, etc.) are not filtered or
+                    // H-augmented by build_dynamics, so their atom count and bond set are
+                    // unchanged. Cloning the original mol preserves bonds for rendering.
+                    if *ff != FfMolType::Peptide {
+                        return (*ff, (*m).clone(), *count);
+                    }
+
+                    // Peptide: build from the actual post-filter, post-H-addition MD atoms
+                    // so that atom_posits.len() matches what the trajectory snapshots store.
                     let start = md.mol_start_indices.get(i).copied().unwrap_or(0);
-                    // mol_start_indices[i+1] is the start of the next input mol (or first ion).
-                    // Falling back to md.atoms.len() is only reached when there are no ions and
-                    // this is the sole mol.
+                    // mol_start_indices[i+1] is the start of the next mol or first ion.
                     let end = md
                         .mol_start_indices
                         .get(i + 1)
                         .copied()
                         .unwrap_or(md.atoms.len());
+
                     let actual_atoms: Vec<Atom> = md.atoms[start..end]
                         .iter()
                         .map(|a| Atom {
@@ -701,20 +712,69 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                             ..Default::default()
                         })
                         .collect();
-                    let atom_posits = actual_atoms.iter().map(|a| a.posit).collect();
-                    (
-                        *ff,
-                        MoleculeCommon {
-                            ident: m.ident.clone(),
-                            atoms: actual_atoms,
-                            atom_posits,
-                            selected_for_md: m.selected_for_md,
+
+                    // Infer covalent bonds from atom distances (covers added H).
+                    let atom_generics: Vec<AtomGeneric> = actual_atoms
+                        .iter()
+                        .map(|a| AtomGeneric {
+                            serial_number: a.serial_number,
+                            posit: a.posit,
+                            element: a.element,
                             ..Default::default()
-                        },
-                        *count,
-                    )
+                        })
+                        .collect();
+                    let bonds: Vec<Bond> = bond_inference::create_bonds(&atom_generics)
+                        .iter()
+                        .filter_map(|bg| Bond::from_generic(bg, &actual_atoms).ok())
+                        .collect();
+
+                    let atom_posits = actual_atoms.iter().map(|a| a.posit).collect();
+                    let mut mol_common = MoleculeCommon {
+                        ident: m.ident.clone(),
+                        atoms: actual_atoms,
+                        bonds,
+                        atom_posits,
+                        selected_for_md: m.selected_for_md,
+                        ..Default::default()
+                    };
+                    mol_common.build_adjacency_list();
+                    (*ff, mol_common, *count)
                 })
                 .collect();
+
+            // Add a single-atom viewer mol for each counter-ion appended by MdState::new.
+            // These live at md.atoms[ion_start..] and each has its own mol_start_indices entry,
+            // so they need a matching ViewerMolecule or the non-water atom count in
+            // mols_and_traj_synced will fall short of snapshot.atom_posits.len().
+            let ion_start = md
+                .mol_start_indices
+                .get(n_input_mols)
+                .copied()
+                .unwrap_or(md.atoms.len());
+            for a in &md.atoms[ion_start..] {
+                let posit = Vec3 {
+                    x: a.posit.x as f64,
+                    y: a.posit.y as f64,
+                    z: a.posit.z as f64,
+                };
+                let ion_atom = Atom {
+                    serial_number: a.serial_number,
+                    element: a.element,
+                    posit,
+                    ..Default::default()
+                };
+                viewer_mol_data.push((
+                    FfMolType::SmallOrganic,
+                    MoleculeCommon {
+                        ident: a.force_field_type.clone(),
+                        atoms: vec![ion_atom],
+                        atom_posits: vec![posit],
+                        selected_for_md: true,
+                        ..Default::default()
+                    },
+                    1,
+                ));
+            }
             let viewer_mol_refs: Vec<(FfMolType, &MoleculeCommon, usize)> = viewer_mol_data
                 .iter()
                 .map(|(ff, m, c)| (*ff, m, *c))

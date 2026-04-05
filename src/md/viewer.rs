@@ -729,13 +729,19 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
     for (i_mol, mol) in set.mols.iter().enumerate() {
         match mol.mol_type {
             MolType::Peptide => {
-                // let mol_ = MoleculeSmall {
-                //     common: mol.mol.clone(),
-                //     ..Default::default()
-                // };
-
-                // todo: This won't work. Probably modify draw_peptide etc.
-                // draw_peptide(state, scene);
+                let mol_ = MoleculeSmall {
+                    common: mol.mol.clone(),
+                    ..Default::default()
+                };
+                ents.extend(draw_mol(
+                    MolGenericRef::Small(&mol_),
+                    i_mol,
+                    &state.ui,
+                    &None,
+                    ManipMode::None,
+                    OperatingMode::Primary,
+                    num_mols,
+                ));
             }
             MolType::Ligand => {
                 let mol_ = MoleculeSmall {

@@ -96,27 +96,38 @@ pub fn make_gromacs_input(
         .md_config
         .to_gromacs(state.to_save.num_md_steps as usize, state.to_save.md_dt);
 
-    // todo: I'm not sure about this. What if the same FF type is used for multiple molecules.
-    // todo: Test adn assess.
-    // Merge all loaded FF tables into a single global fallback so that mass/LJ
-    // lookups succeed for any molecule type (peptide, small organic, DNA, etc.).
-    // Entries from earlier sources win on conflicts; order: small_mol first so GAFF2
-    // atom-type masses are not clobbered by the heavier protein FF tables.
-    let ff_global = [
-        state.ff_param_set.small_mol.as_ref(),
-        state.ff_param_set.peptide.as_ref(),
-        state.ff_param_set.dna.as_ref(),
-        state.ff_param_set.rna.as_ref(),
-        state.ff_param_set.lipids.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .fold(None::<ForceFieldParams>, |acc, ff| {
-        Some(match acc {
-            None => ff.clone(),
-            Some(merged) => merged.merge_with(ff),
-        })
-    });
+    // Warning: We could possibly have FF name conflicts between sets, downstream of this merge.
+    let mut ff_global = ForceFieldParams::default();
+
+    if mols.iter().any(|m| m.0 == FfMolType::Peptide) {
+        if let Some(ff) = &state.ff_param_set.peptide {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::SmallOrganic) {
+        if let Some(ff) = &state.ff_param_set.small_mol {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::Lipid) {
+        if let Some(ff) = &state.ff_param_set.lipids {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::Dna) {
+        if let Some(ff) = &state.ff_param_set.dna {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::Rna) {
+        if let Some(ff) = &state.ff_param_set.rna {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
 
     let water_model = match &cfg.solvent {
         Solvent::None => None,
@@ -130,7 +141,7 @@ pub fn make_gromacs_input(
             mdp,
             molecules,
             box_nm,
-            ff_global,
+            ff_global: Some(ff_global),
             water_model,
             minimize_energy: cfg.max_init_relaxation_iters.is_some(),
         },
@@ -321,9 +332,14 @@ pub fn launch_md(state: &mut State) {
             Err(e) => {
                 let elapsed = start.elapsed().as_millis();
 
+                // handle_err(&mut state.ui, "Error setting up GROMACS.".to_string());
+
+                eprintln!("\nError setting up GROMACS: \n{e:?}");
+
                 // Create an output with the error text, so we can display details in the UI.
                 let out = GromacsOutput {
                     log_text: e.to_string(),
+                    setup_failure: true,
                     ..Default::default()
                 };
 
@@ -379,6 +395,11 @@ pub fn on_gromacs_md_complete(
         state.ui.cmd_line_out_is_err = true;
 
         eprintln!("GROMACS error data: \n------\n{}\n------\n", out.log_text);
+        return;
+    }
+
+    if out.setup_failure {
+        handle_err(&mut state.ui, "GROMACS setup failure error".to_string());
         return;
     }
 
