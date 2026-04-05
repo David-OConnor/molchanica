@@ -25,7 +25,7 @@ use crate::{
     file_io::save_mol_set_as_gro,
     gromacs,
     md::trajectory::{TrajFormat, Trajectory},
-    molecules::{common::MoleculeCommon, nucleic_acid::NucleicAcidType},
+    molecules::{Atom, common::MoleculeCommon, nucleic_acid::NucleicAcidType},
     state::State,
     util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
 };
@@ -668,11 +668,63 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
     ) {
         Ok(md) => {
             let num_water = md.water.len();
+
+            // Build viewer mols from the actual MD atoms (post hetero-filter, post H-addition)
+            // rather than from the original `mols`. The original mol for a protein includes
+            // hetero atoms (crystal waters, ligands) that are stripped by filter_peptide_atoms,
+            // and may gain or lose H during prepare_peptide. Using the original atom count
+            // causes the viewer's atom_posits to mismatch the trajectory snapshot length,
+            // producing out-of-bounds errors in change_snapshot.
+            let viewer_mol_data: Vec<(FfMolType, MoleculeCommon, usize)> = mols
+                .iter()
+                .enumerate()
+                .map(|(i, (ff, m, count))| {
+                    let start = md.mol_start_indices.get(i).copied().unwrap_or(0);
+                    // mol_start_indices[i+1] is the start of the next input mol (or first ion).
+                    // Falling back to md.atoms.len() is only reached when there are no ions and
+                    // this is the sole mol.
+                    let end = md
+                        .mol_start_indices
+                        .get(i + 1)
+                        .copied()
+                        .unwrap_or(md.atoms.len());
+                    let actual_atoms: Vec<Atom> = md.atoms[start..end]
+                        .iter()
+                        .map(|a| Atom {
+                            serial_number: a.serial_number,
+                            element: a.element,
+                            posit: Vec3 {
+                                x: a.posit.x as f64,
+                                y: a.posit.y as f64,
+                                z: a.posit.z as f64,
+                            },
+                            ..Default::default()
+                        })
+                        .collect();
+                    let atom_posits = actual_atoms.iter().map(|a| a.posit).collect();
+                    (
+                        *ff,
+                        MoleculeCommon {
+                            ident: m.ident.clone(),
+                            atoms: actual_atoms,
+                            atom_posits,
+                            selected_for_md: m.selected_for_md,
+                            ..Default::default()
+                        },
+                        *count,
+                    )
+                })
+                .collect();
+            let viewer_mol_refs: Vec<(FfMolType, &MoleculeCommon, usize)> = viewer_mol_data
+                .iter()
+                .map(|(ff, m, c)| (*ff, m, *c))
+                .collect();
+
             state
                 .volatile
                 .md_local
                 .viewer
-                .add_mols_for_disp(&mols, num_water);
+                .add_mols_for_disp(&viewer_mol_refs, num_water);
             state.volatile.md_local.mol_dynamics = Some(md);
 
             if run {

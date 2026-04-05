@@ -292,7 +292,8 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     }
 
     ui.separator();
-    ui.label(RichText::new("Molecules in set (sorted by range):").color(Color32::WHITE));
+    ui.add_space(ROW_SPACING);
+    ui.label(RichText::new("Molecules in set:").color(Color32::WHITE));
 
     // --- Edit current mols in the set (sorted by range, water grouped) ---
     let mols_len = state.volatile.md_local.viewer.mol_sets[set_i].mols.len();
@@ -316,16 +317,19 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
         .count();
     let (water_range_start, water_range_end) = {
         let set = &state.volatile.md_local.viewer.mol_sets[set_i];
+
         let starts = set
             .mols
             .iter()
             .filter(|m| m.mol_type == MolType::Water)
             .map(|m| m.range.0);
+
         let ends = set
             .mols
             .iter()
             .filter(|m| m.mol_type == MolType::Water)
             .map(|m| m.range.1);
+
         (starts.min().unwrap_or(0), ends.max().unwrap_or(0))
     };
 

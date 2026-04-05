@@ -322,7 +322,20 @@ impl SnapshotViewer {
                 // Update from unflatten (handles all mols for file-based, non-water for in-memory).
                 if non_water_i < pbm_len {
                     for (i_p, p) in mol.mol.atom_posits.iter_mut().enumerate() {
-                        *p = posits_by_mol[non_water_i][i_p].0.into();
+                        if non_water_i >= pbm_len {
+                            eprintln!(
+                                "Error: posit {non_water_i} out of bounds for posits-by-mol len {pbm_len}"
+                            );
+                        } else {
+                            if i_p >= posits_by_mol[non_water_i].len() {
+                                eprintln!(
+                                    "Error: posit {i_p} out of bounds for posits-by-mol for this non-water index len {}",
+                                    posits_by_mol[non_water_i].len()
+                                );
+                            } else {
+                                *p = posits_by_mol[non_water_i][i_p].0.into();
+                            }
+                        }
                     }
                 } else {
                     eprintln!(
