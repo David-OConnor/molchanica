@@ -1,5 +1,4 @@
 use bio_files::FrameSlice;
-use cudarc::driver::HostSlice;
 use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;

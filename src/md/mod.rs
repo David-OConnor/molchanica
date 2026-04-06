@@ -16,11 +16,12 @@ use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
-use graphics::{EngineUpdates, Entity, Scene};
+use graphics::{EngineUpdates, Entity, FWD_VEC, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
 use rand::Rng;
 use viewer::SnapshotViewer;
 
+use crate::cam::reset_camera;
 use crate::{
     cam::move_cam_to_active_mol,
     drawing::EntityClass,
@@ -160,8 +161,13 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         return;
     }
 
-    viewer::draw_mols(state, scene, updates);
+    if !state.volatile.md_local.viewer.mol_sets.is_empty() {
+        state.volatile.md_local.viewer.mol_set_active =
+            Some(state.volatile.md_local.viewer.mol_sets.len() - 1);
+    }
 
+    reset_camera(state, scene, updates, FWD_VEC);
+    viewer::draw_mols(state, scene, updates);
     handle_success(&mut state.ui, "MD complete".to_string());
 }
 

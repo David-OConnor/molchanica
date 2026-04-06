@@ -402,7 +402,7 @@ pub fn reset_camera(
         let mut c = Vec3::new_zero();
 
         if !state.volatile.md_local.viewer.snapshots.is_empty() {
-            const SKIP: usize = 50;
+            const SKIP: usize = 10;
 
             let mut count = 0;
             // note: Does not include water fields in snapshots.

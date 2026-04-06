@@ -99,7 +99,7 @@ which may help. For example, loading molecules automatically from PubChem, drugb
 download associated ligands for a protein, automatically download molecule-specific force-field parameters, and
 other party tricks.
 
-![Electron densities and small molecules](screenshots/density_example_nov_2025.png)
+![UI image showing mol properties and a protien](/screenshots/molchanica_ui_apr_2026.png)
 
 ## Parallel computing
 
@@ -133,7 +133,7 @@ Overview of MD components:
 - AM1-BCC partial charges (MBIS if you have ORCA installed)
 
 We use the [Dynamics rust library](https://github.com/david-oconnor/dynamics) for the implementation. You may also wish
-to referencethat library's readme.
+to reference that library's readme.
 
 ## Editing molecules
 
@@ -337,5 +337,7 @@ similar in the path, e.g.:
 - Minimizing may pause molecular dynamics computations.
 - On some displays (Ones with pixel scaling), dragging the MD time slider may also move the camera. To workaround, click
   the slider instead of dragging.
+
+![Electron densities and small molecules](screenshots/density_example_nov_2025.png)
 
 [//]: # (Wub from LabRats didn't dissaprove of the project name!)
