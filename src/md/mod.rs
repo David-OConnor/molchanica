@@ -21,9 +21,8 @@ use lin_alg::f64::{Quaternion, Vec3};
 use rand::Rng;
 use viewer::SnapshotViewer;
 
-use crate::cam::reset_camera;
 use crate::{
-    cam::move_cam_to_active_mol,
+    cam::{move_cam_to_active_mol, reset_camera},
     drawing::EntityClass,
     file_io::save_mol_set_as_gro,
     gromacs,
@@ -47,6 +46,8 @@ pub const STATIC_ATOM_DIST_THRESH: f64 = 14.;
 // noticeably increase total computation time. e.g. the frame time is small compared to this many
 // MD steps for a small molecule + water sim.
 const MD_STEPS_PER_APPLICATION_FRAME: usize = 10;
+
+// pub type MolsForMd = (FfMolType, &MoleculeCommon, usize);
 
 #[derive(Default)]
 pub struct MdStateLocal {

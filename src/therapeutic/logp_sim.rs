@@ -12,23 +12,30 @@
 
 // todo: Create an octanol-initialization template.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    io,
+};
 
-use bio_files::BondType;
+use bio_files::{
+    BondType,
+    gromacs::{MdpParams, MoleculeInput},
+};
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MolDynamics, ParamError,
-    SimBoxInit, Solvent, TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
+    SimBoxInit, Solvent, TAU_TEMP_DEFAULT, params::FfParamSet, snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::Element::{Carbon, Hydrogen, Oxygen};
 
 use crate::{
-    md::{build_dynamics, post_run_cleanup, run_dynamics_blocking},
-    molecules::{Atom, Bond, small::MoleculeSmall},
+    gromacs,
+    gromacs::{build_molecule_inputs, make_gromacs_input},
+    md::{MdBackend, build_dynamics, post_run_cleanup, run_dynamics_blocking},
+    molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     state::State,
 };
-
 // add_copies uses bounding-sphere exclusion (~14 Å center-to-center for octanol).
 // Max reliably placeable per box: ≈ (box - 16)³ × 0.64 / (4/3 π 7³).
 // 55 Å → ~26 molecules; 20 is comfortably within that.
@@ -45,7 +52,7 @@ use crate::{
 // 400: (148 water): 48
 
 const OCTANOL_BOX_SIZE: f32 = 46.; // 356 octanol + 132 water ≈ 97,230 Å³ ≈ 46³ Å³
-const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 TIP3P water mols; > 2× the 12 Å NB cutoff.
+const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 water mols; > 2× the 12 Å NB cutoff.
 
 const OCTANOL_COUNT: usize = 356;
 // 27 mol% water in water-saturated 1-octanol (literature value).
@@ -56,12 +63,16 @@ const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_MOL_PER_OCT
 const DT: f32 = 0.002; // ps
 // Minimum ~100 ps (50_000 steps) for basic equilibration; production LogP needs ≥1 ns.
 // const NUM_STEPS: usize = 50_000;
-const NUM_STEPS: usize = 2_000; // todo temp while testing the initialization
+// const NUM_STEPS: usize = 2_000; // todo temp while testing the initialization
+// todo temp
+const NUM_STEPS: usize = 200;
 
 const TEMP_TGT: f32 = 298.15; // Standard LogP is measured at 25 °C = 298.15 K.
 
 // The conversion factor between ln and log10
 const LOG_CONV: f32 = 1. / 2.303;
+
+const BACKEND: MdBackend = MdBackend::Gromacs; // todo: for now
 
 #[allow(clippy::doc_lazy_continuation)]
 /// Using PubChem data as a reference. Partial charges are computed using ORCA. We us this input:
@@ -166,6 +177,9 @@ pub fn make_octanol() -> MoleculeSmall {
     MoleculeSmall::new("Octanol".to_string(), atoms, bonds, HashMap::new(), None)
 }
 
+// todo: Consider using manual force field params and partial charges for Octanol, if required,
+// from a vetted source.
+
 /// A sim of the molecule in water-saturated Octanol. Returns free energy.
 fn run_octanol(
     mol: &MoleculeSmall,
@@ -230,16 +244,68 @@ fn run_octanol(
         ..Default::default()
     };
 
-    let mut md = build_dynamics(
-        &state.dev,
-        &mols,
-        &state.ff_param_set,
-        &state.mol_specific_params,
-        &cfg,
-        false,
-        None,
-        &mut HashSet::new(),
-    )?;
+    match BACKEND {
+        MdBackend::Dynamics => {
+            let mut md = build_dynamics(
+                &state.dev,
+                &mols,
+                &state.ff_param_set,
+                &state.mol_specific_params,
+                &cfg,
+                false,
+                None,
+                &mut HashSet::new(),
+            )?;
+
+            // Blocking.
+            run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
+
+            // todo: Instead of running a sim, perhaps just use the one-off energy computation.
+
+            println!("Snaps: {:?}", md.snapshots.len());
+        }
+        MdBackend::Gromacs => {
+            let mdp = cfg.to_gromacs(NUM_STEPS, DT);
+
+            // Build molecule entries for GROMACS input.
+            let mols_input = match build_molecule_inputs(
+                &mols,
+                &state.mol_specific_params,
+                &mut HashSet::new(),
+                state.ui.md.peptide_static,
+                None,
+            ) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("GROMACS: failed to build molecule inputs: {e}");
+                    return Err(ParamError {
+                        descrip: "Failed to build GROMACS molecule inputs.".to_string(),
+                    });
+                }
+            };
+
+            // Determine simulation box dimensions (nm).
+            let box_nm = crate::gromacs::sim_box_nm(&cfg.sim_box);
+
+            let inp = match make_gromacs_input(
+                mdp,
+                &mols,
+                mols_input,
+                &state.ff_param_set,
+                box_nm,
+                &cfg.solvent,
+                cfg.max_init_relaxation_iters.is_some(),
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Error creating GROMACS input: {e}");
+                    return Err(ParamError {
+                        descrip: "Error running GROMACS".to_string(),
+                    });
+                }
+            };
+        }
+    }
 
     // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
     // // Register octanol copies so they appear in snapshot playback alongside the solute.
@@ -248,13 +314,6 @@ fn run_octanol(
     //     .md_local
     //     .viewer
     //     .update_custom_solvents_for_disp(&[(&octanol, OCTANOL_COUNT)]);
-
-    // Blocking.
-    run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
-
-    // todo: Instead of running a sim, perhaps just use the one-off energy computation.
-
-    println!("Snaps: {:?}", md.snapshots.len());
 
     // todo: This is for the whole system including water molecules. Is this waht we want?
     let energy = {
@@ -355,8 +414,8 @@ pub fn run(
     let e_octanol = 0.;
 
     // todo: Octanol init is slow.
-    // let e_water = run_water(mol, state, scene, updates)?;
-    let e_octanol = run_octanol(mol, state, scene, updates)?;
+    let e_water = run_water(mol, state, scene, updates)?;
+    // let e_octanol = run_octanol(mol, state, scene, updates)?;
 
     // todo: How do we calculate alchemical free energies?
     // todo: One LLM thinkjs I shoujld calculate something across different

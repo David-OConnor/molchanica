@@ -91,6 +91,7 @@ from the [RCSB PDB](https://www.rcsb.org/).
 - **Small molecules**: SDF, Mol2, GRO, XYZ, and PDBQT
 - **Electron density**: 2fo-fc mmCIF, Map, and MTZ
 - **Force field parameters**: dat, lib, frcmod, prmtop (Amber), and top (GROMACS)
+- **MD**: GRO, MDP, DCD, TRR, XTC
 
 ## A note on internet connectivity
 

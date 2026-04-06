@@ -27,10 +27,13 @@ use std::{
 
 use bio_files::{
     AtomGeneric, BondGeneric, FrameSlice,
-    gromacs::{GromacsInput, GromacsOutput, MoleculeInput, solvate::WaterModel},
+    gromacs::{GromacsInput, GromacsOutput, MdpParams, MoleculeInput, solvate::WaterModel},
     md_params::ForceFieldParams,
 };
-use dynamics::{FfMolType, SimBoxInit, Solvent, WATER_TEMPLATE_60A, WaterInitTemplate};
+use dynamics::{
+    FfMolType, MdConfig, SimBoxInit, Solvent, WATER_TEMPLATE_60A, WaterInitTemplate,
+    params::FfParamSet,
+};
 
 use crate::{
     md::{
@@ -42,8 +45,71 @@ use crate::{
 };
 
 pub fn make_gromacs_input(
+    mdp: MdpParams,
+    mols: &[(FfMolType, &MoleculeCommon, usize)],
+    mols_input: Vec<MoleculeInput>,
+    ff_param_set: &FfParamSet,
+    box_nm: Option<(f64, f64, f64)>,
+    solvent: &Solvent,
+    minimize_energy: bool,
+) -> io::Result<GromacsInput> {
+    // Warning: We could possibly have FF name conflicts between sets, downstream of this merge.
+    let mut ff_global = ForceFieldParams::default();
+
+    if mols.iter().any(|m| m.0 == FfMolType::Peptide) {
+        if let Some(ff) = &ff_param_set.peptide {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::SmallOrganic) {
+        if let Some(ff) = &ff_param_set.small_mol {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::Lipid) {
+        if let Some(ff) = &ff_param_set.lipids {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::Dna) {
+        if let Some(ff) = &ff_param_set.dna {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    if mols.iter().any(|m| m.0 == FfMolType::Rna) {
+        if let Some(ff) = &ff_param_set.rna {
+            ff_global = ff_global.merge_with(ff);
+        }
+    }
+
+    let water_model = match solvent {
+        Solvent::None => None,
+        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => Some(
+            WaterModel::Opc(WaterInitTemplate::from_bytes(WATER_TEMPLATE_60A)?.to_gromacs()),
+        ),
+    };
+
+    Ok(
+        GromacsInput {
+            mdp,
+            molecules: mols_input,
+            box_nm,
+            ff_global: Some(ff_global),
+            water_model,
+            minimize_energy,
+        },
+        // mols_owned,
+    )
+}
+
+pub fn gromacs_input_from_state(
     state: &State,
-) -> io::Result<(GromacsInput, Vec<(FfMolType, MoleculeCommon, usize)>)> {
+    // ) -> io::Result<(GromacsInput, Vec<(FfMolType, MoleculeCommon, usize)>)> {
+) -> io::Result<GromacsInput> {
     // Filter molecules for docking by if they're selected.
     // mut so we can move their posits in the initial snapshot change.
 
@@ -70,8 +136,10 @@ pub fn make_gromacs_input(
         None
     };
 
+    let cfg = &state.to_save.md_config;
+
     // Build molecule entries for GROMACS input.
-    let molecules = match build_molecule_inputs(
+    let mols_input = match build_molecule_inputs(
         &mols,
         &state.mol_specific_params,
         &mut md_pep_sel,
@@ -85,8 +153,6 @@ pub fn make_gromacs_input(
         }
     };
 
-    let cfg = &state.to_save.md_config;
-
     // Determine simulation box dimensions (nm).
     let box_nm = sim_box_nm(&cfg.sim_box);
 
@@ -96,57 +162,16 @@ pub fn make_gromacs_input(
         .md_config
         .to_gromacs(state.to_save.num_md_steps as usize, state.to_save.md_dt);
 
-    // Warning: We could possibly have FF name conflicts between sets, downstream of this merge.
-    let mut ff_global = ForceFieldParams::default();
-
-    if mols.iter().any(|m| m.0 == FfMolType::Peptide) {
-        if let Some(ff) = &state.ff_param_set.peptide {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if mols.iter().any(|m| m.0 == FfMolType::SmallOrganic) {
-        if let Some(ff) = &state.ff_param_set.small_mol {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if mols.iter().any(|m| m.0 == FfMolType::Lipid) {
-        if let Some(ff) = &state.ff_param_set.lipids {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if mols.iter().any(|m| m.0 == FfMolType::Dna) {
-        if let Some(ff) = &state.ff_param_set.dna {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if mols.iter().any(|m| m.0 == FfMolType::Rna) {
-        if let Some(ff) = &state.ff_param_set.rna {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    let water_model = match &cfg.solvent {
-        Solvent::None => None,
-        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => Some(
-            WaterModel::Opc(WaterInitTemplate::from_bytes(WATER_TEMPLATE_60A)?.to_gromacs()),
-        ),
-    };
-
-    Ok((
-        GromacsInput {
-            mdp,
-            molecules,
-            box_nm,
-            ff_global: Some(ff_global),
-            water_model,
-            minimize_energy: cfg.max_init_relaxation_iters.is_some(),
-        },
-        mols_owned,
-    ))
+    let minimize_energy = cfg.max_init_relaxation_iters.is_some();
+    make_gromacs_input(
+        mdp,
+        &mols,
+        mols_input,
+        &state.ff_param_set,
+        box_nm,
+        &cfg.solvent,
+        minimize_energy,
+    )
 }
 
 // todo: Replaced by `launch_dynamics`?
@@ -212,7 +237,7 @@ pub fn make_gromacs_input(
 // }
 
 /// Convert Molchanica molecule data into `Vec<MoleculeInput>` for GROMACS.
-fn build_molecule_inputs(
+pub fn build_molecule_inputs(
     mols_in: &[(FfMolType, &MoleculeCommon, usize)],
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
@@ -282,7 +307,7 @@ fn sanitise_mol_name(ident: &str) -> String {
 ///
 /// For `Pad` boxes the side-length is estimated as 2 × pad + a nominal
 /// molecule diameter; GROMACS `grompp` will adjust it to fit the system.
-fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
+pub fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
     match sim_box {
         SimBoxInit::Fixed((lo, hi)) => {
             let x = ((hi.x - lo.x) as f64) / 10.0;
@@ -303,7 +328,8 @@ fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
 /// delivered via [`crate::threads::ThreadReceivers::gromacs_md_avail`] and
 /// processed by [`on_gromacs_md_complete`].
 pub fn launch_md(state: &mut State) {
-    let (input, _mols) = match make_gromacs_input(state) {
+    // let (input, _mols) = match gromacs_input_from_state(state) {
+    let input = match gromacs_input_from_state(state) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("Error creating GROMACS input: {e}");
@@ -439,6 +465,7 @@ pub fn on_gromacs_md_complete(
 
 /// Save .gro, .mdp, and .top files to disk, from our MD state, molecules etc.
 pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
-    let (inp, _) = make_gromacs_input(state)?;
+    // let (inp, _) = gromacs_input_from_state(state)?;
+    let inp = gromacs_input_from_state(state)?;
     inp.save(path)
 }
