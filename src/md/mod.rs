@@ -123,8 +123,6 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     let snaps = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
     md.viewer.snapshots = snaps.clone();
 
-    md.viewer.current_snapshot = Some(0);
-
     // Register an in-memory Trajectory so the run appears in the trajectory
     // sidebar and water molecules are visible in the mol-set list.
     let run_n = state
@@ -147,6 +145,8 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         .as_ref()
         .and_then(|md| md.run_index)
         .unwrap_or(0);
+
+    println!("Mol sets: {:?}", &state.volatile.md_local.viewer.mol_sets);
 
     let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
     // The mol set we just added is the last one in the viewer.

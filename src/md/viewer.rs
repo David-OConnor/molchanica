@@ -41,6 +41,7 @@ pub struct ViewerMolecule {
 }
 
 /// E.g. from a .gro file or similar.
+#[derive(Debug)]
 pub struct ViewerMolSet {
     pub path: Option<PathBuf>,
     pub name: String,

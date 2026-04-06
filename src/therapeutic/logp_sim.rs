@@ -72,8 +72,6 @@ const TEMP_TGT: f32 = 298.15; // Standard LogP is measured at 25 °C = 298.15 K.
 // The conversion factor between ln and log10
 const LOG_CONV: f32 = 1. / 2.303;
 
-const BACKEND: MdBackend = MdBackend::Gromacs; // todo: for now
-
 #[allow(clippy::doc_lazy_continuation)]
 /// Using PubChem data as a reference. Partial charges are computed using ORCA. We us this input:
 /// ! HF 6-31G* Opt TightSCF TightOpt RESP
@@ -181,16 +179,127 @@ pub fn make_octanol() -> MoleculeSmall {
 // from a vetted source.
 
 /// A sim of the molecule in water-saturated Octanol. Returns free energy.
+/// Runs the solute molecule in the given solvent configuration and returns free energy.
+/// The `cfg` determines the box size and solvent; `component_name` is used for logging.
+fn run_mol_in_solvent(
+    mol: &MoleculeSmall,
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    cfg: MdConfig,
+    component_name: &str,
+) -> Result<f32, ParamError> {
+    // Clone so we can set selected_for_md without mutating the caller's molecule.
+    let mut mol = mol.clone();
+    mol.common.selected_for_md = true;
+
+    // Only the solute molecule goes in `mols`; the solvent is encoded in `cfg`.
+    let mols = [(FfMolType::SmallOrganic, &mol.common, 1)];
+
+    // todo: Don't let the GUI box determine which backend to use long-term; convenient now for testing.
+    let energy = match state.to_save.md_backend {
+        MdBackend::Dynamics => {
+            let mut md = build_dynamics(
+                &state.dev,
+                &mols,
+                &state.ff_param_set,
+                &state.mol_specific_params,
+                &cfg,
+                false,
+                None,
+                &mut HashSet::new(),
+            )?;
+
+            // todo: Consider a non-blocking approach.
+            run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
+
+            println!("Snaps: {:?}", md.snapshots.len());
+
+            // todo: This is for the whole system including water molecules. Is this waht we want?
+            let energy = {
+                let snap = &md.snapshots[md.snapshots.len() - 1];
+                snap.energy_data.as_ref().unwrap().energy_potential
+                    + snap.energy_data.as_ref().unwrap().energy_kinetic
+            };
+
+            // `build_dynamics` normally adds mols for disp, but we haven't yet replaced mol_dynamics
+            // with our computation here.
+            state
+                .volatile
+                .md_local
+                .viewer
+                .add_mols_for_disp(&mols, md.water.len());
+            state.volatile.md_local.mol_dynamics = Some(md);
+
+            // todo: For now.
+            post_run_cleanup(state, scene, updates);
+
+            // todo: Instead of running a sim, perhaps just use the one-off energy computation.
+            energy
+        }
+        MdBackend::Gromacs => {
+            let mdp = cfg.to_gromacs(NUM_STEPS, DT);
+
+            // Build molecule entries for GROMACS input.
+            let (mols_input, _pep_atom_set) = match build_molecule_inputs(
+                &mols,
+                &state.mol_specific_params,
+                state.ui.md.peptide_static,
+                None,
+            ) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("GROMACS: failed to build molecule inputs: {e}");
+                    return Err(ParamError {
+                        descrip: "Failed to build GROMACS molecule inputs.".to_string(),
+                    });
+                }
+            };
+
+            // Determine simulation box dimensions (nm).
+            let box_nm = sim_box_nm(&cfg.sim_box);
+
+            let _inp = match make_gromacs_input(
+                mdp,
+                &mols,
+                mols_input,
+                &state.ff_param_set,
+                box_nm,
+                &cfg.solvent,
+                cfg.max_init_relaxation_iters.is_some(),
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Error creating GROMACS input: {e}");
+                    return Err(ParamError {
+                        descrip: "Error running GROMACS".to_string(),
+                    });
+                }
+            };
+
+            0. // todo for now during a refactor.
+        }
+        MdBackend::Orca => {
+            return Err(ParamError {
+                descrip: "ORCA is not supported for logp sim".to_string(),
+            });
+        }
+    };
+
+    println!(
+        "Free energy computed for the {} component: {:.2}",
+        component_name, energy
+    );
+
+    Ok(energy)
+}
+
 fn run_octanol(
     mol: &MoleculeSmall,
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
-    // Clone so we can set selected_for_md without mutating the caller's molecule.
-    let mut mol = mol.clone();
-    mol.common.selected_for_md = true;
-
     let mut octanol = make_octanol();
     octanol.update_ff_related(
         &mut state.mol_specific_params,
@@ -223,9 +332,6 @@ fn run_octanol(
         }
     };
 
-    // Only the solute molecule goes in `mols`; octanol is the solvent, packed via Solvent::Custom.
-    let mols = [(FfMolType::SmallOrganic, &mol.common, 1)];
-
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
             thermostat: Some(TAU_TEMP_DEFAULT),
@@ -244,101 +350,7 @@ fn run_octanol(
         ..Default::default()
     };
 
-    match BACKEND {
-        MdBackend::Dynamics => {
-            let mut md = build_dynamics(
-                &state.dev,
-                &mols,
-                &state.ff_param_set,
-                &state.mol_specific_params,
-                &cfg,
-                false,
-                None,
-                &mut HashSet::new(),
-            )?;
-
-            // Blocking.
-            run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
-
-            // todo: Instead of running a sim, perhaps just use the one-off energy computation.
-
-            println!("Snaps: {:?}", md.snapshots.len());
-        }
-        MdBackend::Gromacs => {
-            let mdp = cfg.to_gromacs(NUM_STEPS, DT);
-
-            // Build molecule entries for GROMACS input.
-            let (mols_input, _pep_atom_set) = match build_molecule_inputs(
-                &mols,
-                &state.mol_specific_params,
-                state.ui.md.peptide_static,
-                None,
-            ) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("GROMACS: failed to build molecule inputs: {e}");
-                    return Err(ParamError {
-                        descrip: "Failed to build GROMACS molecule inputs.".to_string(),
-                    });
-                }
-            };
-
-            // Determine simulation box dimensions (nm).
-            let box_nm = sim_box_nm(&cfg.sim_box);
-
-            let inp = match make_gromacs_input(
-                mdp,
-                &mols,
-                mols_input,
-                &state.ff_param_set,
-                box_nm,
-                &cfg.solvent,
-                cfg.max_init_relaxation_iters.is_some(),
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("Error creating GROMACS input: {e}");
-                    return Err(ParamError {
-                        descrip: "Error running GROMACS".to_string(),
-                    });
-                }
-            };
-        }
-        MdBackend::Orca => {
-            return Err(ParamError {
-                descrip: "ORCA is not supported for logp sim".to_string(),
-            });
-        }
-    }
-
-    // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
-    // // Register octanol copies so they appear in snapshot playback alongside the solute.
-    // state
-    //     .volatile
-    //     .md_local
-    //     .viewer
-    //     .update_custom_solvents_for_disp(&[(&octanol, OCTANOL_COUNT)]);
-
-    // todo: This is for the whole system including water molecules. Is this waht we want?
-    // let energy = {
-    //     let snap = &md.snapshots[md.snapshots.len() - 1];
-    //     if let Some(en) = &snap.energy_data {
-    //         en.energy_potential + en.energy_kinetic
-    //     } else {
-    //         0.
-    //     }
-    // };
-    //
-    let energy = 0.; // todo for now during a refactor.
-
-    println!(
-        "Free energy computed for the octanol component: {:.2}",
-        energy
-    );
-
-    post_run_cleanup(state, scene, updates);
-
-    Ok(energy)
+    run_mol_in_solvent(mol, state, scene, updates, cfg, "octanol")
 }
 
 /// A sim of the molecule in water. Returns free energy.
@@ -348,12 +360,6 @@ fn run_water(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
-    // Clone so we can set selected_for_md without mutating the caller's molecule.
-    let mut mol = mol.clone();
-    mol.common.selected_for_md = true;
-
-    let mols = [(FfMolType::SmallOrganic, &mol.common, 1)];
-
     let cfg = MdConfig {
         integrator: Integrator::VerletVelocity {
             thermostat: Some(TAU_TEMP_DEFAULT),
@@ -363,50 +369,17 @@ fn run_water(
         hydrogen_constraint: HydrogenConstraint::default(),
         snapshot_handlers: SnapshotHandlers::default(),
         sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
+        solvent: Solvent::WaterOpc,
         overrides: MdOverrides {
             // long_range_recip_disabled: true,
             snapshots_during_equilibration: true,
             ..Default::default()
         },
+
         ..Default::default()
     };
 
-    let mut md = build_dynamics(
-        &state.dev,
-        &mols,
-        &state.ff_param_set,
-        &state.mol_specific_params,
-        &cfg,
-        false,
-        None,
-        &mut HashSet::new(),
-    )?;
-
-    // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
-
-    // Blocking.
-    run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
-
-    println!("Snaps: {:?}", md.snapshots.len());
-
-    // todo: This is for the whole system including water molecules. Is this waht we want?
-    let energy = {
-        let snap = &md.snapshots[md.snapshots.len() - 1];
-        snap.energy_data.as_ref().unwrap().energy_potential
-            + snap.energy_data.as_ref().unwrap().energy_kinetic
-    };
-    println!(
-        "Free energy computed for the water component: {:.2}",
-        energy
-    );
-
-    state.volatile.md_local.mol_dynamics = Some(md); // todo: Required to visualize?
-
-    // todo?
-    post_run_cleanup(state, scene, updates);
-
-    // todo: DRY between the two fns.
-    Ok(energy)
+    run_mol_in_solvent(mol, state, scene, updates, cfg, "water")
 }
 
 pub fn run(
