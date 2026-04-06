@@ -210,7 +210,7 @@ fn build_dynamics_docking(
     // We assume hetero atoms are ligands, water etc, and are not part of the protein.
 
     // Filter out hetero atoms.
-    let pep_atoms = filter_peptide_atoms(pep_atom_set, &pep.common, &[], None);
+    let (pep_atoms, set) = filter_peptide_atoms(&pep.common, &[], None);
 
     // todo: Let's try using all peptide atoms, but assigning certain
     // todo AtomsDynamics to be static and bonded only.
@@ -240,15 +240,14 @@ fn build_dynamics_docking(
     // Mark atoms not near the ligand as static and bonded-forces only. These anchor
     // the non-static ones. Bonded force computations are (unnecessarily) run on them, but this is cheap,
     // and scales linearly with atom count.
-    let mut pep_set_near = HashSet::new();
+    // let mut pep_set_near = HashSet::new();
 
     let near_lig_thresh: f64 = 20.; // todo: Experiment
-    let _ = filter_peptide_atoms(
-        &mut pep_set_near,
-        &pep.common,
-        &[(FfMolType::SmallOrganic, &mol.common, 1)],
-        Some(near_lig_thresh),
-    );
+    // let _ = filter_peptide_atoms(
+    //     &pep.common,
+    //     &[(FfMolType::SmallOrganic, &mol.common, 1)],
+    //     Some(near_lig_thresh),
+    // );
 
     let pep_start_i = mol.common.atoms.len();
     for (i, atom) in md_state.atoms.iter_mut().enumerate() {
@@ -257,10 +256,10 @@ fn build_dynamics_docking(
         }
 
         let i_pep = i - pep_start_i;
-        if !pep_set_near.contains(&(0, i_pep)) {
-            atom.bonded_only = true;
-            atom.static_ = true;
-        }
+        // if !pep_set_near.contains(&(0, i_pep)) {
+        //     atom.bonded_only = true;
+        //     atom.static_ = true;
+        // }
     }
 
     Ok(md_state)

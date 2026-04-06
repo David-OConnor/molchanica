@@ -389,7 +389,7 @@ pub fn align(
         // Compute an initial strain energy.
         // todo: You must mark the mol in question as selected for MD, or this won't work.
 
-        let energy = launch_md_energy_computation(state, &mut HashSet::new());
+        let energy = launch_md_energy_computation(state);
         if let Ok(snap) = energy
             && let Some(en) = &snap.energy_data
         {

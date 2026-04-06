@@ -26,7 +26,7 @@ use std::{
 };
 
 use bio_files::{
-    AtomGeneric, BondGeneric, FrameSlice,
+    AtomGeneric, BondGeneric, FrameSlice, create_bonds,
     gromacs::{GromacsInput, GromacsOutput, MdpParams, MoleculeInput, solvate::WaterModel},
     md_params::ForceFieldParams,
 };
@@ -113,9 +113,6 @@ pub fn gromacs_input_from_state(
     // Filter molecules for docking by if they're selected.
     // mut so we can move their posits in the initial snapshot change.
 
-    // Avoids borrow error.
-    let mut md_pep_sel = state.volatile.md_local.peptide_selected.clone();
-
     // Clone selected molecules to release the immutable borrow of `state`
     // before the mutable borrow needed by update_mols_for_disp.
     let mols_owned: Vec<_> = {
@@ -139,10 +136,9 @@ pub fn gromacs_input_from_state(
     let cfg = &state.to_save.md_config;
 
     // Build molecule entries for GROMACS input.
-    let mols_input = match build_molecule_inputs(
+    let (mols_input, md_pep_sel) = match build_molecule_inputs(
         &mols,
         &state.mol_specific_params,
-        &mut md_pep_sel,
         state.ui.md.peptide_static,
         near_lig_thresh,
     ) {
@@ -152,6 +148,9 @@ pub fn gromacs_input_from_state(
             return Err(io::Error::new(io::ErrorKind::Other, e));
         }
     };
+
+    // todo: you may need to do this; update state with the pep sel state.
+    // state.volatile.md_local.peptide_selected = md_pep_sel;
 
     // Determine simulation box dimensions (nm).
     let box_nm = sim_box_nm(&cfg.sim_box);
@@ -240,30 +239,30 @@ pub fn gromacs_input_from_state(
 pub fn build_molecule_inputs(
     mols_in: &[(FfMolType, &MoleculeCommon, usize)],
     mol_specific_params: &HashMap<String, ForceFieldParams>,
-    pep_atom_set: &mut HashSet<(usize, usize)>,
     static_peptide: bool,
     near_lig_thresh: Option<f64>,
-) -> Result<Vec<MoleculeInput>, String> {
-    use bio_files::create_bonds;
-
+) -> Result<(Vec<MoleculeInput>, HashSet<(usize, usize)>), String> {
     let mut result = Vec::new();
+
+    let mut pep_atom_set = HashSet::new();
 
     for (ff_mol_type, mol, count) in mols_in {
         if !mol.selected_for_md {
             continue;
         }
 
-        let (atoms, bonds, name) = if *ff_mol_type == FfMolType::Peptide {
+        // todo: Do we need to do anything with the pep atom set here?
+        let (atoms, bonds, name, pep_set) = if *ff_mol_type == FfMolType::Peptide {
             // Apply the same peptide filtering as the built-in pipeline.
-            let atoms = filter_peptide_atoms(pep_atom_set, mol, mols_in, near_lig_thresh);
+            let (atoms, pep_set) = filter_peptide_atoms(mol, mols_in, near_lig_thresh);
             let bonds = create_bonds(&atoms);
-            (atoms, bonds, "PEP".to_string())
+            (atoms, bonds, "PEP".to_string(), pep_set)
         } else {
             let atoms: Vec<AtomGeneric> = mol.atoms.iter().map(|a| a.to_generic()).collect();
             let bonds: Vec<BondGeneric> = mol.bonds.iter().map(|b| b.to_generic()).collect();
             // Use the molecule ident as the topology name, truncated to 6 chars.
             let name = sanitise_mol_name(&mol.ident);
-            (atoms, bonds, name)
+            (atoms, bonds, name, HashSet::new())
         };
 
         let ff_params = mol_specific_params.get(&mol.ident).cloned();
@@ -283,7 +282,7 @@ pub fn build_molecule_inputs(
         let _ = static_peptide; // used via filter_peptide_atoms selection
     }
 
-    Ok(result)
+    Ok((result, pep_atom_set))
 }
 
 /// Sanitise a molecule ident for use as a GROMACS molecule name:

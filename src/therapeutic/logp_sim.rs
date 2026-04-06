@@ -31,7 +31,7 @@ use na_seq::Element::{Carbon, Hydrogen, Oxygen};
 
 use crate::{
     gromacs,
-    gromacs::{build_molecule_inputs, make_gromacs_input},
+    gromacs::{build_molecule_inputs, make_gromacs_input, sim_box_nm},
     md::{MdBackend, build_dynamics, post_run_cleanup, run_dynamics_blocking},
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     state::State,
@@ -268,10 +268,9 @@ fn run_octanol(
             let mdp = cfg.to_gromacs(NUM_STEPS, DT);
 
             // Build molecule entries for GROMACS input.
-            let mols_input = match build_molecule_inputs(
+            let (mols_input, _pep_atom_set) = match build_molecule_inputs(
                 &mols,
                 &state.mol_specific_params,
-                &mut HashSet::new(),
                 state.ui.md.peptide_static,
                 None,
             ) {
@@ -285,7 +284,7 @@ fn run_octanol(
             };
 
             // Determine simulation box dimensions (nm).
-            let box_nm = crate::gromacs::sim_box_nm(&cfg.sim_box);
+            let box_nm = sim_box_nm(&cfg.sim_box);
 
             let inp = match make_gromacs_input(
                 mdp,
@@ -305,6 +304,11 @@ fn run_octanol(
                 }
             };
         }
+        MdBackend::Orca => {
+            return Err(ParamError {
+                descrip: "ORCA is not supported for logp sim".to_string(),
+            });
+        }
     }
 
     // state.volatile.md_local.viewer.update_mols_for_disp(&mols);
@@ -316,20 +320,21 @@ fn run_octanol(
     //     .update_custom_solvents_for_disp(&[(&octanol, OCTANOL_COUNT)]);
 
     // todo: This is for the whole system including water molecules. Is this waht we want?
-    let energy = {
-        let snap = &md.snapshots[md.snapshots.len() - 1];
-        if let Some(en) = &snap.energy_data {
-            en.energy_potential + en.energy_kinetic
-        } else {
-            0.
-        }
-    };
+    // let energy = {
+    //     let snap = &md.snapshots[md.snapshots.len() - 1];
+    //     if let Some(en) = &snap.energy_data {
+    //         en.energy_potential + en.energy_kinetic
+    //     } else {
+    //         0.
+    //     }
+    // };
+    //
+    let energy = 0.; // todo for now during a refactor.
+
     println!(
         "Free energy computed for the octanol component: {:.2}",
         energy
     );
-
-    state.volatile.md_local.mol_dynamics = Some(md); // todo: Required to visualize?
 
     post_run_cleanup(state, scene, updates);
 

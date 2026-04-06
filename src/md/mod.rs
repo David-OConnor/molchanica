@@ -67,7 +67,9 @@ pub struct MdStateLocal {
     // todo: putting back for now
     /// We maintain a set of atom indices of peptides that are used in MD. This for example, might
     /// exclude hetero atoms and atoms not near a docking site. (mol i, atom i)
-    pub peptide_selected: HashSet<(usize, usize)>,
+    /// todo: When you support multiple peptides, you will have to updates this. Consider moving it
+    /// to the individual peptide.
+    pub pep_atom_set: HashSet<(usize, usize)>,
 }
 
 impl MdStateLocal {
@@ -174,14 +176,14 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
 
 /// Filter out hetero atoms, and if necessary, atoms not close to a ligand.
 pub fn filter_peptide_atoms(
-    set: &mut HashSet<(usize, usize)>,
     pep: &MoleculeCommon,
     mols_non_pep: &[(FfMolType, &MoleculeCommon, usize)],
     near_lig_thresh: Option<f64>,
-) -> Vec<AtomGeneric> {
-    *set = HashSet::new();
+) -> (Vec<AtomGeneric>, HashSet<(usize, usize)>) {
+    let mut set = HashSet::new();
 
-    pep.atoms
+    let atoms = pep
+        .atoms
         .iter()
         .enumerate()
         .filter_map(|(i, a)| {
@@ -209,7 +211,9 @@ pub fn filter_peptide_atoms(
                 None
             }
         })
-        .collect()
+        .collect();
+
+    (atoms, set)
 }
 
 fn mol_centroid(m: &MolDynamics) -> Vec3 {
@@ -532,14 +536,14 @@ pub fn build_dynamics(
         SimBoxInit::Pad(_) => None,
     };
 
-    let mols = setup_mols_dyn(
+    let (mols, pep_set) = setup_mols_dyn(
         mols_in,
         mol_specific_params,
-        pep_atom_set,
         static_peptide,
         near_lig_thresh,
         box_dims,
     )?;
+    *pep_atom_set = pep_set;
 
     // Uncomment as required for validating individual processes.
     let cfg = MdConfig {
@@ -633,7 +637,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
     // mut so we can move their posits in the initial snapshot change.
 
     // Avoids borrow error.
-    let mut md_pep_sel = state.volatile.md_local.peptide_selected.clone();
+    let mut md_pep_sel = state.volatile.md_local.pep_atom_set.clone();
 
     // Clone selected molecules to release the immutable borrow of `state`
     // before the mutable borrow needed by update_mols_for_disp.
@@ -801,14 +805,12 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         }
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }
-    state.volatile.md_local.peptide_selected = md_pep_sel;
+    state.volatile.md_local.pep_atom_set = md_pep_sel;
 }
 
 /// Called directly from the UI; computes energy.
-pub fn launch_md_energy_computation(
-    state: &State,
-    pep_atom_set: &mut HashSet<(usize, usize)>,
-) -> Result<Snapshot, ParamError> {
+// pub fn launch_md_energy_computation(state: &mut State) -> Result<Snapshot, ParamError> {
+pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamError> {
     let mols_in = get_mols_sel_for_md(state);
 
     let peptide_only_near_lig = if state.ui.md.peptide_only_near_ligs {
@@ -817,14 +819,15 @@ pub fn launch_md_energy_computation(
         None
     };
 
-    let mols = setup_mols_dyn(
+    let (mols, pep_atom_set) = setup_mols_dyn(
         &mols_in,
         &state.mol_specific_params,
-        pep_atom_set,
         state.ui.md.peptide_static,
         peptide_only_near_lig,
         None,
     )?;
+
+    // state.volatile.md_local.pep_atom_set = pep_atom_set;
 
     compute_energy_snapshot(&state.dev, &mols, &state.ff_param_set)
 }
@@ -886,13 +889,13 @@ pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, us
 fn setup_mols_dyn(
     mols: &[(FfMolType, &MoleculeCommon, usize)],
     mol_specific_params: &HashMap<String, ForceFieldParams>,
-    pep_atom_set: &mut HashSet<(usize, usize)>,
     static_peptide: bool,
     near_lig_thresh: Option<f64>,
     box_dims: Option<(f32, f32, f32)>,
-) -> Result<Vec<MolDynamics>, ParamError> {
+) -> Result<(Vec<MolDynamics>, HashSet<(usize, usize)>), ParamError> {
     let mut res = Vec::new();
 
+    let mut pep_atom_set = HashSet::new();
     for (ff_mol_type, mol, copies) in mols {
         if !mol.selected_for_md {
             continue;
@@ -904,12 +907,13 @@ fn setup_mols_dyn(
         if *ff_mol_type == FfMolType::Peptide {
             // We assume hetero atoms are ligands, water etc, and are not part of the protein.
             // let atoms = filter_peptide_atoms(pep_atom_set, p, ligs, peptide_only_near_lig);
-            let atoms = filter_peptide_atoms(pep_atom_set, mol, mols, near_lig_thresh);
+            let (atoms, pep_set) = filter_peptide_atoms(mol, mols, near_lig_thresh);
             println!(
                 "Peptide atom count: {}. Set count: {}",
                 atoms.len(),
                 pep_atom_set.len()
             );
+            pep_atom_set = pep_atom_set;
 
             let bonds = create_bonds(&atoms);
 
@@ -962,7 +966,7 @@ fn setup_mols_dyn(
         }
     }
 
-    Ok(res)
+    Ok((res, pep_atom_set))
 }
 
 #[derive(Clone, Copy, PartialEq, Default, Encode, Decode)]
@@ -1043,8 +1047,8 @@ pub fn start_md_energy_computation(state: &mut State) {
         return;
     }
 
-    let mut pep_md = state.volatile.md_local.peptide_selected.clone(); // Avoids borrow problem.
-    match launch_md_energy_computation(state, &mut pep_md) {
+    let mut pep_md = state.volatile.md_local.pep_atom_set.clone(); // Avoids borrow problem.
+    match launch_md_energy_computation(state) {
         Ok(snap) => {
             if let Some(en) = &snap.energy_data {
                 let data = format!(
@@ -1054,7 +1058,7 @@ pub fn start_md_energy_computation(state: &mut State) {
                 println!("{data}");
                 handle_success(&mut state.ui, data);
 
-                state.volatile.md_local.peptide_selected = pep_md;
+                state.volatile.md_local.pep_atom_set = pep_md;
             }
         }
         Err(e) => handle_err(&mut state.ui, format!("Error computing energy: {:?}", e)),
