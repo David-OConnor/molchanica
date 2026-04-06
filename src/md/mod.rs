@@ -146,8 +146,6 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         .and_then(|md| md.run_index)
         .unwrap_or(0);
 
-    println!("Mol sets: {:?}", &state.volatile.md_local.viewer.mol_sets);
-
     let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
     // The mol set we just added is the last one in the viewer.
     if let Some(mol_set) = state.volatile.md_local.viewer.mol_sets.last() {

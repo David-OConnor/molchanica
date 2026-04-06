@@ -15,25 +15,22 @@
 use std::{
     collections::{HashMap, HashSet},
     io,
+    time::Instant,
 };
 
-use bio_files::{
-    BondType,
-    gromacs::{MdpParams, MoleculeInput},
-};
+use bio_files::BondType;
 use dynamics::{
     FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MolDynamics, ParamError,
-    SimBoxInit, Solvent, TAU_TEMP_DEFAULT, params::FfParamSet, snapshot::SnapshotHandlers,
+    SimBoxInit, Solvent, TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::Element::{Carbon, Hydrogen, Oxygen};
 
 use crate::{
-    gromacs,
-    gromacs::{build_molecule_inputs, make_gromacs_input, sim_box_nm},
+    gromacs::{build_molecule_inputs, make_gromacs_input, on_gromacs_md_complete, sim_box_nm},
     md::{MdBackend, build_dynamics, post_run_cleanup, run_dynamics_blocking},
-    molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
+    molecules::{Atom, Bond, small::MoleculeSmall},
     state::State,
 };
 // add_copies uses bounding-sphere exclusion (~14 Å center-to-center for octanol).
@@ -213,8 +210,6 @@ fn run_mol_in_solvent(
             // todo: Consider a non-blocking approach.
             run_dynamics_blocking(&mut md, &state.dev, DT, NUM_STEPS);
 
-            println!("Snaps: {:?}", md.snapshots.len());
-
             // todo: This is for the whole system including water molecules. Is this waht we want?
             let energy = {
                 let snap = &md.snapshots[md.snapshots.len() - 1];
@@ -259,7 +254,7 @@ fn run_mol_in_solvent(
             // Determine simulation box dimensions (nm).
             let box_nm = sim_box_nm(&cfg.sim_box);
 
-            let _inp = match make_gromacs_input(
+            let inp = match make_gromacs_input(
                 mdp,
                 &mols,
                 mols_input,
@@ -272,11 +267,25 @@ fn run_mol_in_solvent(
                 Err(e) => {
                     eprintln!("Error creating GROMACS input: {e}");
                     return Err(ParamError {
-                        descrip: "Error running GROMACS".to_string(),
+                        descrip: "Error creating GROMACS input".to_string(),
                     });
                 }
             };
 
+            let start = Instant::now();
+            match inp.run() {
+                Ok(out) => {
+                    // todo: Blocking for now.
+                    let elapsed = start.elapsed().as_millis();
+                    on_gromacs_md_complete(state, &out, elapsed);
+                }
+                Err(e) => {
+                    eprintln!("Error running GROMACS: {e}");
+                    return Err(ParamError {
+                        descrip: "Error running GROMACS".to_string(),
+                    });
+                }
+            }
             0. // todo for now during a refactor.
         }
         MdBackend::Orca => {

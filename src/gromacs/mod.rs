@@ -173,68 +173,6 @@ pub fn gromacs_input_from_state(
     )
 }
 
-// todo: Replaced by `launch_dynamics`?
-// /// Run a GROMACS MD simulation and return the trajectory as `Vec<Snapshot>`.
-// ///
-// /// This is conceptually equivalent to calling `md::build_dynamics` followed by
-// /// `md::run_dynamics_blocking`, but delegates execution to the external `gmx`
-// /// binary instead of our own integrator.
-// ///
-// /// # Arguments
-// ///
-// /// Arguments mirror `md::build_dynamics` for drop-in use by the UI layer:
-// ///
-// /// - `_dev` — unused (GROMACS handles device selection internally)
-// /// - `mols_in` — `(ff_mol_type, molecule, copy_count)` triples
-// /// - `param_set` — global Amber force-field parameter set
-// /// - `mol_specific_params` — per-ligand GAFF2 parameters keyed by molecule ident
-// /// - `cfg` — MD configuration (timestep, temperature, box, etc.)
-// /// - `static_peptide` — if `true`, the peptide atoms are held fixed
-// /// - `peptide_only_near_lig` — if `Some(thresh)`, include only peptide atoms
-// ///   within `thresh` Å of any ligand atom
-// /// - `pep_atom_set` — populated with the `(mol_i, atom_i)` pairs of included
-// ///   peptide atoms (same semantics as in `md.rs`)
-// /// - `fast_init` — if `true`, skip water and initial energy relaxation
-// /// - `dt` — timestep in **ps**
-// /// - `n_steps` — total number of MD steps
-// pub fn run_dynamics(state: &mut State) -> (Vec<Snapshot>, Vec<usize>) {
-//     let (input, mols) = match make_gromacs_input(state) {
-//         Ok(input) => input,
-//         Err(e) => {
-//             eprintln!("Error creating GROMACS input");
-//             return (Vec::new(), Vec::new());
-//         }
-//     };
-//
-//     // Compute mol_start_indices from the actual molecules being passed to GROMACS.
-//     // Each copy of each molecule gets its own entry; offsets are over solute atoms only
-//     // (water is handled separately in convert_snapshots and not indexed here).
-//     let mut offset = 0;
-//     let mut mol_start_indices = Vec::new();
-//     for m in &input.molecules {
-//         for _ in 0..m.count {
-//             mol_start_indices.push(offset);
-//             offset += m.atoms.len();
-//         }
-//     }
-//
-//     let mols_ref: Vec<(FfMolType, &MoleculeCommon, usize)> =
-//         mols.iter().map(|(ff, mol, c)| (*ff, mol, *c)).collect();
-//
-//     state.volatile.md_local.update_mols_for_disp(&mols_ref);
-//
-//     match input.run() {
-//         Ok(out) => {
-//             let snapshots = gromacs_frames_to_ss(&out.trajectory, out.solute_atom_count);
-//             (snapshots, mol_start_indices)
-//         }
-//         Err(e) => {
-//             eprintln!("\nGROMACS run failed: \n{e}");
-//             (Vec::new(), Vec::new())
-//         }
-//     }
-// }
-
 /// Convert Molchanica molecule data into `Vec<MoleculeInput>` for GROMACS.
 pub fn build_molecule_inputs(
     mols_in: &[(FfMolType, &MoleculeCommon, usize)],
@@ -327,7 +265,6 @@ pub fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
 /// delivered via [`crate::threads::ThreadReceivers::gromacs_md_avail`] and
 /// processed by [`on_gromacs_md_complete`].
 pub fn launch_md(state: &mut State) {
-    // let (input, _mols) = match gromacs_input_from_state(state) {
     let input = match gromacs_input_from_state(state) {
         Ok(v) => v,
         Err(e) => {
@@ -336,14 +273,14 @@ pub fn launch_md(state: &mut State) {
         }
     };
 
-    let mut offset = 0;
-    let mut mol_start_indices = Vec::new();
-    for m in &input.molecules {
-        for _ in 0..m.count {
-            mol_start_indices.push(offset);
-            offset += m.atoms.len();
-        }
-    }
+    // let mut offset = 0;
+    // let mut mol_start_indices = Vec::new();
+    // for m in &input.molecules {
+    //     for _ in 0..m.count {
+    //         mol_start_indices.push(offset);
+    //         offset += m.atoms.len();
+    //     }
+    // }
 
     let (tx, rx) = mpsc::channel();
 
@@ -352,7 +289,8 @@ pub fn launch_md(state: &mut State) {
         match input.run() {
             Ok(out) => {
                 let elapsed = start.elapsed().as_millis();
-                let _ = tx.send((out, mol_start_indices, elapsed));
+                // let _ = tx.send((out, mol_start_indices, elapsed));
+                let _ = tx.send((out, elapsed));
             }
             Err(e) => {
                 let elapsed = start.elapsed().as_millis();
@@ -368,7 +306,8 @@ pub fn launch_md(state: &mut State) {
                     ..Default::default()
                 };
 
-                let _ = tx.send((out, mol_start_indices, elapsed));
+                // let _ = tx.send((out, mol_start_indices, elapsed));
+                let _ = tx.send((out, elapsed));
             }
         }
     });
@@ -404,7 +343,7 @@ fn extract_gromacs_fatal_error(log_text: &str) -> Option<String> {
 pub fn on_gromacs_md_complete(
     state: &mut State,
     out: &GromacsOutput,
-    _mol_start_indices: Vec<usize>,
+    // _mol_start_indices: Vec<usize>,
     elapsed_ms: u128,
 ) {
     if out.log_text.contains("Fatal error") {
@@ -464,7 +403,6 @@ pub fn on_gromacs_md_complete(
 
 /// Save .gro, .mdp, and .top files to disk, from our MD state, molecules etc.
 pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
-    // let (inp, _) = gromacs_input_from_state(state)?;
     let inp = gromacs_input_from_state(state)?;
     inp.save(path)
 }

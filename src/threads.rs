@@ -13,6 +13,7 @@ use bio_files::gromacs::GromacsOutput;
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
+    gromacs::on_gromacs_md_complete,
     molecules::{MolIdent, MolType},
     render::MESH_PEP_SOLVENT_SURFACE,
     screening::pharmacophore::PhScreeningScore,
@@ -48,7 +49,8 @@ pub struct ThreadReceivers {
     // pub ph_screening_outer: Option<Receiver<Vec<PhScreeningScore>>>,
     pub ph_screening: Option<Receiver<Vec<PhScreeningScore>>>,
     /// GROMACS MD run. Carries `(out, mol_start_indices, elapsed_ms)`.
-    pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<usize>, u128)>>,
+    // pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<usize>, u128)>>,
+    pub gromacs_md_avail: Option<Receiver<(GromacsOutput, u128)>>,
 }
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
@@ -202,10 +204,12 @@ pub fn handle_thread_rx(
         .as_ref()
         .and_then(|rx| rx.try_recv().ok());
 
-    if let Some((out, mol_start_indices, elapsed_ms)) = gromacs_result {
+    // if let Some((out, mol_start_indices, elapsed_ms)) = gromacs_result {
+    if let Some((out, elapsed_ms)) = gromacs_result {
         state.volatile.thread_receivers.gromacs_md_avail = None;
 
-        crate::gromacs::on_gromacs_md_complete(state, &out, mol_start_indices, elapsed_ms);
+        // crate::gromacs::on_gromacs_md_complete(state, &out, mol_start_indices, elapsed_ms);
+        on_gromacs_md_complete(state, &out, elapsed_ms);
         state.volatile.md_local.gromacs_output = Some(out);
     }
 }
