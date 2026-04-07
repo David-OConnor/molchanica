@@ -987,20 +987,16 @@ pub fn save_mol_set_as_gro(
     mol_set: &crate::md::viewer::ViewerMolSet,
     path: &Path,
 ) -> io::Result<()> {
+    const ANGSTROM_TO_NM: f64 = 0.1;
+
     let mut atoms: Vec<AtomGro> = Vec::new();
-    let mut serial = 1u32;
+    let mut serial = 1;
 
     for (mol_i, mol) in mol_set.mols.iter().enumerate() {
         let mol_id = (mol_i + 1) as u32;
 
         for (atom_i, atom) in mol.mol.atoms.iter().enumerate() {
-            let posit_ang = mol.mol.atom_posits[atom_i];
-            // GRO coords are in nm.
-            let posit_nm = lin_alg::f64::Vec3 {
-                x: posit_ang.x / 10.0,
-                y: posit_ang.y / 10.0,
-                z: posit_ang.z / 10.0,
-            };
+            let posit = mol.mol.atom_posits[atom_i];
 
             let atom_type = atom
                 .type_in_res_general
@@ -1013,7 +1009,8 @@ pub fn save_mol_set_as_gro(
                 element: atom.element,
                 atom_type,
                 serial_number: serial,
-                posit: posit_nm,
+                posit: posit * ANGSTROM_TO_NM,
+                velocity: None,
             });
             serial += 1;
         }

@@ -32,6 +32,7 @@ use crate::{
     md::{MdBackend, build_dynamics, post_run_cleanup, run_dynamics_blocking},
     molecules::{Atom, Bond, small::MoleculeSmall},
     state::State,
+    util::handle_success,
 };
 // add_copies uses bounding-sphere exclusion (~14 Å center-to-center for octanol).
 // Max reliably placeable per box: ≈ (box - 16)³ × 0.64 / (4/3 π 7³).
@@ -251,15 +252,12 @@ fn run_mol_in_solvent(
                 }
             };
 
-            // Determine simulation box dimensions (nm).
-            let box_nm = sim_box_nm(&cfg.sim_box);
-
             let inp = match make_gromacs_input(
                 mdp,
                 &mols,
                 mols_input,
                 &state.ff_param_set,
-                box_nm,
+                &cfg.sim_box,
                 &cfg.solvent,
                 cfg.max_init_relaxation_iters.is_some(),
             ) {
@@ -273,6 +271,10 @@ fn run_mol_in_solvent(
             };
 
             let start = Instant::now();
+            handle_success(
+                &mut state.ui,
+                "Running MD for LogP computation with GROMACS...".to_string(),
+            );
             match inp.run() {
                 Ok(out) => {
                     // todo: Blocking for now.
@@ -335,6 +337,7 @@ fn run_octanol(
                 .map(|b| b.to_generic())
                 .collect(),
             adjacency_list: Some(octanol.common.adjacency_list.clone()),
+            // todo: Do we need molecule-specific params for octanol?
             // mol_specific_params: msp,
             mol_specific_params: None,
             ..Default::default()
@@ -401,8 +404,8 @@ pub fn run(
     let e_octanol = 0.;
 
     // todo: Octanol init is slow.
-    let e_water = run_water(mol, state, scene, updates)?;
-    // let e_octanol = run_octanol(mol, state, scene, updates)?;
+    // let e_water = run_water(mol, state, scene, updates)?;
+    let e_octanol = run_octanol(mol, state, scene, updates)?;
 
     // todo: How do we calculate alchemical free energies?
     // todo: One LLM thinkjs I shoujld calculate something across different

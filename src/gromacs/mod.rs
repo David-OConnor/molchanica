@@ -26,14 +26,12 @@ use std::{
 };
 
 use bio_files::{
-    AtomGeneric, BondGeneric, FrameSlice, create_bonds,
-    gromacs::{GromacsInput, GromacsOutput, MdpParams, MoleculeInput, solvate::WaterModel},
+    AtomGeneric, BondGeneric, FrameSlice, create_bonds, gromacs,
+    gromacs::{GromacsInput, GromacsOutput, MdpParams, MoleculeInput},
     md_params::ForceFieldParams,
 };
-use dynamics::{
-    FfMolType, MdConfig, SimBoxInit, Solvent, WATER_TEMPLATE_60A, WaterInitTemplate,
-    params::FfParamSet,
-};
+use dynamics::{FfMolType, SimBoxInit, Solvent, params::FfParamSet};
+use lin_alg::{f32::Vec3, f64::Vec3 as Vec3F64};
 
 use crate::{
     md::{
@@ -44,12 +42,14 @@ use crate::{
     util::{handle_err, handle_success},
 };
 
+const ANGSTROM_TO_NM: f64 = 0.10;
+
 pub fn make_gromacs_input(
     mdp: MdpParams,
     mols: &[(FfMolType, &MoleculeCommon, usize)],
     mols_input: Vec<MoleculeInput>,
     ff_param_set: &FfParamSet,
-    box_nm: Option<(f64, f64, f64)>,
+    sim_box_init: &SimBoxInit,
     solvent: &Solvent,
     minimize_energy: bool,
 ) -> io::Result<GromacsInput> {
@@ -86,11 +86,17 @@ pub fn make_gromacs_input(
         }
     }
 
-    let water_model = match solvent {
+    // Determine simulation box dimensions (nm).
+    let box_nm = sim_box_nm(&mols_input, sim_box_init);
+
+    let solvent_gmx = match solvent {
         Solvent::None => None,
-        Solvent::WaterOpc | Solvent::WaterOpcSpecifyMolCount(_) | Solvent::Custom(_) => Some(
-            WaterModel::Opc(WaterInitTemplate::from_bytes(WATER_TEMPLATE_60A)?.to_gromacs()),
-        ),
+        Solvent::WaterOpc => Some(gromacs::solvate::Solvent::Opc),
+        // todo: Implement.
+        Solvent::WaterOpcSpecifyMolCount(_) => None,
+        Solvent::Custom(_) => None,
+        // todo: Implment this.
+        // Solvent::Custom(_) => Some(gromacs::solvate::Solvent::Custom(WaterInitTemplate)),
     };
 
     Ok(
@@ -99,7 +105,7 @@ pub fn make_gromacs_input(
             molecules: mols_input,
             box_nm,
             ff_global: Some(ff_global),
-            water_model,
+            solvent: solvent_gmx,
             minimize_energy,
         },
         // mols_owned,
@@ -152,9 +158,6 @@ pub fn gromacs_input_from_state(
     // todo: you may need to do this; update state with the pep sel state.
     // state.volatile.md_local.peptide_selected = md_pep_sel;
 
-    // Determine simulation box dimensions (nm).
-    let box_nm = sim_box_nm(&cfg.sim_box);
-
     // Map MdConfig + explicit dt/n_steps onto MdpParams.
     let mdp = state
         .to_save
@@ -167,7 +170,7 @@ pub fn gromacs_input_from_state(
         &mols,
         mols_input,
         &state.ff_param_set,
-        box_nm,
+        &cfg.sim_box,
         &cfg.solvent,
         minimize_energy,
     )
@@ -240,24 +243,43 @@ fn sanitise_mol_name(ident: &str) -> String {
     if s.is_empty() { "MOL".to_string() } else { s }
 }
 
-/// Convert `SimBoxInit` (Å) to GROMACS box dimensions (nm).
-///
-/// For `Pad` boxes the side-length is estimated as 2 × pad + a nominal
-/// molecule diameter; GROMACS `grompp` will adjust it to fit the system.
-pub fn sim_box_nm(sim_box: &SimBoxInit) -> Option<(f64, f64, f64)> {
-    match sim_box {
-        SimBoxInit::Fixed((lo, hi)) => {
-            let x = ((hi.x - lo.x) as f64) / 10.0;
-            let y = ((hi.y - lo.y) as f64) / 10.0;
-            let z = ((hi.z - lo.z) as f64) / 10.0;
-            Some((x, y, z))
+/// This is a copy+paste of SimBox::from_atoms in dynamics, but suited to the input
+/// and output types and units we use here.
+pub fn sim_box_nm(mols: &[MoleculeInput], box_type: &SimBoxInit) -> Option<(f64, f64, f64)> {
+    let (bounds_low, bounds_high) = match box_type {
+        SimBoxInit::Pad(pad) => {
+            let pad = *pad as f64;
+            let (mut min, mut max) = (
+                Vec3F64::splat(f64::INFINITY),
+                Vec3F64::splat(f64::NEG_INFINITY),
+            );
+
+            let mut atom_count = 0;
+            for mol in mols {
+                for a in &mol.atoms {
+                    min = min.min(a.posit.into());
+                    max = max.max(a.posit.into());
+                }
+                atom_count += 1;
+            }
+
+            if atom_count == 0 {
+                return None;
+            }
+
+            let bounds_low = min - Vec3F64::splat(pad);
+            let bounds_high = max + Vec3F64::splat(pad);
+            (bounds_low, bounds_high)
         }
-        SimBoxInit::Pad(margin) => {
-            // Rough estimate — GROMACS adjusts this during grompp anyway.
-            let side = ((*margin as f64) * 2.0 + 30.0) / 10.0; // convert Å → nm
-            Some((side, side, side))
+        SimBoxInit::Fixed((bounds_low, bounds_high)) => {
+            let l: Vec3F64 = (*bounds_low).into();
+            let h: Vec3F64 = (*bounds_high).into();
+            (l, h)
         }
-    }
+    };
+
+    let v = (bounds_high - bounds_low) * ANGSTROM_TO_NM;
+    Some((v.x, v.y, v.z))
 }
 
 /// Similar to `md/launch_md`. Prepares GROMACS input on the calling thread, then

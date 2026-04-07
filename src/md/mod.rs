@@ -88,20 +88,13 @@ impl MdStateLocal {
     }
 
     /// Removes all MD snapshots, and performs related cleanup.
-    pub fn clear_snaps(
-        &mut self,
-        ents: &mut Vec<Entity>,
-        updates: &mut EngineUpdates,
-        redraw: &mut RedrawFlags,
-    ) {
+    pub fn clear_snaps(&mut self, ents: &mut Vec<Entity>, redraw: &mut RedrawFlags) {
         self.viewer.snapshots = Vec::new();
         self.viewer.current_snapshot = None;
         self.viewer.mol_set_active = None;
         self.draw_md_mols = false;
 
-        // todo: Clear ligand A/r.
-        ents.retain(|ent| ent.class != EntityClass::WaterModel as u32);
-
+        ents.clear();
         redraw.set_all();
     }
 }
@@ -732,7 +725,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                             ..Default::default()
                         })
                         .collect();
-                    let bonds: Vec<Bond> = bond_inference::create_bonds(&atom_generics)
+                    let bonds: Vec<Bond> = create_bonds(&atom_generics)
                         .iter()
                         .filter_map(|bg| Bond::from_generic(bg, &actual_atoms).ok())
                         .collect();

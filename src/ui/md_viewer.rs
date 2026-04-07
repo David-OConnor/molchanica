@@ -60,7 +60,7 @@ pub(in crate::ui) fn dynamics_viewer(
             state
                 .volatile
                 .md_local
-                .clear_snaps(&mut scene.entities, updates, redraw);
+                .clear_snaps(&mut scene.entities, redraw);
 
             // todo: Make this call part of clear_snaps?
             for traj in &mut state.trajectories {
