@@ -706,7 +706,7 @@ where
 
 fn output_control(state: &mut State, ui: &mut Ui) {
     ui.label("Out.").on_hover_text("These settings control which formats, and how often \
-    to save the output trajectory to. 'Mem' only affects the Dyanmics backend. TRR positions are required to display \
+    to save the output trajectory to. 'Mem' only affects the Dynamics backend. TRR positions are required to display \
     GROMACS trajectories in the UI automatically");
 
     let mut sync_ui = false;

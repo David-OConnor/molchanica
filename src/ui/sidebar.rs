@@ -1,4 +1,5 @@
 use bio_files::FrameSlice;
+use burn::train::metric::Adaptor;
 use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
@@ -19,8 +20,8 @@ use crate::{
     therapeutic::logp_sim,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, char_adme, md_viewer, mol_editor_sidebar, num_field,
-        pharmacophore,
+        COLOR_INACTIVE, ROW_SPACING, char_adme, highlighted_box, md_viewer, mol_editor_sidebar,
+        num_field, pharmacophore,
     },
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
@@ -47,30 +48,18 @@ fn mol_picker_one(
     pep_center: Vec3,
     reset_fog: &mut bool,
 ) {
-    let help_text = "Make this molecule the active / selected one. Middle click to close it.";
-
     let active = match active_mol {
         Some((mol_type_active, i)) => *mol_type_active == mol_type && *i == i_mol,
         _ => false,
     };
 
-    let mut frame = Frame::new();
-
     let color = if active {
-        frame = frame
-            .stroke(Stroke::new(1.0, COLOR_ACTIVE_RADIO))
-            .fill(Color32::from_rgb(55, 40, 40))
-            .corner_radius(CornerRadius::same(2))
-            .inner_margin(Margin::symmetric(2, 2))
-            .outer_margin(Margin::symmetric(0, 0));
-
         COLOR_ACTIVE_RADIO
     } else {
         COLOR_INACTIVE
     };
 
-    // Frame so we can draw a colored box around the active one.
-    frame.show(ui, |ui| {
+    highlighted_box(active, Color32::from_rgb(55, 40, 40)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(COL_SPACING / 2.);
@@ -137,6 +126,8 @@ fn mol_picker_one(
 
                 let row_h = ui.spacing().interact_size.y;
 
+                let help_text =
+                    "Make this molecule the active / selected one. Middle click to close it.";
                 let sel_btn = ui
                     .add_sized(
                         egui::vec2(ui.available_width(), row_h),
@@ -694,144 +685,150 @@ fn traj_items(
 
     let mut close = None;
     let mut snaps_loaded = false;
+    let mut traj_active = None;
 
     for (i, traj) in state.trajectories.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&traj.display_name).color(Color32::WHITE));
+        highlighted_box(traj.ui_active, Color32::from_rgb(40, 55, 40)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&traj.display_name).color(Color32::WHITE));
 
-            if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
-                && matches!(traj.source, TrajectorySource::File(_))
-                && traj.num_frames != 0
-                && button!(
-                    ui,
-                    "Load all frames",
-                    COLOR_ACTION,
-                    "Load all frames/snapshots from the trajectory into memory"
-                )
-                .clicked()
-            {
-                match traj.load_snaps(FrameSlice::Index {
-                    start: None,
-                    end: None,
-                }) {
-                    Ok(snaps) => {
-                        state.volatile.md_local.replace_snaps(snaps);
-                        snaps_loaded = true;
+                if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
+                    && matches!(traj.source, TrajectorySource::File(_))
+                    && traj.num_frames != 0
+                    && button!(
+                        ui,
+                        "Load all frames",
+                        COLOR_ACTION,
+                        "Load all frames/snapshots from the trajectory into memory"
+                    )
+                    .clicked()
+                {
+                    match traj.load_snaps(FrameSlice::Index {
+                        start: None,
+                        end: None,
+                    }) {
+                        Ok(snaps) => {
+                            state.volatile.md_local.replace_snaps(snaps);
+                            snaps_loaded = true;
+                            traj_active = Some(i);
+                        }
+                        Err(e) => {
+                            handle_err(
+                                &mut state.ui,
+                                format!("Error loading snapshots from trajectory: {:?}", e),
+                            );
+                        }
                     }
-                    Err(e) => {
-                        handle_err(
-                            &mut state.ui,
-                            format!("Error loading snapshots from trajectory: {:?}", e),
+                }
+
+                // Load memory-only trajectories by replacing viewer snaps with theirs, but without
+                // loading anything from disk.
+                if let TrajectorySource::Memory(snaps) = &traj.source
+                    && button!(
+                        ui,
+                        "View frames",
+                        COLOR_ACTION,
+                        "View all frames from this in-memory trajectory."
+                    )
+                    .clicked()
+                {
+                    state.volatile.md_local.replace_snaps(snaps.clone());
+                    snaps_loaded = true;
+                    traj_active = Some(i);
+                }
+
+                // todo: Allow end and start to be unbounded in UI, setting their val to None.
+                num_field(&mut traj.ui_start_i, "", 34, ui);
+                ui.label("-");
+                num_field(&mut traj.ui_end_i, "", 34, ui);
+
+                // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
+                if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
+                    && matches!(traj.source, TrajectorySource::File(_))
+                    && traj.ui_end_i < traj.num_frames
+                    && traj.ui_start_i < traj.ui_end_i
+                    && button!(
+                        ui,
+                        "Load rng",
+                        COLOR_ACTION,
+                        "Load frames/snapshots from the selected indices into memory"
+                    )
+                    .clicked()
+                {
+                    let start = if traj.ui_start_i == 0 {
+                        None
+                    } else {
+                        Some(traj.ui_start_i)
+                    };
+                    let end = if traj.ui_end_i == 0 {
+                        None
+                    } else {
+                        Some(traj.ui_end_i)
+                    };
+
+                    match traj.load_snaps(FrameSlice::Index { start, end }) {
+                        Ok(snaps) => {
+                            state.volatile.md_local.replace_snaps(snaps);
+                            snaps_loaded = true;
+                            traj_active = Some(i);
+                        }
+                        Err(e) => {
+                            handle_err(
+                                &mut state.ui,
+                                format!("Error loading snapshots from trajectory: {:?}", e),
+                            );
+                        }
+                    }
+                }
+
+                if ui
+                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                    .on_hover_text("Close this trajectory.")
+                    .clicked()
+                {
+                    close = Some(i);
+                }
+            });
+
+            let txt = format!(
+                "At: {}, Fr: {}, step: {:.3}, inter: {}, dt: {:.3}ps, end: {:.1}ps",
+                traj.num_atoms,
+                traj.num_frames,
+                traj.start_step,
+                traj.save_interval_steps,
+                traj.dt,
+                traj.end_time,
+            );
+            ui.label(RichText::new(txt).color(Color32::WHITE));
+
+            if let Some(slice) = &traj.frames_open {
+                label!(ui, format!("Open: {slice}"), COLOR_ACTIVE);
+            }
+
+            match state.volatile.md_local.viewer.get_active_mol_set() {
+                Some(set) => {
+                    if set.atom_count == traj.num_atoms {
+                        label!(
+                            ui,
+                            format!(
+                                "Set loaded with correct atom count. {} mols",
+                                set.mols.len()
+                            ),
+                            COLOR_ACTIVE
+                        );
+                    } else {
+                        label!(
+                            ui,
+                            format!("Mol set mismatch. {} atoms in set", set.atom_count),
+                            Color32::YELLOW
                         );
                     }
                 }
-            }
-
-            // Load memory-only trajectories by replacing viewer snaps with theirs, but without
-            // loading anything from disk.
-            if let TrajectorySource::Memory(snaps) = &traj.source
-                && button!(
-                    ui,
-                    "View frames",
-                    COLOR_ACTION,
-                    "View all frames from this in-memory trajectory."
-                )
-                .clicked()
-            {
-                state.volatile.md_local.replace_snaps(snaps.clone());
-                snaps_loaded = true;
-            }
-
-            // todo: Allow end and start to be unbounded in UI, setting their val to None.
-            num_field(&mut traj.ui_start_i, "", 34, ui);
-            ui.label("-");
-            num_field(&mut traj.ui_end_i, "", 34, ui);
-
-            // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
-            if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
-                && matches!(traj.source, TrajectorySource::File(_))
-                && traj.ui_end_i < traj.num_frames
-                && traj.ui_start_i < traj.ui_end_i
-                && button!(
-                    ui,
-                    "Load rng",
-                    COLOR_ACTION,
-                    "Load frames/snapshots from the selected indices into memory"
-                )
-                .clicked()
-            {
-                let start = if traj.ui_start_i == 0 {
-                    None
-                } else {
-                    Some(traj.ui_start_i)
-                };
-                let end = if traj.ui_end_i == 0 {
-                    None
-                } else {
-                    Some(traj.ui_end_i)
-                };
-
-                match traj.load_snaps(FrameSlice::Index { start, end }) {
-                    Ok(snaps) => {
-                        state.volatile.md_local.replace_snaps(snaps);
-                        snaps_loaded = true;
-                    }
-                    Err(e) => {
-                        handle_err(
-                            &mut state.ui,
-                            format!("Error loading snapshots from trajectory: {:?}", e),
-                        );
-                    }
+                None => {
+                    label!(ui, "No mol set loaded", Color32::LIGHT_RED);
                 }
-            }
-
-            if ui
-                .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .on_hover_text("Close this trajectory.")
-                .clicked()
-            {
-                close = Some(i);
             }
         });
-
-        let txt = format!(
-            "At: {}, Fr: {}, step: {:.3}, inter: {}, dt: {:.3}ps, end: {:.1}ps",
-            traj.num_atoms,
-            traj.num_frames,
-            traj.start_step,
-            traj.save_interval_steps,
-            traj.dt,
-            traj.end_time,
-        );
-        ui.label(RichText::new(txt).color(Color32::WHITE));
-
-        if let Some(slice) = &traj.frames_open {
-            label!(ui, format!("Open: {slice}"), COLOR_ACTIVE);
-        }
-
-        match state.volatile.md_local.viewer.get_active_mol_set() {
-            Some(set) => {
-                if set.atom_count == traj.num_atoms {
-                    label!(
-                        ui,
-                        format!(
-                            "Set loaded with correct atom count. {} mols",
-                            set.mols.len()
-                        ),
-                        COLOR_ACTIVE
-                    );
-                } else {
-                    label!(
-                        ui,
-                        format!("Mol set mismatch. {} atoms in set", set.atom_count),
-                        Color32::YELLOW
-                    );
-                }
-            }
-            None => {
-                label!(ui, "No mol set loaded", Color32::LIGHT_RED);
-            }
-        }
     }
 
     ui.separator();
@@ -855,5 +852,12 @@ fn traj_items(
                 state.volatile.md_local.viewer.snapshots.len()
             ),
         );
+    }
+
+    if let Some(i) = traj_active {
+        // Note: `load_snaps` sets active, but doesn't clear this flag from others.
+        for (j, traj) in state.trajectories.iter_mut().enumerate() {
+            traj.ui_active = i == j;
+        }
     }
 }

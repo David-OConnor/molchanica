@@ -12,7 +12,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        num_field, popups::close_btn,
+        highlighted_box, num_field, popups::close_btn,
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -640,20 +640,20 @@ pub(in crate::ui) fn md_viewer_mappings(
     ui.horizontal(|ui| {
 
 
-    ui.label("MD mol sets");
+        ui.label("MD mol sets");
 
         ui.add_space(COL_SPACING);
 
-    // We show this if sets are empty, but trajectories are not.
-    if button!(
+        // We show this if sets are empty, but trajectories are not.
+        if button!(
         ui,
         "Edit sets",
         Color32::WHITE,
         "Add or edit molecule sets associated with MD trajectories. This lets you add open molecules,\
         and adjust which trajectory index range each is associated with."
     ).clicked() {
-        state.ui.popup.md_mol_set_editor = !state.ui.popup.md_mol_set_editor;
-    }
+            state.ui.popup.md_mol_set_editor = !state.ui.popup.md_mol_set_editor;
+        }
 
     });
 
@@ -666,99 +666,126 @@ pub(in crate::ui) fn md_viewer_mappings(
     let mut close = None;
     let mut set_clicked = false;
 
-    for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
-        ui.horizontal(|ui| {
+    for i in 0..state.volatile.md_local.viewer.mol_sets.len() {
+        let (active, color) = if Some(i) == state.volatile.md_local.viewer.mol_set_active {
+            (true, COLOR_ACTIVE)
+        } else {
+            (false, Color32::WHITE)
+        };
 
-            let (active, color) = if Some(i) == state.volatile.md_local.viewer.mol_set_active {
-                (true, COLOR_ACTIVE)
-            } else {
-                (false, Color32::WHITE)
-            };
+        // Extract display data before the closure to avoid borrow conflicts with &mut state.
+        let (
+            set_name,
+            set_mols_len,
+            set_atom_count,
+            set_range_covered,
+            set_range_overlaps,
+            sorted_mols_display,
+        ) = {
+            let set = &state.volatile.md_local.viewer.mol_sets[i];
+            let mut sorted: Vec<&_> = set.mols.iter().collect();
+            sorted.sort_by_key(|m| m.range.0);
+            let display: Vec<(String, usize, usize, usize)> = sorted
+                .iter()
+                .take(5)
+                .map(|m| (m.mol.ident.clone(), m.mol.atoms.len(), m.range.0, m.range.1))
+                .collect();
+            (
+                set.name.clone(),
+                set.mols.len(),
+                set.atom_count,
+                set.range_covered,
+                set.range_overlaps,
+                display,
+            )
+        };
 
-            ui.label(RichText::new(format!("{} | {} mols", set.name, set.mols.len())).color(color));
+        highlighted_box(active, Color32::from_rgb(40, 40, 55)).show(ui, |ui| {
+            ui.horizontal(|ui| {
 
-            ui.label(RichText::new(format!("At: {} | Rng: {}-{}", set.atom_count, set.range_covered.0, set.range_covered.1)).color(color));
+                ui.label(RichText::new(format!("{} | {} mols", set_name, set_mols_len)).color(color));
 
-            if set.range_overlaps {
-                ui.label(RichText::new("Warning: Mol ranges overlap").color(Color32::LIGHT_RED));
-            }
+                ui.label(RichText::new(format!("At: {} | Rng: {}-{}", set_atom_count, set_range_covered.0, set_range_covered.1)).color(color));
 
-            if button!(
+                if set_range_overlaps {
+                    ui.label(RichText::new("Warning: Mol ranges overlap").color(Color32::LIGHT_RED));
+                }
+
+                if button!(
             ui,
             "Set",
             COLOR_ACTION,
             "Load this set of molecules into the MD trajectory atoms. This affects \
         how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
         ).clicked() {
-                state.volatile.md_local.viewer.mol_set_active = if active {
-                    None }
-                else {
-                    Some(i)
-                };
+                    state.volatile.md_local.viewer.mol_set_active = if active {
+                        None }
+                    else {
+                        Some(i)
+                    };
 
-                set_clicked = true;
-                handle_success(&mut state.ui, format!("Set {} as the active mol set", set.name));
-            }
+                    set_clicked = true;
+                    handle_success(&mut state.ui, format!("Set {} as the active mol set", set_name));
+                }
 
-            if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
-                let name = format!("{}.gro", set.name.replace(' ', "_"));
-                state.volatile.dialogs.save_gro.config_mut().default_file_name = name;
-                state.volatile.dialogs.save_gro_mol_set_i = Some(i);
-                state.volatile.dialogs.save_gro.save_file();
-            }
+                if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
+                    let name = format!("{}.gro", set_name.replace(' ', "_"));
+                    state.volatile.dialogs.save_gro.config_mut().default_file_name = name;
+                    state.volatile.dialogs.save_gro_mol_set_i = Some(i);
+                    state.volatile.dialogs.save_gro.save_file();
+                }
 
-            if ui
-                .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .on_hover_text("Close this molecule set.")
-                .clicked()
-            {
-                close = Some(i);
-            }
+                if ui
+                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                    .on_hover_text("Close this molecule set.")
+                    .clicked()
+                {
+                    close = Some(i);
+                }
 
-        });
+            });
 
-        let max_count = 5;
-        let mut sorted_mols: Vec<&_> = set.mols.iter().collect();
-        sorted_mols.sort_by_key(|m| m.range.0);
-        for mol in sorted_mols.iter().take(max_count) {
-            // todo: Consider a total solvent count, and group those together
-            label!(
+            let max_count = 5;
+            for (ident, atoms_len, range_start, range_end) in &sorted_mols_display {
+                // todo: Consider a total solvent count, and group those together
+                label!(
                 ui,
                 format!(
                     "{} | Atoms: {} Range: {}-{}",
-                    mol.mol.ident,
-                    mol.mol.atoms.len(),
-                    mol.range.0,
-                    mol.range.1,
+                    ident,
+                    atoms_len,
+                    range_start,
+                    range_end,
                 ),
                 Color32::WHITE
             );
-        }
-        if set.mols.len() >= max_count {
-            label!(ui, "...", Color32::WHITE);
-        }
-    }
+            }
+            if set_mols_len >= max_count {
+                label!(ui, "...", Color32::WHITE);
+            }
 
-    ui.separator();
+            ui.separator();
 
-    if let Some(i) = close {
-        state
-            .volatile
-            .md_local
-            .viewer
-            .close_mol_set(&mut state.to_save.open_history, i);
-    }
+            if let Some(i) = close {
+                state
+                    .volatile
+                    .md_local
+                    .viewer
+                    .close_mol_set(&mut state.to_save.open_history, i);
+            }
 
-    if set_clicked {
-        // We have this as the function calls in this branch which call state have a borrow
-        // error otherwise; the flag setting is convenience.
-        reset_camera(state, scene, updates, FWD_VEC);
-        viewer::draw_mols(state, scene, updates);
+            if set_clicked {
+                // We have this as the function calls in this branch which call state have a borrow
+                // error otherwise; the flag setting is convenience.
+                reset_camera(state, scene, updates, FWD_VEC);
+                viewer::draw_mols(state, scene, updates);
 
-        redraw.set_all();
+                redraw.set_all();
 
-        if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
-            handle_err(&mut state.ui, "Error changing snaps".to_string());
-        }
+                if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
+                    handle_err(&mut state.ui, "Error changing snaps".to_string());
+                }
+            }
+        });
     }
 }

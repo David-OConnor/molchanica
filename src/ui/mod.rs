@@ -3,8 +3,8 @@ use std::{io::Cursor, time::Instant};
 use bio_apis::{pdbe, rcsb};
 use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
-    Color32, ComboBox, Context, Frame, Key, RichText, Slider, TextEdit, TextFormat, TextStyle,
-    TopBottomPanel, Ui, text::LayoutJob,
+    Color32, ComboBox, Context, CornerRadius, Frame, Key, Margin, RichText, Slider, Stroke,
+    TextEdit, TextFormat, TextStyle, TopBottomPanel, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use md::md_setup;
@@ -1394,4 +1394,18 @@ pub(crate) fn cam_snapshots(
             }
         });
     });
+}
+
+/// Frame so we can draw a colored box around the active one.
+pub(in crate::ui) fn highlighted_box(active: bool, fill: Color32) -> Frame {
+    if active {
+        Frame::new()
+            .stroke(Stroke::new(1.0, COLOR_ACTIVE_RADIO))
+            .fill(fill)
+            .corner_radius(CornerRadius::same(2))
+            .inner_margin(Margin::symmetric(2, 2))
+            .outer_margin(Margin::symmetric(0, 0))
+    } else {
+        Frame::new()
+    }
 }

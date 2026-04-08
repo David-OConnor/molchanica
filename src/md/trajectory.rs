@@ -80,6 +80,9 @@ pub struct Trajectory {
     pub ui_end_i: usize,
     pub ui_start_time: String,
     pub ui_end_time: String,
+    // E.g. loaded frames from this trajectory most recently; used
+    // for highlighting it.
+    pub ui_active: bool,
 }
 
 impl Trajectory {
@@ -112,6 +115,7 @@ impl Trajectory {
             ui_end_i: 0,
             ui_start_time: String::new(),
             ui_end_time: String::new(),
+            ui_active: false,
         };
 
         match format {
@@ -195,6 +199,7 @@ impl Trajectory {
             ui_end_i: num_frames.saturating_sub(1),
             ui_start_time: String::new(),
             ui_end_time: String::new(),
+            ui_active: false,
         }
     }
 
@@ -202,6 +207,8 @@ impl Trajectory {
     /// this reads from disk; for in-memory trajectories it filters the stored snapshots.
     pub fn load_snaps(&mut self, slice: FrameSlice) -> io::Result<Vec<Snapshot>> {
         self.frames_open = Some(slice);
+
+        self.ui_active = true;
 
         match self.format {
             TrajFormat::InMemory => {

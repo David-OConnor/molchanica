@@ -396,6 +396,10 @@ pub fn on_gromacs_md_complete(
         }
     }
 
+    for traj in &mut state.trajectories {
+        traj.ui_active = false;
+    }
+
     // Load the TRR trajectory: register it and immediately show all frames.
     if let Some(trr_path) = &out.trr_path {
         match Trajectory::new(trr_path) {

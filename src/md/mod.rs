@@ -116,6 +116,10 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     let snaps = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
     md.viewer.snapshots = snaps.clone();
 
+    for traj in &mut state.trajectories {
+        traj.ui_active = false;
+    }
+
     // Register an in-memory Trajectory so the run appears in the trajectory
     // sidebar and water molecules are visible in the mol-set list.
     let run_n = state
