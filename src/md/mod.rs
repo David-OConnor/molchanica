@@ -521,7 +521,7 @@ pub fn build_dynamics(
     static_peptide: bool,
     near_lig_thresh: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
-) -> Result<MdState, ParamError> {
+) -> Result<(MdState, Vec<MolDynamics>), ParamError> {
     println!("Setting up dynamics...");
 
     // Extract explicit box side-lengths so add_copies can keep molecules inside the boundary.
@@ -561,10 +561,10 @@ pub fn build_dynamics(
     };
 
     println!("Initializing MD state...");
-    let md_state = MdState::new(dev, &cfg, &mols, param_set)?;
+    let res = MdState::new(dev, &cfg, &mols, param_set)?;
     println!("MD init done.");
 
-    Ok(md_state)
+    Ok(res)
 }
 
 /// Run the dynamics in one go. Blocking.
@@ -674,7 +674,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         near_lig_thresh,
         &mut md_pep_sel,
     ) {
-        Ok(md) => {
+        Ok((md, custom_solvent)) => {
             let num_water = md.water.len();
 
             // Build viewer mols from the actual MD atoms (post hetero-filter, post H-addition)
@@ -781,16 +781,28 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                     1,
                 ));
             }
-            let viewer_mol_refs: Vec<(FfMolType, &MoleculeCommon, usize)> = viewer_mol_data
+            let mut viewer_mol_refs: Vec<(FfMolType, &MoleculeCommon, usize)> = viewer_mol_data
                 .iter()
                 .map(|(ff, m, c)| (*ff, m, *c))
                 .collect();
+
+            let custom_mol_commons = match custom_solvents_to_mol_commons(&custom_solvent) {
+                Ok(v) => v,
+                Err(e) => {
+                    handle_err(&mut state.ui, e);
+                    return;
+                }
+            };
+            for mol_common in &custom_mol_commons {
+                viewer_mol_refs.push((FfMolType::SmallOrganic, mol_common, 1));
+            }
 
             state
                 .volatile
                 .md_local
                 .viewer
-                .add_mols_for_disp(&viewer_mol_refs, num_water);
+                .add_mol_set(&viewer_mol_refs, num_water);
+
             state.volatile.md_local.mol_dynamics = Some(md);
 
             if run {
@@ -801,6 +813,31 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }
     state.volatile.md_local.pep_atom_set = md_pep_sel;
+}
+
+/// Converts the `custom_solvent` vec returned by `MdState::new` into owned `MoleculeCommon`
+/// values suitable for the viewer mol-set. Returns an error string if bond construction fails.
+pub fn custom_solvents_to_mol_commons(
+    custom_solvent: &[MolDynamics],
+) -> Result<Vec<MoleculeCommon>, String> {
+    let mut result = Vec::new();
+    for mol in custom_solvent {
+        let atoms: Vec<_> = mol.atoms.iter().map(|a| a.into()).collect();
+        let mut bonds = Vec::with_capacity(mol.bonds.len());
+        for bond in &mol.bonds {
+            let b = Bond::from_generic(bond, &atoms)
+                .map_err(|_| "Error constructing bonds from custom solvent".to_string())?;
+            bonds.push(b);
+        }
+        result.push(MoleculeCommon::new(
+            "Solvent".to_owned(),
+            atoms,
+            bonds,
+            HashMap::new(),
+            None,
+        ));
+    }
+    Ok(result)
 }
 
 /// Called directly from the UI; computes energy.

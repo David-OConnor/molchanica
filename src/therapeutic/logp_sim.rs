@@ -29,10 +29,13 @@ use na_seq::Element::{Carbon, Hydrogen, Oxygen};
 
 use crate::{
     gromacs::{build_molecule_inputs, make_gromacs_input, on_gromacs_md_complete, sim_box_nm},
-    md::{MdBackend, build_dynamics, post_run_cleanup, run_dynamics_blocking},
+    md::{
+        MdBackend, build_dynamics, custom_solvents_to_mol_commons, post_run_cleanup,
+        run_dynamics_blocking,
+    },
     molecules::{Atom, Bond, small::MoleculeSmall},
     state::State,
-    util::handle_success,
+    util::{handle_err, handle_success},
 };
 // add_copies uses bounding-sphere exclusion (~14 Å center-to-center for octanol).
 // Max reliably placeable per box: ≈ (box - 16)³ × 0.64 / (4/3 π 7³).
@@ -192,12 +195,12 @@ fn run_mol_in_solvent(
     mol.common.selected_for_md = true;
 
     // Only the solute molecule goes in `mols`; the solvent is encoded in `cfg`.
-    let mols = [(FfMolType::SmallOrganic, &mol.common, 1)];
+    let mut mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
 
     // todo: Don't let the GUI box determine which backend to use long-term; convenient now for testing.
     let energy = match state.to_save.md_backend {
         MdBackend::Dynamics => {
-            let mut md = build_dynamics(
+            let (mut md, custom_solvent) = build_dynamics(
                 &state.dev,
                 &mols,
                 &state.ff_param_set,
@@ -218,16 +221,26 @@ fn run_mol_in_solvent(
                     + snap.energy_data.as_ref().unwrap().energy_kinetic
             };
 
+            let custom_mol_commons =
+                custom_solvents_to_mol_commons(&custom_solvent).map_err(|e| {
+                    handle_err(&mut state.ui, e.clone());
+                    ParamError { descrip: e }
+                })?;
+            for mol_common in &custom_mol_commons {
+                mols.push((FfMolType::SmallOrganic, mol_common, 1));
+            }
+
             // `build_dynamics` normally adds mols for disp, but we haven't yet replaced mol_dynamics
             // with our computation here.
             state
                 .volatile
                 .md_local
                 .viewer
-                .add_mols_for_disp(&mols, md.water.len());
+                .add_mol_set(&mols, md.water.len());
+
             state.volatile.md_local.mol_dynamics = Some(md);
 
-            // todo: For now.
+            // todo: For now; helps with vis.
             post_run_cleanup(state, scene, updates);
 
             // todo: Instead of running a sim, perhaps just use the one-off energy computation.
@@ -305,6 +318,33 @@ fn run_mol_in_solvent(
     Ok(energy)
 }
 
+/// A sim of the molecule in water. Returns free energy.
+fn run_water(
+    mol: &MoleculeSmall,
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+) -> Result<f32, ParamError> {
+    let cfg = MdConfig {
+        integrator: Integrator::VerletVelocity {
+            thermostat: Some(TAU_TEMP_DEFAULT),
+        },
+        temp_target: TEMP_TGT,
+        barostat_cfg: Some(Default::default()),
+        snapshot_handlers: SnapshotHandlers::default(),
+        sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
+        solvent: Solvent::WaterOpc,
+        overrides: MdOverrides {
+            snapshots_during_equilibration: true,
+            ..Default::default()
+        },
+
+        ..Default::default()
+    };
+
+    run_mol_in_solvent(mol, state, scene, updates, cfg, "water")
+}
+
 fn run_octanol(
     mol: &MoleculeSmall,
     state: &mut State,
@@ -350,12 +390,10 @@ fn run_octanol(
         },
         temp_target: TEMP_TGT,
         barostat_cfg: Some(Default::default()),
-        hydrogen_constraint: Default::default(),
         snapshot_handlers: SnapshotHandlers::default(),
         sim_box: SimBoxInit::new_cube(OCTANOL_BOX_SIZE),
         solvent: Solvent::Custom((vec![(octanol_dyn, OCTANOL_COUNT)], OCTANOL_BOX_WATER_COUNT)),
         overrides: MdOverrides {
-            // long_range_recip_disabled: true,
             snapshots_during_equilibration: true,
             ..Default::default()
         },
@@ -363,35 +401,6 @@ fn run_octanol(
     };
 
     run_mol_in_solvent(mol, state, scene, updates, cfg, "octanol")
-}
-
-/// A sim of the molecule in water. Returns free energy.
-fn run_water(
-    mol: &MoleculeSmall,
-    state: &mut State,
-    scene: &mut Scene,
-    updates: &mut EngineUpdates,
-) -> Result<f32, ParamError> {
-    let cfg = MdConfig {
-        integrator: Integrator::VerletVelocity {
-            thermostat: Some(TAU_TEMP_DEFAULT),
-        },
-        temp_target: TEMP_TGT,
-        barostat_cfg: Some(Default::default()),
-        hydrogen_constraint: HydrogenConstraint::default(),
-        snapshot_handlers: SnapshotHandlers::default(),
-        sim_box: SimBoxInit::new_cube(WATER_BOX_SIZE),
-        solvent: Solvent::WaterOpc,
-        overrides: MdOverrides {
-            // long_range_recip_disabled: true,
-            snapshots_during_equilibration: true,
-            ..Default::default()
-        },
-
-        ..Default::default()
-    };
-
-    run_mol_in_solvent(mol, state, scene, updates, cfg, "water")
 }
 
 pub fn run(

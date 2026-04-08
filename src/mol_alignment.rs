@@ -272,7 +272,7 @@ fn run_md(
 
     let mols_md = vec![(FfMolType::SmallOrganic, &mol_q_md, 1)];
 
-    let mut md = build_dynamics(
+    let (mut md, _) = build_dynamics(
         &state.dev,
         &mols_md,
         &state.ff_param_set,

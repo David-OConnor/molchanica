@@ -573,11 +573,7 @@ impl SnapshotViewer {
 
     /// Update the molecules stored here; we render these instead of the primary state molecules, if in an
     /// appropriate mode for viewing.
-    pub fn add_mols_for_disp(
-        &mut self,
-        mols: &[(FfMolType, &MoleculeCommon, usize)],
-        num_water: usize,
-    ) {
+    pub fn add_mol_set(&mut self, mols: &[(FfMolType, &MoleculeCommon, usize)], num_water: usize) {
         let mut snap_atom_i = 0;
 
         let mut mols_ = Vec::new();

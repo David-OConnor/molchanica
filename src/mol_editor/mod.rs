@@ -869,7 +869,7 @@ pub(super) fn build_dynamics(
     //     }
     // }
 
-    let md_state = MdState::new(dev, &cfg, &mols, param_set)?;
+    let (md_state, _) = MdState::new(dev, &cfg, &mols, param_set)?;
 
     // if let Some(w) = water_prev {
     //     println!("Using previous water molecules");
