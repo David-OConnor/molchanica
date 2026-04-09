@@ -752,9 +752,14 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             // These live at md.atoms[ion_start..] and each has its own mol_start_indices entry,
             // so they need a matching ViewerMolecule or the non-water atom count in
             // mols_and_traj_synced will fall short of snapshot.atom_posits.len().
+            //
+            // mol_start_indices layout: [input_mol_0, ..., input_mol_{n-1},
+            //                            custom_solvent_0, ..., custom_solvent_{K-1},
+            //                            ion_0, ion_1, ...]
+            // We must skip past BOTH input mols and custom solvents to reach the ions.
             let ion_start = md
                 .mol_start_indices
-                .get(n_input_mols)
+                .get(n_input_mols + custom_solvent.len())
                 .copied()
                 .unwrap_or(md.atoms.len());
             for a in &md.atoms[ion_start..] {
@@ -822,7 +827,21 @@ pub fn custom_solvents_to_mol_commons(
 ) -> Result<Vec<MoleculeCommon>, String> {
     let mut result = Vec::new();
     for mol in custom_solvent {
-        let atoms: Vec<_> = mol.atoms.iter().map(|a| a.into()).collect();
+        // Use the packed (placed) positions from atom_posits, not the template positions
+        // stored in mol.atoms. Without this, all copies appear at the template origin.
+        let atoms: Vec<Atom> = match &mol.atom_posits {
+            Some(packed_posits) => mol
+                .atoms
+                .iter()
+                .zip(packed_posits)
+                .map(|(a, p)| {
+                    let mut atom: Atom = a.into();
+                    atom.posit = Vec3 { x: p.x, y: p.y, z: p.z };
+                    atom
+                })
+                .collect(),
+            None => mol.atoms.iter().map(|a| a.into()).collect(),
+        };
         let mut bonds = Vec::with_capacity(mol.bonds.len());
         for bond in &mol.bonds {
             let b = Bond::from_generic(bond, &atoms)

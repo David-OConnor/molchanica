@@ -33,7 +33,7 @@ use crate::{
         MdBackend, build_dynamics, custom_solvents_to_mol_commons, post_run_cleanup,
         run_dynamics_blocking,
     },
-    molecules::{Atom, Bond, small::MoleculeSmall},
+    molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     state::State,
     util::{handle_err, handle_success},
 };
@@ -55,7 +55,8 @@ use crate::{
 const OCTANOL_BOX_SIZE: f32 = 46.; // 356 octanol + 132 water ≈ 97,230 Å³ ≈ 46³ Å³
 const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 water mols; > 2× the 12 Å NB cutoff.
 
-const OCTANOL_COUNT: usize = 356;
+// const OCTANOL_COUNT: usize = 356;
+const OCTANOL_COUNT: usize = 200; // todo temp while we sort how we'll pack.
 // 27 mol% water in water-saturated 1-octanol (literature value).
 // water/(water+octanol) = 0.27  →  water = octanol × 0.27/0.73 ≈ octanol × 0.37.
 const WATER_MOL_PER_OCTANOL: f32 = 0.27 / 0.73;
@@ -88,6 +89,10 @@ pub fn make_octanol() -> MoleculeSmall {
     // (El, posit, FF name, partial charge.)
     #[rustfmt::skip]
     let atoms = [
+        // force_field_type is set on each atom so update_ff_related sees ff_params_loaded=true
+        // and does NOT overwrite these carefully balanced partial charges with inferred ones.
+        // Without it, infer_charge is called, the per-molecule charge drifts from 0, and
+        // add_ions drops tens of counter-ions into md.atoms that break the viewer mol-set count.
         (Oxygen,   Vec3::new( 4.9442, -0.3976, -0.0463), "oh", -0.730420), //  1
         (Carbon,   Vec3::new( 0.0273, -0.3598,  0.0738), "c3",  0.154597), //  2
         (Carbon,   Vec3::new(-1.2646,  0.4624,  0.0583), "c3", -0.078612), //  3
@@ -156,6 +161,7 @@ pub fn make_octanol() -> MoleculeSmall {
             posit,
             element,
             type_in_res_general: Some(ff_name.to_string()),
+            force_field_type: Some(ff_name.to_string()),
             partial_charge: Some(q),
             ..Default::default()
         })
@@ -227,6 +233,37 @@ fn run_mol_in_solvent(
                     ParamError { descrip: e }
                 })?;
             for mol_common in &custom_mol_commons {
+                mols.push((FfMolType::SmallOrganic, mol_common, 1));
+            }
+
+            // Add any counter-ions that add_ions may have appended to md.atoms beyond the
+            // solute and custom-solvent atoms. Without this, mols_and_traj_synced fails.
+            let n_custom_atoms: usize = custom_solvent.iter().map(|m| m.atoms.len()).sum();
+            let ion_atom_start = mol.common.atoms.len() + n_custom_atoms;
+            let ion_mol_commons: Vec<MoleculeCommon> = md.atoms[ion_atom_start..]
+                .iter()
+                .map(|a| {
+                    let posit = Vec3 {
+                        x: a.posit.x as f64,
+                        y: a.posit.y as f64,
+                        z: a.posit.z as f64,
+                    };
+                    let ion_atom = Atom {
+                        serial_number: a.serial_number,
+                        element: a.element,
+                        posit,
+                        ..Default::default()
+                    };
+                    MoleculeCommon {
+                        ident: a.force_field_type.clone(),
+                        atoms: vec![ion_atom],
+                        atom_posits: vec![posit],
+                        selected_for_md: true,
+                        ..Default::default()
+                    }
+                })
+                .collect();
+            for mol_common in &ion_mol_commons {
                 mols.push((FfMolType::SmallOrganic, mol_common, 1));
             }
 

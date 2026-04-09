@@ -70,9 +70,31 @@ pub(in crate::ui) fn dynamics_viewer(
 
         if !ready {
             let txt = if state.volatile.md_local.viewer.snapshots.is_empty() {
-                "Not ready for MD playback; no snapshots/frames loaded."
+                "Not ready for MD playback; no snapshots/frames loaded.".to_owned()
             } else {
-                "Not ready for MD playback; trajectory and mol set atom count mismatch."
+                let mut t = "Not ready for MD playback; trajectory and mol set atom count mismatch"
+                    .to_owned();
+
+                let viewer = &state.volatile.md_local.viewer;
+
+                if !viewer.snapshots.is_empty()
+                    && let Some(set) = &viewer.get_active_mol_set()
+                {
+                    t.push_str(&format!(
+                        "Traj: {} Mol set: {}",
+                        state.volatile.md_local.viewer.snapshots[0]
+                            .atom_posits
+                            .len(),
+                        state
+                            .volatile
+                            .md_local
+                            .viewer
+                            .get_active_mol_set()
+                            .unwrap()
+                            .atom_count
+                    ));
+                }
+                t
             };
 
             label!(ui, txt, Color32::GRAY);
