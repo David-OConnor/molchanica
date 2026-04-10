@@ -72,8 +72,9 @@ pub(in crate::ui) fn dynamics_viewer(
             let txt = if state.volatile.md_local.viewer.snapshots.is_empty() {
                 "Not ready for MD playback; no snapshots/frames loaded.".to_owned()
             } else {
-                let mut t = "Not ready for MD playback; trajectory and mol set atom count mismatch"
-                    .to_owned();
+                let mut t =
+                    "Not ready for MD playback; trajectory and mol set atom count mismatch: "
+                        .to_owned();
 
                 let viewer = &state.volatile.md_local.viewer;
 
@@ -704,7 +705,12 @@ pub(in crate::ui) fn md_viewer_mappings(
             set_range_overlaps,
             sorted_mols_display,
         ) = {
+            if i >= state.volatile.md_local.viewer.mol_sets.len() {
+                eprintln!("Error active mol set out of range");
+                return;
+            }
             let set = &state.volatile.md_local.viewer.mol_sets[i];
+
             let mut sorted: Vec<&_> = set.mols.iter().collect();
             sorted.sort_by_key(|m| m.range.0);
             let display: Vec<(String, usize, usize, usize)> = sorted

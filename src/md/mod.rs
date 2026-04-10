@@ -549,8 +549,6 @@ pub fn build_dynamics(
             // coulomb_disabled: true,
             // lj_disabled: true,
             // long_range_recip_disabled: true,
-            // thermo_disabled: false,
-            // baro_disabled: false,
             snapshots_during_equilibration: true,
             // Merge with caller-supplied overrides so flags like `skip_water` are preserved.
             ..cfg.overrides.clone()
@@ -836,7 +834,11 @@ pub fn custom_solvents_to_mol_commons(
                 .zip(packed_posits)
                 .map(|(a, p)| {
                     let mut atom: Atom = a.into();
-                    atom.posit = Vec3 { x: p.x, y: p.y, z: p.z };
+                    atom.posit = Vec3 {
+                        x: p.x,
+                        y: p.y,
+                        z: p.z,
+                    };
                     atom
                 })
                 .collect(),

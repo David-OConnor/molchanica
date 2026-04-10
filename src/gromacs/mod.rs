@@ -94,6 +94,7 @@ pub fn make_gromacs_input(
         Solvent::WaterOpc => Some(gromacs::solvate::Solvent::Opc),
         // todo: Implement.
         Solvent::WaterOpcSpecifyMolCount(_) => None,
+        Solvent::OctanolWithWater => None,
         Solvent::Custom(_) => None,
         // todo: Implment this.
         // Solvent::Custom(_) => Some(gromacs::solvate::Solvent::Custom(WaterInitTemplate)),
