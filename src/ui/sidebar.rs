@@ -566,7 +566,7 @@ pub(in crate::ui) fn sidebar(
             }
 
             traj_items(state, scene, updates, ui, redraw);
-            md_viewer::md_viewer_mappings(state, scene, updates, ui, redraw);
+            md_viewer::viewer_mol_set(state, scene, updates, ui, redraw);
 
             ui.add_space(ROW_SPACING);
 

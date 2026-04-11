@@ -23,7 +23,6 @@ use viewer::SnapshotViewer;
 
 use crate::{
     cam::{move_cam_to_active_mol, reset_camera},
-    drawing::EntityClass,
     file_io::save_mol_set_as_gro,
     gromacs,
     md::trajectory::{TrajFormat, Trajectory},

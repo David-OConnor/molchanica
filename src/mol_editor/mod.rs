@@ -18,6 +18,8 @@ use na_seq::{
     Element::{Carbon, Hydrogen},
 };
 
+use crate::ui::util::handle_redraw;
+use crate::util::RedrawFlags;
 use crate::{
     bond_inference::create_hydrogen_bonds_two_mols,
     cam,
@@ -555,11 +557,9 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engine
 
     state.volatile.mol_manip.mode = ManipMode::None;
 
-    // Load all primary molecules into the engine.
-    draw_peptide(state, scene, updates);
-    draw_all_ligs(state, scene, updates);
-    draw_all_nucleic_acids(state, scene, updates);
-    draw_all_lipids(state, scene, updates);
+    let mut flags = RedrawFlags::default();
+    flags.set_all();
+    handle_redraw(state, scene, &mut flags, false, updates);
 
     set_flashlight(scene);
 

@@ -646,9 +646,9 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
 }
 
-/// Selected from loaded molecule maps, which map to atrajectory atoms. This might be loaded, for
-/// example, from a .gro file.
-pub(in crate::ui) fn md_viewer_mappings(
+/// Selected from loaded molecule sets, which map molecules to a trajectory's flat atoms.
+/// This might be loaded, for example, from a .gro file.
+pub(in crate::ui) fn viewer_mol_set(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
@@ -661,8 +661,6 @@ pub(in crate::ui) fn md_viewer_mappings(
     }
 
     ui.horizontal(|ui| {
-
-
         ui.label("MD mol sets");
 
         ui.add_space(COL_SPACING);
@@ -690,6 +688,7 @@ pub(in crate::ui) fn md_viewer_mappings(
     let mut set_clicked = false;
 
     for i in 0..state.volatile.md_local.viewer.mol_sets.len() {
+        let mut redraw_active_set = false;
         let (active, color) = if Some(i) == state.volatile.md_local.viewer.mol_set_active {
             (true, COLOR_ACTIVE)
         } else {
@@ -703,28 +702,20 @@ pub(in crate::ui) fn md_viewer_mappings(
             set_atom_count,
             set_range_covered,
             set_range_overlaps,
-            sorted_mols_display,
+            sorted_groups_display,
         ) = {
             if i >= state.volatile.md_local.viewer.mol_sets.len() {
                 eprintln!("Error active mol set out of range");
                 return;
             }
             let set = &state.volatile.md_local.viewer.mol_sets[i];
-
-            let mut sorted: Vec<&_> = set.mols.iter().collect();
-            sorted.sort_by_key(|m| m.range.0);
-            let display: Vec<(String, usize, usize, usize)> = sorted
-                .iter()
-                .take(5)
-                .map(|m| (m.mol.ident.clone(), m.mol.atoms.len(), m.range.0, m.range.1))
-                .collect();
             (
                 set.name.clone(),
                 set.mols.len(),
                 set.atom_count,
                 set.range_covered,
                 set.range_overlaps,
-                display,
+                set.groups_display(),
             )
         };
 
@@ -774,21 +765,52 @@ pub(in crate::ui) fn md_viewer_mappings(
             });
 
             let max_count = 5;
-            for (ident, atoms_len, range_start, range_end) in &sorted_mols_display {
-                // todo: Consider a total solvent count, and group those together
-                label!(
-                ui,
-                format!(
-                    "{} | Atoms: {} Range: {}-{}",
-                    ident,
-                    atoms_len,
-                    range_start,
-                    range_end,
-                ),
-                Color32::WHITE
-            );
+            for group in sorted_groups_display.iter().take(max_count) {
+                ui.horizontal(|ui| {
+                    let mut visible = state.volatile.md_local.viewer.mol_sets[i].groups
+                        [group.group_i]
+                        .visible;
+                    if ui.checkbox(&mut visible, "vis").changed() {
+                        state.volatile.md_local.viewer.mol_sets[i].groups[group.group_i].visible =
+                            visible;
+                        redraw_active_set = active;
+                    }
+
+                    let mut text = if group.mol_count > 1 {
+                        format!(
+                            "{} ({} mols) | Atoms: {} Range: {}-{}",
+                            group.ident,
+                            group.mol_count,
+                            group.atom_count,
+                            group.range_covered.0,
+                            group.range_covered.1,
+                        )
+                    } else {
+                        format!(
+                            "{} | Atoms: {} Range: {}-{}",
+                            group.ident,
+                            group.atom_count,
+                            group.range_covered.0,
+                            group.range_covered.1,
+                        )
+                    };
+
+                    if !visible {
+                        text.push_str(" (hidden)");
+                    }
+
+                    label!(
+                        ui,
+                        text,
+                        if visible {
+                            Color32::WHITE
+                        } else {
+                            Color32::GRAY
+                        }
+                    );
+                });
             }
-            if set_mols_len >= max_count {
+            if sorted_groups_display.len() > max_count {
                 label!(ui, "...", Color32::WHITE);
             }
 
@@ -805,14 +827,23 @@ pub(in crate::ui) fn md_viewer_mappings(
             if set_clicked {
                 // We have this as the function calls in this branch which call state have a borrow
                 // error otherwise; the flag setting is convenience.
-                reset_camera(state, scene, updates, FWD_VEC);
-                viewer::draw_mols(state, scene, updates);
-
                 redraw.set_all();
 
-                if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
-                    handle_err(&mut state.ui, "Error changing snaps".to_string());
+                if state.volatile.md_local.viewer.mol_set_active.is_some() {
+                    let snap_i = state.volatile.md_local.viewer.current_snapshot.unwrap_or(0);
+
+                    if state.volatile.md_local.viewer.change_snapshot(snap_i).is_err() {
+                        handle_err(&mut state.ui, "Error changing snaps".to_string());
+                    }
+
+                    reset_camera(state, scene, updates, FWD_VEC);
+                    viewer::draw_mols(state, scene, updates);
                 }
+            }
+
+            if redraw_active_set && state.volatile.md_local.draw_md_mols {
+                viewer::draw_mols(state, scene, updates);
+                redraw.set_all();
             }
         });
     }
