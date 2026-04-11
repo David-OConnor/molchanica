@@ -47,7 +47,8 @@ pub(in crate::ui) fn dynamics_viewer(
             {
                 state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
 
-                viewer::draw_mols(state, scene, updates);
+                redraw.set_all();
+                // viewer::draw_mols(state, scene, updates);
             }
         }
 

@@ -814,6 +814,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
 
     let num_mols = set.mols.len();
     let num_groups = set.groups.len();
+    let num_tinted_groups = num_groups.saturating_sub(1);
     let range_to_group: HashMap<(usize, usize), usize> = set
         .groups
         .iter()
@@ -837,7 +838,11 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
             continue;
         }
 
-        let group_color = color_viridis(group_i, 0, num_groups);
+        let group_tint = if group_i == 0 {
+            None
+        } else {
+            Some(color_viridis(group_i - 1, 0, num_tinted_groups))
+        };
 
         match mol.mol_type {
             MolType::Peptide => {
@@ -854,8 +859,10 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     OperatingMode::Primary,
                     num_mols,
                 );
-                for ent in &mut ents_this {
-                    ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                if let Some(group_color) = group_tint {
+                    for ent in &mut ents_this {
+                        ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                    }
                 }
                 ents.extend(ents_this);
             }
@@ -874,8 +881,10 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     OperatingMode::Primary,
                     num_mols,
                 );
-                for ent in &mut ents_this {
-                    ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                if let Some(group_color) = group_tint {
+                    for ent in &mut ents_this {
+                        ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                    }
                 }
                 ents.extend(ents_this);
             }
@@ -894,8 +903,10 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     OperatingMode::Primary,
                     num_mols,
                 );
-                for ent in &mut ents_this {
-                    ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                if let Some(group_color) = group_tint {
+                    for ent in &mut ents_this {
+                        ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                    }
                 }
                 ents.extend(ents_this);
             }
@@ -914,8 +925,10 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     OperatingMode::Primary,
                     num_mols,
                 );
-                for ent in &mut ents_this {
-                    ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                if let Some(group_color) = group_tint {
+                    for ent in &mut ents_this {
+                        ent.color = blend_color(ent.color, group_color, BLEND_AMT_MD_GROUP);
+                    }
                 }
                 ents.extend(ents_this);
             }
