@@ -48,7 +48,6 @@ pub(in crate::ui) fn dynamics_viewer(
                 state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
 
                 redraw.set_all();
-                // viewer::draw_mols(state, scene, updates);
             }
         }
 
@@ -790,10 +789,6 @@ pub(in crate::ui) fn viewer_mol_set(
                     let mut visible = state.volatile.md_local.viewer.mol_sets[i].groups
                         [group.group_i]
                         .visible;
-
-                    if !visible {
-                        text.push_str(" (hidden)");
-                    }
 
                     label!(
                         ui,

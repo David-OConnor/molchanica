@@ -363,8 +363,7 @@ pub fn run(
     let e_water = 0.;
     let e_octanol = 0.;
 
-    // todo: Octanol init is slow.
-    // let e_water = run_water(mol, state, scene, updates)?;
+    let e_water = run_water(mol, state, scene, updates)?;
     let e_octanol = run_octanol(mol, state, scene, updates)?;
 
     // todo: How do we calculate alchemical free energies?
