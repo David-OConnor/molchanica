@@ -767,15 +767,6 @@ pub(in crate::ui) fn viewer_mol_set(
             let max_count = 5;
             for group in sorted_groups_display.iter().take(max_count) {
                 ui.horizontal(|ui| {
-                    let mut visible = state.volatile.md_local.viewer.mol_sets[i].groups
-                        [group.group_i]
-                        .visible;
-                    if ui.checkbox(&mut visible, "vis").changed() {
-                        state.volatile.md_local.viewer.mol_sets[i].groups[group.group_i].visible =
-                            visible;
-                        redraw_active_set = active;
-                    }
-
                     let mut text = if group.mol_count > 1 {
                         format!(
                             "{} ({} mols) | Atoms: {} Range: {}-{}",
@@ -795,6 +786,10 @@ pub(in crate::ui) fn viewer_mol_set(
                         )
                     };
 
+                    let mut visible = state.volatile.md_local.viewer.mol_sets[i].groups
+                        [group.group_i]
+                        .visible;
+
                     if !visible {
                         text.push_str(" (hidden)");
                     }
@@ -808,8 +803,15 @@ pub(in crate::ui) fn viewer_mol_set(
                             Color32::GRAY
                         }
                     );
+
+                    if ui.checkbox(&mut visible, "vis").changed() {
+                        state.volatile.md_local.viewer.mol_sets[i].groups[group.group_i].visible =
+                            visible;
+                        redraw_active_set = active;
+                    }
                 });
             }
+
             if sorted_groups_display.len() > max_count {
                 label!(ui, "...", Color32::WHITE);
             }

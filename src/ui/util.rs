@@ -175,7 +175,6 @@ pub fn handle_redraw(
         && (redraw.peptide || redraw.ligand || redraw.lipid || redraw.na)
     {
         viewer::draw_mols(state, scene, updates);
-        println!("Redrawing MD"); // todo temp to make sure not spamming
 
         *redraw = Default::default();
         return;

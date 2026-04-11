@@ -18,8 +18,6 @@ use na_seq::{
     Element::{Carbon, Hydrogen},
 };
 
-use crate::ui::util::handle_redraw;
-use crate::util::RedrawFlags;
 use crate::{
     bond_inference::create_hydrogen_bonds_two_mols,
     cam,
@@ -38,7 +36,8 @@ use crate::{
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, State, StateUi},
-    util::{aromatic_ring_centroid, find_neighbor_posit},
+    ui::util::handle_redraw,
+    util::{RedrawFlags, aromatic_ring_centroid, find_neighbor_posit},
 };
 
 pub const INIT_CAM_DIST: f32 = 20.;

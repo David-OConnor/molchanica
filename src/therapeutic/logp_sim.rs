@@ -12,13 +12,14 @@
 
 // todo: Create an octanol-initialization template.
 
+use std::{collections::HashSet, time::Instant};
+
 use dynamics::{
     FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit, Solvent,
     TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
-use std::{collections::HashSet, time::Instant};
 
 use crate::{
     gromacs::{build_molecule_inputs, make_gromacs_input, on_gromacs_md_complete},

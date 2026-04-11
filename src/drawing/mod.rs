@@ -77,6 +77,7 @@ const LIGAND_COLOR: Color = (0., 0.4, 1.);
 const LIGAND_BLEND_AMT: f32 = 0.4;
 const LIPID_COLOR: Color = (1.0, 1.0, 0.);
 const LIPID_BLEND_AMT: f32 = 0.3;
+pub const BLEND_AMT_MD_GROUP: f32 = 0.72;
 
 pub const WATER_OPACITY: f32 = 1.;
 pub const PHARMACOPHORE_OPACITY: f32 = 0.3;
