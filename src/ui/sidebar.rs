@@ -738,9 +738,9 @@ fn traj_items(
                 }
 
                 // todo: Allow end and start to be unbounded in UI, setting their val to None.
-                num_field(&mut traj.ui_start_i, "", 34, ui);
+                num_field(&mut traj.ui_start_i, "", 44, ui);
                 ui.label("-");
-                num_field(&mut traj.ui_end_i, "", 34, ui);
+                num_field(&mut traj.ui_end_i, "", 44, ui);
 
                 // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
                 if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING

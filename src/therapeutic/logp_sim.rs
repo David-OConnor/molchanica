@@ -6,25 +6,35 @@
 //! that the lambda-dependent interaction scaling and `dH/dlambda` bookkeeping are
 //! consistent with the solvent templates in that crate.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use dynamics::{
-    ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit,
-    Solvent, TAU_TEMP_DEFAULT,
+    ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBox,
+    SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     alchemical::{LambdaWindow, collect_window, free_energy_ti, log_p},
+    make_octanol, pack_solvent_with_shrinking_box,
     snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
-    md::{build_dynamics, run_dynamics_blocking, MdBackend},
+    md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
+    screening::MOL_CACHE_SIZE_ATOM_COUNT,
     state::State,
     util::handle_success,
 };
 
-const OCTANOL_BOX_SIZE: f32 = 46.;
-const WATER_BOX_SIZE: f32 = 35.;
+const OCTANOL_BOX_SIZE: f32 = 46.; // 356 octanol + 132 water ≈ 97,230 Å³ ≈ 46³ Å³
+const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 water mols; > 2× the 12 Å NB cutoff.
+
+const OCTANOL_COUNT: usize = 356; // or 362 ? Or 368.
+// 27 mol% water in water-saturated 1-octanol (literature value).
+// water/(water+octanol) = 0.27  →  water = octanol × 0.27/0.73 ≈ octanol × 0.37.
+
+// todo: or 0.26? I'm getting different values from different sources.
+const WATER_MOL_PER_OCTANOL: f32 = 0.38;
+const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_MOL_PER_OCTANOL) as usize;
 
 const DT: f32 = 0.002; // ps
 
@@ -137,7 +147,7 @@ fn run_alchemical_window(
 
     // The solute is the first user-supplied molecule. Solvent and ions are appended later.
     md.alch_mol_idx = Some(0);
-    md.lambda = lambda;
+    md.lambda_alch = lambda;
 
     run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
     md.snapshots.clear();
@@ -206,12 +216,38 @@ pub fn run(
         );
     }
 
+    {
+        let phase_ = Phase::Octanol;
+
+        let sim_box_init = SimBoxInit::new_cube(OCTANOL_BOX_SIZE);
+        let cell = SimBox::from_solute_atoms(&[], &sim_box_init);
+        if pack_solvent_with_shrinking_box(
+            &state.dev,
+            &make_octanol(),
+            "octanol",
+            OCTANOL_COUNT,
+            OCTANOL_BOX_WATER_COUNT,
+            cell,
+            &state.ff_param_set,
+            Path::new("./md_out"),
+        )
+        .is_err()
+        {
+            eprintln!("Error creating solvent box");
+        }
+        return Ok(0.);
+    }
+
+    // todo: Temp: Building a new sim box
+
     handle_success(
         &mut state.ui,
         "Running alchemical free-energy windows for water and octanol...".to_string(),
     );
 
+    println!("Running LogP MD for water...");
     let water = run_phase_free_energy(mol, state, Phase::Water)?;
+    println!("Running LogP MD for octanol...");
     let octanol = run_phase_free_energy(mol, state, Phase::Octanol)?;
 
     let logp_value = log_p(water.dg_kcal_mol, octanol.dg_kcal_mol, TEMP_TGT as f64) as f32;
