@@ -372,6 +372,7 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
                 for v in &[
                     Solvent::None,
                     Solvent::WaterOpc,
+                    Solvent::OctanolWithWater,
                     // todo: Custom
                     // Solvent::Custom(),
                 ] {

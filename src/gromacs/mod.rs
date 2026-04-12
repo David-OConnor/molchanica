@@ -27,11 +27,18 @@ use std::{
 
 use bio_files::{
     AtomGeneric, BondGeneric, FrameSlice, create_bonds, gromacs,
-    gromacs::{GromacsInput, GromacsOutput, MdpParams, MoleculeInput},
+    gromacs::{
+        GromacsInput, GromacsOutput, MdpParams, MoleculeInput,
+        gro::{AtomGro, Gro},
+    },
     md_params::ForceFieldParams,
 };
-use dynamics::{FfMolType, SimBoxInit, Solvent, params::FfParamSet};
+use dynamics::{
+    FfMolType, MolDynamics, OCTANOL_WATER_TEMPLATE, SimBoxInit, Solvent, make_octanol,
+    params::FfParamSet,
+};
 use lin_alg::{f32::Vec3, f64::Vec3 as Vec3F64};
+use na_seq::Element;
 
 use crate::{
     md::{
@@ -94,7 +101,7 @@ pub fn make_gromacs_input(
         Solvent::WaterOpc => Some(gromacs::solvate::Solvent::Opc),
         // todo: Implement.
         Solvent::WaterOpcSpecifyMolCount(_) => None,
-        Solvent::OctanolWithWater => None,
+        Solvent::OctanolWithWater => Some(octanol_with_water_solvent()),
         Solvent::Custom(_) => None,
         // todo: Implment this.
         // Solvent::Custom(_) => Some(gromacs::solvate::Solvent::Custom(WaterInitTemplate)),
@@ -111,6 +118,94 @@ pub fn make_gromacs_input(
         },
         // mols_owned,
     )
+}
+
+fn octanol_with_water_solvent() -> gromacs::solvate::Solvent {
+    let octanol = make_octanol();
+
+    gromacs::solvate::Solvent::Custom(gromacs::solvate::CustomSolventTemplate {
+        gro_text: gromacs_octanol_with_water_template()
+            .unwrap_or_else(|_| OCTANOL_WATER_TEMPLATE.to_string()),
+        topology_molecules: vec![molecule_input_from_template("octan", &octanol)],
+        include_opc_water: true,
+    })
+}
+
+fn gromacs_octanol_with_water_template() -> io::Result<String> {
+    const OPC_VS_A: f64 = 0.147803;
+
+    let gro = Gro::new(OCTANOL_WATER_TEMPLATE)?;
+    let mut atoms_out = Vec::with_capacity(gro.atoms.len() + gro.atoms.len() / 3);
+
+    let mut i = 0;
+    while i < gro.atoms.len() {
+        let atom = &gro.atoms[i];
+        if atom.mol_name == "SOL" {
+            let Some(hw1) = gro.atoms.get(i + 1) else {
+                return Err(io::Error::other(
+                    "Incomplete SOL molecule in octanol/water template",
+                ));
+            };
+            let Some(hw2) = gro.atoms.get(i + 2) else {
+                return Err(io::Error::other(
+                    "Incomplete SOL molecule in octanol/water template",
+                ));
+            };
+
+            if atom.atom_type != "OW" || hw1.atom_type != "HW1" || hw2.atom_type != "HW2" {
+                return Err(io::Error::other(
+                    "Unexpected SOL atom order in octanol/water template",
+                ));
+            }
+
+            atoms_out.push(atom.clone());
+            atoms_out.push(hw1.clone());
+            atoms_out.push(hw2.clone());
+
+            let mw_posit = atom.posit
+                + (hw1.posit - atom.posit) * OPC_VS_A
+                + (hw2.posit - atom.posit) * OPC_VS_A;
+            atoms_out.push(AtomGro {
+                mol_id: atom.mol_id,
+                mol_name: atom.mol_name.clone(),
+                element: Element::Oxygen,
+                atom_type: "MW".to_string(),
+                serial_number: 0,
+                posit: mw_posit,
+                velocity: Some(Vec3F64::new_zero()),
+            });
+
+            i += 3;
+        } else {
+            atoms_out.push(atom.clone());
+            i += 1;
+        }
+    }
+
+    for (idx, atom) in atoms_out.iter_mut().enumerate() {
+        atom.serial_number = idx as u32 + 1;
+    }
+
+    let gro_out = Gro {
+        atoms: atoms_out,
+        head_text: gro.head_text,
+        box_vec: gro.box_vec,
+    };
+
+    let mut bytes = Vec::new();
+    gro_out.write_to(&mut bytes)?;
+    String::from_utf8(bytes)
+        .map_err(|e| io::Error::other(format!("Invalid UTF-8 writing GRO template: {e}")))
+}
+
+fn molecule_input_from_template(name: &str, mol: &MolDynamics) -> MoleculeInput {
+    MoleculeInput {
+        name: name.to_string(),
+        atoms: mol.atoms.clone(),
+        bonds: mol.bonds.clone(),
+        ff_params: mol.mol_specific_params.clone(),
+        count: 0,
+    }
 }
 
 pub fn gromacs_input_from_state(
