@@ -101,18 +101,26 @@ impl MdStateLocal {
 /// For our non-blocking workflow. Run this once an MD run using the `Dynamics` engine is complete.
 pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     let md = &mut state.volatile.md_local;
-    if md.mol_dynamics.is_none() {
-        // if md.mol_dynamics.is_none() {
+
+    let Some(md_state) = &mut md.mol_dynamics else {
         eprintln!("Can't run MD cleanup; MD state is None");
         return;
     };
+
+    // if md.mol_dynamics.is_none() {
+    //     // if md.mol_dynamics.is_none() {
+    //     eprintln!("Can't run MD cleanup; MD state is None");
+    //     return;
+    // };
 
     md.running = false;
     md.start = None;
     md.draw_md_mols = true;
 
+    md_state.flush_snapshot_queues();
+
     // Copy snapshots from MD state to the viewer.
-    let snaps = md.mol_dynamics.as_ref().unwrap().snapshots.clone();
+    let snaps = md_state.snapshots.clone();
     md.viewer.snapshots = snaps.clone();
 
     for traj in &mut state.trajectories {
@@ -134,23 +142,17 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     ));
 
     // Auto-save the mol set as a GRO file alongside the trajectory files.
-    let run_index = state
-        .volatile
-        .md_local
-        .mol_dynamics
-        .as_ref()
-        .and_then(|md| md.run_index)
-        .unwrap_or(0);
+    let run_index = md_state.run_index.unwrap_or(0);
 
     let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
     // The mol set we just added is the last one in the viewer.
-    if let Some(mol_set) = state.volatile.md_local.viewer.mol_sets.last() {
+    if let Some(mol_set) = md.viewer.mol_sets.last() {
         if let Err(e) = save_mol_set_as_gro(mol_set, &gro_path) {
             eprintln!("Error auto-saving GRO: {e:?}");
         }
     }
 
-    if state.volatile.md_local.viewer.change_snapshot(0).is_err() {
+    if md.viewer.change_snapshot(0).is_err() {
         handle_err(
             &mut state.ui,
             String::from("Error changing snapshot at MD completion."),
@@ -158,9 +160,8 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         return;
     }
 
-    if !state.volatile.md_local.viewer.mol_sets.is_empty() {
-        state.volatile.md_local.viewer.mol_set_active =
-            Some(state.volatile.md_local.viewer.mol_sets.len() - 1);
+    if !md.viewer.mol_sets.is_empty() {
+        md.viewer.mol_set_active = Some(md.viewer.mol_sets.len() - 1);
     }
 
     reset_camera(state, scene, updates, FWD_VEC);

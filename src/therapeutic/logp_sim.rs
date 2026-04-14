@@ -8,19 +8,21 @@
 
 use std::{collections::HashSet, path::Path};
 
+use bio_files::gromacs::OutputControl;
+use cudarc::driver::sys::CUuserObject_flags::CU_USER_OBJECT_NO_DESTRUCTOR_SYNC;
 use dynamics::{
     ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBox,
     SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     alchemical::{LambdaWindow, collect_window, free_energy_ti, log_p},
-    make_octanol, pack_solvent_with_shrinking_box,
     snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
+use lin_alg::f32::{Vec3, X_VEC};
+use rustfft::num_traits::Zero;
 
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
-    screening::MOL_CACHE_SIZE_ATOM_COUNT,
     state::State,
     util::handle_success,
 };
@@ -42,7 +44,8 @@ const DT: f32 = 0.002; // ps
 // predictions should use much longer sampling and usually denser endpoint spacing.
 const EQUIL_STEPS_PER_WINDOW: usize = 500;
 const PROD_STEPS_PER_WINDOW: usize = 1_000;
-const SNAPSHOT_RATIO: usize = 10;
+
+const SNAPSHOT_RATIO: usize = 1; // todo: For now
 
 const TEMP_TGT: f32 = 298.15; // 25 C
 const LAMBDAS: &[f64] = &[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
@@ -82,7 +85,7 @@ struct FreeEnergyEstimate {
     windows: Vec<LambdaWindow>,
 }
 
-fn build_alchemical_cfg(phase: Phase) -> MdConfig {
+fn build_cfg(phase: Phase) -> MdConfig {
     MdConfig {
         integrator: Integrator::VerletVelocity {
             thermostat: Some(TAU_TEMP_DEFAULT),
@@ -94,14 +97,18 @@ fn build_alchemical_cfg(phase: Phase) -> MdConfig {
         barostat_cfg: None,
         snapshot_handlers: SnapshotHandlers {
             memory: Some(SNAPSHOT_RATIO),
+            // ..Default::default()
+            // todo: For now at least
+            gromacs: OutputControl {
+                nstxout: Some(1),
+                nstfout: Some(1), // todo A/R
+                ..Default::default()
+            },
             ..Default::default()
         },
         sim_box: SimBoxInit::new_cube(phase.box_size()),
         solvent: phase.solvent(),
-        overrides: MdOverrides {
-            snapshots_during_equilibration: false,
-            ..Default::default()
-        },
+        overrides: MdOverrides::default(),
         ..Default::default()
     }
 }
@@ -130,7 +137,7 @@ fn run_alchemical_window(
     mol.common.selected_for_md = true;
 
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
-    let cfg = build_alchemical_cfg(phase);
+    let cfg = build_cfg(phase);
     let mut pep_atom_set = HashSet::new();
 
     let dev = ComputationDevice::Cpu;
@@ -174,6 +181,142 @@ fn run_alchemical_window(
     Ok(window)
 }
 
+fn run_drag(
+    dev: &ComputationDevice,
+    mol: &MoleculeSmall,
+    state: &State,
+    // todo :Mut state for now so we can easily visualize whne testing.
+    phase: Phase,
+) -> Result<f32, ParamError> {
+    let mut mol = mol.clone();
+    mol.common.selected_for_md = true;
+
+    let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
+
+    let atom_count_solute = mols[0].1.atoms.len();
+
+    let cfg = {
+        let mut v = build_cfg(phase);
+
+        // For example: Long along the drag axis.
+        // v.sim_box = SimBoxInit::Fixed((
+        //     Vec3::new_zero(), Vec3::new_zero(),
+        // ));
+
+        v
+    };
+    let mut pep_atom_set = HashSet::new();
+
+    let (mut md, _) = build_dynamics(
+        dev,
+        &mols,
+        &state.ff_param_set,
+        &state.mol_specific_params,
+        &cfg,
+        false,
+        None,
+        &mut pep_atom_set,
+    )?;
+
+    // Includes the solute and if applicable, octanol. Does not include OPC water.
+    let atom_count_all = md.atoms.len();
+
+    // run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
+
+    // todo: Experimenting with our already-existing external force injection into step.
+    let f_drag = Vec3::x() * 1.; // todo: Mag.
+
+    let f_external = {
+        let mut v = vec![Vec3::new_zero(); atom_count_solute];
+
+        for i in 0..atom_count_solute {
+            v[i] = f_drag;
+        }
+
+        v
+    };
+
+    let mut baseline_f = Vec3::new_zero();
+
+    println!("Running MD with drag test for {}...", phase.name());
+    for step in 0..300 {
+        // Step 0 will have no external force/no dragging.
+        let force = if step == 0 {
+            None
+        } else {
+            Some(f_external.clone())
+        };
+        md.step(dev, DT, force);
+    }
+    md.flush_snapshot_queues();
+
+    let mut baseline_f = Vec3::new_zero();
+
+    for (i, snap) in md.snapshots.iter().enumerate() {
+        if !i.is_multiple_of(20) {
+            continue;
+        }
+
+        match &snap.force {
+            Some(f_by_atom) => {
+                let mut f_total = Vec3::new_zero();
+                for f in f_by_atom {
+                    f_total += *f;
+                }
+
+                if i == 0 {
+                    baseline_f = f_total;
+                }
+
+                let diff_from_baseline = f_total - baseline_f;
+                let diff_mag = diff_from_baseline.magnitude();
+
+                println!(
+                    "{} - F at snap {i}: {f_total:.5}. Diff: {diff_mag:.5}",
+                    phase.name()
+                );
+            }
+            None => {
+                eprintln!("Error: No force");
+            }
+        }
+
+        let mut e_baseline = 0.;
+        match &snap.energy_data {
+            Some(e) => {
+                // let mut f_total = Vec3::new_zero();
+                // for f in e {
+                //     f_total += *f;
+                // }
+                //
+                // if i == 0 {
+                //     baseline_f = f_total;
+                // }
+                //
+                // let diff_from_baseline = f_total - baseline_f;
+                // let diff_mag = diff_from_baseline.magnitude();
+
+                if i == 0 {
+                    e_baseline = e.energy_kinetic + e.energy_potential;
+                }
+
+                println!(
+                    "{} - E at snap {i}: {:.5}. Diff: {:.5}",
+                    phase.name(),
+                    e.energy_potential + e.energy_kinetic,
+                    e.energy_potential + e.energy_kinetic - e_baseline
+                );
+            }
+            None => {
+                eprintln!("Error: No force");
+            }
+        }
+    }
+
+    println!("Drag test complete. Snapshots written.");
+    Ok(0.)
+}
+
 fn run_phase_free_energy(
     mol: &MoleculeSmall,
     state: &State,
@@ -204,7 +347,8 @@ fn run_phase_free_energy(
     })
 }
 
-pub fn run(
+/// Todo: Experimenting with different approachesl.
+pub fn run_alchemical(
     mol: &MoleculeSmall,
     state: &mut State,
     _scene: &mut Scene,
@@ -212,31 +356,32 @@ pub fn run(
 ) -> Result<f32, ParamError> {
     if state.to_save.md_backend != MdBackend::Dynamics {
         println!(
-            "LogP alchemical free energy currently runs on the built-in dynamics backend (CPU), ignoring the active non-dynamics backend for this workflow."
+            "LogP alchemical free energy currently runs on the built-in dynamics backend (CPU),\
+             ignoring the active non-dynamics backend for this workflow."
         );
     }
 
-    {
-        let phase_ = Phase::Octanol;
-
-        let sim_box_init = SimBoxInit::new_cube(OCTANOL_BOX_SIZE);
-        let cell = SimBox::from_solute_atoms(&[], &sim_box_init);
-        if pack_solvent_with_shrinking_box(
-            &state.dev,
-            &make_octanol(),
-            "octanol",
-            OCTANOL_COUNT,
-            OCTANOL_BOX_WATER_COUNT,
-            cell,
-            &state.ff_param_set,
-            Path::new("./md_out"),
-        )
-        .is_err()
-        {
-            eprintln!("Error creating solvent box");
-        }
-        return Ok(0.);
-    }
+    // {
+    //     let phase_ = Phase::Octanol;
+    //
+    //     let sim_box_init = SimBoxInit::new_cube(OCTANOL_BOX_SIZE);
+    //     let cell = SimBox::from_solute_atoms(&[], &sim_box_init);
+    //     if pack_solvent_with_shrinking_box(
+    //         &state.dev,
+    //         &make_octanol(),
+    //         "octanol",
+    //         OCTANOL_COUNT,
+    //         OCTANOL_BOX_WATER_COUNT,
+    //         cell,
+    //         &state.ff_param_set,
+    //         Path::new("./md_out"),
+    //     )
+    //     .is_err()
+    //     {
+    //         eprintln!("Error creating solvent box");
+    //     }
+    //     return Ok(0.);
+    // }
 
     // todo: Temp: Building a new sim box
 
@@ -269,4 +414,36 @@ pub fn run(
     handle_success(&mut state.ui, msg);
 
     Ok(logp_value)
+}
+
+/// We shall try different techniques. For example: Dragging a molecule across both boxes,
+/// and summing the forces in each.
+pub fn run(
+    mol: &MoleculeSmall,
+    state: &mut State,
+    _scene: &mut Scene,
+    _updates: &mut EngineUpdates,
+) -> Result<f32, ParamError> {
+    println!("Starting LogP MD simulation...");
+
+    if state.to_save.md_backend != MdBackend::Dynamics {
+        println!(
+            "LogP alchemical free energy currently runs on the built-in dynamics backend (CPU), ignoring the active non-dynamics backend for this workflow."
+        );
+    }
+
+    // todo: Temp: Building a new sim box
+
+    handle_success(
+        &mut state.ui,
+        "Running alchemical free-energy windows for water and octanol...".to_string(),
+    );
+
+    println!("Running LogP MD for water...");
+    let water = run_drag(&state.dev, mol, state, Phase::Water)?;
+
+    // println!("Running LogP MD for octanol...");
+    let octanol = run_drag(&state.dev, mol, state, Phase::Octanol)?;
+
+    Ok(0.)
 }

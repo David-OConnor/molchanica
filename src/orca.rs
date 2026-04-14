@@ -80,12 +80,7 @@ pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
                     // todo: You can also get time from the comment.
                     time: time as f64,
                     atom_posits,
-                    atom_velocities: None,
-                    water_o_posits: Vec::new(),
-                    water_h0_posits: Vec::new(),
-                    water_h1_posits: Vec::new(),
-                    water_velocities: None,
-                    energy_data: None,
+                    ..Default::default()
                 })
             }
         }
