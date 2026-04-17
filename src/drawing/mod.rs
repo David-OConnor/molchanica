@@ -18,7 +18,9 @@ use crate::{
     drawing::{
         atoms_bonds::{
             ATOM_SHININESS, BALL_RADIUS_WATER_H, BALL_RADIUS_WATER_O, BALL_STICK_RADIUS,
-            BALL_STICK_RADIUS_H, BODY_SHINYNESS, WATER_BOND_THICKNESS, draw_hydrogen_bond,
+            BALL_STICK_RADIUS_H, BODY_SHINYNESS, MD_SOLVENT_ATOM_RADIUS_SCALE,
+            WATER_BOND_THICKNESS, draw_hydrogen_bond, hide_md_wrapped_covalent_bond,
+            use_md_compact_solvent_style,
         },
         viridis_lut::VIRIDIS,
     },
@@ -559,6 +561,7 @@ pub fn draw_mol(
     manip_mode: ManipMode,
     mode: OperatingMode,
     num_mols: usize,
+    draw_md_mols: bool,
 ) -> Vec<Entity> {
     let mut result = Vec::new();
 
@@ -571,6 +574,8 @@ pub fn draw_mol(
     } else {
         false
     };
+
+    let compact_md_solvent_style = use_md_compact_solvent_style(draw_md_mols, &mol.common().ident);
 
     // todo: You have problems with transparent objects like the view cube in conjunction
     // todo with the transparent surface; workaround to not draw the cube here.
@@ -694,6 +699,13 @@ pub fn draw_mol(
                 },
             };
 
+            let radius = if compact_md_solvent_style && !matches!(ui.mol_view, MoleculeView::SpaceFill)
+            {
+                radius * MD_SOLVENT_ATOM_RADIUS_SCALE
+            } else {
+                radius
+            };
+
             let mut entity = Entity::new(
                 mesh,
                 mol.common().atom_posits[i_atom].into(),
@@ -749,6 +761,10 @@ pub fn draw_mol(
 
         let posit_0: Vec3 = mol.common().atom_posits[bond.atom_0].into();
         let posit_1: Vec3 = mol.common().atom_posits[bond.atom_1].into();
+
+        if hide_md_wrapped_covalent_bond(draw_md_mols, posit_0, posit_1) {
+            continue;
+        }
 
         // For determining how to orient multiple-bonds. Only run for relevant bonds to save
         // computation.
@@ -938,6 +954,8 @@ pub fn draw_mol(
             color_1,
             bond.bond_type,
             mol.mol_type(),
+            &mol.common().ident,
+            draw_md_mols,
             true,
             neighbor_posit,
             mol_active,
@@ -1879,6 +1897,8 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
             color_1,
             bond.bond_type,
             MolType::Peptide,
+            &mol.common.ident,
+            false,
             state.ui.mol_view != MoleculeView::BallAndStick,
             neighbor_posit,
             false,

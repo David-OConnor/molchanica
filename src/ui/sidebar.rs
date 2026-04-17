@@ -334,7 +334,7 @@ fn mol_picker(
     // todo: AAs here too?
 
     if let Some((mol_type, i_mol)) = close {
-        close_mol(mol_type, i_mol, state, scene, updates);
+        close_mol(mol_type, i_mol, state, scene, redraw, updates);
     }
 
     if recenter_orbit

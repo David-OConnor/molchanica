@@ -584,6 +584,7 @@ pub fn redraw(
         manip_mode,
         OperatingMode::MolEditor,
         1,
+        false,
     ));
 
     if let Some(p) = &editor.mol.pharmacophore.pocket {
@@ -767,6 +768,8 @@ fn draw_bond(
         color_1,
         bond.bond_type,
         MolType::Ligand,
+        "",
+        false,
         true,
         neighbor_posit,
         false,

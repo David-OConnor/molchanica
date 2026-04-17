@@ -582,7 +582,7 @@ fn handle_physical_key(
                         OperatingMode::Primary => {
                             // Close the active mol?
                             if let Some((mol_type, i)) = state.volatile.active_mol {
-                                close_mol(mol_type, i, state, scene, updates);
+                                close_mol(mol_type, i, state, scene, redraw, updates);
                             }
                         }
                         OperatingMode::MolEditor => {

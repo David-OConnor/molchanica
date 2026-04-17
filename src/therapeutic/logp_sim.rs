@@ -9,7 +9,6 @@
 use std::{collections::HashSet, path::Path};
 
 use bio_files::gromacs::OutputControl;
-use cudarc::driver::sys::CUuserObject_flags::CU_USER_OBJECT_NO_DESTRUCTOR_SYNC;
 use dynamics::{
     ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBox,
     SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
@@ -17,26 +16,35 @@ use dynamics::{
     snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
-use lin_alg::f32::{Vec3, X_VEC};
-use rustfft::num_traits::Zero;
+use lin_alg::f32::Vec3;
 
+use crate::file_io::save_mol_set_as_gro;
 use crate::{
-    md::{MdBackend, build_dynamics, run_dynamics_blocking},
+    md::{MdBackend, build_dynamics, custom_solvents_to_mol_commons, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
     state::State,
     util::handle_success,
 };
 
-const OCTANOL_BOX_SIZE: f32 = 46.; // 356 octanol + 132 water ≈ 97,230 Å³ ≈ 46³ Å³
+// 46 is a good default, and is what we built the template for. Trying smaller to optimize.
+// const OCTANOL_BOX_SIZE: f32 = 46.; // 356 octanol + 132 water ≈ 97,230 Å³ ≈ 46³ Å³
+const OCTANOL_BOX_SIZE: f32 = 30.; // 356 octanol + 132 water ≈ 97,230 Å³ ≈ 46³ Å³
 const WATER_BOX_SIZE: f32 = 35.; // Å — 35 Å → ~1,400 water mols; > 2× the 12 Å NB cutoff.
 
-const OCTANOL_COUNT: usize = 356; // or 362 ? Or 368.
+// Molecules per Å³
+const OCTANOL_PER_UNIT_VOL: f32 = 356. / (46. * 46. * 46.);
+
+// Note: We can probably depecate octanol count and water per octanol: These are now part
+// of a template. But useful when *building the template*
+
 // 27 mol% water in water-saturated 1-octanol (literature value).
 // water/(water+octanol) = 0.27  →  water = octanol × 0.27/0.73 ≈ octanol × 0.37.
+// const OCTANOL_COUNT: usize =
+//     (OCTANOL_BOX_SIZE * OCTANOL_BOX_SIZE * OCTANOL_BOX_SIZE * OCTANOL_PER_UNIT_VOL) as usize;
 
 // todo: or 0.26? I'm getting different values from different sources.
 const WATER_MOL_PER_OCTANOL: f32 = 0.38;
-const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_MOL_PER_OCTANOL) as usize;
+// const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_MOL_PER_OCTANOL) as usize;
 
 const DT: f32 = 0.002; // ps
 
@@ -182,9 +190,11 @@ fn run_alchemical_window(
 }
 
 fn run_drag(
-    dev: &ComputationDevice,
+    // dev: &ComputationDevice,
     mol: &MoleculeSmall,
-    state: &State,
+    // state: &State,
+    state: &mut State,
+
     // todo :Mut state for now so we can easily visualize whne testing.
     phase: Phase,
 ) -> Result<f32, ParamError> {
@@ -207,8 +217,8 @@ fn run_drag(
     };
     let mut pep_atom_set = HashSet::new();
 
-    let (mut md, _) = build_dynamics(
-        dev,
+    let (mut md, custom_solvent) = build_dynamics(
+        &state.dev,
         &mols,
         &state.ff_param_set,
         &state.mol_specific_params,
@@ -224,10 +234,24 @@ fn run_drag(
     // run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
 
     // todo: Experimenting with our already-existing external force injection into step.
-    let f_drag = Vec3::x() * 1.; // todo: Mag.
+    // let f_drag = Vec3::x() * 1.; // todo: Mag.
+    // let f_drag = Vec3::x() * 0.25; // todo: Mag.
+    let f_drag = Vec3::x() * 2.; // todo: Mag.
+
+    // 1: 360 (water
+    // 0.5: 34-41
+    // 0.25: 220 - 230... Huh? How? or 600???
+    // 2.0: 90 - 100
 
     let f_external = {
-        let mut v = vec![Vec3::new_zero(); atom_count_solute];
+        // NOte Dynamics has special handling of rigid water, but treats explicit
+        // solvents as normal MD atoms.
+        // let num_md_atoms = match phase {
+        //     Phase::Water => atom_count_solute,
+        //     Phase::Octanol => md.atoms.len(),
+        // }
+        //
+        let mut v = vec![Vec3::new_zero(); md.atoms.len()];
 
         for i in 0..atom_count_solute {
             v[i] = f_drag;
@@ -236,27 +260,31 @@ fn run_drag(
         v
     };
 
-    let mut baseline_f = Vec3::new_zero();
+    // let n_steps = 1_000;
+    // todo temp!!
+    let n_steps = 500;
 
     println!("Running MD with drag test for {}...", phase.name());
-    for step in 0..300 {
+    for step in 0..n_steps {
         // Step 0 will have no external force/no dragging.
         let force = if step == 0 {
             None
         } else {
             Some(f_external.clone())
         };
-        md.step(dev, DT, force);
+        md.step(&state.dev, DT, force);
     }
     md.flush_snapshot_queues();
 
     let mut baseline_f = Vec3::new_zero();
+    let mut baseline_e = 0.;
+
+    let mut f_avg = Vec3::new_zero();
+    let mut f_mag_avg = 0.;
+    let mut e_avg = 0.;
 
     for (i, snap) in md.snapshots.iter().enumerate() {
-        if !i.is_multiple_of(20) {
-            continue;
-        }
-
+        // todo: FOrce on solvent too? Or just solute?
         match &snap.force {
             Some(f_by_atom) => {
                 let mut f_total = Vec3::new_zero();
@@ -271,17 +299,21 @@ fn run_drag(
                 let diff_from_baseline = f_total - baseline_f;
                 let diff_mag = diff_from_baseline.magnitude();
 
-                println!(
-                    "{} - F at snap {i}: {f_total:.5}. Diff: {diff_mag:.5}",
-                    phase.name()
-                );
+                f_avg += f_total;
+                f_mag_avg += f_total.magnitude();
+
+                if i.is_multiple_of(50) {
+                    println!(
+                        "{} - F at snap {i}: {f_total:.5}. Diff: {diff_mag:.5}",
+                        phase.name()
+                    );
+                }
             }
             None => {
                 eprintln!("Error: No force");
             }
         }
 
-        let mut e_baseline = 0.;
         match &snap.energy_data {
             Some(e) => {
                 // let mut f_total = Vec3::new_zero();
@@ -296,21 +328,109 @@ fn run_drag(
                 // let diff_from_baseline = f_total - baseline_f;
                 // let diff_mag = diff_from_baseline.magnitude();
 
+                let e_total = e.energy_potential + e.energy_kinetic;
                 if i == 0 {
-                    e_baseline = e.energy_kinetic + e.energy_potential;
+                    baseline_e = e_total;
                 }
 
-                println!(
-                    "{} - E at snap {i}: {:.5}. Diff: {:.5}",
-                    phase.name(),
-                    e.energy_potential + e.energy_kinetic,
-                    e.energy_potential + e.energy_kinetic - e_baseline
-                );
+                e_avg += e_total;
+
+                if i.is_multiple_of(50) {
+                    println!(
+                        "{} - E at snap {i}: {e_total:.0}. Base: {baseline_e} Diff: {:.0}",
+                        phase.name(),
+                        e_total - baseline_e
+                    );
+                }
             }
             None => {
-                eprintln!("Error: No force");
+                eprintln!("Error: No energy");
             }
         }
+    }
+
+    f_avg /= md.snapshots.len() as f32;
+    f_mag_avg /= md.snapshots.len() as f32;
+    e_avg /= md.snapshots.len() as f32;
+
+    let f_avg_diff = f_avg - baseline_f;
+    let f_mag_diff = f_mag_avg - baseline_f.magnitude();
+    let e_avg_diff = e_avg - baseline_e;
+
+    println!(
+        "\n{} - F avg: {f_avg_diff:.3} F mag avg: {f_mag_avg:.3} E avg: {e_avg_diff:.0}\n",
+        phase.name()
+    );
+
+    // Mirror the normal MD viewer setup so packed octanol copies appear before water
+    // in the exported GRO, and snapshot-driven water positions replace the placeholders.
+    let mut viewer_mol_data = vec![(FfMolType::SmallOrganic, mol.common.clone(), 1)];
+    let custom_mol_commons =
+        custom_solvents_to_mol_commons(&custom_solvent).map_err(|e| ParamError::new(&e))?;
+
+    for mol_common in custom_mol_commons {
+        viewer_mol_data.push((FfMolType::SmallOrganic, mol_common, 1));
+    }
+
+    // MdState stores counter-ions after the custom solvent molecules.
+    let ion_start = md
+        .mol_start_indices
+        .get(mols.len() + custom_solvent.len())
+        .copied()
+        .unwrap_or(md.atoms.len());
+
+    for a in &md.atoms[ion_start..] {
+        let posit = lin_alg::f64::Vec3 {
+            x: a.posit.x as f64,
+            y: a.posit.y as f64,
+            z: a.posit.z as f64,
+        };
+        let ion_atom = crate::molecules::Atom {
+            serial_number: a.serial_number,
+            element: a.element,
+            posit,
+            ..Default::default()
+        };
+        viewer_mol_data.push((
+            FfMolType::SmallOrganic,
+            crate::molecules::common::MoleculeCommon {
+                ident: a.force_field_type.clone(),
+                atoms: vec![ion_atom],
+                atom_posits: vec![posit],
+                selected_for_md: true,
+                ..Default::default()
+            },
+            1,
+        ));
+    }
+
+    let viewer_mol_refs = viewer_mol_data
+        .iter()
+        .map(|(ff, mol, count)| (*ff, mol, *count))
+        .collect::<Vec<_>>();
+    state
+        .volatile
+        .md_local
+        .viewer
+        .add_mol_set(&viewer_mol_refs, md.water.len());
+    let new_set_i = state
+        .volatile
+        .md_local
+        .viewer
+        .mol_sets
+        .len()
+        .saturating_sub(1);
+    state.volatile.md_local.viewer.mol_set_active = Some(new_set_i);
+    state.volatile.md_local.replace_snaps(md.snapshots.clone());
+    state.volatile.md_local.mol_dynamics = Some(md);
+
+    // todo temp; for visualizing this.
+    let gro_path = Path::new("./md_out").join(format!("logp_{}.gro", phase.name()));
+
+    if let Some(mol_set) = state.volatile.md_local.viewer.mol_sets.last()
+        && let Err(e) = save_mol_set_as_gro(mol_set, &gro_path)
+    {
+        eprintln!("Error auto-saving GRO: {e:?}");
     }
 
     println!("Drag test complete. Snapshots written.");
@@ -440,10 +560,10 @@ pub fn run(
     );
 
     println!("Running LogP MD for water...");
-    let water = run_drag(&state.dev, mol, state, Phase::Water)?;
-
-    // println!("Running LogP MD for octanol...");
-    let octanol = run_drag(&state.dev, mol, state, Phase::Octanol)?;
+    // let water = run_drag(mol, state, Phase::Water)?;
+    //
+    println!("Running LogP MD for octanol...");
+    let octanol = run_drag(mol, state, Phase::Octanol)?;
 
     Ok(0.)
 }

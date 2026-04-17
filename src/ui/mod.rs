@@ -1084,7 +1084,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
         // -------UI above; clean-up items (based on flags) below
 
         if close_active_mol && let Some((mol_type, i)) = state.volatile.active_mol {
-            close_mol(mol_type, i, state, scene, &mut updates);
+            close_mol(mol_type, i, state, scene, &mut redraw, &mut updates);
         }
 
         if let Err(e) = update_file_dialogs(state, scene, ui, &mut updates) {

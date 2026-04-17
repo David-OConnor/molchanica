@@ -858,6 +858,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     ManipMode::None,
                     OperatingMode::Primary,
                     num_mols,
+                    state.volatile.md_local.draw_md_mols,
                 );
                 if let Some(group_color) = group_tint {
                     for ent in &mut ents_this {
@@ -880,6 +881,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     ManipMode::None,
                     OperatingMode::Primary,
                     num_mols,
+                    state.volatile.md_local.draw_md_mols,
                 );
                 if let Some(group_color) = group_tint {
                     for ent in &mut ents_this {
@@ -902,6 +904,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     ManipMode::None,
                     OperatingMode::Primary,
                     num_mols,
+                    state.volatile.md_local.draw_md_mols,
                 );
                 if let Some(group_color) = group_tint {
                     for ent in &mut ents_this {
@@ -924,6 +927,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
                     ManipMode::None,
                     OperatingMode::Primary,
                     num_mols,
+                    state.volatile.md_local.draw_md_mols,
                 );
                 if let Some(group_color) = group_tint {
                     for ent in &mut ents_this {

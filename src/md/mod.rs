@@ -145,6 +145,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     let run_index = md_state.run_index.unwrap_or(0);
 
     let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
+
     // The mol set we just added is the last one in the viewer.
     if let Some(mol_set) = md.viewer.mol_sets.last() {
         if let Err(e) = save_mol_set_as_gro(mol_set, &gro_path) {

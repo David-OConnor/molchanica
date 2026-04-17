@@ -493,6 +493,7 @@ pub fn close_mol(
     i: usize,
     state: &mut State,
     scene: &mut Scene,
+    redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
     state.volatile.mol_manip.mode = ManipMode::None;
@@ -525,8 +526,6 @@ pub fn close_mol(
                 state.volatile.active_mol = Some((MolType::Ligand, state.ligands.len() - 1));
             }
 
-            draw_all_ligs(state, scene, updates);
-
             state.update_save_prefs();
         }
         // todo: DRY
@@ -539,8 +538,6 @@ pub fn close_mol(
                 state.volatile.active_mol =
                     Some((MolType::NucleicAcid, state.nucleic_acids.len() - 1));
             }
-
-            draw_all_nucleic_acids(state, scene, updates);
         }
         MolType::Lipid => {
             state.lipids.remove(i);
@@ -550,8 +547,6 @@ pub fn close_mol(
             } else {
                 state.volatile.active_mol = Some((MolType::Lipid, state.lipids.len() - 1));
             }
-
-            draw_all_lipids(state, scene, updates);
         }
         MolType::Pocket => {
             state.pockets.remove(i);
@@ -561,11 +556,11 @@ pub fn close_mol(
             } else {
                 state.volatile.active_mol = Some((MolType::Pocket, state.pockets.len() - 1));
             }
-
-            draw_all_pockets(state, scene, updates);
         }
         MolType::Water => (),
     }
+
+    redraw.set(mol_type);
 
     if let Some((orbit_mol_type, orbit_i)) = &state.volatile.orbit_center
         && (*orbit_mol_type, *orbit_i) == (mol_type, i)

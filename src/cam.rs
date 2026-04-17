@@ -40,7 +40,7 @@ const PEP_FOG_FAR_RATIO: usize = 20;
 /// A wrapper which sets fog using either a manual, or automatic technique based on
 /// configuration.
 pub fn set_fog(state: &State, cam: &mut Camera) {
-    if state.to_save.auto_fog {
+    if state.to_save.auto_fog && !state.volatile.md_local.draw_md_mols {
         set_fog_dists_by_near_and_far_mols(state, cam);
     } else {
         set_fog_dist(cam, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);

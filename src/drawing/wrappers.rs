@@ -148,6 +148,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, updates: &mut EngineU
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
             num_mols,
+            false,
         );
 
         // Note: This may already be set.
@@ -207,6 +208,7 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene, updates: &mu
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
             num_mols,
+            false,
         );
 
         // Note: This may already be set.
@@ -266,6 +268,7 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene, updates: &mut Engin
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
             num_mols,
+            false,
         );
 
         // Note: This may already be set.
@@ -395,6 +398,7 @@ pub fn _draw_all_mol_of_type<T: MolGeneric>(
             state.volatile.mol_manip.mode,
             state.volatile.operating_mode,
             state.ligands.len(),
+            false,
         ));
 
         let end_i = entities.len();
@@ -426,6 +430,7 @@ fn update_inplace_inner(
         state.volatile.mol_manip.mode,
         state.volatile.operating_mode,
         state.ligands.len(),
+        false,
     );
 
     update_inplace_inner_part2(ent_i_start, ent_i_end, ents_updated, scene)

@@ -43,6 +43,10 @@ pub(in crate::drawing) const BODY_SHINYNESS: f32 = 0.9;
 pub const BALL_STICK_RADIUS: f32 = 0.3;
 pub const BALL_STICK_RADIUS_H: f32 = 0.1;
 
+pub const MD_WRAPPED_BOND_HIDE_THRESH: f32 = 3.0;
+pub const MD_SOLVENT_ATOM_RADIUS_SCALE: f32 = 0.72;
+pub const MD_SOLVENT_BOND_RADIUS_SCALE: f32 = 0.65;
+
 pub(in crate::drawing) const BALL_RADIUS_WATER_O: f32 = 0.09;
 pub(in crate::drawing) const BALL_RADIUS_WATER_H: f32 = 0.06;
 pub(in crate::drawing) const WATER_BOND_THICKNESS: f32 = 0.1;
@@ -56,6 +60,19 @@ const H_BOND_DASH_LEN: f32 = 0.15; // Å
 const H_BOND_GAP_LEN: f32 = 0.15; // Å
 // Maximum length of the central strength-indicating cylinder, at strength = 1.
 const H_BOND_CENTER_LEN_MAX: f32 = 1.5; // Å
+
+pub fn use_md_compact_solvent_style(draw_md_mols: bool, mol_ident: &str) -> bool {
+    if !draw_md_mols {
+        return false;
+    }
+
+    let ident = mol_ident.to_ascii_lowercase();
+    ident.contains("solv") || ident.contains("octan")
+}
+
+pub fn hide_md_wrapped_covalent_bond(draw_md_mols: bool, posit_0: Vec3, posit_1: Vec3) -> bool {
+    draw_md_mols && (posit_0 - posit_1).magnitude() > MD_WRAPPED_BOND_HIDE_THRESH
+}
 
 /// A general function that sets color based criteria like element, partial charge,
 /// if selected or not etc.
@@ -275,6 +292,8 @@ pub fn bond_entities(
     color_1: Color,
     bond_type: BondType,
     mol_type: MolType,
+    mol_ident: &str,
+    draw_md_mols: bool,
     // No caps for ball and stick
     caps: bool,
     // A Neighbor, in the case of aromataic, double bonds, and triple bonds. We use this to determine how
@@ -285,6 +304,10 @@ pub fn bond_entities(
     to_hydrogen: bool, // A covalent bond to H
 ) -> Vec<Entity> {
     let mut result = Vec::new();
+
+    if hide_md_wrapped_covalent_bond(draw_md_mols, posit_0, posit_1) {
+        return result;
+    }
 
     let center: Vec3 = (posit_0 + posit_1) / 2.;
 
@@ -315,6 +338,10 @@ pub fn bond_entities(
 
     if to_hydrogen {
         radius_scaler *= BOND_RADIUS_RATIO_H;
+    }
+
+    if use_md_compact_solvent_style(draw_md_mols, mol_ident) {
+        radius_scaler *= MD_SOLVENT_BOND_RADIUS_SCALE;
     }
 
     match bond_type {

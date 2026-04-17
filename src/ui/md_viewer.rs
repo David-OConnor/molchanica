@@ -639,6 +639,7 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             .save_gro
             .config_mut()
             .default_file_name = name;
+
         state.volatile.dialogs.save_gro_mol_set_i = Some(set_i);
         state.volatile.dialogs.save_gro.save_file();
     }
