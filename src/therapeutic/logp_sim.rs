@@ -234,9 +234,7 @@ fn run_drag(
     // run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
 
     // todo: Experimenting with our already-existing external force injection into step.
-    // let f_drag = Vec3::x() * 1.; // todo: Mag.
-    // let f_drag = Vec3::x() * 0.25; // todo: Mag.
-    let f_drag = Vec3::x() * 2.; // todo: Mag.
+    let f_drag = Vec3::x() * 1.;
 
     // 1: 360 (water
     // 0.5: 34-41
@@ -262,9 +260,10 @@ fn run_drag(
 
     // let n_steps = 1_000;
     // todo temp!!
-    let n_steps = 500;
+    let n_steps = 2_000;
 
     println!("Running MD with drag test for {}...", phase.name());
+
     for step in 0..n_steps {
         // Step 0 will have no external force/no dragging.
         let force = if step == 0 {
@@ -302,7 +301,7 @@ fn run_drag(
                 f_avg += f_total;
                 f_mag_avg += f_total.magnitude();
 
-                if i.is_multiple_of(50) {
+                if i.is_multiple_of(500) {
                     println!(
                         "{} - F at snap {i}: {f_total:.5}. Diff: {diff_mag:.5}",
                         phase.name()
@@ -335,7 +334,7 @@ fn run_drag(
 
                 e_avg += e_total;
 
-                if i.is_multiple_of(50) {
+                if i.is_multiple_of(500) {
                     println!(
                         "{} - E at snap {i}: {e_total:.0}. Base: {baseline_e} Diff: {:.0}",
                         phase.name(),

@@ -550,7 +550,7 @@ pub fn build_dynamics(
             // coulomb_disabled: true,
             // lj_disabled: true,
             // long_range_recip_disabled: true,
-            snapshots_during_equilibration: true,
+            // snapshots_during_equilibration: true,
             // Merge with caller-supplied overrides so flags like `skip_water` are preserved.
             ..cfg.overrides.clone()
         },

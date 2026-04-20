@@ -699,12 +699,12 @@ pub fn draw_mol(
                 },
             };
 
-            let radius = if compact_md_solvent_style && !matches!(ui.mol_view, MoleculeView::SpaceFill)
-            {
-                radius * MD_SOLVENT_ATOM_RADIUS_SCALE
-            } else {
-                radius
-            };
+            let radius =
+                if compact_md_solvent_style && !matches!(ui.mol_view, MoleculeView::SpaceFill) {
+                    radius * MD_SOLVENT_ATOM_RADIUS_SCALE
+                } else {
+                    radius
+                };
 
             let mut entity = Entity::new(
                 mesh,
@@ -1027,12 +1027,15 @@ pub fn draw_density_point_cloud(entities: &mut Vec<Entity>, density: &[DensityPt
     entities.retain(|ent| ent.class != EntityClass::DensityPoint as u32);
     // clear_mol_entity_indices(state); // todo: Borrow mut problem.
 
-    const EPS: f64 = 0.0000001;
+    // const EPS: f64 = 0.0000001;
 
     for point in density {
         // For example, points we filter out for not being near the atoms; we set them to 0 density,
         // vice omitting them. Skipping them here makes rendering more efficient.
-        if point.density.abs() < EPS {
+        // if point.density.abs() < EPS {
+        //     continue;
+        // }
+        if point.density == 0. {
             continue;
         }
 

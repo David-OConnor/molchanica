@@ -158,10 +158,12 @@ fn spearman_corr(xs: &[f32], ys: &[f32]) -> f32 {
 }
 
 fn is_binary_01_labels(xs: &[f32]) -> bool {
-    // Accept exactly 0/1 plus tiny float noise.
-    const EPS: f32 = 1e-6;
-    xs.iter()
-        .all(|&y| (y - 0.0).abs() <= EPS || (y - 1.0).abs() <= EPS)
+    // // Accept exactly 0/1 plus tiny float noise.
+    // const EPS: f32 = 1e-6;
+    // xs.iter()
+    //     .all(|&y| (y - 0.0).abs() <= EPS || (y - 1.0).abs() <= EPS)
+
+    xs.iter().all(|&y| y == 0. || y == 1.)
 }
 
 /// AUROC via rank-sum (equivalent to Mann–Whitney U).

@@ -43,9 +43,10 @@ pub(in crate::drawing) const BODY_SHINYNESS: f32 = 0.9;
 pub const BALL_STICK_RADIUS: f32 = 0.3;
 pub const BALL_STICK_RADIUS_H: f32 = 0.1;
 
+// These are generally for solvents other than rigid water.
 pub const MD_WRAPPED_BOND_HIDE_THRESH: f32 = 3.0;
-pub const MD_SOLVENT_ATOM_RADIUS_SCALE: f32 = 0.72;
-pub const MD_SOLVENT_BOND_RADIUS_SCALE: f32 = 0.65;
+pub const MD_SOLVENT_ATOM_RADIUS_SCALE: f32 = 0.4; // e.g. for ball and stick.
+pub const MD_SOLVENT_BOND_RADIUS_SCALE: f32 = 0.2;
 
 pub(in crate::drawing) const BALL_RADIUS_WATER_O: f32 = 0.09;
 pub(in crate::drawing) const BALL_RADIUS_WATER_H: f32 = 0.06;
