@@ -24,8 +24,36 @@ pub(in crate::ui) fn dynamics_viewer(
     redraw: &mut RedrawFlags,
     ui: &mut Ui,
 ) {
+    // --- Automatic playback tick (runs each frame while playing) ---
+    let mut auto_advance: Option<usize> = None;
+
+    if state.volatile.md_local.viewer.playing
+        && !state.volatile.md_local.viewer.snapshots.is_empty()
+        && state.volatile.md_local.viewer.mols_and_traj_synced()
+    {
+        state.volatile.md_local.viewer.playback_accum += state.ui.dt_render as f64;
+        let interval = 1.0 / state.volatile.md_local.viewer.playback_ratio.max(0.1);
+
+        if state.volatile.md_local.viewer.playback_accum >= interval {
+            state.volatile.md_local.viewer.playback_accum -= interval;
+            let n = state.volatile.md_local.viewer.snapshots.len();
+            let next = (state.volatile.md_local.viewer.slider_posit_ui + 1) % n;
+            state.volatile.md_local.viewer.slider_posit_ui = next;
+            state.volatile.md_local.viewer.current_snapshot = Some(next);
+            auto_advance = Some(next);
+        }
+        ui.ctx().request_repaint();
+    }
+
+    if let Some(snap_i) = auto_advance {
+        if let Err(e) = state.volatile.md_local.viewer.change_snapshot(snap_i) {
+            handle_err(&mut state.ui, format!("Error changing MD snapshot: {e:?}"));
+        }
+        viewer::draw_mols(state, scene, updates);
+    }
+
+    // --- Controls row ---
     ui.horizontal(|ui| {
-        // let prev = state.ui.peptide_atom_posits;
         let help_text = "Toggle between viewing the original (pre-dynamics) atom positions, and \
         ones at the selected dynamics snapshot.";
 
@@ -46,7 +74,6 @@ pub(in crate::ui) fn dynamics_viewer(
                     .clicked()
             {
                 state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
-
                 redraw.set_all();
             }
         }
@@ -99,15 +126,38 @@ pub(in crate::ui) fn dynamics_viewer(
             };
 
             label!(ui, txt, Color32::GRAY);
-
             return;
         }
 
+        ui.add_space(COL_SPACING);
+
+        // Play / Pause button
+        let (play_label, play_color) = if state.volatile.md_local.viewer.playing {
+            ("Pause", COLOR_ACTIVE)
+        } else {
+            ("Play", COLOR_ACTION)
+        };
+        if button!(ui, play_label, play_color, "Start or pause automatic snapshot playback.").clicked() {
+            state.volatile.md_local.viewer.playing = !state.volatile.md_local.viewer.playing;
+            state.volatile.md_local.viewer.playback_accum = 0.0;
+        }
+
+        // Playback speed slider (snapshots per second)
+        ui.label("Speed:");
+        ui.add(
+            Slider::new(&mut state.volatile.md_local.viewer.playback_ratio, 0.5..=60.0)
+                .text("fps")
+                .fixed_decimals(1),
+        );
+    });
+
+    // --- Snapshot position slider ---
+    let ready = state.volatile.md_local.viewer.mols_and_traj_synced();
+    if ready && !state.volatile.md_local.viewer.snapshots.is_empty() {
         let slider_posit_prev = state.volatile.md_local.viewer.slider_posit_ui;
 
-        if !state.volatile.md_local.viewer.snapshots.is_empty() {
+        ui.horizontal(|ui| {
             ui.add_space(ROW_SPACING);
-
             ui.spacing_mut().slider_width = ui.available_width() - 100.;
 
             ui.add(Slider::new(
@@ -118,21 +168,20 @@ pub(in crate::ui) fn dynamics_viewer(
             if let Some(ss) = &state.volatile.md_local.viewer.get_active_snap() {
                 ui.label(format!("{:.2} ps", ss.time));
             }
+        });
 
-            let posit = state.volatile.md_local.viewer.slider_posit_ui;
+        let posit = state.volatile.md_local.viewer.slider_posit_ui;
 
-            if posit != slider_posit_prev && posit <= state.volatile.md_local.viewer.snapshots.len()
-            {
-                state.volatile.md_local.viewer.current_snapshot = Some(posit);
+        if posit != slider_posit_prev && posit <= state.volatile.md_local.viewer.snapshots.len() {
+            state.volatile.md_local.viewer.current_snapshot = Some(posit);
 
-                if let Err(e) = state.volatile.md_local.viewer.change_snapshot(posit) {
-                    handle_err(&mut state.ui, format!("Error changing MD snapshot: {e:?}"));
-                }
-
-                viewer::draw_mols(state, scene, updates);
+            if let Err(e) = state.volatile.md_local.viewer.change_snapshot(posit) {
+                handle_err(&mut state.ui, format!("Error changing MD snapshot: {e:?}"));
             }
+
+            viewer::draw_mols(state, scene, updates);
         }
-    });
+    }
 }
 
 pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {

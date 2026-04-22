@@ -259,8 +259,8 @@ fn run_drag(
     };
 
     // let n_steps = 1_000;
-    // todo temp!!
     let n_steps = 2_000;
+    // let n_steps = 500;
 
     println!("Running MD with drag test for {}...", phase.name());
 
@@ -559,8 +559,8 @@ pub fn run(
     );
 
     println!("Running LogP MD for water...");
-    // let water = run_drag(mol, state, Phase::Water)?;
-    //
+    let water = run_drag(mol, state, Phase::Water)?;
+
     println!("Running LogP MD for octanol...");
     let octanol = run_drag(mol, state, Phase::Octanol)?;
 

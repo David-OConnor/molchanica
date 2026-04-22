@@ -193,7 +193,6 @@ impl ViewerMolSet {
     }
 }
 
-#[derive(Default)]
 pub struct SnapshotViewer {
     // pub struct SnapshotViewer<M: MolGeneric> {
     /// Snapshots currently active and loaded in memory; from an MD run, or loading
@@ -205,9 +204,28 @@ pub struct SnapshotViewer {
     /// from an MD file like .gro.
     pub mol_sets: Vec<ViewerMolSet>,
     pub mol_set_active: Option<usize>,
-    // pub mols: Vec<M>, // todo: Evaluate if this makes more sense
-    // pub custom_solvents: Vec<MoleculeSmall>,
     pub slider_posit_ui: usize,
+    /// Snapshots to advance per real second during playback.
+    pub playback_ratio: f64,
+    /// True if the snapshots are incrementing automatically.
+    pub playing: bool,
+    /// Accumulated real time (seconds) between snapshot advances.
+    pub playback_accum: f64,
+}
+
+impl Default for SnapshotViewer {
+    fn default() -> Self {
+        Self {
+            snapshots: Vec::new(),
+            current_snapshot: None,
+            mol_sets: Vec::new(),
+            mol_set_active: None,
+            slider_posit_ui: 0,
+            playback_ratio: 10.0,
+            playing: false,
+            playback_accum: 0.0,
+        }
+    }
 }
 
 impl SnapshotViewer {
