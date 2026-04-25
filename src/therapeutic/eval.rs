@@ -20,8 +20,8 @@ use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
-        infer::infer_general,
-        train::{TGT_COL_TDC, load_training_data, train},
+        infer::Infer,
+        train::{load_training_data, samples_from_mols, train_with_samples},
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -68,12 +68,20 @@ fn run_infer(
     data_set: DatasetTdc,
     ff_params: &ForceFieldParams,
 ) -> io::Result<Vec<f32>> {
-    let mut result = Vec::with_capacity(data.len());
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    // Models here is a cache, so we don't have to load the model for each test item.
-    let mut models = HashMap::new();
-    for (mol, _) in data {
-        result.push(infer_general(mol, data_set, &mut models, ff_params, true)?);
+    // One model load and one batched forward pass for the whole test set.
+    let infer = Infer::load_from_file(data_set)?;
+    let mols: Vec<&MoleculeSmall> = data.iter().map(|(m, _)| m).collect();
+
+    // Chunk to bound peak memory; tune if MAX_ATOMS / hidden dim grow.
+    const CHUNK: usize = 256;
+    let mut result = Vec::with_capacity(data.len());
+    for window in mols.chunks(CHUNK) {
+        let preds = infer.infer_batch(window, ff_params)?;
+        result.extend(preds);
     }
 
     Ok(result)
@@ -158,12 +166,10 @@ fn spearman_corr(xs: &[f32], ys: &[f32]) -> f32 {
 }
 
 fn is_binary_01_labels(xs: &[f32]) -> bool {
-    // // Accept exactly 0/1 plus tiny float noise.
-    // const EPS: f32 = 1e-6;
-    // xs.iter()
-    //     .all(|&y| (y - 0.0).abs() <= EPS || (y - 1.0).abs() <= EPS)
-
-    xs.iter().all(|&y| y == 0. || y == 1.)
+    // Accept exactly 0/1 plus tiny float noise from upstream preprocessing.
+    const EPS: f32 = 1e-6;
+    xs.iter()
+        .all(|&y| (y - 0.0).abs() <= EPS || (y - 1.0).abs() <= EPS)
 }
 
 /// AUROC via rank-sum (equivalent to Mann–Whitney U).
@@ -226,14 +232,15 @@ pub fn eval(
 
     let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
 
-    // Set up training data using this train/test split. (Values otherwise might be
-    // from the full set, which will overfit)
-
     let tts = TrainTestSplit::new(dataset);
-    println!("\nTraining on the test set of len {}...\n", tts.train.len());
+    println!(
+        "\nTraining on the train set of len {}...\n",
+        tts.train.len()
+    );
 
-    // todo: Note. We are double-loading training tdata.
-    // todo: Fix this, but it's minor.
+    // Single load: gives us all three splits as molecules. We convert train+valid
+    // into samples ourselves and pass them to `train_with_samples`, so the SDF
+    // files are not re-read inside the training pipeline.
     let data = load_training_data(
         &csv_path,
         &mol_path,
@@ -241,26 +248,18 @@ pub fn eval(
         &tts,
         mol_specific_params,
         ff_params,
-        true,
+        false,
     )?;
 
-    // Note: This assumes the TTS logic is the same in our training pipeline. (it is for now)
-    // Note: For now at least, we use the same TTS for training, and evaluation. This means
-    // that we are not training on the full set. I'm unclear on how the "Validation" used in the training
-    // affects this.
+    let train_samples = samples_from_mols(&data.train, ff_params);
+    let valid_samples = samples_from_mols(&data.validation, ff_params);
 
-    if let Err(e) = train(
-        data_path,
-        dataset,
-        TGT_COL_TDC,
-        mol_specific_params,
-        ff_params,
-    ) {
+    if let Err(e) = train_with_samples(dataset, train_samples, valid_samples) {
         eprintln!("Error training {dataset}: {e}");
     }
 
     println!(
-        "\nTraining complete. Loading test data and performing inference on set of len {}...\n",
+        "\nTraining complete. Performing inference on test set of len {}...\n",
         tts.test.len()
     );
 

@@ -18,7 +18,6 @@ use std::{
     hash::{Hash, Hasher},
     io,
     io::Write,
-    iter::repeat_n,
     path::Path,
     str::FromStr,
     time::Instant,
@@ -67,9 +66,9 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
-            PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
-            SPACIAL_VOCAB_SIZE,
+            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
+            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS,
+            PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
         },
         train_test_split_indices::TrainTestSplit,
     },
@@ -209,6 +208,7 @@ pub(in crate::therapeutic) const BOND_SIGMA_SQ: f32 = 3.3; // Å. Try 1.5 - 2.2 
 type TrainBackend = Autodiff<Wgpu>;
 #[cfg(feature = "train")]
 type ValidBackend = Wgpu;
+// ALso look at Vulkan.
 
 #[derive(Config, Debug)]
 pub(in crate::therapeutic) struct ModelConfig {
@@ -267,6 +267,13 @@ impl ModelConfig {
         } else {
             0
         };
+
+        assert!(
+            combined_dim > 0,
+            "ModelConfig has all branches disabled — at least one of \
+             mlp_enabled / gnn_atom_enabled / gnn_comp_enabled / gnn_spacial_enabled \
+             must be true."
+        );
 
         let emb_elem = EmbeddingConfig::new(self.vocab_size_elem, self.embedding_dim).init(device);
         let emb_ff = EmbeddingConfig::new(self.vocab_size_ff, self.embedding_dim).init(device);
@@ -396,6 +403,17 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     mlp_enabled: bool,
 }
 
+/// Apply symmetric normalization D^(-1/2) A D^(-1/2) to a batched adjacency
+/// matrix [B, N, N]. Padding rows/cols (which are all-zero in the raw adjacency)
+/// remain zero thanks to the eps clamp.
+fn sym_normalize<B: Backend>(adj: Tensor<B, 3>) -> Tensor<B, 3> {
+    // Sum over j (the trailing N) — keepdim leaves shape [B, N, 1].
+    let deg = adj.clone().sum_dim(2);
+    let deg_inv_sqrt = deg.clamp_min(1e-9).sqrt().recip(); // [B, N, 1]
+    let deg_inv_sqrt_t = deg_inv_sqrt.clone().swap_dims(1, 2); // [B, 1, N]
+    adj * deg_inv_sqrt * deg_inv_sqrt_t
+}
+
 impl<B: Backend> Model<B> {
     /// Make a single middle GNN layer. (Use for the atom and bond graph)
     /// GINE-style Layer:
@@ -471,7 +489,9 @@ impl<B: Backend> Model<B> {
             let ef_flat = edge_feats.clone().reshape([b * n * n, f]);
             let gate_flat = activation::sigmoid(self.edge_proj.forward(ef_flat.clone()));
             let gate = gate_flat.reshape([b, n, n]);
-            let adj_eff = adj * gate;
+            // Gate the raw adjacency, then symmetric-normalize so message
+            // magnitudes stay scale-invariant w.r.t. the gate.
+            let adj_eff = sym_normalize(adj * gate);
 
             let edge_emb_flat = self.edge_encoder.forward(ef_flat);
             let [_, d_hidden] = edge_emb_flat.dims();
@@ -511,7 +531,7 @@ impl<B: Backend> Model<B> {
             let cef_flat = comp_edge_feats.clone().reshape([bc * nc * nc, fc]);
             let comp_gate_flat = activation::sigmoid(self.comp_edge_proj.forward(cef_flat.clone()));
             let comp_gate = comp_gate_flat.reshape([bc, nc, nc]);
-            let comp_adj_eff = comp_adj * comp_gate;
+            let comp_adj_eff = sym_normalize(comp_adj * comp_gate);
 
             let comp_edge_emb_flat = self.comp_edge_encoder.forward(cef_flat);
             let [_, d_comp_hidden] = comp_edge_emb_flat.dims();
@@ -558,7 +578,7 @@ impl<B: Backend> Model<B> {
             let pharm_gate_flat =
                 activation::sigmoid(self.pharm_edge_proj.forward(pef_flat.clone()));
             let pharm_gate = pharm_gate_flat.reshape([bp, np, np]);
-            let pharm_adj_eff = pharm_adj * pharm_gate;
+            let pharm_adj_eff = sym_normalize(pharm_adj * pharm_gate);
 
             let pharm_edge_emb_flat = self.pharm_edge_encoder.forward(pef_flat);
             let [_, d_pharm_hidden] = pharm_edge_emb_flat.dims();
@@ -687,12 +707,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
 
         let n_feat_params = items[0].features_property.len();
 
-        // Calculate num scalars per atom based on first item
-        let n_scalars_per_atom = if items[0].graph.num_atoms > 0 {
-            items[0].graph.scalars.len() / items[0].graph.num_atoms
-        } else {
-            2
-        };
+        // Per-atom scalar count is fixed by GraphDataAtom construction.
+        let n_scalars_per_atom = PER_ATOM_SCALARS;
 
         for mut item in items {
             // Mol parameters, and the target value.
@@ -700,79 +716,72 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_globals.extend_from_slice(&item.features_property);
             batch_y.push(self.scaler.normalize_target(item.target));
 
-            // Pad and Extend Atom Graph Data
-            let n = item.graph.num_atoms.min(MAX_ATOMS);
-
-            batch_elem_ids.extend_from_slice(&item.graph.elem_indices[0..n]);
-            batch_elem_ids.extend(repeat_n(0, MAX_ATOMS - n));
-
-            batch_ff_ids.extend_from_slice(&item.graph.ff_indices[0..n]);
-            batch_ff_ids.extend(repeat_n(0, MAX_ATOMS - n));
-
-            batch_scalars.extend_from_slice(&item.graph.scalars[0..n * n_scalars_per_atom]);
-            batch_scalars.extend(repeat_n(0.0, (MAX_ATOMS - n) * n_scalars_per_atom));
-
-            let (p_adj, p_mask) =
-                gnn::pad_adj_and_mask(&item.graph.adj, item.graph.num_atoms, MAX_ATOMS);
+            // Atom graph
+            let g = &item.graph;
+            batch_elem_ids.extend(gnn::pad_indices(&g.elem_indices, g.num_atoms, MAX_ATOMS));
+            batch_ff_ids.extend(gnn::pad_indices(&g.ff_indices, g.num_atoms, MAX_ATOMS));
+            batch_scalars.extend(gnn::pad_scalars(
+                &g.scalars,
+                g.num_atoms,
+                n_scalars_per_atom,
+                MAX_ATOMS,
+            ));
+            let (p_adj, p_mask) = gnn::pad_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
             batch_adj.extend(p_adj);
             batch_mask.extend(p_mask);
-
-            let p_edge = gnn::pad_edge_feats(
-                &item.graph.edge_feats,
-                item.graph.num_atoms,
+            batch_edge_feats.extend(gnn::pad_edge_feats(
+                &g.edge_feats,
+                g.num_atoms,
                 PER_EDGE_FEATS,
                 MAX_ATOMS,
-            );
-            batch_edge_feats.extend(p_edge);
+            ));
 
-            // Pad and Extend Component Graph Data
-            let n_comps = item.graph_comp.num_comps.min(MAX_COMPS);
-
-            batch_comp_ids.extend_from_slice(&item.graph_comp.comp_type_indices[0..n_comps]);
-            batch_comp_ids.extend(repeat_n(0_i32, MAX_COMPS - n_comps));
-
-            batch_comp_scalars
-                .extend_from_slice(&item.graph_comp.scalars[0..n_comps * PER_COMP_SCALARS]);
-            batch_comp_scalars.extend(repeat_n(0.0_f32, (MAX_COMPS - n_comps) * PER_COMP_SCALARS));
-
-            let (p_comp_adj, p_comp_mask) =
-                gnn::pad_adj_and_mask(&item.graph_comp.adj, item.graph_comp.num_comps, MAX_COMPS);
+            // Component graph
+            let gc = &item.graph_comp;
+            batch_comp_ids.extend(gnn::pad_indices(
+                &gc.comp_type_indices,
+                gc.num_comps,
+                MAX_COMPS,
+            ));
+            batch_comp_scalars.extend(gnn::pad_scalars(
+                &gc.scalars,
+                gc.num_comps,
+                PER_COMP_SCALARS,
+                MAX_COMPS,
+            ));
+            let (p_comp_adj, p_comp_mask) = gnn::pad_adj_and_mask(&gc.adj, gc.num_comps, MAX_COMPS);
             batch_comp_adj.extend(p_comp_adj);
             batch_comp_mask.extend(p_comp_mask);
-
-            let p_comp_edge = gnn::pad_edge_feats(
-                &item.graph_comp.edge_feats,
-                item.graph_comp.num_comps,
+            batch_comp_edge_feats.extend(gnn::pad_edge_feats(
+                &gc.edge_feats,
+                gc.num_comps,
                 PER_EDGE_COMP_FEATS,
                 MAX_COMPS,
-            );
-            batch_comp_edge_feats.extend(p_comp_edge);
+            ));
 
-            // Pad and Extend Spatial (Pharmacophore) Graph Data
-            let n_pharm = item.graph_spacial.num_nodes.min(MAX_PHARM);
-
-            batch_pharm_ids.extend_from_slice(&item.graph_spacial.pharm_type_indices[0..n_pharm]);
-            batch_pharm_ids.extend(repeat_n(0, MAX_PHARM - n_pharm));
-
-            batch_pharm_scalars
-                .extend_from_slice(&item.graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
-            batch_pharm_scalars.extend(repeat_n(0., (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS));
-
-            let (p_pharm_adj, p_pharm_mask) = gnn::pad_adj_and_mask(
-                &item.graph_spacial.adj,
-                item.graph_spacial.num_nodes,
+            // Spatial (pharmacophore) graph
+            let gs = &item.graph_spacial;
+            batch_pharm_ids.extend(gnn::pad_indices(
+                &gs.pharm_type_indices,
+                gs.num_nodes,
                 MAX_PHARM,
-            );
+            ));
+            batch_pharm_scalars.extend(gnn::pad_scalars(
+                &gs.scalars,
+                gs.num_nodes,
+                PER_PHARM_SCALARS,
+                MAX_PHARM,
+            ));
+            let (p_pharm_adj, p_pharm_mask) =
+                gnn::pad_adj_and_mask(&gs.adj, gs.num_nodes, MAX_PHARM);
             batch_pharm_adj.extend(p_pharm_adj);
             batch_pharm_mask.extend(p_pharm_mask);
-
-            let p_pharm_edge = gnn::pad_edge_feats(
-                &item.graph_spacial.edge_feats,
-                item.graph_spacial.num_nodes,
+            batch_pharm_edge_feats.extend(gnn::pad_edge_feats(
+                &gs.edge_feats,
+                gs.num_nodes,
                 PER_SPACIAL_EDGE_FEATS,
                 MAX_PHARM,
-            );
-            batch_pharm_edge_feats.extend(p_pharm_edge);
+            ));
         }
 
         let elem_ids = TensorData::new(batch_elem_ids, [batch_size, MAX_ATOMS]);
@@ -1057,87 +1066,72 @@ pub(in crate::therapeutic) fn load_training_data(
     Ok(result)
 }
 
-/// For training: Load CSV and SDF molecule data for a training set.
-/// Returns (train, test)
+/// Convert pre-loaded `(MoleculeSmall, target)` pairs into model `Sample`s. Skips
+/// any molecules that fail feature extraction or graph construction.
 #[cfg(feature = "train")]
-fn read_data(
-    csv_path: &Path,
-    sdf_path: &Path,
-    tgt_col: usize,
-    tts: &TrainTestSplit,
-    mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
+pub(in crate::therapeutic) fn samples_from_mols(
+    data: &[(MoleculeSmall, f32)],
     ff_params: &ForceFieldParams,
-) -> io::Result<(Vec<Sample>, Vec<Sample>)> {
-    let loaded = load_training_data(
-        csv_path,
-        sdf_path,
-        tgt_col,
-        tts,
-        mol_specific_param_set,
-        ff_params,
-        false,
-    )?;
-
-    let mut result_train = Vec::new();
-    let mut result_test = Vec::new();
-
-    for (result_set, data) in [
-        (&mut result_train, &loaded.train),
-        (&mut result_test, &loaded.validation),
-    ] {
-        for (mol, target) in data {
-            let feat_params = mlp_feats_from_mol(&mol)?;
-
-            if mol.common.bonds.is_empty() {
-                // eprintln!("No bonds found in SDF. Skipping.");
+) -> Vec<Sample> {
+    let mut out = Vec::with_capacity(data.len());
+    for (mol, target) in data {
+        let feat_params = match mlp_feats_from_mol(mol) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error extracting MLP features: {e:?}; skipping mol.");
                 continue;
             }
+        };
 
-            let graph = match GraphDataAtom::new(&mol, ff_params) {
-                Ok(res) => res,
-                Err(e) => {
-                    eprintln!("Error getting graph data: {:?}", e);
-                    continue;
-                }
-            };
+        if mol.common.bonds.is_empty() {
+            continue;
+        }
 
-            if graph.num_atoms == 0 {
+        let graph = match GraphDataAtom::new(mol, ff_params) {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("Error getting graph data: {e:?}");
                 continue;
             }
+        };
 
-            let graph_comp = match &mol.components {
-                Some(comps) => match GraphDataComponent::new(comps) {
-                    Ok(g) => g,
-                    Err(e) => {
-                        eprintln!("Error getting comp graph data: {e:?}");
-                        continue;
-                    }
-                },
-                None => {
-                    eprintln!("Missing components for mol; skipping.");
-                    continue;
-                }
-            };
+        if graph.num_atoms == 0 {
+            continue;
+        }
 
-            let graph_spacial = match GraphDataSpacial::new(&mol) {
+        let graph_comp = match &mol.components {
+            Some(comps) => match GraphDataComponent::new(comps) {
                 Ok(g) => g,
                 Err(e) => {
-                    // Should not happen: new() returns Ok(empty) for missing/no-feature cases.
-                    eprintln!("Unexpected error building spatial graph: {e:?}; skipping sample.");
+                    eprintln!("Error getting comp graph data: {e:?}");
                     continue;
                 }
-            };
+            },
+            None => {
+                eprintln!("Missing components for mol; skipping.");
+                continue;
+            }
+        };
 
-            result_set.push(Sample {
-                features_property: feat_params,
-                graph,
-                graph_comp,
-                graph_spacial,
-                target: *target,
-            });
-        }
+        // GraphDataSpacial::new returns Ok(empty) when characterization is missing
+        // or no pharmacophore sites are present, so this never errors.
+        let graph_spacial = match GraphDataSpacial::new(mol) {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("Error getting spatial graph data: {e:?}");
+                continue;
+            }
+        };
+
+        out.push(Sample {
+            features_property: feat_params,
+            graph,
+            graph_comp,
+            graph_spacial,
+            target: *target,
+        });
     }
-    Ok((result_train, result_test))
+    out
 }
 
 // Note: We can make variants of this A/R tuned to specific inference items. For now, we are using
@@ -1256,19 +1250,14 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
         .map(|s| s.to_owned())
 }
 
+/// Train, save model/scaler/config given pre-built train and validation samples.
+/// `train()` and `eval()` both go through this entry point.
 #[cfg(feature = "train")]
-pub(in crate::therapeutic) fn train(
-    data_path: &Path,
+pub(in crate::therapeutic) fn train_with_samples(
     dataset: DatasetTdc,
-    tgt_col: usize,
-    mol_specific_params: &mut HashMap<String, ForceFieldParams>,
-    gaff2: &ForceFieldParams,
+    data_train: Vec<Sample>,
+    data_valid: Vec<Sample>,
 ) -> io::Result<()> {
-    let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
-
-    // For now at least, the target name will always be the csv filename (Without extension)
-    let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
-
     let param_cfg = load_param_cfg(&dataset.name())?;
     println!(
         "Branch config for '{}': atom_gnn={} comp_gnn={} spacial_gnn={} mlp={}",
@@ -1282,22 +1271,13 @@ pub(in crate::therapeutic) fn train(
     let (model_path, scaler_path, config_path) = dataset.model_paths();
 
     let start = Instant::now();
-    println!("Started training on {csv_path:?}");
 
-    // let model_dir = Path::new(MODEL_DIR);
     let model_dir_train_val = Path::new(TRAIN_VALID_DIR);
     fs::create_dir_all(model_dir_train_val)?;
 
-    let tts = TrainTestSplit::new(dataset);
-
-    let (data_train, data_valid) = read_data(
-        Path::new(&csv_path),
-        Path::new(&mol_path),
-        tgt_col,
-        &tts,
-        mol_specific_params,
-        &gaff2,
-    )?;
+    if data_train.is_empty() {
+        return Err(io::Error::other("No training samples"));
+    }
 
     println!("Training on : {} samples", data_train.len());
 
@@ -1308,8 +1288,6 @@ pub(in crate::therapeutic) fn train(
     const SEED: u64 = 42;
     TrainBackend::seed(&device, SEED);
     ValidBackend::seed(&device, SEED);
-
-    // burn_wgpu::init_setup::<burn_wgpu::graphics::Dx12>(&device, RuntimeOptions::default());
 
     let train_loader = DataLoaderBuilder::new(Batcher_ {
         scaler: scaler.clone(),
@@ -1322,9 +1300,8 @@ pub(in crate::therapeutic) fn train(
         scaler: scaler.clone(),
     })
     .batch_size(128)
-    .build(InMemDataset::new(data_valid.to_vec()));
+    .build(InMemDataset::new(data_valid));
 
-    // Training
     let num_params = data_train[0].features_property.len();
     let model_cfg = ModelConfig {
         global_input_dim: num_params,
@@ -1335,7 +1312,7 @@ pub(in crate::therapeutic) fn train(
         embedding_dim: 16,             // Tune this (8, 16, 32)
         n_node_scalars: PER_ATOM_SCALARS,
         edge_feat_dim: PER_EDGE_FEATS,
-        vocab_size_comp: 10, // 10 component types (see vocab_lookup_component)
+        vocab_size_comp: 11, // 0=pad + 10 component types (see vocab_lookup_component)
         comp_embedding_dim: 8,
         n_comp_scalars: PER_COMP_SCALARS,
         comp_edge_feat_dim: PER_EDGE_COMP_FEATS,
@@ -1344,7 +1321,6 @@ pub(in crate::therapeutic) fn train(
         pharm_embedding_dim: 8,
         n_pharm_scalars: PER_PHARM_SCALARS,
         spacial_edge_feat_dim: PER_SPACIAL_EDGE_FEATS,
-        // Read which branches to enable from the config file.
         gnn_atom_enabled: param_cfg.gnn_atom_enabled,
         gnn_comp_enabled: param_cfg.gnn_comp_enabled,
         gnn_spacial_enabled: param_cfg.gnn_spacial_enabled,
@@ -1372,23 +1348,20 @@ pub(in crate::therapeutic) fn train(
         train_loader,
         valid_loader,
     )
-    .metrics((LossMetric::new(),)) // Note the tuple format for metrics
+    .metrics((LossMetric::new(),))
     .num_epochs(80)
     .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
-    .summary(); // Provides the TUI/CLI output
+    .summary();
 
     let result = training.launch(Learner::new(model, optim, lr_scheduler));
 
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
     result.model.save_file(&model_path, &recorder).unwrap();
 
-    //  Save the Model Config
     let config_file = fs::File::create(&config_path).expect("Could not create config file");
     serde_json::to_writer_pretty(config_file, &model_cfg).expect("Could not write config");
     println!("Saved config to {:?}", config_path);
 
-    //  Save the Scaler
-    // You need this for inference to know the means/stds to normalize new data.
     let scaler_file = fs::File::create(&scaler_path).expect("Could not create scaler file");
     serde_json::to_writer_pretty(scaler_file, &scaler).expect("Could not write scaler");
     println!("Saved scaler to {:?}", scaler_path);
@@ -1400,6 +1373,36 @@ pub(in crate::therapeutic) fn train(
     );
 
     Ok(())
+}
+
+#[cfg(feature = "train")]
+pub(in crate::therapeutic) fn train(
+    data_path: &Path,
+    dataset: DatasetTdc,
+    tgt_col: usize,
+    mol_specific_params: &mut HashMap<String, ForceFieldParams>,
+    ff_params: &ForceFieldParams,
+) -> io::Result<()> {
+    let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
+
+    println!("Started training on {csv_path:?}");
+
+    let tts = TrainTestSplit::new(dataset);
+
+    let loaded = load_training_data(
+        Path::new(&csv_path),
+        Path::new(&mol_path),
+        tgt_col,
+        &tts,
+        mol_specific_params,
+        ff_params,
+        false,
+    )?;
+
+    let data_train = samples_from_mols(&loaded.train, ff_params);
+    let data_valid = samples_from_mols(&loaded.validation, ff_params);
+
+    train_with_samples(dataset, data_train, data_valid)
 }
 
 #[cfg(feature = "train")]
@@ -1422,7 +1425,7 @@ pub fn main() {
     let datasets = match target {
         Some(t) => t
             .split_whitespace()
-            .map(|set| DatasetTdc::from_str(&t).unwrap())
+            .map(|set| DatasetTdc::from_str(set).unwrap())
             .collect(),
         None => DatasetTdc::all(),
     };

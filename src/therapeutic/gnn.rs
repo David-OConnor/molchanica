@@ -56,7 +56,6 @@ const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
 const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 
-
 /// State for our atom-and-bond-based neural network. Atoms are nodes; covalent bonds are
 /// edges.
 #[derive(Clone, Debug)]
@@ -72,7 +71,6 @@ pub(in crate::therapeutic) struct GraphDataAtom {
     pub edge_feats: Vec<f32>,
     pub num_atoms: usize,
 }
-
 
 impl GraphDataAtom {
     /// Converts raw Atoms and Bonds into Flat vectors for Tensors.
@@ -225,41 +223,50 @@ impl GraphDataAtom {
                 let ff1 = atoms[a1].force_field_type.clone().unwrap();
                 let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
 
-                // todo: Consider a dedicated fn for this, or simplify it. However, it currently requires many
-                // todo params avialable here.
-                let bond_stretching = if let Some(v) = bond_stretching {
-                    v
+                let (dr_norm, log_kb) = if let Some(v) = bond_stretching {
+                    let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
+                    let log_kb = (v.k_b / KB_REF).ln_1p();
+                    (dr, log_kb)
                 } else {
-                    // A coarse fallback.
-                    let mut safe_fallback = ("cc".to_owned(), "n".to_owned());
-
-                    if (&ff0 == "cc" && ff1.starts_with("n"))
+                    // Try a small set of coarse fallbacks; if none hit, leave the edge
+                    // features as zero rather than panicking.
+                    let candidates: &[(&str, &str)] = if (&ff0 == "cc" && ff1.starts_with("n"))
                         || (&ff1 == "cc" && ff0.starts_with("n"))
                     {
-                        safe_fallback = ("cc".to_owned(), "n4".to_owned());
+                        &[("cc", "n4"), ("cc", "n")]
                     } else if (&ff0 == "cg" && ff1.starts_with("c"))
                         || (&ff1 == "cg" && ff0.starts_with("c"))
                     {
-                        safe_fallback = ("cg".to_owned(), "cg".to_owned());
+                        &[("cg", "cg"), ("cc", "cc")]
                     } else if atoms[a0].element == Carbon && atoms[a1].element == Carbon {
-                        safe_fallback = ("cc".to_owned(), "cc".to_owned());
-                        eprintln!(
-                            "Missing bond stretching for bond {bond:?}. \nAtoms {ff0} | {ff1}\n. Using a substitute.",
-                        );
+                        &[("cc", "cc")]
                     } else if atoms[a0].element == Nitrogen && atoms[a1].element == Nitrogen {
-                        safe_fallback = ("n".to_owned(), "n".to_owned());
+                        &[("n", "n")]
+                    } else {
+                        &[]
+                    };
 
-                        eprintln!(
-                            "Missing bond stretching for bond {bond:?}. \nAtoms {ff0} | {ff1}\n. Using a substitute.",
-                        );
+                    let mut found = None;
+                    for (a, b) in candidates {
+                        if let Some(v) =
+                            ff_params.get_bond(&((*a).to_owned(), (*b).to_owned()), false)
+                        {
+                            found = Some(v);
+                            break;
+                        }
                     }
 
-                    ff_params.get_bond(&safe_fallback, false).unwrap()
+                    if let Some(v) = found {
+                        let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
+                        let log_kb = (v.k_b / KB_REF).ln_1p();
+                        (dr, log_kb)
+                    } else {
+                        eprintln!(
+                            "Missing bond stretching and no fallback for bond {bond:?}. \nAtoms {ff0} | {ff1}. Using zero edge features.",
+                        );
+                        (0.0, 0.0)
+                    }
                 };
-
-                let dr_norm =
-                    ((dist - bond_stretching.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
-                let log_kb = (bond_stretching.k_b / KB_REF).ln_1p();
 
                 edge_feats[edge_feats_i(a0, a1, 0, num_atoms)] = dr_norm;
                 edge_feats[edge_feats_i(a0, a1, 1, num_atoms)] = log_kb;
@@ -275,29 +282,9 @@ impl GraphDataAtom {
             adj_list[a1 * num_atoms + a0] = weight;
         }
 
-        // Symmetric Normalization: D^(-0.5) * A * D^(-0.5)
-
-
-        let degrees_vec = {
-            let mut v = vec![0.; num_atoms];
-
-            for i in 0..num_atoms {
-                let mut d = 0.0;
-                for j in 0..num_atoms {
-                    d += adj_list[i * num_atoms + j];
-                }
-                v[i] = d;
-            }
-        v
-        };
-
-        for i in 0..num_atoms {
-            let di_inv_sqrt = 1.0 / degrees_vec[i].max(1e-9).sqrt();
-            for j in 0..num_atoms {
-                let dj_inv_sqrt = 1.0 / degrees_vec[j].max(1e-9).sqrt();
-                adj_list[i * num_atoms + j] *= di_inv_sqrt * dj_inv_sqrt;
-            }
-        }
+        // Note: symmetric normalization (D^-1/2 A D^-1/2) is applied in the model's
+        // forward pass *after* the learned edge gate, so we ship the raw weighted
+        // adjacency (with self-loops) here.
 
         Ok(Self {
             elem_indices,
@@ -378,22 +365,7 @@ impl GraphDataComponent {
             edge_feats[edge_feats_i(a1, a0, 0, num_comps)] = shared;
         }
 
-        // Symmetric Normalization: D^(-0.5) * A * D^(-0.5)
-        let mut degrees_vec = vec![0.0f32; num_comps];
-        for i in 0..num_comps {
-            let mut d = 0.0;
-            for j in 0..num_comps {
-                d += adj_list[i * num_comps + j];
-            }
-            degrees_vec[i] = d;
-        }
-        for i in 0..num_comps {
-            let di_inv_sqrt = 1.0 / degrees_vec[i].max(1e-9).sqrt();
-            for j in 0..num_comps {
-                let dj_inv_sqrt = 1.0 / degrees_vec[j].max(1e-9).sqrt();
-                adj_list[i * num_comps + j] *= di_inv_sqrt * dj_inv_sqrt;
-            }
-        }
+        // Symmetric normalization is applied in the model after gating; see GraphDataAtom.
 
         Ok(Self {
             comp_type_indices,
@@ -517,6 +489,29 @@ pub(in crate::therapeutic) fn pad_edge_feats(
     }
 
     out
+}
+
+/// Pad a 1-D index vector to `max`, filling the tail with `0` (the padding token).
+pub(in crate::therapeutic) fn pad_indices(src: &[i32], num: usize, max: usize) -> Vec<i32> {
+    let n = num.min(max);
+    let mut v = Vec::with_capacity(max);
+    v.extend_from_slice(&src[0..n]);
+    v.extend(repeat_n(0_i32, max - n));
+    v
+}
+
+/// Pad a per-node scalar block (`num × n_per` flat) to `max × n_per`.
+pub(in crate::therapeutic) fn pad_scalars(
+    src: &[f32],
+    num: usize,
+    n_per: usize,
+    max: usize,
+) -> Vec<f32> {
+    let n = num.min(max);
+    let mut v = Vec::with_capacity(max * n_per);
+    v.extend_from_slice(&src[0..n * n_per]);
+    v.extend(repeat_n(0.0_f32, (max - n) * n_per));
+    v
 }
 
 /// Pharmacophore-feature graph for 3-D spatial/geometric structure.
@@ -680,6 +675,8 @@ impl GraphDataSpacial {
             }
         }
 
+        // Symmetric normalization is applied in the model after gating; see GraphDataAtom.
+
         Ok(Self {
             pharm_type_indices,
             scalars,
@@ -721,19 +718,20 @@ fn vocab_lookup_element(el: Element) -> i32 {
     }
 }
 
-/// Maps element to values the neural net can use.
+/// Maps component type to integer indices for the embedding layer.
+/// 0 is reserved for padding in the Batcher, so we start at 1.
 fn vocab_lookup_component(comp_type: &ComponentType) -> i32 {
     use ComponentType::*;
     match comp_type {
-        Atom(_) => 0,
-        Ring(_) => 1,
-        Chain(_) => 2,
-        Hydroxyl => 3,
-        Carbonyl => 4,
-        Carboxylate => 5,
-        Amine => 6,
-        Amide => 7,
-        Sulfonamide => 8,
-        Sulfonimide => 9,
+        Atom(_) => 1,
+        Ring(_) => 2,
+        Chain(_) => 3,
+        Hydroxyl => 4,
+        Carbonyl => 5,
+        Carboxylate => 6,
+        Amine => 7,
+        Amide => 8,
+        Sulfonamide => 9,
+        Sulfonimide => 10,
     }
 }

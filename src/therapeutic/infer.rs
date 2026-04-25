@@ -1,7 +1,7 @@
 //! ML inference, e.g. for Therapeutic properties. Shares the model and relevant
 //! properties with `train.rs`.
 
-use std::{collections::HashMap, fs, io, iter::repeat_n, time::Instant};
+use std::{collections::HashMap, fs, io, time::Instant};
 
 use bio_files::md_params::ForceFieldParams;
 use burn::{
@@ -17,9 +17,9 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         gnn::{
-            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
-            PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask,
-            pad_edge_feats,
+            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
+            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS,
+            PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats, pad_indices, pad_scalars,
         },
         train::{
             MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
@@ -37,6 +37,7 @@ use crate::{
 // type InferBackend = Wgpu;
 type InferBackend = NdArray;
 // type InferBackend = Cpu;
+// todo: Also look at Vulkan.
 
 pub struct Infer {
     model: Model<InferBackend>,
@@ -128,59 +129,24 @@ impl Infer {
         };
 
         let graph_comp = GraphDataComponent::new(comps)?;
-        let graph_spacial =
-            GraphDataSpacial::new(mol).unwrap_or_else(|_| GraphDataSpacial::empty());
+        // GraphDataSpacial::new returns Ok(empty) when characterization is missing
+        // or no pharmacophore sites are present, so this never errors.
+        let graph_spacial = GraphDataSpacial::new(mol)?;
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
         let num_atoms = graph_atom_bond.num_atoms;
-        let n = num_atoms.min(MAX_ATOMS);
-
         let num_comps = graph_comp.num_comps;
-        let n_comps = num_comps.min(MAX_COMPS);
+        let num_pharm = graph_spacial.num_nodes;
 
-        // Pad Indices (Int) --
-        let p_el_ids = {
-            let mut v = Vec::with_capacity(MAX_ATOMS);
-            v.extend_from_slice(&graph_atom_bond.elem_indices[0..n]);
-            v.extend(repeat_n(0, MAX_ATOMS - n));
-
-            v
-        };
-
-        let p_ff_ids = {
-            let mut v = Vec::with_capacity(MAX_ATOMS);
-            v.extend_from_slice(&graph_atom_bond.ff_indices[0..n]);
-            v.extend(repeat_n(0, MAX_ATOMS - n));
-
-            v
-        };
-
-        let p_comp_type_ids = {
-            let mut v = Vec::with_capacity(MAX_COMPS);
-            v.extend_from_slice(&graph_comp.comp_type_indices[0..n_comps]);
-            v.extend(repeat_n(0, MAX_COMPS - n_comps));
-
-            v
-        };
-
-        // -- Pad Comp Scalars (Float) --
-        let mut p_comp_scalars = Vec::with_capacity(MAX_COMPS * PER_COMP_SCALARS);
-        p_comp_scalars.extend_from_slice(&graph_comp.scalars[0..n_comps * PER_COMP_SCALARS]);
-        p_comp_scalars.extend(repeat_n(0.0f32, (MAX_COMPS - n_comps) * PER_COMP_SCALARS));
-
-        // -- Pad Scalars (Float) --
-        // Calculate dimensionality (should be 2: charge + degree)
-        let n_scalars_per_atom = if num_atoms > 0 {
-            graph_atom_bond.scalars.len() / num_atoms
-        } else {
-            2
-        };
-        let mut p_scalars = Vec::with_capacity(MAX_ATOMS * n_scalars_per_atom);
-        p_scalars.extend_from_slice(&graph_atom_bond.scalars[0..n * n_scalars_per_atom]);
-        p_scalars.extend(repeat_n(0.0, (MAX_ATOMS - n) * n_scalars_per_atom));
-
-        // -- Pad Adj & Mask (Float) --
-        // Use the helper from train.rs
+        // Atom graph
+        let p_el_ids = pad_indices(&graph_atom_bond.elem_indices, num_atoms, MAX_ATOMS);
+        let p_ff_ids = pad_indices(&graph_atom_bond.ff_indices, num_atoms, MAX_ATOMS);
+        let p_scalars = pad_scalars(
+            &graph_atom_bond.scalars,
+            num_atoms,
+            PER_ATOM_SCALARS,
+            MAX_ATOMS,
+        );
         let (padded_adj, padded_mask) =
             pad_adj_and_mask(&graph_atom_bond.adj, num_atoms, MAX_ATOMS);
         let p_edge_feats = pad_edge_feats(
@@ -190,6 +156,10 @@ impl Infer {
             MAX_ATOMS,
         );
 
+        // Component graph
+        let p_comp_type_ids = pad_indices(&graph_comp.comp_type_indices, num_comps, MAX_COMPS);
+        let p_comp_scalars =
+            pad_scalars(&graph_comp.scalars, num_comps, PER_COMP_SCALARS, MAX_COMPS);
         let (padded_adj_comp, padded_mask_comp) =
             pad_adj_and_mask(&graph_comp.adj, num_comps, MAX_COMPS);
         let p_edge_comp_feats = pad_edge_feats(
@@ -199,21 +169,14 @@ impl Infer {
             MAX_COMPS,
         );
 
-        // Spatial (pharmacophore) graph padding
-        let num_pharm = graph_spacial.num_nodes;
-        let n_pharm = num_pharm.min(MAX_PHARM);
-
-        let p_pharm_ids = {
-            let mut v = Vec::with_capacity(MAX_PHARM);
-            v.extend_from_slice(&graph_spacial.pharm_type_indices[0..n_pharm]);
-            v.extend(repeat_n(0_i32, MAX_PHARM - n_pharm));
-            v
-        };
-
-        let mut p_pharm_scalars = Vec::with_capacity(MAX_PHARM * PER_PHARM_SCALARS);
-        p_pharm_scalars.extend_from_slice(&graph_spacial.scalars[0..n_pharm * PER_PHARM_SCALARS]);
-        p_pharm_scalars.extend(repeat_n(0.0_f32, (MAX_PHARM - n_pharm) * PER_PHARM_SCALARS));
-
+        // Spatial (pharmacophore) graph
+        let p_pharm_ids = pad_indices(&graph_spacial.pharm_type_indices, num_pharm, MAX_PHARM);
+        let p_pharm_scalars = pad_scalars(
+            &graph_spacial.scalars,
+            num_pharm,
+            PER_PHARM_SCALARS,
+            MAX_PHARM,
+        );
         let (padded_adj_pharm, padded_mask_pharm) =
             pad_adj_and_mask(&graph_spacial.adj, num_pharm, MAX_PHARM);
         let p_edge_pharm_feats = pad_edge_feats(
@@ -247,7 +210,7 @@ impl Infer {
 
         // Float Tensors for the rest
         let t_scalars = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(p_scalars, [1, MAX_ATOMS, n_scalars_per_atom]),
+            TensorData::new(p_scalars, [1, MAX_ATOMS, PER_ATOM_SCALARS]),
             &self.device,
         );
 
@@ -348,6 +311,232 @@ impl Infer {
         let real_val = self.scaler.denormalize_target(val);
 
         Ok(real_val)
+    }
+}
+
+impl Infer {
+    /// Batched inference: pack all molecules into a single forward pass. Much faster
+    /// than calling `infer` per-molecule when you have many to evaluate (e.g. eval).
+    /// Errors out if any single mol fails feature extraction or graph construction.
+    pub fn infer_batch(
+        &self,
+        mols: &[&MoleculeSmall],
+        ff_params: &ForceFieldParams,
+    ) -> io::Result<Vec<f32>> {
+        if mols.is_empty() {
+            return Ok(Vec::new());
+        }
+        let batch_size = mols.len();
+
+        let mut all_elem = Vec::with_capacity(batch_size * MAX_ATOMS);
+        let mut all_ff = Vec::with_capacity(batch_size * MAX_ATOMS);
+        let mut all_scalars = Vec::with_capacity(batch_size * MAX_ATOMS * PER_ATOM_SCALARS);
+        let mut all_adj = Vec::with_capacity(batch_size * MAX_ATOMS * MAX_ATOMS);
+        let mut all_edge = Vec::with_capacity(batch_size * MAX_ATOMS * MAX_ATOMS * PER_EDGE_FEATS);
+        let mut all_mask = Vec::with_capacity(batch_size * MAX_ATOMS);
+
+        let mut all_comp_ids = Vec::with_capacity(batch_size * MAX_COMPS);
+        let mut all_comp_scalars = Vec::with_capacity(batch_size * MAX_COMPS * PER_COMP_SCALARS);
+        let mut all_comp_adj = Vec::with_capacity(batch_size * MAX_COMPS * MAX_COMPS);
+        let mut all_comp_edge =
+            Vec::with_capacity(batch_size * MAX_COMPS * MAX_COMPS * PER_EDGE_COMP_FEATS);
+        let mut all_comp_mask = Vec::with_capacity(batch_size * MAX_COMPS);
+
+        let mut all_pharm_ids = Vec::with_capacity(batch_size * MAX_PHARM);
+        let mut all_pharm_scalars = Vec::with_capacity(batch_size * MAX_PHARM * PER_PHARM_SCALARS);
+        let mut all_pharm_adj = Vec::with_capacity(batch_size * MAX_PHARM * MAX_PHARM);
+        let mut all_pharm_edge =
+            Vec::with_capacity(batch_size * MAX_PHARM * MAX_PHARM * PER_SPACIAL_EDGE_FEATS);
+        let mut all_pharm_mask = Vec::with_capacity(batch_size * MAX_PHARM);
+
+        let mut all_globals: Vec<f32> = Vec::new();
+        let mut feat_dim = 0;
+
+        for mol in mols {
+            let mut feat_params = mlp_feats_from_mol(mol)?;
+            if feat_dim == 0 {
+                feat_dim = feat_params.len();
+                all_globals.reserve(batch_size * feat_dim);
+            }
+            self.scaler.apply_in_place(&mut feat_params);
+            all_globals.extend(feat_params);
+
+            let g = GraphDataAtom::new(mol, ff_params)?;
+            let comps = mol
+                .components
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Missing components in ML inference"))?;
+            let gc = GraphDataComponent::new(comps)?;
+            let gs = GraphDataSpacial::new(mol)?;
+
+            // Atom graph
+            all_elem.extend(pad_indices(&g.elem_indices, g.num_atoms, MAX_ATOMS));
+            all_ff.extend(pad_indices(&g.ff_indices, g.num_atoms, MAX_ATOMS));
+            all_scalars.extend(pad_scalars(
+                &g.scalars,
+                g.num_atoms,
+                PER_ATOM_SCALARS,
+                MAX_ATOMS,
+            ));
+            let (a, m) = pad_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
+            all_adj.extend(a);
+            all_mask.extend(m);
+            all_edge.extend(pad_edge_feats(
+                &g.edge_feats,
+                g.num_atoms,
+                PER_EDGE_FEATS,
+                MAX_ATOMS,
+            ));
+
+            // Component graph
+            all_comp_ids.extend(pad_indices(&gc.comp_type_indices, gc.num_comps, MAX_COMPS));
+            all_comp_scalars.extend(pad_scalars(
+                &gc.scalars,
+                gc.num_comps,
+                PER_COMP_SCALARS,
+                MAX_COMPS,
+            ));
+            let (ca, cm) = pad_adj_and_mask(&gc.adj, gc.num_comps, MAX_COMPS);
+            all_comp_adj.extend(ca);
+            all_comp_mask.extend(cm);
+            all_comp_edge.extend(pad_edge_feats(
+                &gc.edge_feats,
+                gc.num_comps,
+                PER_EDGE_COMP_FEATS,
+                MAX_COMPS,
+            ));
+
+            // Spatial (pharmacophore) graph
+            all_pharm_ids.extend(pad_indices(&gs.pharm_type_indices, gs.num_nodes, MAX_PHARM));
+            all_pharm_scalars.extend(pad_scalars(
+                &gs.scalars,
+                gs.num_nodes,
+                PER_PHARM_SCALARS,
+                MAX_PHARM,
+            ));
+            let (pa, pm) = pad_adj_and_mask(&gs.adj, gs.num_nodes, MAX_PHARM);
+            all_pharm_adj.extend(pa);
+            all_pharm_mask.extend(pm);
+            all_pharm_edge.extend(pad_edge_feats(
+                &gs.edge_feats,
+                gs.num_nodes,
+                PER_SPACIAL_EDGE_FEATS,
+                MAX_PHARM,
+            ));
+        }
+
+        let dev = &self.device;
+
+        let t_elem = Tensor::<InferBackend, 2, Int>::from_data(
+            TensorData::new(all_elem, [batch_size, MAX_ATOMS]),
+            dev,
+        );
+        let t_ff = Tensor::<InferBackend, 2, Int>::from_data(
+            TensorData::new(all_ff, [batch_size, MAX_ATOMS]),
+            dev,
+        );
+        let t_scalars = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_scalars, [batch_size, MAX_ATOMS, PER_ATOM_SCALARS]),
+            dev,
+        );
+        let t_adj = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_adj, [batch_size, MAX_ATOMS, MAX_ATOMS]),
+            dev,
+        );
+        let t_edge = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(all_edge, [batch_size, MAX_ATOMS, MAX_ATOMS, PER_EDGE_FEATS]),
+            dev,
+        );
+        let t_mask = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_mask, [batch_size, MAX_ATOMS, 1]),
+            dev,
+        );
+
+        let t_comp_ids = Tensor::<InferBackend, 2, Int>::from_data(
+            TensorData::new(all_comp_ids, [batch_size, MAX_COMPS]),
+            dev,
+        );
+        let t_comp_scalars = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_comp_scalars, [batch_size, MAX_COMPS, PER_COMP_SCALARS]),
+            dev,
+        );
+        let t_comp_adj = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_comp_adj, [batch_size, MAX_COMPS, MAX_COMPS]),
+            dev,
+        );
+        let t_comp_edge = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(
+                all_comp_edge,
+                [batch_size, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
+            ),
+            dev,
+        );
+        let t_comp_mask = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_comp_mask, [batch_size, MAX_COMPS, 1]),
+            dev,
+        );
+
+        let t_pharm_ids = Tensor::<InferBackend, 2, Int>::from_data(
+            TensorData::new(all_pharm_ids, [batch_size, MAX_PHARM]),
+            dev,
+        );
+        let t_pharm_scalars = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(
+                all_pharm_scalars,
+                [batch_size, MAX_PHARM, PER_PHARM_SCALARS],
+            ),
+            dev,
+        );
+        let t_pharm_adj = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_pharm_adj, [batch_size, MAX_PHARM, MAX_PHARM]),
+            dev,
+        );
+        let t_pharm_edge = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(
+                all_pharm_edge,
+                [batch_size, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
+            ),
+            dev,
+        );
+        let t_pharm_mask = Tensor::<InferBackend, 3>::from_data(
+            TensorData::new(all_pharm_mask, [batch_size, MAX_PHARM, 1]),
+            dev,
+        );
+
+        let t_params = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(all_globals, [batch_size, feat_dim]),
+            dev,
+        );
+
+        let preds = self.model.forward(
+            t_elem,
+            t_ff,
+            t_scalars,
+            t_adj,
+            t_edge,
+            t_mask,
+            t_comp_ids,
+            t_comp_scalars,
+            t_comp_adj,
+            t_comp_edge,
+            t_comp_mask,
+            t_pharm_ids,
+            t_pharm_scalars,
+            t_pharm_adj,
+            t_pharm_edge,
+            t_pharm_mask,
+            t_params,
+        );
+
+        let preds_vec = preds
+            .into_data()
+            .to_vec::<f32>()
+            .map_err(|_| io::Error::other("Tensor error"))?;
+
+        Ok(preds_vec
+            .into_iter()
+            .map(|p| self.scaler.denormalize_target(p))
+            .collect())
     }
 }
 
