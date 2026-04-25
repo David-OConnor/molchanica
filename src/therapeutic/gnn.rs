@@ -24,19 +24,23 @@ use crate::{
     therapeutic::train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS},
 };
 
-// Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring,
+// Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring.
+// Keep this in sync with the scalar setup (Where?)
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
 
 // Degree
+// Keep this in sync with the  setup (Where?)
 pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
 
 // Scaled/modified proxies for r_0, k_b
+// Keep this in sync with the  setup (Where?)
 pub(in crate::therapeutic) const PER_EDGE_FEATS: usize = 2;
 
 // Shared.
+// Keep this in sync with the setup (Where?)
 pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 1;
 
-// Spatial (pharmacophore) GNN constants.
+// Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
 // Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]
 pub(in crate::therapeutic) const PER_PHARM_SCALARS: usize = 2;
 // Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
@@ -44,6 +48,7 @@ pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
 // Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
 pub(in crate::therapeutic) const PHARM_VOCAB_SIZE: usize = 5;
 
+// Tunable parameters for the spacial/pharmacophore GNN.
 const SPACIAL_ADJ_SIGMA_SQ: f32 = 16.0; // sigma=4 Å for adjacency Gaussian
 const SPACIAL_DIST_SCALE: f32 = 10.0; // Normalise raw distances to ~O(1)
 const SPACIAL_RBF_SIGMA_SQ: f32 = 2.25; // sigma=1.5 Å for RBF basis functions
@@ -55,11 +60,11 @@ const KB_REF: f32 = 300.0;
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphData {
     /// Assign each element (Which we reasonably expect to encounter) an integer
-    /// assignment, to comply with the neural net's input requirements.
+    /// assignment to comply with the neural net's input requirements.
     pub elem_indices: Vec<i32>,
     /// An integer assignment for each force field type.
     pub ff_indices: Vec<i32>,
-    /// Partial charge, element, is an H bond donors/acceptor etc.
+    /// Partial charge, element, is a H bond donors/acceptor etc.
     pub scalars: Vec<f32>,
     pub adj: Vec<f32>,
     pub edge_feats: Vec<f32>,

@@ -137,7 +137,14 @@ pub(in crate::ui) fn dynamics_viewer(
         } else {
             ("Play", COLOR_ACTION)
         };
-        if button!(ui, play_label, play_color, "Start or pause automatic snapshot playback.").clicked() {
+        if button!(
+            ui,
+            play_label,
+            play_color,
+            "Start or pause automatic snapshot playback."
+        )
+        .clicked()
+        {
             state.volatile.md_local.viewer.playing = !state.volatile.md_local.viewer.playing;
             state.volatile.md_local.viewer.playback_accum = 0.0;
         }
@@ -145,9 +152,12 @@ pub(in crate::ui) fn dynamics_viewer(
         // Playback speed slider (snapshots per second)
         ui.label("Speed:");
         ui.add(
-            Slider::new(&mut state.volatile.md_local.viewer.playback_ratio, 0.5..=60.0)
-                .text("fps")
-                .fixed_decimals(1),
+            Slider::new(
+                &mut state.volatile.md_local.viewer.playback_ratio,
+                0.5..=60.0,
+            )
+            .text("fps")
+            .fixed_decimals(1),
         );
     });
 

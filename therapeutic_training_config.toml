@@ -14,5 +14,10 @@ gnn_comp_layers = 3
 # memory use; have crashed with out-of-memory with this at 7.
 gnn_spacial_layers = 2
 #gnn_spacial_layers = 7
-# It seems  a higher value here, to a point, is relatively cheap, and produces better results.
+# It seems a higher value here, to a point, is relatively cheap, and produces better results.
 mlp_layers = 4
+
+# todo: Eval where this should live. Currently hard-coded.
+## Note: Excluding H or not appears not to make any notable difference at first;
+## Experiment with this more later.
+#exclude_hydrogen = true

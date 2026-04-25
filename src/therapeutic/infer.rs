@@ -29,6 +29,11 @@ use crate::{
 
 // todo: Stack overflow with Burn CPU
 // CPU (i.e.NdArray) seems to be much faster for inference than GPU.
+// The `Cpu` backend is a newer one: "Burn CPU", but we currently get a stack overflow when using it.
+// `Wgpu` is a good default for GPU inference, if that turns out to be faster once we have updated
+// our algorithm. `Cuda` is another option; it uses `Cudarc`, and limits inference to Nvidia GPUs.
+// We may have to make sure its Cudarc linking settings match ours.
+
 // type InferBackend = Wgpu;
 type InferBackend = NdArray;
 // type InferBackend = Cpu;
@@ -48,7 +53,7 @@ impl Infer {
         let device = Default::default();
 
         // Prevent randomness in results.
-        const SEED: u64 = 42;
+        const SEED: u64 = 69;
         InferBackend::seed(&device, SEED);
 
         let model = config.init::<InferBackend>(&device);
@@ -63,8 +68,8 @@ impl Infer {
         ))
     }
 
-    /// Load the model and related data from file. Use this for the training and eval executable. Since we
-    /// evaluate from the same run as training, the training  data does not get embedded there, so
+    /// Load the model and related data from file. Use this for both training and inference pipelines
+    /// executable. Since we evaluate from the same run as training, the training data does not get embedded there, so
     /// we load from disk.
     pub fn load_from_file(data_set: DatasetTdc) -> io::Result<Self> {
         let (model_path, scaler_path, cfg_path) = data_set.model_paths();
@@ -102,19 +107,20 @@ impl Infer {
         Ok(model)
     }
 
+    /// Entry point for inference. Used by the main program to estimate properties,
+    /// and in the evaluation pipeline.
     pub fn infer(
         &self,
         mol: &MoleculeSmall,
         mut feat_params: Vec<f32>,
         ff_params: &ForceFieldParams,
     ) -> io::Result<f32> {
+        #[allow(unused)]
         let start = Instant::now();
 
-        // Prepare Globals
         let n_feat_params = feat_params.len();
         self.scaler.apply_in_place(&mut feat_params);
 
-        // Extract Graph Data (New Return Signature)
         let graph_atom_bond = GraphData::new(mol, ff_params)?;
 
         let Some(comps) = &mol.components else {
@@ -362,7 +368,6 @@ pub fn infer_general(
     let infer = match models.get_mut(&dataset) {
         Some(inf) => inf,
         None => {
-            // let infer =
             let infer = if load_from_file {
                 Infer::load_from_file(dataset)?
             } else {

@@ -18,8 +18,8 @@ use dynamics::{
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f32::Vec3;
 
-use crate::file_io::save_mol_set_as_gro;
 use crate::{
+    file_io::save_mol_set_as_gro,
     md::{MdBackend, build_dynamics, custom_solvents_to_mol_commons, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
     state::State,

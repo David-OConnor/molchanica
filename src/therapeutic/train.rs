@@ -79,6 +79,10 @@ use crate::{
 // 20 is usually enough to capture major distinct atom types without too many collisions. (?)
 pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 
+// Note: Excluding H or not appears not to make any notable difference at first;
+// Experiment with this more later.
+pub(in crate::therapeutic) const EXCLUDE_HYDROGEN: bool = true;
+
 // 10 (Elements) + 1 (Degree) + 20 (FF Hashed) + 1 (Partial Charge)
 // pub(in crate::therapeutic) const FEAT_DIM_ATOMS: usize = 12 + FF_BUCKETS;
 
@@ -87,10 +91,11 @@ pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for paddin
 pub(in crate::therapeutic) const MAX_COMPS: usize = 30; // Max components for padding
 pub(in crate::therapeutic) const MAX_PHARM: usize = 30; // Max pharmacophore nodes for padding
 
-/// Configuation for the model; can be set at runtime, e.g. using the config file.
-/// Loaded from `therapeutic_training_config.toml` at the project root.
+/// Configuration, as loaded from our config file; can be set at runtime.
+/// Loaded from `therapeutic_training_config.toml` at the project root. See that file for
+/// field descriptions, and default values.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(in crate::therapeutic) struct BranchConfig {
+pub(in crate::therapeutic) struct ParamConfig {
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
     pub gnn_spacial_enabled: bool,
@@ -99,37 +104,32 @@ pub(in crate::therapeutic) struct BranchConfig {
     pub gnn_comp_layers: u8,
     pub gnn_spacial_layers: u8,
     pub mlp_layers: u8,
+    // pub exclude_hydrogens: bool,
 }
 
-impl Default for BranchConfig {
-    fn default() -> Self {
-        Self {
-            gnn_atom_enabled: true,
-            gnn_comp_enabled: true,
-            gnn_spacial_enabled: true,
-            mlp_enabled: true,
-            gnn_atom_layers: 3,
-            gnn_comp_layers: 3,
-            gnn_spacial_layers: 2,
-            mlp_layers: 3,
-        }
-    }
-}
+// impl Default for ParamConfig {
+//     fn default() -> Self {
+//         Self {
+//             gnn_atom_enabled: true,
+//             gnn_comp_enabled: true,
+//             gnn_spacial_enabled: true,
+//             mlp_enabled: true,
+//             gnn_atom_layers: 3,
+//             gnn_comp_layers: 3,
+//             gnn_spacial_layers: 2,
+//             mlp_layers: 3,
+//             // exclude_hydrogens: true,
+//         }
+//     }
+// }
 
 /// Minimal parser for the subset of TOML used by `therapeutic_training_config.toml`:
 /// top-level sections (`[name]`) containing `key = true/false` pairs.
 /// Unknown keys are silently ignored; missing keys keep the default value.
-#[cfg(feature = "train")]
-fn load_branch_config(dataset_name: &str) -> BranchConfig {
+fn load_param_cfg(dataset_name: &str) -> io::Result<ParamConfig> {
     const CONFIG_PATH: &str = "therapeutic_training_config.toml";
 
-    let text = match fs::read_to_string(CONFIG_PATH) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("Warning: could not read {CONFIG_PATH}: {e}. Using defaults.");
-            return BranchConfig::default();
-        }
-    };
+    let text = fs::read_to_string(CONFIG_PATH)?;
 
     // Parse into HashMap<section, HashMap<key, String>>; handles both bool and integer values.
     let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -174,7 +174,7 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
             .unwrap_or(default)
     };
 
-    BranchConfig {
+    Ok(ParamConfig {
         gnn_atom_enabled: get(map, "gnn_atom_enabled"),
         gnn_comp_enabled: get(map, "gnn_comp_enabled"),
         gnn_spacial_enabled: get(map, "gnn_spacial_enabled"),
@@ -183,7 +183,7 @@ fn load_branch_config(dataset_name: &str) -> BranchConfig {
         gnn_comp_layers: get_int(map, "gnn_comp_layers", 3),
         gnn_spacial_layers: get_int(map, "gnn_spacial_layers", 2),
         mlp_layers: get_int(map, "mlp_layers", 3),
-    }
+    })
 }
 
 pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
@@ -197,10 +197,6 @@ pub(in crate::therapeutic) static MODEL_INCLUDE: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/ml_models/models");
 
 pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
-
-// Note: Excluding H or not appears not to make any notable difference at first;
-// Experiment with this more later.
-pub(in crate::therapeutic) const EXCLUDE_HYDROGEN: bool = true;
 
 // It seems that low or no dropout significantly improves results, but perhaps it makes the
 // model more likely to overfit, and makes it less general? Maybe 0.1 or disabled.
@@ -1273,14 +1269,14 @@ pub(in crate::therapeutic) fn train(
     // For now at least, the target name will always be the csv filename (Without extension)
     let target_name = Path::new(&csv_path).file_stem().unwrap().to_str().unwrap();
 
-    let branch_cfg = load_branch_config(&dataset.name());
+    let param_cfg = load_param_cfg(&dataset.name())?;
     println!(
         "Branch config for '{}': atom_gnn={} comp_gnn={} spacial_gnn={} mlp={}",
         dataset.name(),
-        branch_cfg.gnn_atom_enabled,
-        branch_cfg.gnn_comp_enabled,
-        branch_cfg.gnn_spacial_enabled,
-        branch_cfg.mlp_enabled,
+        param_cfg.gnn_atom_enabled,
+        param_cfg.gnn_comp_enabled,
+        param_cfg.gnn_spacial_enabled,
+        param_cfg.mlp_enabled,
     );
 
     let (model_path, scaler_path, config_path) = dataset.model_paths();
@@ -1349,14 +1345,14 @@ pub(in crate::therapeutic) fn train(
         n_pharm_scalars: PER_PHARM_SCALARS,
         spacial_edge_feat_dim: PER_SPACIAL_EDGE_FEATS,
         // Read which branches to enable from the config file.
-        gnn_atom_enabled: branch_cfg.gnn_atom_enabled,
-        gnn_comp_enabled: branch_cfg.gnn_comp_enabled,
-        gnn_spacial_enabled: branch_cfg.gnn_spacial_enabled,
-        mlp_enabled: branch_cfg.mlp_enabled,
-        gnn_atom_layers: branch_cfg.gnn_atom_layers,
-        gnn_comp_layers: branch_cfg.gnn_comp_layers,
-        gnn_spacial_layers: branch_cfg.gnn_spacial_layers,
-        mlp_layers: branch_cfg.mlp_layers,
+        gnn_atom_enabled: param_cfg.gnn_atom_enabled,
+        gnn_comp_enabled: param_cfg.gnn_comp_enabled,
+        gnn_spacial_enabled: param_cfg.gnn_spacial_enabled,
+        mlp_enabled: param_cfg.mlp_enabled,
+        gnn_atom_layers: param_cfg.gnn_atom_layers,
+        gnn_comp_layers: param_cfg.gnn_comp_layers,
+        gnn_spacial_layers: param_cfg.gnn_spacial_layers,
+        mlp_layers: param_cfg.mlp_layers,
     };
 
     let model = model_cfg.init::<TrainBackend>(&device);
