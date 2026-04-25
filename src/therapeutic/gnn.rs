@@ -1,5 +1,7 @@
-//! Related to the graph neural net. This includes atom and bond networks,
-//! and per-atom, per-bond etc features.
+//! Graph neural nets: Represent molecules by their covalent bond connections, and related.
+//! This includes atom and bond networks, and per-atom, per-bond etc features. We are also
+//! attempting to construct graphs from functional groups, pharmacophore features, and other
+//! concepts. With and without geometry. (Distance/angles in space)
 
 use std::{
     collections::HashMap,
