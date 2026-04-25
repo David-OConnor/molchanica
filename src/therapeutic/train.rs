@@ -67,9 +67,9 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            GraphData, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
+            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
             PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
-            PHARM_VOCAB_SIZE,
+            SPACIAL_VOCAB_SIZE,
         },
         train_test_split_indices::TrainTestSplit,
     },
@@ -626,7 +626,7 @@ impl<B: Backend> Model<B> {
 pub(in crate::therapeutic) struct Sample {
     /// From computed properties of the molecule.
     pub features_property: Vec<f32>,
-    pub graph: GraphData,
+    pub graph: GraphDataAtom,
     pub graph_comp: GraphDataComponent,
     pub graph_spacial: GraphDataSpacial,
     pub target: f32,
@@ -1093,7 +1093,7 @@ fn read_data(
                 continue;
             }
 
-            let graph = match GraphData::new(&mol, ff_params) {
+            let graph = match GraphDataAtom::new(&mol, ff_params) {
                 Ok(res) => res,
                 Err(e) => {
                     eprintln!("Error getting graph data: {:?}", e);
@@ -1340,7 +1340,7 @@ pub(in crate::therapeutic) fn train(
         n_comp_scalars: PER_COMP_SCALARS,
         comp_edge_feat_dim: PER_EDGE_COMP_FEATS,
         // Spatial (pharmacophore) GNN
-        vocab_size_pharm: PHARM_VOCAB_SIZE, // 0=pad,1=donor,2=acc,3=hydrophobic,4=aromatic
+        vocab_size_pharm: SPACIAL_VOCAB_SIZE, // 0=pad,1=donor,2=acc,3=hydrophobic,4=aromatic
         pharm_embedding_dim: 8,
         n_pharm_scalars: PER_PHARM_SCALARS,
         spacial_edge_feat_dim: PER_SPACIAL_EDGE_FEATS,

@@ -1,5 +1,5 @@
 //! Graph neural nets: Represent molecules by their covalent bond connections, and related.
-//! This includes atom and bond networks, and per-atom, per-bond etc features. We are also
+//! This includes atom and bond networks, and per-atom, per-bond, etc features. We are also
 //! attempting to construct graphs from functional groups, pharmacophore features, and other
 //! concepts. With and without geometry. (Distance/angles in space)
 
@@ -25,28 +25,28 @@ use crate::{
 };
 
 // Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring.
-// Keep this in sync with the scalar setup (Where?)
+// Keep this in sync with `GraphDataAtom::new`.
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
-
-// Degree
-// Keep this in sync with the  setup (Where?)
-pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
-
 // Scaled/modified proxies for r_0, k_b
-// Keep this in sync with the  setup (Where?)
+// Keep this in sync with `GraphDataAtom::new`.
 pub(in crate::therapeutic) const PER_EDGE_FEATS: usize = 2;
 
-// Shared.
-// Keep this in sync with the setup (Where?)
+// Degree
+// Keep this in sync with `GraphDataComponent::new`
+pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
+// Keep this in sync with `GraphDataComponent::new`
 pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 1;
+// For bond-stretching force-field params, used in the atom-based GNN.
+const KB_REF: f32 = 300.0;
 
 // Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
-// Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]
+// Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
+// `GraphDataSpacial::new`.
 pub(in crate::therapeutic) const PER_PHARM_SCALARS: usize = 2;
 // Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
 pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
 // Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
-pub(in crate::therapeutic) const PHARM_VOCAB_SIZE: usize = 5;
+pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;
 
 // Tunable parameters for the spacial/pharmacophore GNN.
 const SPACIAL_ADJ_SIGMA_SQ: f32 = 16.0; // sigma=4 Å for adjacency Gaussian
@@ -54,11 +54,13 @@ const SPACIAL_DIST_SCALE: f32 = 10.0; // Normalise raw distances to ~O(1)
 const SPACIAL_RBF_SIGMA_SQ: f32 = 2.25; // sigma=1.5 Å for RBF basis functions
 const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
-const BOND_DIST_PARAM_SCALE: f32 = 0.15;
-const KB_REF: f32 = 300.0;
+const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 
+
+/// State for our atom-and-bond-based neural network. Atoms are nodes; covalent bonds are
+/// edges.
 #[derive(Clone, Debug)]
-pub(in crate::therapeutic) struct GraphData {
+pub(in crate::therapeutic) struct GraphDataAtom {
     /// Assign each element (Which we reasonably expect to encounter) an integer
     /// assignment to comply with the neural net's input requirements.
     pub elem_indices: Vec<i32>,
@@ -71,9 +73,10 @@ pub(in crate::therapeutic) struct GraphData {
     pub num_atoms: usize,
 }
 
-/// Converts raw Atoms and Bonds into Flat vectors for Tensors.
-/// Used by both Training and Inference.
-impl GraphData {
+
+impl GraphDataAtom {
+    /// Converts raw Atoms and Bonds into Flat vectors for Tensors.
+    /// Used by both Training and Inference.
     pub fn new(mol: &MoleculeSmall, ff_params: &ForceFieldParams) -> io::Result<Self> {
         let (atoms, bonds, adj) = if EXCLUDE_HYDROGEN {
             let a: Vec<_> = mol
@@ -253,7 +256,7 @@ impl GraphData {
                 };
 
                 let dr_norm =
-                    ((dist - bond_stretching.r_0) / BOND_DIST_PARAM_SCALE).clamp(-5.0, 5.0);
+                    ((dist - bond_stretching.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
                 let log_kb = (bond_stretching.k_b / KB_REF).ln_1p();
 
                 edge_feats[edge_feats_i(a0, a1, 0, num_atoms)] = dr_norm;

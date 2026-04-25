@@ -17,7 +17,7 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         gnn::{
-            GraphData, GraphDataComponent, GraphDataSpacial, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
             PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask,
             pad_edge_feats,
         },
@@ -121,7 +121,7 @@ impl Infer {
         let n_feat_params = feat_params.len();
         self.scaler.apply_in_place(&mut feat_params);
 
-        let graph_atom_bond = GraphData::new(mol, ff_params)?;
+        let graph_atom_bond = GraphDataAtom::new(mol, ff_params)?;
 
         let Some(comps) = &mol.components else {
             return Err(io::Error::other("Missing components in ML inference"));
