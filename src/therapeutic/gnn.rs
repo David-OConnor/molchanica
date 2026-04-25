@@ -225,6 +225,8 @@ impl GraphDataAtom {
                 let ff1 = atoms[a1].force_field_type.clone().unwrap();
                 let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
 
+                // todo: Consider a dedicated fn for this, or simplify it. However, it currently requires many
+                // todo params avialable here.
                 let bond_stretching = if let Some(v) = bond_stretching {
                     v
                 } else {
@@ -274,14 +276,21 @@ impl GraphDataAtom {
         }
 
         // Symmetric Normalization: D^(-0.5) * A * D^(-0.5)
-        let mut degrees_vec = vec![0.0f32; num_atoms];
-        for i in 0..num_atoms {
-            let mut d = 0.0;
-            for j in 0..num_atoms {
-                d += adj_list[i * num_atoms + j];
+
+
+        let degrees_vec = {
+            let mut v = vec![0.; num_atoms];
+
+            for i in 0..num_atoms {
+                let mut d = 0.0;
+                for j in 0..num_atoms {
+                    d += adj_list[i * num_atoms + j];
+                }
+                v[i] = d;
             }
-            degrees_vec[i] = d;
-        }
+        v
+        };
+
         for i in 0..num_atoms {
             let di_inv_sqrt = 1.0 / degrees_vec[i].max(1e-9).sqrt();
             for j in 0..num_atoms {
