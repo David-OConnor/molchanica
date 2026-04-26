@@ -13,16 +13,16 @@ required-features = ["train"]
 
 
 [dependencies]
-graphics = { version = "0.5.11", features = ["app_utils"] }
-egui = "0.33.0"
+graphics = { version = "0.5.15", features = ["app_utils"] }
+egui = "0.34.1"
 
 #egui_tiles = "0.12.0" # For layouts etc. Experimenting
-egui-file-dialog = "0.12.0" #  For file dialogs.
-egui_plot = "0.34.0"  # For Rama plots
+egui-file-dialog = "0.13.0" #  For file dialogs.
+egui_plot = "0.35.0"  # For Rama plots
 
 lin_alg = { version = "1.4.2", features = ["encode"] }
 na_seq = "0.3.15"
-bio_apis = { version = "0.2.7", features = ["encode"] }
+bio_apis = { version = "0.2.8", features = ["encode"] }
 bio_files = { version = "0.5.2", features = ["encode"] }
 mcubes = "0.1.7"
 dynamics = { version = "0.2.0", features = ["encode"] }
@@ -73,10 +73,10 @@ include_dir = "0.7.4"
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
-graphics = { path = "../../graphics" }
+#graphics = { path = "../../graphics" }
 #lin_alg = { path = "../../lin_alg" }
 #na_seq = { path = "../na_seq" }
-#bio_apis = { path = "../bio_apis" }
+bio_apis = { path = "../bio_apis" }
 #mcubes = { path = "../mcubes" }
 bio_files = { path = "../bio_files" }
 dynamics = { path = "../dynamics" }

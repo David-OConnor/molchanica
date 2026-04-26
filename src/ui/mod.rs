@@ -3,8 +3,8 @@ use std::{io::Cursor, time::Instant};
 use bio_apis::{pdbe, rcsb};
 use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
-    Color32, ComboBox, Context, CornerRadius, Frame, Key, Margin, RichText, Slider, Stroke,
-    TextEdit, TextFormat, TextStyle, TopBottomPanel, Ui, text::LayoutJob,
+    Color32, ComboBox, Context, CornerRadius, Frame, Key, Margin, Panel, RichText, Slider, Stroke,
+    TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use md::md_setup;
@@ -701,7 +701,7 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
 
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
-pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> EngineUpdates {
+pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUpdates {
     let mut updates = EngineUpdates::default();
 
     // Checks each frame; takes action based on time since last save.
@@ -719,9 +719,9 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
     // For getting DT for certain buttons when held. Does not seem to be the same as the 3D render DT.
     let start = Instant::now();
 
-    sidebar(state, scene, &mut redraw, &mut updates, ctx);
+    sidebar(state, scene, &mut redraw, &mut updates, ui);
 
-    let out_main_panel = TopBottomPanel::top("0").show(ctx, |ui| {
+    let out_main_panel = Panel::top("0").show_inside(ui, |ui| {
         ui.spacing_mut().slider_width = 120.;
 
         handle_input(
@@ -1114,7 +1114,7 @@ pub fn ui_handler(state: &mut State, ctx: &Context, scene: &mut Scene) -> Engine
     // Without this, no computation will happen while minimized.
     // todo: Not working.
     if state.volatile.md_local.running {
-        ctx.request_repaint();
+        ui.request_repaint();
     }
 
     updates
