@@ -24,14 +24,15 @@ use crate::{
     therapeutic::train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS},
 };
 
-// Degree, partial charge, FF name, element, is H-bond acceptor, is H-bond donor, in aromatic ring.
+// Degree, partial charge, geometry (radius from molecular centroid, mean neighbor distance),
+// is H-bond acceptor, is H-bond donor, in aromatic ring.
 // Keep this in sync with `GraphDataAtom::new`.
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
-// Scaled/modified proxies for r_0, k_b
+// Bond type one-hot [single, double, triple, aromatic], plus scaled/modified proxies for r_0, k_b
 // Keep this in sync with `GraphDataAtom::new`.
-pub(in crate::therapeutic) const PER_EDGE_FEATS: usize = 2;
+pub(in crate::therapeutic) const PER_EDGE_FEATS: usize = 6;
 
-// Degree
+// Degree, component size
 // Keep this in sync with `GraphDataComponent::new`
 pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
 // Keep this in sync with `GraphDataComponent::new`
@@ -61,13 +62,18 @@ const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 ///
 /// Graph properties
 /// ----------------
-/// Edges: Non-directional
-/// Node can connect to itself: No
-/// Nodes have multiple types (heterogenous): Yes (chemical element)
-/// Edges have multiple types: Yes (single, double, triple, or aromatic bond)
+/// Edges: Undirected covalent-bond graph, with symmetric adjacency weights from a Gaussian
+///   distance kernel
+/// Underlying chemical graph has self-connections: No
+/// GNN message-passing adjacency has self-loops: Yes (`adj[i,i] = 1.0` is added explicitly)
+/// Nodes have multiple types (heterogeneous): No in the formal hetero-GNN sense; this is a
+///   homogeneous atom graph, with element and FF bucket encoded as node embeddings/features
+/// Edges have multiple types: Yes (single/double/triple/aromatic), represented as categorical
+///   edge features; the adjacency only marks bonded neighbors and geometric proximity
 /// Multipartite (edges can connect only to nodes of a diff type): No
 /// Multiplex (Edges exist in layers; nodes are on all layers): No
-/// Heterophily (Nodes are preferentially connected to others which have diff labels): No
+/// Heterophily (Nodes are preferentially connected to others which have diff labels): Not fixed
+///   by the construction; molecules can exhibit both homophilic and heterophilic local chemistry
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphDataAtom {
     /// Assign each element (Which we reasonably expect to encounter) an integer
@@ -75,7 +81,9 @@ pub(in crate::therapeutic) struct GraphDataAtom {
     pub elem_indices: Vec<i32>,
     /// An integer assignment for each force field type.
     pub ff_indices: Vec<i32>,
-    /// Partial charge, element, is a H bond donors/acceptor etc.
+    /// Per-atom scalars:
+    /// [degree, partial_charge, r_from_mol_centroid, mean_neighbor_dist,
+    ///  is_h_bond_acceptor, is_h_bond_donor, in_aromatic_ring]
     pub scalars: Vec<f32>,
     pub adj: Vec<f32>,
     pub edge_feats: Vec<f32>,
@@ -193,7 +201,7 @@ impl GraphDataAtom {
             scalars.push(in_aromatic_ring);
         }
 
-        // Edge features (Weighted Adjacency)
+        // Edge features and weighted adjacency
         let n_atoms_sq = num_atoms.pow(2);
         let mut adj_list = vec![0.; n_atoms_sq];
         let mut edge_feats = vec![0.; n_atoms_sq * PER_EDGE_FEATS];
@@ -213,12 +221,12 @@ impl GraphDataAtom {
                 continue;
             }
 
-            let bond_strength = match bond.bond_type {
-                BondType::Single => 1.0,
-                BondType::Double => 2.0,
-                BondType::Triple => 3.0,
-                BondType::Aromatic => 1.5,
-                _ => 1.0,
+            let bond_type_one_hot = match bond.bond_type {
+                BondType::Single => [1.0, 0.0, 0.0, 0.0],
+                BondType::Double => [0.0, 1.0, 0.0, 0.0],
+                BondType::Triple => [0.0, 0.0, 1.0, 0.0],
+                BondType::Aromatic => [0.0, 0.0, 0.0, 1.0],
+                _ => [1.0, 0.0, 0.0, 0.0],
             };
 
             // todo: Lennard Jones?
@@ -272,21 +280,25 @@ impl GraphDataAtom {
                         (dr, log_kb)
                     } else {
                         eprintln!(
-                            "Missing bond stretching and no fallback for bond {bond:?}. \nAtoms {ff0} | {ff1}. Using zero edge features.",
+                            "Missing bond stretching and no fallback for bond {bond:?}. \nAtoms {ff0} | {ff1}. Using zero bond-stretch edge features.",
                         );
                         (0.0, 0.0)
                     }
                 };
 
-                edge_feats[edge_feats_i(a0, a1, 0, num_atoms)] = dr_norm;
-                edge_feats[edge_feats_i(a0, a1, 1, num_atoms)] = log_kb;
+                for (k, &v) in bond_type_one_hot.iter().enumerate() {
+                    edge_feats[edge_feats_i(a0, a1, k, num_atoms)] = v;
+                    edge_feats[edge_feats_i(a1, a0, k, num_atoms)] = v;
+                }
+                edge_feats[edge_feats_i(a0, a1, 4, num_atoms)] = dr_norm;
+                edge_feats[edge_feats_i(a0, a1, 5, num_atoms)] = log_kb;
 
-                edge_feats[edge_feats_i(a1, a0, 0, num_atoms)] = dr_norm;
-                edge_feats[edge_feats_i(a1, a0, 1, num_atoms)] = log_kb;
+                edge_feats[edge_feats_i(a1, a0, 4, num_atoms)] = dr_norm;
+                edge_feats[edge_feats_i(a1, a0, 5, num_atoms)] = log_kb;
             }
 
             let k = (-dist_sq / (2.0 * BOND_SIGMA_SQ)).exp();
-            let weight = bond_strength * k;
+            let weight = k;
 
             adj_list[a0 * num_atoms + a1] = weight;
             adj_list[a1 * num_atoms + a0] = weight;
@@ -294,7 +306,7 @@ impl GraphDataAtom {
 
         // Note: symmetric normalization (D^-1/2 A D^-1/2) is applied in the model's
         // forward pass *after* the learned edge gate, so we ship the raw weighted
-        // adjacency (with self-loops) here.
+        // adjacency (with self-loops) here. Bond order itself lives in `edge_feats`.
 
         Ok(Self {
             elem_indices,
@@ -311,13 +323,17 @@ impl GraphDataAtom {
 ///
 /// Graph properties
 /// ----------------
-/// Edges: Non-directional
-/// Node can connect to itself: No
-/// Nodes have multiple types (heterogenous): Yes (chemical element)
-/// Edges have multiple types: Yes (single, double, triple, or aromatic bond)
+/// Edges: Undirected inter-component connections derived from cross-component bonds or shared atoms
+/// Underlying component graph has self-connections: No
+/// GNN message-passing adjacency has self-loops: Yes (`adj[i,i] = 1.0` is added explicitly)
+/// Nodes have multiple types (heterogeneous): No in the formal hetero-GNN sense; this is a
+///   homogeneous component graph, with component category encoded by `comp_type_indices`
+/// Edges have multiple types: No separate relation types; edges are binary component-adjacency
+///   links, with `edge_feats` marking whether the connection uses shared atoms
 /// Multipartite (edges can connect only to nodes of a diff type): No
 /// Multiplex (Edges exist in layers; nodes are on all layers): No
-/// Heterophily (Nodes are preferentially connected to others which have diff labels): No
+/// Heterophily (Nodes are preferentially connected to others which have diff labels): Not fixed
+///   by the construction; components can connect to either similar or different categories
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphDataComponent {
     pub comp_type_indices: Vec<i32>,
@@ -327,7 +343,7 @@ pub(in crate::therapeutic) struct GraphDataComponent {
     pub num_comps: usize,
 }
 
-/// Converts raw Atoms and Bonds into Flat vectors for Tensors.
+/// Converts component nodes and inter-component connections into flat vectors for tensors.
 /// Used by both Training and Inference.
 impl GraphDataComponent {
     pub fn new(mol_comps: &MolComponents) -> io::Result<Self> {
@@ -548,13 +564,20 @@ pub(in crate::therapeutic) fn pad_scalars(
 ///
 /// Graph properties
 /// ----------------
-/// Edges: Non-directional
-/// Node can connect to itself: No
-/// Nodes have multiple types (heterogenous): Yes (chemical element)
-/// Edges have multiple types: Yes (single, double, triple, or aromatic bond)
+/// Edges: Undirected complete graph over pharmacophore sites, weighted by a Gaussian of
+///   Euclidean distance
+/// Underlying pharmacophore graph has self-connections: No
+/// GNN message-passing adjacency has self-loops: Yes (`adj[i,i] = 1.0` is added explicitly)
+/// Nodes have multiple types (heterogeneous): No in the formal hetero-GNN sense; this is a
+///   single pharmacophore-node graph, with donor/acceptor/hydrophobic/aromatic role encoded by
+///   `pharm_type_indices`
+/// Edges have multiple types: No separate relation types; every node pair is connected by the
+///   same spatial relation, with distance encoded by the adjacency weight and RBF edge features
 /// Multipartite (edges can connect only to nodes of a diff type): No
 /// Multiplex (Edges exist in layers; nodes are on all layers): No
-/// Heterophily (Nodes are preferentially connected to others which have diff labels): No
+/// Heterophily (Nodes are preferentially connected to others which have diff labels): Not fixed
+///   by the construction; because the graph is complete, nodes connect to both same-type and
+///   different-type sites
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphDataSpacial {
     /// Integer type index for each node: 1=Donor, 2=Acceptor, 3=Hydrophobic, 4=Aromatic.
