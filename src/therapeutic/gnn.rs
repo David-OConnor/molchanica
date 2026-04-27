@@ -58,6 +58,16 @@ const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 
 /// State for our atom-and-bond-based neural network. Atoms are nodes; covalent bonds are
 /// edges.
+///
+/// Graph properties
+/// ----------------
+/// Edges: Non-directional
+/// Node can connect to itself: No
+/// Nodes have multiple types (heterogenous): Yes (chemical element)
+/// Edges have multiple types: Yes (single, double, triple, or aromatic bond)
+/// Multipartite (edges can connect only to nodes of a diff type): No
+/// Multiplex (Edges exist in layers; nodes are on all layers): No
+/// Heterophily (Nodes are preferentially connected to others which have diff labels): No
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphDataAtom {
     /// Assign each element (Which we reasonably expect to encounter) an integer
@@ -298,6 +308,16 @@ impl GraphDataAtom {
 }
 
 /// Instead of atoms and bonds, this operates on components. (Fgs etc)
+///
+/// Graph properties
+/// ----------------
+/// Edges: Non-directional
+/// Node can connect to itself: No
+/// Nodes have multiple types (heterogenous): Yes (chemical element)
+/// Edges have multiple types: Yes (single, double, triple, or aromatic bond)
+/// Multipartite (edges can connect only to nodes of a diff type): No
+/// Multiplex (Edges exist in layers; nodes are on all layers): No
+/// Heterophily (Nodes are preferentially connected to others which have diff labels): No
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphDataComponent {
     pub comp_type_indices: Vec<i32>,
@@ -525,6 +545,16 @@ pub(in crate::therapeutic) fn pad_scalars(
 /// distance via a raw scaled value plus 4 RBF Gaussian basis functions, giving the
 /// network explicit geometric information. Angles are captured implicitly by
 /// multi-hop message passing (law-of-cosines encodes them after ≥2 GNN layers).
+///
+/// Graph properties
+/// ----------------
+/// Edges: Non-directional
+/// Node can connect to itself: No
+/// Nodes have multiple types (heterogenous): Yes (chemical element)
+/// Edges have multiple types: Yes (single, double, triple, or aromatic bond)
+/// Multipartite (edges can connect only to nodes of a diff type): No
+/// Multiplex (Edges exist in layers; nodes are on all layers): No
+/// Heterophily (Nodes are preferentially connected to others which have diff labels): No
 #[derive(Clone, Debug)]
 pub(in crate::therapeutic) struct GraphDataSpacial {
     /// Integer type index for each node: 1=Donor, 2=Acceptor, 3=Hydrophobic, 4=Aromatic.
