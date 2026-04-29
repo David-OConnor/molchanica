@@ -61,6 +61,7 @@ const SPACIAL_RBF_SIGMA_SQ: f32 = 2.25; // sigma=1.5 Å for RBF basis functions
 const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
 const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
+pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 2;
 
 /// See `Graph Representation Learning` by William L Hamilton, 2020.
 ///
@@ -177,6 +178,14 @@ impl GnnAnalysisTools {
 
         if self.local_overlap_statistics {
             names.extend(["overlap_mean_jaccard", "overlap_mean_sorensen"]);
+        }
+
+        if self.lhn_similarity {
+            names.extend([
+                "lhn_pair_mean_similarity",
+                "lhn_pair_max_similarity",
+                "lhn_edge_mean_similarity",
+            ]);
         }
 
         names
@@ -746,6 +755,10 @@ fn graph_analysis_features(
 
     if tools.local_overlap_statistics {
         out.extend(local_overlap_features(adj));
+    }
+
+    if tools.lhn_similarity {
+        out.extend(lhn_similarity_features(adj));
     }
 
     out
@@ -1366,7 +1379,8 @@ fn vocab_lookup_component(comp_type: &ComponentType) -> i32 {
 mod tests {
     use super::{
         atom_graph_analysis_tools, build_spacial_analysis_adj, graphlet_size_3_features,
-        local_overlap_features, path_based_features, spacial_graph_analysis_tools,
+        lhn_similarity_features, local_overlap_features, path_based_features,
+        spacial_graph_analysis_tools,
     };
 
     #[test]
@@ -1399,6 +1413,19 @@ mod tests {
     }
 
     #[test]
+    fn lhn_features_capture_degree_normalized_shared_neighbors() {
+        let triangle = vec![vec![1, 2], vec![0, 2], vec![0, 1]];
+        let chain = vec![vec![1], vec![0, 2], vec![1, 3], vec![2]];
+
+        let triangle_feats = lhn_similarity_features(&triangle);
+        let chain_feats = lhn_similarity_features(&chain);
+
+        assert!(triangle_feats[0] > chain_feats[0]);
+        assert!(triangle_feats[2] > 0.0);
+        assert_eq!(chain_feats[2], 0.0);
+    }
+
+    #[test]
     fn spacial_analysis_graph_is_not_complete_when_distance_structure_is_sparse() {
         let dist_mat = vec![
             0.0, 2.0, 9.0, 9.0, //
@@ -1416,4 +1443,56 @@ mod tests {
             atom_graph_analysis_tools().feature_dim()
         );
     }
+}
+
+fn lhn_similarity_features(adj: &[Vec<usize>]) -> [f32; 3] {
+    let n = adj.len();
+    let total_pairs = choose2(n);
+    if total_pairs == 0 {
+        return [0.0; 3];
+    }
+
+    let adj_mat = adjacency_matrix(adj);
+    let mut pair_sum = 0.0f32;
+    let mut pair_max = 0.0f32;
+    let mut edge_sum = 0.0f32;
+    let mut edge_count = 0usize;
+
+    for u in 0..n {
+        let deg_u = adj[u].len();
+        if deg_u == 0 {
+            continue;
+        }
+
+        for v in (u + 1)..n {
+            let deg_v = adj[v].len();
+            if deg_v == 0 {
+                continue;
+            }
+
+            // We summarise the standard degree-normalised LHN link-prediction
+            // score, which is a practical small-graph member of the LHN
+            // similarity family for our molecular descriptors.
+            let common = common_neighbor_count(adj, &adj_mat, u, v) as f32;
+            let score = common / (deg_u * deg_v) as f32;
+
+            pair_sum += score;
+            pair_max = pair_max.max(score);
+
+            if has_edge(&adj_mat, n, u, v) {
+                edge_sum += score;
+                edge_count += 1;
+            }
+        }
+    }
+
+    [
+        pair_sum / total_pairs as f32,
+        pair_max,
+        if edge_count > 0 {
+            edge_sum / edge_count as f32
+        } else {
+            0.0
+        },
+    ]
 }

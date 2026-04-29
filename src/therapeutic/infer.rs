@@ -19,10 +19,10 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         gnn::{
-            GnnAnalysisTools, GraphDataAtom, GraphDataComponent, GraphDataSpacial,
-            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
-            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats,
-            pad_indices, pad_scalars,
+            GRAPH_ANALYSIS_FEATURE_VERSION, GnnAnalysisTools, GraphDataAtom,
+            GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
+            PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
+            pad_adj_and_mask, pad_edge_feats, pad_indices, pad_scalars,
         },
         train::{
             MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
@@ -63,6 +63,23 @@ impl Infer {
                 .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
             obj.entry("spacial_graph_analysis")
                 .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
+            let feature_version = obj
+                .entry("graph_analysis_feature_version")
+                .or_insert_with(|| serde_json::json!(1))
+                .as_u64()
+                .unwrap_or(1) as u8;
+
+            if feature_version < GRAPH_ANALYSIS_FEATURE_VERSION {
+                for key in [
+                    "atom_graph_analysis",
+                    "comp_graph_analysis",
+                    "spacial_graph_analysis",
+                ] {
+                    if let Some(analysis) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
+                        analysis.insert("lhn_similarity".to_string(), serde_json::json!(false));
+                    }
+                }
+            }
         }
         let config: ModelConfig = serde_json::from_value(config_json)?;
         let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;

@@ -66,9 +66,9 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
-            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS,
-            PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
+            GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom, GraphDataComponent,
+            GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
         },
         train_test_split_indices::TrainTestSplit,
     },
@@ -421,6 +421,7 @@ type ValidBackend = Wgpu;
 
 #[derive(Config, Debug)]
 pub(in crate::therapeutic) struct ModelConfig {
+    pub graph_analysis_feature_version: u8,
     pub global_input_dim: usize,
     // pub atom_input_dim: usize,
     pub gnn_hidden_dim: usize,
@@ -1661,6 +1662,7 @@ pub(in crate::therapeutic) fn train_with_samples(
 
     let num_params = data_train[0].features_property.len();
     let model_cfg = ModelConfig {
+        graph_analysis_feature_version: GRAPH_ANALYSIS_FEATURE_VERSION,
         global_input_dim: num_params,
         gnn_hidden_dim: 64,
         mlp_hidden_dim: 128,
