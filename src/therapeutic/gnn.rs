@@ -61,6 +61,44 @@ const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
 const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 
+/// See `Graph Representation Learning` by William L Hamilton, 2020.
+///
+/// Defines tools used for analyzing graphs. Focuses on ones listed by Hamilton as specific to
+/// graph-level analysis (as opposed to node-level analysis), as well as tools that can be used by both.
+/// We this this to configure out GNNs to use various combinations of these in the ML analysis.
+///
+/// Note that we do not include "Bag of nodes" (Aggregating node-level statistics), as it's probalby
+/// too naive.
+///
+/// todo: QC which of these make sense for molecule graphs (Of the various sorts we have). I feel like
+/// todo: Molecule-base graphs represent a small subset of the general tyhpes used here, and they may not
+/// todo: Make sense. For example, there are a lot of rules for molecule based graphs we can take advantage
+/// todo of, and/or that make these tools less relevant (?)
+struct GnnAnalysisTools {
+    /// Weisfeiler-Lehman (WL) kernel.
+    /// "The idea with these approaches is to extract
+    /// node-level features that contain more information than just their local ego graph,
+    /// and then to aggregate these richer features into a graph-level representation."
+    pub weisfeiler_lehman: bool,
+    /// "simply count the occurrence of different small subgraph structures, usually called graphlets
+    /// in this context. Formally, the graphlet kernel involves enumerating all possible graph structures
+    /// of a particular size and counting how many times they occur in the full graph."
+    /// If `Some`, contains a vec of node counts to analyze graphlets for.
+    pub graphlets: Option<Vec<u8>>,
+    /// "In these approaches, rather than enumerating graphlets, one simply
+    /// examines the different kinds of paths that occur in the graph. For example, the
+    /// random walk kernel proposed by Kashima et al. [2003] involves running ran-
+    /// dom walks over the graph and then counting the occurrence of different degree
+    /// sequences,3 while the shortest-path kernel of Borgwardt and Kriegel [2005] in-
+    /// volves a similar idea but uses only the shortest-paths between nodes (rather
+    /// 3Other node labels can also be used."
+    pub path_based_methods: bool,
+    pub local_overlap_statistics: bool,
+    pub katz_index: bool,
+    pub lhn_similarity: bool,
+    pub random_walk_methods: bool,
+}
+
 /// State for our atom-and-bond-based neural network. Atoms are nodes; covalent bonds are
 /// edges.
 ///
