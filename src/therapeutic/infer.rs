@@ -8,18 +8,21 @@ use burn::{
     backend::{NdArray, ndarray::NdArrayDevice},
     module::Module,
     prelude::Int,
-    record::{FullPrecisionSettings, NamedMpkBytesRecorder, NamedMpkFileRecorder, Recorder},
+    record::{FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{Tensor, TensorData, backend::Backend},
 };
+#[cfg(not(feature = "train"))]
+use burn::record::{NamedMpkBytesRecorder, Recorder};
 
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
         gnn::{
-            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
-            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS, PER_PHARM_SCALARS,
-            PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats, pad_indices, pad_scalars,
+            GnnAnalysisTools, GraphDataAtom, GraphDataComponent, GraphDataSpacial,
+            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
+            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats,
+            pad_indices, pad_scalars,
         },
         train::{
             MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
@@ -43,13 +46,20 @@ pub struct Infer {
     model: Model<InferBackend>,
     scaler: StandardScaler,
     device: <InferBackend as Backend>::Device,
+    atom_graph_analysis: GnnAnalysisTools,
 }
 
 impl Infer {
     /// Helper used by both loading approaches.
     fn load(cfg_bytes: &[u8], scaler_bytes: &[u8]) -> io::Result<(Self, NdArrayDevice)> {
-        let config: ModelConfig = serde_json::from_slice(cfg_bytes)?;
+        let mut config_json: serde_json::Value = serde_json::from_slice(cfg_bytes)?;
+        if let Some(obj) = config_json.as_object_mut() {
+            obj.entry("atom_graph_analysis")
+                .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
+        }
+        let config: ModelConfig = serde_json::from_value(config_json)?;
         let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;
+        let atom_graph_analysis = config.atom_graph_analysis.clone();
 
         let device = Default::default();
 
@@ -64,6 +74,7 @@ impl Infer {
                 model,
                 scaler,
                 device,
+                atom_graph_analysis,
             },
             device,
         ))
@@ -122,7 +133,7 @@ impl Infer {
         let n_feat_params = feat_params.len();
         self.scaler.apply_in_place(&mut feat_params);
 
-        let graph_atom_bond = GraphDataAtom::new(mol, ff_params)?;
+        let graph_atom_bond = GraphDataAtom::new(mol, ff_params, &self.atom_graph_analysis)?;
 
         let Some(comps) = &mol.components else {
             return Err(io::Error::other("Missing components in ML inference"));
@@ -228,6 +239,18 @@ impl Infer {
             TensorData::new(padded_mask, [1, MAX_ATOMS, 1]),
             &self.device,
         );
+        let atom_graph_analysis = if graph_atom_bond.analysis_features.is_empty() {
+            vec![0.0]
+        } else {
+            graph_atom_bond.analysis_features.clone()
+        };
+        let t_atom_graph_analysis = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(
+                atom_graph_analysis.clone(),
+                [1, atom_graph_analysis.len()],
+            ),
+            &self.device,
+        );
 
         // Comp tensors
         let t_comp_scalars = Tensor::<InferBackend, 3>::from_data(
@@ -300,6 +323,7 @@ impl Infer {
             t_pharm_adj,
             t_pharm_edge_feats,
             t_pharm_mask,
+            t_atom_graph_analysis,
             t_param_feats,
         );
 
@@ -348,6 +372,8 @@ impl Infer {
         let mut all_pharm_edge =
             Vec::with_capacity(batch_size * MAX_PHARM * MAX_PHARM * PER_SPACIAL_EDGE_FEATS);
         let mut all_pharm_mask = Vec::with_capacity(batch_size * MAX_PHARM);
+        let atom_graph_analysis_dim = self.atom_graph_analysis.feature_dim().max(1);
+        let mut all_atom_graph_analysis = Vec::with_capacity(batch_size * atom_graph_analysis_dim);
 
         let mut all_globals: Vec<f32> = Vec::new();
         let mut feat_dim = 0;
@@ -361,7 +387,7 @@ impl Infer {
             self.scaler.apply_in_place(&mut feat_params);
             all_globals.extend(feat_params);
 
-            let g = GraphDataAtom::new(mol, ff_params)?;
+            let g = GraphDataAtom::new(mol, ff_params, &self.atom_graph_analysis)?;
             let comps = mol
                 .components
                 .as_ref()
@@ -387,6 +413,13 @@ impl Infer {
                 PER_EDGE_FEATS,
                 MAX_ATOMS,
             ));
+            if g.analysis_features.is_empty() {
+                all_atom_graph_analysis
+                    .resize(all_atom_graph_analysis.len() + atom_graph_analysis_dim, 0.0);
+            } else {
+                debug_assert_eq!(g.analysis_features.len(), atom_graph_analysis_dim);
+                all_atom_graph_analysis.extend_from_slice(&g.analysis_features);
+            }
 
             // Component graph
             all_comp_ids.extend(pad_indices(&gc.comp_type_indices, gc.num_comps, MAX_COMPS));
@@ -449,6 +482,13 @@ impl Infer {
         );
         let t_mask = Tensor::<InferBackend, 3>::from_data(
             TensorData::new(all_mask, [batch_size, MAX_ATOMS, 1]),
+            dev,
+        );
+        let t_atom_graph_analysis = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(
+                all_atom_graph_analysis,
+                [batch_size, atom_graph_analysis_dim],
+            ),
             dev,
         );
 
@@ -525,6 +565,7 @@ impl Infer {
             t_pharm_adj,
             t_pharm_edge,
             t_pharm_mask,
+            t_atom_graph_analysis,
             t_params,
         );
 

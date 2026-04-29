@@ -233,6 +233,10 @@ pub(in crate::therapeutic) struct ModelConfig {
     pub pharm_embedding_dim: usize,
     pub n_pharm_scalars: usize,
     pub spacial_edge_feat_dim: usize,
+    /// Graph-level AtomGraph analyses persisted with the model so inference can
+    /// rebuild the same features that training used. Older model configs default
+    /// to no extra analyses.
+    pub atom_graph_analysis: gnn::GnnAnalysisTools,
     // Which branches are active — saved so inference reloads correctly
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
@@ -248,6 +252,7 @@ impl ModelConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Model<B> {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
+        let atom_graph_analysis_dim = self.atom_graph_analysis.feature_dim();
 
         // Each GNN branch contributes mean + max pooled vectors (hence * 2).
         let combined_dim = if self.mlp_enabled {
@@ -256,6 +261,11 @@ impl ModelConfig {
             0
         } + if self.gnn_atom_enabled {
             self.gnn_hidden_dim * 2
+                + if atom_graph_analysis_dim > 0 {
+                    self.gnn_hidden_dim
+                } else {
+                    0
+                }
         } else {
             0
         } + if self.gnn_comp_enabled {
@@ -291,6 +301,13 @@ impl ModelConfig {
         for _ in 0..self.gnn_atom_layers {
             gnn_atom_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
+
+        let atom_graph_analysis_encoder =
+            if self.gnn_atom_enabled && atom_graph_analysis_dim > 0 {
+                vec![LinearConfig::new(atom_graph_analysis_dim, dim_gnn).init(device)]
+            } else {
+                Vec::new()
+            };
 
         let edge_proj = LinearConfig::new(self.edge_feat_dim, 1).init(device);
 
@@ -340,6 +357,7 @@ impl ModelConfig {
             node_encoder,
             edge_encoder,
             gnn_layers: gnn_atom_layers,
+            atom_graph_analysis_encoder,
             edge_proj,
             emb_comp,
             comp_node_encoder,
@@ -371,6 +389,9 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     edge_encoder: Linear<B>,
     /// GNN layers: Broadly graph and per-atom data.
     gnn_layers: Vec<Linear<B>>,
+    /// Projects explicit AtomGraph analysis features into the same hidden space as
+    /// the learned atom-branch graph embedding.
+    atom_graph_analysis_encoder: Vec<Linear<B>>,
     edge_proj: Linear<B>,
     /// Component GNN branch
     emb_comp: Embedding<B>,
@@ -478,6 +499,7 @@ impl<B: Backend> Model<B> {
         pharm_adj: Tensor<B, 3>,
         pharm_edge_feats: Tensor<B, 4>,
         pharm_mask: Tensor<B, 3>,
+        atom_graph_analysis: Tensor<B, 2>,
         params: Tensor<B, 2>,
     ) -> Tensor<B, 2> {
         let mut branches: Vec<Tensor<B, 2>> = Vec::new();
@@ -518,10 +540,15 @@ impl<B: Backend> Model<B> {
             let has_nodes = atom_counts.clamp(0.0, 1.0);
             let graph_max = graph_max * has_nodes;
             let [b_g, _one, d] = graph_mean.dims();
-            branches.push(Tensor::cat(
-                vec![graph_mean.reshape([b_g, d]), graph_max.reshape([b_g, d])],
-                1,
-            ));
+            let mut atom_branch = vec![graph_mean.reshape([b_g, d]), graph_max.reshape([b_g, d])];
+
+            if let Some(analysis_encoder) = self.atom_graph_analysis_encoder.first() {
+                atom_branch.push(activation::relu(
+                    analysis_encoder.forward(atom_graph_analysis),
+                ));
+            }
+
+            branches.push(Tensor::cat(atom_branch, 1));
         }
 
         // --- Component GNN branch ---
@@ -673,6 +700,7 @@ pub(in crate::therapeutic) struct Batch<B: Backend> {
     pub pharm_adj_list: Tensor<B, 3>,
     pub pharm_edge_feats: Tensor<B, 4>,
     pub pharm_mask: Tensor<B, 3>,
+    pub atom_graph_analysis: Tensor<B, 2>,
     pub mol_params: Tensor<B, 2>,
     pub targets: Tensor<B, 2>,
 }
@@ -702,6 +730,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let mut batch_pharm_adj = Vec::new();
         let mut batch_pharm_edge_feats = Vec::new();
         let mut batch_pharm_mask = Vec::new();
+        let mut batch_atom_graph_analysis = Vec::new();
         let mut batch_globals = Vec::new();
         let mut batch_y = Vec::new();
 
@@ -709,6 +738,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
 
         // Per-atom scalar count is fixed by GraphDataAtom construction.
         let n_scalars_per_atom = PER_ATOM_SCALARS;
+        let n_atom_graph_analysis = items[0].graph.analysis_features.len().max(1);
 
         for mut item in items {
             // Mol parameters, and the target value.
@@ -735,6 +765,15 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 PER_EDGE_FEATS,
                 MAX_ATOMS,
             ));
+            if g.analysis_features.is_empty() {
+                batch_atom_graph_analysis.resize(
+                    batch_atom_graph_analysis.len() + n_atom_graph_analysis,
+                    0.0,
+                );
+            } else {
+                debug_assert_eq!(g.analysis_features.len(), n_atom_graph_analysis);
+                batch_atom_graph_analysis.extend_from_slice(&g.analysis_features);
+            }
 
             // Component graph
             let gc = &item.graph_comp;
@@ -815,6 +854,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             [batch_size, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
         );
         let pharm_mask = TensorData::new(batch_pharm_mask, [batch_size, MAX_PHARM, 1]);
+        let atom_graph_analysis =
+            TensorData::new(batch_atom_graph_analysis, [batch_size, n_atom_graph_analysis]);
         let globals = TensorData::new(batch_globals, [batch_size, n_feat_params]);
         let y = TensorData::new(batch_y, [batch_size, 1]);
 
@@ -835,6 +876,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             pharm_adj_list: Tensor::from_data(pharm_adj, device),
             pharm_edge_feats: Tensor::from_data(pharm_edge_feats, device),
             pharm_mask: Tensor::from_data(pharm_mask, device),
+            atom_graph_analysis: Tensor::from_data(atom_graph_analysis, device),
             mol_params: Tensor::from_data(globals, device),
             targets: Tensor::from_data(y, device),
         }
@@ -903,6 +945,7 @@ impl TrainStep for Model<TrainBackend> {
             batch.pharm_adj_list,
             batch.pharm_edge_feats,
             batch.pharm_mask,
+            batch.atom_graph_analysis,
             batch.mol_params,
         );
 
@@ -941,6 +984,7 @@ impl InferenceStep for Model<ValidBackend> {
             batch.pharm_adj_list,
             batch.pharm_edge_feats,
             batch.pharm_mask,
+            batch.atom_graph_analysis,
             batch.mol_params,
         );
 
@@ -1074,6 +1118,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
     ff_params: &ForceFieldParams,
 ) -> Vec<Sample> {
     let mut out = Vec::with_capacity(data.len());
+    let atom_graph_analysis = gnn::atom_graph_analysis_tools();
     for (mol, target) in data {
         let feat_params = match mlp_feats_from_mol(mol) {
             Ok(v) => v,
@@ -1087,7 +1132,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
             continue;
         }
 
-        let graph = match GraphDataAtom::new(mol, ff_params) {
+        let graph = match GraphDataAtom::new(mol, ff_params, &atom_graph_analysis) {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("Error getting graph data: {e:?}");
@@ -1259,6 +1304,7 @@ pub(in crate::therapeutic) fn train_with_samples(
     data_valid: Vec<Sample>,
 ) -> io::Result<()> {
     let param_cfg = load_param_cfg(&dataset.name())?;
+    let atom_graph_analysis = gnn::atom_graph_analysis_tools();
     println!(
         "Branch config for '{}': atom_gnn={} comp_gnn={} spacial_gnn={} mlp={}",
         dataset.name(),
@@ -1267,6 +1313,12 @@ pub(in crate::therapeutic) fn train_with_samples(
         param_cfg.gnn_spacial_enabled,
         param_cfg.mlp_enabled,
     );
+    if param_cfg.gnn_atom_enabled && atom_graph_analysis.feature_dim() > 0 {
+        println!(
+            "AtomGraph analysis features enabled: {:?}",
+            atom_graph_analysis.feature_names()
+        );
+    }
 
     let (model_path, scaler_path, config_path) = dataset.model_paths();
 
@@ -1321,6 +1373,7 @@ pub(in crate::therapeutic) fn train_with_samples(
         pharm_embedding_dim: 8,
         n_pharm_scalars: PER_PHARM_SCALARS,
         spacial_edge_feat_dim: PER_SPACIAL_EDGE_FEATS,
+        atom_graph_analysis: atom_graph_analysis.clone(),
         gnn_atom_enabled: param_cfg.gnn_atom_enabled,
         gnn_comp_enabled: param_cfg.gnn_comp_enabled,
         gnn_spacial_enabled: param_cfg.gnn_spacial_enabled,
