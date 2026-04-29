@@ -4,6 +4,8 @@
 use std::{collections::HashMap, fs, io, time::Instant};
 
 use bio_files::md_params::ForceFieldParams;
+#[cfg(not(feature = "train"))]
+use burn::record::{NamedMpkBytesRecorder, Recorder};
 use burn::{
     backend::{NdArray, ndarray::NdArrayDevice},
     module::Module,
@@ -11,8 +13,6 @@ use burn::{
     record::{FullPrecisionSettings, NamedMpkFileRecorder},
     tensor::{Tensor, TensorData, backend::Backend},
 };
-#[cfg(not(feature = "train"))]
-use burn::record::{NamedMpkBytesRecorder, Recorder};
 
 use crate::{
     molecules::small::MoleculeSmall,
@@ -47,19 +47,28 @@ pub struct Infer {
     scaler: StandardScaler,
     device: <InferBackend as Backend>::Device,
     atom_graph_analysis: GnnAnalysisTools,
+    comp_graph_analysis: GnnAnalysisTools,
+    spacial_graph_analysis: GnnAnalysisTools,
 }
 
 impl Infer {
     /// Helper used by both loading approaches.
     fn load(cfg_bytes: &[u8], scaler_bytes: &[u8]) -> io::Result<(Self, NdArrayDevice)> {
         let mut config_json: serde_json::Value = serde_json::from_slice(cfg_bytes)?;
+
         if let Some(obj) = config_json.as_object_mut() {
             obj.entry("atom_graph_analysis")
+                .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
+            obj.entry("comp_graph_analysis")
+                .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
+            obj.entry("spacial_graph_analysis")
                 .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
         }
         let config: ModelConfig = serde_json::from_value(config_json)?;
         let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;
         let atom_graph_analysis = config.atom_graph_analysis.clone();
+        let comp_graph_analysis = config.comp_graph_analysis.clone();
+        let spacial_graph_analysis = config.spacial_graph_analysis.clone();
 
         let device = Default::default();
 
@@ -75,6 +84,8 @@ impl Infer {
                 scaler,
                 device,
                 atom_graph_analysis,
+                comp_graph_analysis,
+                spacial_graph_analysis,
             },
             device,
         ))
@@ -139,10 +150,10 @@ impl Infer {
             return Err(io::Error::other("Missing components in ML inference"));
         };
 
-        let graph_comp = GraphDataComponent::new(comps)?;
+        let graph_comp = GraphDataComponent::new(comps, &self.comp_graph_analysis)?;
         // GraphDataSpacial::new returns Ok(empty) when characterization is missing
         // or no pharmacophore sites are present, so this never errors.
-        let graph_spacial = GraphDataSpacial::new(mol)?;
+        let graph_spacial = GraphDataSpacial::new(mol, &self.spacial_graph_analysis)?;
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
         let num_atoms = graph_atom_bond.num_atoms;
@@ -245,10 +256,18 @@ impl Infer {
             graph_atom_bond.analysis_features.clone()
         };
         let t_atom_graph_analysis = Tensor::<InferBackend, 2>::from_data(
-            TensorData::new(
-                atom_graph_analysis.clone(),
-                [1, atom_graph_analysis.len()],
-            ),
+            TensorData::new(atom_graph_analysis.clone(), [1, atom_graph_analysis.len()]),
+            &self.device,
+        );
+        let comp_graph_analysis_dim = self.comp_graph_analysis.feature_dim().max(1);
+        let comp_graph_analysis = if graph_comp.analysis_features.is_empty() {
+            vec![0.0; comp_graph_analysis_dim]
+        } else {
+            debug_assert_eq!(graph_comp.analysis_features.len(), comp_graph_analysis_dim);
+            graph_comp.analysis_features.clone()
+        };
+        let t_comp_graph_analysis = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(comp_graph_analysis, [1, comp_graph_analysis_dim]),
             &self.device,
         );
 
@@ -304,6 +323,20 @@ impl Infer {
             TensorData::new(padded_mask_pharm, [1, MAX_PHARM, 1]),
             &self.device,
         );
+        let spacial_graph_analysis_dim = self.spacial_graph_analysis.feature_dim().max(1);
+        let spacial_graph_analysis = if graph_spacial.analysis_features.is_empty() {
+            vec![0.0; spacial_graph_analysis_dim]
+        } else {
+            debug_assert_eq!(
+                graph_spacial.analysis_features.len(),
+                spacial_graph_analysis_dim
+            );
+            graph_spacial.analysis_features.clone()
+        };
+        let t_spacial_graph_analysis = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(spacial_graph_analysis, [1, spacial_graph_analysis_dim]),
+            &self.device,
+        );
 
         // 5. Forward Pass
         let forward_tensor = self.model.forward(
@@ -318,11 +351,13 @@ impl Infer {
             t_comp_adj,
             t_comp_edge_feats,
             t_comp_mask,
+            t_comp_graph_analysis,
             t_pharm_ids,
             t_pharm_scalars,
             t_pharm_adj,
             t_pharm_edge_feats,
             t_pharm_mask,
+            t_spacial_graph_analysis,
             t_atom_graph_analysis,
             t_param_feats,
         );
@@ -365,6 +400,8 @@ impl Infer {
         let mut all_comp_edge =
             Vec::with_capacity(batch_size * MAX_COMPS * MAX_COMPS * PER_EDGE_COMP_FEATS);
         let mut all_comp_mask = Vec::with_capacity(batch_size * MAX_COMPS);
+        let comp_graph_analysis_dim = self.comp_graph_analysis.feature_dim().max(1);
+        let mut all_comp_graph_analysis = Vec::with_capacity(batch_size * comp_graph_analysis_dim);
 
         let mut all_pharm_ids = Vec::with_capacity(batch_size * MAX_PHARM);
         let mut all_pharm_scalars = Vec::with_capacity(batch_size * MAX_PHARM * PER_PHARM_SCALARS);
@@ -372,6 +409,9 @@ impl Infer {
         let mut all_pharm_edge =
             Vec::with_capacity(batch_size * MAX_PHARM * MAX_PHARM * PER_SPACIAL_EDGE_FEATS);
         let mut all_pharm_mask = Vec::with_capacity(batch_size * MAX_PHARM);
+        let spacial_graph_analysis_dim = self.spacial_graph_analysis.feature_dim().max(1);
+        let mut all_spacial_graph_analysis =
+            Vec::with_capacity(batch_size * spacial_graph_analysis_dim);
         let atom_graph_analysis_dim = self.atom_graph_analysis.feature_dim().max(1);
         let mut all_atom_graph_analysis = Vec::with_capacity(batch_size * atom_graph_analysis_dim);
 
@@ -392,8 +432,8 @@ impl Infer {
                 .components
                 .as_ref()
                 .ok_or_else(|| io::Error::other("Missing components in ML inference"))?;
-            let gc = GraphDataComponent::new(comps)?;
-            let gs = GraphDataSpacial::new(mol)?;
+            let gc = GraphDataComponent::new(comps, &self.comp_graph_analysis)?;
+            let gs = GraphDataSpacial::new(mol, &self.spacial_graph_analysis)?;
 
             // Atom graph
             all_elem.extend(pad_indices(&g.elem_indices, g.num_atoms, MAX_ATOMS));
@@ -438,6 +478,13 @@ impl Infer {
                 PER_EDGE_COMP_FEATS,
                 MAX_COMPS,
             ));
+            if gc.analysis_features.is_empty() {
+                all_comp_graph_analysis
+                    .resize(all_comp_graph_analysis.len() + comp_graph_analysis_dim, 0.0);
+            } else {
+                debug_assert_eq!(gc.analysis_features.len(), comp_graph_analysis_dim);
+                all_comp_graph_analysis.extend_from_slice(&gc.analysis_features);
+            }
 
             // Spatial (pharmacophore) graph
             all_pharm_ids.extend(pad_indices(&gs.pharm_type_indices, gs.num_nodes, MAX_PHARM));
@@ -456,6 +503,15 @@ impl Infer {
                 PER_SPACIAL_EDGE_FEATS,
                 MAX_PHARM,
             ));
+            if gs.analysis_features.is_empty() {
+                all_spacial_graph_analysis.resize(
+                    all_spacial_graph_analysis.len() + spacial_graph_analysis_dim,
+                    0.0,
+                );
+            } else {
+                debug_assert_eq!(gs.analysis_features.len(), spacial_graph_analysis_dim);
+                all_spacial_graph_analysis.extend_from_slice(&gs.analysis_features);
+            }
         }
 
         let dev = &self.device;
@@ -515,6 +571,13 @@ impl Infer {
             TensorData::new(all_comp_mask, [batch_size, MAX_COMPS, 1]),
             dev,
         );
+        let t_comp_graph_analysis = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(
+                all_comp_graph_analysis,
+                [batch_size, comp_graph_analysis_dim],
+            ),
+            dev,
+        );
 
         let t_pharm_ids = Tensor::<InferBackend, 2, Int>::from_data(
             TensorData::new(all_pharm_ids, [batch_size, MAX_PHARM]),
@@ -542,6 +605,13 @@ impl Infer {
             TensorData::new(all_pharm_mask, [batch_size, MAX_PHARM, 1]),
             dev,
         );
+        let t_spacial_graph_analysis = Tensor::<InferBackend, 2>::from_data(
+            TensorData::new(
+                all_spacial_graph_analysis,
+                [batch_size, spacial_graph_analysis_dim],
+            ),
+            dev,
+        );
 
         let t_params = Tensor::<InferBackend, 2>::from_data(
             TensorData::new(all_globals, [batch_size, feat_dim]),
@@ -560,11 +630,13 @@ impl Infer {
             t_comp_adj,
             t_comp_edge,
             t_comp_mask,
+            t_comp_graph_analysis,
             t_pharm_ids,
             t_pharm_scalars,
             t_pharm_adj,
             t_pharm_edge,
             t_pharm_mask,
+            t_spacial_graph_analysis,
             t_atom_graph_analysis,
             t_params,
         );

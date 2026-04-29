@@ -103,6 +103,27 @@ pub(in crate::therapeutic) struct ParamConfig {
     pub gnn_comp_layers: u8,
     pub gnn_spacial_layers: u8,
     pub mlp_layers: u8,
+    pub atom_graph_analysis_weisfeiler_lehman: bool,
+    pub atom_graph_analysis_graphlets: Option<Vec<u8>>,
+    pub atom_graph_analysis_path_based_methods: bool,
+    pub atom_graph_analysis_local_overlap_statistics: bool,
+    pub atom_graph_analysis_katz_index: bool,
+    pub atom_graph_analysis_lhn_similarity: bool,
+    pub atom_graph_analysis_random_walk_methods: bool,
+    pub comp_graph_analysis_weisfeiler_lehman: bool,
+    pub comp_graph_analysis_graphlets: Option<Vec<u8>>,
+    pub comp_graph_analysis_path_based_methods: bool,
+    pub comp_graph_analysis_local_overlap_statistics: bool,
+    pub comp_graph_analysis_katz_index: bool,
+    pub comp_graph_analysis_lhn_similarity: bool,
+    pub comp_graph_analysis_random_walk_methods: bool,
+    pub spacial_graph_analysis_weisfeiler_lehman: bool,
+    pub spacial_graph_analysis_graphlets: Option<Vec<u8>>,
+    pub spacial_graph_analysis_path_based_methods: bool,
+    pub spacial_graph_analysis_local_overlap_statistics: bool,
+    pub spacial_graph_analysis_katz_index: bool,
+    pub spacial_graph_analysis_lhn_similarity: bool,
+    pub spacial_graph_analysis_random_walk_methods: bool,
     // pub exclude_hydrogens: bool,
 }
 
@@ -123,9 +144,9 @@ pub(in crate::therapeutic) struct ParamConfig {
 // }
 
 /// Minimal parser for the subset of TOML used by `therapeutic_training_config.toml`:
-/// top-level sections (`[name]`) containing `key = true/false` pairs.
+/// top-level sections (`[name]`) containing `key = bool/int/[int, ...]` pairs.
 /// Unknown keys are silently ignored; missing keys keep the default value.
-fn load_param_cfg(dataset_name: &str) -> io::Result<ParamConfig> {
+pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<ParamConfig> {
     const CONFIG_PATH: &str = "therapeutic_training_config.toml";
 
     let text = fs::read_to_string(CONFIG_PATH)?;
@@ -161,10 +182,14 @@ fn load_param_cfg(dataset_name: &str) -> io::Result<ParamConfig> {
 
     println!("  Branch config section used: [{section_name}]");
 
-    let get = |map: Option<&HashMap<String, String>>, key: &str| -> bool {
+    let default_atom_graph_analysis = gnn::atom_graph_analysis_tools();
+    let default_comp_graph_analysis = gnn::component_graph_analysis_tools();
+    let default_spacial_graph_analysis = gnn::spacial_graph_analysis_tools();
+
+    let get_bool = |map: Option<&HashMap<String, String>>, key: &str, default: bool| -> bool {
         map.and_then(|m| m.get(key))
             .and_then(|v| v.parse::<bool>().ok())
-            .unwrap_or(true)
+            .unwrap_or(default)
     };
 
     let get_int = |map: Option<&HashMap<String, String>>, key: &str, default: u8| -> u8 {
@@ -173,16 +198,200 @@ fn load_param_cfg(dataset_name: &str) -> io::Result<ParamConfig> {
             .unwrap_or(default)
     };
 
+    let get_u8_list_opt = |map: Option<&HashMap<String, String>>,
+                           key: &str,
+                           default: Option<Vec<u8>>|
+     -> Option<Vec<u8>> {
+        let Some(raw) = map.and_then(|m| m.get(key)) else {
+            return default;
+        };
+
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") || trimmed == "[]" {
+            return None;
+        }
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let inner = trimmed[1..trimmed.len() - 1].trim();
+            if inner.is_empty() {
+                return None;
+            }
+
+            let parsed = inner
+                .split(',')
+                .map(|part| part.trim().parse::<u8>())
+                .collect::<Result<Vec<_>, _>>();
+
+            return parsed
+                .ok()
+                .and_then(|vals| if vals.is_empty() { None } else { Some(vals) })
+                .or(default);
+        }
+
+        trimmed
+            .parse::<u8>()
+            .ok()
+            .map(|v| vec![v])
+            .or(default)
+    };
+
     Ok(ParamConfig {
-        gnn_atom_enabled: get(map, "gnn_atom_enabled"),
-        gnn_comp_enabled: get(map, "gnn_comp_enabled"),
-        gnn_spacial_enabled: get(map, "gnn_spacial_enabled"),
-        mlp_enabled: get(map, "mlp_enabled"),
+        gnn_atom_enabled: get_bool(map, "gnn_atom_enabled", true),
+        gnn_comp_enabled: get_bool(map, "gnn_comp_enabled", true),
+        gnn_spacial_enabled: get_bool(map, "gnn_spacial_enabled", true),
+        mlp_enabled: get_bool(map, "mlp_enabled", true),
         gnn_atom_layers: get_int(map, "gnn_atom_layers", 3),
         gnn_comp_layers: get_int(map, "gnn_comp_layers", 3),
         gnn_spacial_layers: get_int(map, "gnn_spacial_layers", 2),
         mlp_layers: get_int(map, "mlp_layers", 3),
+        atom_graph_analysis_weisfeiler_lehman: get_bool(
+            map,
+            "atom_graph_analysis_weisfeiler_lehman",
+            default_atom_graph_analysis.weisfeiler_lehman,
+        ),
+        atom_graph_analysis_graphlets: get_u8_list_opt(
+            map,
+            "atom_graph_analysis_graphlets",
+            default_atom_graph_analysis.graphlets.clone(),
+        ),
+        atom_graph_analysis_path_based_methods: get_bool(
+            map,
+            "atom_graph_analysis_path_based_methods",
+            default_atom_graph_analysis.path_based_methods,
+        ),
+        atom_graph_analysis_local_overlap_statistics: get_bool(
+            map,
+            "atom_graph_analysis_local_overlap_statistics",
+            default_atom_graph_analysis.local_overlap_statistics,
+        ),
+        atom_graph_analysis_katz_index: get_bool(
+            map,
+            "atom_graph_analysis_katz_index",
+            default_atom_graph_analysis.katz_index,
+        ),
+        atom_graph_analysis_lhn_similarity: get_bool(
+            map,
+            "atom_graph_analysis_lhn_similarity",
+            default_atom_graph_analysis.lhn_similarity,
+        ),
+        atom_graph_analysis_random_walk_methods: get_bool(
+            map,
+            "atom_graph_analysis_random_walk_methods",
+            default_atom_graph_analysis.random_walk_methods,
+        ),
+        comp_graph_analysis_weisfeiler_lehman: get_bool(
+            map,
+            "comp_graph_analysis_weisfeiler_lehman",
+            default_comp_graph_analysis.weisfeiler_lehman,
+        ),
+        comp_graph_analysis_graphlets: get_u8_list_opt(
+            map,
+            "comp_graph_analysis_graphlets",
+            default_comp_graph_analysis.graphlets.clone(),
+        ),
+        comp_graph_analysis_path_based_methods: get_bool(
+            map,
+            "comp_graph_analysis_path_based_methods",
+            default_comp_graph_analysis.path_based_methods,
+        ),
+        comp_graph_analysis_local_overlap_statistics: get_bool(
+            map,
+            "comp_graph_analysis_local_overlap_statistics",
+            default_comp_graph_analysis.local_overlap_statistics,
+        ),
+        comp_graph_analysis_katz_index: get_bool(
+            map,
+            "comp_graph_analysis_katz_index",
+            default_comp_graph_analysis.katz_index,
+        ),
+        comp_graph_analysis_lhn_similarity: get_bool(
+            map,
+            "comp_graph_analysis_lhn_similarity",
+            default_comp_graph_analysis.lhn_similarity,
+        ),
+        comp_graph_analysis_random_walk_methods: get_bool(
+            map,
+            "comp_graph_analysis_random_walk_methods",
+            default_comp_graph_analysis.random_walk_methods,
+        ),
+        spacial_graph_analysis_weisfeiler_lehman: get_bool(
+            map,
+            "spacial_graph_analysis_weisfeiler_lehman",
+            default_spacial_graph_analysis.weisfeiler_lehman,
+        ),
+        spacial_graph_analysis_graphlets: get_u8_list_opt(
+            map,
+            "spacial_graph_analysis_graphlets",
+            default_spacial_graph_analysis.graphlets.clone(),
+        ),
+        spacial_graph_analysis_path_based_methods: get_bool(
+            map,
+            "spacial_graph_analysis_path_based_methods",
+            default_spacial_graph_analysis.path_based_methods,
+        ),
+        spacial_graph_analysis_local_overlap_statistics: get_bool(
+            map,
+            "spacial_graph_analysis_local_overlap_statistics",
+            default_spacial_graph_analysis.local_overlap_statistics,
+        ),
+        spacial_graph_analysis_katz_index: get_bool(
+            map,
+            "spacial_graph_analysis_katz_index",
+            default_spacial_graph_analysis.katz_index,
+        ),
+        spacial_graph_analysis_lhn_similarity: get_bool(
+            map,
+            "spacial_graph_analysis_lhn_similarity",
+            default_spacial_graph_analysis.lhn_similarity,
+        ),
+        spacial_graph_analysis_random_walk_methods: get_bool(
+            map,
+            "spacial_graph_analysis_random_walk_methods",
+            default_spacial_graph_analysis.random_walk_methods,
+        ),
     })
+}
+
+pub(in crate::therapeutic) fn atom_graph_analysis_from_param_cfg(
+    param_cfg: &ParamConfig,
+) -> gnn::GnnAnalysisTools {
+    gnn::GnnAnalysisTools {
+        weisfeiler_lehman: param_cfg.atom_graph_analysis_weisfeiler_lehman,
+        graphlets: param_cfg.atom_graph_analysis_graphlets.clone(),
+        path_based_methods: param_cfg.atom_graph_analysis_path_based_methods,
+        local_overlap_statistics: param_cfg.atom_graph_analysis_local_overlap_statistics,
+        katz_index: param_cfg.atom_graph_analysis_katz_index,
+        lhn_similarity: param_cfg.atom_graph_analysis_lhn_similarity,
+        random_walk_methods: param_cfg.atom_graph_analysis_random_walk_methods,
+    }
+}
+
+pub(in crate::therapeutic) fn comp_graph_analysis_from_param_cfg(
+    param_cfg: &ParamConfig,
+) -> gnn::GnnAnalysisTools {
+    gnn::GnnAnalysisTools {
+        weisfeiler_lehman: param_cfg.comp_graph_analysis_weisfeiler_lehman,
+        graphlets: param_cfg.comp_graph_analysis_graphlets.clone(),
+        path_based_methods: param_cfg.comp_graph_analysis_path_based_methods,
+        local_overlap_statistics: param_cfg.comp_graph_analysis_local_overlap_statistics,
+        katz_index: param_cfg.comp_graph_analysis_katz_index,
+        lhn_similarity: param_cfg.comp_graph_analysis_lhn_similarity,
+        random_walk_methods: param_cfg.comp_graph_analysis_random_walk_methods,
+    }
+}
+
+pub(in crate::therapeutic) fn spacial_graph_analysis_from_param_cfg(
+    param_cfg: &ParamConfig,
+) -> gnn::GnnAnalysisTools {
+    gnn::GnnAnalysisTools {
+        weisfeiler_lehman: param_cfg.spacial_graph_analysis_weisfeiler_lehman,
+        graphlets: param_cfg.spacial_graph_analysis_graphlets.clone(),
+        path_based_methods: param_cfg.spacial_graph_analysis_path_based_methods,
+        local_overlap_statistics: param_cfg.spacial_graph_analysis_local_overlap_statistics,
+        katz_index: param_cfg.spacial_graph_analysis_katz_index,
+        lhn_similarity: param_cfg.spacial_graph_analysis_lhn_similarity,
+        random_walk_methods: param_cfg.spacial_graph_analysis_random_walk_methods,
+    }
 }
 
 pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
@@ -237,6 +446,8 @@ pub(in crate::therapeutic) struct ModelConfig {
     /// rebuild the same features that training used. Older model configs default
     /// to no extra analyses.
     pub atom_graph_analysis: gnn::GnnAnalysisTools,
+    pub comp_graph_analysis: gnn::GnnAnalysisTools,
+    pub spacial_graph_analysis: gnn::GnnAnalysisTools,
     // Which branches are active — saved so inference reloads correctly
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
@@ -253,6 +464,8 @@ impl ModelConfig {
         let dim_gnn = self.gnn_hidden_dim;
         let dim_mlp = self.mlp_hidden_dim;
         let atom_graph_analysis_dim = self.atom_graph_analysis.feature_dim();
+        let comp_graph_analysis_dim = self.comp_graph_analysis.feature_dim();
+        let spacial_graph_analysis_dim = self.spacial_graph_analysis.feature_dim();
 
         // Each GNN branch contributes mean + max pooled vectors (hence * 2).
         let combined_dim = if self.mlp_enabled {
@@ -270,10 +483,20 @@ impl ModelConfig {
             0
         } + if self.gnn_comp_enabled {
             self.gnn_hidden_dim * 2
+                + if comp_graph_analysis_dim > 0 {
+                    self.gnn_hidden_dim
+                } else {
+                    0
+                }
         } else {
             0
         } + if self.gnn_spacial_enabled {
             self.gnn_hidden_dim * 2
+                + if spacial_graph_analysis_dim > 0 {
+                    self.gnn_hidden_dim
+                } else {
+                    0
+                }
         } else {
             0
         };
@@ -323,6 +546,13 @@ impl ModelConfig {
             gnn_comp_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
 
+        let comp_graph_analysis_encoder =
+            if self.gnn_comp_enabled && comp_graph_analysis_dim > 0 {
+                vec![LinearConfig::new(comp_graph_analysis_dim, dim_gnn).init(device)]
+            } else {
+                Vec::new()
+            };
+
         let comp_edge_proj = LinearConfig::new(self.comp_edge_feat_dim, 1).init(device);
 
         // Spatial (pharmacophore) GNN
@@ -337,6 +567,13 @@ impl ModelConfig {
         for _ in 0..self.gnn_spacial_layers {
             spacial_gnn_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
+
+        let spacial_graph_analysis_encoder =
+            if self.gnn_spacial_enabled && spacial_graph_analysis_dim > 0 {
+                vec![LinearConfig::new(spacial_graph_analysis_dim, dim_gnn).init(device)]
+            } else {
+                Vec::new()
+            };
 
         let pharm_edge_proj = LinearConfig::new(self.spacial_edge_feat_dim, 1).init(device);
 
@@ -363,11 +600,13 @@ impl ModelConfig {
             comp_node_encoder,
             comp_edge_encoder,
             comp_gnn_layers: gnn_comp_layers,
+            comp_graph_analysis_encoder,
             comp_edge_proj,
             emb_pharm,
             pharm_node_encoder,
             pharm_edge_encoder,
             spacial_gnn_layers,
+            spacial_graph_analysis_encoder,
             pharm_edge_proj,
             mlp_layers,
             fusion_norm: LayerNormConfig::new(combined_dim).init(device),
@@ -398,6 +637,7 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     comp_node_encoder: Linear<B>,
     comp_edge_encoder: Linear<B>,
     comp_gnn_layers: Vec<Linear<B>>,
+    comp_graph_analysis_encoder: Vec<Linear<B>>,
     comp_edge_proj: Linear<B>,
     /// Spatial (pharmacophore) GNN branch. Nodes = pharmacophore features;
     /// edges encode Euclidean distances via Gaussian RBF.
@@ -405,6 +645,7 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     pharm_node_encoder: Linear<B>,
     pharm_edge_encoder: Linear<B>,
     spacial_gnn_layers: Vec<Linear<B>>,
+    spacial_graph_analysis_encoder: Vec<Linear<B>>,
     pharm_edge_proj: Linear<B>,
     /// Parameter features. These are for molecule-level parameters. (Atom count, weight, volume, PSA etc)
     mlp_layers: Vec<Linear<B>>,
@@ -493,12 +734,14 @@ impl<B: Backend> Model<B> {
         comp_adj: Tensor<B, 3>,
         comp_edge_feats: Tensor<B, 4>,
         comp_mask: Tensor<B, 3>,
+        comp_graph_analysis: Tensor<B, 2>,
         // Spatial (pharmacophore) graph
         pharm_idx: Tensor<B, 2, Int>,
         pharm_scalars: Tensor<B, 3>,
         pharm_adj: Tensor<B, 3>,
         pharm_edge_feats: Tensor<B, 4>,
         pharm_mask: Tensor<B, 3>,
+        spacial_graph_analysis: Tensor<B, 2>,
         atom_graph_analysis: Tensor<B, 2>,
         params: Tensor<B, 2>,
     ) -> Tensor<B, 2> {
@@ -589,10 +832,15 @@ impl<B: Backend> Model<B> {
             let has_comp_nodes = comp_counts.clamp(0.0, 1.0);
             let comp_max = comp_max * has_comp_nodes;
             let [b_c, _one_c, d_c] = comp_mean.dims();
-            branches.push(Tensor::cat(
-                vec![comp_mean.reshape([b_c, d_c]), comp_max.reshape([b_c, d_c])],
-                1,
-            ));
+            let mut comp_branch = vec![comp_mean.reshape([b_c, d_c]), comp_max.reshape([b_c, d_c])];
+
+            if let Some(analysis_encoder) = self.comp_graph_analysis_encoder.first() {
+                comp_branch.push(activation::relu(
+                    analysis_encoder.forward(comp_graph_analysis),
+                ));
+            }
+
+            branches.push(Tensor::cat(comp_branch, 1));
         }
 
         // --- Spatial (pharmacophore) GNN branch ---
@@ -636,13 +884,18 @@ impl<B: Backend> Model<B> {
             let has_pharm_nodes = pharm_counts.clamp(0.0, 1.0);
             let pharm_max = pharm_max * has_pharm_nodes;
             let [b_p, _one_p, d_p] = pharm_mean.dims();
-            branches.push(Tensor::cat(
-                vec![
-                    pharm_mean.reshape([b_p, d_p]),
-                    pharm_max.reshape([b_p, d_p]),
-                ],
-                1,
-            ));
+            let mut spacial_branch = vec![
+                pharm_mean.reshape([b_p, d_p]),
+                pharm_max.reshape([b_p, d_p]),
+            ];
+
+            if let Some(analysis_encoder) = self.spacial_graph_analysis_encoder.first() {
+                spacial_branch.push(activation::relu(
+                    analysis_encoder.forward(spacial_graph_analysis),
+                ));
+            }
+
+            branches.push(Tensor::cat(spacial_branch, 1));
         }
 
         // --- MLP branch ---
@@ -694,12 +947,14 @@ pub(in crate::therapeutic) struct Batch<B: Backend> {
     pub comp_adj_list: Tensor<B, 3>,
     pub comp_edge_feats: Tensor<B, 4>,
     pub comp_mask: Tensor<B, 3>,
+    pub comp_graph_analysis: Tensor<B, 2>,
     // Spatial (pharmacophore) graph
     pub pharm_indices: Tensor<B, 2, Int>,
     pub pharm_scalars: Tensor<B, 3>,
     pub pharm_adj_list: Tensor<B, 3>,
     pub pharm_edge_feats: Tensor<B, 4>,
     pub pharm_mask: Tensor<B, 3>,
+    pub spacial_graph_analysis: Tensor<B, 2>,
     pub atom_graph_analysis: Tensor<B, 2>,
     pub mol_params: Tensor<B, 2>,
     pub targets: Tensor<B, 2>,
@@ -730,6 +985,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let mut batch_pharm_adj = Vec::new();
         let mut batch_pharm_edge_feats = Vec::new();
         let mut batch_pharm_mask = Vec::new();
+        let mut batch_comp_graph_analysis = Vec::new();
+        let mut batch_spacial_graph_analysis = Vec::new();
         let mut batch_atom_graph_analysis = Vec::new();
         let mut batch_globals = Vec::new();
         let mut batch_y = Vec::new();
@@ -739,6 +996,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         // Per-atom scalar count is fixed by GraphDataAtom construction.
         let n_scalars_per_atom = PER_ATOM_SCALARS;
         let n_atom_graph_analysis = items[0].graph.analysis_features.len().max(1);
+        let n_comp_graph_analysis = items[0].graph_comp.analysis_features.len().max(1);
+        let n_spacial_graph_analysis = items[0].graph_spacial.analysis_features.len().max(1);
 
         for mut item in items {
             // Mol parameters, and the target value.
@@ -797,6 +1056,15 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 PER_EDGE_COMP_FEATS,
                 MAX_COMPS,
             ));
+            if gc.analysis_features.is_empty() {
+                batch_comp_graph_analysis.resize(
+                    batch_comp_graph_analysis.len() + n_comp_graph_analysis,
+                    0.0,
+                );
+            } else {
+                debug_assert_eq!(gc.analysis_features.len(), n_comp_graph_analysis);
+                batch_comp_graph_analysis.extend_from_slice(&gc.analysis_features);
+            }
 
             // Spatial (pharmacophore) graph
             let gs = &item.graph_spacial;
@@ -821,6 +1089,15 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 PER_SPACIAL_EDGE_FEATS,
                 MAX_PHARM,
             ));
+            if gs.analysis_features.is_empty() {
+                batch_spacial_graph_analysis.resize(
+                    batch_spacial_graph_analysis.len() + n_spacial_graph_analysis,
+                    0.0,
+                );
+            } else {
+                debug_assert_eq!(gs.analysis_features.len(), n_spacial_graph_analysis);
+                batch_spacial_graph_analysis.extend_from_slice(&gs.analysis_features);
+            }
         }
 
         let elem_ids = TensorData::new(batch_elem_ids, [batch_size, MAX_ATOMS]);
@@ -843,6 +1120,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             [batch_size, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
         );
         let comp_mask = TensorData::new(batch_comp_mask, [batch_size, MAX_COMPS, 1]);
+        let comp_graph_analysis =
+            TensorData::new(batch_comp_graph_analysis, [batch_size, n_comp_graph_analysis]);
         let pharm_ids = TensorData::new(batch_pharm_ids, [batch_size, MAX_PHARM]);
         let pharm_scalars = TensorData::new(
             batch_pharm_scalars,
@@ -854,6 +1133,10 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             [batch_size, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
         );
         let pharm_mask = TensorData::new(batch_pharm_mask, [batch_size, MAX_PHARM, 1]);
+        let spacial_graph_analysis = TensorData::new(
+            batch_spacial_graph_analysis,
+            [batch_size, n_spacial_graph_analysis],
+        );
         let atom_graph_analysis =
             TensorData::new(batch_atom_graph_analysis, [batch_size, n_atom_graph_analysis]);
         let globals = TensorData::new(batch_globals, [batch_size, n_feat_params]);
@@ -871,11 +1154,13 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             comp_adj_list: Tensor::from_data(comp_adj, device),
             comp_edge_feats: Tensor::from_data(comp_edge_feats, device),
             comp_mask: Tensor::from_data(comp_mask, device),
+            comp_graph_analysis: Tensor::from_data(comp_graph_analysis, device),
             pharm_indices: Tensor::from_data(pharm_ids, device),
             pharm_scalars: Tensor::from_data(pharm_scalars, device),
             pharm_adj_list: Tensor::from_data(pharm_adj, device),
             pharm_edge_feats: Tensor::from_data(pharm_edge_feats, device),
             pharm_mask: Tensor::from_data(pharm_mask, device),
+            spacial_graph_analysis: Tensor::from_data(spacial_graph_analysis, device),
             atom_graph_analysis: Tensor::from_data(atom_graph_analysis, device),
             mol_params: Tensor::from_data(globals, device),
             targets: Tensor::from_data(y, device),
@@ -940,11 +1225,13 @@ impl TrainStep for Model<TrainBackend> {
             batch.comp_adj_list,
             batch.comp_edge_feats,
             batch.comp_mask,
+            batch.comp_graph_analysis,
             batch.pharm_indices,
             batch.pharm_scalars,
             batch.pharm_adj_list,
             batch.pharm_edge_feats,
             batch.pharm_mask,
+            batch.spacial_graph_analysis,
             batch.atom_graph_analysis,
             batch.mol_params,
         );
@@ -979,11 +1266,13 @@ impl InferenceStep for Model<ValidBackend> {
             batch.comp_adj_list,
             batch.comp_edge_feats,
             batch.comp_mask,
+            batch.comp_graph_analysis,
             batch.pharm_indices,
             batch.pharm_scalars,
             batch.pharm_adj_list,
             batch.pharm_edge_feats,
             batch.pharm_mask,
+            batch.spacial_graph_analysis,
             batch.atom_graph_analysis,
             batch.mol_params,
         );
@@ -1116,9 +1405,11 @@ pub(in crate::therapeutic) fn load_training_data(
 pub(in crate::therapeutic) fn samples_from_mols(
     data: &[(MoleculeSmall, f32)],
     ff_params: &ForceFieldParams,
+    atom_graph_analysis: &gnn::GnnAnalysisTools,
+    comp_graph_analysis: &gnn::GnnAnalysisTools,
+    spacial_graph_analysis: &gnn::GnnAnalysisTools,
 ) -> Vec<Sample> {
     let mut out = Vec::with_capacity(data.len());
-    let atom_graph_analysis = gnn::atom_graph_analysis_tools();
     for (mol, target) in data {
         let feat_params = match mlp_feats_from_mol(mol) {
             Ok(v) => v,
@@ -1132,7 +1423,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
             continue;
         }
 
-        let graph = match GraphDataAtom::new(mol, ff_params, &atom_graph_analysis) {
+        let graph = match GraphDataAtom::new(mol, ff_params, atom_graph_analysis) {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("Error getting graph data: {e:?}");
@@ -1145,7 +1436,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
         }
 
         let graph_comp = match &mol.components {
-            Some(comps) => match GraphDataComponent::new(comps) {
+            Some(comps) => match GraphDataComponent::new(comps, comp_graph_analysis) {
                 Ok(g) => g,
                 Err(e) => {
                     eprintln!("Error getting comp graph data: {e:?}");
@@ -1160,7 +1451,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
 
         // GraphDataSpacial::new returns Ok(empty) when characterization is missing
         // or no pharmacophore sites are present, so this never errors.
-        let graph_spacial = match GraphDataSpacial::new(mol) {
+        let graph_spacial = match GraphDataSpacial::new(mol, spacial_graph_analysis) {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("Error getting spatial graph data: {e:?}");
@@ -1300,11 +1591,13 @@ fn cli_value(args: &[String], flag: &str) -> Option<String> {
 #[cfg(feature = "train")]
 pub(in crate::therapeutic) fn train_with_samples(
     dataset: DatasetTdc,
+    param_cfg: &ParamConfig,
     data_train: Vec<Sample>,
     data_valid: Vec<Sample>,
 ) -> io::Result<()> {
-    let param_cfg = load_param_cfg(&dataset.name())?;
-    let atom_graph_analysis = gnn::atom_graph_analysis_tools();
+    let atom_graph_analysis = atom_graph_analysis_from_param_cfg(param_cfg);
+    let comp_graph_analysis = comp_graph_analysis_from_param_cfg(param_cfg);
+    let spacial_graph_analysis = spacial_graph_analysis_from_param_cfg(param_cfg);
     println!(
         "Branch config for '{}': atom_gnn={} comp_gnn={} spacial_gnn={} mlp={}",
         dataset.name(),
@@ -1316,7 +1609,19 @@ pub(in crate::therapeutic) fn train_with_samples(
     if param_cfg.gnn_atom_enabled && atom_graph_analysis.feature_dim() > 0 {
         println!(
             "AtomGraph analysis features enabled: {:?}",
-            atom_graph_analysis.feature_names()
+            atom_graph_analysis.feature_names_with_prefix("atom")
+        );
+    }
+    if param_cfg.gnn_comp_enabled && comp_graph_analysis.feature_dim() > 0 {
+        println!(
+            "ComponentGraph analysis features enabled: {:?}",
+            comp_graph_analysis.feature_names_with_prefix("comp")
+        );
+    }
+    if param_cfg.gnn_spacial_enabled && spacial_graph_analysis.feature_dim() > 0 {
+        println!(
+            "SpacialGraph analysis features enabled: {:?}",
+            spacial_graph_analysis.feature_names_with_prefix("spacial")
         );
     }
 
@@ -1374,6 +1679,8 @@ pub(in crate::therapeutic) fn train_with_samples(
         n_pharm_scalars: PER_PHARM_SCALARS,
         spacial_edge_feat_dim: PER_SPACIAL_EDGE_FEATS,
         atom_graph_analysis: atom_graph_analysis.clone(),
+        comp_graph_analysis: comp_graph_analysis.clone(),
+        spacial_graph_analysis: spacial_graph_analysis.clone(),
         gnn_atom_enabled: param_cfg.gnn_atom_enabled,
         gnn_comp_enabled: param_cfg.gnn_comp_enabled,
         gnn_spacial_enabled: param_cfg.gnn_spacial_enabled,
@@ -1441,6 +1748,10 @@ pub(in crate::therapeutic) fn train(
     println!("Started training on {csv_path:?}");
 
     let tts = TrainTestSplit::new(dataset);
+    let param_cfg = load_param_cfg(&dataset.name())?;
+    let atom_graph_analysis = atom_graph_analysis_from_param_cfg(&param_cfg);
+    let comp_graph_analysis = comp_graph_analysis_from_param_cfg(&param_cfg);
+    let spacial_graph_analysis = spacial_graph_analysis_from_param_cfg(&param_cfg);
 
     let loaded = load_training_data(
         Path::new(&csv_path),
@@ -1452,10 +1763,22 @@ pub(in crate::therapeutic) fn train(
         false,
     )?;
 
-    let data_train = samples_from_mols(&loaded.train, ff_params);
-    let data_valid = samples_from_mols(&loaded.validation, ff_params);
+    let data_train = samples_from_mols(
+        &loaded.train,
+        ff_params,
+        &atom_graph_analysis,
+        &comp_graph_analysis,
+        &spacial_graph_analysis,
+    );
+    let data_valid = samples_from_mols(
+        &loaded.validation,
+        ff_params,
+        &atom_graph_analysis,
+        &comp_graph_analysis,
+        &spacial_graph_analysis,
+    );
 
-    train_with_samples(dataset, data_train, data_valid)
+    train_with_samples(dataset, &param_cfg, data_train, data_valid)
 }
 
 #[cfg(feature = "train")]

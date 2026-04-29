@@ -21,7 +21,11 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         infer::Infer,
-        train::{load_training_data, samples_from_mols, train_with_samples},
+        train::{
+            atom_graph_analysis_from_param_cfg, comp_graph_analysis_from_param_cfg,
+            load_param_cfg, load_training_data, samples_from_mols,
+            spacial_graph_analysis_from_param_cfg, train_with_samples,
+        },
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -251,10 +255,26 @@ pub fn eval(
         false,
     )?;
 
-    let train_samples = samples_from_mols(&data.train, ff_params);
-    let valid_samples = samples_from_mols(&data.validation, ff_params);
+    let param_cfg = load_param_cfg(&dataset.name())?;
+    let atom_graph_analysis = atom_graph_analysis_from_param_cfg(&param_cfg);
+    let comp_graph_analysis = comp_graph_analysis_from_param_cfg(&param_cfg);
+    let spacial_graph_analysis = spacial_graph_analysis_from_param_cfg(&param_cfg);
+    let train_samples = samples_from_mols(
+        &data.train,
+        ff_params,
+        &atom_graph_analysis,
+        &comp_graph_analysis,
+        &spacial_graph_analysis,
+    );
+    let valid_samples = samples_from_mols(
+        &data.validation,
+        ff_params,
+        &atom_graph_analysis,
+        &comp_graph_analysis,
+        &spacial_graph_analysis,
+    );
 
-    if let Err(e) = train_with_samples(dataset, train_samples, valid_samples) {
+    if let Err(e) = train_with_samples(dataset, &param_cfg, train_samples, valid_samples) {
         eprintln!("Error training {dataset}: {e}");
     }
 

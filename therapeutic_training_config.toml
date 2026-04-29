@@ -17,6 +17,38 @@ gnn_spacial_layers = 2
 # It seems a higher value here, to a point, is relatively cheap, and produces better results.
 mlp_layers = 5
 
+# AtomGraph analysis features. These feed explicit graph-level descriptors into the
+# atom GNN branch and are saved into the trained model config for inference reuse.
+atom_graph_analysis_weisfeiler_lehman = true
+# Empty list / [] disables graphlet counting. Currently size-3 graphlets are implemented.
+atom_graph_analysis_graphlets = [3]
+atom_graph_analysis_path_based_methods = true
+atom_graph_analysis_local_overlap_statistics = true
+atom_graph_analysis_katz_index = true
+atom_graph_analysis_lhn_similarity = false
+atom_graph_analysis_random_walk_methods = false
+
+# ComponentGraph analysis features. These are graph-level descriptors derived from the
+# component/functional-group graph and fed into the component GNN branch.
+comp_graph_analysis_weisfeiler_lehman = true
+comp_graph_analysis_graphlets = [3]
+comp_graph_analysis_path_based_methods = true
+comp_graph_analysis_local_overlap_statistics = true
+comp_graph_analysis_katz_index = false
+comp_graph_analysis_lhn_similarity = false
+comp_graph_analysis_random_walk_methods = false
+
+# Spacial/PharmacophoreGraph analysis features. For these analyses we build a sparse
+# proximity graph over pharmacophore nodes, even though message passing still uses the
+# full distance-weighted pharmacophore graph.
+spacial_graph_analysis_weisfeiler_lehman = true
+spacial_graph_analysis_graphlets = [3]
+spacial_graph_analysis_path_based_methods = true
+spacial_graph_analysis_local_overlap_statistics = true
+spacial_graph_analysis_katz_index = false
+spacial_graph_analysis_lhn_similarity = false
+spacial_graph_analysis_random_walk_methods = false
+
 # todo: Eval where this should live. Currently hard-coded.
 ## Note: Excluding H or not appears not to make any notable difference at first;
 ## Experiment with this more later.

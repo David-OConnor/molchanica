@@ -75,7 +75,7 @@ const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 /// todo: Molecule-base graphs represent a small subset of the general tyhpes used here, and they may not
 /// todo: Make sense. For example, there are a lot of rules for molecule based graphs we can take advantage
 /// todo of, and/or that make these tools less relevant (?)
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::therapeutic) struct GnnAnalysisTools {
     /// Weisfeiler-Lehman (WL) kernel.
     /// "The idea with these approaches is to extract
@@ -123,20 +123,34 @@ pub(in crate::therapeutic) struct GnnAnalysisTools {
     pub random_walk_methods: bool,
 }
 
+impl Default for GnnAnalysisTools {
+    fn default() -> Self {
+        Self {
+            weisfeiler_lehman: false,
+            graphlets: None,
+            path_based_methods: false,
+            local_overlap_statistics: false,
+            katz_index: false,
+            lhn_similarity: false,
+            random_walk_methods: false,
+        }
+    }
+}
+
 impl GnnAnalysisTools {
-    /// The feature order emitted by `GraphDataAtom::analysis_features`.
+    /// The feature order emitted by graph `analysis_features`.
     ///
-    /// At the moment we only emit features for the implemented AtomGraph analyses.
+    /// At the moment we only emit features for the implemented analyses.
     /// Unsupported flags remain inert until we add concrete features for them.
     pub fn feature_names(&self) -> Vec<&'static str> {
         let mut names = Vec::new();
 
         if self.weisfeiler_lehman {
             names.extend([
-                "atom_wl_unique_labels_base",
-                "atom_wl_unique_labels_hop_1",
-                "atom_wl_unique_labels_hop_2",
-                "atom_wl_dominant_label_frac_hop_2",
+                "wl_unique_labels_base",
+                "wl_unique_labels_hop_1",
+                "wl_unique_labels_hop_2",
+                "wl_dominant_label_frac_hop_2",
             ]);
         }
 
@@ -144,9 +158,9 @@ impl GnnAnalysisTools {
             for &size in graphlets {
                 if size == 3 {
                     names.extend([
-                        "atom_graphlet_wedge_frac",
-                        "atom_graphlet_triangle_frac",
-                        "atom_graphlet_transitivity",
+                        "graphlet_wedge_frac",
+                        "graphlet_triangle_frac",
+                        "graphlet_transitivity",
                     ]);
                 }
             }
@@ -154,21 +168,25 @@ impl GnnAnalysisTools {
 
         if self.path_based_methods {
             names.extend([
-                "atom_path_reachable_pair_frac",
-                "atom_path_mean_shortest_path",
-                "atom_path_diameter",
-                "atom_path_long_shortest_path_frac",
+                "path_reachable_pair_frac",
+                "path_mean_shortest_path",
+                "path_diameter",
+                "path_long_shortest_path_frac",
             ]);
         }
 
         if self.local_overlap_statistics {
-            names.extend([
-                "atom_overlap_mean_jaccard",
-                "atom_overlap_mean_sorensen",
-            ]);
+            names.extend(["overlap_mean_jaccard", "overlap_mean_sorensen"]);
         }
 
         names
+    }
+
+    pub fn feature_names_with_prefix(&self, prefix: &'static str) -> Vec<String> {
+        self.feature_names()
+            .into_iter()
+            .map(|name| format!("{prefix}_{name}"))
+            .collect()
     }
 
     pub fn feature_dim(&self) -> usize {
@@ -182,6 +200,32 @@ impl GnnAnalysisTools {
 /// The configuration is also persisted into `ModelConfig`, so inference reloads the
 /// same feature set that training used.
 pub(in crate::therapeutic) fn atom_graph_analysis_tools() -> GnnAnalysisTools {
+    GnnAnalysisTools {
+        weisfeiler_lehman: true,
+        graphlets: Some(vec![3]),
+        path_based_methods: true,
+        local_overlap_statistics: true,
+        katz_index: false,
+        lhn_similarity: false,
+        random_walk_methods: false,
+    }
+}
+
+/// Current ComponentGraph analysis bundle.
+pub(in crate::therapeutic) fn component_graph_analysis_tools() -> GnnAnalysisTools {
+    GnnAnalysisTools {
+        weisfeiler_lehman: true,
+        graphlets: Some(vec![3]),
+        path_based_methods: true,
+        local_overlap_statistics: true,
+        katz_index: false,
+        lhn_similarity: false,
+        random_walk_methods: false,
+    }
+}
+
+/// Current Pharmacophore/SpatialGraph analysis bundle.
+pub(in crate::therapeutic) fn spacial_graph_analysis_tools() -> GnnAnalysisTools {
     GnnAnalysisTools {
         weisfeiler_lehman: true,
         graphlets: Some(vec![3]),
@@ -222,8 +266,7 @@ pub(in crate::therapeutic) struct GraphDataAtom {
     ///  is_h_bond_acceptor, is_h_bond_donor, in_aromatic_ring]
     pub scalars: Vec<f32>,
     /// Graph-level analysis features assembled according to
-    /// `GnnAnalysisTools::feature_names()`. These are currently wired only into
-    /// the AtomGraph branch.
+    /// `GnnAnalysisTools::feature_names()`.
     pub analysis_features: Vec<f32>,
     pub adj: Vec<f32>,
     pub edge_feats: Vec<f32>,
@@ -506,6 +549,7 @@ impl GraphDataAtom {
 pub(in crate::therapeutic) struct GraphDataComponent {
     pub comp_type_indices: Vec<i32>,
     pub scalars: Vec<f32>,
+    pub analysis_features: Vec<f32>,
     pub adj: Vec<f32>,
     pub edge_feats: Vec<f32>,
     pub num_comps: usize,
@@ -514,7 +558,7 @@ pub(in crate::therapeutic) struct GraphDataComponent {
 /// Converts component nodes and inter-component connections into flat vectors for tensors.
 /// Used by both Training and Inference.
 impl GraphDataComponent {
-    pub fn new(mol_comps: &MolComponents) -> io::Result<Self> {
+    pub fn new(mol_comps: &MolComponents, analysis_tools: &GnnAnalysisTools) -> io::Result<Self> {
         let comps = &mol_comps.components;
         let conns = &mol_comps.connections;
 
@@ -539,6 +583,16 @@ impl GraphDataComponent {
             // Number of atoms owned by this component, normalised.
             scalars.push(comp.atoms.len() as f32 / 10.0);
         }
+
+        let mut base_labels = Vec::with_capacity(num_comps);
+        for (i, comp) in comps.iter().enumerate() {
+            let mut hasher = DefaultHasher::new();
+            vocab_lookup_component(&comp.comp_type).hash(&mut hasher);
+            adj[i].len().hash(&mut hasher);
+            bucket_scalar(comp.atoms.len() as f32 / 10.0, 4.0).hash(&mut hasher);
+            base_labels.push(hasher.finish());
+        }
+        let analysis_features = graph_analysis_features(analysis_tools, &base_labels, &adj);
 
         // Conn features (Weighted Adjacency)
         let n_atoms_sq = num_comps.pow(2);
@@ -575,6 +629,7 @@ impl GraphDataComponent {
         Ok(Self {
             comp_type_indices,
             scalars,
+            analysis_features,
             adj: adj_list,
             edge_feats,
             num_comps,
@@ -649,16 +704,32 @@ fn atom_graph_analysis_features(
     is_h_bond_donor: &[bool],
     is_aromatic_ring: &[bool],
 ) -> Vec<f32> {
+    let base_labels: Vec<u64> = atoms
+        .iter()
+        .enumerate()
+        .map(|(i, atom)| {
+            let mut hasher = DefaultHasher::new();
+            vocab_lookup_element(atom.element).hash(&mut hasher);
+            adj[i].len().hash(&mut hasher);
+            is_h_bond_acceptor[i].hash(&mut hasher);
+            is_h_bond_donor[i].hash(&mut hasher);
+            is_aromatic_ring[i].hash(&mut hasher);
+            hasher.finish()
+        })
+        .collect();
+
+    graph_analysis_features(tools, &base_labels, adj)
+}
+
+fn graph_analysis_features(
+    tools: &GnnAnalysisTools,
+    base_labels: &[u64],
+    adj: &[Vec<usize>],
+) -> Vec<f32> {
     let mut out = Vec::with_capacity(tools.feature_dim());
 
     if tools.weisfeiler_lehman {
-        out.extend(wl_atom_graph_features(
-            atoms,
-            adj,
-            is_h_bond_acceptor,
-            is_h_bond_donor,
-            is_aromatic_ring,
-        ));
+        out.extend(wl_features(base_labels, adj));
     }
 
     if let Some(graphlets) = &tools.graphlets {
@@ -680,34 +751,13 @@ fn atom_graph_analysis_features(
     out
 }
 
-fn wl_atom_graph_features(
-    atoms: &[Atom],
-    adj: &[Vec<usize>],
-    is_h_bond_acceptor: &[bool],
-    is_h_bond_donor: &[bool],
-    is_aromatic_ring: &[bool],
-) -> [f32; 4] {
-    let n = atoms.len().max(1) as f32;
-
-    let base_labels: Vec<u64> = atoms
-        .iter()
-        .enumerate()
-        .map(|(i, atom)| {
-            let mut hasher = DefaultHasher::new();
-            vocab_lookup_element(atom.element).hash(&mut hasher);
-            adj[i].len().hash(&mut hasher);
-            is_h_bond_acceptor[i].hash(&mut hasher);
-            is_h_bond_donor[i].hash(&mut hasher);
-            is_aromatic_ring[i].hash(&mut hasher);
-            hasher.finish()
-        })
-        .collect();
-
-    let hop_1 = wl_refine_labels(&base_labels, adj);
+fn wl_features(base_labels: &[u64], adj: &[Vec<usize>]) -> [f32; 4] {
+    let n = base_labels.len().max(1) as f32;
+    let hop_1 = wl_refine_labels(base_labels, adj);
     let hop_2 = wl_refine_labels(&hop_1, adj);
 
     [
-        unique_label_count(&base_labels) as f32 / n,
+        unique_label_count(base_labels) as f32 / n,
         unique_label_count(&hop_1) as f32 / n,
         unique_label_count(&hop_2) as f32 / n,
         dominant_label_frac(&hop_2),
@@ -923,6 +973,61 @@ fn choose3(n: usize) -> usize {
         / 6
 }
 
+fn bucket_scalar(value: f32, bins_per_unit: f32) -> i16 {
+    (value.max(0.0) * bins_per_unit).round().clamp(0.0, 127.0) as i16
+}
+
+fn build_spacial_analysis_adj(dist_mat: &[f32], num_nodes: usize) -> Vec<Vec<usize>> {
+    const SPACIAL_ANALYSIS_RADIUS_A: f32 = 5.5;
+    const SPACIAL_ANALYSIS_MIN_NEIGHBORS: usize = 2;
+
+    if num_nodes == 0 {
+        return Vec::new();
+    }
+
+    let mut adj = vec![Vec::new(); num_nodes];
+
+    for i in 0..num_nodes {
+        for j in (i + 1)..num_nodes {
+            if dist_mat[i * num_nodes + j] <= SPACIAL_ANALYSIS_RADIUS_A {
+                adj[i].push(j);
+                adj[j].push(i);
+            }
+        }
+    }
+
+    for i in 0..num_nodes {
+        let mut nearest = Vec::with_capacity(num_nodes.saturating_sub(1));
+        for j in 0..num_nodes {
+            if i != j {
+                nearest.push((dist_mat[i * num_nodes + j], j));
+            }
+        }
+        nearest.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        let target_degree = SPACIAL_ANALYSIS_MIN_NEIGHBORS.min(num_nodes.saturating_sub(1));
+        for &(_, j) in &nearest {
+            if adj[i].len() >= target_degree {
+                break;
+            }
+
+            if !adj[i].contains(&j) {
+                adj[i].push(j);
+            }
+            if !adj[j].contains(&i) {
+                adj[j].push(i);
+            }
+        }
+    }
+
+    for nbrs in &mut adj {
+        nbrs.sort_unstable();
+        nbrs.dedup();
+    }
+
+    adj
+}
+
 /// Helper: Pads a single graph to MAX_ATOMS.
 /// Returns (PaddedNodes, PaddedAdj, PaddedMask) as flat vectors.
 ///
@@ -1035,6 +1140,9 @@ pub(in crate::therapeutic) struct GraphDataSpacial {
     pub pharm_type_indices: Vec<i32>,
     /// Per-node scalar features: [r_from_pharm_centroid, mean_pairwise_dist] (both normalised).
     pub scalars: Vec<f32>,
+    /// Graph-level analysis features computed from a sparse proximity graph over
+    /// pharmacophore nodes, rather than the fully connected message-passing graph.
+    pub analysis_features: Vec<f32>,
     /// Gaussian distance-weighted adjacency (fully connected + self-loops). Flat [N²].
     pub adj: Vec<f32>,
     /// Per-edge geometric features: [scaled_dist, rbf0..rbf3]. Flat [N² × PER_SPACIAL_EDGE_FEATS].
@@ -1047,13 +1155,14 @@ impl GraphDataSpacial {
         Self {
             pharm_type_indices: Vec::new(),
             scalars: Vec::new(),
+            analysis_features: Vec::new(),
             adj: Vec::new(),
             edge_feats: Vec::new(),
             num_nodes: 0,
         }
     }
 
-    pub fn new(mol: &MoleculeSmall) -> io::Result<Self> {
+    pub fn new(mol: &MoleculeSmall, analysis_tools: &GnnAnalysisTools) -> io::Result<Self> {
         let Some(char) = mol.characterization.as_ref() else {
             return Ok(Self::empty());
         };
@@ -1147,6 +1256,18 @@ impl GraphDataSpacial {
             scalars.push(mean_d);
         }
 
+        let analysis_adj = build_spacial_analysis_adj(&dist_mat, num_nodes);
+        let mut base_labels = Vec::with_capacity(num_nodes);
+        for i in 0..num_nodes {
+            let mut hasher = DefaultHasher::new();
+            pharm_type_indices[i].hash(&mut hasher);
+            analysis_adj[i].len().hash(&mut hasher);
+            bucket_scalar(scalars[i * PER_PHARM_SCALARS], 4.0).hash(&mut hasher);
+            bucket_scalar(scalars[i * PER_PHARM_SCALARS + 1], 4.0).hash(&mut hasher);
+            base_labels.push(hasher.finish());
+        }
+        let analysis_features = graph_analysis_features(analysis_tools, &base_labels, &analysis_adj);
+
         // Edge features and adjacency (fully connected; all pairs connected).
         let n2 = num_nodes * num_nodes;
         let mut adj = vec![0f32; n2];
@@ -1184,6 +1305,7 @@ impl GraphDataSpacial {
         Ok(Self {
             pharm_type_indices,
             scalars,
+            analysis_features,
             adj,
             edge_feats,
             num_nodes,
@@ -1243,8 +1365,8 @@ fn vocab_lookup_component(comp_type: &ComponentType) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        atom_graph_analysis_tools, graphlet_size_3_features, local_overlap_features,
-        path_based_features,
+        atom_graph_analysis_tools, build_spacial_analysis_adj, graphlet_size_3_features,
+        local_overlap_features, path_based_features, spacial_graph_analysis_tools,
     };
 
     #[test]
@@ -1274,5 +1396,24 @@ mod tests {
         let overlap_feats = local_overlap_features(&chain);
         assert_eq!(overlap_feats[0], 0.0);
         assert_eq!(overlap_feats[1], 0.0);
+    }
+
+    #[test]
+    fn spacial_analysis_graph_is_not_complete_when_distance_structure_is_sparse() {
+        let dist_mat = vec![
+            0.0, 2.0, 9.0, 9.0, //
+            2.0, 0.0, 2.0, 9.0, //
+            9.0, 2.0, 0.0, 2.0, //
+            9.0, 9.0, 2.0, 0.0, //
+        ];
+        let adj = build_spacial_analysis_adj(&dist_mat, 4);
+        let edge_count = adj.iter().map(Vec::len).sum::<usize>() / 2;
+
+        assert!(edge_count < 6);
+        assert!(adj[1].contains(&2));
+        assert_eq!(
+            spacial_graph_analysis_tools().feature_dim(),
+            atom_graph_analysis_tools().feature_dim()
+        );
     }
 }
