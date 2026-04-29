@@ -93,9 +93,31 @@ struct GnnAnalysisTools {
     /// volves a similar idea but uses only the shortest-paths between nodes (rather
     /// 3Other node labels can also be used."
     pub path_based_methods: bool,
+    /// "Local overlap statistics are simply functions of the number of common neighbors
+    /// two nodes share, i.e. |N(u) ∩ N(v)|. For instance, the Sorensen index defines
+    /// a matrix SSorenson ∈ R|V|×|V| of node-node neighborhood overlaps with entries
+    /// given by...In general, these measures seek to quantify the overlap between node neighbor-
+    /// hoods while minimizing any biases due to node degrees. There are many further
+    /// variations of this approach in the literature [L¨u and Zhou, 2011]."
     pub local_overlap_statistics: bool,
+    /// "The Katz index is the most basic global overlap statistic. To compute the Katz
+    /// index we simply count the number of paths of all lengths between a pair of
+    /// nodes... The Katz index is one example of a geo-
+    /// metric series of matrices, variants of which occur frequently in graph anal-
+    /// ysis and graph representation learning. "
     pub katz_index: bool,
+    /// "One issue with the Katz index is that it is strongly biased by node degree.
+    /// Equation (2.14) is generally going to give higher overall similarity scores when
+    /// considering high-degree nodes, compared to low-degree ones, since high-degree
+    /// nodes will generally be involved in more paths. To alleviate this, Leicht et al.
+    /// [2006] propose an improved metric by considering the ratio between the actual
+    /// number of observed paths and the number of expected paths between two nodes"
     pub lhn_similarity: bool,
+    /// "Another set of global similarity measures consider random walks rather than
+    /// exact counts of paths over the graph. For example, we can directly apply a
+    /// variant of the famous PageRank approach [Page et al., 1999]4—known as the
+    /// Personalized PageRank algorithm [Leskovec et al., 2020]—where we define the
+    /// stochastic matrix P = AD−1 and compute:"
     pub random_walk_methods: bool,
 }
 
