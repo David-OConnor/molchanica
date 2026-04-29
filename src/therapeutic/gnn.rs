@@ -2,6 +2,10 @@
 //! This includes atom and bond networks, and per-atom, per-bond, etc features. We are also
 //! attempting to construct graphs from functional groups, pharmacophore features, and other
 //! concepts. With and without geometry. (Distance/angles in space)
+//!
+//! We use *Graph classification or regression* as our primary technique in the set of Graph ML tools:
+//! We view molecules as graphs, and infer properties of the entire graph. We may also implement
+//! graph clustering
 
 use std::{
     collections::HashMap,
@@ -24,7 +28,7 @@ use crate::{
     therapeutic::train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS},
 };
 
-// Degree, partial charge, geometry (radius from molecular centroid, mean neighbor distance),
+// Degree (Number of edges incident to a node), partial charge, geometry (radius from molecular centroid, mean neighbor distance),
 // is H-bond acceptor, is H-bond donor, in aromatic ring.
 // Keep this in sync with `GraphDataAtom::new`.
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
@@ -146,6 +150,7 @@ impl GraphDataAtom {
             elem_indices.push(vocab_lookup_element(atom.element));
             ff_indices.push(vocab_lookup_ff(atom.force_field_type.as_ref()));
 
+            // Degree is the number of edges incident to a node.
             let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
             scalars.push(degree as f32 / 6.0);
 
@@ -365,6 +370,7 @@ impl GraphDataComponent {
         for (i, comp) in comps.iter().enumerate() {
             comp_type_indices.push(vocab_lookup_component(&comp.comp_type));
 
+            // Degree is the number of edges incident to a node.
             let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
             scalars.push(degree as f32 / 6.0);
             // Number of atoms owned by this component, normalised.
