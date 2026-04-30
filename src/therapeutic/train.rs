@@ -65,9 +65,10 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom,
-            GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
-            PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
+            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
+            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
+            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
+            SPACIAL_VOCAB_SIZE,
         },
         non_nn_ml,
         train_test_split_indices::TrainTestSplit,
@@ -671,6 +672,11 @@ fn sym_normalize<B: Backend>(adj: Tensor<B, 3>) -> Tensor<B, 3> {
     adj * deg_inv_sqrt * deg_inv_sqrt_t
 }
 
+fn sym_normalize_layered<B: Backend>(adj: Tensor<B, 4>) -> Tensor<B, 4> {
+    let [b, l, n, _] = adj.dims();
+    sym_normalize(adj.reshape([b * l, n, n])).reshape([b, l, n, n])
+}
+
 impl<B: Backend> Model<B> {
     /// Make a single middle GNN layer. (Use for the atom and bond graph)
     /// GINE-style Layer:
@@ -714,14 +720,51 @@ impl<B: Backend> Model<B> {
         out * mask.clone()
     }
 
+    fn make_multiplex_gnn_layer(
+        &self,
+        adj_weighted: &Tensor<B, 4>, // [Batch, Layer, N, N]
+        mask: &Tensor<B, 3>,         // [Batch, N, 1]
+        nodes: Tensor<B, 3>,         // [Batch, N, D_in]
+        edge_emb: &Tensor<B, 5>,     // [Batch, Layer, N, N, D_hidden]
+        gnn_linear: &Linear<B>,
+        dropout: bool,
+    ) -> Tensor<B, 3> {
+        let [b, l, n, _] = adj_weighted.dims();
+        let d = nodes.dims()[2];
+
+        let nodes_j = nodes.clone().unsqueeze_dim::<4>(1).unsqueeze_dim::<5>(1);
+        let message = activation::relu(nodes_j + edge_emb.clone());
+        let weights = adj_weighted.clone().unsqueeze_dim(4);
+
+        let agg = (message * weights)
+            .sum_dim(3)
+            .reshape([b, l, n, d])
+            .sum_dim(1)
+            .reshape([b, n, d]);
+
+        let mut layer_out = activation::relu(gnn_linear.forward(agg));
+
+        if dropout && DROPOUT.is_some() {
+            layer_out = self.dropout.forward(layer_out);
+        }
+
+        let out = if nodes.dims()[2] == layer_out.dims()[2] {
+            layer_out + nodes
+        } else {
+            layer_out
+        };
+
+        out * mask.clone()
+    }
+
     pub fn forward(
         &self,
         // These indexes are for mapping string values to integers for use in the model.
         elem_idx: Tensor<B, 2, Int>,
         ff_idx: Tensor<B, 2, Int>,
         scalars: Tensor<B, 3>,
-        adj: Tensor<B, 3>,
-        edge_feats: Tensor<B, 4>,
+        adj: Tensor<B, 4>,
+        edge_feats: Tensor<B, 5>,
         mask: Tensor<B, 3>,
         // Component graph
         comp_idx: Tensor<B, 2, Int>,
@@ -744,18 +787,18 @@ impl<B: Backend> Model<B> {
 
         // --- Atom GNN branch ---
         if self.atom_gnn_enabled {
-            let [b, n, _n2, f] = edge_feats.dims();
+            let [b, l, n, _n2, f] = edge_feats.dims();
 
-            let ef_flat = edge_feats.clone().reshape([b * n * n, f]);
+            let ef_flat = edge_feats.clone().reshape([b * l * n * n, f]);
             let gate_flat = activation::sigmoid(self.edge_proj.forward(ef_flat.clone()));
-            let gate = gate_flat.reshape([b, n, n]);
+            let gate = gate_flat.reshape([b, l, n, n]);
             // Gate the raw adjacency, then symmetric-normalize so message
             // magnitudes stay scale-invariant w.r.t. the gate.
-            let adj_eff = sym_normalize(adj * gate);
+            let adj_eff = sym_normalize_layered(adj * gate);
 
             let edge_emb_flat = self.edge_encoder.forward(ef_flat);
             let [_, d_hidden] = edge_emb_flat.dims();
-            let edge_emb = edge_emb_flat.reshape([b, n, n, d_hidden]);
+            let edge_emb = edge_emb_flat.reshape([b, l, n, n, d_hidden]);
 
             let x_elem = self.emb_elem.forward(elem_idx);
             let x_ff = self.emb_ff.forward(ff_idx);
@@ -765,8 +808,8 @@ impl<B: Backend> Model<B> {
             let mut gnn_prev = nodes;
             for (i, layer) in self.gnn_layers.iter().enumerate() {
                 let dropout = i != self.gnn_layers.len() - 1;
-                gnn_prev =
-                    self.make_gnn_layer(&adj_eff, &mask, gnn_prev, &edge_emb, layer, dropout);
+                gnn_prev = self
+                    .make_multiplex_gnn_layer(&adj_eff, &mask, gnn_prev, &edge_emb, layer, dropout);
             }
 
             let graph_sum = gnn_prev.clone().sum_dim(1);
@@ -933,8 +976,8 @@ pub(in crate::therapeutic) struct Batch<B: Backend> {
     pub ff_indices: Tensor<B, 2, Int>,
     /// Atom-specific properties, e.g. partial charge.
     pub scalars: Tensor<B, 3>,
-    pub adj_list: Tensor<B, 3>,
-    pub edge_feats: Tensor<B, 4>,
+    pub adj_list: Tensor<B, 4>,
+    pub edge_feats: Tensor<B, 5>,
     pub mask: Tensor<B, 3>,
     // Component graph
     pub comp_indices: Tensor<B, 2, Int>,
@@ -1010,13 +1053,12 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 n_scalars_per_atom,
                 MAX_ATOMS,
             ));
-            let (p_adj, p_mask) = gnn::pad_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
+            let (p_adj, p_mask) = gnn::pad_atom_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
             batch_adj.extend(p_adj);
             batch_mask.extend(p_mask);
-            batch_edge_feats.extend(gnn::pad_edge_feats(
+            batch_edge_feats.extend(gnn::pad_atom_edge_feats(
                 &g.edge_feats,
                 g.num_atoms,
-                ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
                 MAX_ATOMS,
             ));
             if g.analysis_features.is_empty() {
@@ -1094,11 +1136,15 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let elem_ids = TensorData::new(batch_elem_ids, [batch_size, MAX_ATOMS]);
         let ff_ids = TensorData::new(batch_ff_ids, [batch_size, MAX_ATOMS]);
         let scalars = TensorData::new(batch_scalars, [batch_size, MAX_ATOMS, n_scalars_per_atom]);
-        let adj = TensorData::new(batch_adj, [batch_size, MAX_ATOMS, MAX_ATOMS]);
+        let adj = TensorData::new(
+            batch_adj,
+            [batch_size, ATOM_GNN_EDGE_LAYERS, MAX_ATOMS, MAX_ATOMS],
+        );
         let edge_feats = TensorData::new(
             batch_edge_feats,
             [
                 batch_size,
+                ATOM_GNN_EDGE_LAYERS,
                 MAX_ATOMS,
                 MAX_ATOMS,
                 ATOM_GNN_PER_EDGE_FEATS_LAYER_0,

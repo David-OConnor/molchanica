@@ -14,17 +14,18 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
-use crate::therapeutic::non_nn_ml::GnnAnalysisTools;
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
         gnn::{
-            ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom,
-            GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
-            PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask,
-            pad_edge_feats, pad_indices, pad_scalars,
+            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
+            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
+            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
+            pad_adj_and_mask, pad_atom_adj_and_mask, pad_atom_edge_feats, pad_edge_feats,
+            pad_indices, pad_scalars,
         },
+        non_nn_ml::GnnAnalysisTools,
         train::{
             MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
         },
@@ -187,13 +188,8 @@ impl Infer {
             MAX_ATOMS,
         );
         let (padded_adj, padded_mask) =
-            pad_adj_and_mask(&graph_atom_bond.adj, num_atoms, MAX_ATOMS);
-        let p_edge_feats = pad_edge_feats(
-            &graph_atom_bond.edge_feats,
-            num_atoms,
-            ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
-            MAX_ATOMS,
-        );
+            pad_atom_adj_and_mask(&graph_atom_bond.adj, num_atoms, MAX_ATOMS);
+        let p_edge_feats = pad_atom_edge_feats(&graph_atom_bond.edge_feats, num_atoms, MAX_ATOMS);
 
         // Component graph
         let p_comp_type_ids = pad_indices(&graph_comp.comp_type_indices, num_comps, MAX_COMPS);
@@ -253,15 +249,21 @@ impl Infer {
             &self.device,
         );
 
-        let t_adj = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(padded_adj, [1, MAX_ATOMS, MAX_ATOMS]),
+        let t_adj = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(padded_adj, [1, ATOM_GNN_EDGE_LAYERS, MAX_ATOMS, MAX_ATOMS]),
             &self.device,
         );
 
-        let t_edge_feats = Tensor::<InferBackend, 4>::from_data(
+        let t_edge_feats = Tensor::<InferBackend, 5>::from_data(
             TensorData::new(
                 p_edge_feats,
-                [1, MAX_ATOMS, MAX_ATOMS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0],
+                [
+                    1,
+                    ATOM_GNN_EDGE_LAYERS,
+                    MAX_ATOMS,
+                    MAX_ATOMS,
+                    ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+                ],
             ),
             &self.device,
         );
@@ -410,9 +412,14 @@ impl Infer {
         let mut all_elem = Vec::with_capacity(batch_size * MAX_ATOMS);
         let mut all_ff = Vec::with_capacity(batch_size * MAX_ATOMS);
         let mut all_scalars = Vec::with_capacity(batch_size * MAX_ATOMS * PER_ATOM_SCALARS);
-        let mut all_adj = Vec::with_capacity(batch_size * MAX_ATOMS * MAX_ATOMS);
+        let mut all_adj =
+            Vec::with_capacity(batch_size * ATOM_GNN_EDGE_LAYERS * MAX_ATOMS * MAX_ATOMS);
         let mut all_edge = Vec::with_capacity(
-            batch_size * MAX_ATOMS * MAX_ATOMS * ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+            batch_size
+                * ATOM_GNN_EDGE_LAYERS
+                * MAX_ATOMS
+                * MAX_ATOMS
+                * ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
         );
         let mut all_mask = Vec::with_capacity(batch_size * MAX_ATOMS);
 
@@ -466,15 +473,10 @@ impl Infer {
                 PER_ATOM_SCALARS,
                 MAX_ATOMS,
             ));
-            let (a, m) = pad_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
+            let (a, m) = pad_atom_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
             all_adj.extend(a);
             all_mask.extend(m);
-            all_edge.extend(pad_edge_feats(
-                &g.edge_feats,
-                g.num_atoms,
-                ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
-                MAX_ATOMS,
-            ));
+            all_edge.extend(pad_atom_edge_feats(&g.edge_feats, g.num_atoms, MAX_ATOMS));
             if g.analysis_features.is_empty() {
                 all_atom_graph_analysis
                     .resize(all_atom_graph_analysis.len() + atom_graph_analysis_dim, 0.0);
@@ -550,15 +552,19 @@ impl Infer {
             TensorData::new(all_scalars, [batch_size, MAX_ATOMS, PER_ATOM_SCALARS]),
             dev,
         );
-        let t_adj = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(all_adj, [batch_size, MAX_ATOMS, MAX_ATOMS]),
+        let t_adj = Tensor::<InferBackend, 4>::from_data(
+            TensorData::new(
+                all_adj,
+                [batch_size, ATOM_GNN_EDGE_LAYERS, MAX_ATOMS, MAX_ATOMS],
+            ),
             dev,
         );
-        let t_edge = Tensor::<InferBackend, 4>::from_data(
+        let t_edge = Tensor::<InferBackend, 5>::from_data(
             TensorData::new(
                 all_edge,
                 [
                     batch_size,
+                    ATOM_GNN_EDGE_LAYERS,
                     MAX_ATOMS,
                     MAX_ATOMS,
                     ATOM_GNN_PER_EDGE_FEATS_LAYER_0,

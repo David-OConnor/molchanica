@@ -8,27 +8,29 @@
 //! graph clustering
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
     io,
     iter::repeat_n,
 };
 
-use bio_files::{BondType, md_params::ForceFieldParams};
+use bio_files::{
+    BondType,
+    md_params::{DihedralParams, ForceFieldParams},
+};
 use na_seq::{
     Element,
     Element::{
         Bromine, Carbon, Chlorine, Fluorine, Hydrogen, Iodine, Nitrogen, Oxygen, Phosphorus, Sulfur,
     },
 };
-use serde::{Deserialize, Serialize};
 
-use crate::therapeutic::non_nn_ml::GnnAnalysisTools;
 use crate::{
     mol_components::{ComponentType, MolComponents, build_adjacency_list_conn},
     molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
     therapeutic::{
         non_nn_ml,
+        non_nn_ml::GnnAnalysisTools,
         train::{BOND_SIGMA_SQ, EXCLUDE_HYDROGEN, FF_BUCKETS},
     },
 };
@@ -42,12 +44,16 @@ pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
 // Keep this in sync with `GraphDataAtom::new`.
 // Layer 0: Covalent bonds
 pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize = 6;
-// Layer 1: Valence ("Angle bending") angles
+// Layer 1: Bond type one-hot [single, double, triple, aromatic],
+// plus [signed angle deviation, log_k_theta] for valence ("angle bending") terms.
 pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize = 6;
-// Layer 2: Proper (linear) dihedral angles
+// Layer 2: Bond type one-hot [single, double, triple, aromatic],
+// plus [torsion alignment, log_barrier_sum] for proper (linear) dihedrals.
 pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize = 6;
-// Layer 3: Improper (Hub + spoke) dihedral angles
+// Layer 3: Bond type one-hot [single, double, triple, aromatic],
+// plus [torsion alignment, log_barrier_sum] for improper (hub + spoke) dihedrals.
 pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize = 6;
+pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
 
 // Degree, component size
 // Keep this in sync with `GraphDataComponent::new`
@@ -56,6 +62,10 @@ pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
 pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 1;
 // For bond-stretching force-field params, used in the atom-based GNN.
 const KB_REF: f32 = 300.0;
+const ANGLE_K_REF: f32 = 80.0;
+const ANGLE_DIST_SCALE: f32 = 0.5;
+const DIHEDRAL_BARRIER_REF: f32 = 4.0;
+const DEFAULT_BOND_ONE_HOT: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
 // Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
 // Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
@@ -78,15 +88,16 @@ pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 2;
 /// State for our atom-and-bond-based neural network. Atoms are nodes. 4 edge layers:
 /// - covalent bonds (1 edge connects 2 nodes)
 /// - Valence angles (2 edges connect 3 nodes)
-/// - Dihedral angles (proper. 3 edges connect 4 nodes, with one central, and the others radiating)
-/// - Dihedral angles (improper. 3 edges connect 4 nodes in a line.)
+/// - Proper dihedral angles (3 edges connect 4 nodes in a line)
+/// - Improper dihedral angles (3 edges connect 4 nodes in a hub-and-spoke pattern)
 ///
 /// Graph properties
 /// ----------------
-/// Edges: Undirected covalent-bond graph, with symmetric adjacency weights from a Gaussian
-///   distance kernel
+/// Edges: Multiplex atom graph with 4 undirected edge layers over the same node set:
+///   covalent bonds, valence angles, proper dihedrals, and improper dihedrals. Each layer uses
+///   symmetric adjacency weights from a Gaussian distance kernel over the participating atom pairs.
 /// Underlying chemical graph has self-connections: No
-/// GNN message-passing adjacency has self-loops: Yes (`adj[i,i] = 1.0` is added explicitly)
+/// GNN message-passing adjacency has self-loops: Yes (`adj[layer0, i, i] = 1.0` is added explicitly)
 /// Nodes have multiple types (heterogeneous): No in the formal hetero-GNN sense; this is a
 ///   homogeneous atom graph, with element and FF bucket encoded as node embeddings/features
 /// Edges have multiple types: Yes (single/double/triple/aromatic), represented as categorical
@@ -113,7 +124,9 @@ pub(in crate::therapeutic) struct GraphDataAtom {
     /// Graph-level analysis features assembled according to
     /// `GnnAnalysisTools::feature_names()`.
     pub analysis_features: Vec<f32>,
+    /// Flattened as `[layer, atom_i, atom_j]`, layer-major.
     pub adj: Vec<f32>,
+    /// Flattened as `[layer, atom_i, atom_j, feat_k]`, layer-major.
     pub edge_feats: Vec<f32>,
     pub num_atoms: usize,
 }
@@ -256,18 +269,30 @@ impl GraphDataAtom {
             &is_aromatic_ring,
         );
 
-        // Edge features and weighted adjacency
+        // Layered edge features and weighted adjacency.
+        debug_assert_eq!(
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_1
+        );
+        debug_assert_eq!(
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_2
+        );
+        debug_assert_eq!(
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_3
+        );
+
         let n_atoms_sq = num_atoms.pow(2);
-        let mut adj_list = vec![0.; n_atoms_sq];
-        let mut edge_feats_layer0 = vec![0.; n_atoms_sq * ATOM_GNN_PER_EDGE_FEATS_LAYER_0];
+        let mut adj_layers = vec![0.; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
+        let mut edge_feats =
+            vec![0.; ATOM_GNN_EDGE_LAYERS * n_atoms_sq * ATOM_GNN_PER_EDGE_FEATS_LAYER_0];
+        let mut edge_feat_counts = vec![0usize; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
+        let mut bond_type_by_pair = HashMap::with_capacity(bonds.len());
 
-        let edge_feats_i = |i: usize, j: usize, k: usize, n: usize| -> usize {
-            (i * n + j) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0 + k
-        };
-
-        // Self loops
+        // Keep the explicit self-loop behavior from the old atom graph on layer 0.
         for i in 0..num_atoms {
-            adj_list[i * num_atoms + i] = 1.0;
+            adj_layers[atom_adj_i(0, i, i, num_atoms)] = 1.0;
         }
 
         for bond in &bonds {
@@ -277,101 +302,483 @@ impl GraphDataAtom {
                 continue;
             }
 
-            let bond_type_one_hot = match bond.bond_type {
-                BondType::Single => [1.0, 0.0, 0.0, 0.0],
-                BondType::Double => [0.0, 1.0, 0.0, 0.0],
-                BondType::Triple => [0.0, 0.0, 1.0, 0.0],
-                BondType::Aromatic => [0.0, 0.0, 0.0, 1.0],
-                _ => [1.0, 0.0, 0.0, 0.0],
-            };
+            let bond_type_one_hot = bond_type_one_hot(bond.bond_type);
+            bond_type_by_pair.insert(bond_pair_key(a0, a1), bond_type_one_hot);
 
             let p1 = atoms[a0].posit;
             let p2 = atoms[a1].posit;
             let dist_sq = (p1 - p2).magnitude_squared() as f32;
             let dist = dist_sq.sqrt();
 
-            {
-                let ff0 = atoms[a0].force_field_type.clone().unwrap();
-                let ff1 = atoms[a1].force_field_type.clone().unwrap();
-                let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
+            let ff0 = atoms[a0].force_field_type.clone().unwrap();
+            let ff1 = atoms[a1].force_field_type.clone().unwrap();
+            let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
 
-                let (dr_norm, log_kb) = if let Some(v) = bond_stretching {
+            let (dr_norm, log_kb) = if let Some(v) = bond_stretching {
+                let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
+                let log_kb = (v.k_b / KB_REF).ln_1p();
+                (dr, log_kb)
+            } else {
+                // Try a small set of coarse fallbacks; if none hit, leave the edge
+                // features as zero rather than panicking.
+                let candidates: &[(&str, &str)] = if (&ff0 == "cc" && ff1.starts_with("n"))
+                    || (&ff1 == "cc" && ff0.starts_with("n"))
+                {
+                    &[("cc", "n4"), ("cc", "n")]
+                } else if (&ff0 == "cg" && ff1.starts_with("c"))
+                    || (&ff1 == "cg" && ff0.starts_with("c"))
+                {
+                    &[("cg", "cg"), ("cc", "cc")]
+                } else if atoms[a0].element == Carbon && atoms[a1].element == Carbon {
+                    &[("cc", "cc")]
+                } else if atoms[a0].element == Nitrogen && atoms[a1].element == Nitrogen {
+                    &[("n", "n")]
+                } else {
+                    &[]
+                };
+
+                let mut found = None;
+                for (a, b) in candidates {
+                    if let Some(v) = ff_params.get_bond(&((*a).to_owned(), (*b).to_owned()), false)
+                    {
+                        found = Some(v);
+                        break;
+                    }
+                }
+
+                if let Some(v) = found {
                     let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
                     let log_kb = (v.k_b / KB_REF).ln_1p();
                     (dr, log_kb)
                 } else {
-                    // Try a small set of coarse fallbacks; if none hit, leave the edge
-                    // features as zero rather than panicking.
-                    let candidates: &[(&str, &str)] = if (&ff0 == "cc" && ff1.starts_with("n"))
-                        || (&ff1 == "cc" && ff0.starts_with("n"))
-                    {
-                        &[("cc", "n4"), ("cc", "n")]
-                    } else if (&ff0 == "cg" && ff1.starts_with("c"))
-                        || (&ff1 == "cg" && ff0.starts_with("c"))
-                    {
-                        &[("cg", "cg"), ("cc", "cc")]
-                    } else if atoms[a0].element == Carbon && atoms[a1].element == Carbon {
-                        &[("cc", "cc")]
-                    } else if atoms[a0].element == Nitrogen && atoms[a1].element == Nitrogen {
-                        &[("n", "n")]
-                    } else {
-                        &[]
-                    };
-
-                    let mut found = None;
-                    for (a, b) in candidates {
-                        if let Some(v) =
-                            ff_params.get_bond(&((*a).to_owned(), (*b).to_owned()), false)
-                        {
-                            found = Some(v);
-                            break;
-                        }
-                    }
-
-                    if let Some(v) = found {
-                        let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
-                        let log_kb = (v.k_b / KB_REF).ln_1p();
-                        (dr, log_kb)
-                    } else {
-                        eprintln!(
-                            "Missing bond stretching and no fallback for bond {bond:?}. \nAtoms {ff0} | {ff1}. Using zero bond-stretch edge features.",
-                        );
-                        (0.0, 0.0)
-                    }
-                };
-
-                for (k, &v) in bond_type_one_hot.iter().enumerate() {
-                    edge_feats_layer0[edge_feats_i(a0, a1, k, num_atoms)] = v;
-                    edge_feats_layer0[edge_feats_i(a1, a0, k, num_atoms)] = v;
+                    eprintln!(
+                        "Missing bond stretching and no fallback for bond {bond:?}. \nAtoms {ff0} | {ff1}. Using zero bond-stretch edge features.",
+                    );
+                    (0.0, 0.0)
                 }
+            };
 
-                edge_feats_layer0[edge_feats_i(a0, a1, 4, num_atoms)] = dr_norm;
-                edge_feats_layer0[edge_feats_i(a0, a1, 5, num_atoms)] = log_kb;
+            let features = relation_edge_features(bond_type_one_hot, dr_norm, log_kb);
+            let weight = bond_edge_weight(&atoms, a0, a1);
 
-                edge_feats_layer0[edge_feats_i(a1, a0, 4, num_atoms)] = dr_norm;
-                edge_feats_layer0[edge_feats_i(a1, a0, 5, num_atoms)] = log_kb;
+            append_relation_edge(
+                &mut adj_layers,
+                &mut edge_feats,
+                &mut edge_feat_counts,
+                0,
+                a0,
+                a1,
+                num_atoms,
+                weight,
+                &features,
+            );
+            append_relation_edge(
+                &mut adj_layers,
+                &mut edge_feats,
+                &mut edge_feat_counts,
+                0,
+                a1,
+                a0,
+                num_atoms,
+                weight,
+                &features,
+            );
+        }
+
+        for (ctr, neighbors) in adj.iter().enumerate() {
+            if neighbors.len() < 2 {
+                continue;
             }
 
-            let k = (-dist_sq / (2.0 * BOND_SIGMA_SQ)).exp();
-            let weight = k;
+            for left in 0..neighbors.len() - 1 {
+                for right in left + 1..neighbors.len() {
+                    let a0 = neighbors[left];
+                    let a1 = neighbors[right];
 
-            adj_list[a0 * num_atoms + a1] = weight;
-            adj_list[a1 * num_atoms + a0] = weight;
+                    let Some(theta) = valence_angle(&atoms, a0, ctr, a1) else {
+                        continue;
+                    };
+
+                    let angle_stats = match (
+                        atoms[a0].force_field_type.clone(),
+                        atoms[ctr].force_field_type.clone(),
+                        atoms[a1].force_field_type.clone(),
+                    ) {
+                        (Some(ff0), Some(ff_ctr), Some(ff1)) => ff_params
+                            .get_valence_angle(&(ff0, ff_ctr, ff1), true)
+                            .map(|params| {
+                                (
+                                    ((theta - params.theta_0) / ANGLE_DIST_SCALE).clamp(-5.0, 5.0),
+                                    (params.k / ANGLE_K_REF).ln_1p(),
+                                )
+                            })
+                            .unwrap_or((0.0, 0.0)),
+                        _ => (0.0, 0.0),
+                    };
+
+                    for &(u, v) in &[(ctr, a0), (ctr, a1)] {
+                        let bond_type = bond_type_by_pair
+                            .get(&bond_pair_key(u, v))
+                            .copied()
+                            .unwrap_or(DEFAULT_BOND_ONE_HOT);
+                        let features =
+                            relation_edge_features(bond_type, angle_stats.0, angle_stats.1);
+                        let weight = bond_edge_weight(&atoms, u, v);
+
+                        append_relation_edge(
+                            &mut adj_layers,
+                            &mut edge_feats,
+                            &mut edge_feat_counts,
+                            1,
+                            u,
+                            v,
+                            num_atoms,
+                            weight,
+                            &features,
+                        );
+                        append_relation_edge(
+                            &mut adj_layers,
+                            &mut edge_feats,
+                            &mut edge_feat_counts,
+                            1,
+                            v,
+                            u,
+                            num_atoms,
+                            weight,
+                            &features,
+                        );
+                    }
+                }
+            }
         }
+
+        let mut proper_seen = HashSet::<(usize, usize, usize, usize)>::new();
+        for (i1, neighbors) in adj.iter().enumerate() {
+            for &i2 in neighbors {
+                if i1 >= i2 {
+                    continue;
+                }
+
+                for &i0 in adj[i1].iter().filter(|&&x| x != i2) {
+                    for &i3 in adj[i2].iter().filter(|&&x| x != i1) {
+                        if i0 == i3 || !proper_seen.insert((i0, i1, i2, i3)) {
+                            continue;
+                        }
+
+                        let Some(phi) = dihedral_angle(&atoms, i0, i1, i2, i3) else {
+                            continue;
+                        };
+
+                        let proper_stats = match (
+                            atoms[i0].force_field_type.clone(),
+                            atoms[i1].force_field_type.clone(),
+                            atoms[i2].force_field_type.clone(),
+                            atoms[i3].force_field_type.clone(),
+                        ) {
+                            (Some(ff0), Some(ff1), Some(ff2), Some(ff3)) => ff_params
+                                .get_dihedral(&(ff0, ff1, ff2, ff3), true, true)
+                                .map(|params| dihedral_edge_stats(phi, params))
+                                .unwrap_or((0.0, 0.0)),
+                            _ => (0.0, 0.0),
+                        };
+
+                        for &(u, v) in &[(i0, i1), (i1, i2), (i2, i3)] {
+                            let bond_type = bond_type_by_pair
+                                .get(&bond_pair_key(u, v))
+                                .copied()
+                                .unwrap_or(DEFAULT_BOND_ONE_HOT);
+                            let features =
+                                relation_edge_features(bond_type, proper_stats.0, proper_stats.1);
+                            let weight = bond_edge_weight(&atoms, u, v);
+
+                            append_relation_edge(
+                                &mut adj_layers,
+                                &mut edge_feats,
+                                &mut edge_feat_counts,
+                                2,
+                                u,
+                                v,
+                                num_atoms,
+                                weight,
+                                &features,
+                            );
+                            append_relation_edge(
+                                &mut adj_layers,
+                                &mut edge_feats,
+                                &mut edge_feat_counts,
+                                2,
+                                v,
+                                u,
+                                num_atoms,
+                                weight,
+                                &features,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut improper_seen = HashSet::<(usize, usize, usize, usize)>::new();
+        for (ctr, satellites) in adj.iter().enumerate() {
+            if satellites.len() < 3 {
+                continue;
+            }
+
+            for a in 0..satellites.len() - 2 {
+                for b in a + 1..satellites.len() - 1 {
+                    for d in b + 1..satellites.len() {
+                        let sat0 = satellites[a];
+                        let sat1 = satellites[b];
+                        let sat2 = satellites[d];
+
+                        if !improper_seen.insert((sat0, sat1, ctr, sat2)) {
+                            continue;
+                        }
+
+                        let (Some(ff0), Some(ff1), Some(ff_ctr), Some(ff2)) = (
+                            atoms[sat0].force_field_type.clone(),
+                            atoms[sat1].force_field_type.clone(),
+                            atoms[ctr].force_field_type.clone(),
+                            atoms[sat2].force_field_type.clone(),
+                        ) else {
+                            continue;
+                        };
+
+                        let mut lookup_satellites = [(ff0, sat0), (ff1, sat1), (ff2, sat2)];
+                        lookup_satellites
+                            .sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+
+                        let key = (
+                            lookup_satellites[0].0.clone(),
+                            lookup_satellites[1].0.clone(),
+                            ff_ctr,
+                            lookup_satellites[2].0.clone(),
+                        );
+
+                        let Some(params) = ff_params.get_dihedral(&key, false, true) else {
+                            continue;
+                        };
+
+                        let ordered_satellites = [
+                            lookup_satellites[0].1,
+                            lookup_satellites[1].1,
+                            lookup_satellites[2].1,
+                        ];
+
+                        let Some(phi) = dihedral_angle(
+                            &atoms,
+                            ordered_satellites[0],
+                            ordered_satellites[1],
+                            ctr,
+                            ordered_satellites[2],
+                        ) else {
+                            continue;
+                        };
+
+                        let improper_stats = dihedral_edge_stats(phi, params);
+
+                        for &sat in &ordered_satellites {
+                            let bond_type = bond_type_by_pair
+                                .get(&bond_pair_key(ctr, sat))
+                                .copied()
+                                .unwrap_or(DEFAULT_BOND_ONE_HOT);
+                            let features = relation_edge_features(
+                                bond_type,
+                                improper_stats.0,
+                                improper_stats.1,
+                            );
+                            let weight = bond_edge_weight(&atoms, ctr, sat);
+
+                            append_relation_edge(
+                                &mut adj_layers,
+                                &mut edge_feats,
+                                &mut edge_feat_counts,
+                                3,
+                                ctr,
+                                sat,
+                                num_atoms,
+                                weight,
+                                &features,
+                            );
+                            append_relation_edge(
+                                &mut adj_layers,
+                                &mut edge_feats,
+                                &mut edge_feat_counts,
+                                3,
+                                sat,
+                                ctr,
+                                num_atoms,
+                                weight,
+                                &features,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        finalize_relation_edge_features(&mut edge_feats, &edge_feat_counts, num_atoms);
 
         // Note: symmetric normalization (D^-1/2 A D^-1/2) is applied in the model's
         // forward pass *after* the learned edge gate, so we ship the raw weighted
-        // adjacency (with self-loops) here. Bond order itself lives in `edge_feats`.
+        // multiplex adjacency here. Relation-specific chemistry lives in `edge_feats`.
 
         Ok(Self {
             elem_indices,
             ff_indices,
             scalars,
             analysis_features,
-            adj: adj_list,
-            edge_feats: edge_feats_layer0,
+            adj: adj_layers,
+            edge_feats,
             num_atoms,
         })
+    }
+}
+
+fn atom_adj_i(layer: usize, i: usize, j: usize, n: usize) -> usize {
+    layer * n * n + i * n + j
+}
+
+fn atom_edge_feats_i(layer: usize, i: usize, j: usize, k: usize, n: usize) -> usize {
+    ((layer * n * n) + i * n + j) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0 + k
+}
+
+fn bond_pair_key(a: usize, b: usize) -> (usize, usize) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+fn bond_type_one_hot(bond_type: BondType) -> [f32; 4] {
+    match bond_type {
+        BondType::Single => [1.0, 0.0, 0.0, 0.0],
+        BondType::Double => [0.0, 1.0, 0.0, 0.0],
+        BondType::Triple => [0.0, 0.0, 1.0, 0.0],
+        BondType::Aromatic => [0.0, 0.0, 0.0, 1.0],
+        _ => DEFAULT_BOND_ONE_HOT,
+    }
+}
+
+fn relation_edge_features(
+    bond_type_one_hot: [f32; 4],
+    scalar_0: f32,
+    scalar_1: f32,
+) -> [f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0] {
+    [
+        bond_type_one_hot[0],
+        bond_type_one_hot[1],
+        bond_type_one_hot[2],
+        bond_type_one_hot[3],
+        scalar_0,
+        scalar_1,
+    ]
+}
+
+fn append_relation_edge(
+    adj_layers: &mut [f32],
+    edge_feats: &mut [f32],
+    edge_feat_counts: &mut [usize],
+    layer: usize,
+    i: usize,
+    j: usize,
+    num_atoms: usize,
+    weight: f32,
+    features: &[f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0],
+) {
+    adj_layers[atom_adj_i(layer, i, j, num_atoms)] += weight;
+    edge_feat_counts[atom_adj_i(layer, i, j, num_atoms)] += 1;
+
+    for (k, &value) in features.iter().enumerate() {
+        edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] += value;
+    }
+}
+
+fn finalize_relation_edge_features(
+    edge_feats: &mut [f32],
+    edge_feat_counts: &[usize],
+    num_atoms: usize,
+) {
+    for layer in 0..ATOM_GNN_EDGE_LAYERS {
+        for i in 0..num_atoms {
+            for j in 0..num_atoms {
+                let count = edge_feat_counts[atom_adj_i(layer, i, j, num_atoms)];
+                if count <= 1 {
+                    continue;
+                }
+
+                for k in 0..ATOM_GNN_PER_EDGE_FEATS_LAYER_0 {
+                    edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] /= count as f32;
+                }
+            }
+        }
+    }
+}
+
+fn bond_edge_weight(atoms: &[Atom], i: usize, j: usize) -> f32 {
+    let diff = atoms[i].posit - atoms[j].posit;
+    let dist_sq = diff.magnitude_squared() as f32;
+    (-dist_sq / (2.0 * BOND_SIGMA_SQ)).exp()
+}
+
+fn valence_angle(atoms: &[Atom], a0: usize, ctr: usize, a1: usize) -> Option<f32> {
+    let v0 = atoms[a0].posit - atoms[ctr].posit;
+    let v1 = atoms[a1].posit - atoms[ctr].posit;
+    let mag = v0.magnitude() * v1.magnitude();
+    if mag <= 1.0e-12 {
+        return None;
+    }
+
+    let cos_theta = (v0.dot(v1) / mag).clamp(-1.0, 1.0);
+    Some(cos_theta.acos() as f32)
+}
+
+fn dihedral_angle(atoms: &[Atom], a0: usize, a1: usize, a2: usize, a3: usize) -> Option<f32> {
+    let b0 = atoms[a1].posit - atoms[a0].posit;
+    let b1 = atoms[a2].posit - atoms[a1].posit;
+    let b2 = atoms[a3].posit - atoms[a2].posit;
+
+    let n0 = b0.cross(b1);
+    let n1 = b1.cross(b2);
+
+    let n0_mag_sq = n0.magnitude_squared();
+    let n1_mag_sq = n1.magnitude_squared();
+    let b1_mag = b1.magnitude();
+
+    if n0_mag_sq <= 1.0e-12 || n1_mag_sq <= 1.0e-12 || b1_mag <= 1.0e-12 {
+        return None;
+    }
+
+    let b1_unit = b1 * (1.0 / b1_mag);
+    let m1 = n0.cross(b1_unit);
+    let x = n0.dot(n1);
+    let y = m1.dot(n1);
+
+    Some(y.atan2(x) as f32)
+}
+
+fn dihedral_edge_stats(phi: f32, params: &[DihedralParams]) -> (f32, f32) {
+    let mut barrier_sum = 0.0;
+    let mut alignment_sum = 0.0;
+
+    for param in params {
+        let divider = param.divider.max(1) as f32;
+        let weight = (param.barrier_height / divider).abs();
+        if weight <= 0.0 {
+            continue;
+        }
+
+        let phase = param.phase;
+        let periodicity = param.periodicity as f32;
+        alignment_sum += weight * (periodicity * phi - phase).cos();
+        barrier_sum += weight;
+    }
+
+    if barrier_sum <= 1.0e-6 {
+        (0.0, 0.0)
+    } else {
+        (
+            (alignment_sum / barrier_sum).clamp(-1.0, 1.0),
+            (barrier_sum / DIHEDRAL_BARRIER_REF).ln_1p(),
+        )
     }
 }
 
@@ -546,6 +953,30 @@ fn atom_geom_scalars(atoms: &[Atom], adj: &[Vec<usize>]) -> Vec<(f32, f32)> {
 /// Returns (PaddedNodes, PaddedAdj, PaddedMask) as flat vectors.
 ///
 /// For comps too.
+pub(in crate::therapeutic) fn pad_atom_adj_and_mask(
+    raw_adj: &[f32],
+    num_atoms: usize,
+    max: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    let n = num_atoms.min(max);
+
+    let mut p_mask = Vec::with_capacity(max);
+    p_mask.extend(repeat_n(1.0, n));
+    p_mask.extend(repeat_n(0.0, max - n));
+
+    let mut p_adj = vec![0.0f32; ATOM_GNN_EDGE_LAYERS * max * max];
+
+    for layer in 0..ATOM_GNN_EDGE_LAYERS {
+        for i in 0..n {
+            let src_base = atom_adj_i(layer, i, 0, num_atoms);
+            let dst_base = layer * max * max + i * max;
+            p_adj[dst_base..dst_base + n].copy_from_slice(&raw_adj[src_base..src_base + n]);
+        }
+    }
+
+    (p_adj, p_mask)
+}
+
 pub(in crate::therapeutic) fn pad_adj_and_mask(
     raw_adj: &[f32],
     num_atoms: usize,
@@ -572,6 +1003,31 @@ pub(in crate::therapeutic) fn pad_adj_and_mask(
     p_adj.extend(repeat_n(0.0, remaining_rows * max));
 
     (p_adj, p_mask)
+}
+
+pub(in crate::therapeutic) fn pad_atom_edge_feats(
+    edge_feats: &[f32], // [layers*num_atoms*num_atoms*PER_EDGE_FEATS]
+    num_atoms: usize,
+    max: usize,
+) -> Vec<f32> {
+    let n = num_atoms.min(max);
+
+    let mut out = vec![0.0f32; ATOM_GNN_EDGE_LAYERS * max.pow(2) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0];
+
+    for layer in 0..ATOM_GNN_EDGE_LAYERS {
+        for i in 0..n {
+            for j in 0..n {
+                let src_base = atom_edge_feats_i(layer, i, j, 0, num_atoms);
+                let dst_base =
+                    ((layer * max * max) + i * max + j) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
+                out[dst_base..dst_base + ATOM_GNN_PER_EDGE_FEATS_LAYER_0].copy_from_slice(
+                    &edge_feats[src_base..src_base + ATOM_GNN_PER_EDGE_FEATS_LAYER_0],
+                );
+            }
+        }
+    }
+
+    out
 }
 
 /// For comps too

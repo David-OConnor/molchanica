@@ -1,11 +1,13 @@
 //! Graph analysis features not associated with the neural net.
 
-use crate::{molecules::Atom, therapeutic::gnn};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
 };
+
+use serde::{Deserialize, Serialize};
+
+use crate::{molecules::Atom, therapeutic::gnn};
 
 /// See `Graph Representation Learning` by William L Hamilton, 2020.
 ///
