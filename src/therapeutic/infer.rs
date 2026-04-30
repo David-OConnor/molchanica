@@ -20,10 +20,10 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         gnn::{
-            GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom, GraphDataComponent, GraphDataSpacial,
-            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
-            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats,
-            pad_indices, pad_scalars,
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom,
+            GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
+            PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask,
+            pad_edge_feats, pad_indices, pad_scalars,
         },
         train::{
             MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
@@ -191,7 +191,7 @@ impl Infer {
         let p_edge_feats = pad_edge_feats(
             &graph_atom_bond.edge_feats,
             num_atoms,
-            PER_EDGE_FEATS,
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
             MAX_ATOMS,
         );
 
@@ -259,7 +259,10 @@ impl Infer {
         );
 
         let t_edge_feats = Tensor::<InferBackend, 4>::from_data(
-            TensorData::new(p_edge_feats, [1, MAX_ATOMS, MAX_ATOMS, PER_EDGE_FEATS]),
+            TensorData::new(
+                p_edge_feats,
+                [1, MAX_ATOMS, MAX_ATOMS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0],
+            ),
             &self.device,
         );
 
@@ -408,7 +411,9 @@ impl Infer {
         let mut all_ff = Vec::with_capacity(batch_size * MAX_ATOMS);
         let mut all_scalars = Vec::with_capacity(batch_size * MAX_ATOMS * PER_ATOM_SCALARS);
         let mut all_adj = Vec::with_capacity(batch_size * MAX_ATOMS * MAX_ATOMS);
-        let mut all_edge = Vec::with_capacity(batch_size * MAX_ATOMS * MAX_ATOMS * PER_EDGE_FEATS);
+        let mut all_edge = Vec::with_capacity(
+            batch_size * MAX_ATOMS * MAX_ATOMS * ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+        );
         let mut all_mask = Vec::with_capacity(batch_size * MAX_ATOMS);
 
         let mut all_comp_ids = Vec::with_capacity(batch_size * MAX_COMPS);
@@ -467,7 +472,7 @@ impl Infer {
             all_edge.extend(pad_edge_feats(
                 &g.edge_feats,
                 g.num_atoms,
-                PER_EDGE_FEATS,
+                ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
                 MAX_ATOMS,
             ));
             if g.analysis_features.is_empty() {
@@ -550,7 +555,15 @@ impl Infer {
             dev,
         );
         let t_edge = Tensor::<InferBackend, 4>::from_data(
-            TensorData::new(all_edge, [batch_size, MAX_ATOMS, MAX_ATOMS, PER_EDGE_FEATS]),
+            TensorData::new(
+                all_edge,
+                [
+                    batch_size,
+                    MAX_ATOMS,
+                    MAX_ATOMS,
+                    ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+                ],
+            ),
             dev,
         );
         let t_mask = Tensor::<InferBackend, 3>::from_data(

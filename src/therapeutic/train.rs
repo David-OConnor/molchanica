@@ -65,9 +65,9 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom, GraphDataComponent, GraphDataSpacial,
-            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
-            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
+            ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom,
+            GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS,
+            PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
         },
         non_nn_ml,
         train_test_split_indices::TrainTestSplit,
@@ -1016,7 +1016,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_edge_feats.extend(gnn::pad_edge_feats(
                 &g.edge_feats,
                 g.num_atoms,
-                PER_EDGE_FEATS,
+                ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
                 MAX_ATOMS,
             ));
             if g.analysis_features.is_empty() {
@@ -1097,7 +1097,12 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let adj = TensorData::new(batch_adj, [batch_size, MAX_ATOMS, MAX_ATOMS]);
         let edge_feats = TensorData::new(
             batch_edge_feats,
-            [batch_size, MAX_ATOMS, MAX_ATOMS, PER_EDGE_FEATS],
+            [
+                batch_size,
+                MAX_ATOMS,
+                MAX_ATOMS,
+                ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+            ],
         );
         let mask = TensorData::new(batch_mask, [batch_size, MAX_ATOMS, 1]);
         let comp_ids = TensorData::new(batch_comp_ids, [batch_size, MAX_COMPS]);
@@ -1664,7 +1669,7 @@ pub(in crate::therapeutic) fn train_with_samples(
         vocab_size_ff: FF_BUCKETS + 2, // 0 pad + 1..FF_BUCKETS + unknown.
         embedding_dim: 16,             // Tune this (8, 16, 32)
         n_node_scalars: PER_ATOM_SCALARS,
-        edge_feat_dim: PER_EDGE_FEATS,
+        edge_feat_dim: ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
         vocab_size_comp: 11, // 0=pad + 10 component types (see vocab_lookup_component)
         comp_embedding_dim: 8,
         n_comp_scalars: PER_COMP_SCALARS,

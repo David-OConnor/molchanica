@@ -37,9 +37,17 @@ use crate::{
 // is H-bond acceptor, is H-bond donor, in aromatic ring.
 // Keep this in sync with `GraphDataAtom::new`.
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
-// Bond type one-hot [single, double, triple, aromatic], plus scaled/modified proxies for r_0, k_b
+// Bond type one-hot [single, double, triple, aromatic], plus sca
+// led/modified proxies for r_0, k_b
 // Keep this in sync with `GraphDataAtom::new`.
-pub(in crate::therapeutic) const PER_EDGE_FEATS: usize = 6;
+// Layer 0: Covalent bonds
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize = 6;
+// Layer 1: Valence ("Angle bending") angles
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize = 6;
+// Layer 2: Proper (linear) dihedral angles
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize = 6;
+// Layer 3: Improper (Hub + spoke) dihedral angles
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize = 6;
 
 // Degree, component size
 // Keep this in sync with `GraphDataComponent::new`
@@ -68,10 +76,10 @@ const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 2;
 
 /// State for our atom-and-bond-based neural network. Atoms are nodes. 4 edge layers:
-/// - covalent bonds
-/// - Valence angles
-/// - Dihedral angles (proper)
-/// - Dihedral angles (improper)
+/// - covalent bonds (1 edge connects 2 nodes)
+/// - Valence angles (2 edges connect 3 nodes)
+/// - Dihedral angles (proper. 3 edges connect 4 nodes, with one central, and the others radiating)
+/// - Dihedral angles (improper. 3 edges connect 4 nodes in a line.)
 ///
 /// Graph properties
 /// ----------------
@@ -251,10 +259,11 @@ impl GraphDataAtom {
         // Edge features and weighted adjacency
         let n_atoms_sq = num_atoms.pow(2);
         let mut adj_list = vec![0.; n_atoms_sq];
-        let mut edge_feats = vec![0.; n_atoms_sq * PER_EDGE_FEATS];
+        let mut edge_feats_layer0 = vec![0.; n_atoms_sq * ATOM_GNN_PER_EDGE_FEATS_LAYER_0];
 
-        let edge_feats_i =
-            |i: usize, j: usize, k: usize, n: usize| -> usize { (i * n + j) * PER_EDGE_FEATS + k };
+        let edge_feats_i = |i: usize, j: usize, k: usize, n: usize| -> usize {
+            (i * n + j) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0 + k
+        };
 
         // Self loops
         for i in 0..num_atoms {
@@ -332,15 +341,15 @@ impl GraphDataAtom {
                 };
 
                 for (k, &v) in bond_type_one_hot.iter().enumerate() {
-                    edge_feats[edge_feats_i(a0, a1, k, num_atoms)] = v;
-                    edge_feats[edge_feats_i(a1, a0, k, num_atoms)] = v;
+                    edge_feats_layer0[edge_feats_i(a0, a1, k, num_atoms)] = v;
+                    edge_feats_layer0[edge_feats_i(a1, a0, k, num_atoms)] = v;
                 }
 
-                edge_feats[edge_feats_i(a0, a1, 4, num_atoms)] = dr_norm;
-                edge_feats[edge_feats_i(a0, a1, 5, num_atoms)] = log_kb;
+                edge_feats_layer0[edge_feats_i(a0, a1, 4, num_atoms)] = dr_norm;
+                edge_feats_layer0[edge_feats_i(a0, a1, 5, num_atoms)] = log_kb;
 
-                edge_feats[edge_feats_i(a1, a0, 4, num_atoms)] = dr_norm;
-                edge_feats[edge_feats_i(a1, a0, 5, num_atoms)] = log_kb;
+                edge_feats_layer0[edge_feats_i(a1, a0, 4, num_atoms)] = dr_norm;
+                edge_feats_layer0[edge_feats_i(a1, a0, 5, num_atoms)] = log_kb;
             }
 
             let k = (-dist_sq / (2.0 * BOND_SIGMA_SQ)).exp();
@@ -360,7 +369,7 @@ impl GraphDataAtom {
             scalars,
             analysis_features,
             adj: adj_list,
-            edge_feats,
+            edge_feats: edge_feats_layer0,
             num_atoms,
         })
     }
