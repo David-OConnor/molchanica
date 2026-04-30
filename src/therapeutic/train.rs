@@ -15,7 +15,7 @@
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
-    hash::{Hash, Hasher},
+    hash::Hasher,
     io,
     io::Write,
     path::Path,
@@ -53,7 +53,6 @@ use burn::{
     },
 };
 use dynamics::params::FfParamSet;
-use include_dir::{Dir, include_dir};
 use na_seq::Element::*;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -66,10 +65,11 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom, GraphDataComponent,
-            GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
-            PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
+            GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom, GraphDataComponent, GraphDataSpacial,
+            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
+            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
         },
+        non_nn_ml,
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -182,9 +182,9 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
 
     println!("  Branch config section used: [{section_name}]");
 
-    let default_atom_graph_analysis = gnn::atom_graph_analysis_tools();
-    let default_comp_graph_analysis = gnn::component_graph_analysis_tools();
-    let default_spacial_graph_analysis = gnn::spacial_graph_analysis_tools();
+    let default_atom_graph_analysis = non_nn_ml::atom_graph_analysis_tools();
+    let default_comp_graph_analysis = non_nn_ml::component_graph_analysis_tools();
+    let default_spacial_graph_analysis = non_nn_ml::spacial_graph_analysis_tools();
 
     let get_bool = |map: Option<&HashMap<String, String>>, key: &str, default: bool| -> bool {
         map.and_then(|m| m.get(key))
@@ -228,11 +228,7 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
                 .or(default);
         }
 
-        trimmed
-            .parse::<u8>()
-            .ok()
-            .map(|v| vec![v])
-            .or(default)
+        trimmed.parse::<u8>().ok().map(|v| vec![v]).or(default)
     };
 
     Ok(ParamConfig {
@@ -526,12 +522,11 @@ impl ModelConfig {
             gnn_atom_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
 
-        let atom_graph_analysis_encoder =
-            if self.gnn_atom_enabled && atom_graph_analysis_dim > 0 {
-                vec![LinearConfig::new(atom_graph_analysis_dim, dim_gnn).init(device)]
-            } else {
-                Vec::new()
-            };
+        let atom_graph_analysis_encoder = if self.gnn_atom_enabled && atom_graph_analysis_dim > 0 {
+            vec![LinearConfig::new(atom_graph_analysis_dim, dim_gnn).init(device)]
+        } else {
+            Vec::new()
+        };
 
         let edge_proj = LinearConfig::new(self.edge_feat_dim, 1).init(device);
 
@@ -547,12 +542,11 @@ impl ModelConfig {
             gnn_comp_layers.push(LinearConfig::new(dim_gnn, dim_gnn).init(device));
         }
 
-        let comp_graph_analysis_encoder =
-            if self.gnn_comp_enabled && comp_graph_analysis_dim > 0 {
-                vec![LinearConfig::new(comp_graph_analysis_dim, dim_gnn).init(device)]
-            } else {
-                Vec::new()
-            };
+        let comp_graph_analysis_encoder = if self.gnn_comp_enabled && comp_graph_analysis_dim > 0 {
+            vec![LinearConfig::new(comp_graph_analysis_dim, dim_gnn).init(device)]
+        } else {
+            Vec::new()
+        };
 
         let comp_edge_proj = LinearConfig::new(self.comp_edge_feat_dim, 1).init(device);
 
@@ -1026,10 +1020,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 MAX_ATOMS,
             ));
             if g.analysis_features.is_empty() {
-                batch_atom_graph_analysis.resize(
-                    batch_atom_graph_analysis.len() + n_atom_graph_analysis,
-                    0.0,
-                );
+                batch_atom_graph_analysis
+                    .resize(batch_atom_graph_analysis.len() + n_atom_graph_analysis, 0.0);
             } else {
                 debug_assert_eq!(g.analysis_features.len(), n_atom_graph_analysis);
                 batch_atom_graph_analysis.extend_from_slice(&g.analysis_features);
@@ -1058,10 +1050,8 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 MAX_COMPS,
             ));
             if gc.analysis_features.is_empty() {
-                batch_comp_graph_analysis.resize(
-                    batch_comp_graph_analysis.len() + n_comp_graph_analysis,
-                    0.0,
-                );
+                batch_comp_graph_analysis
+                    .resize(batch_comp_graph_analysis.len() + n_comp_graph_analysis, 0.0);
             } else {
                 debug_assert_eq!(gc.analysis_features.len(), n_comp_graph_analysis);
                 batch_comp_graph_analysis.extend_from_slice(&gc.analysis_features);
@@ -1121,8 +1111,10 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             [batch_size, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
         );
         let comp_mask = TensorData::new(batch_comp_mask, [batch_size, MAX_COMPS, 1]);
-        let comp_graph_analysis =
-            TensorData::new(batch_comp_graph_analysis, [batch_size, n_comp_graph_analysis]);
+        let comp_graph_analysis = TensorData::new(
+            batch_comp_graph_analysis,
+            [batch_size, n_comp_graph_analysis],
+        );
         let pharm_ids = TensorData::new(batch_pharm_ids, [batch_size, MAX_PHARM]);
         let pharm_scalars = TensorData::new(
             batch_pharm_scalars,
@@ -1138,8 +1130,10 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_spacial_graph_analysis,
             [batch_size, n_spacial_graph_analysis],
         );
-        let atom_graph_analysis =
-            TensorData::new(batch_atom_graph_analysis, [batch_size, n_atom_graph_analysis]);
+        let atom_graph_analysis = TensorData::new(
+            batch_atom_graph_analysis,
+            [batch_size, n_atom_graph_analysis],
+        );
         let globals = TensorData::new(batch_globals, [batch_size, n_feat_params]);
         let y = TensorData::new(batch_y, [batch_size, 1]);
 

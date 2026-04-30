@@ -22,6 +22,7 @@ pub mod eval;
 mod gnn;
 pub(crate) mod logp_sim;
 mod mol_gen;
+mod non_nn_ml;
 mod postgres;
 mod train_md;
 mod train_test_split_indices;

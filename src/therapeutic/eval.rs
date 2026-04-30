@@ -22,9 +22,9 @@ use crate::{
         DatasetTdc,
         infer::Infer,
         train::{
-            atom_graph_analysis_from_param_cfg, comp_graph_analysis_from_param_cfg,
-            load_param_cfg, load_training_data, samples_from_mols,
-            spacial_graph_analysis_from_param_cfg, train_with_samples,
+            atom_graph_analysis_from_param_cfg, comp_graph_analysis_from_param_cfg, load_param_cfg,
+            load_training_data, samples_from_mols, spacial_graph_analysis_from_param_cfg,
+            train_with_samples,
         },
         train_test_split_indices::TrainTestSplit,
     },
