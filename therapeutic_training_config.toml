@@ -1,8 +1,8 @@
 [adme]
-gnn_atom_enabled = false
+gnn_atom_enabled = true
 gnn_comp_enabled = true
 gnn_spacial_enabled = false
-mlp_enabled = false
+mlp_enabled = true
 
 # Increasing layers may or may not improve model performance. It will slow down inference and training.
 # We have it lower than idea now to improve speed.
@@ -24,8 +24,8 @@ atom_graph_analysis_weisfeiler_lehman = true
 atom_graph_analysis_graphlets = [3]
 atom_graph_analysis_path_based_methods = true
 atom_graph_analysis_local_overlap_statistics = true
-atom_graph_analysis_katz_index = true
-atom_graph_analysis_lhn_similarity = false
+atom_graph_analysis_katz_index = false
+atom_graph_analysis_lhn_similarity = true
 atom_graph_analysis_random_walk_methods = false
 
 # ComponentGraph analysis features. These are graph-level descriptors derived from the
@@ -35,7 +35,7 @@ comp_graph_analysis_graphlets = [3]
 comp_graph_analysis_path_based_methods = true
 comp_graph_analysis_local_overlap_statistics = true
 comp_graph_analysis_katz_index = false
-comp_graph_analysis_lhn_similarity = false
+comp_graph_analysis_lhn_similarity = true
 comp_graph_analysis_random_walk_methods = false
 
 # Spacial/PharmacophoreGraph analysis features. For these analyses we build a sparse
@@ -46,7 +46,7 @@ spacial_graph_analysis_graphlets = [3]
 spacial_graph_analysis_path_based_methods = true
 spacial_graph_analysis_local_overlap_statistics = true
 spacial_graph_analysis_katz_index = false
-spacial_graph_analysis_lhn_similarity = false
+spacial_graph_analysis_lhn_similarity = true
 spacial_graph_analysis_random_walk_methods = false
 
 # todo: Eval where this should live. Currently hard-coded.
