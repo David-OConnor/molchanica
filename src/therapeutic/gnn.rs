@@ -23,6 +23,7 @@ use na_seq::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::therapeutic::non_nn_ml::GnnAnalysisTools;
 use crate::{
     mol_components::{ComponentType, MolComponents, build_adjacency_list_conn},
     molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
@@ -66,151 +67,11 @@ const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 2;
 
-/// See `Graph Representation Learning` by William L Hamilton, 2020.
-///
-/// Defines tools used for analyzing graphs. Focuses on ones listed by Hamilton as specific to
-/// graph-level analysis (as opposed to node-level analysis), as well as tools that can be used by both.
-/// We this this to configure out GNNs to use various combinations of these in the ML analysis.
-///
-/// Note that we do not include "Bag of nodes" (Aggregating node-level statistics), as it's probalby
-/// too naive.
-///
-/// todo: QC which of these make sense for molecule graphs (Of the various sorts we have). I feel like
-/// todo: Molecule-base graphs represent a small subset of the general tyhpes used here, and they may not
-/// todo: Make sense. For example, there are a lot of rules for molecule based graphs we can take advantage
-/// todo of, and/or that make these tools less relevant (?)'
-///
-/// todo: I think most of these (Or top ones pending addition) are not for GNNs: They are traditional
-/// todo: ML approaches for graphs.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(in crate::therapeutic) struct GnnAnalysisTools {
-    /// Weisfeiler-Lehman (WL) kernel.
-    /// "The idea with these approaches is to extract
-    /// node-level features that contain more information than just their local ego graph,
-    /// and then to aggregate these richer features into a graph-level representation."
-    pub weisfeiler_lehman: bool,
-    /// "simply count the occurrence of different small subgraph structures, usually called graphlets
-    /// in this context. Formally, the graphlet kernel involves enumerating all possible graph structures
-    /// of a particular size and counting how many times they occur in the full graph."
-    /// If `Some`, contains a vec of node counts to analyze graphlets for.
-    pub graphlets: Option<Vec<u8>>,
-    /// "In these approaches, rather than enumerating graphlets, one simply
-    /// examines the different kinds of paths that occur in the graph. For example, the
-    /// random walk kernel proposed by Kashima et al. [2003] involves running ran-
-    /// dom walks over the graph and then counting the occurrence of different degree
-    /// sequences,3 while the shortest-path kernel of Borgwardt and Kriegel [2005] in-
-    /// volves a similar idea but uses only the shortest-paths between nodes (rather
-    /// 3Other node labels can also be used."
-    pub path_based_methods: bool,
-    /// "Local overlap statistics are simply functions of the number of common neighbors
-    /// two nodes share, i.e. |N(u) ∩ N(v)|. For instance, the Sorensen index defines
-    /// a matrix SSorenson ∈ R|V|×|V| of node-node neighborhood overlaps with entries
-    /// given by...In general, these measures seek to quantify the overlap between node neighbor-
-    /// hoods while minimizing any biases due to node degrees. There are many further
-    /// variations of this approach in the literature [L¨u and Zhou, 2011]."
-    pub local_overlap_statistics: bool,
-    /// "The Katz index is the most basic global overlap statistic. To compute the Katz
-    /// index we simply count the number of paths of all lengths between a pair of
-    /// nodes... The Katz index is one example of a geo-
-    /// metric series of matrices, variants of which occur frequently in graph anal-
-    /// ysis and graph representation learning. "
-    pub katz_index: bool,
-    /// "One issue with the Katz index is that it is strongly biased by node degree.
-    /// Equation (2.14) is generally going to give higher overall similarity scores when
-    /// considering high-degree nodes, compared to low-degree ones, since high-degree
-    /// nodes will generally be involved in more paths. To alleviate this, Leicht et al.
-    /// [2006] propose an improved metric by considering the ratio between the actual
-    /// number of observed paths and the number of expected paths between two nodes"
-    pub lhn_similarity: bool,
-    /// "Another set of global similarity measures consider random walks rather than
-    /// exact counts of paths over the graph. For example, we can directly apply a
-    /// variant of the famous PageRank approach [Page et al., 1999]4—known as the
-    /// Personalized PageRank algorithm [Leskovec et al., 2020]—where we define the
-    /// stochastic matrix P = AD−1 and compute:"
-    pub random_walk_methods: bool,
-}
-
-impl Default for GnnAnalysisTools {
-    fn default() -> Self {
-        Self {
-            weisfeiler_lehman: false,
-            graphlets: None,
-            path_based_methods: false,
-            local_overlap_statistics: false,
-            katz_index: false,
-            lhn_similarity: false,
-            random_walk_methods: false,
-        }
-    }
-}
-
-impl GnnAnalysisTools {
-    /// The feature order emitted by graph `analysis_features`.
-    ///
-    /// At the moment we only emit features for the implemented analyses.
-    /// Unsupported flags remain inert until we add concrete features for them.
-    pub fn feature_names(&self) -> Vec<&'static str> {
-        let mut names = Vec::new();
-
-        if self.weisfeiler_lehman {
-            names.extend([
-                "wl_unique_labels_base",
-                "wl_unique_labels_hop_1",
-                "wl_unique_labels_hop_2",
-                "wl_dominant_label_frac_hop_2",
-            ]);
-        }
-
-        if let Some(graphlets) = &self.graphlets {
-            for &size in graphlets {
-                if size == 3 {
-                    names.extend([
-                        "graphlet_wedge_frac",
-                        "graphlet_triangle_frac",
-                        "graphlet_transitivity",
-                    ]);
-                }
-            }
-        }
-
-        if self.path_based_methods {
-            names.extend([
-                "path_reachable_pair_frac",
-                "path_mean_shortest_path",
-                "path_diameter",
-                "path_long_shortest_path_frac",
-            ]);
-        }
-
-        if self.local_overlap_statistics {
-            names.extend(["overlap_mean_jaccard", "overlap_mean_sorensen"]);
-        }
-
-        if self.lhn_similarity {
-            names.extend([
-                "lhn_pair_mean_similarity",
-                "lhn_pair_max_similarity",
-                "lhn_edge_mean_similarity",
-            ]);
-        }
-
-        names
-    }
-
-    pub fn feature_names_with_prefix(&self, prefix: &'static str) -> Vec<String> {
-        self.feature_names()
-            .into_iter()
-            .map(|name| format!("{prefix}_{name}"))
-            .collect()
-    }
-
-    pub fn feature_dim(&self) -> usize {
-        self.feature_names().len()
-    }
-}
-
-/// State for our atom-and-bond-based neural network. Atoms are nodes; covalent bonds are
-/// edges.
+/// State for our atom-and-bond-based neural network. Atoms are nodes. 4 edge layers:
+/// - covalent bonds
+/// - Valence angles
+/// - Dihedral angles (proper)
+/// - Dihedral angles (improper)
 ///
 /// Graph properties
 /// ----------------
@@ -415,8 +276,6 @@ impl GraphDataAtom {
                 _ => [1.0, 0.0, 0.0, 0.0],
             };
 
-            // todo: Lennard Jones?
-
             let p1 = atoms[a0].posit;
             let p2 = atoms[a1].posit;
             let dist_sq = (p1 - p2).magnitude_squared() as f32;
@@ -476,6 +335,7 @@ impl GraphDataAtom {
                     edge_feats[edge_feats_i(a0, a1, k, num_atoms)] = v;
                     edge_feats[edge_feats_i(a1, a0, k, num_atoms)] = v;
                 }
+
                 edge_feats[edge_feats_i(a0, a1, 4, num_atoms)] = dr_norm;
                 edge_feats[edge_feats_i(a0, a1, 5, num_atoms)] = log_kb;
 
@@ -1010,11 +870,7 @@ fn vocab_lookup_component(comp_type: &ComponentType) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::therapeutic::non_nn_ml::{
-        atom_graph_analysis_tools, build_spacial_analysis_adj, graphlet_size_3_features,
-        lhn_similarity_features, local_overlap_features, path_based_features,
-        spacial_graph_analysis_tools,
-    };
+    use crate::therapeutic::non_nn_ml::*;
 
     #[test]
     fn atom_graph_analysis_feature_count_matches_names() {

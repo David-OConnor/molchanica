@@ -14,22 +14,22 @@ use burn::{
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
+use crate::therapeutic::non_nn_ml::GnnAnalysisTools;
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
         gnn::{
-            GRAPH_ANALYSIS_FEATURE_VERSION, GnnAnalysisTools, GraphDataAtom, GraphDataComponent,
-            GraphDataSpacial, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
-            PER_EDGE_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask,
-            pad_edge_feats, pad_indices, pad_scalars,
+            GRAPH_ANALYSIS_FEATURE_VERSION, GraphDataAtom, GraphDataComponent, GraphDataSpacial,
+            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_EDGE_FEATS,
+            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, pad_adj_and_mask, pad_edge_feats,
+            pad_indices, pad_scalars,
         },
         train::{
             MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
         },
     },
 };
-
 // todo: Stack overflow with Burn CPU
 // CPU (i.e.NdArray) seems to be much faster for inference than GPU.
 // The `Cpu` backend is a newer one: "Burn CPU", but we currently get a stack overflow when using it.
