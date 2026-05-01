@@ -20,15 +20,15 @@ use crate::{
         DatasetTdc,
         gnn::{
             ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
-            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
-            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
-            pad_adj_and_mask, pad_atom_adj_and_mask, pad_atom_edge_feats, pad_edge_feats,
-            pad_indices, pad_scalars,
+            GraphDataComponent, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
+            atom_bond::{GraphDataAtom, pad_atom_adj_and_mask, pad_atom_edge_feats},
+            pad_adj_and_mask, pad_edge_feats, pad_indices, pad_scalars,
+            spacial::GraphDataSpacial,
         },
+        mlp::mlp_feats_from_mol,
         non_nn_ml::GnnAnalysisTools,
-        train::{
-            MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler, mlp_feats_from_mol,
-        },
+        train::{MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler},
     },
 };
 // todo: Stack overflow with Burn CPU

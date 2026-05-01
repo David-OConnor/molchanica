@@ -60,7 +60,6 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "train")]
 use crate::therapeutic::eval::eval;
-use crate::therapeutic::non_nn_ml::GnnAnalysisTools;
 use crate::{
     molecules::small::MoleculeSmall,
     screening::pharmacophore::Pharmacophore,
@@ -68,11 +67,12 @@ use crate::{
         DatasetTdc, gnn,
         gnn::{
             ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
-            GraphDataAtom, GraphDataComponent, GraphDataSpacial, PER_ATOM_SCALARS,
-            PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
-            SPACIAL_VOCAB_SIZE,
+            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS,
+            PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE, atom_bond, atom_bond::GraphDataAtom,
+            component::GraphDataComponent, spacial::GraphDataSpacial,
         },
-        non_nn_ml,
+        mlp, non_nn_ml,
+        non_nn_ml::GnnAnalysisTools,
         train_test_split_indices::TrainTestSplit,
     },
 };
@@ -1059,10 +1059,10 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
                 n_scalars_per_atom,
                 MAX_ATOMS,
             ));
-            let (p_adj, p_mask) = gnn::pad_atom_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
+            let (p_adj, p_mask) = atom_bond::pad_atom_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
             batch_adj.extend(p_adj);
             batch_mask.extend(p_mask);
-            batch_edge_feats.extend(gnn::pad_atom_edge_feats(
+            batch_edge_feats.extend(atom_bond::pad_atom_edge_feats(
                 &g.edge_feats,
                 g.num_atoms,
                 MAX_ATOMS,
@@ -1463,7 +1463,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
 ) -> Vec<Sample> {
     let mut out = Vec::with_capacity(data.len());
     for (mol, target) in data {
-        let feat_params = match mlp_feats_from_mol(mol) {
+        let feat_params = match mlp::mlp_feats_from_mol(mol) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("Error extracting MLP features: {e:?}; skipping mol.");
@@ -1522,111 +1522,6 @@ pub(in crate::therapeutic) fn samples_from_mols(
         });
     }
     out
-}
-
-// Note: We can make variants of this A/R tuned to specific inference items. For now, we are using
-// a single  set of features for all targets.
-/// Extract  molecule-level features from a molecule that are relevant for inferring the target parameter. We use this
-/// in both training and inference workflows.
-///
-/// We avoid features that may be more robustly represented by GNNs. For example, the count of rings,
-/// functional groups, and H bond donors/acceptors.
-pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
-    let Some(c) = &mol.characterization else {
-        return Err(io::Error::other("Missing mol characterization"));
-    };
-
-    // Helper to compress large ranges (Log1p)
-    // We use abs() to handle potential negative LogP inputs safely if you apply it there,
-    // though usually we only apply this to Counts and Weights.
-    let ln = |x: f32| (x + 1.0).ln();
-
-    // ----
-
-    // We are generally apply ln to values that can be "large".
-    // Note: We do seem to get better results using ln values.
-
-    // todo: Many of these are suspect.
-
-    // Ring count: Pos
-    // Function groups: Pos
-    // Valence: Neg
-    // c.rings.len() as f32 * 6. / c.num_atoms as f32: Pos
-    // Ring count: Pos
-    // Wiener index: Neg impact
-    // Mol weight: neg impact
-    // Num bonds: Positive impact
-    // Rot bond count: Positive impact
-    // ln(c.psa_topo / c.asa_topo): Pos
-    // psa topo: Pos
-    // SAS topo: Big pos
-    // Num heavy: pos
-    // Het: Pos
-    // Halogen: Pos
-    // Volume: Pos (big)
-
-    // -----
-
-    Ok(vec![
-        // c.num_atoms as f32,
-        // c.num_bonds as f32,
-        // c.mol_weight,
-        // c.num_heavy_atoms as f32,
-        // c.h_bond_acceptor.len() as f32,
-        // c.h_bond_donor.len() as f32,
-        // c.num_hetero_atoms as f32,
-        // c.halogen.len() as f32,
-        // c.rotatable_bonds.len() as f32,
-        // c.amines.len() as f32,
-        // c.amides.len() as f32,
-        // c.carbonyl.len() as f32,
-        // c.hydroxyl.len() as f32,
-        // // c.num_valence_elecs as f32,
-        // c.num_rings_aromatic as f32,
-        // c.num_rings_saturated as f32,
-        // c.num_rings_aliphatic as f32,
-        // c.rings.len() as f32,
-        // c.log_p,
-        // c.molar_refractivity,
-        // c.psa_topo,
-        // c.asa_topo,
-        // c.volume,
-        // c.wiener_index.unwrap_or(0) as f32,
-        //
-        // ----
-        //
-        ln(c.num_atoms as f32),
-        ln(c.num_bonds as f32),
-        // ln(c.mol_weight),
-        ln(c.num_heavy_atoms as f32),
-        // c.h_bond_acceptor.len() as f32,
-        // c.h_bond_donor.len() as f32,
-        c.num_hetero_atoms as f32,
-        c.halogen.len() as f32,
-        c.rotatable_bonds.len() as f32,
-        c.flexibility / 4., // normalizationish?
-        // c.amines.len() as f32,
-        // c.amides.len() as f32,
-        // c.carbonyl.len() as f32,
-        // c.hydroxyl.len() as f32,
-        // c.carboxylate.len() as f32,
-        // c.sulfonamide.len() as f32,
-        // c.sulfonimide.len() as f32,
-        // c.num_valence_elecs as f32,
-        // c.num_rings_aromatic as f32,
-        // c.num_rings_saturated as f32,
-        // c.num_rings_aliphatic as f32,
-        // c.rings.len() as f32,
-        c.log_p,
-        c.molar_refractivity,
-        ln(c.psa_topo),
-        ln(c.asa_topo),
-        ln(c.volume),
-        // ln(c.wiener_index.unwrap_or(0) as f32),
-        c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
-        ln(c.psa_topo / c.asa_topo),
-        // ln(c.greasiness),
-    ])
 }
 
 fn cli_has_flag(args: &[String], flag: &str) -> bool {
