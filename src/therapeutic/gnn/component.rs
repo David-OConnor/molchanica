@@ -49,7 +49,7 @@ pub(in crate::therapeutic) struct GraphDataComponent {
 /// Converts component nodes and inter-component connections into flat vectors for tensors.
 /// Used by both Training and Inference.
 impl GraphDataComponent {
-    pub fn new(
+    pub(in crate::therapeutic) fn new(
         mol: &MoleculeSmall,
         mol_comps: &MolComponents,
         ff_params: &ForceFieldParams,

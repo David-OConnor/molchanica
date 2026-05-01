@@ -12,14 +12,17 @@ use std::{
 use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
-        gnn::{
-            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_ADJ_SIGMA_SQ, SPACIAL_DIST_SCALE,
-            SPACIAL_RBF_CENTERS, SPACIAL_RBF_SIGMA_SQ,
-        },
+        gnn::{PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS},
         non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
     },
 };
+
+// Tunable parameters for the spacial/pharmacophore GNN.
+const SPACIAL_ADJ_SIGMA_SQ: f32 = 16.0; // sigma=4 Å for adjacency Gaussian
+const SPACIAL_DIST_SCALE: f32 = 10.0; // Normalise raw distances to ~O(1)
+const SPACIAL_RBF_SIGMA_SQ: f32 = 2.25; // sigma=1.5 Å for RBF basis functions
+const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
 /// Pharmacophore-feature graph for 3-D spatial/geometric structure.
 ///
@@ -66,7 +69,7 @@ pub(in crate::therapeutic) struct GraphDataSpacial {
 }
 
 impl GraphDataSpacial {
-    pub(in crate::therapeutic) fn empty() -> Self {
+    fn empty() -> Self {
         Self {
             pharm_type_indices: Vec::new(),
             scalars: Vec::new(),
@@ -77,7 +80,10 @@ impl GraphDataSpacial {
         }
     }
 
-    pub fn new(mol: &MoleculeSmall, analysis_tools: &GnnAnalysisTools) -> io::Result<Self> {
+    pub(in crate::therapeutic) fn new(
+        mol: &MoleculeSmall,
+        analysis_tools: &GnnAnalysisTools,
+    ) -> io::Result<Self> {
         let Some(char) = mol.characterization.as_ref() else {
             return Ok(Self::empty());
         };

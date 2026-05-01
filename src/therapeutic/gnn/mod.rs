@@ -10,21 +10,11 @@
 //! We view molecules as graphs, and infer properties of the entire graph. We may also implement
 //! graph clustering later, for other applications like finding molecules similar to a target.
 
-use std::{
-    collections::HashMap,
-    hash::{DefaultHasher, Hash, Hasher},
-    iter::repeat_n,
-};
+use std::{collections::HashMap, iter::repeat_n};
 
-use bio_files::{
-    BondType,
-    md_params::{DihedralParams, ForceFieldParams},
-};
+use bio_files::md_params::{DihedralParams, ForceFieldParams};
 
-use crate::{
-    molecules::Atom,
-    therapeutic::train::{BOND_SIGMA_SQ, FF_BUCKETS},
-};
+use crate::molecules::Atom;
 
 // Degree (Number of edges incident to a node), partial charge, geometry (radius from molecular centroid, mean neighbor distance),
 // is H-bond acceptor, is H-bond donor, in aromatic ring.
@@ -69,12 +59,6 @@ const ATOM_GNN_EDGE_REL_SCALARS: usize = 2;
 
 pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize =
     ATOM_GNN_EDGE_SHARED_FEATS + ATOM_GNN_EDGE_REL_SCALARS + DIHEDRAL_PARAM_SUMMARY_FEATS;
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize =
-    ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize =
-    ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize =
-    ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
 pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
 
 // Degree, component size
@@ -84,16 +68,9 @@ pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
 // [shared_atoms, rotatable, log_raw_barrier_sum, phase_cos_mean, phase_sin_mean,
 //  periodicity_mean_norm, divider_mean_norm]
 pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 2 + DIHEDRAL_PARAM_SUMMARY_FEATS;
-// For bond-stretching force-field params, used in the atom-based GNN.
-const KB_REF: f32 = 300.0;
-const ANGLE_K_REF: f32 = 80.0;
-const ANGLE_DIST_SCALE: f32 = 0.5;
 const DIHEDRAL_BARRIER_REF: f32 = 4.0;
 const DIHEDRAL_PERIODICITY_REF: f32 = 6.0;
 const DIHEDRAL_DIVIDER_REF: f32 = 6.0;
-const DEFAULT_BOND_ONE_HOT: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
-// Used on multiplex layers whose edges connect non-bonded atom pairs (1-3, 1-4 outer pairs).
-const NO_BOND_ONE_HOT: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
 // Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
 // Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
@@ -104,166 +81,14 @@ pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
 // Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
 pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;
 
-// Tunable parameters for the spacial/pharmacophore GNN.
-const SPACIAL_ADJ_SIGMA_SQ: f32 = 16.0; // sigma=4 Å for adjacency Gaussian
-const SPACIAL_DIST_SCALE: f32 = 10.0; // Normalise raw distances to ~O(1)
-const SPACIAL_RBF_SIGMA_SQ: f32 = 2.25; // sigma=1.5 Å for RBF basis functions
-const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
-
-const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
 pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 2;
 
 pub(in crate::therapeutic) mod atom_bond;
 pub(in crate::therapeutic) mod component;
 pub(in crate::therapeutic) mod spacial;
 
-fn atom_adj_i(layer: usize, i: usize, j: usize, n: usize) -> usize {
-    layer * n * n + i * n + j
-}
-
-fn atom_edge_feats_i(layer: usize, i: usize, j: usize, k: usize, n: usize) -> usize {
-    ((layer * n * n) + i * n + j) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0 + k
-}
-
 fn bond_pair_key(a: usize, b: usize) -> (usize, usize) {
     if a < b { (a, b) } else { (b, a) }
-}
-
-fn bond_sn_pair_key(a: u32, b: u32) -> (u32, u32) {
-    if a < b { (a, b) } else { (b, a) }
-}
-
-fn bond_type_one_hot(bond_type: BondType) -> [f32; 4] {
-    match bond_type {
-        BondType::Single => [1.0, 0.0, 0.0, 0.0],
-        BondType::Double => [0.0, 1.0, 0.0, 0.0],
-        BondType::Triple => [0.0, 0.0, 1.0, 0.0],
-        BondType::Aromatic => [0.0, 0.0, 0.0, 1.0],
-        _ => DEFAULT_BOND_ONE_HOT,
-    }
-}
-
-fn relation_edge_features(
-    layer: usize,
-    bond_type_one_hot: [f32; 4],
-    rotatable: f32,
-    scalar_0: f32,
-    scalar_1: f32,
-    dihedral_summary: [f32; DIHEDRAL_PARAM_SUMMARY_FEATS],
-) -> [f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0] {
-    debug_assert!(layer < ATOM_GNN_EDGE_LAYERS);
-    let mut layer_one_hot = [0.0f32; ATOM_GNN_EDGE_LAYERS];
-    layer_one_hot[layer] = 1.0;
-    [
-        layer_one_hot[0],
-        layer_one_hot[1],
-        layer_one_hot[2],
-        layer_one_hot[3],
-        bond_type_one_hot[0],
-        bond_type_one_hot[1],
-        bond_type_one_hot[2],
-        bond_type_one_hot[3],
-        rotatable,
-        scalar_0,
-        scalar_1,
-        dihedral_summary[0],
-        dihedral_summary[1],
-        dihedral_summary[2],
-        dihedral_summary[3],
-        dihedral_summary[4],
-    ]
-}
-
-fn append_relation_edge(
-    adj_layers: &mut [f32],
-    edge_feats: &mut [f32],
-    edge_feat_counts: &mut [usize],
-    layer: usize,
-    i: usize,
-    j: usize,
-    num_atoms: usize,
-    weight: f32,
-    features: &[f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0],
-) {
-    adj_layers[atom_adj_i(layer, i, j, num_atoms)] += weight;
-    edge_feat_counts[atom_adj_i(layer, i, j, num_atoms)] += 1;
-
-    for (k, &value) in features.iter().enumerate() {
-        edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] += value;
-    }
-}
-
-/// Normalize per-edge accumulations by their multiplicity. Multiple angles or dihedrals
-/// can share the same outer-pair edge (fused ring systems, multi-path 1-4 pairs), and
-/// `append_relation_edge` sums both the adjacency weight and the edge features on each
-/// hit. Averaging keeps the adjacency a stable Gaussian-distance kernel and keeps the
-/// edge-feature scalars bounded; otherwise a fused-ring 1-3 corner would fire 2x or 3x
-/// on layer 1 vs an isolated 1-3 corner. count == 0 (self-loops, padding) and count == 1
-/// (single contribution) are left untouched.
-fn finalize_relation_edges(
-    adj_layers: &mut [f32],
-    edge_feats: &mut [f32],
-    edge_feat_counts: &[usize],
-    num_atoms: usize,
-) {
-    for layer in 0..ATOM_GNN_EDGE_LAYERS {
-        for i in 0..num_atoms {
-            for j in 0..num_atoms {
-                let count = edge_feat_counts[atom_adj_i(layer, i, j, num_atoms)];
-                if count <= 1 {
-                    continue;
-                }
-
-                let inv = 1.0 / count as f32;
-                adj_layers[atom_adj_i(layer, i, j, num_atoms)] *= inv;
-                for k in 0..ATOM_GNN_PER_EDGE_FEATS_LAYER_0 {
-                    edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] *= inv;
-                }
-            }
-        }
-    }
-}
-
-fn bond_edge_weight(atoms: &[Atom], i: usize, j: usize) -> f32 {
-    let diff = atoms[i].posit - atoms[j].posit;
-    let dist_sq = diff.magnitude_squared() as f32;
-    (-dist_sq / (2.0 * BOND_SIGMA_SQ)).exp()
-}
-
-fn valence_angle(atoms: &[Atom], a0: usize, ctr: usize, a1: usize) -> Option<f32> {
-    let v0 = atoms[a0].posit - atoms[ctr].posit;
-    let v1 = atoms[a1].posit - atoms[ctr].posit;
-    let mag = v0.magnitude() * v1.magnitude();
-    if mag <= 1.0e-12 {
-        return None;
-    }
-
-    let cos_theta = (v0.dot(v1) / mag).clamp(-1.0, 1.0);
-    Some(cos_theta.acos() as f32)
-}
-
-fn dihedral_angle(atoms: &[Atom], a0: usize, a1: usize, a2: usize, a3: usize) -> Option<f32> {
-    let b0 = atoms[a1].posit - atoms[a0].posit;
-    let b1 = atoms[a2].posit - atoms[a1].posit;
-    let b2 = atoms[a3].posit - atoms[a2].posit;
-
-    let n0 = b0.cross(b1);
-    let n1 = b1.cross(b2);
-
-    let n0_mag_sq = n0.magnitude_squared();
-    let n1_mag_sq = n1.magnitude_squared();
-    let b1_mag = b1.magnitude();
-
-    if n0_mag_sq <= 1.0e-12 || n1_mag_sq <= 1.0e-12 || b1_mag <= 1.0e-12 {
-        return None;
-    }
-
-    let b1_unit = b1 * (1.0 / b1_mag);
-    let m1 = n0.cross(b1_unit);
-    let x = n0.dot(n1);
-    let y = m1.dot(n1);
-
-    Some(y.atan2(x) as f32)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -431,19 +256,6 @@ pub(in crate::therapeutic) fn pad_scalars(
     v.extend_from_slice(&src[0..n * n_per]);
     v.extend(repeat_n(0.0_f32, (max - n) * n_per));
     v
-}
-
-fn vocab_lookup_ff(ff: Option<&String>) -> i32 {
-    // 0 is Padding.
-    match ff {
-        Some(s) => {
-            // Hash to range [1..20]
-            let mut h = DefaultHasher::new();
-            s.hash(&mut h);
-            ((h.finish() % (FF_BUCKETS as u64)) + 1) as i32
-        }
-        None => (FF_BUCKETS as i32) + 1, // Unknown bucket
-    }
 }
 
 #[cfg(test)]

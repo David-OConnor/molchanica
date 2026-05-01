@@ -4,11 +4,15 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
     io,
     iter::repeat_n,
 };
 
-use bio_files::md_params::{DihedralParams, ForceFieldParams};
+use bio_files::{
+    BondType,
+    md_params::{DihedralParams, ForceFieldParams},
+};
 use na_seq::{
     Element,
     Element::{
@@ -21,17 +25,191 @@ use crate::{
     therapeutic::{
         gnn,
         gnn::{
-            ANGLE_DIST_SCALE, ANGLE_K_REF, ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
-            ATOM_GNN_PER_EDGE_FEATS_LAYER_1, ATOM_GNN_PER_EDGE_FEATS_LAYER_2,
-            ATOM_GNN_PER_EDGE_FEATS_LAYER_3, BOND_DIST_SPACIAL_SCALE, DEFAULT_BOND_ONE_HOT,
-            DIHEDRAL_BARRIER_REF, DIHEDRAL_PARAM_SUMMARY_FEATS, DihedralParamAccumulator, KB_REF,
-            NO_BOND_ONE_HOT, PER_ATOM_SCALARS,
+            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, DIHEDRAL_BARRIER_REF,
+            DIHEDRAL_PARAM_SUMMARY_FEATS, DihedralParamAccumulator, PER_ATOM_SCALARS,
         },
         non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
-        train::EXCLUDE_HYDROGEN,
+        train::FF_BUCKETS,
     },
 };
+
+const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize = ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
+const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize = ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
+const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize = ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
+
+// For bond-stretching force-field params.
+const KB_REF: f32 = 300.0;
+const ANGLE_K_REF: f32 = 80.0;
+const ANGLE_DIST_SCALE: f32 = 0.5;
+const DEFAULT_BOND_ONE_HOT: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+// Used on multiplex layers whose edges connect non-bonded atom pairs (1-3, 1-4 outer pairs).
+const NO_BOND_ONE_HOT: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+const BOND_DIST_SPACIAL_SCALE: f32 = 0.15;
+
+// Note: Excluding H or not appears not to make any notable difference at first;
+// Experiment with this more later.
+const EXCLUDE_HYDROGEN: bool = true;
+
+const BOND_SIGMA_SQ: f32 = 3.3; // Å. Try 1.5 - 2.2 for sigma, (Square it)
+
+fn atom_adj_i(layer: usize, i: usize, j: usize, n: usize) -> usize {
+    layer * n * n + i * n + j
+}
+
+fn atom_edge_feats_i(layer: usize, i: usize, j: usize, k: usize, n: usize) -> usize {
+    ((layer * n * n) + i * n + j) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0 + k
+}
+
+fn bond_sn_pair_key(a: u32, b: u32) -> (u32, u32) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+fn bond_type_one_hot(bond_type: BondType) -> [f32; 4] {
+    match bond_type {
+        BondType::Single => [1.0, 0.0, 0.0, 0.0],
+        BondType::Double => [0.0, 1.0, 0.0, 0.0],
+        BondType::Triple => [0.0, 0.0, 1.0, 0.0],
+        BondType::Aromatic => [0.0, 0.0, 0.0, 1.0],
+        _ => DEFAULT_BOND_ONE_HOT,
+    }
+}
+
+fn relation_edge_features(
+    layer: usize,
+    bond_type_one_hot: [f32; 4],
+    rotatable: f32,
+    scalar_0: f32,
+    scalar_1: f32,
+    dihedral_summary: [f32; DIHEDRAL_PARAM_SUMMARY_FEATS],
+) -> [f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0] {
+    debug_assert!(layer < ATOM_GNN_EDGE_LAYERS);
+    let mut layer_one_hot = [0.0f32; ATOM_GNN_EDGE_LAYERS];
+    layer_one_hot[layer] = 1.0;
+    [
+        layer_one_hot[0],
+        layer_one_hot[1],
+        layer_one_hot[2],
+        layer_one_hot[3],
+        bond_type_one_hot[0],
+        bond_type_one_hot[1],
+        bond_type_one_hot[2],
+        bond_type_one_hot[3],
+        rotatable,
+        scalar_0,
+        scalar_1,
+        dihedral_summary[0],
+        dihedral_summary[1],
+        dihedral_summary[2],
+        dihedral_summary[3],
+        dihedral_summary[4],
+    ]
+}
+
+fn append_relation_edge(
+    adj_layers: &mut [f32],
+    edge_feats: &mut [f32],
+    edge_feat_counts: &mut [usize],
+    layer: usize,
+    i: usize,
+    j: usize,
+    num_atoms: usize,
+    weight: f32,
+    features: &[f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0],
+) {
+    adj_layers[atom_adj_i(layer, i, j, num_atoms)] += weight;
+    edge_feat_counts[atom_adj_i(layer, i, j, num_atoms)] += 1;
+
+    for (k, &value) in features.iter().enumerate() {
+        edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] += value;
+    }
+}
+
+/// Normalize per-edge accumulations by their multiplicity. Multiple angles or dihedrals
+/// can share the same outer-pair edge (fused ring systems, multi-path 1-4 pairs), and
+/// `append_relation_edge` sums both the adjacency weight and the edge features on each
+/// hit. Averaging keeps the adjacency a stable Gaussian-distance kernel and keeps the
+/// edge-feature scalars bounded; otherwise a fused-ring 1-3 corner would fire 2x or 3x
+/// on layer 1 vs an isolated 1-3 corner. count == 0 (self-loops, padding) and count == 1
+/// (single contribution) are left untouched.
+fn finalize_relation_edges(
+    adj_layers: &mut [f32],
+    edge_feats: &mut [f32],
+    edge_feat_counts: &[usize],
+    num_atoms: usize,
+) {
+    for layer in 0..ATOM_GNN_EDGE_LAYERS {
+        for i in 0..num_atoms {
+            for j in 0..num_atoms {
+                let count = edge_feat_counts[atom_adj_i(layer, i, j, num_atoms)];
+                if count <= 1 {
+                    continue;
+                }
+
+                let inv = 1.0 / count as f32;
+                adj_layers[atom_adj_i(layer, i, j, num_atoms)] *= inv;
+                for k in 0..ATOM_GNN_PER_EDGE_FEATS_LAYER_0 {
+                    edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] *= inv;
+                }
+            }
+        }
+    }
+}
+
+fn bond_edge_weight(atoms: &[Atom], i: usize, j: usize) -> f32 {
+    let diff = atoms[i].posit - atoms[j].posit;
+    let dist_sq = diff.magnitude_squared() as f32;
+    (-dist_sq / (2.0 * BOND_SIGMA_SQ)).exp()
+}
+
+fn valence_angle(atoms: &[Atom], a0: usize, ctr: usize, a1: usize) -> Option<f32> {
+    let v0 = atoms[a0].posit - atoms[ctr].posit;
+    let v1 = atoms[a1].posit - atoms[ctr].posit;
+    let mag = v0.magnitude() * v1.magnitude();
+    if mag <= 1.0e-12 {
+        return None;
+    }
+
+    let cos_theta = (v0.dot(v1) / mag).clamp(-1.0, 1.0);
+    Some(cos_theta.acos() as f32)
+}
+
+fn dihedral_angle(atoms: &[Atom], a0: usize, a1: usize, a2: usize, a3: usize) -> Option<f32> {
+    let b0 = atoms[a1].posit - atoms[a0].posit;
+    let b1 = atoms[a2].posit - atoms[a1].posit;
+    let b2 = atoms[a3].posit - atoms[a2].posit;
+
+    let n0 = b0.cross(b1);
+    let n1 = b1.cross(b2);
+
+    let n0_mag_sq = n0.magnitude_squared();
+    let n1_mag_sq = n1.magnitude_squared();
+    let b1_mag = b1.magnitude();
+
+    if n0_mag_sq <= 1.0e-12 || n1_mag_sq <= 1.0e-12 || b1_mag <= 1.0e-12 {
+        return None;
+    }
+
+    let b1_unit = b1 * (1.0 / b1_mag);
+    let m1 = n0.cross(b1_unit);
+    let x = n0.dot(n1);
+    let y = m1.dot(n1);
+
+    Some(y.atan2(x) as f32)
+}
+
+fn vocab_lookup_ff(ff: Option<&String>) -> i32 {
+    // 0 is Padding.
+    match ff {
+        Some(s) => {
+            // Hash to range [1..20]
+            let mut h = DefaultHasher::new();
+            s.hash(&mut h);
+            ((h.finish() % (FF_BUCKETS as u64)) + 1) as i32
+        }
+        None => (FF_BUCKETS as i32) + 1, // Unknown bucket
+    }
+}
 
 /// State for our atom-and-bond-based neural network. Atoms are nodes. 4 edge layers:
 /// - covalent bonds (1 edge connects 2 nodes)
@@ -82,7 +260,7 @@ pub(in crate::therapeutic) struct GraphDataAtom {
 impl GraphDataAtom {
     /// Converts raw Atoms and Bonds into Flat vectors for Tensors.
     /// Used by both Training and Inference.
-    pub fn new(
+    pub(in crate::therapeutic) fn new(
         mol: &MoleculeSmall,
         ff_params: &ForceFieldParams,
         analysis_tools: &GnnAnalysisTools,
@@ -143,7 +321,7 @@ impl GraphDataAtom {
                 mol.common
                     .bonds
                     .get(rot_bond.bond_i)
-                    .map(|bond| gnn::bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn))
+                    .map(|bond| bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn))
             })
             .collect();
 
@@ -180,7 +358,7 @@ impl GraphDataAtom {
 
         for (i, atom) in atoms.iter().enumerate() {
             elem_indices.push(vocab_lookup_element(atom.element));
-            ff_indices.push(gnn::vocab_lookup_ff(atom.force_field_type.as_ref()));
+            ff_indices.push(vocab_lookup_ff(atom.force_field_type.as_ref()));
 
             // Degree is the number of edges incident to a node.
             let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
@@ -258,7 +436,7 @@ impl GraphDataAtom {
         // self-message during message passing.
         for layer in 0..ATOM_GNN_EDGE_LAYERS {
             for i in 0..num_atoms {
-                adj_layers[gnn::atom_adj_i(layer, i, i, num_atoms)] = 1.0;
+                adj_layers[atom_adj_i(layer, i, i, num_atoms)] = 1.0;
             }
         }
 
@@ -269,10 +447,10 @@ impl GraphDataAtom {
                 continue;
             }
 
-            let bond_type_one_hot = gnn::bond_type_one_hot(bond.bond_type);
+            let bond_type_one_hot = bond_type_one_hot(bond.bond_type);
             bond_type_by_pair.insert(gnn::bond_pair_key(a0, a1), bond_type_one_hot);
-            let is_rotatable = rotatable_bond_keys
-                .contains(&gnn::bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn));
+            let is_rotatable =
+                rotatable_bond_keys.contains(&bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn));
 
             let p1 = atoms[a0].posit;
             let p2 = atoms[a1].posit;
@@ -327,7 +505,7 @@ impl GraphDataAtom {
                 }
             };
 
-            let features = gnn::relation_edge_features(
+            let features = relation_edge_features(
                 0,
                 bond_type_one_hot,
                 if is_rotatable { 1.0 } else { 0.0 },
@@ -338,9 +516,9 @@ impl GraphDataAtom {
                     .copied()
                     .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
             );
-            let weight = gnn::bond_edge_weight(&atoms, a0, a1);
+            let weight = bond_edge_weight(&atoms, a0, a1);
 
-            gnn::append_relation_edge(
+            append_relation_edge(
                 &mut adj_layers,
                 &mut edge_feats,
                 &mut edge_feat_counts,
@@ -351,7 +529,7 @@ impl GraphDataAtom {
                 weight,
                 &features,
             );
-            gnn::append_relation_edge(
+            append_relation_edge(
                 &mut adj_layers,
                 &mut edge_feats,
                 &mut edge_feat_counts,
@@ -378,7 +556,7 @@ impl GraphDataAtom {
                     let a0 = neighbors[left];
                     let a1 = neighbors[right];
 
-                    let Some(theta) = gnn::valence_angle(&atoms, a0, ctr, a1) else {
+                    let Some(theta) = valence_angle(&atoms, a0, ctr, a1) else {
                         continue;
                     };
 
@@ -399,7 +577,7 @@ impl GraphDataAtom {
                         _ => (0.0, 0.0),
                     };
 
-                    let features = gnn::relation_edge_features(
+                    let features = relation_edge_features(
                         1,
                         NO_BOND_ONE_HOT,
                         0.0,
@@ -407,9 +585,9 @@ impl GraphDataAtom {
                         angle_stats.1,
                         [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS],
                     );
-                    let weight = gnn::bond_edge_weight(&atoms, a0, a1);
+                    let weight = bond_edge_weight(&atoms, a0, a1);
 
-                    gnn::append_relation_edge(
+                    append_relation_edge(
                         &mut adj_layers,
                         &mut edge_feats,
                         &mut edge_feat_counts,
@@ -420,7 +598,7 @@ impl GraphDataAtom {
                         weight,
                         &features,
                     );
-                    gnn::append_relation_edge(
+                    append_relation_edge(
                         &mut adj_layers,
                         &mut edge_feats,
                         &mut edge_feat_counts,
@@ -458,7 +636,7 @@ impl GraphDataAtom {
                             continue;
                         }
 
-                        let Some(phi) = gnn::dihedral_angle(&atoms, i0, i1, i2, i3) else {
+                        let Some(phi) = dihedral_angle(&atoms, i0, i1, i2, i3) else {
                             continue;
                         };
 
@@ -480,7 +658,7 @@ impl GraphDataAtom {
                             _ => ((0.0, 0.0), [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
                         };
 
-                        let features = gnn::relation_edge_features(
+                        let features = relation_edge_features(
                             2,
                             central_bond_type,
                             0.0,
@@ -488,9 +666,9 @@ impl GraphDataAtom {
                             proper_stats.1,
                             proper_param_summary,
                         );
-                        let weight = gnn::bond_edge_weight(&atoms, i0, i3);
+                        let weight = bond_edge_weight(&atoms, i0, i3);
 
-                        gnn::append_relation_edge(
+                        append_relation_edge(
                             &mut adj_layers,
                             &mut edge_feats,
                             &mut edge_feat_counts,
@@ -501,7 +679,7 @@ impl GraphDataAtom {
                             weight,
                             &features,
                         );
-                        gnn::append_relation_edge(
+                        append_relation_edge(
                             &mut adj_layers,
                             &mut edge_feats,
                             &mut edge_feat_counts,
@@ -564,7 +742,7 @@ impl GraphDataAtom {
                             lookup_satellites[2].1,
                         ];
 
-                        let Some(phi) = gnn::dihedral_angle(
+                        let Some(phi) = dihedral_angle(
                             &atoms,
                             ordered_satellites[0],
                             ordered_satellites[1],
@@ -574,15 +752,15 @@ impl GraphDataAtom {
                             continue;
                         };
 
-                        let improper_stats = gnn::dihedral_edge_stats(phi, params);
-                        let improper_param_summary = gnn::dihedral_param_summary(params);
+                        let improper_stats = dihedral_edge_stats(phi, params);
+                        let improper_param_summary = dihedral_param_summary(params);
 
                         for &sat in &ordered_satellites {
                             let bond_type = bond_type_by_pair
                                 .get(&gnn::bond_pair_key(ctr, sat))
                                 .copied()
                                 .unwrap_or(DEFAULT_BOND_ONE_HOT);
-                            let features = gnn::relation_edge_features(
+                            let features = relation_edge_features(
                                 3,
                                 bond_type,
                                 0.0,
@@ -590,9 +768,9 @@ impl GraphDataAtom {
                                 improper_stats.1,
                                 improper_param_summary,
                             );
-                            let weight = gnn::bond_edge_weight(&atoms, ctr, sat);
+                            let weight = bond_edge_weight(&atoms, ctr, sat);
 
-                            gnn::append_relation_edge(
+                            append_relation_edge(
                                 &mut adj_layers,
                                 &mut edge_feats,
                                 &mut edge_feat_counts,
@@ -603,7 +781,7 @@ impl GraphDataAtom {
                                 weight,
                                 &features,
                             );
-                            gnn::append_relation_edge(
+                            append_relation_edge(
                                 &mut adj_layers,
                                 &mut edge_feats,
                                 &mut edge_feat_counts,
@@ -620,7 +798,7 @@ impl GraphDataAtom {
             }
         }
 
-        gnn::finalize_relation_edges(
+        finalize_relation_edges(
             &mut adj_layers,
             &mut edge_feats,
             &edge_feat_counts,
@@ -644,7 +822,7 @@ impl GraphDataAtom {
 }
 
 /// These are numerical properties of individual atoms. Partial charge, FF type etc.
-pub fn atom_geom_scalars(atoms: &[Atom], adj: &[Vec<usize>]) -> Vec<(f32, f32)> {
+fn atom_geom_scalars(atoms: &[Atom], adj: &[Vec<usize>]) -> Vec<(f32, f32)> {
     let n = atoms.len().max(1);
 
     let mut cx = 0.0;
@@ -721,7 +899,7 @@ pub(in crate::therapeutic) fn pad_atom_adj_and_mask(
 
     for layer in 0..ATOM_GNN_EDGE_LAYERS {
         for i in 0..n {
-            let src_base = gnn::atom_adj_i(layer, i, 0, num_atoms);
+            let src_base = atom_adj_i(layer, i, 0, num_atoms);
             let dst_base = layer * max * max + i * max;
             p_adj[dst_base..dst_base + n].copy_from_slice(&raw_adj[src_base..src_base + n]);
         }
@@ -742,7 +920,7 @@ pub(in crate::therapeutic) fn pad_atom_edge_feats(
     for layer in 0..ATOM_GNN_EDGE_LAYERS {
         for i in 0..n {
             for j in 0..n {
-                let src_base = gnn::atom_edge_feats_i(layer, i, j, 0, num_atoms);
+                let src_base = atom_edge_feats_i(layer, i, j, 0, num_atoms);
                 let dst_base =
                     ((layer * max * max) + i * max + j) * ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
                 out[dst_base..dst_base + ATOM_GNN_PER_EDGE_FEATS_LAYER_0].copy_from_slice(

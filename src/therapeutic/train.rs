@@ -81,10 +81,6 @@ use crate::{
 // 20 is usually enough to capture major distinct atom types without too many collisions. (?)
 pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 
-// Note: Excluding H or not appears not to make any notable difference at first;
-// Experiment with this more later.
-pub(in crate::therapeutic) const EXCLUDE_HYDROGEN: bool = true;
-
 // 10 (Elements) + 1 (Degree) + 20 (FF Hashed) + 1 (Partial Charge)
 // pub(in crate::therapeutic) const FEAT_DIM_ATOMS: usize = 12 + FF_BUCKETS;
 
@@ -409,8 +405,6 @@ pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 // model more likely to overfit, and makes it less general? Maybe 0.1 or disabled.
 // Perhaps skip dropout due to our small TDC data sets.
 const DROPOUT: Option<f64> = None;
-
-pub(in crate::therapeutic) const BOND_SIGMA_SQ: f32 = 3.3; // Å. Try 1.5 - 2.2 for sigma, (Square it)
 
 #[cfg(feature = "train")]
 type TrainBackend = Autodiff<Wgpu>;
