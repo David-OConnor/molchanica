@@ -102,6 +102,14 @@ pub(in crate::therapeutic) struct ParamConfig {
     pub gnn_comp_layers: u8,
     pub gnn_spacial_layers: u8,
     pub mlp_layers: u8,
+    /// Covalent bonds
+    pub gnn_atom_multiplex_level_0: bool,
+    /// Valence angles
+    pub gnn_atom_multiplex_level_1: bool,
+    /// Proper dihedrals
+    pub gnn_atom_multiplex_level_2: bool,
+    /// Improper dihedrals
+    pub gnn_atom_multiplex_level_3: bool,
     pub atom_graph_analysis_weisfeiler_lehman: bool,
     pub atom_graph_analysis_graphlets: Option<Vec<u8>>,
     pub atom_graph_analysis_path_based_methods: bool,
@@ -238,6 +246,10 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
         gnn_atom_layers: get_int(map, "gnn_atom_layers", 3),
         gnn_comp_layers: get_int(map, "gnn_comp_layers", 3),
         gnn_spacial_layers: get_int(map, "gnn_spacial_layers", 2),
+        gnn_atom_multiplex_level_0: get_bool(map, "gnn_atom_multiplex_level_0", false),
+        gnn_atom_multiplex_level_1: get_bool(map, "gnn_atom_multiplex_level_1", false),
+        gnn_atom_multiplex_level_2: get_bool(map, "gnn_atom_multiplex_level_2", false),
+        gnn_atom_multiplex_level_3: get_bool(map, "gnn_atom_multiplex_level_3", false),
         mlp_layers: get_int(map, "mlp_layers", 3),
         atom_graph_analysis_weisfeiler_lehman: get_bool(
             map,
@@ -451,6 +463,17 @@ pub(in crate::therapeutic) struct ModelConfig {
     pub gnn_comp_layers: u8,
     pub gnn_spacial_layers: u8,
     pub mlp_layers: u8,
+    /// Atom-GNN multiplex level toggles (covalent bonds, valence angles, proper dihedrals,
+    /// improper dihedrals). Disabled levels are zeroed in the adjacency, so they
+    /// contribute neither neighbor messages nor self-loops during message passing.
+    #[config(default = "true")]
+    pub gnn_atom_multiplex_level_0: bool,
+    #[config(default = "true")]
+    pub gnn_atom_multiplex_level_1: bool,
+    #[config(default = "true")]
+    pub gnn_atom_multiplex_level_2: bool,
+    #[config(default = "true")]
+    pub gnn_atom_multiplex_level_3: bool,
 }
 
 impl ModelConfig {
@@ -608,6 +631,10 @@ impl ModelConfig {
             comp_gnn_enabled: self.gnn_comp_enabled,
             spacial_gnn_enabled: self.gnn_spacial_enabled,
             mlp_enabled: self.mlp_enabled,
+            atom_multiplex_level_0: self.gnn_atom_multiplex_level_0,
+            atom_multiplex_level_1: self.gnn_atom_multiplex_level_1,
+            atom_multiplex_level_2: self.gnn_atom_multiplex_level_2,
+            atom_multiplex_level_3: self.gnn_atom_multiplex_level_3,
         }
     }
 }
@@ -655,6 +682,14 @@ pub(in crate::therapeutic) struct Model<B: Backend> {
     spacial_gnn_enabled: bool,
     #[module(skip)]
     mlp_enabled: bool,
+    #[module(skip)]
+    atom_multiplex_level_0: bool,
+    #[module(skip)]
+    atom_multiplex_level_1: bool,
+    #[module(skip)]
+    atom_multiplex_level_2: bool,
+    #[module(skip)]
+    atom_multiplex_level_3: bool,
 }
 
 /// Apply symmetric normalization D^(-1/2) A D^(-1/2) to a batched adjacency
@@ -792,9 +827,25 @@ impl<B: Backend> Model<B> {
             let ef_flat = edge_feats.clone().reshape([b * l * n * n, f]);
             let gate_flat = activation::sigmoid(self.edge_proj.forward(ef_flat.clone()));
             let gate = gate_flat.reshape([b, l, n, n]);
+
+            // Mask out disabled multiplex levels by zeroing their adjacency rows.
+            // This drops both neighbor messages and self-loops on those layers, so
+            // they contribute nothing to the per-atom aggregation.
+            let layer_mask_vals: [f32; ATOM_GNN_EDGE_LAYERS] = [
+                if self.atom_multiplex_level_0 { 1.0 } else { 0.0 },
+                if self.atom_multiplex_level_1 { 1.0 } else { 0.0 },
+                if self.atom_multiplex_level_2 { 1.0 } else { 0.0 },
+                if self.atom_multiplex_level_3 { 1.0 } else { 0.0 },
+            ];
+            let layer_mask = Tensor::<B, 4>::from_data(
+                TensorData::new(layer_mask_vals.to_vec(), [1, ATOM_GNN_EDGE_LAYERS, 1, 1]),
+                &adj.device(),
+            );
+
             // Gate the raw adjacency, then symmetric-normalize so message
-            // magnitudes stay scale-invariant w.r.t. the gate.
-            let adj_eff = sym_normalize_layered(adj * gate);
+            // magnitudes stay scale-invariant w.r.t. the gate. Apply the layer
+            // mask after normalization so disabled levels stay exactly zero.
+            let adj_eff = sym_normalize_layered(adj * gate) * layer_mask;
 
             let edge_emb_flat = self.edge_encoder.forward(ef_flat);
             let [_, d_hidden] = edge_emb_flat.dims();
@@ -1633,6 +1684,10 @@ pub(in crate::therapeutic) fn train_with_samples(
         gnn_comp_layers: param_cfg.gnn_comp_layers,
         gnn_spacial_layers: param_cfg.gnn_spacial_layers,
         mlp_layers: param_cfg.mlp_layers,
+        gnn_atom_multiplex_level_0: param_cfg.gnn_atom_multiplex_level_0,
+        gnn_atom_multiplex_level_1: param_cfg.gnn_atom_multiplex_level_1,
+        gnn_atom_multiplex_level_2: param_cfg.gnn_atom_multiplex_level_2,
+        gnn_atom_multiplex_level_3: param_cfg.gnn_atom_multiplex_level_3,
     };
 
     let model = model_cfg.init::<TrainBackend>(&device);

@@ -17,6 +17,15 @@ gnn_spacial_layers = 2
 # It seems a higher value here, to a point, is relatively cheap, and produces better results.
 mlp_layers = 5
 
+# Covalent bonds
+gnn_atom_multiplex_level_0 = true
+# Valence angles
+gnn_atom_multiplex_level_1 = false
+# Proper dihedrals
+gnn_atom_multiplex_level_2 = false
+# Improper dihedrals
+gnn_atom_multiplex_level_3 = false
+
 # AtomGraph analysis features (Non-NN; traditional graph ML.). These feed explicit graph-level descriptors into the
 # atom GNN branch and are saved into the trained model config for inference reuse.
 atom_graph_analysis_weisfeiler_lehman = false

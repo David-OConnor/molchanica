@@ -221,7 +221,7 @@ pub(in crate::therapeutic) fn pad_edge_feats(
 ) -> Vec<f32> {
     let n = num_atoms.min(max);
 
-    let mut out = vec![0.0f32; max.pow(2) * num_feats];
+    let mut out = vec![0.; max.pow(2) * num_feats];
 
     for i in 0..n {
         for j in 0..n {
@@ -240,7 +240,7 @@ pub(in crate::therapeutic) fn pad_indices(src: &[i32], num: usize, max: usize) -
     let n = num.min(max);
     let mut v = Vec::with_capacity(max);
     v.extend_from_slice(&src[0..n]);
-    v.extend(repeat_n(0_i32, max - n));
+    v.extend(repeat_n(0, max - n));
     v
 }
 
@@ -253,8 +253,10 @@ pub(in crate::therapeutic) fn pad_scalars(
 ) -> Vec<f32> {
     let n = num.min(max);
     let mut v = Vec::with_capacity(max * n_per);
+
     v.extend_from_slice(&src[0..n * n_per]);
-    v.extend(repeat_n(0.0_f32, (max - n) * n_per));
+    v.extend(repeat_n(0., (max - n) * n_per));
+
     v
 }
 
