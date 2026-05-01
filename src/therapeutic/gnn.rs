@@ -8,7 +8,7 @@
 //! graph clustering
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
     io,
     iter::repeat_n,
@@ -40,40 +40,62 @@ use crate::{
 // Keep this in sync with `GraphDataAtom::new`.
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
 // All multiplex layers share the same per-edge feature layout so the encoder MLP can
-// process them as one batch. Layout (10 floats):
+// process them as one batch. Layout (16 floats):
 //   [0..4)  layer one-hot [L0, L1, L2, L3] — tells the encoder which relation this edge
 //           belongs to so it can specialize the meaning of the trailing scalars.
 //   [4..8)  bond-type one-hot [single, double, triple, aromatic] — the bond order most
 //           relevant to this edge (see per-layer notes below). Zero when no real bond
 //           is associated with the edge (L1/L2 outer pairs).
-//   [8..10) two layer-specific scalars (see below).
+//   [8]     rotatable-bond flag. Only populated on layer 0 covalent-bond edges.
+//   [9..11) two layer-specific scalars (see below).
+//   [11..16) dihedral-parameter summary:
+//            [log_raw_barrier_sum, phase_cos_mean, phase_sin_mean,
+//             periodicity_mean_norm, divider_mean_norm].
 //
 // Per-layer semantics (kept in sync with `GraphDataAtom::new`):
 // - Layer 0 (covalent bonds, edge between bonded atoms a0-a1):
-//     bond_type = (a0, a1) bond order; scalars = [dr_norm, log_kb].
+//     bond_type = (a0, a1) bond order; rotatable = whether (a0, a1) is rotatable;
+//     scalars = [dr_norm, log_kb]; dihedral summary = proper torsions whose MIDDLE bond is
+//     (a0, a1).
 // - Layer 1 (valence angles a0-ctr-a1, edge between the OUTER 1-3 pair (a0, a1)):
-//     bond_type = zero (no direct bond); scalars = [signed_angle_deviation, log_k_theta].
+//     bond_type = zero (no direct bond); rotatable = 0;
+//     scalars = [signed_angle_deviation, log_k_theta]; dihedral summary = zero.
 // - Layer 2 (proper dihedrals i0-i1-i2-i3, edge between the OUTER 1-4 pair (i0, i3)):
 //     bond_type = (i1, i2) central-bond order (rotatable-bond chemistry);
-//     scalars = [torsion_alignment, log_barrier_sum].
+//     rotatable = 0;
+//     scalars = [torsion_alignment, log_effective_barrier_sum]; dihedral summary = raw
+//     proper-dihedral params for that torsion.
 // - Layer 3 (improper dihedrals at hub `ctr` with satellites, edge on each (ctr, sat)):
-//     bond_type = (ctr, sat) bond order; scalars = [torsion_alignment, log_barrier_sum].
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize = 10;
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize = 10;
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize = 10;
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize = 10;
+//     bond_type = (ctr, sat) bond order; rotatable = 0;
+//     scalars = [torsion_alignment, log_effective_barrier_sum]; dihedral summary = raw
+//     improper-dihedral params for that torsion.
+const DIHEDRAL_PARAM_SUMMARY_FEATS: usize = 5;
+const ATOM_GNN_EDGE_SHARED_FEATS: usize = 9;
+const ATOM_GNN_EDGE_REL_SCALARS: usize = 2;
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize =
+    ATOM_GNN_EDGE_SHARED_FEATS + ATOM_GNN_EDGE_REL_SCALARS + DIHEDRAL_PARAM_SUMMARY_FEATS;
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize =
+    ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize =
+    ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize =
+    ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
 pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
 
 // Degree, component size
 // Keep this in sync with `GraphDataComponent::new`
 pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
-// Keep this in sync with `GraphDataComponent::new`
-pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 1;
+// Keep this in sync with `GraphDataComponent::new`.
+// [shared_atoms, rotatable, log_raw_barrier_sum, phase_cos_mean, phase_sin_mean,
+//  periodicity_mean_norm, divider_mean_norm]
+pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 2 + DIHEDRAL_PARAM_SUMMARY_FEATS;
 // For bond-stretching force-field params, used in the atom-based GNN.
 const KB_REF: f32 = 300.0;
 const ANGLE_K_REF: f32 = 80.0;
 const ANGLE_DIST_SCALE: f32 = 0.5;
 const DIHEDRAL_BARRIER_REF: f32 = 4.0;
+const DIHEDRAL_PERIODICITY_REF: f32 = 6.0;
+const DIHEDRAL_DIVIDER_REF: f32 = 6.0;
 const DEFAULT_BOND_ONE_HOT: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 // Used on multiplex layers whose edges connect non-bonded atom pairs (1-3, 1-4 outer pairs).
 const NO_BOND_ONE_HOT: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
@@ -199,6 +221,16 @@ impl GraphDataAtom {
             eprintln!("Missing char");
             return Err(io::Error::other("Missing characterization"));
         };
+        let rotatable_bond_keys: HashSet<_> = char
+            .rotatable_bonds
+            .iter()
+            .filter_map(|rot_bond| {
+                mol.common
+                    .bonds
+                    .get(rot_bond.bond_i)
+                    .map(|bond| bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn))
+            })
+            .collect();
 
         let mut is_h_bond_acceptor = vec![false; num_atoms];
         for &old_i in &char.h_bond_acceptor {
@@ -294,6 +326,9 @@ impl GraphDataAtom {
             ATOM_GNN_PER_EDGE_FEATS_LAYER_3
         );
 
+        let proper_dihedral_summary_by_central_bond =
+            proper_dihedral_summaries_by_central_bond(&atoms, &adj, ff_params);
+
         let n_atoms_sq = num_atoms.pow(2);
         let mut adj_layers = vec![0.; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
         let mut edge_feats =
@@ -321,6 +356,8 @@ impl GraphDataAtom {
 
             let bond_type_one_hot = bond_type_one_hot(bond.bond_type);
             bond_type_by_pair.insert(bond_pair_key(a0, a1), bond_type_one_hot);
+            let is_rotatable =
+                rotatable_bond_keys.contains(&bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn));
 
             let p1 = atoms[a0].posit;
             let p2 = atoms[a1].posit;
@@ -375,7 +412,17 @@ impl GraphDataAtom {
                 }
             };
 
-            let features = relation_edge_features(0, bond_type_one_hot, dr_norm, log_kb);
+            let features = relation_edge_features(
+                0,
+                bond_type_one_hot,
+                if is_rotatable { 1.0 } else { 0.0 },
+                dr_norm,
+                log_kb,
+                proper_dihedral_summary_by_central_bond
+                    .get(&bond_pair_key(a0, a1))
+                    .copied()
+                    .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
+            );
             let weight = bond_edge_weight(&atoms, a0, a1);
 
             append_relation_edge(
@@ -437,8 +484,14 @@ impl GraphDataAtom {
                         _ => (0.0, 0.0),
                     };
 
-                    let features =
-                        relation_edge_features(1, NO_BOND_ONE_HOT, angle_stats.0, angle_stats.1);
+                    let features = relation_edge_features(
+                        1,
+                        NO_BOND_ONE_HOT,
+                        0.0,
+                        angle_stats.0,
+                        angle_stats.1,
+                        [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS],
+                    );
                     let weight = bond_edge_weight(&atoms, a0, a1);
 
                     append_relation_edge(
@@ -494,7 +547,7 @@ impl GraphDataAtom {
                             continue;
                         };
 
-                        let proper_stats = match (
+                        let (proper_stats, proper_param_summary) = match (
                             atoms[i0].force_field_type.clone(),
                             atoms[i1].force_field_type.clone(),
                             atoms[i2].force_field_type.clone(),
@@ -502,16 +555,23 @@ impl GraphDataAtom {
                         ) {
                             (Some(ff0), Some(ff1), Some(ff2), Some(ff3)) => ff_params
                                 .get_dihedral(&(ff0, ff1, ff2, ff3), true, true)
-                                .map(|params| dihedral_edge_stats(phi, params))
-                                .unwrap_or((0.0, 0.0)),
-                            _ => (0.0, 0.0),
+                                .map(|params| {
+                                    (
+                                        dihedral_edge_stats(phi, params),
+                                        dihedral_param_summary(params),
+                                    )
+                                })
+                                .unwrap_or(((0.0, 0.0), [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS])),
+                            _ => ((0.0, 0.0), [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
                         };
 
                         let features = relation_edge_features(
                             2,
                             central_bond_type,
+                            0.0,
                             proper_stats.0,
                             proper_stats.1,
+                            proper_param_summary,
                         );
                         let weight = bond_edge_weight(&atoms, i0, i3);
 
@@ -600,6 +660,7 @@ impl GraphDataAtom {
                         };
 
                         let improper_stats = dihedral_edge_stats(phi, params);
+                        let improper_param_summary = dihedral_param_summary(params);
 
                         for &sat in &ordered_satellites {
                             let bond_type = bond_type_by_pair
@@ -609,8 +670,10 @@ impl GraphDataAtom {
                             let features = relation_edge_features(
                                 3,
                                 bond_type,
+                                0.0,
                                 improper_stats.0,
                                 improper_stats.1,
+                                improper_param_summary,
                             );
                             let weight = bond_edge_weight(&atoms, ctr, sat);
 
@@ -677,6 +740,10 @@ fn bond_pair_key(a: usize, b: usize) -> (usize, usize) {
     if a < b { (a, b) } else { (b, a) }
 }
 
+fn bond_sn_pair_key(a: u32, b: u32) -> (u32, u32) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
 fn bond_type_one_hot(bond_type: BondType) -> [f32; 4] {
     match bond_type {
         BondType::Single => [1.0, 0.0, 0.0, 0.0],
@@ -690,8 +757,10 @@ fn bond_type_one_hot(bond_type: BondType) -> [f32; 4] {
 fn relation_edge_features(
     layer: usize,
     bond_type_one_hot: [f32; 4],
+    rotatable: f32,
     scalar_0: f32,
     scalar_1: f32,
+    dihedral_summary: [f32; DIHEDRAL_PARAM_SUMMARY_FEATS],
 ) -> [f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0] {
     debug_assert!(layer < ATOM_GNN_EDGE_LAYERS);
     let mut layer_one_hot = [0.0f32; ATOM_GNN_EDGE_LAYERS];
@@ -705,8 +774,14 @@ fn relation_edge_features(
         bond_type_one_hot[1],
         bond_type_one_hot[2],
         bond_type_one_hot[3],
+        rotatable,
         scalar_0,
         scalar_1,
+        dihedral_summary[0],
+        dihedral_summary[1],
+        dihedral_summary[2],
+        dihedral_summary[3],
+        dihedral_summary[4],
     ]
 }
 
@@ -829,6 +904,120 @@ fn dihedral_edge_stats(phi: f32, params: &[DihedralParams]) -> (f32, f32) {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct DihedralParamAccumulator {
+    raw_barrier_sum: f32,
+    effective_weight_sum: f32,
+    phase_cos_sum: f32,
+    phase_sin_sum: f32,
+    periodicity_sum: f32,
+    divider_sum: f32,
+}
+
+impl DihedralParamAccumulator {
+    fn add_terms(&mut self, params: &[DihedralParams]) {
+        for param in params {
+            let divider = param.divider.max(1) as f32;
+            let raw_barrier = param.barrier_height.abs();
+            if raw_barrier <= 0.0 {
+                continue;
+            }
+
+            let weight = raw_barrier / divider;
+            self.raw_barrier_sum += raw_barrier;
+            self.effective_weight_sum += weight;
+            self.phase_cos_sum += weight * param.phase.cos();
+            self.phase_sin_sum += weight * param.phase.sin();
+            self.periodicity_sum += weight * param.periodicity as f32;
+            self.divider_sum += weight * divider;
+        }
+    }
+
+    fn summary(self) -> [f32; DIHEDRAL_PARAM_SUMMARY_FEATS] {
+        if self.raw_barrier_sum <= 1.0e-6 || self.effective_weight_sum <= 1.0e-6 {
+            [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]
+        } else {
+            [
+                (self.raw_barrier_sum / DIHEDRAL_BARRIER_REF).ln_1p(),
+                (self.phase_cos_sum / self.effective_weight_sum).clamp(-1.0, 1.0),
+                (self.phase_sin_sum / self.effective_weight_sum).clamp(-1.0, 1.0),
+                (self.periodicity_sum / self.effective_weight_sum) / DIHEDRAL_PERIODICITY_REF,
+                (self.divider_sum / self.effective_weight_sum) / DIHEDRAL_DIVIDER_REF,
+            ]
+        }
+    }
+}
+
+fn dihedral_param_summary(params: &[DihedralParams]) -> [f32; DIHEDRAL_PARAM_SUMMARY_FEATS] {
+    let mut acc = DihedralParamAccumulator::default();
+    acc.add_terms(params);
+    acc.summary()
+}
+
+fn proper_dihedral_summaries_by_central_bond(
+    atoms: &[Atom],
+    adj: &[Vec<usize>],
+    ff_params: &ForceFieldParams,
+) -> HashMap<(usize, usize), [f32; DIHEDRAL_PARAM_SUMMARY_FEATS]> {
+    let mut by_bond: HashMap<(usize, usize), DihedralParamAccumulator> = HashMap::new();
+
+    for (i1, neighbors) in adj.iter().enumerate() {
+        for &i2 in neighbors {
+            if i1 >= i2 {
+                continue;
+            }
+
+            for &i0 in adj[i1].iter().filter(|&&x| x != i2) {
+                for &i3 in adj[i2].iter().filter(|&&x| x != i1) {
+                    if i0 == i3 {
+                        continue;
+                    }
+
+                    let Some(params) = (match (
+                        atoms[i0].force_field_type.clone(),
+                        atoms[i1].force_field_type.clone(),
+                        atoms[i2].force_field_type.clone(),
+                        atoms[i3].force_field_type.clone(),
+                    ) {
+                        (Some(ff0), Some(ff1), Some(ff2), Some(ff3)) => {
+                            ff_params.get_dihedral(&(ff0, ff1, ff2, ff3), true, true)
+                        }
+                        _ => None,
+                    }) else {
+                        continue;
+                    };
+
+                    by_bond
+                        .entry(bond_pair_key(i1, i2))
+                        .or_default()
+                        .add_terms(params);
+                }
+            }
+        }
+    }
+
+    by_bond
+        .into_iter()
+        .map(|(bond, acc)| (bond, acc.summary()))
+        .collect()
+}
+
+fn component_edge_features(
+    shared: f32,
+    rotatable: f32,
+    proper_summary: [f32; DIHEDRAL_PARAM_SUMMARY_FEATS],
+) -> [f32; PER_EDGE_COMP_FEATS] {
+    [
+        shared,
+        rotatable,
+        proper_summary[0],
+        proper_summary[1],
+        proper_summary[2],
+        proper_summary[3],
+        proper_summary[4],
+    ]
+}
+
 /// Instead of atoms and bonds, this operates on components. (Fgs etc)
 ///
 /// Graph properties
@@ -839,7 +1028,9 @@ fn dihedral_edge_stats(phi: f32, params: &[DihedralParams]) -> (f32, f32) {
 /// Nodes have multiple types (heterogeneous): No in the formal hetero-GNN sense; this is a
 ///   homogeneous component graph, with component category encoded by `comp_type_indices`
 /// Edges have multiple types: No separate relation types; edges are binary component-adjacency
-///   links, with `edge_feats` marking whether the connection uses shared atoms
+///   links, with `edge_feats` marking whether the connection uses shared atoms, whether the
+///   underlying cross-component bond is rotatable, and aggregated proper-dihedral params when
+///   that bond is the middle bond of a torsion
 /// Multipartite (edges can connect only to nodes of a diff type): No
 /// Multiplex (Edges exist in layers; nodes are on all layers): No
 /// Heterophily (Nodes are preferentially connected to others which have diff labels): Not fixed
@@ -857,7 +1048,12 @@ pub(in crate::therapeutic) struct GraphDataComponent {
 /// Converts component nodes and inter-component connections into flat vectors for tensors.
 /// Used by both Training and Inference.
 impl GraphDataComponent {
-    pub fn new(mol_comps: &MolComponents, analysis_tools: &GnnAnalysisTools) -> io::Result<Self> {
+    pub fn new(
+        mol: &MoleculeSmall,
+        mol_comps: &MolComponents,
+        ff_params: &ForceFieldParams,
+        analysis_tools: &GnnAnalysisTools,
+    ) -> io::Result<Self> {
         let comps = &mol_comps.components;
         let conns = &mol_comps.connections;
 
@@ -894,6 +1090,12 @@ impl GraphDataComponent {
         let analysis_features =
             non_nn_ml::graph_analysis_features(analysis_tools, &base_labels, &adj);
 
+        let proper_dihedral_summary_by_bond = proper_dihedral_summaries_by_central_bond(
+            &mol.common.atoms,
+            &mol.common.adjacency_list,
+            ff_params,
+        );
+
         // Conn features (Weighted Adjacency)
         let n_atoms_sq = num_comps.pow(2);
         let mut adj_list = vec![0.; n_atoms_sq];
@@ -918,10 +1120,21 @@ impl GraphDataComponent {
             adj_list[a0 * num_comps + a1] = 1.0;
             adj_list[a1 * num_comps + a0] = 1.0;
 
-            // An edge feature for if the connection uses shared atoms or not.
+            // Edge features: [shared_atoms, rotatable, dihedral-param summary...].
             let shared = if conn.shared_atoms { 1. } else { 0. };
-            edge_feats[edge_feats_i(a0, a1, 0, num_comps)] = shared;
-            edge_feats[edge_feats_i(a1, a0, 0, num_comps)] = shared;
+            let rotatable = if conn.rotatable { 1. } else { 0. };
+            let atom_i = comps[a0].atoms.get(conn.atom_0).copied().unwrap_or(0);
+            let atom_j = comps[a1].atoms.get(conn.atom_1).copied().unwrap_or(0);
+            let proper_summary = proper_dihedral_summary_by_bond
+                .get(&bond_pair_key(atom_i, atom_j))
+                .copied()
+                .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]);
+            let features = component_edge_features(shared, rotatable, proper_summary);
+
+            for (k, &value) in features.iter().enumerate() {
+                edge_feats[edge_feats_i(a0, a1, k, num_comps)] = value;
+                edge_feats[edge_feats_i(a1, a0, k, num_comps)] = value;
+            }
         }
 
         // Symmetric normalization is applied in the model after gating; see GraphDataAtom.

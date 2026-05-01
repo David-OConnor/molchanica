@@ -53,6 +53,7 @@ use burn::{
     },
 };
 use dynamics::params::FfParamSet;
+use include_dir::{Dir, include_dir};
 use na_seq::Element::*;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -1487,13 +1488,15 @@ pub(in crate::therapeutic) fn samples_from_mols(
         }
 
         let graph_comp = match &mol.components {
-            Some(comps) => match GraphDataComponent::new(comps, comp_graph_analysis) {
-                Ok(g) => g,
-                Err(e) => {
-                    eprintln!("Error getting comp graph data: {e:?}");
-                    continue;
+            Some(comps) => {
+                match GraphDataComponent::new(mol, comps, ff_params, comp_graph_analysis) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        eprintln!("Error getting comp graph data: {e:?}");
+                        continue;
+                    }
                 }
-            },
+            }
             None => {
                 eprintln!("Missing components for mol; skipping.");
                 continue;

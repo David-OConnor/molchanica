@@ -194,6 +194,8 @@ pub struct Connection {
     /// separate components. For example, this will be true on the connection points
     /// between fused rings, and there will be two connections fusing the rings.
     pub shared_atoms: bool,
+    /// True if the underlying cross-component covalent bond is rotatable.
+    pub rotatable: bool,
 }
 
 /// The top-level data structure for representing a molecule as a set of connected components.
@@ -478,10 +480,15 @@ impl MolComponents {
                 *atom_ring_count.entry(a).or_insert(0) += 1;
             }
         }
+        let rotatable_bond_indices: HashSet<_> = char
+            .rotatable_bonds
+            .iter()
+            .map(|bond| bond.bond_i)
+            .collect();
 
         let mut conns: Vec<Connection> = Vec::new();
 
-        for bond in bonds {
+        for (bond_i, bond) in bonds.iter().enumerate() {
             let a = bond.atom_0;
             let b = bond.atom_1;
 
@@ -510,6 +517,7 @@ impl MolComponents {
                 comp_1: cb,
                 atom_1,
                 shared_atoms,
+                rotatable: rotatable_bond_indices.contains(&bond_i),
             });
         }
 

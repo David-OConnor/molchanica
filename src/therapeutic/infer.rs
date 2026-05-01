@@ -83,6 +83,19 @@ impl Infer {
             }
         }
         let config: ModelConfig = serde_json::from_value(config_json)?;
+        if config.edge_feat_dim != ATOM_GNN_PER_EDGE_FEATS_LAYER_0
+            || config.comp_edge_feat_dim != PER_EDGE_COMP_FEATS
+        {
+            return Err(io::Error::other(format!(
+                "Therapeutic model edge feature dims are incompatible with the current graph \
+                 layout. Model has atom/component edge dims {}/{} but code expects {}/{}. \
+                 Retrain or regenerate the model artifacts.",
+                config.edge_feat_dim,
+                config.comp_edge_feat_dim,
+                ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
+                PER_EDGE_COMP_FEATS,
+            )));
+        }
         let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;
         let atom_graph_analysis = config.atom_graph_analysis.clone();
         let comp_graph_analysis = config.comp_graph_analysis.clone();
@@ -168,7 +181,7 @@ impl Infer {
             return Err(io::Error::other("Missing components in ML inference"));
         };
 
-        let graph_comp = GraphDataComponent::new(comps, &self.comp_graph_analysis)?;
+        let graph_comp = GraphDataComponent::new(mol, comps, ff_params, &self.comp_graph_analysis)?;
         // GraphDataSpacial::new returns Ok(empty) when characterization is missing
         // or no pharmacophore sites are present, so this never errors.
         let graph_spacial = GraphDataSpacial::new(mol, &self.spacial_graph_analysis)?;
@@ -461,7 +474,7 @@ impl Infer {
                 .components
                 .as_ref()
                 .ok_or_else(|| io::Error::other("Missing components in ML inference"))?;
-            let gc = GraphDataComponent::new(comps, &self.comp_graph_analysis)?;
+            let gc = GraphDataComponent::new(mol, comps, ff_params, &self.comp_graph_analysis)?;
             let gs = GraphDataSpacial::new(mol, &self.spacial_graph_analysis)?;
 
             // Atom graph
