@@ -59,6 +59,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "train")]
 use crate::therapeutic::eval::eval;
+use crate::therapeutic::non_nn_ml::GnnAnalysisTools;
 use crate::{
     molecules::small::MoleculeSmall,
     screening::pharmacophore::Pharmacophore,
@@ -351,8 +352,8 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
 
 pub(in crate::therapeutic) fn atom_graph_analysis_from_param_cfg(
     param_cfg: &ParamConfig,
-) -> gnn::GnnAnalysisTools {
-    gnn::GnnAnalysisTools {
+) -> GnnAnalysisTools {
+    GnnAnalysisTools {
         weisfeiler_lehman: param_cfg.atom_graph_analysis_weisfeiler_lehman,
         graphlets: param_cfg.atom_graph_analysis_graphlets.clone(),
         path_based_methods: param_cfg.atom_graph_analysis_path_based_methods,
@@ -365,8 +366,8 @@ pub(in crate::therapeutic) fn atom_graph_analysis_from_param_cfg(
 
 pub(in crate::therapeutic) fn comp_graph_analysis_from_param_cfg(
     param_cfg: &ParamConfig,
-) -> gnn::GnnAnalysisTools {
-    gnn::GnnAnalysisTools {
+) -> GnnAnalysisTools {
+    GnnAnalysisTools {
         weisfeiler_lehman: param_cfg.comp_graph_analysis_weisfeiler_lehman,
         graphlets: param_cfg.comp_graph_analysis_graphlets.clone(),
         path_based_methods: param_cfg.comp_graph_analysis_path_based_methods,
@@ -379,8 +380,8 @@ pub(in crate::therapeutic) fn comp_graph_analysis_from_param_cfg(
 
 pub(in crate::therapeutic) fn spacial_graph_analysis_from_param_cfg(
     param_cfg: &ParamConfig,
-) -> gnn::GnnAnalysisTools {
-    gnn::GnnAnalysisTools {
+) -> GnnAnalysisTools {
+    GnnAnalysisTools {
         weisfeiler_lehman: param_cfg.spacial_graph_analysis_weisfeiler_lehman,
         graphlets: param_cfg.spacial_graph_analysis_graphlets.clone(),
         path_based_methods: param_cfg.spacial_graph_analysis_path_based_methods,
@@ -443,9 +444,9 @@ pub(in crate::therapeutic) struct ModelConfig {
     /// Graph-level AtomGraph analyses persisted with the model so inference can
     /// rebuild the same features that training used. Older model configs default
     /// to no extra analyses.
-    pub atom_graph_analysis: gnn::GnnAnalysisTools,
-    pub comp_graph_analysis: gnn::GnnAnalysisTools,
-    pub spacial_graph_analysis: gnn::GnnAnalysisTools,
+    pub atom_graph_analysis: GnnAnalysisTools,
+    pub comp_graph_analysis: GnnAnalysisTools,
+    pub spacial_graph_analysis: GnnAnalysisTools,
     // Which branches are active — saved so inference reloads correctly
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
@@ -733,7 +734,11 @@ impl<B: Backend> Model<B> {
         let d = nodes.dims()[2];
 
         let nodes_j = nodes.clone().unsqueeze_dim::<4>(1).unsqueeze_dim::<5>(1);
-        let message = activation::relu(nodes_j + edge_emb.clone());
+        // Note: no inner ReLU here. Several edge-feature scalars are *signed*
+        // (signed angle deviation on L1, torsion alignment ∈ [-1, 1] on L2/L3) and the
+        // FF training signal lives in those negative values too. The outer ReLU after
+        // `gnn_linear` keeps the GNN nonlinear without clipping signed inputs.
+        let message = nodes_j + edge_emb.clone();
         let weights = adj_weighted.clone().unsqueeze_dim(4);
 
         let agg = (message * weights)
@@ -1451,9 +1456,9 @@ pub(in crate::therapeutic) fn load_training_data(
 pub(in crate::therapeutic) fn samples_from_mols(
     data: &[(MoleculeSmall, f32)],
     ff_params: &ForceFieldParams,
-    atom_graph_analysis: &gnn::GnnAnalysisTools,
-    comp_graph_analysis: &gnn::GnnAnalysisTools,
-    spacial_graph_analysis: &gnn::GnnAnalysisTools,
+    atom_graph_analysis: &GnnAnalysisTools,
+    comp_graph_analysis: &GnnAnalysisTools,
+    spacial_graph_analysis: &GnnAnalysisTools,
 ) -> Vec<Sample> {
     let mut out = Vec::with_capacity(data.len());
     for (mol, target) in data {

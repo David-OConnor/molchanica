@@ -8,7 +8,7 @@
 //! graph clustering
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     io,
     iter::repeat_n,
@@ -39,20 +39,29 @@ use crate::{
 // is H-bond acceptor, is H-bond donor, in aromatic ring.
 // Keep this in sync with `GraphDataAtom::new`.
 pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
-// Bond type one-hot [single, double, triple, aromatic], plus sca
-// led/modified proxies for r_0, k_b
-// Keep this in sync with `GraphDataAtom::new`.
-// Layer 0: Covalent bonds
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize = 6;
-// Layer 1: Bond type one-hot [single, double, triple, aromatic],
-// plus [signed angle deviation, log_k_theta] for valence ("angle bending") terms.
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize = 6;
-// Layer 2: Bond type one-hot [single, double, triple, aromatic],
-// plus [torsion alignment, log_barrier_sum] for proper (linear) dihedrals.
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize = 6;
-// Layer 3: Bond type one-hot [single, double, triple, aromatic],
-// plus [torsion alignment, log_barrier_sum] for improper (hub + spoke) dihedrals.
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize = 6;
+// All multiplex layers share the same per-edge feature layout so the encoder MLP can
+// process them as one batch. Layout (10 floats):
+//   [0..4)  layer one-hot [L0, L1, L2, L3] — tells the encoder which relation this edge
+//           belongs to so it can specialize the meaning of the trailing scalars.
+//   [4..8)  bond-type one-hot [single, double, triple, aromatic] — the bond order most
+//           relevant to this edge (see per-layer notes below). Zero when no real bond
+//           is associated with the edge (L1/L2 outer pairs).
+//   [8..10) two layer-specific scalars (see below).
+//
+// Per-layer semantics (kept in sync with `GraphDataAtom::new`):
+// - Layer 0 (covalent bonds, edge between bonded atoms a0-a1):
+//     bond_type = (a0, a1) bond order; scalars = [dr_norm, log_kb].
+// - Layer 1 (valence angles a0-ctr-a1, edge between the OUTER 1-3 pair (a0, a1)):
+//     bond_type = zero (no direct bond); scalars = [signed_angle_deviation, log_k_theta].
+// - Layer 2 (proper dihedrals i0-i1-i2-i3, edge between the OUTER 1-4 pair (i0, i3)):
+//     bond_type = (i1, i2) central-bond order (rotatable-bond chemistry);
+//     scalars = [torsion_alignment, log_barrier_sum].
+// - Layer 3 (improper dihedrals at hub `ctr` with satellites, edge on each (ctr, sat)):
+//     bond_type = (ctr, sat) bond order; scalars = [torsion_alignment, log_barrier_sum].
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize = 10;
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize = 10;
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize = 10;
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize = 10;
 pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
 
 // Degree, component size
@@ -66,6 +75,8 @@ const ANGLE_K_REF: f32 = 80.0;
 const ANGLE_DIST_SCALE: f32 = 0.5;
 const DIHEDRAL_BARRIER_REF: f32 = 4.0;
 const DEFAULT_BOND_ONE_HOT: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+// Used on multiplex layers whose edges connect non-bonded atom pairs (1-3, 1-4 outer pairs).
+const NO_BOND_ONE_HOT: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
 // Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
 // Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
@@ -290,9 +301,15 @@ impl GraphDataAtom {
         let mut edge_feat_counts = vec![0usize; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
         let mut bond_type_by_pair = HashMap::with_capacity(bonds.len());
 
-        // Keep the explicit self-loop behavior from the old atom graph on layer 0.
-        for i in 0..num_atoms {
-            adj_layers[atom_adj_i(0, i, i, num_atoms)] = 1.0;
+        // Add explicit self-loops on every multiplex layer. Edge features at the self-loop
+        // stay zero (the layer one-hot is also zero, signaling "self / no relation"), so
+        // the encoder treats the self-message as a pure identity contribution. Without
+        // self-loops on L1-L3, ablating L0 would leave those layers without any
+        // self-message during message passing.
+        for layer in 0..ATOM_GNN_EDGE_LAYERS {
+            for i in 0..num_atoms {
+                adj_layers[atom_adj_i(layer, i, i, num_atoms)] = 1.0;
+            }
         }
 
         for bond in &bonds {
@@ -358,7 +375,7 @@ impl GraphDataAtom {
                 }
             };
 
-            let features = relation_edge_features(bond_type_one_hot, dr_norm, log_kb);
+            let features = relation_edge_features(0, bond_type_one_hot, dr_norm, log_kb);
             let weight = bond_edge_weight(&atoms, a0, a1);
 
             append_relation_edge(
@@ -385,6 +402,10 @@ impl GraphDataAtom {
             );
         }
 
+        // Layer 1: valence-angle layer. For each angle a0-ctr-a1 we deposit ONE edge on
+        // the OUTER 1-3 pair (a0, a1), not on the participating bonds. This makes layer 1
+        // genuinely add new connectivity (1-3 reach) instead of relabeling layer-0 edges,
+        // which is the actual point of multiplex.
         for (ctr, neighbors) in adj.iter().enumerate() {
             if neighbors.len() < 2 {
                 continue;
@@ -416,52 +437,56 @@ impl GraphDataAtom {
                         _ => (0.0, 0.0),
                     };
 
-                    for &(u, v) in &[(ctr, a0), (ctr, a1)] {
-                        let bond_type = bond_type_by_pair
-                            .get(&bond_pair_key(u, v))
-                            .copied()
-                            .unwrap_or(DEFAULT_BOND_ONE_HOT);
-                        let features =
-                            relation_edge_features(bond_type, angle_stats.0, angle_stats.1);
-                        let weight = bond_edge_weight(&atoms, u, v);
+                    let features =
+                        relation_edge_features(1, NO_BOND_ONE_HOT, angle_stats.0, angle_stats.1);
+                    let weight = bond_edge_weight(&atoms, a0, a1);
 
-                        append_relation_edge(
-                            &mut adj_layers,
-                            &mut edge_feats,
-                            &mut edge_feat_counts,
-                            1,
-                            u,
-                            v,
-                            num_atoms,
-                            weight,
-                            &features,
-                        );
-                        append_relation_edge(
-                            &mut adj_layers,
-                            &mut edge_feats,
-                            &mut edge_feat_counts,
-                            1,
-                            v,
-                            u,
-                            num_atoms,
-                            weight,
-                            &features,
-                        );
-                    }
+                    append_relation_edge(
+                        &mut adj_layers,
+                        &mut edge_feats,
+                        &mut edge_feat_counts,
+                        1,
+                        a0,
+                        a1,
+                        num_atoms,
+                        weight,
+                        &features,
+                    );
+                    append_relation_edge(
+                        &mut adj_layers,
+                        &mut edge_feats,
+                        &mut edge_feat_counts,
+                        1,
+                        a1,
+                        a0,
+                        num_atoms,
+                        weight,
+                        &features,
+                    );
                 }
             }
         }
 
-        let mut proper_seen = HashSet::<(usize, usize, usize, usize)>::new();
+        // Layer 2: proper-dihedral layer. For each torsion i0-i1-i2-i3 we deposit ONE edge
+        // on the OUTER 1-4 pair (i0, i3). The bond-type slot encodes the central (i1, i2)
+        // bond order, since rotational chemistry hinges on the central-bond order
+        // (single = freely rotating, double = restricted, etc.). Iterating with i1 < i2 over
+        // the central bond enumerates each proper torsion exactly once, so no seen-set is
+        // needed.
         for (i1, neighbors) in adj.iter().enumerate() {
             for &i2 in neighbors {
                 if i1 >= i2 {
                     continue;
                 }
 
+                let central_bond_type = bond_type_by_pair
+                    .get(&bond_pair_key(i1, i2))
+                    .copied()
+                    .unwrap_or(DEFAULT_BOND_ONE_HOT);
+
                 for &i0 in adj[i1].iter().filter(|&&x| x != i2) {
                     for &i3 in adj[i2].iter().filter(|&&x| x != i1) {
-                        if i0 == i3 || !proper_seen.insert((i0, i1, i2, i3)) {
+                        if i0 == i3 {
                             continue;
                         }
 
@@ -482,44 +507,46 @@ impl GraphDataAtom {
                             _ => (0.0, 0.0),
                         };
 
-                        for &(u, v) in &[(i0, i1), (i1, i2), (i2, i3)] {
-                            let bond_type = bond_type_by_pair
-                                .get(&bond_pair_key(u, v))
-                                .copied()
-                                .unwrap_or(DEFAULT_BOND_ONE_HOT);
-                            let features =
-                                relation_edge_features(bond_type, proper_stats.0, proper_stats.1);
-                            let weight = bond_edge_weight(&atoms, u, v);
+                        let features = relation_edge_features(
+                            2,
+                            central_bond_type,
+                            proper_stats.0,
+                            proper_stats.1,
+                        );
+                        let weight = bond_edge_weight(&atoms, i0, i3);
 
-                            append_relation_edge(
-                                &mut adj_layers,
-                                &mut edge_feats,
-                                &mut edge_feat_counts,
-                                2,
-                                u,
-                                v,
-                                num_atoms,
-                                weight,
-                                &features,
-                            );
-                            append_relation_edge(
-                                &mut adj_layers,
-                                &mut edge_feats,
-                                &mut edge_feat_counts,
-                                2,
-                                v,
-                                u,
-                                num_atoms,
-                                weight,
-                                &features,
-                            );
-                        }
+                        append_relation_edge(
+                            &mut adj_layers,
+                            &mut edge_feats,
+                            &mut edge_feat_counts,
+                            2,
+                            i0,
+                            i3,
+                            num_atoms,
+                            weight,
+                            &features,
+                        );
+                        append_relation_edge(
+                            &mut adj_layers,
+                            &mut edge_feats,
+                            &mut edge_feat_counts,
+                            2,
+                            i3,
+                            i0,
+                            num_atoms,
+                            weight,
+                            &features,
+                        );
                     }
                 }
             }
         }
 
-        let mut improper_seen = HashSet::<(usize, usize, usize, usize)>::new();
+        // Layer 3: improper-dihedral layer. Improper torsions have no natural "outer" pair
+        // (the geometry is hub-and-spoke), so edges stay on (ctr, sat) bonds — the bond
+        // chemistry is preserved by the bond_type slot. The triple-nested iteration over
+        // satellite indices a < b < d already enumerates each (ctr, sat0, sat1, sat2)
+        // configuration exactly once, so no seen-set is needed.
         for (ctr, satellites) in adj.iter().enumerate() {
             if satellites.len() < 3 {
                 continue;
@@ -531,10 +558,6 @@ impl GraphDataAtom {
                         let sat0 = satellites[a];
                         let sat1 = satellites[b];
                         let sat2 = satellites[d];
-
-                        if !improper_seen.insert((sat0, sat1, ctr, sat2)) {
-                            continue;
-                        }
 
                         let (Some(ff0), Some(ff1), Some(ff_ctr), Some(ff2)) = (
                             atoms[sat0].force_field_type.clone(),
@@ -584,6 +607,7 @@ impl GraphDataAtom {
                                 .copied()
                                 .unwrap_or(DEFAULT_BOND_ONE_HOT);
                             let features = relation_edge_features(
+                                3,
                                 bond_type,
                                 improper_stats.0,
                                 improper_stats.1,
@@ -618,7 +642,12 @@ impl GraphDataAtom {
             }
         }
 
-        finalize_relation_edge_features(&mut edge_feats, &edge_feat_counts, num_atoms);
+        finalize_relation_edges(
+            &mut adj_layers,
+            &mut edge_feats,
+            &edge_feat_counts,
+            num_atoms,
+        );
 
         // Note: symmetric normalization (D^-1/2 A D^-1/2) is applied in the model's
         // forward pass *after* the learned edge gate, so we ship the raw weighted
@@ -659,11 +688,19 @@ fn bond_type_one_hot(bond_type: BondType) -> [f32; 4] {
 }
 
 fn relation_edge_features(
+    layer: usize,
     bond_type_one_hot: [f32; 4],
     scalar_0: f32,
     scalar_1: f32,
 ) -> [f32; ATOM_GNN_PER_EDGE_FEATS_LAYER_0] {
+    debug_assert!(layer < ATOM_GNN_EDGE_LAYERS);
+    let mut layer_one_hot = [0.0f32; ATOM_GNN_EDGE_LAYERS];
+    layer_one_hot[layer] = 1.0;
     [
+        layer_one_hot[0],
+        layer_one_hot[1],
+        layer_one_hot[2],
+        layer_one_hot[3],
         bond_type_one_hot[0],
         bond_type_one_hot[1],
         bond_type_one_hot[2],
@@ -692,7 +729,15 @@ fn append_relation_edge(
     }
 }
 
-fn finalize_relation_edge_features(
+/// Normalize per-edge accumulations by their multiplicity. Multiple angles or dihedrals
+/// can share the same outer-pair edge (fused ring systems, multi-path 1-4 pairs), and
+/// `append_relation_edge` sums both the adjacency weight and the edge features on each
+/// hit. Averaging keeps the adjacency a stable Gaussian-distance kernel and keeps the
+/// edge-feature scalars bounded; otherwise a fused-ring 1-3 corner would fire 2x or 3x
+/// on layer 1 vs an isolated 1-3 corner. count == 0 (self-loops, padding) and count == 1
+/// (single contribution) are left untouched.
+fn finalize_relation_edges(
+    adj_layers: &mut [f32],
     edge_feats: &mut [f32],
     edge_feat_counts: &[usize],
     num_atoms: usize,
@@ -705,8 +750,10 @@ fn finalize_relation_edge_features(
                     continue;
                 }
 
+                let inv = 1.0 / count as f32;
+                adj_layers[atom_adj_i(layer, i, j, num_atoms)] *= inv;
                 for k in 0..ATOM_GNN_PER_EDGE_FEATS_LAYER_0 {
-                    edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] /= count as f32;
+                    edge_feats[atom_edge_feats_i(layer, i, j, k, num_atoms)] *= inv;
                 }
             }
         }
