@@ -13,7 +13,7 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     mol_characterization::RingType,
-    mol_components::{Component, MolComponents, build_adjacency_list_conn},
+    mol_components::{Component, Connection, MolComponents, build_adjacency_list_conn},
     molecules::small::MoleculeSmall,
     therapeutic::{
         gnn,
@@ -25,19 +25,19 @@ use crate::{
 
 // Degree, number of atoms in the component, distance from mol center.
 // Component type is probably the most important node feature, but it's not included here,
-// as it's not a scalar.\
+// as it's not a scalar.
 // Keep this in sync with `GraphDataComponent::new`
-pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 3;
+pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 3;
 
 // Keep this in sync with `GraphDataComponent::new`.
-pub(in crate::therapeutic) const COMP_EDGE_GEOM_FEATS: usize = 2;
+pub(in crate::therapeutic) const NUM_COMP_EDGE_GEOM_FEATS: usize = 2;
 
-pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize =
-    2 + COMP_EDGE_GEOM_FEATS + DIHEDRAL_PARAM_SUMMARY_FEATS;
+pub(in crate::therapeutic) const NUM_COMP_EDGE_FEATS: usize =
+    2 + NUM_COMP_EDGE_GEOM_FEATS + DIHEDRAL_PARAM_SUMMARY_FEATS;
 
-// This is the number of componenent types. One for each element, common ring sizes,
+// This is the number of component types. One for each element, common ring sizes,
 // one for each functional group, etc.
-pub(in crate::therapeutic) const COMPONENT_VOCAB_SIZE: usize = 23;
+pub(in crate::therapeutic) const COMP_VOCAB_SIZE: usize = 23;
 
 /// Very similar to `MoleculeCommon::centroid`.
 fn comp_centroid(comp: &Component, atom_posits: &[Vec3]) -> Vec3 {
@@ -57,14 +57,14 @@ fn comp_centroid(comp: &Component, atom_posits: &[Vec3]) -> Vec3 {
 ///
 /// todo: 0ing these out appears to have no effect on the result. They are therefor currently not working
 /// todo: properly.
-fn setup_scalars(
+fn setup_node_scalars(
     comps: &[Component],
     num_comps: usize,
     mol: &MoleculeSmall,
     mol_centroid: Vec3,
     adj: &[Vec<usize>],
 ) -> Vec<f32> {
-    let mut res = Vec::with_capacity(num_comps * PER_COMP_SCALARS);
+    let mut res = Vec::with_capacity(num_comps * NUM_COMP_NODE_SCALARS);
 
     for (i, comp) in comps.iter().enumerate() {
         // Degree is the number of edges incident to a node.
@@ -75,11 +75,9 @@ fn setup_scalars(
         // Number of atoms owned by this component, normalized. This divider
         // assumes no Hydrogens.
 
-        // scalars.push(comp.atoms.len() as f32 / 4.0);
+        res.push(comp.atoms.len() as f32 / 4.0);
 
         let dist = (mol_centroid - comp_centroid(comp, &mol.common.atom_posits)).magnitude();
-        // let dist =
-        //     (mol_centroid - comp_centroid(comp, &mol.common.atom_posits)).magnitude_squared();
 
         // todo note: setting dist and/or degree to 0 seems to have no notable effect on results.
         // todo: Yikes. Not a good sign for this.
@@ -88,8 +86,116 @@ fn setup_scalars(
     }
 
     // todo?
-    vec![0.; num_comps * PER_COMP_SCALARS]
-    // res
+    // vec![0.; num_comps * PER_COMP_SCALARS]
+    res
+}
+
+fn setup_edge_feats(
+    comps: &[Component],
+    conns: &[Connection],
+    num_comps: usize,
+    mol: &MoleculeSmall,
+    ff_params: &ForceFieldParams,
+) -> (Vec<f32>, Vec<f32>) {
+    let n_comps_sq = num_comps.pow(2);
+    let mut adj_list = vec![0.; n_comps_sq];
+    let mut edge_feats = vec![0.; n_comps_sq * NUM_COMP_EDGE_FEATS];
+
+    let proper_dihedral_summary_by_bond = gnn::proper_dihedral_summaries_by_central_bond(
+        &mol.common.atoms,
+        &mol.common.adjacency_list,
+        ff_params,
+    );
+
+    let proper_dihedral_stats_by_bond = gnn::proper_dihedral_stats_by_central_bond(
+        &mol.common.atoms,
+        &mol.common.adjacency_list,
+        ff_params,
+    );
+
+    let mut pair_to_conns: HashMap<(usize, usize), Vec<_>> = HashMap::new();
+    for conn in conns {
+        if conn.comp_0 >= num_comps || conn.comp_1 >= num_comps || conn.comp_0 == conn.comp_1 {
+            continue;
+        }
+        pair_to_conns
+            .entry(component_pair_key(conn.comp_0, conn.comp_1))
+            .or_default()
+            .push(conn);
+    }
+
+    let edge_feats_i =
+        |i: usize, j: usize, k: usize, n: usize| -> usize { (i * n + j) * NUM_COMP_EDGE_FEATS + k };
+
+    // Self loops
+    for i in 0..num_comps {
+        adj_list[i * num_comps + i] = 1.0;
+    }
+
+    for ((a0, a1), pair_conns) in pair_to_conns {
+        let pair_conn_count = pair_conns.len();
+        let shared = if pair_conns.iter().any(|conn| conn.shared_atoms) {
+            1.0
+        } else {
+            0.0
+        };
+
+        let rotatable =
+            pair_conns.iter().filter(|conn| conn.rotatable).count() as f32 / pair_conn_count as f32;
+
+        let mut torsion_stats = [0.; 2];
+        let mut proper_summary = [0.; DIHEDRAL_PARAM_SUMMARY_FEATS];
+
+        for conn in &pair_conns {
+            let (local_atom_0, local_atom_1) = if conn.comp_0 == a0 {
+                (conn.atom_0, conn.atom_1)
+            } else {
+                (conn.atom_1, conn.atom_0)
+            };
+            let Some(&atom_i) = comps[a0].atoms.get(local_atom_0) else {
+                continue;
+            };
+            let Some(&atom_j) = comps[a1].atoms.get(local_atom_1) else {
+                continue;
+            };
+            let bond_key = gnn::bond_pair_key(atom_i, atom_j);
+            let bond_torsion_stats = proper_dihedral_stats_by_bond
+                .get(&bond_key)
+                .copied()
+                .unwrap_or([0.0; 2]);
+            let bond_proper_summary = proper_dihedral_summary_by_bond
+                .get(&bond_key)
+                .copied()
+                .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]);
+
+            torsion_stats[0] += bond_torsion_stats[0];
+            torsion_stats[1] += bond_torsion_stats[1];
+
+            for (dst, src) in proper_summary.iter_mut().zip(bond_proper_summary) {
+                *dst += src;
+            }
+        }
+
+        let inv_conn_count = 1.0 / pair_conn_count as f32;
+        torsion_stats[0] *= inv_conn_count;
+        torsion_stats[1] *= inv_conn_count;
+
+        for value in &mut proper_summary {
+            *value *= inv_conn_count;
+        }
+
+        adj_list[a0 * num_comps + a1] = 1.0;
+        adj_list[a1 * num_comps + a0] = 1.0;
+
+        let features = component_edge_features(shared, rotatable, torsion_stats, proper_summary);
+
+        for (k, &value) in features.iter().enumerate() {
+            edge_feats[edge_feats_i(a0, a1, k, num_comps)] = value;
+            edge_feats[edge_feats_i(a1, a0, k, num_comps)] = value;
+        }
+    }
+
+    (edge_feats, adj_list)
 }
 
 /// Instead of atoms and bonds, this operates on components. (Functioal groups, rings, etc)
@@ -149,16 +255,15 @@ impl GraphDataComponent {
         // todo: Even scarier than scalars not having much effect: We're not getting much effect from
         // todo: comp type either???
         // Node features (Indices and Scalars)
-        // todo temp!
         let comp_type_indices = comps
             .iter()
             .map(|c| vocab_lookup_component(c, mol))
             .collect();
-        // let comp_type_indices = comps.iter().map(|c| 0).collect();
 
-        let scalars = setup_scalars(comps, num_comps, mol, mol_centroid, &adj);
+        let scalars = setup_node_scalars(comps, num_comps, mol, mol_centroid, &adj);
 
         let mut base_labels = Vec::with_capacity(num_comps);
+
         for (i, comp) in comps.iter().enumerate() {
             let mut hasher = DefaultHasher::new();
             vocab_lookup_component(comp, mol).hash(&mut hasher);
@@ -171,106 +276,8 @@ impl GraphDataComponent {
         let analysis_features =
             non_nn_ml::graph_analysis_features(analysis_tools, &base_labels, &adj);
 
-        let proper_dihedral_summary_by_bond = gnn::proper_dihedral_summaries_by_central_bond(
-            &mol.common.atoms,
-            &mol.common.adjacency_list,
-            ff_params,
-        );
-
-        let proper_dihedral_stats_by_bond = gnn::proper_dihedral_stats_by_central_bond(
-            &mol.common.atoms,
-            &mol.common.adjacency_list,
-            ff_params,
-        );
-
-        let mut pair_to_conns: HashMap<(usize, usize), Vec<_>> = HashMap::new();
-        for conn in conns {
-            if conn.comp_0 >= num_comps || conn.comp_1 >= num_comps || conn.comp_0 == conn.comp_1 {
-                continue;
-            }
-            pair_to_conns
-                .entry(component_pair_key(conn.comp_0, conn.comp_1))
-                .or_default()
-                .push(conn);
-        }
-
         // Connection features (Weighted Adjacency)
-        let (edge_feats, adj_list) = {
-            let n_comps_sq = num_comps.pow(2);
-            let mut adj_list = vec![0.; n_comps_sq];
-            let mut edge_feats = vec![0.; n_comps_sq * PER_EDGE_COMP_FEATS];
-
-            let edge_feats_i = |i: usize, j: usize, k: usize, n: usize| -> usize {
-                (i * n + j) * PER_EDGE_COMP_FEATS + k
-            };
-
-            // Self loops
-            for i in 0..num_comps {
-                adj_list[i * num_comps + i] = 1.0;
-            }
-
-            for ((a0, a1), pair_conns) in pair_to_conns {
-                let pair_conn_count = pair_conns.len();
-                let shared = if pair_conns.iter().any(|conn| conn.shared_atoms) {
-                    1.0
-                } else {
-                    0.0
-                };
-                let rotatable = pair_conns.iter().filter(|conn| conn.rotatable).count() as f32
-                    / pair_conn_count as f32;
-                let mut torsion_stats = [0.0; 2];
-                let mut proper_summary = [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS];
-
-                for conn in &pair_conns {
-                    let (local_atom_0, local_atom_1) = if conn.comp_0 == a0 {
-                        (conn.atom_0, conn.atom_1)
-                    } else {
-                        (conn.atom_1, conn.atom_0)
-                    };
-                    let Some(&atom_i) = comps[a0].atoms.get(local_atom_0) else {
-                        continue;
-                    };
-                    let Some(&atom_j) = comps[a1].atoms.get(local_atom_1) else {
-                        continue;
-                    };
-                    let bond_key = gnn::bond_pair_key(atom_i, atom_j);
-                    let bond_torsion_stats = proper_dihedral_stats_by_bond
-                        .get(&bond_key)
-                        .copied()
-                        .unwrap_or([0.0; 2]);
-                    let bond_proper_summary = proper_dihedral_summary_by_bond
-                        .get(&bond_key)
-                        .copied()
-                        .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]);
-
-                    torsion_stats[0] += bond_torsion_stats[0];
-                    torsion_stats[1] += bond_torsion_stats[1];
-                    for (dst, src) in proper_summary.iter_mut().zip(bond_proper_summary) {
-                        *dst += src;
-                    }
-                }
-
-                let inv_conn_count = 1.0 / pair_conn_count as f32;
-                torsion_stats[0] *= inv_conn_count;
-                torsion_stats[1] *= inv_conn_count;
-                for value in &mut proper_summary {
-                    *value *= inv_conn_count;
-                }
-
-                adj_list[a0 * num_comps + a1] = 1.0;
-                adj_list[a1 * num_comps + a0] = 1.0;
-
-                let features =
-                    component_edge_features(shared, rotatable, torsion_stats, proper_summary);
-
-                for (k, &value) in features.iter().enumerate() {
-                    edge_feats[edge_feats_i(a0, a1, k, num_comps)] = value;
-                    edge_feats[edge_feats_i(a1, a0, k, num_comps)] = value;
-                }
-            }
-
-            (edge_feats, adj_list)
-        };
+        let (edge_feats, adj_list) = setup_edge_feats(comps, conns, num_comps, mol, ff_params);
 
         // Symmetric normalization is applied in the model after gating; see GraphDataAtom.
 
@@ -290,7 +297,7 @@ fn component_edge_features(
     rotatable: f32,
     torsion_stats: [f32; 2],
     proper_summary: [f32; DIHEDRAL_PARAM_SUMMARY_FEATS],
-) -> [f32; PER_EDGE_COMP_FEATS] {
+) -> [f32; NUM_COMP_EDGE_FEATS] {
     [
         shared,
         rotatable,
@@ -305,7 +312,7 @@ fn component_edge_features(
 
 /// Maps component type to integer indices for the embedding layer.
 /// 0 is reserved for padding in the Batcher, so we start at 1.
-fn vocab_lookup_component(comp: &crate::mol_components::Component, mol: &MoleculeSmall) -> i32 {
+fn vocab_lookup_component(comp: &Component, mol: &MoleculeSmall) -> i32 {
     use crate::mol_components::ComponentType::*;
 
     let token = match &comp.comp_type {
@@ -332,14 +339,12 @@ fn vocab_lookup_component(comp: &crate::mol_components::Component, mol: &Molecul
         Sulfonamide => 21,
         Sulfonimide => 22,
     };
-    debug_assert!((token as usize) < COMPONENT_VOCAB_SIZE);
+
+    debug_assert!((token as usize) < COMP_VOCAB_SIZE);
     token
 }
 
-fn component_chain_is_branched(
-    comp: &crate::mol_components::Component,
-    mol: &MoleculeSmall,
-) -> bool {
+fn component_chain_is_branched(comp: &Component, mol: &MoleculeSmall) -> bool {
     let mut in_component = vec![false; mol.common.atoms.len()];
 
     for &atom_i in &comp.atoms {
@@ -369,7 +374,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        mol_components::{Component, ComponentType, Connection},
+        mol_components::{Component, ComponentType, Connection, RingComponent},
         molecules::{Atom, Bond},
     };
 
@@ -421,14 +426,14 @@ mod tests {
         );
 
         let aromatic_ring = Component {
-            comp_type: ComponentType::Ring(crate::mol_components::RingComponent {
+            comp_type: ComponentType::Ring(RingComponent {
                 num_atoms: 6,
                 ring_type: RingType::Aromatic,
             }),
             atoms: vec![0, 1, 2, 3, 4, 5],
         };
         let saturated_ring = Component {
-            comp_type: ComponentType::Ring(crate::mol_components::RingComponent {
+            comp_type: ComponentType::Ring(RingComponent {
                 num_atoms: 6,
                 ring_type: RingType::Saturated,
             }),
@@ -524,7 +529,7 @@ mod tests {
         assert_eq!(graph.adj[1], 1.0);
         assert_eq!(graph.adj[2], 1.0);
 
-        let rotatable_feat_i = ((0 * 2 + 1) * PER_EDGE_COMP_FEATS) + 1;
+        let rotatable_feat_i = ((0 * 2 + 1) * NUM_COMP_EDGE_FEATS) + 1;
         assert_eq!(graph.edge_feats[rotatable_feat_i], 0.5);
     }
 }

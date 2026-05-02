@@ -16,12 +16,11 @@ use bio_files::{
 use na_seq::Element::*;
 
 use crate::{
-    molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
+    molecules::{Atom, Bond, build_adjacency_list, small::MoleculeSmall},
     therapeutic::{
         gnn,
         gnn::{
-            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, DIHEDRAL_BARRIER_REF,
-            DIHEDRAL_PARAM_SUMMARY_FEATS, DihedralParamAccumulator, PER_ATOM_SCALARS,
+            DIHEDRAL_BARRIER_REF, DIHEDRAL_PARAM_SUMMARY_FEATS, DihedralParamAccumulator,
             vocab_lookup_element,
         },
         non_nn_ml,
@@ -30,11 +29,24 @@ use crate::{
     },
 };
 
+// Degree (Number of edges incident to a node), partial charge, geometry (radius from molecular centroid, mean neighbor distance),
+// is H-bond acceptor, is H-bond donor, in aromatic ring.
+// Keep this in sync with `GraphDataAtom::new`.
+pub(in crate::therapeutic) const NUM_ATOM_NODE_SCALARS: usize = 7;
+const NUM_ATOM_EDGE_REL_SCALARS: usize = 2;
+const NUM_ATOM_EDGE_SHARED_FEATS: usize = 9;
+
+pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize =
+    NUM_ATOM_EDGE_SHARED_FEATS + NUM_ATOM_EDGE_REL_SCALARS + DIHEDRAL_PARAM_SUMMARY_FEATS;
+
+pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
+
 const ATOM_GNN_PER_EDGE_FEATS_LAYER_1: usize = ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
 const ATOM_GNN_PER_EDGE_FEATS_LAYER_2: usize = ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
 const ATOM_GNN_PER_EDGE_FEATS_LAYER_3: usize = ATOM_GNN_PER_EDGE_FEATS_LAYER_0;
 
-// For bond-stretching force-field params.
+// For bond-stretching force-field params. For example, some of these are divisors for
+// coarse normalization.
 const KB_REF: f32 = 300.0;
 const ANGLE_K_REF: f32 = 80.0;
 const ANGLE_DIST_SCALE: f32 = 0.5;
@@ -184,7 +196,7 @@ fn vocab_lookup_ff(ff: Option<&String>) -> i32 {
 
 /// Set up scalars for the atom-bond GNN. These are per-node, floating point features. They
 /// do not include integer (e.g. atom element) per-node features.
-fn setup_scalars(
+fn setup_node_scalars(
     atoms: &[Atom],
     num_atoms: usize,
     adj: &[Vec<usize>],
@@ -192,7 +204,7 @@ fn setup_scalars(
     is_h_bond_acceptor: &[bool],
     is_aromatic_ring: &[bool],
 ) -> Vec<f32> {
-    let mut res = Vec::with_capacity(num_atoms * PER_ATOM_SCALARS);
+    let mut res = Vec::with_capacity(num_atoms * NUM_ATOM_NODE_SCALARS);
 
     let geom = atom_geom_scalars(&atoms, &adj);
 
@@ -234,6 +246,402 @@ fn setup_scalars(
     }
 
     res
+}
+
+fn setup_edge_feats(
+    atoms: &[Atom],
+    bonds: &[Bond],
+    num_atoms: usize,
+    adj: &[Vec<usize>],
+    ff_params: &ForceFieldParams,
+    rotatable_bond_keys: &HashSet<(u32, u32)>,
+) -> (Vec<f32>, Vec<f32>) {
+    let proper_dihedral_summary_by_central_bond =
+        gnn::proper_dihedral_summaries_by_central_bond(&atoms, &adj, ff_params);
+
+    let n_atoms_sq = num_atoms.pow(2);
+    let mut adj_layers = vec![0.; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
+    let mut edge_feats =
+        vec![0.; ATOM_GNN_EDGE_LAYERS * n_atoms_sq * ATOM_GNN_PER_EDGE_FEATS_LAYER_0];
+    let mut edge_feat_counts = vec![0usize; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
+    let mut bond_type_by_pair = HashMap::with_capacity(bonds.len());
+
+    // Add explicit self-loops on every multiplex layer. Edge features at the self-loop
+    // stay zero (the layer one-hot is also zero, signaling "self / no relation"), so
+    // the encoder treats the self-message as a pure identity contribution. Without
+    // self-loops on L1-L3, ablating L0 would leave those layers without any
+    // self-message during message passing.
+    for layer in 0..ATOM_GNN_EDGE_LAYERS {
+        for i in 0..num_atoms {
+            adj_layers[atom_adj_i(layer, i, i, num_atoms)] = 1.0;
+        }
+    }
+
+    for bond in bonds {
+        let a0 = bond.atom_0;
+        let a1 = bond.atom_1;
+        if a0 >= num_atoms || a1 >= num_atoms {
+            continue;
+        }
+
+        let bond_type_one_hot = bond_type_one_hot(bond.bond_type);
+        bond_type_by_pair.insert(gnn::bond_pair_key(a0, a1), bond_type_one_hot);
+        let is_rotatable =
+            rotatable_bond_keys.contains(&bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn));
+
+        let p1 = atoms[a0].posit;
+        let p2 = atoms[a1].posit;
+        let dist_sq = (p1 - p2).magnitude_squared() as f32;
+        let dist = dist_sq.sqrt();
+
+        let ff0 = atoms[a0].force_field_type.clone().unwrap();
+        let ff1 = atoms[a1].force_field_type.clone().unwrap();
+        let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
+
+        let (dr_norm, log_kb) = if let Some(v) = bond_stretching {
+            let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
+            let log_kb = (v.k_b / KB_REF).ln_1p();
+            (dr, log_kb)
+        } else {
+            // Try a small set of coarse fallbacks; if none hit, leave the edge
+            // features as zero rather than panicking.
+            let candidates: &[(&str, &str)] = if (&ff0 == "cc" && ff1.starts_with("n"))
+                || (&ff1 == "cc" && ff0.starts_with("n"))
+            {
+                &[("cc", "n4"), ("cc", "n")]
+            } else if (&ff0 == "cg" && ff1.starts_with("c"))
+                || (&ff1 == "cg" && ff0.starts_with("c"))
+            {
+                &[("cg", "cg"), ("cc", "cc")]
+            } else if atoms[a0].element == Carbon && atoms[a1].element == Carbon {
+                &[("cc", "cc")]
+            } else if atoms[a0].element == Nitrogen && atoms[a1].element == Nitrogen {
+                &[("n", "n")]
+            } else {
+                &[]
+            };
+
+            let mut found = None;
+            for (a, b) in candidates {
+                if let Some(v) = ff_params.get_bond(&((*a).to_owned(), (*b).to_owned()), false) {
+                    found = Some(v);
+                    break;
+                }
+            }
+
+            if let Some(v) = found {
+                let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
+                let log_kb = (v.k_b / KB_REF).ln_1p();
+                (dr, log_kb)
+            } else {
+                eprintln!(
+                    "Missing bond stretching and no fallback for bond {bond:?}. \nAtoms {ff0} | {ff1}. Using zero bond-stretch edge features.",
+                );
+                (0.0, 0.0)
+            }
+        };
+
+        let features = relation_edge_features(
+            0,
+            bond_type_one_hot,
+            if is_rotatable { 1.0 } else { 0.0 },
+            dr_norm,
+            log_kb,
+            proper_dihedral_summary_by_central_bond
+                .get(&gnn::bond_pair_key(a0, a1))
+                .copied()
+                .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
+        );
+        let weight = bond_edge_weight(&atoms, a0, a1);
+
+        append_relation_edge(
+            &mut adj_layers,
+            &mut edge_feats,
+            &mut edge_feat_counts,
+            0,
+            a0,
+            a1,
+            num_atoms,
+            weight,
+            &features,
+        );
+        append_relation_edge(
+            &mut adj_layers,
+            &mut edge_feats,
+            &mut edge_feat_counts,
+            0,
+            a1,
+            a0,
+            num_atoms,
+            weight,
+            &features,
+        );
+    }
+
+    // Layer 1: valence-angle layer. For each angle a0-ctr-a1 we deposit ONE edge on
+    // the OUTER 1-3 pair (a0, a1), not on the participating bonds. This makes layer 1
+    // genuinely add new connectivity (1-3 reach) instead of relabeling layer-0 edges,
+    // which is the actual point of multiplex.
+    for (ctr, neighbors) in adj.iter().enumerate() {
+        if neighbors.len() < 2 {
+            continue;
+        }
+
+        for left in 0..neighbors.len() - 1 {
+            for right in left + 1..neighbors.len() {
+                let a0 = neighbors[left];
+                let a1 = neighbors[right];
+
+                let Some(theta) = valence_angle(&atoms, a0, ctr, a1) else {
+                    continue;
+                };
+
+                let angle_stats = match (
+                    atoms[a0].force_field_type.clone(),
+                    atoms[ctr].force_field_type.clone(),
+                    atoms[a1].force_field_type.clone(),
+                ) {
+                    (Some(ff0), Some(ff_ctr), Some(ff1)) => ff_params
+                        .get_valence_angle(&(ff0, ff_ctr, ff1), true)
+                        .map(|params| {
+                            (
+                                ((theta - params.theta_0) / ANGLE_DIST_SCALE).clamp(-5.0, 5.0),
+                                (params.k / ANGLE_K_REF).ln_1p(),
+                            )
+                        })
+                        .unwrap_or((0.0, 0.0)),
+                    _ => (0.0, 0.0),
+                };
+
+                let features = relation_edge_features(
+                    1,
+                    NO_BOND_ONE_HOT,
+                    0.0,
+                    angle_stats.0,
+                    angle_stats.1,
+                    [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS],
+                );
+                let weight = bond_edge_weight(&atoms, a0, a1);
+
+                append_relation_edge(
+                    &mut adj_layers,
+                    &mut edge_feats,
+                    &mut edge_feat_counts,
+                    1,
+                    a0,
+                    a1,
+                    num_atoms,
+                    weight,
+                    &features,
+                );
+                append_relation_edge(
+                    &mut adj_layers,
+                    &mut edge_feats,
+                    &mut edge_feat_counts,
+                    1,
+                    a1,
+                    a0,
+                    num_atoms,
+                    weight,
+                    &features,
+                );
+            }
+        }
+    }
+
+    // Layer 2: proper-dihedral layer. For each torsion i0-i1-i2-i3 we deposit ONE edge
+    // on the OUTER 1-4 pair (i0, i3). The bond-type slot encodes the central (i1, i2)
+    // bond order, since rotational chemistry hinges on the central-bond order
+    // (single = freely rotating, double = restricted, etc.). Iterating with i1 < i2 over
+    // the central bond enumerates each proper torsion exactly once, so no seen-set is
+    // needed.
+    for (i1, neighbors) in adj.iter().enumerate() {
+        for &i2 in neighbors {
+            if i1 >= i2 {
+                continue;
+            }
+
+            let central_bond_type = bond_type_by_pair
+                .get(&gnn::bond_pair_key(i1, i2))
+                .copied()
+                .unwrap_or(DEFAULT_BOND_ONE_HOT);
+
+            for &i0 in adj[i1].iter().filter(|&&x| x != i2) {
+                for &i3 in adj[i2].iter().filter(|&&x| x != i1) {
+                    if i0 == i3 {
+                        continue;
+                    }
+
+                    let Some(phi) = gnn::dihedral_angle(&atoms, i0, i1, i2, i3) else {
+                        continue;
+                    };
+
+                    let (proper_stats, proper_param_summary) = match (
+                        atoms[i0].force_field_type.clone(),
+                        atoms[i1].force_field_type.clone(),
+                        atoms[i2].force_field_type.clone(),
+                        atoms[i3].force_field_type.clone(),
+                    ) {
+                        (Some(ff0), Some(ff1), Some(ff2), Some(ff3)) => ff_params
+                            .get_dihedral(&(ff0, ff1, ff2, ff3), true, true)
+                            .map(|params| {
+                                (
+                                    dihedral_edge_stats(phi, params),
+                                    dihedral_param_summary(params),
+                                )
+                            })
+                            .unwrap_or(((0.0, 0.0), [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS])),
+                        _ => ((0.0, 0.0), [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
+                    };
+
+                    let features = relation_edge_features(
+                        2,
+                        central_bond_type,
+                        0.0,
+                        proper_stats.0,
+                        proper_stats.1,
+                        proper_param_summary,
+                    );
+                    let weight = bond_edge_weight(&atoms, i0, i3);
+
+                    append_relation_edge(
+                        &mut adj_layers,
+                        &mut edge_feats,
+                        &mut edge_feat_counts,
+                        2,
+                        i0,
+                        i3,
+                        num_atoms,
+                        weight,
+                        &features,
+                    );
+                    append_relation_edge(
+                        &mut adj_layers,
+                        &mut edge_feats,
+                        &mut edge_feat_counts,
+                        2,
+                        i3,
+                        i0,
+                        num_atoms,
+                        weight,
+                        &features,
+                    );
+                }
+            }
+        }
+    }
+
+    // Layer 3: improper-dihedral layer. Improper torsions have no natural "outer" pair
+    // (the geometry is hub-and-spoke), so edges stay on (ctr, sat) bonds — the bond
+    // chemistry is preserved by the bond_type slot. The triple-nested iteration over
+    // satellite indices a < b < d already enumerates each (ctr, sat0, sat1, sat2)
+    // configuration exactly once, so no seen-set is needed.
+    for (ctr, satellites) in adj.iter().enumerate() {
+        if satellites.len() < 3 {
+            continue;
+        }
+
+        for a in 0..satellites.len() - 2 {
+            for b in a + 1..satellites.len() - 1 {
+                for d in b + 1..satellites.len() {
+                    let sat0 = satellites[a];
+                    let sat1 = satellites[b];
+                    let sat2 = satellites[d];
+
+                    let (Some(ff0), Some(ff1), Some(ff_ctr), Some(ff2)) = (
+                        atoms[sat0].force_field_type.clone(),
+                        atoms[sat1].force_field_type.clone(),
+                        atoms[ctr].force_field_type.clone(),
+                        atoms[sat2].force_field_type.clone(),
+                    ) else {
+                        continue;
+                    };
+
+                    let mut lookup_satellites = [(ff0, sat0), (ff1, sat1), (ff2, sat2)];
+                    lookup_satellites
+                        .sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+
+                    let key = (
+                        lookup_satellites[0].0.clone(),
+                        lookup_satellites[1].0.clone(),
+                        ff_ctr,
+                        lookup_satellites[2].0.clone(),
+                    );
+
+                    let Some(params) = ff_params.get_dihedral(&key, false, true) else {
+                        continue;
+                    };
+
+                    let ordered_satellites = [
+                        lookup_satellites[0].1,
+                        lookup_satellites[1].1,
+                        lookup_satellites[2].1,
+                    ];
+
+                    let Some(phi) = gnn::dihedral_angle(
+                        &atoms,
+                        ordered_satellites[0],
+                        ordered_satellites[1],
+                        ctr,
+                        ordered_satellites[2],
+                    ) else {
+                        continue;
+                    };
+
+                    let improper_stats = dihedral_edge_stats(phi, params);
+                    let improper_param_summary = dihedral_param_summary(params);
+
+                    for &sat in &ordered_satellites {
+                        let bond_type = bond_type_by_pair
+                            .get(&gnn::bond_pair_key(ctr, sat))
+                            .copied()
+                            .unwrap_or(DEFAULT_BOND_ONE_HOT);
+                        let features = relation_edge_features(
+                            3,
+                            bond_type,
+                            0.0,
+                            improper_stats.0,
+                            improper_stats.1,
+                            improper_param_summary,
+                        );
+                        let weight = bond_edge_weight(&atoms, ctr, sat);
+
+                        append_relation_edge(
+                            &mut adj_layers,
+                            &mut edge_feats,
+                            &mut edge_feat_counts,
+                            3,
+                            ctr,
+                            sat,
+                            num_atoms,
+                            weight,
+                            &features,
+                        );
+                        append_relation_edge(
+                            &mut adj_layers,
+                            &mut edge_feats,
+                            &mut edge_feat_counts,
+                            3,
+                            sat,
+                            ctr,
+                            num_atoms,
+                            weight,
+                            &features,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    finalize_relation_edges(
+        &mut adj_layers,
+        &mut edge_feats,
+        &edge_feat_counts,
+        num_atoms,
+    );
+
+    (edge_feats, adj_layers)
 }
 
 /// State for our atom-and-bond-based neural network. Atoms are nodes. 4 edge layers:
@@ -382,7 +790,7 @@ impl GraphDataAtom {
             ff_indices.push(vocab_lookup_ff(atom.force_field_type.as_ref()));
         }
 
-        let scalars = setup_scalars(
+        let scalars = setup_node_scalars(
             &atoms,
             num_atoms,
             &adj,
@@ -414,390 +822,13 @@ impl GraphDataAtom {
             ATOM_GNN_PER_EDGE_FEATS_LAYER_3
         );
 
-        let proper_dihedral_summary_by_central_bond =
-            gnn::proper_dihedral_summaries_by_central_bond(&atoms, &adj, ff_params);
-
-        let n_atoms_sq = num_atoms.pow(2);
-        let mut adj_layers = vec![0.; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
-        let mut edge_feats =
-            vec![0.; ATOM_GNN_EDGE_LAYERS * n_atoms_sq * ATOM_GNN_PER_EDGE_FEATS_LAYER_0];
-        let mut edge_feat_counts = vec![0usize; ATOM_GNN_EDGE_LAYERS * n_atoms_sq];
-        let mut bond_type_by_pair = HashMap::with_capacity(bonds.len());
-
-        // Add explicit self-loops on every multiplex layer. Edge features at the self-loop
-        // stay zero (the layer one-hot is also zero, signaling "self / no relation"), so
-        // the encoder treats the self-message as a pure identity contribution. Without
-        // self-loops on L1-L3, ablating L0 would leave those layers without any
-        // self-message during message passing.
-        for layer in 0..ATOM_GNN_EDGE_LAYERS {
-            for i in 0..num_atoms {
-                adj_layers[atom_adj_i(layer, i, i, num_atoms)] = 1.0;
-            }
-        }
-
-        for bond in &bonds {
-            let a0 = bond.atom_0;
-            let a1 = bond.atom_1;
-            if a0 >= num_atoms || a1 >= num_atoms {
-                continue;
-            }
-
-            let bond_type_one_hot = bond_type_one_hot(bond.bond_type);
-            bond_type_by_pair.insert(gnn::bond_pair_key(a0, a1), bond_type_one_hot);
-            let is_rotatable =
-                rotatable_bond_keys.contains(&bond_sn_pair_key(bond.atom_0_sn, bond.atom_1_sn));
-
-            let p1 = atoms[a0].posit;
-            let p2 = atoms[a1].posit;
-            let dist_sq = (p1 - p2).magnitude_squared() as f32;
-            let dist = dist_sq.sqrt();
-
-            let ff0 = atoms[a0].force_field_type.clone().unwrap();
-            let ff1 = atoms[a1].force_field_type.clone().unwrap();
-            let bond_stretching = ff_params.get_bond(&(ff0.clone(), ff1.clone()), true);
-
-            let (dr_norm, log_kb) = if let Some(v) = bond_stretching {
-                let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
-                let log_kb = (v.k_b / KB_REF).ln_1p();
-                (dr, log_kb)
-            } else {
-                // Try a small set of coarse fallbacks; if none hit, leave the edge
-                // features as zero rather than panicking.
-                let candidates: &[(&str, &str)] = if (&ff0 == "cc" && ff1.starts_with("n"))
-                    || (&ff1 == "cc" && ff0.starts_with("n"))
-                {
-                    &[("cc", "n4"), ("cc", "n")]
-                } else if (&ff0 == "cg" && ff1.starts_with("c"))
-                    || (&ff1 == "cg" && ff0.starts_with("c"))
-                {
-                    &[("cg", "cg"), ("cc", "cc")]
-                } else if atoms[a0].element == Carbon && atoms[a1].element == Carbon {
-                    &[("cc", "cc")]
-                } else if atoms[a0].element == Nitrogen && atoms[a1].element == Nitrogen {
-                    &[("n", "n")]
-                } else {
-                    &[]
-                };
-
-                let mut found = None;
-                for (a, b) in candidates {
-                    if let Some(v) = ff_params.get_bond(&((*a).to_owned(), (*b).to_owned()), false)
-                    {
-                        found = Some(v);
-                        break;
-                    }
-                }
-
-                if let Some(v) = found {
-                    let dr = ((dist - v.r_0) / BOND_DIST_SPACIAL_SCALE).clamp(-5.0, 5.0);
-                    let log_kb = (v.k_b / KB_REF).ln_1p();
-                    (dr, log_kb)
-                } else {
-                    eprintln!(
-                        "Missing bond stretching and no fallback for bond {bond:?}. \nAtoms {ff0} | {ff1}. Using zero bond-stretch edge features.",
-                    );
-                    (0.0, 0.0)
-                }
-            };
-
-            let features = relation_edge_features(
-                0,
-                bond_type_one_hot,
-                if is_rotatable { 1.0 } else { 0.0 },
-                dr_norm,
-                log_kb,
-                proper_dihedral_summary_by_central_bond
-                    .get(&gnn::bond_pair_key(a0, a1))
-                    .copied()
-                    .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
-            );
-            let weight = bond_edge_weight(&atoms, a0, a1);
-
-            append_relation_edge(
-                &mut adj_layers,
-                &mut edge_feats,
-                &mut edge_feat_counts,
-                0,
-                a0,
-                a1,
-                num_atoms,
-                weight,
-                &features,
-            );
-            append_relation_edge(
-                &mut adj_layers,
-                &mut edge_feats,
-                &mut edge_feat_counts,
-                0,
-                a1,
-                a0,
-                num_atoms,
-                weight,
-                &features,
-            );
-        }
-
-        // Layer 1: valence-angle layer. For each angle a0-ctr-a1 we deposit ONE edge on
-        // the OUTER 1-3 pair (a0, a1), not on the participating bonds. This makes layer 1
-        // genuinely add new connectivity (1-3 reach) instead of relabeling layer-0 edges,
-        // which is the actual point of multiplex.
-        for (ctr, neighbors) in adj.iter().enumerate() {
-            if neighbors.len() < 2 {
-                continue;
-            }
-
-            for left in 0..neighbors.len() - 1 {
-                for right in left + 1..neighbors.len() {
-                    let a0 = neighbors[left];
-                    let a1 = neighbors[right];
-
-                    let Some(theta) = valence_angle(&atoms, a0, ctr, a1) else {
-                        continue;
-                    };
-
-                    let angle_stats = match (
-                        atoms[a0].force_field_type.clone(),
-                        atoms[ctr].force_field_type.clone(),
-                        atoms[a1].force_field_type.clone(),
-                    ) {
-                        (Some(ff0), Some(ff_ctr), Some(ff1)) => ff_params
-                            .get_valence_angle(&(ff0, ff_ctr, ff1), true)
-                            .map(|params| {
-                                (
-                                    ((theta - params.theta_0) / ANGLE_DIST_SCALE).clamp(-5.0, 5.0),
-                                    (params.k / ANGLE_K_REF).ln_1p(),
-                                )
-                            })
-                            .unwrap_or((0.0, 0.0)),
-                        _ => (0.0, 0.0),
-                    };
-
-                    let features = relation_edge_features(
-                        1,
-                        NO_BOND_ONE_HOT,
-                        0.0,
-                        angle_stats.0,
-                        angle_stats.1,
-                        [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS],
-                    );
-                    let weight = bond_edge_weight(&atoms, a0, a1);
-
-                    append_relation_edge(
-                        &mut adj_layers,
-                        &mut edge_feats,
-                        &mut edge_feat_counts,
-                        1,
-                        a0,
-                        a1,
-                        num_atoms,
-                        weight,
-                        &features,
-                    );
-                    append_relation_edge(
-                        &mut adj_layers,
-                        &mut edge_feats,
-                        &mut edge_feat_counts,
-                        1,
-                        a1,
-                        a0,
-                        num_atoms,
-                        weight,
-                        &features,
-                    );
-                }
-            }
-        }
-
-        // Layer 2: proper-dihedral layer. For each torsion i0-i1-i2-i3 we deposit ONE edge
-        // on the OUTER 1-4 pair (i0, i3). The bond-type slot encodes the central (i1, i2)
-        // bond order, since rotational chemistry hinges on the central-bond order
-        // (single = freely rotating, double = restricted, etc.). Iterating with i1 < i2 over
-        // the central bond enumerates each proper torsion exactly once, so no seen-set is
-        // needed.
-        for (i1, neighbors) in adj.iter().enumerate() {
-            for &i2 in neighbors {
-                if i1 >= i2 {
-                    continue;
-                }
-
-                let central_bond_type = bond_type_by_pair
-                    .get(&gnn::bond_pair_key(i1, i2))
-                    .copied()
-                    .unwrap_or(DEFAULT_BOND_ONE_HOT);
-
-                for &i0 in adj[i1].iter().filter(|&&x| x != i2) {
-                    for &i3 in adj[i2].iter().filter(|&&x| x != i1) {
-                        if i0 == i3 {
-                            continue;
-                        }
-
-                        let Some(phi) = gnn::dihedral_angle(&atoms, i0, i1, i2, i3) else {
-                            continue;
-                        };
-
-                        let (proper_stats, proper_param_summary) = match (
-                            atoms[i0].force_field_type.clone(),
-                            atoms[i1].force_field_type.clone(),
-                            atoms[i2].force_field_type.clone(),
-                            atoms[i3].force_field_type.clone(),
-                        ) {
-                            (Some(ff0), Some(ff1), Some(ff2), Some(ff3)) => ff_params
-                                .get_dihedral(&(ff0, ff1, ff2, ff3), true, true)
-                                .map(|params| {
-                                    (
-                                        dihedral_edge_stats(phi, params),
-                                        dihedral_param_summary(params),
-                                    )
-                                })
-                                .unwrap_or(((0.0, 0.0), [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS])),
-                            _ => ((0.0, 0.0), [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]),
-                        };
-
-                        let features = relation_edge_features(
-                            2,
-                            central_bond_type,
-                            0.0,
-                            proper_stats.0,
-                            proper_stats.1,
-                            proper_param_summary,
-                        );
-                        let weight = bond_edge_weight(&atoms, i0, i3);
-
-                        append_relation_edge(
-                            &mut adj_layers,
-                            &mut edge_feats,
-                            &mut edge_feat_counts,
-                            2,
-                            i0,
-                            i3,
-                            num_atoms,
-                            weight,
-                            &features,
-                        );
-                        append_relation_edge(
-                            &mut adj_layers,
-                            &mut edge_feats,
-                            &mut edge_feat_counts,
-                            2,
-                            i3,
-                            i0,
-                            num_atoms,
-                            weight,
-                            &features,
-                        );
-                    }
-                }
-            }
-        }
-
-        // Layer 3: improper-dihedral layer. Improper torsions have no natural "outer" pair
-        // (the geometry is hub-and-spoke), so edges stay on (ctr, sat) bonds — the bond
-        // chemistry is preserved by the bond_type slot. The triple-nested iteration over
-        // satellite indices a < b < d already enumerates each (ctr, sat0, sat1, sat2)
-        // configuration exactly once, so no seen-set is needed.
-        for (ctr, satellites) in adj.iter().enumerate() {
-            if satellites.len() < 3 {
-                continue;
-            }
-
-            for a in 0..satellites.len() - 2 {
-                for b in a + 1..satellites.len() - 1 {
-                    for d in b + 1..satellites.len() {
-                        let sat0 = satellites[a];
-                        let sat1 = satellites[b];
-                        let sat2 = satellites[d];
-
-                        let (Some(ff0), Some(ff1), Some(ff_ctr), Some(ff2)) = (
-                            atoms[sat0].force_field_type.clone(),
-                            atoms[sat1].force_field_type.clone(),
-                            atoms[ctr].force_field_type.clone(),
-                            atoms[sat2].force_field_type.clone(),
-                        ) else {
-                            continue;
-                        };
-
-                        let mut lookup_satellites = [(ff0, sat0), (ff1, sat1), (ff2, sat2)];
-                        lookup_satellites
-                            .sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-
-                        let key = (
-                            lookup_satellites[0].0.clone(),
-                            lookup_satellites[1].0.clone(),
-                            ff_ctr,
-                            lookup_satellites[2].0.clone(),
-                        );
-
-                        let Some(params) = ff_params.get_dihedral(&key, false, true) else {
-                            continue;
-                        };
-
-                        let ordered_satellites = [
-                            lookup_satellites[0].1,
-                            lookup_satellites[1].1,
-                            lookup_satellites[2].1,
-                        ];
-
-                        let Some(phi) = gnn::dihedral_angle(
-                            &atoms,
-                            ordered_satellites[0],
-                            ordered_satellites[1],
-                            ctr,
-                            ordered_satellites[2],
-                        ) else {
-                            continue;
-                        };
-
-                        let improper_stats = dihedral_edge_stats(phi, params);
-                        let improper_param_summary = dihedral_param_summary(params);
-
-                        for &sat in &ordered_satellites {
-                            let bond_type = bond_type_by_pair
-                                .get(&gnn::bond_pair_key(ctr, sat))
-                                .copied()
-                                .unwrap_or(DEFAULT_BOND_ONE_HOT);
-                            let features = relation_edge_features(
-                                3,
-                                bond_type,
-                                0.0,
-                                improper_stats.0,
-                                improper_stats.1,
-                                improper_param_summary,
-                            );
-                            let weight = bond_edge_weight(&atoms, ctr, sat);
-
-                            append_relation_edge(
-                                &mut adj_layers,
-                                &mut edge_feats,
-                                &mut edge_feat_counts,
-                                3,
-                                ctr,
-                                sat,
-                                num_atoms,
-                                weight,
-                                &features,
-                            );
-                            append_relation_edge(
-                                &mut adj_layers,
-                                &mut edge_feats,
-                                &mut edge_feat_counts,
-                                3,
-                                sat,
-                                ctr,
-                                num_atoms,
-                                weight,
-                                &features,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        finalize_relation_edges(
-            &mut adj_layers,
-            &mut edge_feats,
-            &edge_feat_counts,
+        let (edge_feats, adj) = setup_edge_feats(
+            &atoms,
+            &bonds,
             num_atoms,
+            &adj,
+            ff_params,
+            &rotatable_bond_keys,
         );
 
         // Note: symmetric normalization (D^-1/2 A D^-1/2) is applied in the model's
@@ -809,7 +840,7 @@ impl GraphDataAtom {
             ff_indices,
             scalars,
             analysis_features,
-            adj: adj_layers,
+            adj: adj,
             edge_feats,
             num_atoms,
         })

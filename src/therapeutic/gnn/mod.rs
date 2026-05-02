@@ -15,12 +15,7 @@ use std::{collections::HashMap, iter::repeat_n};
 use bio_files::md_params::{DihedralParams, ForceFieldParams};
 use na_seq::Element::{self, *};
 
-use crate::{molecules::Atom, therapeutic::gnn::component::COMP_EDGE_GEOM_FEATS};
-
-// Degree (Number of edges incident to a node), partial charge, geometry (radius from molecular centroid, mean neighbor distance),
-// is H-bond acceptor, is H-bond donor, in aromatic ring.
-// Keep this in sync with `GraphDataAtom::new`.
-pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
+use crate::{molecules::Atom, therapeutic::gnn::component::NUM_COMP_EDGE_GEOM_FEATS};
 
 // Edge feature description for the Atom-as-node GNN.
 // All multiplex layers share the same per-edge feature layout so the encoder MLP can
@@ -56,12 +51,6 @@ pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
 
 // Barrier height, cos(phase), sin(phase), periodicity sum, divider sum
 const DIHEDRAL_PARAM_SUMMARY_FEATS: usize = 4;
-const ATOM_GNN_EDGE_SHARED_FEATS: usize = 9;
-const ATOM_GNN_EDGE_REL_SCALARS: usize = 2;
-
-pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize =
-    ATOM_GNN_EDGE_SHARED_FEATS + ATOM_GNN_EDGE_REL_SCALARS + DIHEDRAL_PARAM_SUMMARY_FEATS;
-pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
 
 // These are used to normalize dihedral properties.
 const DIHEDRAL_BARRIER_REF: f32 = 4.0;
@@ -142,9 +131,9 @@ impl DihedralGeometryAccumulator {
         }
     }
 
-    fn summary(self) -> [f32; COMP_EDGE_GEOM_FEATS] {
+    fn summary(self) -> [f32; NUM_COMP_EDGE_GEOM_FEATS] {
         if self.effective_weight_sum <= 1.0e-6 {
-            [0.0; COMP_EDGE_GEOM_FEATS]
+            [0.0; NUM_COMP_EDGE_GEOM_FEATS]
         } else {
             [
                 (self.alignment_sum / self.effective_weight_sum).clamp(-1.0, 1.0),
@@ -238,7 +227,7 @@ fn proper_dihedral_stats_by_central_bond(
     atoms: &[Atom],
     adj: &[Vec<usize>],
     ff_params: &ForceFieldParams,
-) -> HashMap<(usize, usize), [f32; COMP_EDGE_GEOM_FEATS]> {
+) -> HashMap<(usize, usize), [f32; NUM_COMP_EDGE_GEOM_FEATS]> {
     let mut by_bond: HashMap<(usize, usize), DihedralGeometryAccumulator> = HashMap::new();
 
     for (i1, neighbors) in adj.iter().enumerate() {

@@ -19,14 +19,16 @@ use crate::{
     therapeutic::{
         DatasetTdc,
         gnn::{
-            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
-            PER_ATOM_SCALARS,
-            atom_bond::{GraphDataAtom, pad_atom_adj_and_mask, pad_atom_edge_feats},
+            GRAPH_ANALYSIS_FEATURE_VERSION,
+            atom_bond::{
+                ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GraphDataAtom,
+                NUM_ATOM_NODE_SCALARS, pad_atom_adj_and_mask, pad_atom_edge_feats,
+            },
             component::{
-                COMPONENT_VOCAB_SIZE, GraphDataComponent, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+                COMP_VOCAB_SIZE, GraphDataComponent, NUM_COMP_EDGE_FEATS, NUM_COMP_NODE_SCALARS,
             },
             pad_adj_and_mask, pad_edge_feats, pad_indices, pad_scalars,
-            spacial::{GraphDataSpacial, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS},
+            spacial::{GraphDataSpacial, NUM_SPACIAL_EDGE_FEATS, NUM_SPACIAL_NODE_SCALARS},
         },
         mlp::mlp_feats_from_mol,
         non_nn_ml::GnnAnalysisTools,
@@ -86,9 +88,9 @@ impl Infer {
         }
         let config: ModelConfig = serde_json::from_value(config_json)?;
         if config.edge_feat_dim != ATOM_GNN_PER_EDGE_FEATS_LAYER_0
-            || config.comp_edge_feat_dim != PER_EDGE_COMP_FEATS
-            || config.n_comp_scalars != PER_COMP_SCALARS
-            || config.vocab_size_comp < COMPONENT_VOCAB_SIZE
+            || config.comp_edge_feat_dim != NUM_COMP_EDGE_FEATS
+            || config.n_comp_scalars != NUM_COMP_NODE_SCALARS
+            || config.vocab_size_comp < COMP_VOCAB_SIZE
         {
             return Err(io::Error::other(format!(
                 "Therapeutic model graph layout is incompatible with the current component GNN \
@@ -100,9 +102,9 @@ impl Infer {
                 config.n_comp_scalars,
                 config.vocab_size_comp,
                 ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
-                PER_EDGE_COMP_FEATS,
-                PER_COMP_SCALARS,
-                COMPONENT_VOCAB_SIZE,
+                NUM_COMP_EDGE_FEATS,
+                NUM_COMP_NODE_SCALARS,
+                COMP_VOCAB_SIZE,
             )));
         }
         let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;
@@ -206,7 +208,7 @@ impl Infer {
         let p_scalars = pad_scalars(
             &graph_atom_bond.scalars,
             num_atoms,
-            PER_ATOM_SCALARS,
+            NUM_ATOM_NODE_SCALARS,
             MAX_ATOMS,
         );
         let (padded_adj, padded_mask) =
@@ -215,14 +217,18 @@ impl Infer {
 
         // Component graph
         let p_comp_type_ids = pad_indices(&graph_comp.comp_type_indices, num_comps, MAX_COMPS);
-        let p_comp_scalars =
-            pad_scalars(&graph_comp.scalars, num_comps, PER_COMP_SCALARS, MAX_COMPS);
+        let p_comp_scalars = pad_scalars(
+            &graph_comp.scalars,
+            num_comps,
+            NUM_COMP_NODE_SCALARS,
+            MAX_COMPS,
+        );
         let (padded_adj_comp, padded_mask_comp) =
             pad_adj_and_mask(&graph_comp.adj, num_comps, MAX_COMPS);
         let p_edge_comp_feats = pad_edge_feats(
             &graph_comp.edge_feats,
             num_comps,
-            PER_EDGE_COMP_FEATS,
+            NUM_COMP_EDGE_FEATS,
             MAX_COMPS,
         );
 
@@ -231,7 +237,7 @@ impl Infer {
         let p_pharm_scalars = pad_scalars(
             &graph_spacial.scalars,
             num_pharm,
-            PER_PHARM_SCALARS,
+            NUM_SPACIAL_NODE_SCALARS,
             MAX_PHARM,
         );
         let (padded_adj_pharm, padded_mask_pharm) =
@@ -239,7 +245,7 @@ impl Infer {
         let p_edge_pharm_feats = pad_edge_feats(
             &graph_spacial.edge_feats,
             num_pharm,
-            PER_SPACIAL_EDGE_FEATS,
+            NUM_SPACIAL_EDGE_FEATS,
             MAX_PHARM,
         );
 
@@ -267,7 +273,7 @@ impl Infer {
 
         // Float Tensors for the rest
         let t_scalars = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(p_scalars, [1, MAX_ATOMS, PER_ATOM_SCALARS]),
+            TensorData::new(p_scalars, [1, MAX_ATOMS, NUM_ATOM_NODE_SCALARS]),
             &self.device,
         );
 
@@ -317,7 +323,7 @@ impl Infer {
 
         // Comp tensors
         let t_comp_scalars = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(p_comp_scalars, [1, MAX_COMPS, PER_COMP_SCALARS]),
+            TensorData::new(p_comp_scalars, [1, MAX_COMPS, NUM_COMP_NODE_SCALARS]),
             &self.device,
         );
 
@@ -329,7 +335,7 @@ impl Infer {
         let t_comp_edge_feats = Tensor::<InferBackend, 4>::from_data(
             TensorData::new(
                 p_edge_comp_feats,
-                [1, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
+                [1, MAX_COMPS, MAX_COMPS, NUM_COMP_EDGE_FEATS],
             ),
             &self.device,
         );
@@ -346,7 +352,7 @@ impl Infer {
         );
 
         let t_pharm_scalars = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(p_pharm_scalars, [1, MAX_PHARM, PER_PHARM_SCALARS]),
+            TensorData::new(p_pharm_scalars, [1, MAX_PHARM, NUM_SPACIAL_NODE_SCALARS]),
             &self.device,
         );
 
@@ -358,7 +364,7 @@ impl Infer {
         let t_pharm_edge_feats = Tensor::<InferBackend, 4>::from_data(
             TensorData::new(
                 p_edge_pharm_feats,
-                [1, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
+                [1, MAX_PHARM, MAX_PHARM, NUM_SPACIAL_EDGE_FEATS],
             ),
             &self.device,
         );
@@ -433,7 +439,7 @@ impl Infer {
 
         let mut all_elem = Vec::with_capacity(batch_size * MAX_ATOMS);
         let mut all_ff = Vec::with_capacity(batch_size * MAX_ATOMS);
-        let mut all_scalars = Vec::with_capacity(batch_size * MAX_ATOMS * PER_ATOM_SCALARS);
+        let mut all_scalars = Vec::with_capacity(batch_size * MAX_ATOMS * NUM_ATOM_NODE_SCALARS);
         let mut all_adj =
             Vec::with_capacity(batch_size * ATOM_GNN_EDGE_LAYERS * MAX_ATOMS * MAX_ATOMS);
         let mut all_edge = Vec::with_capacity(
@@ -446,19 +452,21 @@ impl Infer {
         let mut all_mask = Vec::with_capacity(batch_size * MAX_ATOMS);
 
         let mut all_comp_ids = Vec::with_capacity(batch_size * MAX_COMPS);
-        let mut all_comp_scalars = Vec::with_capacity(batch_size * MAX_COMPS * PER_COMP_SCALARS);
+        let mut all_comp_scalars =
+            Vec::with_capacity(batch_size * MAX_COMPS * NUM_COMP_NODE_SCALARS);
         let mut all_comp_adj = Vec::with_capacity(batch_size * MAX_COMPS * MAX_COMPS);
         let mut all_comp_edge =
-            Vec::with_capacity(batch_size * MAX_COMPS * MAX_COMPS * PER_EDGE_COMP_FEATS);
+            Vec::with_capacity(batch_size * MAX_COMPS * MAX_COMPS * NUM_COMP_EDGE_FEATS);
         let mut all_comp_mask = Vec::with_capacity(batch_size * MAX_COMPS);
         let comp_graph_analysis_dim = self.comp_graph_analysis.feature_dim().max(1);
         let mut all_comp_graph_analysis = Vec::with_capacity(batch_size * comp_graph_analysis_dim);
 
         let mut all_pharm_ids = Vec::with_capacity(batch_size * MAX_PHARM);
-        let mut all_pharm_scalars = Vec::with_capacity(batch_size * MAX_PHARM * PER_PHARM_SCALARS);
+        let mut all_pharm_scalars =
+            Vec::with_capacity(batch_size * MAX_PHARM * NUM_SPACIAL_NODE_SCALARS);
         let mut all_pharm_adj = Vec::with_capacity(batch_size * MAX_PHARM * MAX_PHARM);
         let mut all_pharm_edge =
-            Vec::with_capacity(batch_size * MAX_PHARM * MAX_PHARM * PER_SPACIAL_EDGE_FEATS);
+            Vec::with_capacity(batch_size * MAX_PHARM * MAX_PHARM * NUM_SPACIAL_EDGE_FEATS);
         let mut all_pharm_mask = Vec::with_capacity(batch_size * MAX_PHARM);
         let spacial_graph_analysis_dim = self.spacial_graph_analysis.feature_dim().max(1);
         let mut all_spacial_graph_analysis =
@@ -492,7 +500,7 @@ impl Infer {
             all_scalars.extend(pad_scalars(
                 &g.scalars,
                 g.num_atoms,
-                PER_ATOM_SCALARS,
+                NUM_ATOM_NODE_SCALARS,
                 MAX_ATOMS,
             ));
             let (a, m) = pad_atom_adj_and_mask(&g.adj, g.num_atoms, MAX_ATOMS);
@@ -512,7 +520,7 @@ impl Infer {
             all_comp_scalars.extend(pad_scalars(
                 &gc.scalars,
                 gc.num_comps,
-                PER_COMP_SCALARS,
+                NUM_COMP_NODE_SCALARS,
                 MAX_COMPS,
             ));
             let (ca, cm) = pad_adj_and_mask(&gc.adj, gc.num_comps, MAX_COMPS);
@@ -521,7 +529,7 @@ impl Infer {
             all_comp_edge.extend(pad_edge_feats(
                 &gc.edge_feats,
                 gc.num_comps,
-                PER_EDGE_COMP_FEATS,
+                NUM_COMP_EDGE_FEATS,
                 MAX_COMPS,
             ));
             if gc.analysis_features.is_empty() {
@@ -537,7 +545,7 @@ impl Infer {
             all_pharm_scalars.extend(pad_scalars(
                 &gs.scalars,
                 gs.num_nodes,
-                PER_PHARM_SCALARS,
+                NUM_SPACIAL_NODE_SCALARS,
                 MAX_PHARM,
             ));
             let (pa, pm) = pad_adj_and_mask(&gs.adj, gs.num_nodes, MAX_PHARM);
@@ -546,7 +554,7 @@ impl Infer {
             all_pharm_edge.extend(pad_edge_feats(
                 &gs.edge_feats,
                 gs.num_nodes,
-                PER_SPACIAL_EDGE_FEATS,
+                NUM_SPACIAL_EDGE_FEATS,
                 MAX_PHARM,
             ));
             if gs.analysis_features.is_empty() {
@@ -571,7 +579,7 @@ impl Infer {
             dev,
         );
         let t_scalars = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(all_scalars, [batch_size, MAX_ATOMS, PER_ATOM_SCALARS]),
+            TensorData::new(all_scalars, [batch_size, MAX_ATOMS, NUM_ATOM_NODE_SCALARS]),
             dev,
         );
         let t_adj = Tensor::<InferBackend, 4>::from_data(
@@ -611,7 +619,10 @@ impl Infer {
             dev,
         );
         let t_comp_scalars = Tensor::<InferBackend, 3>::from_data(
-            TensorData::new(all_comp_scalars, [batch_size, MAX_COMPS, PER_COMP_SCALARS]),
+            TensorData::new(
+                all_comp_scalars,
+                [batch_size, MAX_COMPS, NUM_COMP_NODE_SCALARS],
+            ),
             dev,
         );
         let t_comp_adj = Tensor::<InferBackend, 3>::from_data(
@@ -621,7 +632,7 @@ impl Infer {
         let t_comp_edge = Tensor::<InferBackend, 4>::from_data(
             TensorData::new(
                 all_comp_edge,
-                [batch_size, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
+                [batch_size, MAX_COMPS, MAX_COMPS, NUM_COMP_EDGE_FEATS],
             ),
             dev,
         );
@@ -644,7 +655,7 @@ impl Infer {
         let t_pharm_scalars = Tensor::<InferBackend, 3>::from_data(
             TensorData::new(
                 all_pharm_scalars,
-                [batch_size, MAX_PHARM, PER_PHARM_SCALARS],
+                [batch_size, MAX_PHARM, NUM_SPACIAL_NODE_SCALARS],
             ),
             dev,
         );
@@ -655,7 +666,7 @@ impl Infer {
         let t_pharm_edge = Tensor::<InferBackend, 4>::from_data(
             TensorData::new(
                 all_pharm_edge,
-                [batch_size, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
+                [batch_size, MAX_PHARM, MAX_PHARM, NUM_SPACIAL_EDGE_FEATS],
             ),
             dev,
         );

@@ -629,8 +629,8 @@ pub fn density_map_from_sf(
     }
 
     // --- remap to FILE order buffer if you want DensityMap.data in file order ---
-    // let mut rho_file = vec![0f32; mx * my * mz];
-    let mut density_data = vec![0f32; nz * ny * nx];
+    // let mut rho_file = vec![0.; mx * my * mz];
+    let mut density_data = vec![0.; nz * ny * nx];
 
     // file indices → crystal indices → pull from rho_crystal (Z-fast) → store in file buffer
     // todo: Experiment with order here too

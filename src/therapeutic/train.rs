@@ -66,14 +66,17 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
-            PER_ATOM_SCALARS, atom_bond,
-            atom_bond::GraphDataAtom,
+            GRAPH_ANALYSIS_FEATURE_VERSION,
+            atom_bond::{
+                self, ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GraphDataAtom,
+                NUM_ATOM_NODE_SCALARS,
+            },
             component::{
-                COMPONENT_VOCAB_SIZE, GraphDataComponent, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+                COMP_VOCAB_SIZE, GraphDataComponent, NUM_COMP_EDGE_FEATS, NUM_COMP_NODE_SCALARS,
             },
             spacial::{
-                GraphDataSpacial, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
+                GraphDataSpacial, NUM_SPACIAL_EDGE_FEATS, NUM_SPACIAL_NODE_SCALARS,
+                SPACIAL_VOCAB_SIZE,
             },
         },
         mlp, non_nn_ml,
@@ -1113,7 +1116,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let n_feat_params = items[0].features_property.len();
 
         // Per-atom scalar count is fixed by GraphDataAtom construction.
-        let n_scalars_per_atom = PER_ATOM_SCALARS;
+        let n_scalars_per_atom = NUM_ATOM_NODE_SCALARS;
         let n_atom_graph_analysis = items[0].graph.analysis_features.len().max(1);
         let n_comp_graph_analysis = items[0].graph_comp.analysis_features.len().max(1);
         let n_spacial_graph_analysis = items[0].graph_spacial.analysis_features.len().max(1);
@@ -1160,7 +1163,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_comp_scalars.extend(gnn::pad_scalars(
                 &gc.scalars,
                 gc.num_comps,
-                PER_COMP_SCALARS,
+                NUM_COMP_NODE_SCALARS,
                 MAX_COMPS,
             ));
             let (p_comp_adj, p_comp_mask) = gnn::pad_adj_and_mask(&gc.adj, gc.num_comps, MAX_COMPS);
@@ -1169,7 +1172,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_comp_edge_feats.extend(gnn::pad_edge_feats(
                 &gc.edge_feats,
                 gc.num_comps,
-                PER_EDGE_COMP_FEATS,
+                NUM_COMP_EDGE_FEATS,
                 MAX_COMPS,
             ));
             if gc.analysis_features.is_empty() {
@@ -1190,7 +1193,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_pharm_scalars.extend(gnn::pad_scalars(
                 &gs.scalars,
                 gs.num_nodes,
-                PER_PHARM_SCALARS,
+                NUM_SPACIAL_NODE_SCALARS,
                 MAX_PHARM,
             ));
             let (p_pharm_adj, p_pharm_mask) =
@@ -1200,7 +1203,7 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
             batch_pharm_edge_feats.extend(gnn::pad_edge_feats(
                 &gs.edge_feats,
                 gs.num_nodes,
-                PER_SPACIAL_EDGE_FEATS,
+                NUM_SPACIAL_EDGE_FEATS,
                 MAX_PHARM,
             ));
             if gs.analysis_features.is_empty() {
@@ -1235,12 +1238,12 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let comp_ids = TensorData::new(batch_comp_ids, [batch_size, MAX_COMPS]);
         let comp_scalars = TensorData::new(
             batch_comp_scalars,
-            [batch_size, MAX_COMPS, PER_COMP_SCALARS],
+            [batch_size, MAX_COMPS, NUM_COMP_NODE_SCALARS],
         );
         let comp_adj = TensorData::new(batch_comp_adj, [batch_size, MAX_COMPS, MAX_COMPS]);
         let comp_edge_feats = TensorData::new(
             batch_comp_edge_feats,
-            [batch_size, MAX_COMPS, MAX_COMPS, PER_EDGE_COMP_FEATS],
+            [batch_size, MAX_COMPS, MAX_COMPS, NUM_COMP_EDGE_FEATS],
         );
         let comp_mask = TensorData::new(batch_comp_mask, [batch_size, MAX_COMPS, 1]);
         let comp_graph_analysis = TensorData::new(
@@ -1250,12 +1253,12 @@ impl<B: Backend> Batcher<B, Sample, Batch<B>> for Batcher_ {
         let pharm_ids = TensorData::new(batch_pharm_ids, [batch_size, MAX_PHARM]);
         let pharm_scalars = TensorData::new(
             batch_pharm_scalars,
-            [batch_size, MAX_PHARM, PER_PHARM_SCALARS],
+            [batch_size, MAX_PHARM, NUM_SPACIAL_NODE_SCALARS],
         );
         let pharm_adj = TensorData::new(batch_pharm_adj, [batch_size, MAX_PHARM, MAX_PHARM]);
         let pharm_edge_feats = TensorData::new(
             batch_pharm_edge_feats,
-            [batch_size, MAX_PHARM, MAX_PHARM, PER_SPACIAL_EDGE_FEATS],
+            [batch_size, MAX_PHARM, MAX_PHARM, NUM_SPACIAL_EDGE_FEATS],
         );
         let pharm_mask = TensorData::new(batch_pharm_mask, [batch_size, MAX_PHARM, 1]);
         let spacial_graph_analysis = TensorData::new(
@@ -1692,17 +1695,17 @@ pub(in crate::therapeutic) fn train_with_samples(
         vocab_size_elem: 12,           // matches vocab_lookup_element max + 1
         vocab_size_ff: FF_BUCKETS + 2, // 0 pad + 1..FF_BUCKETS + unknown.
         embedding_dim: 16,             // Tune this (8, 16, 32)
-        n_node_scalars: PER_ATOM_SCALARS,
+        n_node_scalars: NUM_ATOM_NODE_SCALARS,
         edge_feat_dim: ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
-        vocab_size_comp: COMPONENT_VOCAB_SIZE,
+        vocab_size_comp: COMP_VOCAB_SIZE,
         comp_embedding_dim: 8,
-        n_comp_scalars: PER_COMP_SCALARS,
-        comp_edge_feat_dim: PER_EDGE_COMP_FEATS,
+        n_comp_scalars: NUM_COMP_NODE_SCALARS,
+        comp_edge_feat_dim: NUM_COMP_EDGE_FEATS,
         // Spatial (pharmacophore) GNN
         vocab_size_pharm: SPACIAL_VOCAB_SIZE, // 0=pad,1=donor,2=acc,3=hydrophobic,4=aromatic
         pharm_embedding_dim: 8,
-        n_pharm_scalars: PER_PHARM_SCALARS,
-        spacial_edge_feat_dim: PER_SPACIAL_EDGE_FEATS,
+        n_pharm_scalars: NUM_SPACIAL_NODE_SCALARS,
+        spacial_edge_feat_dim: NUM_SPACIAL_EDGE_FEATS,
         atom_graph_analysis: atom_graph_analysis.clone(),
         comp_graph_analysis: comp_graph_analysis.clone(),
         spacial_graph_analysis: spacial_graph_analysis.clone(),

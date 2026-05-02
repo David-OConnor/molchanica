@@ -23,16 +23,16 @@ const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 // Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
 // Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
 // `GraphDataSpacial::new`.
-pub(in crate::therapeutic) const PER_PHARM_SCALARS: usize = 2;
+pub(in crate::therapeutic) const NUM_SPACIAL_NODE_SCALARS: usize = 2;
 // Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
-pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
+pub(in crate::therapeutic) const NUM_SPACIAL_EDGE_FEATS: usize = 5;
 // Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
 pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;
 
 /// Set up scalars for the spacial/pharmacophore GNN. These are per-node, floating point features. They
 /// do not include integer (e.g. pharmacophore feature type) per-node features.
-fn setup_scalars(nodes: &[([f32; 3], i32)], num_nodes: usize, dist_mat: &[f32]) -> Vec<f32> {
-    let mut res = Vec::with_capacity(num_nodes * PER_PHARM_SCALARS);
+fn setup_node_scalars(nodes: &[([f32; 3], i32)], num_nodes: usize, dist_mat: &[f32]) -> Vec<f32> {
+    let mut res = Vec::with_capacity(num_nodes * NUM_SPACIAL_NODE_SCALARS);
 
     // Pharmacophore centroid.
     let (cx, cy, cz) = {
@@ -75,6 +75,43 @@ fn setup_scalars(nodes: &[([f32; 3], i32)], num_nodes: usize, dist_mat: &[f32]) 
     }
 
     res
+}
+
+fn setup_edge_feats(num_nodes: usize, dist_mat: &[f32]) -> (Vec<f32>, Vec<f32>) {
+    // Edge features and adjacency (fully connected; all pairs connected).
+    let n_sq = num_nodes.pow(2);
+    let mut adj = vec![0.; n_sq];
+    let mut edge_feats = vec![0.; n_sq * NUM_SPACIAL_EDGE_FEATS];
+
+    // Self-loops with weight 1; edge features at self-loop stay 0.
+    for i in 0..num_nodes {
+        adj[i * num_nodes + i] = 1.0;
+    }
+
+    for i in 0..num_nodes {
+        for j in 0..num_nodes {
+            if i == j {
+                continue;
+            }
+            let d = dist_mat[i * num_nodes + j];
+            let d_sq = d * d;
+
+            // Gaussian-weighted adjacency (same spirit as the atom GNN bond kernel).
+            adj[i * num_nodes + j] = (-d_sq / SPACIAL_ADJ_SIGMA_SQ).exp();
+
+            // Edge feature vector: [scaled_dist, rbf_0 .. rbf_3].
+            // RBF encoding explicitly gives the network multi-resolution distance info.
+            let base = (i * num_nodes + j) * NUM_SPACIAL_EDGE_FEATS;
+
+            edge_feats[base] = (d / SPACIAL_DIST_SCALE).clamp(0.0, 1.5);
+            for (k, &mu) in SPACIAL_RBF_CENTERS.iter().enumerate() {
+                let dmu = d - mu;
+                edge_feats[base + 1 + k] = (-(dmu * dmu) / SPACIAL_RBF_SIGMA_SQ).exp();
+            }
+        }
+    }
+
+    (edge_feats, adj)
 }
 
 /// Pharmacophore-feature graph for 3-D spatial/geometric structure.
@@ -175,7 +212,7 @@ impl GraphDataSpacial {
         }
 
         // Precompute all pairwise Euclidean distances (symmetric).
-        let mut dist_mat = vec![0f32; num_nodes * num_nodes];
+        let mut dist_mat = vec![0.; num_nodes * num_nodes];
         for i in 0..num_nodes {
             for j in (i + 1)..num_nodes {
                 let pi = nodes[i].0;
@@ -192,7 +229,7 @@ impl GraphDataSpacial {
 
         // Node features.
         let pharm_type_indices: Vec<i32> = nodes.iter().map(|(_, ty)| *ty).collect();
-        let scalars = setup_scalars(&nodes, num_nodes, &dist_mat);
+        let scalars = setup_node_scalars(&nodes, num_nodes, &dist_mat);
 
         let analysis_adj = non_nn_ml::build_spacial_analysis_adj(&dist_mat, num_nodes);
         let mut base_labels = Vec::with_capacity(num_nodes);
@@ -201,44 +238,15 @@ impl GraphDataSpacial {
             pharm_type_indices[i].hash(&mut hasher);
             analysis_adj[i].len().hash(&mut hasher);
 
-            non_nn_ml::bucket_scalar(scalars[i * PER_PHARM_SCALARS], 4.0).hash(&mut hasher);
-            non_nn_ml::bucket_scalar(scalars[i * PER_PHARM_SCALARS + 1], 4.0).hash(&mut hasher);
+            non_nn_ml::bucket_scalar(scalars[i * NUM_SPACIAL_NODE_SCALARS], 4.0).hash(&mut hasher);
+            non_nn_ml::bucket_scalar(scalars[i * NUM_SPACIAL_NODE_SCALARS + 1], 4.0)
+                .hash(&mut hasher);
             base_labels.push(hasher.finish());
         }
         let analysis_features =
             non_nn_ml::graph_analysis_features(analysis_tools, &base_labels, &analysis_adj);
 
-        // Edge features and adjacency (fully connected; all pairs connected).
-        let n2 = num_nodes * num_nodes;
-        let mut adj = vec![0f32; n2];
-        let mut edge_feats = vec![0f32; n2 * PER_SPACIAL_EDGE_FEATS];
-
-        // Self-loops with weight 1; edge features at self-loop stay 0.
-        for i in 0..num_nodes {
-            adj[i * num_nodes + i] = 1.0;
-        }
-
-        for i in 0..num_nodes {
-            for j in 0..num_nodes {
-                if i == j {
-                    continue;
-                }
-                let d = dist_mat[i * num_nodes + j];
-                let d_sq = d * d;
-
-                // Gaussian-weighted adjacency (same spirit as the atom GNN bond kernel).
-                adj[i * num_nodes + j] = (-d_sq / SPACIAL_ADJ_SIGMA_SQ).exp();
-
-                // Edge feature vector: [scaled_dist, rbf_0 .. rbf_3].
-                // RBF encoding explicitly gives the network multi-resolution distance info.
-                let base = (i * num_nodes + j) * PER_SPACIAL_EDGE_FEATS;
-                edge_feats[base] = (d / SPACIAL_DIST_SCALE).clamp(0.0, 1.5);
-                for (k, &mu) in SPACIAL_RBF_CENTERS.iter().enumerate() {
-                    let dmu = d - mu;
-                    edge_feats[base + 1 + k] = (-(dmu * dmu) / SPACIAL_RBF_SIGMA_SQ).exp();
-                }
-            }
-        }
+        let (edge_feats, adj) = setup_edge_feats(num_nodes, &dist_mat);
 
         // Symmetric normalization is applied in the model after gating; see GraphDataAtom.
 
