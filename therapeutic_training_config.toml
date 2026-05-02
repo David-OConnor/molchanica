@@ -7,9 +7,11 @@ mlp_enabled = true
 # Increasing layers may or may not improve model performance. It will slow down inference and training.
 # We have it lower than idea now to improve speed.
 
-
 gnn_atom_layers = 1
-gnn_comp_layers = 2
+
+# Increasing atom comp players appears to have a small, incremental advantage per layer,
+# up to a point (2026-05-02)
+gnn_comp_layers = 4
 # It seems a higher value here, to a point, is relatively cheap, and produces better results. High values increase
 # memory use; have crashed with out-of-memory with this at 7.
 gnn_spacial_layers = 2

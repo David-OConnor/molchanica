@@ -20,6 +20,63 @@ const SPACIAL_DIST_SCALE: f32 = 10.0; // Normalise raw distances to ~O(1)
 const SPACIAL_RBF_SIGMA_SQ: f32 = 2.25; // sigma=1.5 Å for RBF basis functions
 const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
+// Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
+// Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
+// `GraphDataSpacial::new`.
+pub(in crate::therapeutic) const PER_PHARM_SCALARS: usize = 2;
+// Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
+pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
+// Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
+pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;
+
+/// Set up scalars for the spacial/pharmacophore GNN. These are per-node, floating point features. They
+/// do not include integer (e.g. pharmacophore feature type) per-node features.
+fn setup_scalars(nodes: &[([f32; 3], i32)], num_nodes: usize, dist_mat: &[f32]) -> Vec<f32> {
+    let mut res = Vec::with_capacity(num_nodes * PER_PHARM_SCALARS);
+
+    // Pharmacophore centroid.
+    let (cx, cy, cz) = {
+        let (mut cx, mut cy, mut cz) = (0., 0., 0.);
+        for (p, _) in nodes {
+            cx += p[0];
+            cy += p[1];
+            cz += p[2];
+        }
+
+        let inv_n = 1.0 / num_nodes as f32;
+        cx *= inv_n;
+        cy *= inv_n;
+        cz *= inv_n;
+
+        (cx, cy, cz)
+    };
+
+    for (i, (p, ty)) in nodes.iter().enumerate() {
+        // Rotation-invariant distance from pharmacophore centroid, normalized.
+        let dx = p[0] - cx;
+        let dy = p[1] - cy;
+        let dz = p[2] - cz;
+        let r = (dx * dx + dy * dy + dz * dz).sqrt() / SPACIAL_DIST_SCALE;
+        res.push(r);
+
+        // Mean pairwise distance to all other pharmacophore nodes, normalized.
+        let mean_d = if num_nodes > 1 {
+            let mut sum = 0f32;
+            for j in 0..num_nodes {
+                if i != j {
+                    sum += dist_mat[i * num_nodes + j];
+                }
+            }
+            sum / ((num_nodes - 1) as f32 * SPACIAL_DIST_SCALE)
+        } else {
+            0.0
+        };
+        res.push(mean_d);
+    }
+
+    res
+}
+
 /// Pharmacophore-feature graph for 3-D spatial/geometric structure.
 ///
 /// Nodes = pharmacophore sites derived from the molecule characterization:
@@ -117,18 +174,6 @@ impl GraphDataSpacial {
             return Ok(Self::empty());
         }
 
-        // Pharmacophore centroid.
-        let (mut cx, mut cy, mut cz) = (0f32, 0f32, 0f32);
-        for (p, _) in &nodes {
-            cx += p[0];
-            cy += p[1];
-            cz += p[2];
-        }
-        let inv_n = 1.0 / num_nodes as f32;
-        cx *= inv_n;
-        cy *= inv_n;
-        cz *= inv_n;
-
         // Precompute all pairwise Euclidean distances (symmetric).
         let mut dist_mat = vec![0f32; num_nodes * num_nodes];
         for i in 0..num_nodes {
@@ -139,39 +184,15 @@ impl GraphDataSpacial {
                 let dy = pi[1] - pj[1];
                 let dz = pi[2] - pj[2];
                 let d = (dx * dx + dy * dy + dz * dz).sqrt();
+
                 dist_mat[i * num_nodes + j] = d;
                 dist_mat[j * num_nodes + i] = d;
             }
         }
 
         // Node features.
-        let mut pharm_type_indices = Vec::with_capacity(num_nodes);
-        let mut scalars = Vec::with_capacity(num_nodes * PER_PHARM_SCALARS);
-
-        for (i, (p, ty)) in nodes.iter().enumerate() {
-            pharm_type_indices.push(*ty);
-
-            // Rotation-invariant distance from pharmacophore centroid, normalised.
-            let dx = p[0] - cx;
-            let dy = p[1] - cy;
-            let dz = p[2] - cz;
-            let r = (dx * dx + dy * dy + dz * dz).sqrt() / SPACIAL_DIST_SCALE;
-            scalars.push(r);
-
-            // Mean pairwise distance to all other pharmacophore nodes, normalised.
-            let mean_d = if num_nodes > 1 {
-                let mut sum = 0f32;
-                for j in 0..num_nodes {
-                    if i != j {
-                        sum += dist_mat[i * num_nodes + j];
-                    }
-                }
-                sum / ((num_nodes - 1) as f32 * SPACIAL_DIST_SCALE)
-            } else {
-                0.0
-            };
-            scalars.push(mean_d);
-        }
+        let pharm_type_indices: Vec<i32> = nodes.iter().map(|(_, ty)| *ty).collect();
+        let scalars = setup_scalars(&nodes, num_nodes, &dist_mat);
 
         let analysis_adj = non_nn_ml::build_spacial_analysis_adj(&dist_mat, num_nodes);
         let mut base_labels = Vec::with_capacity(num_nodes);
@@ -179,6 +200,7 @@ impl GraphDataSpacial {
             let mut hasher = DefaultHasher::new();
             pharm_type_indices[i].hash(&mut hasher);
             analysis_adj[i].len().hash(&mut hasher);
+
             non_nn_ml::bucket_scalar(scalars[i * PER_PHARM_SCALARS], 4.0).hash(&mut hasher);
             non_nn_ml::bucket_scalar(scalars[i * PER_PHARM_SCALARS + 1], 4.0).hash(&mut hasher);
             base_labels.push(hasher.finish());
@@ -230,12 +252,3 @@ impl GraphDataSpacial {
         })
     }
 }
-
-// Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
-// Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
-// `GraphDataSpacial::new`.
-pub(in crate::therapeutic) const PER_PHARM_SCALARS: usize = 2;
-// Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
-pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
-// Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
-pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;

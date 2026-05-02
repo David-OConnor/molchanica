@@ -182,6 +182,60 @@ fn vocab_lookup_ff(ff: Option<&String>) -> i32 {
     }
 }
 
+/// Set up scalars for the atom-bond GNN. These are per-node, floating point features. They
+/// do not include integer (e.g. atom element) per-node features.
+fn setup_scalars(
+    atoms: &[Atom],
+    num_atoms: usize,
+    adj: &[Vec<usize>],
+    is_h_bond_donor: &[bool],
+    is_h_bond_acceptor: &[bool],
+    is_aromatic_ring: &[bool],
+) -> Vec<f32> {
+    let mut res = Vec::with_capacity(num_atoms * PER_ATOM_SCALARS);
+
+    let geom = atom_geom_scalars(&atoms, &adj);
+
+    for (i, atom) in atoms.iter().enumerate() {
+        // Degree is the number of edges incident to a node.
+        let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
+        res.push(degree as f32 / 6.0);
+
+        // Note: Including partial charge and FF type appears to be beneficial.
+        res.push(atom.partial_charge.unwrap_or(0.0));
+
+        // if let Some(lj_data) = ff_params
+        //     .lennard_jones
+        //     .get(atom.force_field_type.as_ref().unwrap())
+        // {
+        //     scalars.push(lj_data.sigma);
+        //     scalars.push(lj_data.eps);
+        // } else {
+        //     eprintln!("Missing LJ for FF type {:?}", atom.force_field_type);
+        //
+        //     scalars.push(0.);
+        //     scalars.push(0.);
+        // }
+
+        // scalars.push(ff_params.lennard_jones[atom.force_field_type.as_ref().unwrap()].sigma);
+        // scalars.push(ff_params.lennard_jones[atom.force_field_type.as_ref().unwrap()].eps);
+
+        let (r, mean_nb_dist) = geom[i];
+        res.push(r);
+        res.push(mean_nb_dist);
+
+        let h_bond_acc = if is_h_bond_acceptor[i] { 1. } else { 0. };
+        let h_bond_donor = if is_h_bond_donor[i] { 1. } else { 0. };
+        res.push(h_bond_acc);
+        res.push(h_bond_donor);
+
+        let in_aromatic_ring = if is_aromatic_ring[i] { 1. } else { 0. };
+        res.push(in_aromatic_ring);
+    }
+
+    res
+}
+
 /// State for our atom-and-bond-based neural network. Atoms are nodes. 4 edge layers:
 /// - covalent bonds (1 edge connects 2 nodes)
 /// - Valence angles (2 edges connect 3 nodes)
@@ -323,49 +377,19 @@ impl GraphDataAtom {
         let mut elem_indices = Vec::with_capacity(num_atoms);
         let mut ff_indices = Vec::with_capacity(num_atoms);
 
-        let mut scalars = Vec::with_capacity(num_atoms * PER_ATOM_SCALARS);
-
-        let geom = atom_geom_scalars(&atoms, &adj);
-
-        for (i, atom) in atoms.iter().enumerate() {
+        for atom in &atoms {
             elem_indices.push(vocab_lookup_element(atom.element));
             ff_indices.push(vocab_lookup_ff(atom.force_field_type.as_ref()));
-
-            // Degree is the number of edges incident to a node.
-            let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
-            scalars.push(degree as f32 / 6.0);
-
-            // Note: Including partial charge and FF type appears to be beneficial.
-            scalars.push(atom.partial_charge.unwrap_or(0.0));
-
-            // if let Some(lj_data) = ff_params
-            //     .lennard_jones
-            //     .get(atom.force_field_type.as_ref().unwrap())
-            // {
-            //     scalars.push(lj_data.sigma);
-            //     scalars.push(lj_data.eps);
-            // } else {
-            //     eprintln!("Missing LJ for FF type {:?}", atom.force_field_type);
-            //
-            //     scalars.push(0.);
-            //     scalars.push(0.);
-            // }
-
-            // scalars.push(ff_params.lennard_jones[atom.force_field_type.as_ref().unwrap()].sigma);
-            // scalars.push(ff_params.lennard_jones[atom.force_field_type.as_ref().unwrap()].eps);
-
-            let (r, mean_nb_dist) = geom[i];
-            scalars.push(r);
-            scalars.push(mean_nb_dist);
-
-            let h_bond_acc = if is_h_bond_acceptor[i] { 1. } else { 0. };
-            let h_bond_donor = if is_h_bond_donor[i] { 1. } else { 0. };
-            scalars.push(h_bond_acc);
-            scalars.push(h_bond_donor);
-
-            let in_aromatic_ring = if is_aromatic_ring[i] { 1. } else { 0. };
-            scalars.push(in_aromatic_ring);
         }
+
+        let scalars = setup_scalars(
+            &atoms,
+            num_atoms,
+            &adj,
+            &is_h_bond_donor,
+            &is_h_bond_acceptor,
+            &is_aromatic_ring,
+        );
 
         let analysis_features = non_nn_ml::atom_graph_analysis_features(
             analysis_tools,

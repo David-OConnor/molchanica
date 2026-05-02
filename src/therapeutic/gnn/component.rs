@@ -39,6 +39,59 @@ pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize =
 // one for each functional group, etc.
 pub(in crate::therapeutic) const COMPONENT_VOCAB_SIZE: usize = 23;
 
+/// Very similar to `MoleculeCommon::centroid`.
+fn comp_centroid(comp: &Component, atom_posits: &[Vec3]) -> Vec3 {
+    let n = comp.atoms.len() as f64;
+
+    let sum = comp
+        .atoms
+        .iter()
+        .map(|i| atom_posits[*i])
+        .fold(Vec3::new_zero(), |a, b| a + b);
+
+    sum / n
+}
+
+/// Set up scalars for the component GNN. These are per-node, floating point features. They
+/// do not include integer (e.g. component type) per-node features.
+///
+/// todo: 0ing these out appears to have no effect on the result. They are therefor currently not working
+/// todo: properly.
+fn setup_scalars(
+    comps: &[Component],
+    num_comps: usize,
+    mol: &MoleculeSmall,
+    mol_centroid: Vec3,
+    adj: &[Vec<usize>],
+) -> Vec<f32> {
+    let mut res = Vec::with_capacity(num_comps * PER_COMP_SCALARS);
+
+    for (i, comp) in comps.iter().enumerate() {
+        // Degree is the number of edges incident to a node.
+        let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
+
+        res.push(degree as f32 / 3.0);
+
+        // Number of atoms owned by this component, normalized. This divider
+        // assumes no Hydrogens.
+
+        // scalars.push(comp.atoms.len() as f32 / 4.0);
+
+        let dist = (mol_centroid - comp_centroid(comp, &mol.common.atom_posits)).magnitude();
+        // let dist =
+        //     (mol_centroid - comp_centroid(comp, &mol.common.atom_posits)).magnitude_squared();
+
+        // todo note: setting dist and/or degree to 0 seems to have no notable effect on results.
+        // todo: Yikes. Not a good sign for this.
+
+        res.push(dist as f32 / 8.0);
+    }
+
+    // todo?
+    vec![0.; num_comps * PER_COMP_SCALARS]
+    // res
+}
+
 /// Instead of atoms and bonds, this operates on components. (Functioal groups, rings, etc)
 ///
 /// Graph properties
@@ -72,19 +125,6 @@ pub(in crate::therapeutic) struct GraphDataComponent {
     pub num_comps: usize,
 }
 
-/// Very similar to `MoleculeCommon::centroid`.
-fn comp_centroid(comp: &Component, atom_posits: &[Vec3]) -> Vec3 {
-    let n = comp.atoms.len() as f64;
-
-    let sum = comp
-        .atoms
-        .iter()
-        .map(|i| atom_posits[*i])
-        .fold(Vec3::new_zero(), |a, b| a + b);
-
-    sum / n
-}
-
 /// Converts component nodes and inter-component connections into flat vectors for tensors.
 /// Used by both training and inference.
 impl GraphDataComponent {
@@ -106,26 +146,17 @@ impl GraphDataComponent {
 
         let mol_centroid = mol.common.centroid();
 
+        // todo: Even scarier than scalars not having much effect: We're not getting much effect from
+        // todo: comp type either???
         // Node features (Indices and Scalars)
-        let mut comp_type_indices = Vec::with_capacity(num_comps);
+        // todo temp!
+        let comp_type_indices = comps
+            .iter()
+            .map(|c| vocab_lookup_component(c, mol))
+            .collect();
+        // let comp_type_indices = comps.iter().map(|c| 0).collect();
 
-        let mut scalars = Vec::with_capacity(num_comps * PER_COMP_SCALARS);
-
-        for (i, comp) in comps.iter().enumerate() {
-            comp_type_indices.push(vocab_lookup_component(comp, mol));
-
-            // Degree is the number of edges incident to a node.
-            let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
-            scalars.push(degree as f32 / 3.0);
-
-            // Number of atoms owned by this component, normalized. This divider
-            // assumes no Hydrogens.
-            scalars.push(comp.atoms.len() as f32 / 4.0);
-
-            let dist = (mol_centroid - comp_centroid(comp, &mol.common.atom_posits)).magnitude();
-            // todo: QC this normalizing divisor.
-            scalars.push(dist as f32 / 8.0);
-        }
+        let scalars = setup_scalars(comps, num_comps, mol, mol_centroid, &adj);
 
         let mut base_labels = Vec::with_capacity(num_comps);
         for (i, comp) in comps.iter().enumerate() {
