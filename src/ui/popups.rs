@@ -14,7 +14,7 @@ use na_seq::AaIdent;
 use crate::{
     button, cam,
     cam::move_cam_to_mol,
-    drawing::{EntityClass, wrappers::draw_all_pockets},
+    drawing::wrappers::draw_all_pockets,
     file_io::download_mols::load_atom_coords_rcsb,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,

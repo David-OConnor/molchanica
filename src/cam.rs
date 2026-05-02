@@ -4,7 +4,6 @@ use lin_alg::f32::{Quaternion, Vec3};
 use na_seq::Element;
 
 use crate::{
-    cam,
     molecules::{
         MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
         nucleic_acid::MoleculeNucleicAcid, peptide::MoleculePeptide, pocket::Pocket,

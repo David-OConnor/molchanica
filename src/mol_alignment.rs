@@ -19,10 +19,7 @@ use std::{
     time::Instant,
 };
 
-use dynamics::{
-    FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState, ParamError,
-    SHAKE_TOL_DEFAULT, Solvent,
-};
+use dynamics::{FfMolType, Integrator, MdConfig, MdOverrides, MdState, ParamError, Solvent};
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},

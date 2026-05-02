@@ -3,13 +3,12 @@
 use std::f32::consts::TAU;
 
 use graphics::{
-    Camera, EngineUpdates, GraphicsSettings, InputSettings, Lighting, Mesh, PointLight, RIGHT_VEC,
-    Scene, ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings,
+    Camera, EngineUpdates, InputSettings, Lighting, Mesh, PointLight, RIGHT_VEC, Scene,
+    ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings,
 };
 use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
-    cam,
     cam::{
         FOG_DIST_DEFAULT, FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists,
     },

@@ -11,11 +11,7 @@ use std::{
 
 use crate::{
     molecules::small::MoleculeSmall,
-    therapeutic::{
-        gnn::{PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS},
-        non_nn_ml,
-        non_nn_ml::GnnAnalysisTools,
-    },
+    therapeutic::{non_nn_ml, non_nn_ml::GnnAnalysisTools},
 };
 
 // Tunable parameters for the spacial/pharmacophore GNN.
@@ -234,3 +230,12 @@ impl GraphDataSpacial {
         })
     }
 }
+
+// Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
+// Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
+// `GraphDataSpacial::new`.
+pub(in crate::therapeutic) const PER_PHARM_SCALARS: usize = 2;
+// Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
+pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
+// Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
+pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;

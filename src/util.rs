@@ -25,20 +25,17 @@ use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
 };
-use na_seq::Element;
 
 use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
         color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
-        draw_peptide,
-        ribbon_mesh::build_ribbon_mesh,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
+        draw_peptide, ribbon_mesh::build_ribbon_mesh,
     },
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, Chain, MolGenericRef, MolGenericRefMut, MolType, MoleculeGeneric, Residue,
-        aa_color, peptide::MoleculePeptide, small::MoleculeSmall,
+        Atom, Bond, Chain, MolGenericRefMut, MolType, MoleculeGeneric, Residue, aa_color,
+        peptide::MoleculePeptide, small::MoleculeSmall,
     },
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,

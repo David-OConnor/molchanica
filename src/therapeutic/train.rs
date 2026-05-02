@@ -8,7 +8,7 @@
 //! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data`
 //!
 //! Add the `tgt` param if training on a single file. Can be a single target, or multiple.
-//! --tgt bbb_martins`
+//! e.g: `--tgt bbb_martins`
 //!
 //! Add the `--eval` tag to evaluate
 
@@ -66,11 +66,15 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, COMPONENT_VOCAB_SIZE,
-            GRAPH_ANALYSIS_FEATURE_VERSION, PER_ATOM_SCALARS, PER_COMP_SCALARS,
-            PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
-            atom_bond, atom_bond::GraphDataAtom, component::GraphDataComponent,
-            spacial::GraphDataSpacial,
+            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
+            PER_ATOM_SCALARS, atom_bond,
+            atom_bond::GraphDataAtom,
+            component::{
+                COMPONENT_VOCAB_SIZE, GraphDataComponent, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            },
+            spacial::{
+                GraphDataSpacial, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
+            },
         },
         mlp, non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
@@ -85,10 +89,23 @@ pub(in crate::therapeutic) const FF_BUCKETS: usize = 20;
 // 10 (Elements) + 1 (Degree) + 20 (FF Hashed) + 1 (Partial Charge)
 // pub(in crate::therapeutic) const FEAT_DIM_ATOMS: usize = 12 + FF_BUCKETS;
 
-// todo: How should this be set up
+// Is the cost to making these too long just memory, or also computation or other limitations?
+// Training, inference, or both?
 pub(in crate::therapeutic) const MAX_ATOMS: usize = 100; // Max atoms for padding
 pub(in crate::therapeutic) const MAX_COMPS: usize = 30; // Max components for padding
 pub(in crate::therapeutic) const MAX_PHARM: usize = 30; // Max pharmacophore nodes for padding
+
+pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
+
+pub(in crate::therapeutic) const TRAIN_VALID_DIR: &str = "ml_models";
+
+// Only embed model files in the main app binary. The train binary always loads from disk,
+// and embedding here would force a recompile every time a training run writes new model files.
+#[cfg(not(feature = "train"))]
+pub(in crate::therapeutic) static MODEL_INCLUDE: Dir =
+    include_dir!("$CARGO_MANIFEST_DIR/ml_models/models");
+
+pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
 /// Configuration, as loaded from our config file; can be set at runtime.
 /// Loaded from `therapeutic_training_config.toml` at the project root. See that file for
@@ -103,6 +120,8 @@ pub(in crate::therapeutic) struct ParamConfig {
     pub gnn_comp_layers: u8,
     pub gnn_spacial_layers: u8,
     pub mlp_layers: u8,
+    /// These gnn levels are multiplex layers; different sets of edges for each
+    /// node.
     /// Covalent bonds
     pub gnn_atom_multiplex_level_0: bool,
     /// Valence angles
@@ -401,18 +420,6 @@ pub(in crate::therapeutic) fn spacial_graph_analysis_from_param_cfg(
         random_walk_methods: param_cfg.spacial_graph_analysis_random_walk_methods,
     }
 }
-
-pub(in crate::therapeutic) const MODEL_DIR: &str = "ml_models/models";
-
-pub(in crate::therapeutic) const TRAIN_VALID_DIR: &str = "ml_models";
-
-// Only embed model files in the main app binary. The train binary always loads from disk,
-// and embedding here would force a recompile every time a training run writes new model files.
-#[cfg(not(feature = "train"))]
-pub(in crate::therapeutic) static MODEL_INCLUDE: Dir =
-    include_dir!("$CARGO_MANIFEST_DIR/ml_models/models");
-
-pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 
 // It seems that low or no dropout significantly improves results, but perhaps it makes the
 // model more likely to overfit, and makes it less general? Maybe 0.1 or disabled.

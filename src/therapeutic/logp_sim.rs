@@ -10,8 +10,8 @@ use std::{collections::HashSet, path::Path};
 
 use bio_files::gromacs::OutputControl;
 use dynamics::{
-    ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBox,
-    SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit,
+    Solvent, TAU_TEMP_DEFAULT,
     alchemical::{LambdaWindow, collect_window, free_energy_ti, log_p},
     snapshot::SnapshotHandlers,
 };

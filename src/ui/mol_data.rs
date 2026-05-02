@@ -4,7 +4,7 @@ use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
 use bio_files::{ResidueType, md_params::ForceFieldParams};
 use dynamics::params::FfParamSet;
 use egui::{Color32, RichText, Ui};
-use graphics::{EngineUpdates, EntityUpdate, Scene};
+use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::{

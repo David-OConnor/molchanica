@@ -1,6 +1,5 @@
 use bio_files::FrameSlice;
-use burn::train::metric::Adaptor;
-use egui::{Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
+use egui::{Color32, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
@@ -490,15 +489,15 @@ pub(in crate::ui) fn sidebar(
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
-    ctx: &Context,
+    ui: &mut Ui,
 ) {
     let edit_mode = state.volatile.operating_mode == OperatingMode::MolEditor;
 
-    let out = egui::SidePanel::left("sidebar")
+    let out = egui::Panel::left("sidebar")
         .resizable(true) // let user drag the width
-        .default_width(140.0)
-        .width_range(60.0..=800.0)
-        .show(ctx, |ui| {
+        .default_size(140.0)
+        .size_range(60.0..=800.0)
+        .show_inside(ui, |ui| {
             ui.label("Molecules opened");
 
             ui.horizontal(|ui| {

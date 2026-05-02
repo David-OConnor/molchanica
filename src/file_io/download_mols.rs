@@ -5,10 +5,8 @@ use std::time::Instant;
 use bio_apis::{ReqError, amber_geostd, pubchem::StructureSearchNamespace, rcsb};
 use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
-use na_seq::AaIdent;
 
 use crate::{
-    cam,
     drawing::EntityClass,
     file_io::load_peptide,
     molecules::{

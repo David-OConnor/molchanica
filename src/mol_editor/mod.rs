@@ -27,8 +27,7 @@ use crate::{
         atoms_bonds::{
             ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, atom_color, bond_entities,
         },
-        draw_mol, draw_peptide, draw_pocket,
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+        draw_mol, draw_pocket,
     },
     mol_components::MolComponents,
     mol_manip::ManipMode,

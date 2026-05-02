@@ -13,12 +13,7 @@ use bio_files::{
     BondType,
     md_params::{DihedralParams, ForceFieldParams},
 };
-use na_seq::{
-    Element,
-    Element::{
-        Bromine, Carbon, Chlorine, Fluorine, Hydrogen, Iodine, Nitrogen, Oxygen, Phosphorus, Sulfur,
-    },
-};
+use na_seq::Element::*;
 
 use crate::{
     molecules::{Atom, build_adjacency_list, small::MoleculeSmall},
@@ -27,6 +22,7 @@ use crate::{
         gnn::{
             ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, DIHEDRAL_BARRIER_REF,
             DIHEDRAL_PARAM_SUMMARY_FEATS, DihedralParamAccumulator, PER_ATOM_SCALARS,
+            vocab_lookup_element,
         },
         non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
@@ -102,7 +98,6 @@ fn relation_edge_features(
         dihedral_summary[1],
         dihedral_summary[2],
         dihedral_summary[3],
-        dihedral_summary[4],
     ]
 }
 
@@ -907,24 +902,6 @@ pub(in crate::therapeutic) fn pad_atom_edge_feats(
     }
 
     out
-}
-
-/// Maps element to values the neural net can use.
-pub(in crate::therapeutic) fn vocab_lookup_element(el: Element) -> i32 {
-    // 0 is reserved for Padding in the Batcher, so we start at 1.
-    match el {
-        Hydrogen => 1,
-        Carbon => 2,
-        Nitrogen => 3,
-        Oxygen => 4,
-        Fluorine => 5,
-        Phosphorus => 6,
-        Sulfur => 7,
-        Chlorine => 8,
-        Bromine => 9,
-        Iodine => 10,
-        _ => 11, // "Other" bucket
-    }
 }
 
 fn dihedral_edge_stats(phi: f32, params: &[DihedralParams]) -> (f32, f32) {

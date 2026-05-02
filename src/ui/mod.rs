@@ -3,8 +3,8 @@ use std::{io::Cursor, time::Instant};
 use bio_apis::{pdbe, rcsb};
 use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
-    Color32, ComboBox, Context, CornerRadius, Frame, Key, Margin, Panel, RichText, Slider, Stroke,
-    TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
+    Color32, ComboBox, CornerRadius, Frame, Key, Margin, Panel, RichText, Slider, Stroke, TextEdit,
+    TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use md::md_setup;

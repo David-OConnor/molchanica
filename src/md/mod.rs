@@ -9,9 +9,7 @@ use std::{
 };
 
 use bincode::{Decode, Encode};
-use bio_files::{
-    AtomGeneric, bond_inference, create_bonds, gromacs::GromacsOutput, md_params::ForceFieldParams,
-};
+use bio_files::{AtomGeneric, create_bonds, gromacs::GromacsOutput, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,

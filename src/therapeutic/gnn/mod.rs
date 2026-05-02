@@ -13,8 +13,9 @@
 use std::{collections::HashMap, iter::repeat_n};
 
 use bio_files::md_params::{DihedralParams, ForceFieldParams};
+use na_seq::Element::{self, *};
 
-use crate::molecules::Atom;
+use crate::{molecules::Atom, therapeutic::gnn::component::COMP_EDGE_GEOM_FEATS};
 
 // Degree (Number of edges incident to a node), partial charge, geometry (radius from molecular centroid, mean neighbor distance),
 // is H-bond acceptor, is H-bond donor, in aromatic ring.
@@ -52,8 +53,9 @@ pub(in crate::therapeutic) const PER_ATOM_SCALARS: usize = 7;
 //     bond_type = (ctr, sat) bond order; rotatable = 0;
 //     scalars = [torsion_alignment, log_effective_barrier_sum]; dihedral summary = raw
 //     improper-dihedral params for that torsion.
-//
-const DIHEDRAL_PARAM_SUMMARY_FEATS: usize = 5;
+
+// Barrier height, cos(phase), sin(phase), periodicity sum, divider sum
+const DIHEDRAL_PARAM_SUMMARY_FEATS: usize = 4;
 const ATOM_GNN_EDGE_SHARED_FEATS: usize = 9;
 const ATOM_GNN_EDGE_REL_SCALARS: usize = 2;
 
@@ -61,29 +63,10 @@ pub(in crate::therapeutic) const ATOM_GNN_PER_EDGE_FEATS_LAYER_0: usize =
     ATOM_GNN_EDGE_SHARED_FEATS + ATOM_GNN_EDGE_REL_SCALARS + DIHEDRAL_PARAM_SUMMARY_FEATS;
 pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
 
-// Degree, component size
-// Keep this in sync with `GraphDataComponent::new`
-pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
-// Keep this in sync with `GraphDataComponent::new`.
-// [shared_atoms, rotatable_fraction, torsion_alignment_mean, log_effective_barrier_mean,
-//  log_raw_barrier_sum, phase_cos_mean, phase_sin_mean, periodicity_mean_norm,
-//  divider_mean_norm]
-const COMP_EDGE_GEOM_FEATS: usize = 2;
-pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize =
-    2 + COMP_EDGE_GEOM_FEATS + DIHEDRAL_PARAM_SUMMARY_FEATS;
-pub(in crate::therapeutic) const COMPONENT_VOCAB_SIZE: usize = 23;
+// These are used to normalize dihedral properties.
 const DIHEDRAL_BARRIER_REF: f32 = 4.0;
 const DIHEDRAL_PERIODICITY_REF: f32 = 6.0;
 const DIHEDRAL_DIVIDER_REF: f32 = 6.0;
-
-// Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
-// Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
-// `GraphDataSpacial::new`.
-pub(in crate::therapeutic) const PER_PHARM_SCALARS: usize = 2;
-// Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
-pub(in crate::therapeutic) const PER_SPACIAL_EDGE_FEATS: usize = 5;
-// Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
-pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;
 
 pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 2;
 
@@ -133,7 +116,7 @@ impl DihedralParamAccumulator {
                 (self.phase_cos_sum / self.effective_weight_sum).clamp(-1.0, 1.0),
                 (self.phase_sin_sum / self.effective_weight_sum).clamp(-1.0, 1.0),
                 (self.periodicity_sum / self.effective_weight_sum) / DIHEDRAL_PERIODICITY_REF,
-                (self.divider_sum / self.effective_weight_sum) / DIHEDRAL_DIVIDER_REF,
+                // (self.divider_sum / self.effective_weight_sum) / DIHEDRAL_DIVIDER_REF,
             ]
         }
     }
@@ -442,5 +425,23 @@ mod tests {
             spacial_graph_analysis_tools().feature_dim(),
             atom_graph_analysis_tools().feature_dim()
         );
+    }
+}
+
+/// Maps element to values the neural net can use.
+pub(in crate::therapeutic) fn vocab_lookup_element(el: Element) -> i32 {
+    // 0 is reserved for Padding in the Batcher, so we start at 1.
+    match el {
+        Hydrogen => 1,
+        Carbon => 2,
+        Nitrogen => 3,
+        Oxygen => 4,
+        Fluorine => 5,
+        Phosphorus => 6,
+        Sulfur => 7,
+        Chlorine => 8,
+        Bromine => 9,
+        Iodine => 10,
+        _ => 11, // "Other" bucket
     }
 }

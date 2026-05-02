@@ -7,10 +7,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    molecules::Atom,
-    therapeutic::{gnn, gnn::atom_bond},
-};
+use crate::{molecules::Atom, therapeutic::gnn};
 
 /// See `Graph Representation Learning` by William L Hamilton, 2020.
 ///
@@ -211,7 +208,7 @@ pub fn atom_graph_analysis_features(
         .enumerate()
         .map(|(i, atom)| {
             let mut hasher = DefaultHasher::new();
-            atom_bond::vocab_lookup_element(atom.element).hash(&mut hasher);
+            gnn::vocab_lookup_element(atom.element).hash(&mut hasher);
             adj[i].len().hash(&mut hasher);
             is_h_bond_acceptor[i].hash(&mut hasher);
             is_h_bond_donor[i].hash(&mut hasher);

@@ -469,7 +469,10 @@ impl MolComponents {
             let atom_0 = comps[ca].atoms.iter().position(|&x| x == a).unwrap_or(0);
             let atom_1 = comps[cb].atoms.iter().position(|&x| x == b).unwrap_or(0);
 
-            let shared_atoms = comps[ca].atoms.iter().any(|atom_i| comps[cb].atoms.contains(atom_i));
+            let shared_atoms = comps[ca]
+                .atoms
+                .iter()
+                .any(|atom_i| comps[cb].atoms.contains(atom_i));
 
             conns.push(Connection {
                 comp_0: ca,
@@ -574,7 +577,11 @@ fn ring_component_clusters(rings: &[crate::mol_characterization::Ring]) -> Vec<V
     let mut ring_adj = vec![Vec::new(); n];
     for i in 0..n {
         for j in (i + 1)..n {
-            if rings[i].atoms.iter().any(|atom_i| rings[j].atoms.contains(atom_i)) {
+            if rings[i]
+                .atoms
+                .iter()
+                .any(|atom_i| rings[j].atoms.contains(atom_i))
+            {
                 ring_adj[i].push(j);
                 ring_adj[j].push(i);
             }
@@ -614,10 +621,11 @@ fn ring_component_clusters(rings: &[crate::mol_characterization::Ring]) -> Vec<V
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::molecules::small::MoleculeSmall;
     use bio_files::BondType;
     use lin_alg::f64::Vec3;
+
+    use super::*;
+    use crate::molecules::small::MoleculeSmall;
 
     fn test_atom() -> Atom {
         Atom {
@@ -655,7 +663,13 @@ mod tests {
             test_bond(9, 5, BondType::Aromatic),
         ];
 
-        let mut mol = MoleculeSmall::new(String::from("naphthalene"), atoms, bonds, HashMap::new(), None);
+        let mut mol = MoleculeSmall::new(
+            String::from("naphthalene"),
+            atoms,
+            bonds,
+            HashMap::new(),
+            None,
+        );
         mol.update_characterization();
 
         let components = mol.components.expect("components");

@@ -37,7 +37,7 @@ use dynamics::{
     FfMolType, MolDynamics, OCTANOL_WATER_TEMPLATE, SimBoxInit, Solvent, make_octanol,
     params::FfParamSet,
 };
-use lin_alg::{f32::Vec3, f64::Vec3 as Vec3F64};
+use lin_alg::f64::Vec3 as Vec3F64;
 use na_seq::Element;
 
 use crate::{
@@ -390,15 +390,6 @@ pub fn launch_md(state: &mut State) {
             return;
         }
     };
-
-    // let mut offset = 0;
-    // let mut mol_start_indices = Vec::new();
-    // for m in &input.molecules {
-    //     for _ in 0..m.count {
-    //         mol_start_indices.push(offset);
-    //         offset += m.atoms.len();
-    //     }
-    // }
 
     let (tx, rx) = mpsc::channel();
 
