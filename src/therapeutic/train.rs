@@ -1,9 +1,9 @@
 #![allow(unused)] // Required to prevent false positives.
 
 //! Entry point for training of therapeutic properties. (Via a thin wrapper in `/src/train.rs` required
-//! by Rust's system)
+//! by Rust's moedule system)
 //!
-//! This is tailored towards data from Therapeutic Data Commons (TDC).
+//! This is tailored towards data from Therapeutic Data Commons (TDC), but is more broadly applicable.
 
 //! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data`
 //!
@@ -66,10 +66,11 @@ use crate::{
     therapeutic::{
         DatasetTdc, gnn,
         gnn::{
-            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
-            COMPONENT_VOCAB_SIZE, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
-            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE, atom_bond,
-            atom_bond::GraphDataAtom, component::GraphDataComponent, spacial::GraphDataSpacial,
+            ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, COMPONENT_VOCAB_SIZE,
+            GRAPH_ANALYSIS_FEATURE_VERSION, PER_ATOM_SCALARS, PER_COMP_SCALARS,
+            PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE,
+            atom_bond, atom_bond::GraphDataAtom, component::GraphDataComponent,
+            spacial::GraphDataSpacial,
         },
         mlp, non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
@@ -836,10 +837,26 @@ impl<B: Backend> Model<B> {
             // This drops both neighbor messages and self-loops on those layers, so
             // they contribute nothing to the per-atom aggregation.
             let layer_mask_vals: [f32; ATOM_GNN_EDGE_LAYERS] = [
-                if self.atom_multiplex_level_0 { 1.0 } else { 0.0 },
-                if self.atom_multiplex_level_1 { 1.0 } else { 0.0 },
-                if self.atom_multiplex_level_2 { 1.0 } else { 0.0 },
-                if self.atom_multiplex_level_3 { 1.0 } else { 0.0 },
+                if self.atom_multiplex_level_0 {
+                    1.0
+                } else {
+                    0.0
+                },
+                if self.atom_multiplex_level_1 {
+                    1.0
+                } else {
+                    0.0
+                },
+                if self.atom_multiplex_level_2 {
+                    1.0
+                } else {
+                    0.0
+                },
+                if self.atom_multiplex_level_3 {
+                    1.0
+                } else {
+                    0.0
+                },
             ];
             let layer_mask = Tensor::<B, 4>::from_data(
                 TensorData::new(layer_mask_vals.to_vec(), [1, ATOM_GNN_EDGE_LAYERS, 1, 1]),
