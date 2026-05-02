@@ -67,9 +67,9 @@ use crate::{
         DatasetTdc, gnn,
         gnn::{
             ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
-            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS,
-            PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE, atom_bond, atom_bond::GraphDataAtom,
-            component::GraphDataComponent, spacial::GraphDataSpacial,
+            COMPONENT_VOCAB_SIZE, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS, SPACIAL_VOCAB_SIZE, atom_bond,
+            atom_bond::GraphDataAtom, component::GraphDataComponent, spacial::GraphDataSpacial,
         },
         mlp, non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
@@ -719,13 +719,17 @@ impl<B: Backend> Model<B> {
         nodes: Tensor<B, 3>,         // [Batch, N, D_in]
         edge_emb: &Tensor<B, 4>,     // [Batch, N, N, D_hidden]
         gnn_linear: &Linear<B>,      // The update layer
+        apply_message_relu: bool,
         dropout: bool,
     ) -> Tensor<B, 3> {
         // 1. Broadcast Nodes to Neighbors: [B, N, D] -> [B, 1, N, D]
         let nodes_j = nodes.clone().unsqueeze_dim(1);
 
         // 2. Combine Node + Edge (GINE): [B, 1, N, D] + [B, N, N, D] -> [B, N, N, D]
-        let message = activation::relu(nodes_j + edge_emb.clone());
+        let mut message = nodes_j + edge_emb.clone();
+        if apply_message_relu {
+            message = activation::relu(message);
+        }
 
         // 3. Aggregate: message * weights -> Sum(dim 2)
         let weights = adj_weighted.clone().unsqueeze_dim(3); // [B, N, N, 1]
@@ -909,6 +913,7 @@ impl<B: Backend> Model<B> {
                     comp_gnn_prev,
                     &comp_edge_emb,
                     layer,
+                    false,
                     dropout,
                 );
             }
@@ -961,6 +966,7 @@ impl<B: Backend> Model<B> {
                     spacial_gnn_prev,
                     &pharm_edge_emb,
                     layer,
+                    true,
                     dropout,
                 );
             }
@@ -1664,7 +1670,7 @@ pub(in crate::therapeutic) fn train_with_samples(
         embedding_dim: 16,             // Tune this (8, 16, 32)
         n_node_scalars: PER_ATOM_SCALARS,
         edge_feat_dim: ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
-        vocab_size_comp: 11, // 0=pad + 10 component types (see vocab_lookup_component)
+        vocab_size_comp: COMPONENT_VOCAB_SIZE,
         comp_embedding_dim: 8,
         n_comp_scalars: PER_COMP_SCALARS,
         comp_edge_feat_dim: PER_EDGE_COMP_FEATS,

@@ -65,9 +65,13 @@ pub(in crate::therapeutic) const ATOM_GNN_EDGE_LAYERS: usize = 4;
 // Keep this in sync with `GraphDataComponent::new`
 pub(in crate::therapeutic) const PER_COMP_SCALARS: usize = 2;
 // Keep this in sync with `GraphDataComponent::new`.
-// [shared_atoms, rotatable, log_raw_barrier_sum, phase_cos_mean, phase_sin_mean,
-//  periodicity_mean_norm, divider_mean_norm]
-pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize = 2 + DIHEDRAL_PARAM_SUMMARY_FEATS;
+// [shared_atoms, rotatable_fraction, torsion_alignment_mean, log_effective_barrier_mean,
+//  log_raw_barrier_sum, phase_cos_mean, phase_sin_mean, periodicity_mean_norm,
+//  divider_mean_norm]
+const COMP_EDGE_GEOM_FEATS: usize = 2;
+pub(in crate::therapeutic) const PER_EDGE_COMP_FEATS: usize =
+    2 + COMP_EDGE_GEOM_FEATS + DIHEDRAL_PARAM_SUMMARY_FEATS;
+pub(in crate::therapeutic) const COMPONENT_VOCAB_SIZE: usize = 23;
 const DIHEDRAL_BARRIER_REF: f32 = 4.0;
 const DIHEDRAL_PERIODICITY_REF: f32 = 6.0;
 const DIHEDRAL_DIVIDER_REF: f32 = 6.0;
@@ -135,6 +139,68 @@ impl DihedralParamAccumulator {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct DihedralGeometryAccumulator {
+    alignment_sum: f32,
+    effective_weight_sum: f32,
+}
+
+impl DihedralGeometryAccumulator {
+    fn add_terms(&mut self, phi: f32, params: &[DihedralParams]) {
+        for param in params {
+            let divider = param.divider.max(1) as f32;
+            let weight = (param.barrier_height / divider).abs();
+            if weight <= 0.0 {
+                continue;
+            }
+
+            self.alignment_sum += weight * (param.periodicity as f32 * phi - param.phase).cos();
+            self.effective_weight_sum += weight;
+        }
+    }
+
+    fn summary(self) -> [f32; COMP_EDGE_GEOM_FEATS] {
+        if self.effective_weight_sum <= 1.0e-6 {
+            [0.0; COMP_EDGE_GEOM_FEATS]
+        } else {
+            [
+                (self.alignment_sum / self.effective_weight_sum).clamp(-1.0, 1.0),
+                (self.effective_weight_sum / DIHEDRAL_BARRIER_REF).ln_1p(),
+            ]
+        }
+    }
+}
+
+pub(in crate::therapeutic) fn dihedral_angle(
+    atoms: &[Atom],
+    a0: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+) -> Option<f32> {
+    let b0 = atoms[a1].posit - atoms[a0].posit;
+    let b1 = atoms[a2].posit - atoms[a1].posit;
+    let b2 = atoms[a3].posit - atoms[a2].posit;
+
+    let n0 = b0.cross(b1);
+    let n1 = b1.cross(b2);
+
+    let n0_mag_sq = n0.magnitude_squared();
+    let n1_mag_sq = n1.magnitude_squared();
+    let b1_mag = b1.magnitude();
+
+    if n0_mag_sq <= 1.0e-12 || n1_mag_sq <= 1.0e-12 || b1_mag <= 1.0e-12 {
+        return None;
+    }
+
+    let b1_unit = b1 * (1.0 / b1_mag);
+    let m1 = n0.cross(b1_unit);
+    let x = n0.dot(n1);
+    let y = m1.dot(n1);
+
+    Some(y.atan2(x) as f32)
+}
+
 /// For atom/bond, and component GNNs.
 fn proper_dihedral_summaries_by_central_bond(
     atoms: &[Atom],
@@ -173,6 +239,59 @@ fn proper_dihedral_summaries_by_central_bond(
                         .entry(bond_pair_key(i1, i2))
                         .or_default()
                         .add_terms(params);
+                }
+            }
+        }
+    }
+
+    by_bond
+        .into_iter()
+        .map(|(bond, acc)| (bond, acc.summary()))
+        .collect()
+}
+
+/// For component-edge features: aggregate actual torsion geometry for each central bond.
+fn proper_dihedral_stats_by_central_bond(
+    atoms: &[Atom],
+    adj: &[Vec<usize>],
+    ff_params: &ForceFieldParams,
+) -> HashMap<(usize, usize), [f32; COMP_EDGE_GEOM_FEATS]> {
+    let mut by_bond: HashMap<(usize, usize), DihedralGeometryAccumulator> = HashMap::new();
+
+    for (i1, neighbors) in adj.iter().enumerate() {
+        for &i2 in neighbors {
+            if i1 >= i2 {
+                continue;
+            }
+
+            for &i0 in adj[i1].iter().filter(|&&x| x != i2) {
+                for &i3 in adj[i2].iter().filter(|&&x| x != i1) {
+                    if i0 == i3 {
+                        continue;
+                    }
+
+                    let Some(params) = (match (
+                        atoms[i0].force_field_type.clone(),
+                        atoms[i1].force_field_type.clone(),
+                        atoms[i2].force_field_type.clone(),
+                        atoms[i3].force_field_type.clone(),
+                    ) {
+                        (Some(ff0), Some(ff1), Some(ff2), Some(ff3)) => {
+                            ff_params.get_dihedral(&(ff0, ff1, ff2, ff3), true, true)
+                        }
+                        _ => None,
+                    }) else {
+                        continue;
+                    };
+
+                    let Some(phi) = dihedral_angle(atoms, i0, i1, i2, i3) else {
+                        continue;
+                    };
+
+                    by_bond
+                        .entry(bond_pair_key(i1, i2))
+                        .or_default()
+                        .add_terms(phi, params);
                 }
             }
         }

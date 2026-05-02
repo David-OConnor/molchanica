@@ -1,6 +1,7 @@
 //! Represents small organic molecules by breaking them down into components.
-//! Components correspond to chemically meaningful subgraphs (functional groups, rings, chains),
-//! and are connected by `Connection`s that mirror the actual bonds that cross component boundaries.
+//! Components correspond to chemically meaningful subgraphs (functional groups, ring clusters,
+//! chains), and are connected by `Connection`s that mirror the actual bonds that cross component
+//! boundaries.
 //!
 //! Primary uses:
 //!   - As a graph neural network (GNN) feature representation for ML.
@@ -21,7 +22,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct RingComponent {
-    /// For a fused ring system this is the total atom count across all rings in the system.
+    /// For a connected ring cluster this is the total atom count across all member rings.
     pub num_atoms: u8,
     pub ring_type: RingType,
 }
@@ -30,7 +31,7 @@ pub struct RingComponent {
 pub enum ComponentType {
     /// Fallback for atoms that don't fit any other component category.
     Atom(Element),
-    /// A single ring or a fused ring system (naphthalene, indole, etc.).
+    /// A single ring or a connected ring cluster (fused/spiro/bridged overlap handled as one node).
     Ring(RingComponent),
     /// A carbon chain (alkyl, alkenyl, …). Stores the number of carbon atoms.
     Chain(usize),
@@ -190,9 +191,8 @@ pub struct Connection {
     pub atom_0: usize,
     pub comp_1: usize,
     pub atom_1: usize,
-    /// True if this the atom is shared between both components; false if they are
-    /// separate components. For example, this will be true on the connection points
-    /// between fused rings, and there will be two connections fusing the rings.
+    /// True if an atom is intentionally shared between both components. Overlapping rings are
+    /// merged into one component up front, so this is rare in the current decomposition.
     pub shared_atoms: bool,
     /// True if the underlying cross-component covalent bond is rotatable.
     pub rotatable: bool,
@@ -256,55 +256,30 @@ impl MolComponents {
         }
 
         // --- 1. Rings ---
-        // Fused ring systems become a single component; isolated rings each get their own.
-        // let mut ring_in_system: HashSet<usize> = HashSet::new();
+        // Any connected set of overlapping rings becomes one component. This avoids emitting
+        // partial later rings on fused or spiro scaffolds after the first ring claims atoms.
+        for cluster in ring_component_clusters(&char.rings) {
+            let mut cluster_atoms = Vec::new();
+            let mut ring_type = RingType::Saturated;
 
-        // for system in &char.ring_systems {
-        //     let mut sys_atoms: Vec<usize> = Vec::new();
-        //     for &ri in system {
-        //         ring_in_system.insert(ri);
-        //         for &a in &char.rings[ri].atoms {
-        //             if !sys_atoms.contains(&a) {
-        //                 sys_atoms.push(a);
-        //             }
-        //         }
-        //     }
-        //     // Aromatic takes precedence; then Aliphatic; finally Saturated.
-        //     let ring_type = system.iter().map(|&i| char.rings[i].ring_type).fold(
-        //         RingType::Saturated,
-        //         |best, rt| match rt {
-        //             RingType::Aromatic => RingType::Aromatic,
-        //             RingType::Aliphatic if best != RingType::Aromatic => RingType::Aliphatic,
-        //             _ => best,
-        //         },
-        //     );
-        //     let num_atoms = sys_atoms.len() as u8;
-        //     add_comp!(
-        //         ComponentType::Ring(RingComponent {
-        //             num_atoms,
-        //             ring_type
-        //         }),
-        //         sys_atoms
-        //     );
-        // }
-
-        for ring in &char.rings {
-            let ring_atoms: Vec<usize> = ring
-                .atoms
-                .iter()
-                .filter(|&&a| !claimed.contains(&a))
-                .copied()
-                .collect();
-
-            if ring_atoms.is_empty() {
-                continue;
+            for &ri in &cluster {
+                let ring = &char.rings[ri];
+                ring_type = merge_ring_type(ring_type, ring.ring_type);
+                for &a in &ring.atoms {
+                    if !cluster_atoms.contains(&a) {
+                        cluster_atoms.push(a);
+                    }
+                }
             }
+
+            cluster_atoms.sort_unstable();
+            let num_atoms = cluster_atoms.len() as u8;
             add_comp!(
                 ComponentType::Ring(RingComponent {
-                    num_atoms: ring.atoms.len() as u8,
-                    ring_type: ring.ring_type,
+                    num_atoms,
+                    ring_type,
                 }),
-                ring_atoms
+                cluster_atoms
             );
         }
 
@@ -472,14 +447,6 @@ impl MolComponents {
         // Every bond whose two endpoints belong to different components becomes a Connection.
         // `atom_0` / `atom_1` are positions within the respective component's `atoms` list.
 
-        // Precompute how many detected rings each atom belongs to.
-        // Atoms that appear in 2+ rings are bridgehead (fusion) atoms.
-        let mut atom_ring_count: HashMap<usize, usize> = HashMap::new();
-        for ring in &char.rings {
-            for &a in &ring.atoms {
-                *atom_ring_count.entry(a).or_insert(0) += 1;
-            }
-        }
         let rotatable_bond_indices: HashSet<_> = char
             .rotatable_bonds
             .iter()
@@ -502,14 +469,7 @@ impl MolComponents {
             let atom_0 = comps[ca].atoms.iter().position(|&x| x == a).unwrap_or(0);
             let atom_1 = comps[cb].atoms.iter().position(|&x| x == b).unwrap_or(0);
 
-            // A connection is at a ring fusion when both components are rings and at least
-            // one endpoint is a bridgehead atom (present in 2+ detected rings). Because of
-            // exclusive atom claiming, only one side of the fusion bond will be a bridgehead;
-            // the other side is the non-bridgehead neighbour in the second ring component.
-            let shared_atoms = matches!(comps[ca].comp_type, ComponentType::Ring(_))
-                && matches!(comps[cb].comp_type, ComponentType::Ring(_))
-                && (atom_ring_count.get(&a).copied().unwrap_or(0) > 1
-                    || atom_ring_count.get(&b).copied().unwrap_or(0) > 1);
+            let shared_atoms = comps[ca].atoms.iter().any(|atom_i| comps[cb].atoms.contains(atom_i));
 
             conns.push(Connection {
                 comp_0: ca,
@@ -576,14 +536,135 @@ impl MolComponents {
 
 /// Mirrors the atoms/bonds based one.
 pub fn build_adjacency_list_conn(conns: &[Connection], comps_len: usize) -> Vec<Vec<usize>> {
-    let mut result = vec![Vec::new(); comps_len];
+    let mut result: Vec<HashSet<usize>> = vec![HashSet::new(); comps_len];
 
-    // For each conn, record its comps as neighbors of each other
+    // For each conn, record its comps as neighbors of each other.
     for conn in conns {
-        // todo: Should we take into account the atoms joined at?
-        result[conn.comp_0].push(conn.comp_1);
-        result[conn.comp_1].push(conn.comp_0);
+        if conn.comp_0 >= comps_len || conn.comp_1 >= comps_len || conn.comp_0 == conn.comp_1 {
+            continue;
+        }
+        result[conn.comp_0].insert(conn.comp_1);
+        result[conn.comp_1].insert(conn.comp_0);
     }
 
     result
+        .into_iter()
+        .map(|nbrs| {
+            let mut nbrs: Vec<_> = nbrs.into_iter().collect();
+            nbrs.sort_unstable();
+            nbrs
+        })
+        .collect()
+}
+
+fn merge_ring_type(best: RingType, next: RingType) -> RingType {
+    match next {
+        RingType::Aromatic => RingType::Aromatic,
+        RingType::Aliphatic if best != RingType::Aromatic => RingType::Aliphatic,
+        RingType::Aliphatic | RingType::Saturated => best,
+    }
+}
+
+fn ring_component_clusters(rings: &[crate::mol_characterization::Ring]) -> Vec<Vec<usize>> {
+    let n = rings.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let mut ring_adj = vec![Vec::new(); n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if rings[i].atoms.iter().any(|atom_i| rings[j].atoms.contains(atom_i)) {
+                ring_adj[i].push(j);
+                ring_adj[j].push(i);
+            }
+        }
+    }
+
+    let mut seen = vec![false; n];
+    let mut clusters = Vec::new();
+
+    for start in 0..n {
+        if seen[start] {
+            continue;
+        }
+
+        let mut queue = VecDeque::new();
+        let mut cluster = Vec::new();
+        seen[start] = true;
+        queue.push_back(start);
+
+        while let Some(cur) = queue.pop_front() {
+            cluster.push(cur);
+            for &next in &ring_adj[cur] {
+                if !seen[next] {
+                    seen[next] = true;
+                    queue.push_back(next);
+                }
+            }
+        }
+
+        cluster.sort_unstable();
+        clusters.push(cluster);
+    }
+
+    clusters.sort();
+    clusters
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::molecules::small::MoleculeSmall;
+    use bio_files::BondType;
+    use lin_alg::f64::Vec3;
+
+    fn test_atom() -> Atom {
+        Atom {
+            element: Carbon,
+            posit: Vec3::new_zero(),
+            ..Default::default()
+        }
+    }
+
+    fn test_bond(atom_0: usize, atom_1: usize, bond_type: BondType) -> Bond {
+        Bond {
+            bond_type,
+            atom_0_sn: atom_0 as u32 + 1,
+            atom_1_sn: atom_1 as u32 + 1,
+            atom_0,
+            atom_1,
+            is_backbone: false,
+        }
+    }
+
+    #[test]
+    fn fused_ring_clusters_become_one_component() {
+        let atoms = (0..10).map(|_| test_atom()).collect();
+        let bonds = vec![
+            test_bond(0, 1, BondType::Aromatic),
+            test_bond(1, 2, BondType::Aromatic),
+            test_bond(2, 3, BondType::Aromatic),
+            test_bond(3, 4, BondType::Aromatic),
+            test_bond(4, 5, BondType::Aromatic),
+            test_bond(5, 0, BondType::Aromatic),
+            test_bond(4, 6, BondType::Aromatic),
+            test_bond(6, 7, BondType::Aromatic),
+            test_bond(7, 8, BondType::Aromatic),
+            test_bond(8, 9, BondType::Aromatic),
+            test_bond(9, 5, BondType::Aromatic),
+        ];
+
+        let mut mol = MoleculeSmall::new(String::from("naphthalene"), atoms, bonds, HashMap::new(), None);
+        mol.update_characterization();
+
+        let components = mol.components.expect("components");
+        assert_eq!(components.components.len(), 1);
+        assert!(matches!(
+            components.components[0].comp_type,
+            ComponentType::Ring(_)
+        ));
+        assert_eq!(components.components[0].atoms.len(), 10);
+        assert!(components.connections.is_empty());
+    }
 }

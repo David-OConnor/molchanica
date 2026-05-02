@@ -20,8 +20,8 @@ use crate::{
         DatasetTdc,
         gnn::{
             ATOM_GNN_EDGE_LAYERS, ATOM_GNN_PER_EDGE_FEATS_LAYER_0, GRAPH_ANALYSIS_FEATURE_VERSION,
-            PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS, PER_PHARM_SCALARS,
-            PER_SPACIAL_EDGE_FEATS,
+            COMPONENT_VOCAB_SIZE, PER_ATOM_SCALARS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS,
+            PER_PHARM_SCALARS, PER_SPACIAL_EDGE_FEATS,
             atom_bond::{GraphDataAtom, pad_atom_adj_and_mask, pad_atom_edge_feats},
             component::GraphDataComponent,
             pad_adj_and_mask, pad_edge_feats, pad_indices, pad_scalars,
@@ -86,15 +86,22 @@ impl Infer {
         let config: ModelConfig = serde_json::from_value(config_json)?;
         if config.edge_feat_dim != ATOM_GNN_PER_EDGE_FEATS_LAYER_0
             || config.comp_edge_feat_dim != PER_EDGE_COMP_FEATS
+            || config.n_comp_scalars != PER_COMP_SCALARS
+            || config.vocab_size_comp < COMPONENT_VOCAB_SIZE
         {
             return Err(io::Error::other(format!(
-                "Therapeutic model edge feature dims are incompatible with the current graph \
-                 layout. Model has atom/component edge dims {}/{} but code expects {}/{}. \
+                "Therapeutic model graph layout is incompatible with the current component GNN \
+                 encoding. Model has atom/component edge dims {}/{}, component scalar dim {}, \
+                 and component vocab size {}, but code expects {}/{}, {}, and at least {}. \
                  Retrain or regenerate the model artifacts.",
                 config.edge_feat_dim,
                 config.comp_edge_feat_dim,
+                config.n_comp_scalars,
+                config.vocab_size_comp,
                 ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
                 PER_EDGE_COMP_FEATS,
+                PER_COMP_SCALARS,
+                COMPONENT_VOCAB_SIZE,
             )));
         }
         let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;

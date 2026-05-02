@@ -2,18 +2,24 @@
 //! connections between components are edges. Single layer.
 
 use std::{
+    collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     io,
 };
 
 use bio_files::md_params::ForceFieldParams;
+use na_seq::Element::{Bromine, Carbon, Chlorine, Fluorine, Iodine, Nitrogen, Oxygen, Phosphorus, Sulfur};
 
 use crate::{
-    mol_components::{ComponentType, MolComponents, build_adjacency_list_conn},
+    mol_characterization::RingType,
+    mol_components::{MolComponents, build_adjacency_list_conn},
     molecules::small::MoleculeSmall,
     therapeutic::{
         gnn,
-        gnn::{DIHEDRAL_PARAM_SUMMARY_FEATS, PER_COMP_SCALARS, PER_EDGE_COMP_FEATS},
+        gnn::{
+            COMPONENT_VOCAB_SIZE, DIHEDRAL_PARAM_SUMMARY_FEATS, PER_COMP_SCALARS,
+            PER_EDGE_COMP_FEATS,
+        },
         non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
     },
@@ -23,15 +29,15 @@ use crate::{
 ///
 /// Graph properties
 /// ----------------
-/// Edges: Undirected inter-component connections derived from cross-component bonds or shared atoms
+/// Edges: Undirected component-adjacency links derived from cross-component bonds. If multiple
+/// bonds connect the same component pair, their chemistry is aggregated onto one edge.
 /// Underlying component graph has self-connections: No
 /// GNN message-passing adjacency has self-loops: Yes (`adj[i,i] = 1.0` is added explicitly)
 /// Nodes have multiple types (heterogeneous): No in the formal hetero-GNN sense; this is a
 ///   homogeneous component graph, with component category encoded by `comp_type_indices`
 /// Edges have multiple types: No separate relation types; edges are binary component-adjacency
-///   links, with `edge_feats` marking whether the connection uses shared atoms, whether the
-///   underlying cross-component bond is rotatable, and aggregated proper-dihedral params when
-///   that bond is the middle bond of a torsion
+///   links, with `edge_feats` aggregating overlap/rotatability and proper-dihedral geometry for
+///   the cross-component bonds between a component pair
 /// Multipartite (edges can connect only to nodes of a diff type): No
 /// Multiplex (Edges exist in layers; nodes are on all layers): No
 /// Heterophily (Nodes are preferentially connected to others which have diff labels): Not fixed
@@ -71,7 +77,7 @@ impl GraphDataComponent {
         let mut scalars = Vec::with_capacity(num_comps * PER_COMP_SCALARS);
 
         for (i, comp) in comps.iter().enumerate() {
-            comp_type_indices.push(vocab_lookup_component(&comp.comp_type));
+            comp_type_indices.push(vocab_lookup_component(comp, mol));
 
             // Degree is the number of edges incident to a node.
             let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
@@ -83,7 +89,7 @@ impl GraphDataComponent {
         let mut base_labels = Vec::with_capacity(num_comps);
         for (i, comp) in comps.iter().enumerate() {
             let mut hasher = DefaultHasher::new();
-            vocab_lookup_component(&comp.comp_type).hash(&mut hasher);
+            vocab_lookup_component(comp, mol).hash(&mut hasher);
             adj[i].len().hash(&mut hasher);
             non_nn_ml::bucket_scalar(comp.atoms.len() as f32 / 10.0, 4.0).hash(&mut hasher);
             base_labels.push(hasher.finish());
@@ -96,11 +102,27 @@ impl GraphDataComponent {
             &mol.common.adjacency_list,
             ff_params,
         );
+        let proper_dihedral_stats_by_bond = gnn::proper_dihedral_stats_by_central_bond(
+            &mol.common.atoms,
+            &mol.common.adjacency_list,
+            ff_params,
+        );
+
+        let mut pair_to_conns: HashMap<(usize, usize), Vec<_>> = HashMap::new();
+        for conn in conns {
+            if conn.comp_0 >= num_comps || conn.comp_1 >= num_comps || conn.comp_0 == conn.comp_1 {
+                continue;
+            }
+            pair_to_conns
+                .entry(component_pair_key(conn.comp_0, conn.comp_1))
+                .or_default()
+                .push(conn);
+        }
 
         // Conn features (Weighted Adjacency)
-        let n_atoms_sq = num_comps.pow(2);
-        let mut adj_list = vec![0.; n_atoms_sq];
-        let mut edge_feats = vec![0.; n_atoms_sq * PER_EDGE_COMP_FEATS];
+        let n_comps_sq = num_comps.pow(2);
+        let mut adj_list = vec![0.; n_comps_sq];
+        let mut edge_feats = vec![0.; n_comps_sq * PER_EDGE_COMP_FEATS];
 
         let edge_feats_i = |i: usize, j: usize, k: usize, n: usize| -> usize {
             (i * n + j) * PER_EDGE_COMP_FEATS + k
@@ -111,26 +133,58 @@ impl GraphDataComponent {
             adj_list[i * num_comps + i] = 1.0;
         }
 
-        for conn in conns {
-            let a0 = conn.comp_0;
-            let a1 = conn.comp_1;
-            if a0 >= num_comps || a1 >= num_comps {
-                continue;
+        for ((a0, a1), pair_conns) in pair_to_conns {
+            let pair_conn_count = pair_conns.len();
+            let shared = if pair_conns.iter().any(|conn| conn.shared_atoms) {
+                1.0
+            } else {
+                0.0
+            };
+            let rotatable = pair_conns.iter().filter(|conn| conn.rotatable).count() as f32
+                / pair_conn_count as f32;
+            let mut torsion_stats = [0.0; 2];
+            let mut proper_summary = [0.0; DIHEDRAL_PARAM_SUMMARY_FEATS];
+
+            for conn in &pair_conns {
+                let (local_atom_0, local_atom_1) = if conn.comp_0 == a0 {
+                    (conn.atom_0, conn.atom_1)
+                } else {
+                    (conn.atom_1, conn.atom_0)
+                };
+                let Some(&atom_i) = comps[a0].atoms.get(local_atom_0) else {
+                    continue;
+                };
+                let Some(&atom_j) = comps[a1].atoms.get(local_atom_1) else {
+                    continue;
+                };
+                let bond_key = gnn::bond_pair_key(atom_i, atom_j);
+                let bond_torsion_stats = proper_dihedral_stats_by_bond
+                    .get(&bond_key)
+                    .copied()
+                    .unwrap_or([0.0; 2]);
+                let bond_proper_summary = proper_dihedral_summary_by_bond
+                    .get(&bond_key)
+                    .copied()
+                    .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]);
+
+                torsion_stats[0] += bond_torsion_stats[0];
+                torsion_stats[1] += bond_torsion_stats[1];
+                for (dst, src) in proper_summary.iter_mut().zip(bond_proper_summary) {
+                    *dst += src;
+                }
+            }
+
+            let inv_conn_count = 1.0 / pair_conn_count as f32;
+            torsion_stats[0] *= inv_conn_count;
+            torsion_stats[1] *= inv_conn_count;
+            for value in &mut proper_summary {
+                *value *= inv_conn_count;
             }
 
             adj_list[a0 * num_comps + a1] = 1.0;
             adj_list[a1 * num_comps + a0] = 1.0;
 
-            // Edge features: [shared_atoms, rotatable, dihedral-param summary...].
-            let shared = if conn.shared_atoms { 1. } else { 0. };
-            let rotatable = if conn.rotatable { 1. } else { 0. };
-            let atom_i = comps[a0].atoms.get(conn.atom_0).copied().unwrap_or(0);
-            let atom_j = comps[a1].atoms.get(conn.atom_1).copied().unwrap_or(0);
-            let proper_summary = proper_dihedral_summary_by_bond
-                .get(&gnn::bond_pair_key(atom_i, atom_j))
-                .copied()
-                .unwrap_or([0.0; DIHEDRAL_PARAM_SUMMARY_FEATS]);
-            let features = component_edge_features(shared, rotatable, proper_summary);
+            let features = component_edge_features(shared, rotatable, torsion_stats, proper_summary);
 
             for (k, &value) in features.iter().enumerate() {
                 edge_feats[edge_feats_i(a0, a1, k, num_comps)] = value;
@@ -154,11 +208,14 @@ impl GraphDataComponent {
 fn component_edge_features(
     shared: f32,
     rotatable: f32,
+    torsion_stats: [f32; 2],
     proper_summary: [f32; DIHEDRAL_PARAM_SUMMARY_FEATS],
 ) -> [f32; PER_EDGE_COMP_FEATS] {
     [
         shared,
         rotatable,
+        torsion_stats[0],
+        torsion_stats[1],
         proper_summary[0],
         proper_summary[1],
         proper_summary[2],
@@ -169,18 +226,221 @@ fn component_edge_features(
 
 /// Maps component type to integer indices for the embedding layer.
 /// 0 is reserved for padding in the Batcher, so we start at 1.
-fn vocab_lookup_component(comp_type: &ComponentType) -> i32 {
+fn vocab_lookup_component(comp: &crate::mol_components::Component, mol: &MoleculeSmall) -> i32 {
     use crate::mol_components::ComponentType::*;
-    match comp_type {
-        Atom(_) => 1,
-        Ring(_) => 2,
-        Chain(_) => 3,
-        Hydroxyl => 4,
-        Carbonyl => 5,
-        Carboxylate => 6,
-        Amine => 7,
-        Amide => 8,
-        Sulfonamide => 9,
-        Sulfonimide => 10,
+    let token = match &comp.comp_type {
+        Atom(element) => match element {
+            Carbon => 1,
+            Nitrogen => 2,
+            Oxygen => 3,
+            Sulfur => 4,
+            Phosphorus => 5,
+            Fluorine => 6,
+            Chlorine => 7,
+            Bromine => 8,
+            Iodine => 9,
+            _ => 10,
+        },
+        Ring(ring) => match ring.ring_type {
+            RingType::Aromatic => 11,
+            RingType::Saturated => 12,
+            RingType::Aliphatic => 13,
+        },
+        Chain(_) => {
+            if component_chain_is_branched(comp, mol) {
+                15
+            } else {
+                14
+            }
+        }
+        Hydroxyl => 16,
+        Carbonyl => 17,
+        Carboxylate => 18,
+        Amine => 19,
+        Amide => 20,
+        Sulfonamide => 21,
+        Sulfonimide => 22,
+    };
+    debug_assert!((token as usize) < COMPONENT_VOCAB_SIZE);
+    token
+}
+
+fn component_chain_is_branched(comp: &crate::mol_components::Component, mol: &MoleculeSmall) -> bool {
+    let mut in_component = vec![false; mol.common.atoms.len()];
+    for &atom_i in &comp.atoms {
+        if atom_i < in_component.len() {
+            in_component[atom_i] = true;
+        }
+    }
+
+    comp.atoms.iter().any(|&atom_i| {
+        mol.common.adjacency_list[atom_i]
+            .iter()
+            .filter(|&&nbr| in_component[nbr])
+            .count()
+            > 2
+    })
+}
+
+fn component_pair_key(a: usize, b: usize) -> (usize, usize) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        mol_components::{Component, ComponentType, Connection},
+        molecules::{Atom, Bond},
+    };
+    use bio_files::BondType;
+    use lin_alg::f64::Vec3;
+
+    fn test_atom(element: na_seq::Element) -> Atom {
+        Atom {
+            element,
+            posit: Vec3::new_zero(),
+            ..Default::default()
+        }
+    }
+
+    fn test_bond(atom_0: usize, atom_1: usize) -> Bond {
+        Bond {
+            bond_type: BondType::Single,
+            atom_0_sn: atom_0 as u32 + 1,
+            atom_1_sn: atom_1 as u32 + 1,
+            atom_0,
+            atom_1,
+            is_backbone: false,
+        }
+    }
+
+    #[test]
+    fn component_vocab_distinguishes_ring_atom_and_chain_chemistry() {
+        let atoms = vec![
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Chlorine),
+            test_atom(Bromine),
+        ];
+        let bonds = vec![
+            test_bond(0, 1),
+            test_bond(1, 2),
+            test_bond(3, 4),
+            test_bond(4, 5),
+            test_bond(4, 6),
+        ];
+        let mol = MoleculeSmall::new(String::from("component_vocab"), atoms, bonds, HashMap::new(), None);
+
+        let aromatic_ring = Component {
+            comp_type: ComponentType::Ring(crate::mol_components::RingComponent {
+                num_atoms: 6,
+                ring_type: RingType::Aromatic,
+            }),
+            atoms: vec![0, 1, 2, 3, 4, 5],
+        };
+        let saturated_ring = Component {
+            comp_type: ComponentType::Ring(crate::mol_components::RingComponent {
+                num_atoms: 6,
+                ring_type: RingType::Saturated,
+            }),
+            atoms: vec![0, 1, 2, 3, 4, 5],
+        };
+        let linear_chain = Component {
+            comp_type: ComponentType::Chain(3),
+            atoms: vec![0, 1, 2],
+        };
+        let branched_chain = Component {
+            comp_type: ComponentType::Chain(4),
+            atoms: vec![3, 4, 5, 6],
+        };
+        let chlorine_atom = Component {
+            comp_type: ComponentType::Atom(Chlorine),
+            atoms: vec![7],
+        };
+        let bromine_atom = Component {
+            comp_type: ComponentType::Atom(Bromine),
+            atoms: vec![8],
+        };
+
+        assert_ne!(
+            vocab_lookup_component(&aromatic_ring, &mol),
+            vocab_lookup_component(&saturated_ring, &mol)
+        );
+        assert_ne!(
+            vocab_lookup_component(&linear_chain, &mol),
+            vocab_lookup_component(&branched_chain, &mol)
+        );
+        assert_ne!(
+            vocab_lookup_component(&chlorine_atom, &mol),
+            vocab_lookup_component(&bromine_atom, &mol)
+        );
+    }
+
+    #[test]
+    fn graph_data_component_aggregates_multi_bond_pairs() {
+        let atoms = vec![
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Carbon),
+            test_atom(Carbon),
+        ];
+        let bonds = vec![
+            test_bond(0, 2),
+            test_bond(1, 3),
+            test_bond(0, 1),
+            test_bond(2, 3),
+        ];
+        let mol = MoleculeSmall::new(String::from("pair_agg"), atoms, bonds, HashMap::new(), None);
+        let comps = MolComponents {
+            components: vec![
+                Component {
+                    comp_type: ComponentType::Chain(2),
+                    atoms: vec![0, 1],
+                },
+                Component {
+                    comp_type: ComponentType::Chain(2),
+                    atoms: vec![2, 3],
+                },
+            ],
+            connections: vec![
+                Connection {
+                    comp_0: 0,
+                    atom_0: 0,
+                    comp_1: 1,
+                    atom_1: 0,
+                    shared_atoms: false,
+                    rotatable: true,
+                },
+                Connection {
+                    comp_0: 0,
+                    atom_0: 1,
+                    comp_1: 1,
+                    atom_1: 1,
+                    shared_atoms: false,
+                    rotatable: false,
+                },
+            ],
+        };
+
+        let graph = GraphDataComponent::new(
+            &mol,
+            &comps,
+            &ForceFieldParams::default(),
+            &GnnAnalysisTools::default(),
+        )
+        .expect("component graph");
+
+        assert_eq!(graph.scalars[0], 1.0 / 6.0);
+        assert_eq!(graph.scalars[2], 1.0 / 6.0);
+        assert_eq!(graph.adj[1], 1.0);
+        assert_eq!(graph.adj[2], 1.0);
+        let rotatable_feat_i = ((0 * 2 + 1) * PER_EDGE_COMP_FEATS) + 1;
+        assert_eq!(graph.edge_feats[rotatable_feat_i], 0.5);
     }
 }

@@ -174,30 +174,6 @@ fn valence_angle(atoms: &[Atom], a0: usize, ctr: usize, a1: usize) -> Option<f32
     Some(cos_theta.acos() as f32)
 }
 
-fn dihedral_angle(atoms: &[Atom], a0: usize, a1: usize, a2: usize, a3: usize) -> Option<f32> {
-    let b0 = atoms[a1].posit - atoms[a0].posit;
-    let b1 = atoms[a2].posit - atoms[a1].posit;
-    let b2 = atoms[a3].posit - atoms[a2].posit;
-
-    let n0 = b0.cross(b1);
-    let n1 = b1.cross(b2);
-
-    let n0_mag_sq = n0.magnitude_squared();
-    let n1_mag_sq = n1.magnitude_squared();
-    let b1_mag = b1.magnitude();
-
-    if n0_mag_sq <= 1.0e-12 || n1_mag_sq <= 1.0e-12 || b1_mag <= 1.0e-12 {
-        return None;
-    }
-
-    let b1_unit = b1 * (1.0 / b1_mag);
-    let m1 = n0.cross(b1_unit);
-    let x = n0.dot(n1);
-    let y = m1.dot(n1);
-
-    Some(y.atan2(x) as f32)
-}
-
 fn vocab_lookup_ff(ff: Option<&String>) -> i32 {
     // 0 is Padding.
     match ff {
@@ -636,7 +612,7 @@ impl GraphDataAtom {
                             continue;
                         }
 
-                        let Some(phi) = dihedral_angle(&atoms, i0, i1, i2, i3) else {
+                        let Some(phi) = gnn::dihedral_angle(&atoms, i0, i1, i2, i3) else {
                             continue;
                         };
 
@@ -742,7 +718,7 @@ impl GraphDataAtom {
                             lookup_satellites[2].1,
                         ];
 
-                        let Some(phi) = dihedral_angle(
+                        let Some(phi) = gnn::dihedral_angle(
                             &atoms,
                             ordered_satellites[0],
                             ordered_satellites[1],
