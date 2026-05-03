@@ -474,6 +474,8 @@ impl Bond {
     }
 }
 
+/// This is for hydrogen bonds within a single molecule. For example, the many
+/// which are instrumental to a protein's secondary structure.
 #[derive(Debug, Clone)]
 pub struct HydrogenBond {
     /// All three atoms are atom indexes.
@@ -494,7 +496,7 @@ impl HydrogenBond {
     }
 }
 
-/// A bond between two molecules.
+/// A bond between two molecules. We have a similar one in `dynamics`.
 #[derive(Debug, Clone)]
 pub struct HydrogenBondTwoMols {
     /// Donor and acceptor atoms are (mol, atom) indexes. hydrogen is an atom index, of the
@@ -503,22 +505,6 @@ pub struct HydrogenBondTwoMols {
     pub acceptor: (usize, usize),
     pub hydrogen: usize,
     pub strength: f32,
-}
-
-impl HydrogenBondTwoMols {
-    pub fn new(
-        donor: (usize, usize),
-        acceptor: (usize, usize),
-        hydrogen: usize,
-        strength: f32,
-    ) -> Self {
-        Self {
-            donor,
-            acceptor,
-            hydrogen,
-            strength,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
