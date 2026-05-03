@@ -13,7 +13,7 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     mol_characterization::RingType,
-    mol_components::{Component, Connection, MolComponents, build_adjacency_list_conn},
+    mol_components::{Component, ComponentType, Connection, MolComponents, build_adjacency_list_conn},
     molecules::small::MoleculeSmall,
     therapeutic::{
         gnn,
@@ -23,11 +23,11 @@ use crate::{
     },
 };
 
-// Number of atoms in the component, distance from mol center.
-// Component type is probably the most important node feature, but it's not included here,
-// as it's not a scalar.
-// Keep this in sync with `GraphDataComponent::new`
-pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 2;
+// Per-component scalar features. Order (kept in sync with `setup_node_scalars`):
+//   [0] atom count normalized
+//   [1] distance from molecule centroid normalized
+//   [2] ring nitrogen count normalized (0 for non-ring components)
+pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 3;
 
 // Keep this in sync with `GraphDataComponent::new`.
 pub(in crate::therapeutic) const NUM_COMP_EDGE_GEOM_FEATS: usize = 2;
@@ -35,9 +35,15 @@ pub(in crate::therapeutic) const NUM_COMP_EDGE_GEOM_FEATS: usize = 2;
 pub(in crate::therapeutic) const NUM_COMP_EDGE_FEATS: usize =
     2 + NUM_COMP_EDGE_GEOM_FEATS + DIHEDRAL_PARAM_SUMMARY_FEATS;
 
-// This is the number of component types. One for each element, common ring sizes,
-// one for each functional group, etc.
-pub(in crate::therapeutic) const COMP_VOCAB_SIZE: usize = 23;
+// Component-type vocabulary. Tokens 1..=10 mirror `vocab_lookup_element` (Atom components).
+// Ring components occupy 11..=19 as a (ring_type x size-bucket) grid: 3 ring types
+// (Aromatic / Saturated / Aliphatic) crossed with 3 size buckets (<=5, ==6, >=7).
+// Remaining tokens cover chains and named functional groups. Token 0 is reserved for padding.
+pub(in crate::therapeutic) const COMP_VOCAB_SIZE: usize = 29;
+
+// Normalization for ring nitrogen count. Most heteroaromatic rings carry 1-4 N atoms; dividing
+// by 4 keeps the scalar in roughly [0, 1] for the common cases without saturating on edge cases.
+const RING_NITROGEN_NORM: f32 = 4.0;
 
 /// Very similar to `MoleculeCommon::centroid`.
 fn comp_centroid(comp: &Component, atom_posits: &[Vec3]) -> Vec3 {
@@ -78,6 +84,14 @@ fn setup_node_scalars(
         // todo: Yikes. Not a good sign for this.
 
         res.push(dist as f32 / 8.0);
+
+        // Lets the model differentiate e.g. pyridine from benzene within the same
+        // (ring_type, size) vocab bucket. Zero for non-ring components.
+        let n_nitrogens = match &comp.comp_type {
+            ComponentType::Ring(ring) => ring.num_nitrogens as f32,
+            _ => 0.0,
+        };
+        res.push(n_nitrogens / RING_NITROGEN_NORM);
     }
 
     // todo?
@@ -265,6 +279,13 @@ impl GraphDataComponent {
             adj[i].len().hash(&mut hasher);
 
             non_nn_ml::bucket_scalar(comp.atoms.len() as f32 / 10., 4.).hash(&mut hasher);
+
+            // Distinguish heteroaromatic / heterocyclic rings (e.g. pyridine, imidazole) from
+            // their all-carbon counterparts at the graph-analysis layer too.
+            if let ComponentType::Ring(ring) = &comp.comp_type {
+                ring.num_nitrogens.hash(&mut hasher);
+            }
+
             base_labels.push(hasher.finish());
         }
 
@@ -287,6 +308,7 @@ impl GraphDataComponent {
     }
 }
 
+/// Expands sub-arrays, producing a single, flat array.
 fn component_edge_features(
     shared: f32,
     rotatable: f32,
@@ -312,31 +334,47 @@ fn vocab_lookup_component(comp: &Component, mol: &MoleculeSmall) -> i32 {
 
     let token = match &comp.comp_type {
         Atom(el) => vocab_lookup_element(*el),
-        // This must be kept in sync with the atom lookup so as not to overlap
-        // with it.
-        Ring(ring) => match ring.ring_type {
-            RingType::Aromatic => 11,
-            RingType::Saturated => 12,
-            RingType::Aliphatic => 13,
-        },
+        // Ring tokens form a (ring_type, size-bucket) grid so the embedding layer learns
+        // a distinct vector for each combination (e.g. small saturated, six-membered aromatic,
+        // fused/large aliphatic). Nitrogen content is conveyed separately as a scalar feature.
+        Ring(ring) => ring_vocab_token(ring.ring_type, ring.num_atoms),
         Chain(_) => {
             if component_chain_is_branched(comp, mol) {
-                15
+                21
             } else {
-                14
+                20
             }
         }
-        Hydroxyl => 16,
-        Carbonyl => 17,
-        Carboxylate => 18,
-        Amine => 19,
-        Amide => 20,
-        Sulfonamide => 21,
-        Sulfonimide => 22,
+        Hydroxyl => 22,
+        Carbonyl => 23,
+        Carboxylate => 24,
+        Amine => 25,
+        Amide => 26,
+        Sulfonamide => 27,
+        Sulfonimide => 28,
     };
 
     debug_assert!((token as usize) < COMP_VOCAB_SIZE);
     token
+}
+
+/// Slot a ring component into one of nine vocab tokens (3 ring types x 3 size buckets).
+/// Size buckets: <=5, ==6, >=7. The 5/6 split separates the two dominant biological ring
+/// sizes; the >=7 bucket lumps macrocycles and fused ring systems together.
+fn ring_vocab_token(ring_type: RingType, num_atoms: u8) -> i32 {
+    let type_offset: i32 = match ring_type {
+        RingType::Aromatic => 0,
+        RingType::Saturated => 1,
+        RingType::Aliphatic => 2,
+    };
+    let size_offset: i32 = if num_atoms <= 5 {
+        0
+    } else if num_atoms == 6 {
+        1
+    } else {
+        2
+    };
+    11 + type_offset * 3 + size_offset
 }
 
 fn component_chain_is_branched(comp: &Component, mol: &MoleculeSmall) -> bool {
@@ -424,6 +462,7 @@ mod tests {
             comp_type: ComponentType::Ring(RingComponent {
                 num_atoms: 6,
                 ring_type: RingType::Aromatic,
+                num_nitrogens: 0,
             }),
             atoms: vec![0, 1, 2, 3, 4, 5],
         };
@@ -431,6 +470,7 @@ mod tests {
             comp_type: ComponentType::Ring(RingComponent {
                 num_atoms: 6,
                 ring_type: RingType::Saturated,
+                num_nitrogens: 0,
             }),
             atoms: vec![0, 1, 2, 3, 4, 5],
         };
@@ -520,7 +560,7 @@ mod tests {
         .expect("component graph");
 
         assert_eq!(graph.scalars[0], 1.0 / 6.0);
-        assert_eq!(graph.scalars[2], 1.0 / 6.0);
+        assert_eq!(graph.scalars[NUM_COMP_NODE_SCALARS], 1.0 / 6.0);
         assert_eq!(graph.adj[1], 1.0);
         assert_eq!(graph.adj[2], 1.0);
 

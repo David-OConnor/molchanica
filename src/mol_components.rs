@@ -25,6 +25,7 @@ pub struct RingComponent {
     /// For a connected ring cluster this is the total atom count across all member rings.
     pub num_atoms: u8,
     pub ring_type: RingType,
+    pub num_nitrogens: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -274,10 +275,15 @@ impl MolComponents {
 
             cluster_atoms.sort_unstable();
             let num_atoms = cluster_atoms.len() as u8;
+            let num_nitrogens = cluster_atoms
+                .iter()
+                .filter(|&&a| atoms[a].element == Nitrogen)
+                .count() as u8;
             add_comp!(
                 ComponentType::Ring(RingComponent {
                     num_atoms,
                     ring_type,
+                    num_nitrogens,
                 }),
                 cluster_atoms
             );
