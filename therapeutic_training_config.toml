@@ -1,4 +1,6 @@
 [adme]
+# Warning: CAO 2026-05-02, the atom gnn makes results much worse. And it's (Expectedly) very slow
+# for training. Regardless of the results, disable it if testing other parts of the model.
 gnn_atom_enabled = false
 gnn_comp_enabled = true
 gnn_spacial_enabled = true

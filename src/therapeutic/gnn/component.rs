@@ -23,11 +23,11 @@ use crate::{
     },
 };
 
-// Degree, number of atoms in the component, distance from mol center.
+// Number of atoms in the component, distance from mol center.
 // Component type is probably the most important node feature, but it's not included here,
 // as it's not a scalar.
 // Keep this in sync with `GraphDataComponent::new`
-pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 3;
+pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 2;
 
 // Keep this in sync with `GraphDataComponent::new`.
 pub(in crate::therapeutic) const NUM_COMP_EDGE_GEOM_FEATS: usize = 2;
@@ -62,21 +62,16 @@ fn setup_node_scalars(
     num_comps: usize,
     mol: &MoleculeSmall,
     mol_centroid: Vec3,
-    adj: &[Vec<usize>],
 ) -> Vec<f32> {
     let mut res = Vec::with_capacity(num_comps * NUM_COMP_NODE_SCALARS);
 
     for (i, comp) in comps.iter().enumerate() {
-        // Degree is the number of edges incident to a node.
-        let degree = adj.get(i).map(|n| n.len()).unwrap_or(0);
-
-        res.push(degree as f32 / 3.0);
-
         // Number of atoms owned by this component, normalized. This divider
         // assumes no Hydrogens.
 
         res.push(comp.atoms.len() as f32 / 4.0);
 
+        // note: Distance here is just from the input conformer; we may need to try different conformers.
         let dist = (mol_centroid - comp_centroid(comp, &mol.common.atom_posits)).magnitude();
 
         // todo note: setting dist and/or degree to 0 seems to have no notable effect on results.
@@ -260,7 +255,7 @@ impl GraphDataComponent {
             .map(|c| vocab_lookup_component(c, mol))
             .collect();
 
-        let scalars = setup_node_scalars(comps, num_comps, mol, mol_centroid, &adj);
+        let scalars = setup_node_scalars(comps, num_comps, mol, mol_centroid);
 
         let mut base_labels = Vec::with_capacity(num_comps);
 
