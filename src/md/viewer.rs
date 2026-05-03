@@ -9,17 +9,23 @@ use std::{
 };
 
 use bio_files::{AtomGeneric, bond_inference, gromacs::gro::Gro};
-use dynamics::{FfMolType, snapshot::Snapshot};
+use dynamics::{
+    FfMolType,
+    snapshot::{HBondAtomType, HydrogenBond as SnapshotHydrogenBond, Snapshot},
+};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::Element;
 
 use crate::{
-    drawing::{BLEND_AMT_MD_GROUP, MoleculeView, blend_color, color_viridis, draw_mol, draw_water},
+    drawing::{
+        BLEND_AMT_MD_GROUP, MoleculeView, blend_color, color_viridis, draw_md_hydrogen_bonds,
+        draw_mol, draw_water,
+    },
     mol_manip::ManipMode,
     molecules::{
-        Atom, Bond, MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
-        nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
+        Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, common::MoleculeCommon,
+        lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
     },
     prefs::{OpenHistory, OpenType},
     state::{OperatingMode, State},
@@ -814,6 +820,118 @@ impl SnapshotViewer {
     }
 }
 
+fn water_atom_local_i(mol: &ViewerMolecule, atom_type: HBondAtomType) -> Option<usize> {
+    let atom_name = match atom_type {
+        HBondAtomType::WaterO => Some("OW"),
+        HBondAtomType::WaterH0 => Some("HW1"),
+        HBondAtomType::WaterH1 => Some("HW2"),
+        HBondAtomType::Standard => None,
+    }?;
+
+    if let Some(atom_i) = mol
+        .mol
+        .atoms
+        .iter()
+        .position(|atom| atom.type_in_res_general.as_deref() == Some(atom_name))
+    {
+        return Some(atom_i);
+    }
+
+    match atom_type {
+        HBondAtomType::WaterO => mol
+            .mol
+            .atoms
+            .iter()
+            .position(|atom| atom.element == Element::Oxygen),
+        HBondAtomType::WaterH0 | HBondAtomType::WaterH1 => {
+            let hydrogen_i = if atom_type == HBondAtomType::WaterH0 {
+                0
+            } else {
+                1
+            };
+
+            mol.mol
+                .atoms
+                .iter()
+                .enumerate()
+                .filter(|(_, atom)| atom.element == Element::Hydrogen)
+                .nth(hydrogen_i)
+                .map(|(atom_i, _)| atom_i)
+        }
+        HBondAtomType::Standard => None,
+    }
+}
+
+fn snapshot_h_bond_atom_to_viewer_atom(
+    set: &ViewerMolSet,
+    water_mol_indices: &[usize],
+    atom_ref: (HBondAtomType, usize),
+) -> Option<(usize, usize)> {
+    match atom_ref.0 {
+        HBondAtomType::Standard => set
+            .mols
+            .iter()
+            .enumerate()
+            .find(|(_, mol)| {
+                mol.mol_type != MolType::Water
+                    && atom_ref.1 >= mol.range.0
+                    && atom_ref.1 < mol.range.1
+            })
+            .map(|(mol_i, mol)| (mol_i, atom_ref.1 - mol.range.0)),
+        HBondAtomType::WaterO | HBondAtomType::WaterH0 | HBondAtomType::WaterH1 => {
+            let mol_i = *water_mol_indices.get(atom_ref.1)?;
+            let mol = set.mols.get(mol_i)?;
+            let atom_i = water_atom_local_i(mol, atom_ref.0)?;
+            Some((mol_i, atom_i))
+        }
+    }
+}
+
+fn snapshot_hydrogen_bonds_to_two_mols(
+    set: &ViewerMolSet,
+    h_bonds: &[SnapshotHydrogenBond],
+) -> Vec<HydrogenBondTwoMols> {
+    let water_mol_indices = set
+        .mols
+        .iter()
+        .enumerate()
+        .filter(|(_, mol)| mol.mol_type == MolType::Water)
+        .map(|(mol_i, _)| mol_i)
+        .collect::<Vec<_>>();
+
+    let mut result = Vec::with_capacity(h_bonds.len());
+
+    for bond in h_bonds {
+        let Some(donor) = snapshot_h_bond_atom_to_viewer_atom(set, &water_mol_indices, bond.donor)
+        else {
+            continue;
+        };
+        let Some(acceptor) =
+            snapshot_h_bond_atom_to_viewer_atom(set, &water_mol_indices, bond.acceptor)
+        else {
+            continue;
+        };
+        let Some((hydrogen_mol_i, hydrogen)) =
+            snapshot_h_bond_atom_to_viewer_atom(set, &water_mol_indices, bond.hydrogen)
+        else {
+            continue;
+        };
+
+        if hydrogen_mol_i != donor.0 {
+            continue;
+        }
+
+        result.push(HydrogenBondTwoMols {
+            donor,
+            acceptor,
+            hydrogen,
+            strength: bond.strength,
+        });
+    }
+
+    result
+}
+
 /// Draw all molecules from the loaded MD run.
 pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     let mut ents = Vec::new();
@@ -839,6 +957,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
         .enumerate()
         .flat_map(|(group_i, group)| group.ranges.iter().map(move |range| (*range, group_i)))
         .collect();
+    let mut visible_mols = vec![false; set.mols.len()];
 
     let mut water_o_posits = Vec::new();
     let mut water_h0_posits = Vec::new();
@@ -855,6 +974,7 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
         if !group.visible {
             continue;
         }
+        visible_mols[i_mol] = true;
 
         let group_tint = if group_i == 0 {
             None
@@ -977,6 +1097,32 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
             }
             _ => {}
         }
+    }
+
+    let snapshot_h_bonds = state
+        .volatile
+        .md_local
+        .viewer
+        .get_active_snap()
+        .and_then(|snap| snap.energy_data.as_ref())
+        .map(|energy| snapshot_hydrogen_bonds_to_two_mols(set, &energy.hydrogen_bonds))
+        .unwrap_or_default();
+
+    if !snapshot_h_bonds.is_empty() {
+        ents.extend(draw_md_hydrogen_bonds(
+            &snapshot_h_bonds,
+            &state.ui.visibility,
+            |(mol_i, atom_i)| {
+                if !visible_mols.get(mol_i).copied().unwrap_or(false) {
+                    return None;
+                }
+
+                let mol = set.mols.get(mol_i)?;
+                let posit = mol.mol.atom_posits.get(atom_i)?;
+
+                Some(((*posit).into(), mol.mol_type))
+            },
+        ));
     }
 
     state.ui.mol_view = prev_mol_view;

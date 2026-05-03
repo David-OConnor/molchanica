@@ -12,15 +12,15 @@
 //!
 //! todo: Gaussians?
 
-use std::time::Instant;
+use crate::molecules::common::MoleculeCommon;
 use dynamics::ParamError;
 use dynamics::snapshot::Snapshot;
 use graphics::Scene;
-use crate::molecules::common::MoleculeCommon;
+use std::time::Instant;
 
-use lin_alg::f64::Vec3;
 use crate::md::build_dynamics;
 use crate::state::State;
+use lin_alg::f64::Vec3;
 
 /// For a single atom.
 pub struct PositSample {
@@ -68,7 +68,6 @@ impl MdSampleData {
             h_bond_total_str_avg: 0.0,
         };
     }
-
 }
 /// WIP / experimental. Run a MD simulation of the molecule in water to sample various properties.
 /// This includes conformation data (As is typical of this molecule this functionality currently lives in),
@@ -83,8 +82,8 @@ impl MdSampleData {
 /// todo: Evolve this over time, and move it where appropriate.
 pub fn sample_mol_properties_from_md(
     mol: &MoleculeCommon, // todo: Should this be a MoleculeSmall?
-    state: &State, // todo: Do we need mut?
-    scene: &Scene, // todo: Why?
+    state: &State,        // todo: Do we need mut?
+    scene: &Scene,        // todo: Why?
 ) -> Result<MdSampleData, ParamError> {
     println!("Starting per mol sim for {}...", mol.ident);
     let start = Instant::now();
@@ -95,9 +94,7 @@ pub fn sample_mol_properties_from_md(
 
     let elapsed = start.elapsed().as_millis();
 
-
     println!("Finished per mol sim in {} ms", elapsed);
 
     result
-
 }

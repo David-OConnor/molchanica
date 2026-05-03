@@ -2205,3 +2205,53 @@ pub fn draw_pocket(
 
     res
 }
+
+pub fn draw_md_hydrogen_bonds<F>(
+    hydrogen_bonds: &[HydrogenBondTwoMols],
+    visibility: &Visibility,
+    mut atom_lookup: F,
+) -> Vec<Entity>
+where
+    F: FnMut((usize, usize)) -> Option<(Vec3, MolType)>,
+{
+    if visibility.hide_h_bonds {
+        return Vec::new();
+    }
+
+    let mut res = Vec::new();
+
+    for bond in hydrogen_bonds {
+        let Some((posit_donor, donor_type)) = atom_lookup(bond.donor) else {
+            continue;
+        };
+        let Some((posit_acc, acceptor_type)) = atom_lookup(bond.acceptor) else {
+            continue;
+        };
+
+        if visibility.hide_water
+            && (donor_type == MolType::Water || acceptor_type == MolType::Water)
+        {
+            continue;
+        }
+
+        // Snapshot H bonds may span a periodic wrap; skip the long scene-space segment.
+        if hide_md_wrapped_covalent_bond(true, posit_donor, posit_acc) {
+            continue;
+        }
+
+        let mol_type = if donor_type != MolType::Water {
+            donor_type
+        } else {
+            acceptor_type
+        };
+
+        res.extend(draw_hydrogen_bond(
+            posit_donor,
+            posit_acc,
+            mol_type,
+            bond.strength,
+        ));
+    }
+
+    res
+}

@@ -13,7 +13,9 @@ use lin_alg::f64::Vec3;
 
 use crate::{
     mol_characterization::RingType,
-    mol_components::{Component, ComponentType, Connection, MolComponents, build_adjacency_list_conn},
+    mol_components::{
+        Component, ComponentType, Connection, MolComponents, build_adjacency_list_conn,
+    },
     molecules::small::MoleculeSmall,
     therapeutic::{
         gnn,
