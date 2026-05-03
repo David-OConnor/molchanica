@@ -1987,6 +1987,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
                 mol.common.atom_posits[bond.acceptor].into(),
                 MolType::Peptide,
                 bond.strength,
+                false,
             ));
         }
     }
@@ -2199,6 +2200,7 @@ pub fn draw_pocket(
                 posit_acc.into(),
                 MolType::Pocket,
                 bond.strength,
+                false,
             ));
         }
     }
@@ -2250,6 +2252,7 @@ where
             posit_acc,
             mol_type,
             bond.strength,
+            true,
         ));
     }
 

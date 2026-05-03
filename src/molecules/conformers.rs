@@ -58,6 +58,7 @@ pub struct MdSampleData {
 impl MdSampleData {
     pub fn new(snaps: &[Snapshot]) -> Self {
         // todo fill in
+        unimplemented!();
 
         // todo: Prereq. You may need to add H bonds to your MD snap state.
 
@@ -88,13 +89,14 @@ pub fn sample_mol_properties_from_md(
     println!("Starting per mol sim for {}...", mol.ident);
     let start = Instant::now();
 
-    let md = build_dynamics()?;
+    unimplemented!();
+    // let md = build_dynamics()?;
 
-    let result = MdSampleData::new(&snaps);
+    // let result = MdSampleData::new(&snaps);
 
     let elapsed = start.elapsed().as_millis();
 
     println!("Finished per mol sim in {} ms", elapsed);
 
-    result
+    // result
 }

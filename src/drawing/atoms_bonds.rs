@@ -53,9 +53,18 @@ pub(in crate::drawing) const BALL_RADIUS_WATER_H: f32 = 0.06;
 pub(in crate::drawing) const WATER_BOND_THICKNESS: f32 = 0.1;
 
 const COLOR_H_BOND: Color = (1., 0.5, 0.1);
+
 const RADIUS_H_BOND: f32 = 0.2; // A scaler relative to covalent sticks.
+
 // For the central cylinder which indicates strength
 const RADIUS_H_BOND_CENTER: f32 = 0.8; // A scaler relative to covalent sticks.
+
+// These low-profile radii make drawing H bonds less obstructive to the view in MD mode, where
+// there are likely to be many due to water.
+const RADIUS_H_BOND_LOW_PROFILE: f32 = 0.1; // A scaler relative to covalent sticks.
+
+// For the central cylinder which indicates strength
+const RADIUS_H_BOND_CENTER_LOW_PROFILE: f32 = 0.4; // A scaler relative to covalent sticks.
 
 const H_BOND_DASH_LEN: f32 = 0.15; // Å
 const H_BOND_GAP_LEN: f32 = 0.15; // Å
@@ -510,6 +519,7 @@ pub(in crate::drawing) fn draw_hydrogen_bond(
     posit_acc: Vec3,
     mol_type: MolType,
     strength: f32,
+    low_profile: bool,
 ) -> Vec<Entity> {
     let mut result = Vec::new();
 
@@ -535,11 +545,14 @@ pub(in crate::drawing) fn draw_hydrogen_bond(
         BODY_SHINYNESS,
     );
     center_entity.class = entity_type;
-    center_entity.scale_partial = Some(Vec3::new(
-        RADIUS_H_BOND_CENTER,
-        center_len,
-        RADIUS_H_BOND_CENTER,
-    ));
+
+    let (radius, radius_center) = if low_profile {
+        (RADIUS_H_BOND_CENTER, RADIUS_H_BOND_CENTER_LOW_PROFILE)
+    } else {
+        (RADIUS_H_BOND, RADIUS_H_BOND_CENTER)
+    };
+
+    center_entity.scale_partial = Some(Vec3::new(radius_center, center_len, radius_center));
     result.push(center_entity);
 
     // Dashes on each side, from the outer atom towards the central cylinder.
@@ -569,7 +582,7 @@ pub(in crate::drawing) fn draw_hydrogen_bond(
                 BODY_SHINYNESS,
             );
             dash.class = entity_type;
-            dash.scale_partial = Some(Vec3::new(RADIUS_H_BOND, dash_len, RADIUS_H_BOND));
+            dash.scale_partial = Some(Vec3::new(radius, dash_len, radius));
             result.push(dash);
 
             offset += dash_len + H_BOND_GAP_LEN;
