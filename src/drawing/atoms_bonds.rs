@@ -61,10 +61,10 @@ const RADIUS_H_BOND_CENTER: f32 = 0.8; // A scaler relative to covalent sticks.
 
 // These low-profile radii make drawing H bonds less obstructive to the view in MD mode, where
 // there are likely to be many due to water.
-const RADIUS_H_BOND_LOW_PROFILE: f32 = 0.1; // A scaler relative to covalent sticks.
+const RADIUS_H_BOND_LOW_PROFILE: f32 = 0.07; // A scaler relative to covalent sticks.
 
 // For the central cylinder which indicates strength
-const RADIUS_H_BOND_CENTER_LOW_PROFILE: f32 = 0.4; // A scaler relative to covalent sticks.
+const RADIUS_H_BOND_CENTER_LOW_PROFILE: f32 = 0.3; // A scaler relative to covalent sticks.
 
 const H_BOND_DASH_LEN: f32 = 0.15; // Å
 const H_BOND_GAP_LEN: f32 = 0.15; // Å
@@ -547,7 +547,7 @@ pub(in crate::drawing) fn draw_hydrogen_bond(
     center_entity.class = entity_type;
 
     let (radius, radius_center) = if low_profile {
-        (RADIUS_H_BOND_CENTER, RADIUS_H_BOND_CENTER_LOW_PROFILE)
+        (RADIUS_H_BOND_LOW_PROFILE, RADIUS_H_BOND_CENTER_LOW_PROFILE)
     } else {
         (RADIUS_H_BOND, RADIUS_H_BOND_CENTER)
     };
