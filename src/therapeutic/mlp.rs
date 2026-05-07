@@ -86,13 +86,18 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Res
         c.halogen.len() as f32,
         c.rotatable_bonds.len() as f32,
         c.flexibility / 4., // normalizationish?
-        // c.amines.len() as f32,
-        // c.amides.len() as f32,
-        // c.carbonyl.len() as f32,
-        // c.hydroxyl.len() as f32,
-        // c.carboxylate.len() as f32,
-        // c.sulfonamide.len() as f32,
-        // c.sulfonimide.len() as f32,
+        // Note: 2026-05-07: Despite including a component-based GNN which includes functional groups,
+        // it appears that adding these explicitly here improves results slightly.
+        c.amines.len() as f32,
+        c.amides.len() as f32,
+        // -    with just the above: 0.333
+        c.carbonyl.len() as f32,
+        c.hydroxyl.len() as f32,
+        // with just the above (cum): 0.316
+        c.carboxylate.len() as f32,
+        c.sulfonamide.len() as f32,
+        c.sulfonimide.len() as f32,
+        // with just the above (cum): _
         // c.num_valence_elecs as f32,
         // c.num_rings_aromatic as f32,
         // c.num_rings_saturated as f32,
@@ -103,9 +108,14 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Res
         ln(c.psa_topo),
         ln(c.asa_topo),
         ln(c.volume),
+        // The ratio of surface area to volume on its own may be useful.
+
+        // Note: In one test, adding asa/volume improved results slightly. And ln(asa/vol) produced
+        // slightly better results than without ln.
+        ln(c.asa_topo / c.volume),
+        ln(c.psa_topo / c.asa_topo),
         // ln(c.wiener_index.unwrap_or(0) as f32),
         c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
-        ln(c.psa_topo / c.asa_topo),
-        // ln(c.greasiness),
+                                                        // ln(c.greasiness),
     ])
 }

@@ -3,7 +3,7 @@
 # for training. Regardless of the results, disable it if testing other parts of the model.
 gnn_atom_enabled = false
 gnn_comp_enabled = true
-gnn_spacial_enabled = true
+gnn_spacial_enabled = false
 mlp_enabled = true
 
 # Increasing layers may or may not improve model performance. It will slow down inference and training.

@@ -12,15 +12,13 @@
 //!
 //! todo: Gaussians?
 
-use crate::molecules::common::MoleculeCommon;
-use dynamics::ParamError;
-use dynamics::snapshot::Snapshot;
-use graphics::Scene;
 use std::time::Instant;
 
-use crate::md::build_dynamics;
-use crate::state::State;
+use dynamics::{ParamError, snapshot::Snapshot};
+use graphics::Scene;
 use lin_alg::f64::Vec3;
+
+use crate::{md::build_dynamics, molecules::common::MoleculeCommon, state::State};
 
 /// For a single atom.
 pub struct PositSample {

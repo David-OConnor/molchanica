@@ -1690,11 +1690,14 @@ pub(in crate::therapeutic) fn train_with_samples(
     let model_cfg = ModelConfig {
         graph_analysis_feature_version: GRAPH_ANALYSIS_FEATURE_VERSION,
         global_input_dim: num_params,
-        gnn_hidden_dim: 64,
-        mlp_hidden_dim: 128,
-        vocab_size_elem: 12,           // matches vocab_lookup_element max + 1
+        gnn_hidden_dim: 64, // In a simple test, results marginally got worse when deviating from 64.
+        mlp_hidden_dim: 128, // 128 seems to be the sweet spot  CAO 2026-05-06 for a very limited test.
+        vocab_size_elem: 12, // matches vocab_lookup_element max + 1
         vocab_size_ff: FF_BUCKETS + 2, // 0 pad + 1..FF_BUCKETS + unknown.
-        embedding_dim: 16,             // Tune this (8, 16, 32)
+        // note: 2026-05-06: 32 over 16 seems to confer a tiny improvement to results.
+        // e.g. Caco2wang MAE from 0.345 to 0.342. Setting to 64 makes the results 0.339.
+        // todo: Does increasing this negatively affect training time, inference size etc?
+        embedding_dim: 64, // Tune this (8, 16, 32, etc)
         n_node_scalars: NUM_ATOM_NODE_SCALARS,
         edge_feat_dim: ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
         vocab_size_comp: COMP_VOCAB_SIZE,
