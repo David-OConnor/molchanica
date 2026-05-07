@@ -49,43 +49,17 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Res
     // -----
 
     Ok(vec![
-        // c.num_atoms as f32,
-        // c.num_bonds as f32,
-        // c.mol_weight,
-        // c.num_heavy_atoms as f32,
-        // c.h_bond_acceptor.len() as f32,
-        // c.h_bond_donor.len() as f32,
-        // c.num_hetero_atoms as f32,
-        // c.halogen.len() as f32,
-        // c.rotatable_bonds.len() as f32,
-        // c.amines.len() as f32,
-        // c.amides.len() as f32,
-        // c.carbonyl.len() as f32,
-        // c.hydroxyl.len() as f32,
-        // // c.num_valence_elecs as f32,
-        // c.num_rings_aromatic as f32,
-        // c.num_rings_saturated as f32,
-        // c.num_rings_aliphatic as f32,
-        // c.rings.len() as f32,
-        // c.log_p,
-        // c.molar_refractivity,
-        // c.psa_topo,
-        // c.asa_topo,
-        // c.volume,
-        // c.wiener_index.unwrap_or(0) as f32,
-        //
-        // ----
-        //
         ln(c.num_atoms as f32),
         ln(c.num_bonds as f32),
-        // ln(c.mol_weight),
+        // ln(c.mol_weight), // mol weight might make results slightly worse.
+        // ln(c.num_heavy_atoms as f32),
         ln(c.num_heavy_atoms as f32),
         // c.h_bond_acceptor.len() as f32,
         // c.h_bond_donor.len() as f32,
         c.num_hetero_atoms as f32,
         c.halogen.len() as f32,
         c.rotatable_bonds.len() as f32,
-        c.flexibility / 4., // normalizationish?
+        c.flexibility / 4.,
         // Note: 2026-05-07: Despite including a component-based GNN which includes functional groups,
         // it appears that adding these explicitly here improves results slightly.
         c.amines.len() as f32,
@@ -97,12 +71,16 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Res
         c.carboxylate.len() as f32,
         c.sulfonamide.len() as f32,
         c.sulfonimide.len() as f32,
-        // with just the above (cum): _
+        // with just the above (cum): 0.309
         // c.num_valence_elecs as f32,
         // c.num_rings_aromatic as f32,
-        // c.num_rings_saturated as f32,
-        // c.num_rings_aliphatic as f32,
+        // Valence + aro: .313 (tiny regression). Aromatic only: 0.320. So, let's not use either.
+        // with just the above (cum): ___
+        c.num_rings_saturated as f32,
+        c.num_rings_aliphatic as f32,
+        // with just the above (cum): 0.306
         // c.rings.len() as f32,
+        // with just the above (cum): 0.311 (Slightly worse when adding rings.)
         c.log_p,
         c.molar_refractivity,
         ln(c.psa_topo),
