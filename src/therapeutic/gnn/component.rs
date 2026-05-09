@@ -49,8 +49,9 @@ pub(in crate::therapeutic) const NUM_COMP_EDGE_FEATS: usize =
 // Component-type vocabulary. Tokens 1..=10 mirror `vocab_lookup_element` (Atom components).
 // Ring components occupy 11..=19 as a (ring_type x size-bucket) grid: 3 ring types
 // (Aromatic / Saturated / Aliphatic) crossed with 3 size buckets (<=5, ==6, >=7).
-// Remaining tokens cover chains and named functional groups. Token 0 is reserved for padding.
-pub(in crate::therapeutic) const COMP_VOCAB_SIZE: usize = 29;
+// Remaining tokens cover chains, methyl, and named functional groups.
+// Token 0 is reserved for padding.
+pub(in crate::therapeutic) const COMP_VOCAB_SIZE: usize = 30;
 
 // Normalization for ring nitrogen count. Most heteroaromatic rings carry 1-4 N atoms; dividing
 // by 4 keeps the scalar in roughly [0, 1] for the common cases without saturating on edge cases.
@@ -432,13 +433,14 @@ fn vocab_lookup_component(comp: &Component, mol: &MoleculeSmall) -> i32 {
                 20
             }
         }
-        Hydroxyl => 22,
-        Carbonyl => 23,
-        Carboxylate => 24,
-        Amine => 25,
-        Amide => 26,
-        Sulfonamide => 27,
-        Sulfonimide => 28,
+        Methyl => 22,
+        Hydroxyl => 23,
+        Carbonyl => 24,
+        Carboxylate => 25,
+        Amine => 26,
+        Amide => 27,
+        Sulfonamide => 28,
+        Sulfonimide => 29,
     };
 
     debug_assert!((token as usize) < COMP_VOCAB_SIZE);
@@ -518,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn component_vocab_distinguishes_ring_atom_and_chain_chemistry() {
+    fn component_vocab_distinguishes_ring_atom_chain_and_methyl_chemistry() {
         let atoms = vec![
             test_atom(Carbon),
             test_atom(Carbon),
@@ -569,6 +571,14 @@ mod tests {
             comp_type: ComponentType::Chain(4),
             atoms: vec![3, 4, 5, 6],
         };
+        let methyl = Component {
+            comp_type: ComponentType::Methyl,
+            atoms: vec![0, 1, 2, 3],
+        };
+        let carbon_atom = Component {
+            comp_type: ComponentType::Atom(Carbon),
+            atoms: vec![0],
+        };
         let chlorine_atom = Component {
             comp_type: ComponentType::Atom(Chlorine),
             atoms: vec![7],
@@ -585,6 +595,14 @@ mod tests {
         assert_ne!(
             vocab_lookup_component(&linear_chain, &mol),
             vocab_lookup_component(&branched_chain, &mol)
+        );
+        assert_ne!(
+            vocab_lookup_component(&methyl, &mol),
+            vocab_lookup_component(&linear_chain, &mol)
+        );
+        assert_ne!(
+            vocab_lookup_component(&methyl, &mol),
+            vocab_lookup_component(&carbon_atom, &mol)
         );
         assert_ne!(
             vocab_lookup_component(&chlorine_atom, &mol),

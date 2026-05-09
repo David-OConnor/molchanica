@@ -36,6 +36,8 @@ pub enum ComponentType {
     Ring(RingComponent),
     /// A carbon chain (alkyl, alkenyl, …). Stores the number of carbon atoms.
     Chain(usize),
+    /// A terminal CH3 group; carbon first, followed by its three hydrogens.
+    Methyl,
     Hydroxyl,
     Carbonyl,
     Carboxylate,
@@ -52,6 +54,7 @@ impl Display for ComponentType {
             Atom(element) => format!("Atom: {}", element),
             Ring(ring) => format!("Ring: {:?}", ring.ring_type),
             Chain(chain) => format!("Chain: {}", chain),
+            Methyl => "Methyl".to_string(),
             Hydroxyl => "Hydroxyl".to_string(),
             Carbonyl => "Carbonyl".to_string(),
             Carboxylate => "Carboxylate".to_string(),
@@ -111,6 +114,16 @@ impl ComponentType {
                 let bonds: Vec<Bond> = (0..*n - 1).map(|i| b(i, i + 1, BondType::Single)).collect();
                 (atoms, bonds)
             }
+
+            // C(0)–H(1), C(0)–H(2), C(0)–H(3)
+            ComponentType::Methyl => (
+                vec![a(Carbon), a(Hydrogen), a(Hydrogen), a(Hydrogen)],
+                vec![
+                    b(0, 1, BondType::Single),
+                    b(0, 2, BondType::Single),
+                    b(0, 3, BondType::Single),
+                ],
+            ),
 
             // O(0) — H(1)
             ComponentType::Hydroxyl => (
@@ -174,7 +187,7 @@ impl ComponentType {
 ///
 /// `atoms` holds indices into the parent molecule's atom array.  The key (junction-capable)
 /// atom is always stored first: O for Hydroxyl, N for Amine/Amide/Sulfonamide/Sulfonimide,
-/// C for Carbonyl/Carboxylate/Chain.
+/// C for Carbonyl/Carboxylate/Chain/Methyl.
 #[derive(Clone, Debug)]
 pub struct Component {
     pub comp_type: ComponentType,
@@ -220,8 +233,9 @@ impl MolComponents {
     ///   6. Carbonyls (C=O not part of a carboxylate)
     ///   7. Amines
     ///   8. Hydroxyls
-    ///   9. Carbon chains (≥2 connected unclaimed C atoms)
-    ///  10. Singleton fallback for anything remaining
+    ///   9. Methyl groups
+    ///  10. Carbon chains (≥2 connected unclaimed C atoms after methyl termini are peeled off)
+    ///  11. Singleton fallback for anything remaining
     ///
     /// Connections are then derived by walking the molecule's bond list and recording every
     /// bond whose two endpoint atoms belong to different components.
@@ -372,7 +386,7 @@ impl MolComponents {
                 continue;
             }
             let mut comp_atoms = vec![o_idx]; // key atom first (O)
-            // Include the carbonyl C if it hasn't been claimed by a ring or chain yet.
+            // Include the carbonyl C if it hasn't already been claimed by a higher-priority component.
             for &nb in &adj[o_idx] {
                 if atoms[nb].element == Carbon && !claimed.contains(&nb) {
                     comp_atoms.push(nb);
@@ -409,7 +423,15 @@ impl MolComponents {
             add_comp!(ComponentType::Hydroxyl, comp_atoms);
         }
 
-        // --- 9. Carbon chains ---
+        // --- 9. Methyl groups ---
+        for c_idx in 0..n_atoms {
+            let Some(comp_atoms) = methyl_component_atoms(c_idx, atoms, adj, &claimed) else {
+                continue;
+            };
+            add_comp!(ComponentType::Methyl, comp_atoms);
+        }
+
+        // --- 10. Carbon chains ---
         // BFS over unclaimed carbons; runs of ≥2 become a Chain component.
         // Single isolated carbons fall through to the singleton fallback.
         let mut chain_seen = vec![false; n_atoms];
@@ -439,7 +461,7 @@ impl MolComponents {
             }
         }
 
-        // --- 10. Fallback: singleton component for every remaining atom ---
+        // --- 11. Fallback: singleton component for every remaining atom ---
         for i in 0..n_atoms {
             if !claimed.contains(&i) {
                 let el = atoms[i].element;
@@ -574,6 +596,36 @@ fn merge_ring_type(best: RingType, next: RingType) -> RingType {
     }
 }
 
+fn methyl_component_atoms(
+    c_idx: usize,
+    atoms: &[Atom],
+    adj: &[Vec<usize>],
+    claimed: &HashSet<usize>,
+) -> Option<Vec<usize>> {
+    if claimed.contains(&c_idx) || atoms[c_idx].element != Carbon {
+        return None;
+    }
+
+    let mut hydrogens = Vec::new();
+    let mut heavy_neighbors = 0usize;
+
+    for &nb in &adj[c_idx] {
+        match atoms[nb].element {
+            Hydrogen if !claimed.contains(&nb) => hydrogens.push(nb),
+            Hydrogen => return None,
+            _ => heavy_neighbors += 1,
+        }
+    }
+
+    if hydrogens.len() == 3 && heavy_neighbors == 1 {
+        let mut comp_atoms = vec![c_idx];
+        comp_atoms.extend(hydrogens);
+        Some(comp_atoms)
+    } else {
+        None
+    }
+}
+
 fn ring_component_clusters(rings: &[crate::mol_characterization::Ring]) -> Vec<Vec<usize>> {
     let n = rings.len();
     if n == 0 {
@@ -629,6 +681,7 @@ fn ring_component_clusters(rings: &[crate::mol_characterization::Ring]) -> Vec<V
 mod tests {
     use bio_files::BondType;
     use lin_alg::f64::Vec3;
+    use na_seq::Element::Hydrogen;
 
     use super::*;
     use crate::molecules::small::MoleculeSmall;
@@ -636,6 +689,14 @@ mod tests {
     fn test_atom() -> Atom {
         Atom {
             element: Carbon,
+            posit: Vec3::new_zero(),
+            ..Default::default()
+        }
+    }
+
+    fn test_atom_with_element(element: Element) -> Atom {
+        Atom {
+            element,
             posit: Vec3::new_zero(),
             ..Default::default()
         }
@@ -686,5 +747,63 @@ mod tests {
         ));
         assert_eq!(components.components[0].atoms.len(), 10);
         assert!(components.connections.is_empty());
+    }
+
+    #[test]
+    fn methyl_groups_are_inferred_before_chains() {
+        let atoms = vec![
+            test_atom(),
+            test_atom(),
+            test_atom(),
+            test_atom_with_element(Hydrogen),
+            test_atom_with_element(Hydrogen),
+            test_atom_with_element(Hydrogen),
+            test_atom_with_element(Hydrogen),
+            test_atom_with_element(Hydrogen),
+            test_atom_with_element(Hydrogen),
+        ];
+        let bonds = vec![
+            test_bond(0, 1, BondType::Single),
+            test_bond(1, 2, BondType::Single),
+            test_bond(0, 3, BondType::Single),
+            test_bond(0, 4, BondType::Single),
+            test_bond(0, 5, BondType::Single),
+            test_bond(2, 6, BondType::Single),
+            test_bond(2, 7, BondType::Single),
+            test_bond(2, 8, BondType::Single),
+        ];
+
+        let mut mol =
+            MoleculeSmall::new(String::from("propane"), atoms, bonds, HashMap::new(), None);
+        mol.update_characterization();
+
+        let components = mol.components.expect("components");
+        assert_eq!(components.components.len(), 3);
+        assert!(matches!(
+            components.components[0].comp_type,
+            ComponentType::Methyl
+        ));
+        assert!(matches!(
+            components.components[1].comp_type,
+            ComponentType::Methyl
+        ));
+        assert!(matches!(
+            components.components[2].comp_type,
+            ComponentType::Atom(Carbon)
+        ));
+        assert_eq!(components.connections.len(), 2);
+    }
+
+    #[test]
+    fn methyl_component_to_atoms_bonds_is_canonical() {
+        let (atoms, bonds) = ComponentType::Methyl.to_atoms_bonds();
+
+        assert_eq!(atoms.len(), 4);
+        assert_eq!(atoms[0].element, Carbon);
+        assert!(atoms[1..].iter().all(|atom| atom.element == Hydrogen));
+        assert_eq!(bonds.len(), 3);
+        assert!(bonds.iter().all(|bond| {
+            bond.bond_type == BondType::Single && bond.atom_0 == 0 && matches!(bond.atom_1, 1..=3)
+        }));
     }
 }
