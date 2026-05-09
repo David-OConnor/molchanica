@@ -13,7 +13,9 @@ use bio_files::md_params::ForceFieldParams;
 
 use crate::{
     molecules::{
-        conformers::{CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer},
+        conformers::{
+            CONFORMER_ATOM_HIST_FEATS, CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer,
+        },
         small::MoleculeSmall,
     },
     therapeutic::{non_nn_ml, non_nn_ml::GnnAnalysisTools},
@@ -27,9 +29,10 @@ const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
 // Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
 // Node scalar features:
-// [r_from_pharm_centroid, mean_pairwise_dist, site_mobility, site_reach_from_reference].
+// [r_from_pharm_centroid, mean_pairwise_dist, site_mobility, site_reach_from_reference,
+//  coarse distance-from-reference histogram bins].
 // Keep these in sync with `GraphDataSpacial::new`.
-pub(in crate::therapeutic) const NUM_SPACIAL_NODE_SCALARS: usize = 4;
+pub(in crate::therapeutic) const NUM_SPACIAL_NODE_SCALARS: usize = 4 + CONFORMER_ATOM_HIST_FEATS;
 // Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
 pub(in crate::therapeutic) const NUM_SPACIAL_EDGE_FEATS: usize = 5;
 // Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
@@ -82,6 +85,7 @@ fn setup_node_scalars(nodes: &[PharmacophoreNode], num_nodes: usize, dist_mat: &
         res.push(mean_d);
         res.push(node.mobility);
         res.push(node.reference_reach);
+        res.extend(node.reference_hist);
     }
 
     res
@@ -93,34 +97,43 @@ struct PharmacophoreNode {
     ty: i32,
     mobility: f32,
     reference_reach: f32,
+    reference_hist: [f32; CONFORMER_ATOM_HIST_FEATS],
 }
 
-fn atom_conformation_scalars(conformer: Option<&Conformer>, atom_i: usize) -> (f32, f32) {
+fn atom_conformation_scalars(
+    conformer: Option<&Conformer>,
+    atom_i: usize,
+) -> (f32, f32, [f32; CONFORMER_ATOM_HIST_FEATS]) {
     let Some(conformer) = conformer else {
-        return (0.0, 0.0);
+        return (0.0, 0.0, [0.0; CONFORMER_ATOM_HIST_FEATS]);
     };
     let Some(atom_sample) = conformer.atom_samples.get(atom_i) else {
-        return (0.0, 0.0);
+        return (0.0, 0.0, [0.0; CONFORMER_ATOM_HIST_FEATS]);
     };
 
     let scale = conformer.atom_feature_scale();
     (
         atom_sample.rmsf / scale,
         atom_sample.mean_distance_from_reference / scale,
+        conformer.atom_motion_histogram_features(atom_i),
     )
 }
 
-fn ring_conformation_scalars(conformer: Option<&Conformer>, atom_indices: &[usize]) -> (f32, f32) {
+fn ring_conformation_scalars(
+    conformer: Option<&Conformer>,
+    atom_indices: &[usize],
+) -> (f32, f32, [f32; CONFORMER_ATOM_HIST_FEATS]) {
     let Some(conformer) = conformer else {
-        return (0.0, 0.0);
+        return (0.0, 0.0, [0.0; CONFORMER_ATOM_HIST_FEATS]);
     };
     if atom_indices.is_empty() {
-        return (0.0, 0.0);
+        return (0.0, 0.0, [0.0; CONFORMER_ATOM_HIST_FEATS]);
     }
 
     let scale = conformer.atom_feature_scale();
     let mut mobility_sum = 0.0;
     let mut reach_sum = 0.0;
+    let mut hist_sum = [0.0; CONFORMER_ATOM_HIST_FEATS];
     let mut count = 0.0f32;
 
     for &atom_i in atom_indices {
@@ -129,13 +142,24 @@ fn ring_conformation_scalars(conformer: Option<&Conformer>, atom_indices: &[usiz
         };
         mobility_sum += atom_sample.rmsf;
         reach_sum += atom_sample.mean_distance_from_reference;
+        let hist = conformer.atom_motion_histogram_features(atom_i);
+        for i in 0..CONFORMER_ATOM_HIST_FEATS {
+            hist_sum[i] += hist[i];
+        }
         count += 1.0;
     }
 
     if count == 0.0 {
-        (0.0, 0.0)
+        (0.0, 0.0, [0.0; CONFORMER_ATOM_HIST_FEATS])
     } else {
-        (mobility_sum / count / scale, reach_sum / count / scale)
+        for value in &mut hist_sum {
+            *value /= count;
+        }
+        (
+            mobility_sum / count / scale,
+            reach_sum / count / scale,
+            hist_sum,
+        )
     }
 }
 
@@ -224,7 +248,8 @@ pub(in crate::therapeutic) struct GraphDataSpacial {
     /// Integer type index for each node: 1=Donor, 2=Acceptor, 3=Hydrophobic, 4=Aromatic.
     pub pharm_type_indices: Vec<i32>,
     /// Per-node scalar features:
-    /// [r_from_pharm_centroid, mean_pairwise_dist, site_mobility, site_reach_from_reference].
+    /// [r_from_pharm_centroid, mean_pairwise_dist, site_mobility, site_reach_from_reference,
+    ///  coarse distance-from-reference histogram bins].
     pub scalars: Vec<f32>,
     /// Graph-level analysis features computed from a sparse proximity graph over
     /// pharmacophore nodes, rather than the fully connected message-passing graph.
@@ -237,6 +262,10 @@ pub(in crate::therapeutic) struct GraphDataSpacial {
 }
 
 impl GraphDataSpacial {
+    pub(in crate::therapeutic) fn empty() -> Self {
+        Self::empty_with_analysis(Vec::new())
+    }
+
     fn empty_with_analysis(analysis_features: Vec<f32>) -> Self {
         Self {
             pharm_type_indices: Vec::new(),
@@ -254,14 +283,22 @@ impl GraphDataSpacial {
         analysis_tools: &GnnAnalysisTools,
     ) -> io::Result<Self> {
         let conformer = resolve_conformer(mol, ff_params);
-        let conformer_summary =
-            conformation_summary_features(conformer.as_deref(), analysis_tools);
+        Self::new_with_conformer(mol, ff_params, analysis_tools, conformer.as_deref())
+    }
+
+    pub(in crate::therapeutic) fn new_with_conformer(
+        mol: &MoleculeSmall,
+        _ff_params: &ForceFieldParams,
+        analysis_tools: &GnnAnalysisTools,
+        conformer: Option<&Conformer>,
+    ) -> io::Result<Self> {
+        let conformer_summary = conformation_summary_features(conformer, analysis_tools);
 
         let Some(char) = mol.characterization.as_ref() else {
             return Ok(Self::empty_with_analysis(conformer_summary));
         };
 
-        let atom_posits = &mol.common.atom_posits;
+        let atom_posits: Vec<_> = mol.common.atoms.iter().map(|atom| atom.posit).collect();
 
         // Collect positions, node types, and conformation-aware site mobility for each
         // pharmacophore site.
@@ -270,51 +307,55 @@ impl GraphDataSpacial {
         for &i in &char.h_bond_donor {
             if i < atom_posits.len() {
                 let p = atom_posits[i];
-                let (mobility, reference_reach) =
-                    atom_conformation_scalars(conformer.as_deref(), i);
+                let (mobility, reference_reach, reference_hist) =
+                    atom_conformation_scalars(conformer, i);
                 nodes.push(PharmacophoreNode {
                     posit: [p.x as f32, p.y as f32, p.z as f32],
                     ty: 1,
                     mobility,
                     reference_reach,
+                    reference_hist,
                 });
             }
         }
         for &i in &char.h_bond_acceptor {
             if i < atom_posits.len() {
                 let p = atom_posits[i];
-                let (mobility, reference_reach) =
-                    atom_conformation_scalars(conformer.as_deref(), i);
+                let (mobility, reference_reach, reference_hist) =
+                    atom_conformation_scalars(conformer, i);
                 nodes.push(PharmacophoreNode {
                     posit: [p.x as f32, p.y as f32, p.z as f32],
                     ty: 2,
                     mobility,
                     reference_reach,
+                    reference_hist,
                 });
             }
         }
         for &i in &char.hydrophobic_carbon {
             if i < atom_posits.len() {
                 let p = atom_posits[i];
-                let (mobility, reference_reach) =
-                    atom_conformation_scalars(conformer.as_deref(), i);
+                let (mobility, reference_reach, reference_hist) =
+                    atom_conformation_scalars(conformer, i);
                 nodes.push(PharmacophoreNode {
                     posit: [p.x as f32, p.y as f32, p.z as f32],
                     ty: 3,
                     mobility,
                     reference_reach,
+                    reference_hist,
                 });
             }
         }
         for ring in &char.rings {
-            let c = ring.center(atom_posits);
-            let (mobility, reference_reach) =
-                ring_conformation_scalars(conformer.as_deref(), &ring.atoms);
+            let c = ring.center(&atom_posits);
+            let (mobility, reference_reach, reference_hist) =
+                ring_conformation_scalars(conformer, &ring.atoms);
             nodes.push(PharmacophoreNode {
                 posit: [c.x as f32, c.y as f32, c.z as f32],
                 ty: 4,
                 mobility,
                 reference_reach,
+                reference_hist,
             });
         }
 

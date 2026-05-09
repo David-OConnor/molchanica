@@ -29,8 +29,9 @@ use crate::{
     mol_characterization::MolCharacterization,
     mol_components::MolComponents,
     molecules::{
-        Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent,
-        PHARMACOPHORE_POCKET_ATOMS_KEY, Residue, common::MoleculeCommon,
+        Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent, PHARMACOPHORE_POCKET_ATOMS_KEY,
+        Residue,
+        common::MoleculeCommon,
         conformers::{Conformer, characterize_conformations},
         pocket::Pocket,
     },

@@ -17,7 +17,9 @@ use crate::{
         Component, ComponentType, Connection, MolComponents, build_adjacency_list_conn,
     },
     molecules::{
-        conformers::{CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer},
+        conformers::{
+            CONFORMER_ATOM_HIST_FEATS, CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer,
+        },
         small::MoleculeSmall,
     },
     therapeutic::{
@@ -35,7 +37,8 @@ use crate::{
 //   [3] mean atom RMSF within the component
 //   [4] max atom RMSF within the component
 //   [5] mean atom flexibility depth within the component
-pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 6;
+//   [6..] mean coarse atom distance-from-reference histogram bins within the component
+pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 6 + CONFORMER_ATOM_HIST_FEATS;
 
 // Keep this in sync with `GraphDataComponent::new`.
 pub(in crate::therapeutic) const NUM_COMP_EDGE_GEOM_FEATS: usize = 2;
@@ -74,7 +77,7 @@ fn comp_centroid(comp: &Component, atom_posits: &[Vec3]) -> Vec3 {
 fn setup_node_scalars(
     comps: &[Component],
     num_comps: usize,
-    mol: &MoleculeSmall,
+    atom_posits: &[Vec3],
     mol_centroid: Vec3,
     conformer: Option<&Conformer>,
 ) -> Vec<f32> {
@@ -91,7 +94,7 @@ fn setup_node_scalars(
         res.push(comp.atoms.len() as f32 / 4.0);
 
         // note: Distance here is just from the input conformer; we may need to try different conformers.
-        let dist = (mol_centroid - comp_centroid(comp, &mol.common.atom_posits)).magnitude();
+        let dist = (mol_centroid - comp_centroid(comp, atom_posits)).magnitude();
 
         // todo note: setting dist and/or degree to 0 seems to have no notable effect on results.
         // todo: Yikes. Not a good sign for this.
@@ -106,10 +109,11 @@ fn setup_node_scalars(
         };
         res.push(n_nitrogens / RING_NITROGEN_NORM);
 
-        let (mean_rmsf, max_rmsf, mean_depth) = if let Some(conformer) = conformer {
+        let (mean_rmsf, max_rmsf, mean_depth, hist_mean) = if let Some(conformer) = conformer {
             let mut rmsf_sum = 0.0f32;
             let mut rmsf_max = 0.0f32;
             let mut depth_sum = 0.0f32;
+            let mut hist_sum = [0.0; CONFORMER_ATOM_HIST_FEATS];
             let atom_count = comp.atoms.len().max(1) as f32;
 
             for &atom_i in &comp.atoms {
@@ -117,19 +121,29 @@ fn setup_node_scalars(
                 rmsf_sum += atom_sample.rmsf;
                 rmsf_max = rmsf_max.max(atom_sample.rmsf);
                 depth_sum += atom_sample.flexibility_depth as f32;
+                let hist = conformer.atom_motion_histogram_features(atom_i);
+                for i in 0..CONFORMER_ATOM_HIST_FEATS {
+                    hist_sum[i] += hist[i];
+                }
+            }
+
+            for value in &mut hist_sum {
+                *value /= atom_count;
             }
 
             (
                 rmsf_sum / atom_count / scale,
                 rmsf_max / scale,
                 depth_sum / atom_count / max_depth,
+                hist_sum,
             )
         } else {
-            (0.0, 0.0, 0.0)
+            (0.0, 0.0, 0.0, [0.0; CONFORMER_ATOM_HIST_FEATS])
         };
         res.push(mean_rmsf);
         res.push(max_rmsf);
         res.push(mean_depth);
+        res.extend(hist_mean);
     }
 
     // todo?
@@ -281,11 +295,39 @@ pub(in crate::therapeutic) struct GraphDataComponent {
 /// Converts component nodes and inter-component connections into flat vectors for tensors.
 /// Used by both training and inference.
 impl GraphDataComponent {
+    pub(in crate::therapeutic) fn empty() -> Self {
+        Self {
+            comp_type_indices: Vec::new(),
+            scalars: Vec::new(),
+            analysis_features: Vec::new(),
+            adj: Vec::new(),
+            edge_feats: Vec::new(),
+            num_comps: 0,
+        }
+    }
+
     pub(in crate::therapeutic) fn new(
         mol: &MoleculeSmall,
         mol_comps: &MolComponents,
         ff_params: &ForceFieldParams,
         analysis_tools: &GnnAnalysisTools,
+    ) -> io::Result<Self> {
+        let conformer = resolve_conformer(mol, ff_params);
+        Self::new_with_conformer(
+            mol,
+            mol_comps,
+            ff_params,
+            analysis_tools,
+            conformer.as_deref(),
+        )
+    }
+
+    pub(in crate::therapeutic) fn new_with_conformer(
+        mol: &MoleculeSmall,
+        mol_comps: &MolComponents,
+        ff_params: &ForceFieldParams,
+        analysis_tools: &GnnAnalysisTools,
+        conformer: Option<&Conformer>,
     ) -> io::Result<Self> {
         let comps = &mol_comps.components;
         let conns = &mol_comps.connections;
@@ -296,9 +338,8 @@ impl GraphDataComponent {
         if num_comps == 0 {
             return Err(io::Error::other("Molecule has 0 components"));
         }
-        let conformer = resolve_conformer(mol, ff_params);
-
-        let mol_centroid = mol.common.centroid();
+        let atom_posits: Vec<_> = mol.common.atoms.iter().map(|atom| atom.posit).collect();
+        let mol_centroid = mol.common.centroid_local();
 
         // todo: Even scarier than scalars not having much effect: We're not getting much effect from
         // todo: comp type either???
@@ -308,7 +349,7 @@ impl GraphDataComponent {
             .map(|c| vocab_lookup_component(c, mol))
             .collect();
 
-        let scalars = setup_node_scalars(comps, num_comps, mol, mol_centroid, conformer.as_deref());
+        let scalars = setup_node_scalars(comps, num_comps, &atom_posits, mol_centroid, conformer);
 
         let mut base_labels = Vec::with_capacity(num_comps);
 
@@ -331,7 +372,7 @@ impl GraphDataComponent {
         let mut analysis_features =
             non_nn_ml::graph_analysis_features(analysis_tools, &base_labels, &adj);
         if analysis_tools.conformation_summary {
-            if let Some(conformer) = conformer.as_deref() {
+            if let Some(conformer) = conformer {
                 analysis_features.extend(conformer.summary_features());
             } else {
                 analysis_features.extend([0.0; CONFORMER_SUMMARY_FEATS]);

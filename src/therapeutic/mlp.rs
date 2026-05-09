@@ -6,7 +6,9 @@ use std::io;
 use bio_files::md_params::ForceFieldParams;
 
 use crate::molecules::{
-    conformers::{CONFORMER_SUMMARY_FEATS, resolve_conformer},
+    conformers::{
+        CONFORMER_MOTION_HIST_FEATS, CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer,
+    },
     small::MoleculeSmall,
 };
 
@@ -20,6 +22,14 @@ use crate::molecules::{
 pub(in crate::therapeutic) fn mlp_feats_from_mol(
     mol: &MoleculeSmall,
     ff_params: &ForceFieldParams,
+) -> io::Result<Vec<f32>> {
+    let conformer = resolve_conformer(mol, ff_params);
+    mlp_feats_from_mol_with_conformer(mol, conformer.as_deref())
+}
+
+pub(in crate::therapeutic) fn mlp_feats_from_mol_with_conformer(
+    mol: &MoleculeSmall,
+    conformer: Option<&Conformer>,
 ) -> io::Result<Vec<f32>> {
     let Some(c) = &mol.characterization else {
         return Err(io::Error::other("Missing mol characterization"));
@@ -102,16 +112,22 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(
         ln(c.psa_topo / c.asa_topo),
         // ln(c.wiener_index.unwrap_or(0) as f32),
         c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
-        // ln(c.greasiness),
+                                                        // ln(c.greasiness),
     ];
 
-    let conformer_features = if let Some(conformer) = resolve_conformer(mol, ff_params) {
+    let conformer_features = if let Some(conformer) = conformer {
         conformer.summary_features().to_vec()
     } else {
         vec![0.0; CONFORMER_SUMMARY_FEATS]
     };
 
     result.extend(conformer_features);
+    let conformer_motion_hist = if let Some(conformer) = conformer {
+        conformer.motion_histogram_features().to_vec()
+    } else {
+        vec![0.0; CONFORMER_MOTION_HIST_FEATS]
+    };
+    result.extend(conformer_motion_hist);
 
     Ok(result)
 }

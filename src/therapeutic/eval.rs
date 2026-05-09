@@ -265,6 +265,9 @@ pub fn eval(
         &atom_graph_analysis,
         &comp_graph_analysis,
         &spacial_graph_analysis,
+        param_cfg.gnn_atom_enabled,
+        param_cfg.gnn_comp_enabled,
+        param_cfg.gnn_spacial_enabled,
     );
     let valid_samples = samples_from_mols(
         &data.validation,
@@ -272,6 +275,9 @@ pub fn eval(
         &atom_graph_analysis,
         &comp_graph_analysis,
         &spacial_graph_analysis,
+        param_cfg.gnn_atom_enabled,
+        param_cfg.gnn_comp_enabled,
+        param_cfg.gnn_spacial_enabled,
     );
 
     if let Err(e) = train_with_samples(dataset, &param_cfg, train_samples, valid_samples) {

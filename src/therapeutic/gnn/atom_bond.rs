@@ -18,7 +18,9 @@ use na_seq::Element::*;
 use crate::{
     molecules::{
         Atom, Bond, build_adjacency_list,
-        conformers::{CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer},
+        conformers::{
+            CONFORMER_ATOM_HIST_FEATS, CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer,
+        },
         small::MoleculeSmall,
     },
     therapeutic::{
@@ -35,9 +37,11 @@ use crate::{
 
 // Degree, partial charge, geometry (radius from molecular centroid, mean neighbor distance),
 // H-bond flags, aromatic-ring flag, and conformer-derived mobility features:
-// [rmsf, max deviation, mean distance from rigid-core anchor, flexibility depth].
+// [rmsf, max deviation, mean distance from rigid-core anchor, flexibility depth,
+//  coarse distance-from-reference histogram bins].
 // Keep this in sync with `GraphDataAtom::new`.
-pub(in crate::therapeutic) const NUM_ATOM_NODE_SCALARS: usize = 11;
+const ATOM_CONFORMATION_SCALARS: usize = 4 + CONFORMER_ATOM_HIST_FEATS;
+pub(in crate::therapeutic) const NUM_ATOM_NODE_SCALARS: usize = 11 + CONFORMER_ATOM_HIST_FEATS;
 const NUM_ATOM_EDGE_REL_SCALARS: usize = 2;
 const NUM_ATOM_EDGE_SHARED_FEATS: usize = 9;
 
@@ -208,7 +212,7 @@ fn setup_node_scalars(
     is_h_bond_donor: &[bool],
     is_h_bond_acceptor: &[bool],
     is_aromatic_ring: &[bool],
-    conformer_scalars: &[(f32, f32, f32, f32)],
+    conformer_scalars: &[[f32; ATOM_CONFORMATION_SCALARS]],
 ) -> Vec<f32> {
     let mut res = Vec::with_capacity(num_atoms * NUM_ATOM_NODE_SCALARS);
 
@@ -250,12 +254,13 @@ fn setup_node_scalars(
         let in_aromatic_ring = if is_aromatic_ring[i] { 1. } else { 0. };
         res.push(in_aromatic_ring);
 
-        let (rmsf, max_deviation, mean_distance_from_reference, flexibility_depth) =
-            conformer_scalars.get(i).copied().unwrap_or((0.0, 0.0, 0.0, 0.0));
-        res.push(rmsf);
-        res.push(max_deviation);
-        res.push(mean_distance_from_reference);
-        res.push(flexibility_depth);
+        let conformer_scalar = conformer_scalars
+            .get(i)
+            .copied()
+            .unwrap_or([0.0; ATOM_CONFORMATION_SCALARS]);
+        for value in conformer_scalar {
+            res.push(value);
+        }
     }
 
     res
@@ -265,8 +270,8 @@ fn atom_conformation_scalars(
     conformer: Option<&Conformer>,
     old_to_new: &[Option<usize>],
     num_atoms: usize,
-) -> Vec<(f32, f32, f32, f32)> {
-    let mut out = vec![(0.0, 0.0, 0.0, 0.0); num_atoms];
+) -> Vec<[f32; ATOM_CONFORMATION_SCALARS]> {
+    let mut out = vec![[0.0; ATOM_CONFORMATION_SCALARS]; num_atoms];
 
     let Some(conformer) = conformer else {
         return out;
@@ -283,12 +288,13 @@ fn atom_conformation_scalars(
             continue;
         }
 
-        out[*new_i] = (
-            atom_sample.rmsf / scale,
-            atom_sample.max_deviation / scale,
-            atom_sample.mean_distance_from_reference / scale,
-            atom_sample.flexibility_depth as f32 / max_depth,
-        );
+        let mut node_scalars = [0.0; ATOM_CONFORMATION_SCALARS];
+        node_scalars[0] = atom_sample.rmsf / scale;
+        node_scalars[1] = atom_sample.max_deviation / scale;
+        node_scalars[2] = atom_sample.mean_distance_from_reference / scale;
+        node_scalars[3] = atom_sample.flexibility_depth as f32 / max_depth;
+        node_scalars[4..].copy_from_slice(&conformer.atom_motion_histogram_features(old_i));
+        out[*new_i] = node_scalars;
     }
 
     out
@@ -725,7 +731,8 @@ pub(in crate::therapeutic) struct GraphDataAtom {
     /// Per-atom scalars:
     /// [degree, partial_charge, r_from_mol_centroid, mean_neighbor_dist,
     ///  is_h_bond_acceptor, is_h_bond_donor, in_aromatic_ring,
-    ///  rmsf, max_deviation, mean_distance_from_reference, flexibility_depth]
+    ///  rmsf, max_deviation, mean_distance_from_reference, flexibility_depth,
+    ///  coarse distance-from-reference histogram bins]
     pub scalars: Vec<f32>,
     /// Graph-level analysis features assembled according to
     /// `GnnAnalysisTools::feature_names()`.
@@ -738,12 +745,34 @@ pub(in crate::therapeutic) struct GraphDataAtom {
 }
 
 impl GraphDataAtom {
+    pub(in crate::therapeutic) fn empty() -> Self {
+        Self {
+            elem_indices: Vec::new(),
+            ff_indices: Vec::new(),
+            scalars: Vec::new(),
+            analysis_features: Vec::new(),
+            adj: Vec::new(),
+            edge_feats: Vec::new(),
+            num_atoms: 0,
+        }
+    }
+
     /// Converts raw Atoms and Bonds into Flat vectors for Tensors.
     /// Used by both Training and Inference.
     pub(in crate::therapeutic) fn new(
         mol: &MoleculeSmall,
         ff_params: &ForceFieldParams,
         analysis_tools: &GnnAnalysisTools,
+    ) -> io::Result<Self> {
+        let conformer = resolve_conformer(mol, ff_params);
+        Self::new_with_conformer(mol, ff_params, analysis_tools, conformer.as_deref())
+    }
+
+    pub(in crate::therapeutic) fn new_with_conformer(
+        mol: &MoleculeSmall,
+        ff_params: &ForceFieldParams,
+        analysis_tools: &GnnAnalysisTools,
+        conformer: Option<&Conformer>,
     ) -> io::Result<Self> {
         let (atoms, bonds, adj, old_to_new) = if EXCLUDE_HYDROGEN {
             let a: Vec<_> = mol
@@ -794,7 +823,6 @@ impl GraphDataAtom {
             eprintln!("Missing char");
             return Err(io::Error::other("Missing characterization"));
         };
-        let conformer = resolve_conformer(mol, ff_params);
         let rotatable_bond_keys: HashSet<_> = char
             .rotatable_bonds
             .iter()
@@ -829,8 +857,7 @@ impl GraphDataAtom {
             }
         }
 
-        let conformer_scalars =
-            atom_conformation_scalars(conformer.as_deref(), &old_to_new, num_atoms);
+        let conformer_scalars = atom_conformation_scalars(conformer, &old_to_new, num_atoms);
 
         // Node features (Indices and Scalars)
         let mut elem_indices = Vec::with_capacity(num_atoms);
@@ -860,7 +887,7 @@ impl GraphDataAtom {
             &is_aromatic_ring,
         );
         if analysis_tools.conformation_summary {
-            if let Some(conformer) = conformer.as_deref() {
+            if let Some(conformer) = conformer {
                 analysis_features.extend(conformer.summary_features());
             } else {
                 analysis_features.extend([0.0; CONFORMER_SUMMARY_FEATS]);

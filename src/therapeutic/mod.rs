@@ -110,6 +110,18 @@ impl DatasetTdc {
         .to_string()
     }
 
+    pub fn config_group(self) -> &'static str {
+        match self {
+            Self::Ames
+            | Self::CarcinogensLagunin
+            | Self::Dili
+            | Self::Herg
+            | Self::Ld50Zhu
+            | Self::SkinReaction => "toxicity",
+            _ => "adme",
+        }
+    }
+
     #[cfg(feature = "train")]
     /// Returns (csv file path, mols (SDF) folder)
     fn csv_mol_paths(self, path: &Path) -> io::Result<(PathBuf, PathBuf)> {

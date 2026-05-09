@@ -31,7 +31,14 @@ const DEFAULT_GLOBAL_HIST_BINS: usize = 24;
 const BOLTZMANN_KCAL_PER_MOL_K: f64 = 0.001_987_204_1;
 const DEFAULT_CONFORMER_TEMP_K: f64 = 298.15;
 const TORSION_PROFILE_SMOOTHING: f64 = 0.05;
+const MOTION_HIST_ATOM_DIST_FEATS: usize = 6;
+const MOTION_HIST_TORSION_FEATS: usize = 12;
+const MOTION_HIST_GLOBAL_FEATS_PER_METRIC: usize = 6;
 pub const CONFORMER_SUMMARY_FEATS: usize = 12;
+pub const CONFORMER_ATOM_HIST_FEATS: usize = 4;
+pub const CONFORMER_MOTION_HIST_FEATS: usize = MOTION_HIST_ATOM_DIST_FEATS
+    + MOTION_HIST_TORSION_FEATS
+    + 4 * MOTION_HIST_GLOBAL_FEATS_PER_METRIC;
 pub const CONFORMER_SUMMARY_FEATURE_NAMES: [&str; CONFORMER_SUMMARY_FEATS] = [
     "conf_mean_atom_rmsf_ln",
     "conf_max_atom_rmsf_ln",
@@ -94,6 +101,20 @@ impl Histogram1D {
 
         Self { min, max, bins }
     }
+}
+
+fn compress_histogram_bins<const OUT: usize>(bins: &[f32]) -> [f32; OUT] {
+    let mut out = [0.0; OUT];
+    if bins.is_empty() {
+        return out;
+    }
+
+    for (src_i, &value) in bins.iter().enumerate() {
+        let dst_i = (src_i * OUT / bins.len()).min(OUT - 1);
+        out[dst_i] += value;
+    }
+
+    out
 }
 
 /// For a single atom.
@@ -252,6 +273,79 @@ impl Conformer {
             .mean_max_radius_from_centroid
             .max(self.global.mean_radius_of_gyration)
             .max(1.0e-3)
+    }
+
+    pub fn atom_motion_histogram_features(
+        &self,
+        atom_i: usize,
+    ) -> [f32; CONFORMER_ATOM_HIST_FEATS] {
+        self.atom_samples
+            .get(atom_i)
+            .map(|sample| {
+                compress_histogram_bins::<CONFORMER_ATOM_HIST_FEATS>(
+                    &sample.distance_from_reference.bins,
+                )
+            })
+            .unwrap_or([0.0; CONFORMER_ATOM_HIST_FEATS])
+    }
+
+    pub fn motion_histogram_features(&self) -> [f32; CONFORMER_MOTION_HIST_FEATS] {
+        let mut out = [0.0; CONFORMER_MOTION_HIST_FEATS];
+        let mut cursor = 0usize;
+
+        let atom_count = self.atom_samples.len().max(1) as f32;
+        let mut atom_dist_avg = [0.0; MOTION_HIST_ATOM_DIST_FEATS];
+        for atom_sample in &self.atom_samples {
+            let bins = compress_histogram_bins::<MOTION_HIST_ATOM_DIST_FEATS>(
+                &atom_sample.distance_from_reference.bins,
+            );
+            for i in 0..MOTION_HIST_ATOM_DIST_FEATS {
+                atom_dist_avg[i] += bins[i];
+            }
+        }
+        for value in &mut atom_dist_avg {
+            *value /= atom_count;
+            out[cursor] = *value;
+            cursor += 1;
+        }
+
+        let rotor_count = self.rotatable_bonds.len();
+        let mut torsion_avg = [0.0; MOTION_HIST_TORSION_FEATS];
+        if rotor_count > 0 {
+            for rotor in &self.rotatable_bonds {
+                let bins = compress_histogram_bins::<MOTION_HIST_TORSION_FEATS>(
+                    &rotor.angle_distribution.bins,
+                );
+                for i in 0..MOTION_HIST_TORSION_FEATS {
+                    torsion_avg[i] += bins[i];
+                }
+            }
+            let inv_rotors = 1.0 / rotor_count as f32;
+            for value in &mut torsion_avg {
+                *value *= inv_rotors;
+            }
+        }
+        for value in torsion_avg {
+            out[cursor] = value;
+            cursor += 1;
+        }
+
+        for hist in [
+            &self.global.radius_of_gyration,
+            &self.global.max_radius_from_centroid,
+            &self.global.shape_anisotropy,
+            &self.global.centroid_drift,
+        ] {
+            let bins = compress_histogram_bins::<MOTION_HIST_GLOBAL_FEATS_PER_METRIC>(&hist.bins);
+            for value in bins {
+                out[cursor] = value;
+                cursor += 1;
+            }
+        }
+
+        debug_assert_eq!(cursor, CONFORMER_MOTION_HIST_FEATS);
+
+        out
     }
 }
 
@@ -964,7 +1058,10 @@ mod tests {
     use lin_alg::f64::Vec3;
     use na_seq::Element::Carbon;
 
-    use super::{Conformer, characterize_conformations};
+    use super::{
+        CONFORMER_ATOM_HIST_FEATS, CONFORMER_MOTION_HIST_FEATS, Conformer,
+        characterize_conformations,
+    };
     use crate::molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall};
 
     fn chain_molecule() -> MoleculeSmall {
@@ -1082,6 +1179,14 @@ mod tests {
         let angle_hist = &conformer.rotatable_bonds[0].angle_distribution.bins;
         let prob_sum: f32 = angle_hist.iter().sum();
         assert!((prob_sum - 1.0).abs() < 1.0e-4);
+
+        let motion_hist = conformer.motion_histogram_features();
+        assert_eq!(motion_hist.len(), CONFORMER_MOTION_HIST_FEATS);
+
+        let atom_hist = conformer.atom_motion_histogram_features(0);
+        assert_eq!(atom_hist.len(), CONFORMER_ATOM_HIST_FEATS);
+        let atom_hist_sum: f32 = atom_hist.iter().sum();
+        assert!((atom_hist_sum - 1.0).abs() < 1.0e-4);
 
         assert!(conformer.atom_samples[3].rmsf > conformer.atom_samples[0].rmsf);
     }

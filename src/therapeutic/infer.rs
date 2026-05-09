@@ -15,7 +15,10 @@ use burn::{
 };
 
 use crate::{
-    molecules::small::MoleculeSmall,
+    molecules::{
+        conformers::{Conformer, resolve_conformer},
+        small::MoleculeSmall,
+    },
     therapeutic::{
         DatasetTdc,
         gnn::{
@@ -33,7 +36,7 @@ use crate::{
                 SPACIAL_VOCAB_SIZE,
             },
         },
-        mlp::mlp_feats_from_mol,
+        mlp::mlp_feats_from_mol_with_conformer,
         non_nn_ml::GnnAnalysisTools,
         train::{MAX_ATOMS, MAX_COMPS, MAX_PHARM, Model, ModelConfig, StandardScaler},
     },
@@ -58,6 +61,9 @@ pub struct Infer {
     comp_graph_analysis: GnnAnalysisTools,
     spacial_graph_analysis: GnnAnalysisTools,
     global_input_dim: usize,
+    atom_gnn_enabled: bool,
+    comp_gnn_enabled: bool,
+    spacial_gnn_enabled: bool,
 }
 
 impl Infer {
@@ -155,6 +161,9 @@ impl Infer {
                 comp_graph_analysis,
                 spacial_graph_analysis,
                 global_input_dim: config.global_input_dim,
+                atom_gnn_enabled: config.gnn_atom_enabled,
+                comp_gnn_enabled: config.gnn_comp_enabled,
+                spacial_gnn_enabled: config.gnn_spacial_enabled,
             },
             device,
         ))
@@ -204,7 +213,18 @@ impl Infer {
     pub fn infer(
         &self,
         mol: &MoleculeSmall,
+        feat_params: Vec<f32>,
+        ff_params: &ForceFieldParams,
+    ) -> io::Result<f32> {
+        let conformer = resolve_conformer(mol, ff_params);
+        self.infer_with_conformer(mol, feat_params, conformer.as_deref(), ff_params)
+    }
+
+    fn infer_with_conformer(
+        &self,
+        mol: &MoleculeSmall,
         mut feat_params: Vec<f32>,
+        conformer: Option<&Conformer>,
         ff_params: &ForceFieldParams,
     ) -> io::Result<f32> {
         #[allow(unused)]
@@ -223,16 +243,38 @@ impl Infer {
         let n_feat_params = feat_params.len();
         self.scaler.apply_in_place(&mut feat_params);
 
-        let graph_atom_bond = GraphDataAtom::new(mol, ff_params, &self.atom_graph_analysis)?;
-
-        let Some(comps) = &mol.components else {
-            return Err(io::Error::other("Missing components in ML inference"));
+        let graph_atom_bond = if self.atom_gnn_enabled {
+            GraphDataAtom::new_with_conformer(mol, ff_params, &self.atom_graph_analysis, conformer)?
+        } else {
+            GraphDataAtom::empty()
         };
 
-        let graph_comp = GraphDataComponent::new(mol, comps, ff_params, &self.comp_graph_analysis)?;
+        let graph_comp = if self.comp_gnn_enabled {
+            let Some(comps) = &mol.components else {
+                return Err(io::Error::other("Missing components in ML inference"));
+            };
+            GraphDataComponent::new_with_conformer(
+                mol,
+                comps,
+                ff_params,
+                &self.comp_graph_analysis,
+                conformer,
+            )?
+        } else {
+            GraphDataComponent::empty()
+        };
         // GraphDataSpacial::new returns Ok(empty) when characterization is missing
         // or no pharmacophore sites are present, so this never errors.
-        let graph_spacial = GraphDataSpacial::new(mol, ff_params, &self.spacial_graph_analysis)?;
+        let graph_spacial = if self.spacial_gnn_enabled {
+            GraphDataSpacial::new_with_conformer(
+                mol,
+                ff_params,
+                &self.spacial_graph_analysis,
+                conformer,
+            )?
+        } else {
+            GraphDataSpacial::empty()
+        };
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
         let num_atoms = graph_atom_bond.num_atoms;
@@ -515,7 +557,8 @@ impl Infer {
         let mut feat_dim = 0;
 
         for mol in mols {
-            let mut feat_params = mlp_feats_from_mol(mol, ff_params)?;
+            let conformer = resolve_conformer(mol, ff_params);
+            let mut feat_params = mlp_feats_from_mol_with_conformer(mol, conformer.as_deref())?;
             if feat_params.len() != self.global_input_dim {
                 return Err(io::Error::other(format!(
                     "Therapeutic model global feature layout is incompatible with the current \
@@ -532,13 +575,41 @@ impl Infer {
             self.scaler.apply_in_place(&mut feat_params);
             all_globals.extend(feat_params);
 
-            let g = GraphDataAtom::new(mol, ff_params, &self.atom_graph_analysis)?;
-            let comps = mol
-                .components
-                .as_ref()
-                .ok_or_else(|| io::Error::other("Missing components in ML inference"))?;
-            let gc = GraphDataComponent::new(mol, comps, ff_params, &self.comp_graph_analysis)?;
-            let gs = GraphDataSpacial::new(mol, ff_params, &self.spacial_graph_analysis)?;
+            let g = if self.atom_gnn_enabled {
+                GraphDataAtom::new_with_conformer(
+                    mol,
+                    ff_params,
+                    &self.atom_graph_analysis,
+                    conformer.as_deref(),
+                )?
+            } else {
+                GraphDataAtom::empty()
+            };
+            let gc = if self.comp_gnn_enabled {
+                let comps = mol
+                    .components
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("Missing components in ML inference"))?;
+                GraphDataComponent::new_with_conformer(
+                    mol,
+                    comps,
+                    ff_params,
+                    &self.comp_graph_analysis,
+                    conformer.as_deref(),
+                )?
+            } else {
+                GraphDataComponent::empty()
+            };
+            let gs = if self.spacial_gnn_enabled {
+                GraphDataSpacial::new_with_conformer(
+                    mol,
+                    ff_params,
+                    &self.spacial_graph_analysis,
+                    conformer.as_deref(),
+                )?
+            } else {
+                GraphDataSpacial::empty()
+            };
 
             // Atom graph
             all_elem.extend(pad_indices(&g.elem_indices, g.num_atoms, MAX_ATOMS));
@@ -780,8 +851,6 @@ pub fn infer_general(
     ff_params: &ForceFieldParams,
     load_from_file: bool,
 ) -> io::Result<f32> {
-    let feat_params = mlp_feats_from_mol(mol, ff_params)?;
-
     let infer = match models.get_mut(&dataset) {
         Some(inf) => inf,
         None => {
@@ -805,5 +874,8 @@ pub fn infer_general(
         }
     };
 
-    infer.infer(mol, feat_params, ff_params)
+    let conformer = resolve_conformer(mol, ff_params);
+    let feat_params = mlp_feats_from_mol_with_conformer(mol, conformer.as_deref())?;
+
+    infer.infer_with_conformer(mol, feat_params, conformer.as_deref(), ff_params)
 }

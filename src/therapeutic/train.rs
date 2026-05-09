@@ -61,7 +61,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "train")]
 use crate::therapeutic::eval::eval;
 use crate::{
-    molecules::small::MoleculeSmall,
+    molecules::{conformers::resolve_conformer, small::MoleculeSmall},
     screening::pharmacophore::Pharmacophore,
     therapeutic::{
         DatasetTdc, gnn,
@@ -202,15 +202,22 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
         }
     }
 
-    // Look up: specific dataset → [default] → first section in file → all-true fallback
+    // Look up: specific dataset → dataset family (e.g. [adme], [toxicity]) → [default]
+    // → all-true fallback.
     let (section_name, map) = if let Some(m) = sections.get(dataset_name) {
         (dataset_name.to_string(), Some(m))
+    } else if let Ok(dataset) = DatasetTdc::from_str(dataset_name) {
+        if let Some(m) = sections.get(dataset.config_group()) {
+            (dataset.config_group().to_string(), Some(m))
+        } else if let Some(m) = sections.get("default") {
+            ("default".to_string(), Some(m))
+        } else {
+            ("(built-in defaults)".to_string(), None)
+        }
     } else if let Some(m) = sections.get("default") {
         ("default".to_string(), Some(m))
-    } else if let Some((name, m)) = sections.iter().next() {
-        (name.clone(), Some(m))
     } else {
-        ("(none — file empty or unparseable)".to_string(), None)
+        ("(built-in defaults)".to_string(), None)
     };
 
     println!("  Branch config section used: [{section_name}]");
@@ -1560,10 +1567,14 @@ pub(in crate::therapeutic) fn samples_from_mols(
     atom_graph_analysis: &GnnAnalysisTools,
     comp_graph_analysis: &GnnAnalysisTools,
     spacial_graph_analysis: &GnnAnalysisTools,
+    atom_gnn_enabled: bool,
+    comp_gnn_enabled: bool,
+    spacial_gnn_enabled: bool,
 ) -> Vec<Sample> {
     let mut out = Vec::with_capacity(data.len());
     for (mol, target) in data {
-        let feat_params = match mlp::mlp_feats_from_mol(mol, ff_params) {
+        let conformer = resolve_conformer(mol, ff_params);
+        let feat_params = match mlp::mlp_feats_from_mol_with_conformer(mol, conformer.as_deref()) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("Error extracting MLP features: {e:?}; skipping mol.");
@@ -1575,42 +1586,68 @@ pub(in crate::therapeutic) fn samples_from_mols(
             continue;
         }
 
-        let graph = match GraphDataAtom::new(mol, ff_params, atom_graph_analysis) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("Error getting graph data: {e:?}");
-                continue;
+        let graph = if atom_gnn_enabled {
+            match GraphDataAtom::new_with_conformer(
+                mol,
+                ff_params,
+                atom_graph_analysis,
+                conformer.as_deref(),
+            ) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("Error getting graph data: {e:?}");
+                    continue;
+                }
             }
+        } else {
+            GraphDataAtom::empty()
         };
 
-        if graph.num_atoms == 0 {
+        if atom_gnn_enabled && graph.num_atoms == 0 {
             continue;
         }
 
-        let graph_comp = match &mol.components {
-            Some(comps) => {
-                match GraphDataComponent::new(mol, comps, ff_params, comp_graph_analysis) {
+        let graph_comp = if comp_gnn_enabled {
+            match &mol.components {
+                Some(comps) => match GraphDataComponent::new_with_conformer(
+                    mol,
+                    comps,
+                    ff_params,
+                    comp_graph_analysis,
+                    conformer.as_deref(),
+                ) {
                     Ok(g) => g,
                     Err(e) => {
                         eprintln!("Error getting comp graph data: {e:?}");
                         continue;
                     }
+                },
+                None => {
+                    eprintln!("Missing components for mol; skipping.");
+                    continue;
                 }
             }
-            None => {
-                eprintln!("Missing components for mol; skipping.");
-                continue;
-            }
+        } else {
+            GraphDataComponent::empty()
         };
 
         // GraphDataSpacial::new returns Ok(empty) when characterization is missing
         // or no pharmacophore sites are present, so this never errors.
-        let graph_spacial = match GraphDataSpacial::new(mol, ff_params, spacial_graph_analysis) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("Error getting spatial graph data: {e:?}");
-                continue;
+        let graph_spacial = if spacial_gnn_enabled {
+            match GraphDataSpacial::new_with_conformer(
+                mol,
+                ff_params,
+                spacial_graph_analysis,
+                conformer.as_deref(),
+            ) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("Error getting spatial graph data: {e:?}");
+                    continue;
+                }
             }
+        } else {
+            GraphDataSpacial::empty()
         };
 
         out.push(Sample {
@@ -1826,6 +1863,9 @@ pub(in crate::therapeutic) fn train(
         &atom_graph_analysis,
         &comp_graph_analysis,
         &spacial_graph_analysis,
+        param_cfg.gnn_atom_enabled,
+        param_cfg.gnn_comp_enabled,
+        param_cfg.gnn_spacial_enabled,
     );
     let data_valid = samples_from_mols(
         &loaded.validation,
@@ -1833,6 +1873,9 @@ pub(in crate::therapeutic) fn train(
         &atom_graph_analysis,
         &comp_graph_analysis,
         &spacial_graph_analysis,
+        param_cfg.gnn_atom_enabled,
+        param_cfg.gnn_comp_enabled,
+        param_cfg.gnn_spacial_enabled,
     );
 
     train_with_samples(dataset, &param_cfg, data_train, data_valid)
