@@ -9,8 +9,13 @@ use std::{
     io,
 };
 
+use bio_files::md_params::ForceFieldParams;
+
 use crate::{
-    molecules::small::MoleculeSmall,
+    molecules::{
+        conformers::{CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer},
+        small::MoleculeSmall,
+    },
     therapeutic::{non_nn_ml, non_nn_ml::GnnAnalysisTools},
 };
 
@@ -21,9 +26,10 @@ const SPACIAL_RBF_SIGMA_SQ: f32 = 2.25; // sigma=1.5 Å for RBF basis functions
 const SPACIAL_RBF_CENTERS: [f32; 4] = [2.0, 4.0, 6.0, 8.0]; // Å
 
 // Spacial (pharmacophore) GNN constants. Keep this in sync with (Where?)
-// Node scalar features: [r_from_pharm_centroid, mean_pairwise_dist]. Keep these in sync with
-// `GraphDataSpacial::new`.
-pub(in crate::therapeutic) const NUM_SPACIAL_NODE_SCALARS: usize = 2;
+// Node scalar features:
+// [r_from_pharm_centroid, mean_pairwise_dist, site_mobility, site_reach_from_reference].
+// Keep these in sync with `GraphDataSpacial::new`.
+pub(in crate::therapeutic) const NUM_SPACIAL_NODE_SCALARS: usize = 4;
 // Edge features: [scaled_dist, rbf_0, rbf_1, rbf_2, rbf_3]
 pub(in crate::therapeutic) const NUM_SPACIAL_EDGE_FEATS: usize = 5;
 // Node type vocab: 0=pad, 1=HBondDonor, 2=HBondAcceptor, 3=Hydrophobic, 4=Aromatic
@@ -31,13 +37,14 @@ pub(in crate::therapeutic) const SPACIAL_VOCAB_SIZE: usize = 5;
 
 /// Set up scalars for the spacial/pharmacophore GNN. These are per-node, floating point features. They
 /// do not include integer (e.g. pharmacophore feature type) per-node features.
-fn setup_node_scalars(nodes: &[([f32; 3], i32)], num_nodes: usize, dist_mat: &[f32]) -> Vec<f32> {
+fn setup_node_scalars(nodes: &[PharmacophoreNode], num_nodes: usize, dist_mat: &[f32]) -> Vec<f32> {
     let mut res = Vec::with_capacity(num_nodes * NUM_SPACIAL_NODE_SCALARS);
 
     // Pharmacophore centroid.
     let (cx, cy, cz) = {
         let (mut cx, mut cy, mut cz) = (0., 0., 0.);
-        for (p, _) in nodes {
+        for node in nodes {
+            let p = node.posit;
             cx += p[0];
             cy += p[1];
             cz += p[2];
@@ -51,7 +58,8 @@ fn setup_node_scalars(nodes: &[([f32; 3], i32)], num_nodes: usize, dist_mat: &[f
         (cx, cy, cz)
     };
 
-    for (i, (p, ty)) in nodes.iter().enumerate() {
+    for (i, node) in nodes.iter().enumerate() {
+        let p = node.posit;
         // Rotation-invariant distance from pharmacophore centroid, normalized.
         let dx = p[0] - cx;
         let dy = p[1] - cy;
@@ -72,9 +80,78 @@ fn setup_node_scalars(nodes: &[([f32; 3], i32)], num_nodes: usize, dist_mat: &[f
             0.0
         };
         res.push(mean_d);
+        res.push(node.mobility);
+        res.push(node.reference_reach);
     }
 
     res
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PharmacophoreNode {
+    posit: [f32; 3],
+    ty: i32,
+    mobility: f32,
+    reference_reach: f32,
+}
+
+fn atom_conformation_scalars(conformer: Option<&Conformer>, atom_i: usize) -> (f32, f32) {
+    let Some(conformer) = conformer else {
+        return (0.0, 0.0);
+    };
+    let Some(atom_sample) = conformer.atom_samples.get(atom_i) else {
+        return (0.0, 0.0);
+    };
+
+    let scale = conformer.atom_feature_scale();
+    (
+        atom_sample.rmsf / scale,
+        atom_sample.mean_distance_from_reference / scale,
+    )
+}
+
+fn ring_conformation_scalars(conformer: Option<&Conformer>, atom_indices: &[usize]) -> (f32, f32) {
+    let Some(conformer) = conformer else {
+        return (0.0, 0.0);
+    };
+    if atom_indices.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let scale = conformer.atom_feature_scale();
+    let mut mobility_sum = 0.0;
+    let mut reach_sum = 0.0;
+    let mut count = 0.0f32;
+
+    for &atom_i in atom_indices {
+        let Some(atom_sample) = conformer.atom_samples.get(atom_i) else {
+            continue;
+        };
+        mobility_sum += atom_sample.rmsf;
+        reach_sum += atom_sample.mean_distance_from_reference;
+        count += 1.0;
+    }
+
+    if count == 0.0 {
+        (0.0, 0.0)
+    } else {
+        (mobility_sum / count / scale, reach_sum / count / scale)
+    }
+}
+
+fn conformation_summary_features(
+    conformer: Option<&Conformer>,
+    analysis_tools: &GnnAnalysisTools,
+) -> Vec<f32> {
+    if !analysis_tools.conformation_summary {
+        return Vec::new();
+    }
+
+    if let Some(conformer) = conformer {
+        conformer.summary_features().to_vec()
+    } else {
+        vec![0.0; CONFORMER_SUMMARY_FEATS]
+    }
 }
 
 fn setup_edge_feats(num_nodes: usize, dist_mat: &[f32]) -> (Vec<f32>, Vec<f32>) {
@@ -146,7 +223,8 @@ fn setup_edge_feats(num_nodes: usize, dist_mat: &[f32]) -> (Vec<f32>, Vec<f32>) 
 pub(in crate::therapeutic) struct GraphDataSpacial {
     /// Integer type index for each node: 1=Donor, 2=Acceptor, 3=Hydrophobic, 4=Aromatic.
     pub pharm_type_indices: Vec<i32>,
-    /// Per-node scalar features: [r_from_pharm_centroid, mean_pairwise_dist] (both normalised).
+    /// Per-node scalar features:
+    /// [r_from_pharm_centroid, mean_pairwise_dist, site_mobility, site_reach_from_reference].
     pub scalars: Vec<f32>,
     /// Graph-level analysis features computed from a sparse proximity graph over
     /// pharmacophore nodes, rather than the fully connected message-passing graph.
@@ -159,11 +237,11 @@ pub(in crate::therapeutic) struct GraphDataSpacial {
 }
 
 impl GraphDataSpacial {
-    fn empty() -> Self {
+    fn empty_with_analysis(analysis_features: Vec<f32>) -> Self {
         Self {
             pharm_type_indices: Vec::new(),
             scalars: Vec::new(),
-            analysis_features: Vec::new(),
+            analysis_features,
             adj: Vec::new(),
             edge_feats: Vec::new(),
             num_nodes: 0,
@@ -172,51 +250,85 @@ impl GraphDataSpacial {
 
     pub(in crate::therapeutic) fn new(
         mol: &MoleculeSmall,
+        ff_params: &ForceFieldParams,
         analysis_tools: &GnnAnalysisTools,
     ) -> io::Result<Self> {
+        let conformer = resolve_conformer(mol, ff_params);
+        let conformer_summary =
+            conformation_summary_features(conformer.as_deref(), analysis_tools);
+
         let Some(char) = mol.characterization.as_ref() else {
-            return Ok(Self::empty());
+            return Ok(Self::empty_with_analysis(conformer_summary));
         };
 
         let atom_posits = &mol.common.atom_posits;
 
-        // Collect (position as [f32;3], type_index) for each pharmacophore site.
-        let mut nodes: Vec<([f32; 3], i32)> = Vec::new();
+        // Collect positions, node types, and conformation-aware site mobility for each
+        // pharmacophore site.
+        let mut nodes: Vec<PharmacophoreNode> = Vec::new();
 
         for &i in &char.h_bond_donor {
             if i < atom_posits.len() {
                 let p = atom_posits[i];
-                nodes.push(([p.x as f32, p.y as f32, p.z as f32], 1));
+                let (mobility, reference_reach) =
+                    atom_conformation_scalars(conformer.as_deref(), i);
+                nodes.push(PharmacophoreNode {
+                    posit: [p.x as f32, p.y as f32, p.z as f32],
+                    ty: 1,
+                    mobility,
+                    reference_reach,
+                });
             }
         }
         for &i in &char.h_bond_acceptor {
             if i < atom_posits.len() {
                 let p = atom_posits[i];
-                nodes.push(([p.x as f32, p.y as f32, p.z as f32], 2));
+                let (mobility, reference_reach) =
+                    atom_conformation_scalars(conformer.as_deref(), i);
+                nodes.push(PharmacophoreNode {
+                    posit: [p.x as f32, p.y as f32, p.z as f32],
+                    ty: 2,
+                    mobility,
+                    reference_reach,
+                });
             }
         }
         for &i in &char.hydrophobic_carbon {
             if i < atom_posits.len() {
                 let p = atom_posits[i];
-                nodes.push(([p.x as f32, p.y as f32, p.z as f32], 3));
+                let (mobility, reference_reach) =
+                    atom_conformation_scalars(conformer.as_deref(), i);
+                nodes.push(PharmacophoreNode {
+                    posit: [p.x as f32, p.y as f32, p.z as f32],
+                    ty: 3,
+                    mobility,
+                    reference_reach,
+                });
             }
         }
         for ring in &char.rings {
             let c = ring.center(atom_posits);
-            nodes.push(([c.x as f32, c.y as f32, c.z as f32], 4));
+            let (mobility, reference_reach) =
+                ring_conformation_scalars(conformer.as_deref(), &ring.atoms);
+            nodes.push(PharmacophoreNode {
+                posit: [c.x as f32, c.y as f32, c.z as f32],
+                ty: 4,
+                mobility,
+                reference_reach,
+            });
         }
 
         let num_nodes = nodes.len();
         if num_nodes == 0 {
-            return Ok(Self::empty());
+            return Ok(Self::empty_with_analysis(conformer_summary));
         }
 
         // Precompute all pairwise Euclidean distances (symmetric).
         let mut dist_mat = vec![0.; num_nodes * num_nodes];
         for i in 0..num_nodes {
             for j in (i + 1)..num_nodes {
-                let pi = nodes[i].0;
-                let pj = nodes[j].0;
+                let pi = nodes[i].posit;
+                let pj = nodes[j].posit;
                 let dx = pi[0] - pj[0];
                 let dy = pi[1] - pj[1];
                 let dz = pi[2] - pj[2];
@@ -228,7 +340,7 @@ impl GraphDataSpacial {
         }
 
         // Node features.
-        let pharm_type_indices: Vec<i32> = nodes.iter().map(|(_, ty)| *ty).collect();
+        let pharm_type_indices: Vec<i32> = nodes.iter().map(|node| node.ty).collect();
         let scalars = setup_node_scalars(&nodes, num_nodes, &dist_mat);
 
         let analysis_adj = non_nn_ml::build_spacial_analysis_adj(&dist_mat, num_nodes);
@@ -238,13 +350,15 @@ impl GraphDataSpacial {
             pharm_type_indices[i].hash(&mut hasher);
             analysis_adj[i].len().hash(&mut hasher);
 
-            non_nn_ml::bucket_scalar(scalars[i * NUM_SPACIAL_NODE_SCALARS], 4.0).hash(&mut hasher);
-            non_nn_ml::bucket_scalar(scalars[i * NUM_SPACIAL_NODE_SCALARS + 1], 4.0)
-                .hash(&mut hasher);
+            for k in 0..NUM_SPACIAL_NODE_SCALARS {
+                non_nn_ml::bucket_scalar(scalars[i * NUM_SPACIAL_NODE_SCALARS + k], 4.0)
+                    .hash(&mut hasher);
+            }
             base_labels.push(hasher.finish());
         }
-        let analysis_features =
+        let mut analysis_features =
             non_nn_ml::graph_analysis_features(analysis_tools, &base_labels, &analysis_adj);
+        analysis_features.extend(conformer_summary);
 
         let (edge_feats, adj) = setup_edge_feats(num_nodes, &dist_mat);
 

@@ -16,7 +16,10 @@ use crate::{
     mol_components::{
         Component, ComponentType, Connection, MolComponents, build_adjacency_list_conn,
     },
-    molecules::small::MoleculeSmall,
+    molecules::{
+        conformers::{CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer},
+        small::MoleculeSmall,
+    },
     therapeutic::{
         gnn,
         gnn::{DIHEDRAL_PARAM_SUMMARY_FEATS, vocab_lookup_element},
@@ -29,7 +32,10 @@ use crate::{
 //   [0] atom count normalized
 //   [1] distance from molecule centroid normalized
 //   [2] ring nitrogen count normalized (0 for non-ring components)
-pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 3;
+//   [3] mean atom RMSF within the component
+//   [4] max atom RMSF within the component
+//   [5] mean atom flexibility depth within the component
+pub(in crate::therapeutic) const NUM_COMP_NODE_SCALARS: usize = 6;
 
 // Keep this in sync with `GraphDataComponent::new`.
 pub(in crate::therapeutic) const NUM_COMP_EDGE_GEOM_FEATS: usize = 2;
@@ -70,8 +76,13 @@ fn setup_node_scalars(
     num_comps: usize,
     mol: &MoleculeSmall,
     mol_centroid: Vec3,
+    conformer: Option<&Conformer>,
 ) -> Vec<f32> {
     let mut res = Vec::with_capacity(num_comps * NUM_COMP_NODE_SCALARS);
+    let scale = conformer.map(Conformer::atom_feature_scale).unwrap_or(1.0);
+    let max_depth = conformer
+        .map(|conf| conf.rotatable_bonds.len().max(1) as f32)
+        .unwrap_or(1.0);
 
     for (i, comp) in comps.iter().enumerate() {
         // Number of atoms owned by this component, normalized. This divider
@@ -94,6 +105,31 @@ fn setup_node_scalars(
             _ => 0.0,
         };
         res.push(n_nitrogens / RING_NITROGEN_NORM);
+
+        let (mean_rmsf, max_rmsf, mean_depth) = if let Some(conformer) = conformer {
+            let mut rmsf_sum = 0.0f32;
+            let mut rmsf_max = 0.0f32;
+            let mut depth_sum = 0.0f32;
+            let atom_count = comp.atoms.len().max(1) as f32;
+
+            for &atom_i in &comp.atoms {
+                let atom_sample = &conformer.atom_samples[atom_i];
+                rmsf_sum += atom_sample.rmsf;
+                rmsf_max = rmsf_max.max(atom_sample.rmsf);
+                depth_sum += atom_sample.flexibility_depth as f32;
+            }
+
+            (
+                rmsf_sum / atom_count / scale,
+                rmsf_max / scale,
+                depth_sum / atom_count / max_depth,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+        res.push(mean_rmsf);
+        res.push(max_rmsf);
+        res.push(mean_depth);
     }
 
     // todo?
@@ -260,6 +296,7 @@ impl GraphDataComponent {
         if num_comps == 0 {
             return Err(io::Error::other("Molecule has 0 components"));
         }
+        let conformer = resolve_conformer(mol, ff_params);
 
         let mol_centroid = mol.common.centroid();
 
@@ -271,7 +308,7 @@ impl GraphDataComponent {
             .map(|c| vocab_lookup_component(c, mol))
             .collect();
 
-        let scalars = setup_node_scalars(comps, num_comps, mol, mol_centroid);
+        let scalars = setup_node_scalars(comps, num_comps, mol, mol_centroid, conformer.as_deref());
 
         let mut base_labels = Vec::with_capacity(num_comps);
 
@@ -291,8 +328,15 @@ impl GraphDataComponent {
             base_labels.push(hasher.finish());
         }
 
-        let analysis_features =
+        let mut analysis_features =
             non_nn_ml::graph_analysis_features(analysis_tools, &base_labels, &adj);
+        if analysis_tools.conformation_summary {
+            if let Some(conformer) = conformer.as_deref() {
+                analysis_features.extend(conformer.summary_features());
+            } else {
+                analysis_features.extend([0.0; CONFORMER_SUMMARY_FEATS]);
+            }
+        }
 
         // Connection features (Weighted Adjacency)
         let (edge_feats, adj_list) = setup_edge_feats(comps, conns, num_comps, mol, ff_params);
@@ -561,8 +605,8 @@ mod tests {
         )
         .expect("component graph");
 
-        assert_eq!(graph.scalars[0], 1.0 / 6.0);
-        assert_eq!(graph.scalars[NUM_COMP_NODE_SCALARS], 1.0 / 6.0);
+        assert_eq!(graph.scalars[0], 0.5);
+        assert_eq!(graph.scalars[NUM_COMP_NODE_SCALARS], 0.5);
         assert_eq!(graph.adj[1], 1.0);
         assert_eq!(graph.adj[2], 1.0);
 

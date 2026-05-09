@@ -7,7 +7,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{molecules::Atom, therapeutic::gnn};
+use crate::{
+    molecules::{Atom, conformers::CONFORMER_SUMMARY_FEATURE_NAMES},
+    therapeutic::gnn,
+};
 
 /// See `Graph Representation Learning` by William L Hamilton, 2020.
 ///
@@ -26,6 +29,7 @@ use crate::{molecules::Atom, therapeutic::gnn};
 /// todo: I think most of these (Or top ones pending addition) are not for GNNs: They are traditional
 /// todo: ML approaches for graphs.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub(in crate::therapeutic) struct GnnAnalysisTools {
     /// Weisfeiler-Lehman (WL) kernel.
     /// "The idea with these approaches is to extract
@@ -71,6 +75,9 @@ pub(in crate::therapeutic) struct GnnAnalysisTools {
     /// Personalized PageRank algorithm [Leskovec et al., 2020]—where we define the
     /// stochastic matrix P = AD−1 and compute:"
     pub random_walk_methods: bool,
+    /// Fixed-size conformer/flexibility summary features derived from the
+    /// torsion-weighted conformation approximation.
+    pub conformation_summary: bool,
 }
 
 impl Default for GnnAnalysisTools {
@@ -83,6 +90,7 @@ impl Default for GnnAnalysisTools {
             katz_index: false,
             lhn_similarity: false,
             random_walk_methods: false,
+            conformation_summary: false,
         }
     }
 }
@@ -137,6 +145,10 @@ impl GnnAnalysisTools {
             ]);
         }
 
+        if self.conformation_summary {
+            names.extend(CONFORMER_SUMMARY_FEATURE_NAMES);
+        }
+
         names
     }
 
@@ -166,6 +178,7 @@ pub(in crate::therapeutic) fn atom_graph_analysis_tools() -> GnnAnalysisTools {
         katz_index: false,
         lhn_similarity: false,
         random_walk_methods: false,
+        conformation_summary: true,
     }
 }
 
@@ -179,6 +192,7 @@ pub(in crate::therapeutic) fn component_graph_analysis_tools() -> GnnAnalysisToo
         katz_index: false,
         lhn_similarity: false,
         random_walk_methods: false,
+        conformation_summary: true,
     }
 }
 
@@ -192,6 +206,7 @@ pub(in crate::therapeutic) fn spacial_graph_analysis_tools() -> GnnAnalysisTools
         katz_index: false,
         lhn_similarity: false,
         random_walk_methods: false,
+        conformation_summary: true,
     }
 }
 

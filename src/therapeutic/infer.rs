@@ -28,7 +28,10 @@ use crate::{
                 COMP_VOCAB_SIZE, GraphDataComponent, NUM_COMP_EDGE_FEATS, NUM_COMP_NODE_SCALARS,
             },
             pad_adj_and_mask, pad_edge_feats, pad_indices, pad_scalars,
-            spacial::{GraphDataSpacial, NUM_SPACIAL_EDGE_FEATS, NUM_SPACIAL_NODE_SCALARS},
+            spacial::{
+                GraphDataSpacial, NUM_SPACIAL_EDGE_FEATS, NUM_SPACIAL_NODE_SCALARS,
+                SPACIAL_VOCAB_SIZE,
+            },
         },
         mlp::mlp_feats_from_mol,
         non_nn_ml::GnnAnalysisTools,
@@ -54,6 +57,7 @@ pub struct Infer {
     atom_graph_analysis: GnnAnalysisTools,
     comp_graph_analysis: GnnAnalysisTools,
     spacial_graph_analysis: GnnAnalysisTools,
+    global_input_dim: usize,
 }
 
 impl Infer {
@@ -81,30 +85,52 @@ impl Infer {
                     "spacial_graph_analysis",
                 ] {
                     if let Some(analysis) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
-                        analysis.insert("lhn_similarity".to_string(), serde_json::json!(false));
+                        if feature_version < 2 {
+                            analysis
+                                .entry("lhn_similarity".to_string())
+                                .or_insert_with(|| serde_json::json!(false));
+                        }
+                        if feature_version < 3 {
+                            analysis
+                                .entry("conformation_summary".to_string())
+                                .or_insert_with(|| serde_json::json!(false));
+                        }
                     }
                 }
             }
         }
         let config: ModelConfig = serde_json::from_value(config_json)?;
-        if config.edge_feat_dim != ATOM_GNN_PER_EDGE_FEATS_LAYER_0
+        if config.n_node_scalars != NUM_ATOM_NODE_SCALARS
+            || config.edge_feat_dim != ATOM_GNN_PER_EDGE_FEATS_LAYER_0
             || config.comp_edge_feat_dim != NUM_COMP_EDGE_FEATS
             || config.n_comp_scalars != NUM_COMP_NODE_SCALARS
+            || config.n_pharm_scalars != NUM_SPACIAL_NODE_SCALARS
+            || config.spacial_edge_feat_dim != NUM_SPACIAL_EDGE_FEATS
             || config.vocab_size_comp < COMP_VOCAB_SIZE
+            || config.vocab_size_pharm < SPACIAL_VOCAB_SIZE
         {
             return Err(io::Error::other(format!(
-                "Therapeutic model graph layout is incompatible with the current component GNN \
-                 encoding. Model has atom/component edge dims {}/{}, component scalar dim {}, \
-                 and component vocab size {}, but code expects {}/{}, {}, and at least {}. \
-                 Retrain or regenerate the model artifacts.",
+                "Therapeutic model graph layout is incompatible with the current encoding. \
+                 Model has atom node/edge dims {}/{}, component node/edge dims {}/{}, \
+                 pharmacophore node/edge dims {}/{}, component vocab size {}, and \
+                 pharmacophore vocab size {}. Code expects {}/{}, {}/{}, {}/{}, at least {}, \
+                 and at least {}. Retrain or regenerate the model artifacts.",
+                config.n_node_scalars,
                 config.edge_feat_dim,
-                config.comp_edge_feat_dim,
                 config.n_comp_scalars,
+                config.comp_edge_feat_dim,
+                config.n_pharm_scalars,
+                config.spacial_edge_feat_dim,
                 config.vocab_size_comp,
+                config.vocab_size_pharm,
+                NUM_ATOM_NODE_SCALARS,
                 ATOM_GNN_PER_EDGE_FEATS_LAYER_0,
-                NUM_COMP_EDGE_FEATS,
                 NUM_COMP_NODE_SCALARS,
+                NUM_COMP_EDGE_FEATS,
+                NUM_SPACIAL_NODE_SCALARS,
+                NUM_SPACIAL_EDGE_FEATS,
                 COMP_VOCAB_SIZE,
+                SPACIAL_VOCAB_SIZE,
             )));
         }
         let scaler: StandardScaler = serde_json::from_slice(scaler_bytes)?;
@@ -128,6 +154,7 @@ impl Infer {
                 atom_graph_analysis,
                 comp_graph_analysis,
                 spacial_graph_analysis,
+                global_input_dim: config.global_input_dim,
             },
             device,
         ))
@@ -183,6 +210,16 @@ impl Infer {
         #[allow(unused)]
         let start = Instant::now();
 
+        if feat_params.len() != self.global_input_dim {
+            return Err(io::Error::other(format!(
+                "Therapeutic model global feature layout is incompatible with the current \
+                 molecule featurization. Model expects {} features, but code produced {}. \
+                 Retrain or regenerate the model artifacts.",
+                self.global_input_dim,
+                feat_params.len(),
+            )));
+        }
+
         let n_feat_params = feat_params.len();
         self.scaler.apply_in_place(&mut feat_params);
 
@@ -195,7 +232,7 @@ impl Infer {
         let graph_comp = GraphDataComponent::new(mol, comps, ff_params, &self.comp_graph_analysis)?;
         // GraphDataSpacial::new returns Ok(empty) when characterization is missing
         // or no pharmacophore sites are present, so this never errors.
-        let graph_spacial = GraphDataSpacial::new(mol, &self.spacial_graph_analysis)?;
+        let graph_spacial = GraphDataSpacial::new(mol, ff_params, &self.spacial_graph_analysis)?;
 
         // 3. Pad Data (Replicating Batcher Logic for BatchSize=1)
         let num_atoms = graph_atom_bond.num_atoms;
@@ -478,7 +515,16 @@ impl Infer {
         let mut feat_dim = 0;
 
         for mol in mols {
-            let mut feat_params = mlp_feats_from_mol(mol)?;
+            let mut feat_params = mlp_feats_from_mol(mol, ff_params)?;
+            if feat_params.len() != self.global_input_dim {
+                return Err(io::Error::other(format!(
+                    "Therapeutic model global feature layout is incompatible with the current \
+                     molecule featurization. Model expects {} features, but code produced {}. \
+                     Retrain or regenerate the model artifacts.",
+                    self.global_input_dim,
+                    feat_params.len(),
+                )));
+            }
             if feat_dim == 0 {
                 feat_dim = feat_params.len();
                 all_globals.reserve(batch_size * feat_dim);
@@ -492,7 +538,7 @@ impl Infer {
                 .as_ref()
                 .ok_or_else(|| io::Error::other("Missing components in ML inference"))?;
             let gc = GraphDataComponent::new(mol, comps, ff_params, &self.comp_graph_analysis)?;
-            let gs = GraphDataSpacial::new(mol, &self.spacial_graph_analysis)?;
+            let gs = GraphDataSpacial::new(mol, ff_params, &self.spacial_graph_analysis)?;
 
             // Atom graph
             all_elem.extend(pad_indices(&g.elem_indices, g.num_atoms, MAX_ATOMS));
@@ -734,7 +780,7 @@ pub fn infer_general(
     ff_params: &ForceFieldParams,
     load_from_file: bool,
 ) -> io::Result<f32> {
-    let feat_params = mlp_feats_from_mol(mol)?;
+    let feat_params = mlp_feats_from_mol(mol, ff_params)?;
 
     let infer = match models.get_mut(&dataset) {
         Some(inf) => inf,

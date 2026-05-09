@@ -40,6 +40,7 @@ atom_graph_analysis_local_overlap_statistics = false
 atom_graph_analysis_katz_index = false
 atom_graph_analysis_lhn_similarity = false
 atom_graph_analysis_random_walk_methods = false
+atom_graph_analysis_conformation_summary = true
 
 # ComponentGraph analysis features. These are graph-level descriptors derived from the
 # component/functional-group graph and fed into the component GNN branch.
@@ -50,6 +51,7 @@ comp_graph_analysis_local_overlap_statistics = false
 comp_graph_analysis_katz_index = false
 comp_graph_analysis_lhn_similarity = false
 comp_graph_analysis_random_walk_methods = false
+comp_graph_analysis_conformation_summary = true
 
 # Spacial/PharmacophoreGraph analysis features. For these analyses we build a sparse
 # proximity graph over pharmacophore nodes, even though message passing still uses the
@@ -61,6 +63,7 @@ spacial_graph_analysis_local_overlap_statistics = false
 spacial_graph_analysis_katz_index = false
 spacial_graph_analysis_lhn_similarity = false
 spacial_graph_analysis_random_walk_methods = false
+spacial_graph_analysis_conformation_summary = true
 
 # todo: Eval where this should live. Currently hard-coded.
 ## Note: Excluding H or not appears not to make any notable difference at first;

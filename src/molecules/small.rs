@@ -29,8 +29,10 @@ use crate::{
     mol_characterization::MolCharacterization,
     mol_components::MolComponents,
     molecules::{
-        Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        Residue, common::MoleculeCommon, pocket::Pocket,
+        Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent,
+        PHARMACOPHORE_POCKET_ATOMS_KEY, Residue, common::MoleculeCommon,
+        conformers::{Conformer, characterize_conformations},
+        pocket::Pocket,
     },
     screening::pharmacophore::{Pharmacophore, PharmacophoreFeature},
     therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer},
@@ -53,6 +55,7 @@ pub struct MoleculeSmall {
     // /// A cache for display as required. This is a text representation of a molecular formula.
     // pub smiles: Option<String>,
     pub characterization: Option<MolCharacterization>,
+    pub conformer: Option<Conformer>,
     pub pharmacophore: Pharmacophore,
     pub therapeutic_props: Option<TherapeuticProperties>,
     pub components: Option<MolComponents>,
@@ -110,6 +113,15 @@ impl MoleculeSmall {
 
         // For now, this works as the spot
         self.components = MolComponents::new(&self);
+        self.conformer = None;
+    }
+
+    pub fn update_conformer(&mut self, ff_params: &ForceFieldParams) {
+        if self.characterization.is_none() {
+            self.update_characterization();
+        }
+
+        self.conformer = characterize_conformations(self, ff_params);
     }
 
     pub fn get_smiles(&self) -> Option<&str> {
@@ -568,6 +580,7 @@ impl MoleculeSmall {
         mol_i: usize,
     ) {
         self.update_characterization();
+        self.update_conformer(ff_params);
 
         // Load PubChem properties from either our prefs file, or online. If online,
         // launch this in a separate thread.
@@ -743,6 +756,7 @@ impl MoleculeSmall {
         gaff2: &ForceFieldParams,
         skip_mol_specific: bool,
     ) {
+        self.conformer = None;
         self.ff_params_loaded = true;
         for atom in &self.common.atoms {
             if atom.force_field_type.is_none() || atom.partial_charge.is_none() {

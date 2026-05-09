@@ -140,6 +140,7 @@ pub(in crate::therapeutic) struct ParamConfig {
     pub atom_graph_analysis_katz_index: bool,
     pub atom_graph_analysis_lhn_similarity: bool,
     pub atom_graph_analysis_random_walk_methods: bool,
+    pub atom_graph_analysis_conformation_summary: bool,
     pub comp_graph_analysis_weisfeiler_lehman: bool,
     pub comp_graph_analysis_graphlets: Option<Vec<u8>>,
     pub comp_graph_analysis_path_based_methods: bool,
@@ -147,6 +148,7 @@ pub(in crate::therapeutic) struct ParamConfig {
     pub comp_graph_analysis_katz_index: bool,
     pub comp_graph_analysis_lhn_similarity: bool,
     pub comp_graph_analysis_random_walk_methods: bool,
+    pub comp_graph_analysis_conformation_summary: bool,
     pub spacial_graph_analysis_weisfeiler_lehman: bool,
     pub spacial_graph_analysis_graphlets: Option<Vec<u8>>,
     pub spacial_graph_analysis_path_based_methods: bool,
@@ -154,6 +156,7 @@ pub(in crate::therapeutic) struct ParamConfig {
     pub spacial_graph_analysis_katz_index: bool,
     pub spacial_graph_analysis_lhn_similarity: bool,
     pub spacial_graph_analysis_random_walk_methods: bool,
+    pub spacial_graph_analysis_conformation_summary: bool,
     // pub exclude_hydrogens: bool,
 }
 
@@ -309,6 +312,11 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
             "atom_graph_analysis_random_walk_methods",
             default_atom_graph_analysis.random_walk_methods,
         ),
+        atom_graph_analysis_conformation_summary: get_bool(
+            map,
+            "atom_graph_analysis_conformation_summary",
+            default_atom_graph_analysis.conformation_summary,
+        ),
         comp_graph_analysis_weisfeiler_lehman: get_bool(
             map,
             "comp_graph_analysis_weisfeiler_lehman",
@@ -343,6 +351,11 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
             map,
             "comp_graph_analysis_random_walk_methods",
             default_comp_graph_analysis.random_walk_methods,
+        ),
+        comp_graph_analysis_conformation_summary: get_bool(
+            map,
+            "comp_graph_analysis_conformation_summary",
+            default_comp_graph_analysis.conformation_summary,
         ),
         spacial_graph_analysis_weisfeiler_lehman: get_bool(
             map,
@@ -379,6 +392,11 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
             "spacial_graph_analysis_random_walk_methods",
             default_spacial_graph_analysis.random_walk_methods,
         ),
+        spacial_graph_analysis_conformation_summary: get_bool(
+            map,
+            "spacial_graph_analysis_conformation_summary",
+            default_spacial_graph_analysis.conformation_summary,
+        ),
     })
 }
 
@@ -393,6 +411,7 @@ pub(in crate::therapeutic) fn atom_graph_analysis_from_param_cfg(
         katz_index: param_cfg.atom_graph_analysis_katz_index,
         lhn_similarity: param_cfg.atom_graph_analysis_lhn_similarity,
         random_walk_methods: param_cfg.atom_graph_analysis_random_walk_methods,
+        conformation_summary: param_cfg.atom_graph_analysis_conformation_summary,
     }
 }
 
@@ -407,6 +426,7 @@ pub(in crate::therapeutic) fn comp_graph_analysis_from_param_cfg(
         katz_index: param_cfg.comp_graph_analysis_katz_index,
         lhn_similarity: param_cfg.comp_graph_analysis_lhn_similarity,
         random_walk_methods: param_cfg.comp_graph_analysis_random_walk_methods,
+        conformation_summary: param_cfg.comp_graph_analysis_conformation_summary,
     }
 }
 
@@ -421,6 +441,7 @@ pub(in crate::therapeutic) fn spacial_graph_analysis_from_param_cfg(
         katz_index: param_cfg.spacial_graph_analysis_katz_index,
         lhn_similarity: param_cfg.spacial_graph_analysis_lhn_similarity,
         random_walk_methods: param_cfg.spacial_graph_analysis_random_walk_methods,
+        conformation_summary: param_cfg.spacial_graph_analysis_conformation_summary,
     }
 }
 
@@ -1502,6 +1523,7 @@ pub(in crate::therapeutic) fn load_training_data(
         // We are experimenting with using our internally-derived characteristics
         // instead of those in the CSV; it may be more consistent.
         mol.update_characterization(); // also builds mol.components
+        mol.update_conformer(ff_params);
 
         mol.pharmacophore = Pharmacophore::new_all_candidates(&mol);
 
@@ -1541,7 +1563,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
 ) -> Vec<Sample> {
     let mut out = Vec::with_capacity(data.len());
     for (mol, target) in data {
-        let feat_params = match mlp::mlp_feats_from_mol(mol) {
+        let feat_params = match mlp::mlp_feats_from_mol(mol, ff_params) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("Error extracting MLP features: {e:?}; skipping mol.");
@@ -1583,7 +1605,7 @@ pub(in crate::therapeutic) fn samples_from_mols(
 
         // GraphDataSpacial::new returns Ok(empty) when characterization is missing
         // or no pharmacophore sites are present, so this never errors.
-        let graph_spacial = match GraphDataSpacial::new(mol, spacial_graph_analysis) {
+        let graph_spacial = match GraphDataSpacial::new(mol, ff_params, spacial_graph_analysis) {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("Error getting spatial graph data: {e:?}");

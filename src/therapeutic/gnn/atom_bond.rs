@@ -16,7 +16,11 @@ use bio_files::{
 use na_seq::Element::*;
 
 use crate::{
-    molecules::{Atom, Bond, build_adjacency_list, small::MoleculeSmall},
+    molecules::{
+        Atom, Bond, build_adjacency_list,
+        conformers::{CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer},
+        small::MoleculeSmall,
+    },
     therapeutic::{
         gnn,
         gnn::{
@@ -29,10 +33,11 @@ use crate::{
     },
 };
 
-// Degree (Number of edges incident to a node), partial charge, geometry (radius from molecular centroid, mean neighbor distance),
-// is H-bond acceptor, is H-bond donor, in aromatic ring.
+// Degree, partial charge, geometry (radius from molecular centroid, mean neighbor distance),
+// H-bond flags, aromatic-ring flag, and conformer-derived mobility features:
+// [rmsf, max deviation, mean distance from rigid-core anchor, flexibility depth].
 // Keep this in sync with `GraphDataAtom::new`.
-pub(in crate::therapeutic) const NUM_ATOM_NODE_SCALARS: usize = 7;
+pub(in crate::therapeutic) const NUM_ATOM_NODE_SCALARS: usize = 11;
 const NUM_ATOM_EDGE_REL_SCALARS: usize = 2;
 const NUM_ATOM_EDGE_SHARED_FEATS: usize = 9;
 
@@ -203,6 +208,7 @@ fn setup_node_scalars(
     is_h_bond_donor: &[bool],
     is_h_bond_acceptor: &[bool],
     is_aromatic_ring: &[bool],
+    conformer_scalars: &[(f32, f32, f32, f32)],
 ) -> Vec<f32> {
     let mut res = Vec::with_capacity(num_atoms * NUM_ATOM_NODE_SCALARS);
 
@@ -243,9 +249,49 @@ fn setup_node_scalars(
 
         let in_aromatic_ring = if is_aromatic_ring[i] { 1. } else { 0. };
         res.push(in_aromatic_ring);
+
+        let (rmsf, max_deviation, mean_distance_from_reference, flexibility_depth) =
+            conformer_scalars.get(i).copied().unwrap_or((0.0, 0.0, 0.0, 0.0));
+        res.push(rmsf);
+        res.push(max_deviation);
+        res.push(mean_distance_from_reference);
+        res.push(flexibility_depth);
     }
 
     res
+}
+
+fn atom_conformation_scalars(
+    conformer: Option<&Conformer>,
+    old_to_new: &[Option<usize>],
+    num_atoms: usize,
+) -> Vec<(f32, f32, f32, f32)> {
+    let mut out = vec![(0.0, 0.0, 0.0, 0.0); num_atoms];
+
+    let Some(conformer) = conformer else {
+        return out;
+    };
+
+    let scale = conformer.atom_feature_scale();
+    let max_depth = conformer.rotatable_bonds.len().max(1) as f32;
+
+    for (old_i, atom_sample) in conformer.atom_samples.iter().enumerate() {
+        let Some(Some(new_i)) = old_to_new.get(old_i) else {
+            continue;
+        };
+        if *new_i >= out.len() {
+            continue;
+        }
+
+        out[*new_i] = (
+            atom_sample.rmsf / scale,
+            atom_sample.max_deviation / scale,
+            atom_sample.mean_distance_from_reference / scale,
+            atom_sample.flexibility_depth as f32 / max_depth,
+        );
+    }
+
+    out
 }
 
 fn setup_edge_feats(
@@ -678,7 +724,8 @@ pub(in crate::therapeutic) struct GraphDataAtom {
     pub ff_indices: Vec<i32>,
     /// Per-atom scalars:
     /// [degree, partial_charge, r_from_mol_centroid, mean_neighbor_dist,
-    ///  is_h_bond_acceptor, is_h_bond_donor, in_aromatic_ring]
+    ///  is_h_bond_acceptor, is_h_bond_donor, in_aromatic_ring,
+    ///  rmsf, max_deviation, mean_distance_from_reference, flexibility_depth]
     pub scalars: Vec<f32>,
     /// Graph-level analysis features assembled according to
     /// `GnnAnalysisTools::feature_names()`.
@@ -747,6 +794,7 @@ impl GraphDataAtom {
             eprintln!("Missing char");
             return Err(io::Error::other("Missing characterization"));
         };
+        let conformer = resolve_conformer(mol, ff_params);
         let rotatable_bond_keys: HashSet<_> = char
             .rotatable_bonds
             .iter()
@@ -781,6 +829,9 @@ impl GraphDataAtom {
             }
         }
 
+        let conformer_scalars =
+            atom_conformation_scalars(conformer.as_deref(), &old_to_new, num_atoms);
+
         // Node features (Indices and Scalars)
         let mut elem_indices = Vec::with_capacity(num_atoms);
         let mut ff_indices = Vec::with_capacity(num_atoms);
@@ -797,9 +848,10 @@ impl GraphDataAtom {
             &is_h_bond_donor,
             &is_h_bond_acceptor,
             &is_aromatic_ring,
+            &conformer_scalars,
         );
 
-        let analysis_features = non_nn_ml::atom_graph_analysis_features(
+        let mut analysis_features = non_nn_ml::atom_graph_analysis_features(
             analysis_tools,
             &atoms,
             &adj,
@@ -807,6 +859,13 @@ impl GraphDataAtom {
             &is_h_bond_donor,
             &is_aromatic_ring,
         );
+        if analysis_tools.conformation_summary {
+            if let Some(conformer) = conformer.as_deref() {
+                analysis_features.extend(conformer.summary_features());
+            } else {
+                analysis_features.extend([0.0; CONFORMER_SUMMARY_FEATS]);
+            }
+        }
 
         // Layered edge features and weighted adjacency.
         debug_assert_eq!(

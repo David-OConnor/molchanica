@@ -12,7 +12,7 @@
 //!
 //! todo: Gaussians?
 
-use std::{f64::consts::TAU, time::Instant};
+use std::{f64::consts::TAU, ops::Deref, time::Instant};
 
 use bio_files::md_params::{DihedralParams, ForceFieldParams};
 use dynamics::{ParamError, snapshot::Snapshot};
@@ -31,6 +31,21 @@ const DEFAULT_GLOBAL_HIST_BINS: usize = 24;
 const BOLTZMANN_KCAL_PER_MOL_K: f64 = 0.001_987_204_1;
 const DEFAULT_CONFORMER_TEMP_K: f64 = 298.15;
 const TORSION_PROFILE_SMOOTHING: f64 = 0.05;
+pub const CONFORMER_SUMMARY_FEATS: usize = 12;
+pub const CONFORMER_SUMMARY_FEATURE_NAMES: [&str; CONFORMER_SUMMARY_FEATS] = [
+    "conf_mean_atom_rmsf_ln",
+    "conf_max_atom_rmsf_ln",
+    "conf_mobile_atom_frac",
+    "conf_mean_flex_depth_norm",
+    "conf_mean_rotor_barrier_ln",
+    "conf_weighted_rotor_barrier_ln",
+    "conf_mean_rotor_circular_variance",
+    "conf_weighted_rotor_circular_variance",
+    "conf_mean_radius_of_gyration_ln",
+    "conf_mean_max_radius_ln",
+    "conf_mean_shape_anisotropy",
+    "conf_mean_centroid_drift_ln",
+];
 
 /// A normalized 1D histogram. `bins` sum to 1 when samples are present.
 #[derive(Clone, Debug, Default)]
@@ -93,6 +108,7 @@ pub struct PositSample {
     pub max_deviation: f32,
     /// Distances from a rigid-core anchor point.
     pub distance_from_reference: Histogram1D,
+    pub mean_distance_from_reference: f32,
     /// Number of rotatable-bond moves that can displace this atom.
     pub flexibility_depth: usize,
 }
@@ -144,6 +160,99 @@ pub struct Conformer {
     pub rotatable_bonds: Vec<RotatableBondProfile>,
     pub global: GlobalConformationMetrics,
     pub sample_count: usize,
+}
+
+pub enum ConformerSource<'a> {
+    Borrowed(&'a Conformer),
+    Owned(Conformer),
+}
+
+impl Deref for ConformerSource<'_> {
+    type Target = Conformer;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(conformer) => conformer,
+            Self::Owned(conformer) => conformer,
+        }
+    }
+}
+
+impl Conformer {
+    pub fn summary_features(&self) -> [f32; CONFORMER_SUMMARY_FEATS] {
+        let ln = |x: f32| x.max(0.0).ln_1p();
+
+        let atom_count = self.atom_samples.len().max(1) as f32;
+        let max_depth = self.rotatable_bonds.len().max(1) as f32;
+
+        let mut mean_rmsf = 0.0f32;
+        let mut max_rmsf = 0.0f32;
+        let mut mobile_atoms = 0usize;
+        let mut mean_depth = 0.0;
+
+        for atom_sample in &self.atom_samples {
+            mean_rmsf += atom_sample.rmsf;
+            max_rmsf = max_rmsf.max(atom_sample.rmsf);
+            mean_depth += atom_sample.flexibility_depth as f32;
+            if atom_sample.rmsf >= 0.35 {
+                mobile_atoms += 1;
+            }
+        }
+
+        mean_rmsf /= atom_count;
+        mean_depth /= atom_count;
+
+        let mut barrier_sum = 0.0f32;
+        let mut weighted_barrier_sum = 0.0f32;
+        let mut circular_variance_sum = 0.0f32;
+        let mut weighted_circular_variance_sum = 0.0f32;
+        let mut rotor_weight_sum = 0.0f32;
+
+        for rotor in &self.rotatable_bonds {
+            let weight = rotor.downstream_atoms.len().max(1) as f32;
+            barrier_sum += rotor.effective_barrier;
+            weighted_barrier_sum += rotor.effective_barrier * weight;
+            circular_variance_sum += rotor.circular_variance;
+            weighted_circular_variance_sum += rotor.circular_variance * weight;
+            rotor_weight_sum += weight;
+        }
+
+        let rotor_count = self.rotatable_bonds.len().max(1) as f32;
+        let mean_rotor_barrier = barrier_sum / rotor_count;
+        let weighted_rotor_barrier = if rotor_weight_sum > 0.0 {
+            weighted_barrier_sum / rotor_weight_sum
+        } else {
+            0.0
+        };
+        let mean_rotor_circular_variance = circular_variance_sum / rotor_count;
+        let weighted_rotor_circular_variance = if rotor_weight_sum > 0.0 {
+            weighted_circular_variance_sum / rotor_weight_sum
+        } else {
+            0.0
+        };
+
+        [
+            ln(mean_rmsf),
+            ln(max_rmsf),
+            mobile_atoms as f32 / atom_count,
+            mean_depth / max_depth,
+            ln(mean_rotor_barrier),
+            ln(weighted_rotor_barrier),
+            mean_rotor_circular_variance,
+            weighted_rotor_circular_variance,
+            ln(self.global.mean_radius_of_gyration),
+            ln(self.global.mean_max_radius_from_centroid),
+            self.global.mean_shape_anisotropy,
+            ln(self.global.mean_centroid_drift),
+        ]
+    }
+
+    pub fn atom_feature_scale(&self) -> f32 {
+        self.global
+            .mean_max_radius_from_centroid
+            .max(self.global.mean_radius_of_gyration)
+            .max(1.0e-3)
+    }
 }
 
 /// See the description on `sample_mol_properties_from_md`.
@@ -246,6 +355,17 @@ pub fn characterize_conformations(
         global,
         sample_count: ensemble.len(),
     })
+}
+
+pub fn resolve_conformer<'a>(
+    mol: &'a MoleculeSmall,
+    ff_params: &ForceFieldParams,
+) -> Option<ConformerSource<'a>> {
+    if let Some(conformer) = mol.conformer.as_ref() {
+        Some(ConformerSource::Borrowed(conformer))
+    } else {
+        characterize_conformations(mol, ff_params).map(ConformerSource::Owned)
+    }
 }
 
 #[derive(Clone)]
@@ -687,6 +807,7 @@ fn build_atom_samples(
             .iter()
             .map(|posit| (*posit - reference_point).magnitude())
             .collect();
+        let mean_distance_from_reference = mean(&dists) as f32;
 
         result.push(PositSample {
             samples,
@@ -694,6 +815,7 @@ fn build_atom_samples(
             rmsf: rmsf_sq.sqrt() as f32,
             max_deviation: max_deviation_sq.sqrt() as f32,
             distance_from_reference: Histogram1D::from_values(&dists, DEFAULT_ATOM_DIST_HIST_BINS),
+            mean_distance_from_reference,
             flexibility_depth: flexibility_depth[atom_i],
         });
     }
@@ -806,6 +928,7 @@ fn mean(values: &[f64]) -> f64 {
     }
 }
 
+// todo: No. Replace this with the one in lin alg.
 fn dihedral_angle(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3) -> Option<f64> {
     let b0 = p1 - p0;
     let b1 = p2 - p1;

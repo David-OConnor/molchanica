@@ -57,7 +57,7 @@ const DIHEDRAL_BARRIER_REF: f32 = 4.0;
 const DIHEDRAL_PERIODICITY_REF: f32 = 6.0;
 const DIHEDRAL_DIVIDER_REF: f32 = 6.0;
 
-pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 2;
+pub(in crate::therapeutic) const GRAPH_ANALYSIS_FEATURE_VERSION: u8 = 3;
 
 pub(in crate::therapeutic) mod atom_bond;
 pub(in crate::therapeutic) mod component;

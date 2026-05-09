@@ -3,7 +3,12 @@
 
 use std::io;
 
-use crate::molecules::small::MoleculeSmall;
+use bio_files::md_params::ForceFieldParams;
+
+use crate::molecules::{
+    conformers::{CONFORMER_SUMMARY_FEATS, resolve_conformer},
+    small::MoleculeSmall,
+};
 
 // Note: We can make variants of this A/R tuned to specific inference items. For now, we are using
 // a single set of features for all targets.
@@ -12,7 +17,10 @@ use crate::molecules::small::MoleculeSmall;
 ///
 /// We avoid features that may be more robustly represented by GNNs. For example, the count of rings,
 /// functional groups, and H bond donors/acceptors.
-pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Result<Vec<f32>> {
+pub(in crate::therapeutic) fn mlp_feats_from_mol(
+    mol: &MoleculeSmall,
+    ff_params: &ForceFieldParams,
+) -> io::Result<Vec<f32>> {
     let Some(c) = &mol.characterization else {
         return Err(io::Error::other("Missing mol characterization"));
     };
@@ -48,7 +56,7 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Res
 
     // -----
 
-    Ok(vec![
+    let mut result = vec![
         ln(c.num_atoms as f32),
         ln(c.num_bonds as f32),
         // ln(c.mol_weight), // mol weight might make results slightly worse.
@@ -94,6 +102,16 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol(mol: &MoleculeSmall) -> io::Res
         ln(c.psa_topo / c.asa_topo),
         // ln(c.wiener_index.unwrap_or(0) as f32),
         c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
-                                                        // ln(c.greasiness),
-    ])
+        // ln(c.greasiness),
+    ];
+
+    let conformer_features = if let Some(conformer) = resolve_conformer(mol, ff_params) {
+        conformer.summary_features().to_vec()
+    } else {
+        vec![0.0; CONFORMER_SUMMARY_FEATS]
+    };
+
+    result.extend(conformer_features);
+
+    Ok(result)
 }
