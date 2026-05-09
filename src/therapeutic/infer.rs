@@ -61,6 +61,7 @@ pub struct Infer {
     comp_graph_analysis: GnnAnalysisTools,
     spacial_graph_analysis: GnnAnalysisTools,
     global_input_dim: usize,
+    conformation_enabled: bool,
     atom_gnn_enabled: bool,
     comp_gnn_enabled: bool,
     spacial_gnn_enabled: bool,
@@ -78,6 +79,8 @@ impl Infer {
                 .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
             obj.entry("spacial_graph_analysis")
                 .or_insert_with(|| serde_json::json!(GnnAnalysisTools::default()));
+            obj.entry("conformation_enabled")
+                .or_insert_with(|| serde_json::json!(true));
             let feature_version = obj
                 .entry("graph_analysis_feature_version")
                 .or_insert_with(|| serde_json::json!(1))
@@ -161,6 +164,7 @@ impl Infer {
                 comp_graph_analysis,
                 spacial_graph_analysis,
                 global_input_dim: config.global_input_dim,
+                conformation_enabled: config.conformation_enabled,
                 atom_gnn_enabled: config.gnn_atom_enabled,
                 comp_gnn_enabled: config.gnn_comp_enabled,
                 spacial_gnn_enabled: config.gnn_spacial_enabled,
@@ -216,7 +220,11 @@ impl Infer {
         feat_params: Vec<f32>,
         ff_params: &ForceFieldParams,
     ) -> io::Result<f32> {
-        let conformer = resolve_conformer(mol, ff_params);
+        let conformer = if self.conformation_enabled {
+            resolve_conformer(mol, ff_params)
+        } else {
+            None
+        };
         self.infer_with_conformer(mol, feat_params, conformer.as_deref(), ff_params)
     }
 
@@ -557,8 +565,16 @@ impl Infer {
         let mut feat_dim = 0;
 
         for mol in mols {
-            let conformer = resolve_conformer(mol, ff_params);
-            let mut feat_params = mlp_feats_from_mol_with_conformer(mol, conformer.as_deref())?;
+            let conformer = if self.conformation_enabled {
+                resolve_conformer(mol, ff_params)
+            } else {
+                None
+            };
+            let mut feat_params = mlp_feats_from_mol_with_conformer(
+                mol,
+                conformer.as_deref(),
+                self.conformation_enabled,
+            )?;
             if feat_params.len() != self.global_input_dim {
                 return Err(io::Error::other(format!(
                     "Therapeutic model global feature layout is incompatible with the current \
@@ -874,8 +890,13 @@ pub fn infer_general(
         }
     };
 
-    let conformer = resolve_conformer(mol, ff_params);
-    let feat_params = mlp_feats_from_mol_with_conformer(mol, conformer.as_deref())?;
+    let conformer = if infer.conformation_enabled {
+        resolve_conformer(mol, ff_params)
+    } else {
+        None
+    };
+    let feat_params =
+        mlp_feats_from_mol_with_conformer(mol, conformer.as_deref(), infer.conformation_enabled)?;
 
     infer.infer_with_conformer(mol, feat_params, conformer.as_deref(), ff_params)
 }

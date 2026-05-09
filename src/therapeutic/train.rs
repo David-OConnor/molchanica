@@ -115,6 +115,7 @@ pub(in crate::therapeutic) const TGT_COL_TDC: usize = 2;
 /// field descriptions, and default values.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::therapeutic) struct ParamConfig {
+    pub conformation_enabled: bool,
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
     pub gnn_spacial_enabled: bool,
@@ -272,6 +273,7 @@ pub(in crate::therapeutic) fn load_param_cfg(dataset_name: &str) -> io::Result<P
     };
 
     Ok(ParamConfig {
+        conformation_enabled: get_bool(map, "conformation_enabled", true),
         gnn_atom_enabled: get_bool(map, "gnn_atom_enabled", true),
         gnn_comp_enabled: get_bool(map, "gnn_comp_enabled", true),
         gnn_spacial_enabled: get_bool(map, "gnn_spacial_enabled", true),
@@ -418,7 +420,8 @@ pub(in crate::therapeutic) fn atom_graph_analysis_from_param_cfg(
         katz_index: param_cfg.atom_graph_analysis_katz_index,
         lhn_similarity: param_cfg.atom_graph_analysis_lhn_similarity,
         random_walk_methods: param_cfg.atom_graph_analysis_random_walk_methods,
-        conformation_summary: param_cfg.atom_graph_analysis_conformation_summary,
+        conformation_summary: param_cfg.conformation_enabled
+            && param_cfg.atom_graph_analysis_conformation_summary,
     }
 }
 
@@ -433,7 +436,8 @@ pub(in crate::therapeutic) fn comp_graph_analysis_from_param_cfg(
         katz_index: param_cfg.comp_graph_analysis_katz_index,
         lhn_similarity: param_cfg.comp_graph_analysis_lhn_similarity,
         random_walk_methods: param_cfg.comp_graph_analysis_random_walk_methods,
-        conformation_summary: param_cfg.comp_graph_analysis_conformation_summary,
+        conformation_summary: param_cfg.conformation_enabled
+            && param_cfg.comp_graph_analysis_conformation_summary,
     }
 }
 
@@ -448,7 +452,8 @@ pub(in crate::therapeutic) fn spacial_graph_analysis_from_param_cfg(
         katz_index: param_cfg.spacial_graph_analysis_katz_index,
         lhn_similarity: param_cfg.spacial_graph_analysis_lhn_similarity,
         random_walk_methods: param_cfg.spacial_graph_analysis_random_walk_methods,
-        conformation_summary: param_cfg.spacial_graph_analysis_conformation_summary,
+        conformation_summary: param_cfg.conformation_enabled
+            && param_cfg.spacial_graph_analysis_conformation_summary,
     }
 }
 
@@ -493,6 +498,8 @@ pub(in crate::therapeutic) struct ModelConfig {
     pub atom_graph_analysis: GnnAnalysisTools,
     pub comp_graph_analysis: GnnAnalysisTools,
     pub spacial_graph_analysis: GnnAnalysisTools,
+    #[config(default = "true")]
+    pub conformation_enabled: bool,
     // Which branches are active — saved so inference reloads correctly
     pub gnn_atom_enabled: bool,
     pub gnn_comp_enabled: bool,
@@ -1567,14 +1574,23 @@ pub(in crate::therapeutic) fn samples_from_mols(
     atom_graph_analysis: &GnnAnalysisTools,
     comp_graph_analysis: &GnnAnalysisTools,
     spacial_graph_analysis: &GnnAnalysisTools,
+    conformation_enabled: bool,
     atom_gnn_enabled: bool,
     comp_gnn_enabled: bool,
     spacial_gnn_enabled: bool,
 ) -> Vec<Sample> {
     let mut out = Vec::with_capacity(data.len());
     for (mol, target) in data {
-        let conformer = resolve_conformer(mol, ff_params);
-        let feat_params = match mlp::mlp_feats_from_mol_with_conformer(mol, conformer.as_deref()) {
+        let conformer = if conformation_enabled {
+            resolve_conformer(mol, ff_params)
+        } else {
+            None
+        };
+        let feat_params = match mlp::mlp_feats_from_mol_with_conformer(
+            mol,
+            conformer.as_deref(),
+            conformation_enabled,
+        ) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("Error extracting MLP features: {e:?}; skipping mol.");
@@ -1685,8 +1701,9 @@ pub(in crate::therapeutic) fn train_with_samples(
     let comp_graph_analysis = comp_graph_analysis_from_param_cfg(param_cfg);
     let spacial_graph_analysis = spacial_graph_analysis_from_param_cfg(param_cfg);
     println!(
-        "Branch config for '{}': atom_gnn={} comp_gnn={} spacial_gnn={} mlp={}",
+        "Branch config for '{}': conformations={} atom_gnn={} comp_gnn={} spacial_gnn={} mlp={}",
         dataset.name(),
+        param_cfg.conformation_enabled,
         param_cfg.gnn_atom_enabled,
         param_cfg.gnn_comp_enabled,
         param_cfg.gnn_spacial_enabled,
@@ -1771,6 +1788,7 @@ pub(in crate::therapeutic) fn train_with_samples(
         atom_graph_analysis: atom_graph_analysis.clone(),
         comp_graph_analysis: comp_graph_analysis.clone(),
         spacial_graph_analysis: spacial_graph_analysis.clone(),
+        conformation_enabled: param_cfg.conformation_enabled,
         gnn_atom_enabled: param_cfg.gnn_atom_enabled,
         gnn_comp_enabled: param_cfg.gnn_comp_enabled,
         gnn_spacial_enabled: param_cfg.gnn_spacial_enabled,
@@ -1863,6 +1881,7 @@ pub(in crate::therapeutic) fn train(
         &atom_graph_analysis,
         &comp_graph_analysis,
         &spacial_graph_analysis,
+        param_cfg.conformation_enabled,
         param_cfg.gnn_atom_enabled,
         param_cfg.gnn_comp_enabled,
         param_cfg.gnn_spacial_enabled,
@@ -1873,6 +1892,7 @@ pub(in crate::therapeutic) fn train(
         &atom_graph_analysis,
         &comp_graph_analysis,
         &spacial_graph_analysis,
+        param_cfg.conformation_enabled,
         param_cfg.gnn_atom_enabled,
         param_cfg.gnn_comp_enabled,
         param_cfg.gnn_spacial_enabled,

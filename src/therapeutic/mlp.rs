@@ -22,14 +22,20 @@ use crate::molecules::{
 pub(in crate::therapeutic) fn mlp_feats_from_mol(
     mol: &MoleculeSmall,
     ff_params: &ForceFieldParams,
+    conformation_enabled: bool,
 ) -> io::Result<Vec<f32>> {
-    let conformer = resolve_conformer(mol, ff_params);
-    mlp_feats_from_mol_with_conformer(mol, conformer.as_deref())
+    let conformer = if conformation_enabled {
+        resolve_conformer(mol, ff_params)
+    } else {
+        None
+    };
+    mlp_feats_from_mol_with_conformer(mol, conformer.as_deref(), conformation_enabled)
 }
 
 pub(in crate::therapeutic) fn mlp_feats_from_mol_with_conformer(
     mol: &MoleculeSmall,
     conformer: Option<&Conformer>,
+    conformation_enabled: bool,
 ) -> io::Result<Vec<f32>> {
     let Some(c) = &mol.characterization else {
         return Err(io::Error::other("Missing mol characterization"));
@@ -115,19 +121,21 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol_with_conformer(
                                                         // ln(c.greasiness),
     ];
 
-    let conformer_features = if let Some(conformer) = conformer {
-        conformer.summary_features().to_vec()
-    } else {
-        vec![0.0; CONFORMER_SUMMARY_FEATS]
-    };
+    if conformation_enabled {
+        let conformer_features = if let Some(conformer) = conformer {
+            conformer.summary_features().to_vec()
+        } else {
+            vec![0.0; CONFORMER_SUMMARY_FEATS]
+        };
+        result.extend(conformer_features);
 
-    result.extend(conformer_features);
-    let conformer_motion_hist = if let Some(conformer) = conformer {
-        conformer.motion_histogram_features().to_vec()
-    } else {
-        vec![0.0; CONFORMER_MOTION_HIST_FEATS]
-    };
-    result.extend(conformer_motion_hist);
+        let conformer_motion_hist = if let Some(conformer) = conformer {
+            conformer.motion_histogram_features().to_vec()
+        } else {
+            vec![0.0; CONFORMER_MOTION_HIST_FEATS]
+        };
+        result.extend(conformer_motion_hist);
+    }
 
     Ok(result)
 }

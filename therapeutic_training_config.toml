@@ -6,6 +6,10 @@ gnn_comp_enabled = true
 gnn_spacial_enabled = false
 mlp_enabled = true
 
+# Global conformation toggle for therapeutic ML. When false, conformation-derived
+# features are not integrated into training or inference.
+conformation_enabled = false
+
 # Increasing layers may or may not improve model performance. It will slow down inference and training.
 # We have it lower than idea now to improve speed.
 
