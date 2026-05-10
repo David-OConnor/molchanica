@@ -8,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     io,
     io::ErrorKind,
+    time::Instant,
 };
 
 use bio_files::{gromacs::OutputControl, md_params::ForceFieldParams};
@@ -46,6 +47,29 @@ pub enum CrystalEstimateSource {
     MolecularDynamics,
 }
 
+/// todo: RM A/R
+#[derive(Clone, Debug, Default)]
+pub struct CrystalDataMdProperties {
+    /// Number of molecule copies represented by the MD cell.
+    pub copy_count: usize,
+    // pub pressure_target_bar: f32,
+    pub density_g_cm3: f32,
+    /// Molecular volume divided by volume available per molecule. This is a rough packing
+    /// fraction because the molecular volume descriptor is itself approximate.
+    pub packing_fraction_proxy: f32,
+    pub volume_per_molecule_a3: f32,
+    pub potential_energy_per_mol_kcal: f32,
+    pub nonbonded_energy_per_mol_kcal: f32,
+    /// Inter-molecular non-bonded energy per molecule. More negative means stronger cohesion.
+    pub cohesive_energy_per_mol_kcal: f32,
+    pub mean_pair_interaction_kcal: f32,
+    pub nearest_neighbor_distance_a: f32,
+    pub coordination_number: f32,
+    pub h_bonds_per_molecule: f32,
+    /// 0.5 is random uncorrelated axes; 1.0 is highly aligned.
+    pub orientational_order: f32,
+}
+
 /// Contains self-affinity, packing, and related results for a small organic molecule in a
 /// pure-molecule crystal-like environment.
 ///
@@ -67,33 +91,7 @@ pub struct CrystalData {
     pub hydrophobicity: f32,
     pub aromatic_stacking_propensity: f32,
     pub flexibility_penalty: f32,
-    pub polar_surface_area_a2: f32,
-    pub mol_weight_da: f32,
-    pub molar_refractivity: f32,
-    pub log_p: f32,
-    pub rotatable_bond_count: usize,
-    pub heavy_atom_count: usize,
-    /// Number of molecule copies represented by the MD cell.
-    pub copy_count: Option<usize>,
-    pub temperature_k: Option<f32>,
-    pub pressure_target_bar: Option<f32>,
-    pub density_g_cm3: Option<f32>,
-    /// Molecular volume divided by volume available per molecule. This is a rough packing
-    /// fraction because the molecular volume descriptor is itself approximate.
-    pub packing_fraction_proxy: Option<f32>,
-    pub volume_per_molecule_a3: Option<f32>,
-    pub mean_pressure_bar: Option<f32>,
-    pub mean_temperature_k: Option<f32>,
-    pub potential_energy_per_mol_kcal: Option<f32>,
-    pub nonbonded_energy_per_mol_kcal: Option<f32>,
-    /// Inter-molecular non-bonded energy per molecule. More negative means stronger cohesion.
-    pub cohesive_energy_per_mol_kcal: Option<f32>,
-    pub mean_pair_interaction_kcal: Option<f32>,
-    pub nearest_neighbor_distance_a: Option<f32>,
-    pub coordination_number: Option<f32>,
-    pub h_bonds_per_molecule: Option<f32>,
-    /// 0.5 is random uncorrelated axes; 1.0 is highly aligned.
-    pub orientational_order: Option<f32>,
+    pub md_properties: Option<CrystalDataMdProperties>,
 }
 
 struct PropertyTerms {
@@ -189,28 +187,7 @@ fn crystal_data_from_properties(
         hydrophobicity: terms.hydrophobicity,
         aromatic_stacking_propensity: terms.aromatic_stacking,
         flexibility_penalty: terms.flexibility_penalty,
-        polar_surface_area_a2: char.tpsa_ertl,
-        mol_weight_da: char.mol_weight,
-        molar_refractivity: char.molar_refractivity,
-        log_p: char.log_p,
-        rotatable_bond_count: char.rotatable_bonds.len(),
-        heavy_atom_count: char.num_heavy_atoms,
-        copy_count: None,
-        temperature_k: None,
-        pressure_target_bar: None,
-        density_g_cm3: None,
-        packing_fraction_proxy: None,
-        volume_per_molecule_a3: None,
-        mean_pressure_bar: None,
-        mean_temperature_k: None,
-        potential_energy_per_mol_kcal: None,
-        nonbonded_energy_per_mol_kcal: None,
-        cohesive_energy_per_mol_kcal: None,
-        mean_pair_interaction_kcal: None,
-        nearest_neighbor_distance_a: None,
-        coordination_number: None,
-        h_bonds_per_molecule: None,
-        orientational_order: None,
+        md_properties: None,
     }
 }
 
@@ -465,9 +442,11 @@ fn add_md_metrics(data: &mut CrystalData, char: &MolCharacterization, md: &MdSta
         return;
     }
 
-    data.copy_count = Some(n_mol);
-    data.temperature_k = Some(TEMPERATURE);
-    data.pressure_target_bar = Some(PRESSURE);
+    let mut metrics = CrystalDataMdProperties::default();
+
+    metrics.copy_count = n_mol;
+    // metrics.temperature_k = TEMPERATURE;
+    // metrics.pressure_target_bar = PRESSURE;
 
     let snaps = if md.snapshots.len() > 4 {
         &md.snapshots[md.snapshots.len() / 2..]
@@ -506,38 +485,35 @@ fn add_md_metrics(data: &mut CrystalData, char: &MolCharacterization, md: &MdSta
         }
     }
 
-    data.potential_energy_per_mol_kcal = mean(&potentials);
-    data.nonbonded_energy_per_mol_kcal = mean(&nonbonded);
-    data.cohesive_energy_per_mol_kcal = mean(&cohesive);
-    data.mean_pair_interaction_kcal = mean(&pair_interactions);
-    data.mean_pressure_bar = mean(&pressures);
-    data.mean_temperature_k = mean(&temperatures);
-    data.density_g_cm3 = mean(&densities);
-    data.volume_per_molecule_a3 = mean(&volumes_per_mol);
-    data.h_bonds_per_molecule = mean(&h_bonds);
+    metrics.potential_energy_per_mol_kcal = mean(&potentials).unwrap_or(0.0);
+    metrics.nonbonded_energy_per_mol_kcal = mean(&nonbonded).unwrap_or(0.0);
+    metrics.cohesive_energy_per_mol_kcal = mean(&cohesive).unwrap_or(0.0);
+    metrics.mean_pair_interaction_kcal = mean(&pair_interactions).unwrap_or(0.0);
+    // metrics.mean_pressure_bar = mean(&pressures);
+    // metrics.mean_temperature_k = mean(&temperatures);
+    metrics.density_g_cm3 = mean(&densities).unwrap_or(0.0);
+    metrics.volume_per_molecule_a3 = mean(&volumes_per_mol).unwrap_or(0.0);
+    metrics.h_bonds_per_molecule = mean(&h_bonds).unwrap_or(0.0);
 
-    if let Some(volume_per_mol) = data.volume_per_molecule_a3
-        && volume_per_mol > 0.0
-        && char.volume > 0.0
-    {
-        data.packing_fraction_proxy = Some((char.volume / volume_per_mol).clamp(0.0, 1.5));
+    if metrics.volume_per_molecule_a3 > 0.0 && char.volume > 0.0 {
+        metrics.packing_fraction_proxy =
+            Some((char.volume / metrics.volume_per_molecule_a3).clamp(0.0, 1.5)).unwrap_or(0.0);
     }
 
     let (nearest, coordination, orientational_order) = structural_metrics(md, n_mol);
-    data.nearest_neighbor_distance_a = nearest;
-    data.coordination_number = coordination;
-    data.orientational_order = orientational_order;
+    metrics.nearest_neighbor_distance_a = nearest.unwrap_or(0.0);
+    metrics.coordination_number = coordination.unwrap_or(0.0);
+    metrics.orientational_order = orientational_order.unwrap_or(0.0);
 
-    let md_self_affinity = data
-        .cohesive_energy_per_mol_kcal
-        .map(|v| (-v).max(0.0) / 8.0)
-        .unwrap_or_default()
-        + data.density_g_cm3.unwrap_or_default() * 0.20
-        + data.h_bonds_per_molecule.unwrap_or_default() * 0.10
-        + data.coordination_number.unwrap_or_default() * 0.05;
+    let md_self_affinity = metrics.cohesive_energy_per_mol_kcal
+        + metrics.density_g_cm3 * 0.20
+        + metrics.h_bonds_per_molecule * 0.10
+        + metrics.coordination_number * 0.05;
 
     data.self_affinity_score = data.property_self_affinity_score + md_self_affinity;
     data.crystal_solubility_penalty = data.self_affinity_score - data.water_affinity_proxy * 0.60;
+
+    data.md_properties = Some(metrics);
 }
 
 /// Runs a molecular dynamics simulation of a number of copies of the molecule being analyzed,
@@ -592,16 +568,17 @@ pub fn estimate_from_md(
 
 /// Attempts to infer crystal properties based on properties of the molecule, and other analytic or
 /// fast approaches which don't involve ML or MD.
-pub fn estimate_from_properties(
-    mol: &MoleculeSmall,
-    _backend: MdBackend,
-) -> io::Result<CrystalData> {
+pub fn estimate_from_properties(mol: &MoleculeSmall) -> io::Result<CrystalData> {
+    let start = Instant::now();
     validate_mol(mol)?;
 
     let char = characterization(mol);
 
-    Ok(crystal_data_from_properties(
-        &char,
-        CrystalEstimateSource::Properties,
-    ))
+    let res = crystal_data_from_properties(&char, CrystalEstimateSource::Properties);
+
+    // todo: Too fast to need to log this.
+    let elapsed = start.elapsed().as_micros();
+    println!("\nEstimated crystal data from properties in {elapsed} μs");
+
+    Ok(res)
 }

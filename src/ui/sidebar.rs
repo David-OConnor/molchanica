@@ -607,19 +607,28 @@ pub(in crate::ui) fn sidebar(
                     }
                 }
 
-                if run_logp_sim {
+                if run_crystal_sim {
                     // Some gymnastics here to avoid a borrow error.
                     if let Some(active_mol) = state.volatile.active_mol.as_ref() {
                         let mol = state.get_small(active_mol.1).cloned();
 
                         if let Some(mol) = mol {
-                            match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
-                                Ok(v) => println!("Crystal sim result: {v:?}"),
+                            match crystal::estimate_from_properties(&mol) {
+                                Ok(v) => println!("Crystal properties result: {v:?}"),
                                 Err(e) => handle_err(
                                     &mut state.ui,
-                                    format!("Error running the crystal simulation: {e:?}"),
+                                    format!("Error running the crystal properties: {e:?}"),
                                 ),
                             }
+
+                            // todo: Temp analyhtic
+                            // match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
+                            //     Ok(v) => println!("Crystal sim result: {v:?}"),
+                            //     Err(e) => handle_err(
+                            //         &mut state.ui,
+                            //         format!("Error running the crystal simulation: {e:?}"),
+                            //     ),
+                            // }
                         }
                     }
                 }
