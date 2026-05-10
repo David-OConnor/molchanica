@@ -8,7 +8,12 @@ use crate::{
     ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
 };
 
-fn char_basics(char: &MolCharacterization, ui: &mut Ui, run_logp_sim: &mut bool) {
+fn char_basics(
+    char: &MolCharacterization,
+    ui: &mut Ui,
+    run_logp_sim: &mut bool,
+    run_crystal_sim: &mut bool,
+) {
     // Basics
     char_item(
         ui,
@@ -158,6 +163,13 @@ fn char_basics(char: &MolCharacterization, ui: &mut Ui, run_logp_sim: &mut bool)
             .clicked()
         {
             *run_logp_sim = true;
+        }
+
+        if button!(ui, "Crystal sim", COLOR_ACTION, "Estimate solubility by performing a simulation of the molecule \
+                        as a crystal of itself, with no solvent. Display the results. " )
+            .clicked()
+        {
+            *run_crystal_sim = true;
         }
 
         ui.add_space(COL_SPACING / 2.);
@@ -361,7 +373,12 @@ fn char_item(ui: &mut Ui, items: &[(&str, &str, &str)]) {
     });
 }
 
-pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui, run_logp_sim: &mut bool) {
+pub(in crate::ui) fn mol_char_disp(
+    mol: &MoleculeSmall,
+    ui: &mut Ui,
+    run_logp_sim: &mut bool,
+    run_crystal_sim: &mut bool,
+) {
     let Some(char) = &mol.characterization else {
         return;
     };
@@ -400,7 +417,7 @@ pub(in crate::ui) fn mol_char_disp(mol: &MoleculeSmall, ui: &mut Ui, run_logp_si
             ui.separator();
             ui.add_space(ROW_SPACING);
 
-            char_basics(char, ui, run_logp_sim);
+            char_basics(char, ui, run_logp_sim, run_crystal_sim);
             ui.separator();
             ui.add_space(ROW_SPACING);
 

@@ -31,8 +31,10 @@ mod cli;
 mod reflection;
 
 pub mod cam;
+mod crystal;
 mod drug_design;
 mod gromacs;
+mod ionization;
 mod lod_generalization;
 mod md;
 mod mol_alignment;

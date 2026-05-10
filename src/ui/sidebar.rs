@@ -6,8 +6,9 @@ use lin_alg::f64::Vec3;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
-    label,
+    crystal, label,
     md::{
+        MdBackend,
         trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, TrajectorySource, close_traj},
         viewer,
     },
@@ -581,11 +582,12 @@ pub(in crate::ui) fn sidebar(
             if state.ui.ui_vis.mol_char && !edit_mode {
                 // Avoid double borrow.
                 let mut run_logp_sim = false;
+                let mut run_crystal_sim = false;
 
                 if let Some(m) = &state.active_mol()
                     && let MolGenericRef::Small(mol) = m
                 {
-                    char_adme::mol_char_disp(mol, ui, &mut run_logp_sim);
+                    char_adme::mol_char_disp(mol, ui, &mut run_logp_sim, &mut run_crystal_sim);
                 }
 
                 if run_logp_sim {
@@ -599,6 +601,23 @@ pub(in crate::ui) fn sidebar(
                                 Err(e) => handle_err(
                                     &mut state.ui,
                                     format!("Error running the LogP simulation: {e:?}"),
+                                ),
+                            }
+                        }
+                    }
+                }
+
+                if run_logp_sim {
+                    // Some gymnastics here to avoid a borrow error.
+                    if let Some(active_mol) = state.volatile.active_mol.as_ref() {
+                        let mol = state.get_small(active_mol.1).cloned();
+
+                        if let Some(mol) = mol {
+                            match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
+                                Ok(v) => println!("Crystal sim result: {v:?}"),
+                                Err(e) => handle_err(
+                                    &mut state.ui,
+                                    format!("Error running the crystal simulation: {e:?}"),
                                 ),
                             }
                         }

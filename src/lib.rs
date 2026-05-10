@@ -11,12 +11,14 @@
 pub mod bond_inference;
 pub mod cam;
 pub mod cli;
+pub mod crystal;
 pub mod docking;
 pub mod drawing;
 pub mod drug_design;
 pub mod file_io;
 pub mod gromacs;
 pub mod inputs;
+pub mod ionization;
 pub mod md;
 pub mod mol_alignment;
 pub mod mol_characterization;
