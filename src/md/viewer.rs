@@ -100,6 +100,31 @@ impl ViewerMolSet {
         result
     }
 
+    /// Tuple value: (type, Molecule, count)
+    pub fn from_mols(name: String, mols: &[(MolType, MoleculeCommon, usize)]) -> Self {
+        let mols_for_set = {
+            let mut v = Vec::new();
+            let mut snap_atom_i = 0;
+
+            for (mol_type, mol, count) in mols {
+                for _ in 0..*count {
+                    let len_this_mol = mol.atoms.len();
+
+                    v.push(ViewerMolecule {
+                        mol_type: *mol_type,
+                        mol: mol.clone(),
+                        range: (snap_atom_i, snap_atom_i + len_this_mol),
+                    });
+
+                    snap_atom_i += len_this_mol;
+                }
+            }
+            v
+        };
+
+        Self::new(None, name, mols_for_set)
+    }
+
     pub fn update_derivative_vals(&mut self) {
         self.atom_count = self.mols.iter().map(|m| m.mol.atoms.len()).sum();
 
@@ -693,16 +718,18 @@ impl SnapshotViewer {
 
         let mut mols_ = Vec::new();
 
-        for (mol_type, m, _count) in mols {
+        for (mol_type, m, count) in mols {
             let len_this_mol = m.atoms.len();
 
-            mols_.push(ViewerMolecule {
-                mol_type: MolType::from(*mol_type),
-                mol: (*m).clone(),
-                range: (snap_atom_i, snap_atom_i + len_this_mol),
-            });
+            for _ in 0..*count {
+                mols_.push(ViewerMolecule {
+                    mol_type: MolType::from(*mol_type),
+                    mol: (*m).clone(),
+                    range: (snap_atom_i, snap_atom_i + len_this_mol),
+                });
 
-            snap_atom_i += len_this_mol;
+                snap_atom_i += len_this_mol;
+            }
         }
 
         // Add one ViewerMolecule per water molecule.  Positions start at zero; change_snapshot

@@ -4,7 +4,7 @@ use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
 use crate::md::trajectory::Trajectory;
-use crate::md::viewer::{ViewerMolSet, ViewerMolecule};
+use crate::md::viewer::ViewerMolSet;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -634,13 +634,24 @@ pub(in crate::ui) fn sidebar(
                                         0.002, // todo?
                                     ));
 
-                                    // state.volatile.md_local.viewer.mol_sets.push(
-                                    //     ViewerMolSet::new(None, "Crystal sim".to_string(), vec![
-                                    //         ViewerMolecule
-                                    //     ])
-                                    // );
+                                    println!(
+                                        "Copies: {:?}",
+                                        data.md_properties.as_ref().unwrap().copy_count
+                                    ); // todo temp
 
-                                    println!("Crystal sim result: {data:?}")
+                                    let mol_set = ViewerMolSet::from_mols(
+                                        "Crystal sim".to_string(),
+                                        &vec![(
+                                            MolType::Ligand,
+                                            mol.common.clone(),
+                                            data.md_properties.as_ref().unwrap().copy_count,
+                                        )],
+                                    );
+                                    state.volatile.md_local.viewer.mol_sets.push(mol_set);
+                                    state.volatile.md_local.viewer.mol_set_active =
+                                        Some(state.volatile.md_local.viewer.mol_sets.len() - 1);
+
+                                    println!("Crystal sim result: {data:?}");
                                 }
                                 Err(e) => handle_err(
                                     &mut state.ui,
