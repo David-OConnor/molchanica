@@ -8,7 +8,6 @@ use std::{
     collections::{HashMap, HashSet},
     io,
     io::ErrorKind,
-    time::Instant,
 };
 
 use bio_files::{gromacs::OutputControl, md_params::ForceFieldParams};
@@ -26,18 +25,20 @@ use crate::{
     molecules::small::MoleculeSmall,
 };
 
-const NUM_COPIES_FOR_MD: usize = 40; // todo: Set A/R
 // todo: Consider making this dynamic once basic functionality in this module works. I.e., run until
 // todo: a crystal structure is stable, and use this as an upper bound.
-const NUM_STEPS: usize = 400;
+const NUM_STEPS: usize = 3_000;
 const SNAPSHOT_INTERVAL: usize = 10;
 const TEMPERATURE: f32 = 300.; // K. todo: Set A/R
 const PRESSURE: f32 = 1.; // Bar. todo: A/R.
 const DT: f32 = 0.002; // ps
 
 const DEFAULT_CRYSTAL_DENSITY_G_CM3: f32 = 1.20;
+const MIN_CRYSTAL_DENSITY_G_CM3: f32 = 0.85;
+const MAX_CRYSTAL_DENSITY_G_CM3: f32 = 1.65;
 const AMU_A3_TO_G_CM3: f32 = 1.660_539;
-const MIN_BOX_SIDE_A: f32 = 36.;
+const MIN_CRYSTAL_BOX_SIDE_A: f32 = 36.;
+const MIN_COPIES_FOR_MD: usize = 32;
 const MIN_WALL_PADDING_A: f32 = 2.;
 
 /// How the data was estimated.
@@ -52,6 +53,10 @@ pub enum CrystalEstimateSource {
 pub struct CrystalDataMdProperties {
     /// Number of molecule copies represented by the MD cell.
     pub copy_count: usize,
+    /// Density used to size the fixed-volume dry crystal cell.
+    pub target_density_g_cm3: f32,
+    /// Cubic simulation-cell side length.
+    pub box_side_a: f32,
     // pub pressure_target_bar: f32,
     pub density_g_cm3: f32,
     /// Molecular volume divided by volume available per molecule. This is a rough packing
@@ -216,16 +221,67 @@ fn mol_bounding_radius(mol: &MoleculeSmall) -> f32 {
         .fold(0.0, f32::max)
 }
 
-fn crystal_box_side(mol: &MoleculeSmall, char: &MolCharacterization, copy_count: usize) -> f32 {
+#[derive(Clone, Copy, Debug)]
+struct CrystalMdSetup {
+    copy_count: usize,
+    box_side: f32,
+    target_density_g_cm3: f32,
+}
+
+fn estimated_crystal_packing_fraction(char: &MolCharacterization) -> f32 {
+    let h_bond_sites = char.h_bond_donor.len() + char.h_bond_acceptor.len();
+    let aromatic_bonus = (char.num_rings_aromatic as f32 * 0.010
+        + char.ring_systems.len() as f32 * 0.015)
+        .min(0.045);
+    let h_bond_bonus = (h_bond_sites as f32 * 0.006).min(0.035);
+    let flexibility_penalty =
+        (char.rotatable_bonds.len() as f32 * 0.008 + char.flexibility * 0.004).min(0.080);
+
+    (0.68 + aromatic_bonus + h_bond_bonus - flexibility_penalty).clamp(0.58, 0.76)
+}
+
+fn target_crystal_density_g_cm3(mol: &MoleculeSmall, char: &MolCharacterization) -> f32 {
     let mass = char.mol_weight.max(mol_mass_from_atoms(mol)).max(1.0);
-    let target_density_amu_a3 = DEFAULT_CRYSTAL_DENSITY_G_CM3 / AMU_A3_TO_G_CM3;
-    let target_volume = mass * copy_count as f32 / target_density_amu_a3;
-    let density_side = target_volume.cbrt();
+    let mol_volume = char
+        .volume_pubchem
+        .filter(|v| *v > 0.0)
+        .unwrap_or(char.volume);
 
-    let grid_n = (copy_count as f32).cbrt().ceil().max(3.0);
-    let radius_side = grid_n * (mol_bounding_radius(mol) * 1.35 + MIN_WALL_PADDING_A);
+    if mol_volume > 0.0 {
+        let packing_fraction = estimated_crystal_packing_fraction(char);
+        (mass * AMU_A3_TO_G_CM3 * packing_fraction / mol_volume)
+            .clamp(MIN_CRYSTAL_DENSITY_G_CM3, MAX_CRYSTAL_DENSITY_G_CM3)
+    } else {
+        DEFAULT_CRYSTAL_DENSITY_G_CM3
+    }
+}
 
-    density_side.max(radius_side).max(MIN_BOX_SIDE_A)
+fn min_crystal_box_side(mol: &MoleculeSmall) -> f32 {
+    let diameter_with_margin = mol_bounding_radius(mol) * 2.0 + MIN_WALL_PADDING_A * 2.0;
+    MIN_CRYSTAL_BOX_SIDE_A.max(diameter_with_margin)
+}
+
+fn box_side_for_density(mass: f32, copy_count: usize, density_g_cm3: f32) -> f32 {
+    let target_density_amu_a3 = density_g_cm3 / AMU_A3_TO_G_CM3;
+    (mass * copy_count as f32 / target_density_amu_a3).cbrt()
+}
+
+fn crystal_md_setup(mol: &MoleculeSmall, char: &MolCharacterization) -> CrystalMdSetup {
+    let mass = char.mol_weight.max(mol_mass_from_atoms(mol)).max(1.0);
+    let target_density_g_cm3 = target_crystal_density_g_cm3(mol, char);
+    let target_density_amu_a3 = target_density_g_cm3 / AMU_A3_TO_G_CM3;
+    let min_box_side = min_crystal_box_side(mol);
+
+    let copy_count = ((target_density_amu_a3 * min_box_side.powi(3)) / mass)
+        .ceil()
+        .max(MIN_COPIES_FOR_MD as f32) as usize;
+    let box_side = box_side_for_density(mass, copy_count, target_density_g_cm3);
+
+    CrystalMdSetup {
+        copy_count,
+        box_side,
+        target_density_g_cm3,
+    }
 }
 
 fn build_md_cfg(box_side: f32) -> MdConfig {
@@ -440,8 +496,13 @@ fn structural_metrics(md: &MdState, n_mol: usize) -> (Option<f32>, Option<f32>, 
     )
 }
 
-fn add_md_metrics(data: &mut CrystalData, char: &MolCharacterization, md: &MdState) {
-    let n_mol = md.mol_start_indices.len().min(NUM_COPIES_FOR_MD);
+fn add_md_metrics(
+    data: &mut CrystalData,
+    char: &MolCharacterization,
+    md: &MdState,
+    setup: CrystalMdSetup,
+) {
+    let n_mol = md.mol_start_indices.len().min(setup.copy_count);
     if n_mol == 0 {
         return;
     }
@@ -449,6 +510,8 @@ fn add_md_metrics(data: &mut CrystalData, char: &MolCharacterization, md: &MdSta
     let mut metrics = CrystalDataMdProperties::default();
 
     metrics.copy_count = n_mol;
+    metrics.target_density_g_cm3 = setup.target_density_g_cm3;
+    metrics.box_side_a = setup.box_side;
     // metrics.temperature_k = TEMPERATURE;
     // metrics.pressure_target_bar = PRESSURE;
 
@@ -539,11 +602,16 @@ pub fn estimate_from_md(
     let param_set = FfParamSet::new_amber()?;
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
     let char = characterization(&mol);
-    let box_side = crystal_box_side(&mol, &char, NUM_COPIES_FOR_MD);
-    let cfg = build_md_cfg(box_side);
+    let setup = crystal_md_setup(&mol, &char);
+    let cfg = build_md_cfg(setup.box_side);
     let dev = ComputationDevice::Cpu;
 
-    let mols = vec![(FfMolType::SmallOrganic, &mol.common, NUM_COPIES_FOR_MD)];
+    println!(
+        "Crystal MD setup: density target {:.2} g/cm^3, box side {:.1} A, copies {}",
+        setup.target_density_g_cm3, setup.box_side, setup.copy_count
+    );
+
+    let mols = vec![(FfMolType::SmallOrganic, &mol.common, setup.copy_count)];
     let (mut md, _) = build_dynamics(
         &dev,
         &mols,
@@ -565,7 +633,7 @@ pub fn estimate_from_md(
     }
 
     let mut data = crystal_data_from_properties(&char, CrystalEstimateSource::MolecularDynamics);
-    add_md_metrics(&mut data, &char, &md);
+    add_md_metrics(&mut data, &char, &md, setup);
 
     Ok((data, md.snapshots))
 }
