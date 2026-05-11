@@ -3,6 +3,8 @@ use egui::{Color32, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::md::trajectory::Trajectory;
+use crate::md::viewer::{ViewerMolSet, ViewerMolecule};
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -613,22 +615,38 @@ pub(in crate::ui) fn sidebar(
                         let mol = state.get_small(active_mol.1).cloned();
 
                         if let Some(mol) = mol {
-                            match crystal::estimate_from_properties(&mol) {
-                                Ok(v) => println!("Crystal properties result: {v:?}"),
-                                Err(e) => handle_err(
-                                    &mut state.ui,
-                                    format!("Error running the crystal properties: {e:?}"),
-                                ),
-                            }
-
-                            // todo: Temp analyhtic
-                            // match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
-                            //     Ok(v) => println!("Crystal sim result: {v:?}"),
+                            // match crystal::estimate_from_properties(&mol) {
+                            //     Ok(v) => println!("Crystal properties result: {v:?}"),
                             //     Err(e) => handle_err(
                             //         &mut state.ui,
-                            //         format!("Error running the crystal simulation: {e:?}"),
+                            //         format!("Error running the crystal properties: {e:?}"),
                             //     ),
                             // }
+
+                            // todo: Temp analyhtic
+                            match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
+                                Ok((data, snaps)) => {
+                                    // state.volatile.md_local.viewer.snapshots = snaps;
+
+                                    state.trajectories.push(Trajectory::new_in_memory(
+                                        snaps,
+                                        "Crystal sim".to_string(),
+                                        0.002, // todo?
+                                    ));
+
+                                    // state.volatile.md_local.viewer.mol_sets.push(
+                                    //     ViewerMolSet::new(None, "Crystal sim".to_string(), vec![
+                                    //         ViewerMolecule
+                                    //     ])
+                                    // );
+
+                                    println!("Crystal sim result: {data:?}")
+                                }
+                                Err(e) => handle_err(
+                                    &mut state.ui,
+                                    format!("Error running the crystal simulation: {e:?}"),
+                                ),
+                            }
                         }
                     }
                 }

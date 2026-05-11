@@ -132,16 +132,20 @@ fn property_terms(char: &MolCharacterization) -> PropertyTerms {
     let h_bond_capacity = donors + acceptors;
 
     let hydrophobicity = ((char.log_p + 1.0) / 4.0).clamp(0.0, 2.5);
+
     let aromatic_stacking = char.num_aromatic_atoms as f32 * 0.06
         + char.num_rings_aromatic as f32 * 0.25
         + char.ring_systems.len() as f32 * 0.30;
+
     let polar_contact = donors.min(6.0) * 0.22
         + acceptors.min(8.0) * 0.14
         + (char.tpsa_ertl / 120.0).min(1.5) * 0.40;
+
     let polarizability = (char.molar_refractivity / 80.0).clamp(0.0, 2.0)
         + char.halogen.len() as f32 * 0.08
         + char.sulfur.len() as f32 * 0.12
         + char.phosphorus.len() as f32 * 0.12;
+
     let size = (char.mol_weight / 350.0).clamp(0.1, 2.0);
     let flexibility_penalty =
         char.rotatable_bonds.len() as f32 * 0.08 + (char.flexibility / 8.0).clamp(0.0, 1.5);
@@ -569,7 +573,7 @@ pub fn estimate_from_md(
 /// Attempts to infer crystal properties based on properties of the molecule, and other analytic or
 /// fast approaches which don't involve ML or MD.
 pub fn estimate_from_properties(mol: &MoleculeSmall) -> io::Result<CrystalData> {
-    let start = Instant::now();
+    // let start = Instant::now();
     validate_mol(mol)?;
 
     let char = characterization(mol);
@@ -577,8 +581,8 @@ pub fn estimate_from_properties(mol: &MoleculeSmall) -> io::Result<CrystalData> 
     let res = crystal_data_from_properties(&char, CrystalEstimateSource::Properties);
 
     // todo: Too fast to need to log this.
-    let elapsed = start.elapsed().as_micros();
-    println!("\nEstimated crystal data from properties in {elapsed} μs");
+    // let elapsed = start.elapsed().as_micros();
+    // println!("\nEstimated crystal data from properties in {elapsed} μs");
 
     Ok(res)
 }
