@@ -1063,7 +1063,7 @@ pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, us
     res
 }
 
-fn setup_mols_dyn(
+pub(crate) fn setup_mols_dyn(
     mols: &[(FfMolType, &MoleculeCommon, usize)],
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     static_peptide: bool,

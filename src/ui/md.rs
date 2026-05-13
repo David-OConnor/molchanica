@@ -238,8 +238,8 @@ pub fn md_setup(
 
             ui.add_space(COL_SPACING / 2.);
             ui.label("Cutoffs (Å).").on_hover_text(help);
-            num_field(&mut state.to_save.md_config.coulomb_cutoff, "Coulomb:", 20, ui);
-            num_field(&mut state.to_save.md_config.lj_cutoff, "LJ:", 20, ui);
+            num_field(&mut state.to_save.md_config.coulomb_cutoff, "Coulomb:", 34, ui);
+            num_field(&mut state.to_save.md_config.lj_cutoff, "LJ:", 34, ui);
         });
 
         ui.add_space(ROW_SPACING / 2.);

@@ -624,7 +624,8 @@ pub(in crate::ui) fn sidebar(
                             // }
 
                             // todo: Temp analyhtic
-                            match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
+                            // match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
+                            match crystal::estimate_from_md(&mol, MdBackend::Gromacs) {
                                 Ok((data, snaps)) => {
                                     // state.volatile.md_local.viewer.snapshots = snaps;
 

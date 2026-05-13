@@ -10,24 +10,29 @@ use std::{
     io::ErrorKind,
 };
 
-use bio_files::{gromacs::OutputControl, md_params::ForceFieldParams};
+use bio_files::{
+    BondGeneric,
+    gromacs::{MoleculeInput, OutputControl},
+    md_params::ForceFieldParams,
+};
 use dynamics::{
-    BarostatCfg, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
+    BarostatCfg, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MolDynamics,
     ParamError, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     params::FfParamSet,
-    snapshot::{Snapshot, SnapshotHandlers},
+    snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::f32::Vec3;
 
 use crate::{
-    md::{MdBackend, build_dynamics, run_dynamics_blocking},
+    gromacs as gromacs_backend,
+    md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
     mol_characterization::MolCharacterization,
     molecules::small::MoleculeSmall,
 };
 
 // todo: Consider making this dynamic once basic functionality in this module works. I.e., run until
 // todo: a crystal structure is stable, and use this as an upper bound.
-const NUM_STEPS: usize = 3_000;
+const NUM_STEPS: usize = 10_000;
 const SNAPSHOT_INTERVAL: usize = 10;
 const TEMPERATURE: f32 = 300.; // K. todo: Set A/R
 const PRESSURE: f32 = 1.; // Bar. todo: A/R.
@@ -358,6 +363,18 @@ fn build_md_cfg(box_side: f32) -> MdConfig {
     }
 }
 
+fn build_gromacs_md_cfg(box_side: f32) -> MdConfig {
+    let mut cfg = build_md_cfg(box_side);
+    cfg.snapshot_handlers.memory = None;
+    cfg.snapshot_handlers.gromacs = OutputControl {
+        nstxout: Some(SNAPSHOT_INTERVAL as u32),
+        nstcalcenergy: Some(SNAPSHOT_INTERVAL as u32),
+        nstenergy: Some(SNAPSHOT_INTERVAL as u32),
+        ..Default::default()
+    };
+    cfg
+}
+
 fn prepare_mol_for_md(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
@@ -442,32 +459,35 @@ fn min_image(mut delta: Vec3, extent: Vec3) -> Vec3 {
     delta
 }
 
-fn molecule_centroids_and_axes(md: &MdState, n_mol: usize) -> (Vec<Vec3>, Vec<Vec3>) {
+fn molecule_centroids_and_axes(
+    atom_posits: &[Vec3],
+    mol_start_indices: &[usize],
+    n_mol: usize,
+) -> (Vec<Vec3>, Vec<Vec3>) {
     let mut centroids = Vec::with_capacity(n_mol);
     let mut axes = Vec::with_capacity(n_mol);
 
     for mol_i in 0..n_mol {
-        let start = md.mol_start_indices[mol_i];
-        let end = md
-            .mol_start_indices
+        let start = mol_start_indices[mol_i];
+        let end = mol_start_indices
             .get(mol_i + 1)
             .copied()
-            .unwrap_or(md.atoms.len());
+            .unwrap_or(atom_posits.len());
 
-        if start >= end {
+        if start >= end || end > atom_posits.len() {
             continue;
         }
 
         let mut centroid = Vec3::new_zero();
-        for atom in &md.atoms[start..end] {
-            centroid += atom.posit;
+        for posit in &atom_posits[start..end] {
+            centroid += *posit;
         }
         centroid /= (end - start) as f32;
 
         let mut axis = Vec3::new(1.0, 0.0, 0.0);
         let mut max_dist_sq = 0.0;
-        for atom in &md.atoms[start..end] {
-            let v = atom.posit - centroid;
+        for posit in &atom_posits[start..end] {
+            let v = *posit - centroid;
             let dist_sq = v.magnitude_squared();
             if dist_sq > max_dist_sq {
                 max_dist_sq = dist_sq;
@@ -485,17 +505,21 @@ fn molecule_centroids_and_axes(md: &MdState, n_mol: usize) -> (Vec<Vec3>, Vec<Ve
     (centroids, axes)
 }
 
-fn structural_metrics(md: &MdState, n_mol: usize) -> (Option<f32>, Option<f32>, Option<f32>) {
-    if n_mol < 2 || md.mol_start_indices.len() < n_mol {
+fn structural_metrics(
+    atom_posits: &[Vec3],
+    mol_start_indices: &[usize],
+    extent: Vec3,
+    n_mol: usize,
+) -> (Option<f32>, Option<f32>, Option<f32>) {
+    if n_mol < 2 || mol_start_indices.len() < n_mol {
         return (None, None, None);
     }
 
-    let (centroids, axes) = molecule_centroids_and_axes(md, n_mol);
+    let (centroids, axes) = molecule_centroids_and_axes(atom_posits, mol_start_indices, n_mol);
     if centroids.len() < 2 {
         return (None, None, None);
     }
 
-    let extent = md.cell.extent;
     let mut nearest = vec![f32::INFINITY; centroids.len()];
 
     for i in 0..centroids.len() {
@@ -545,10 +569,13 @@ fn structural_metrics(md: &MdState, n_mol: usize) -> (Option<f32>, Option<f32>, 
 fn add_md_metrics(
     data: &mut CrystalData,
     char: &MolCharacterization,
-    md: &MdState,
+    snapshots: &[Snapshot],
+    atom_posits: &[Vec3],
+    mol_start_indices: &[usize],
+    cell_extent: Vec3,
     setup: CrystalMdSetup,
 ) {
-    let n_mol = md.mol_start_indices.len().min(setup.copy_count);
+    let n_mol = mol_start_indices.len().min(setup.copy_count);
     if n_mol == 0 {
         return;
     }
@@ -561,10 +588,10 @@ fn add_md_metrics(
     // metrics.temperature_k = TEMPERATURE;
     // metrics.pressure_target_bar = PRESSURE;
 
-    let snaps = if md.snapshots.len() > 4 {
-        &md.snapshots[md.snapshots.len() / 2..]
+    let snaps = if snapshots.len() > 4 {
+        &snapshots[snapshots.len() / 2..]
     } else {
-        &md.snapshots[..]
+        snapshots
     };
 
     let mut potentials = Vec::new();
@@ -604,8 +631,9 @@ fn add_md_metrics(
     metrics.mean_pair_interaction_kcal = mean(&pair_interactions).unwrap_or(0.0);
     // metrics.mean_pressure_bar = mean(&pressures);
     // metrics.mean_temperature_k = mean(&temperatures);
-    metrics.density_g_cm3 = mean(&densities).unwrap_or(0.0);
-    metrics.volume_per_molecule_a3 = mean(&volumes_per_mol).unwrap_or(0.0);
+    metrics.density_g_cm3 = mean(&densities).unwrap_or(setup.target_density_g_cm3);
+    metrics.volume_per_molecule_a3 =
+        mean(&volumes_per_mol).unwrap_or_else(|| setup.box_side.powi(3) / n_mol as f32);
     metrics.h_bonds_per_molecule = mean(&h_bonds).unwrap_or(0.0);
 
     if metrics.volume_per_molecule_a3 > 0.0 && char.volume > 0.0 {
@@ -613,7 +641,8 @@ fn add_md_metrics(
             Some((char.volume / metrics.volume_per_molecule_a3).clamp(0.0, 1.5)).unwrap_or(0.0);
     }
 
-    let (nearest, coordination, orientational_order) = structural_metrics(md, n_mol);
+    let (nearest, coordination, orientational_order) =
+        structural_metrics(atom_posits, mol_start_indices, cell_extent, n_mol);
     metrics.nearest_neighbor_distance_a = nearest.unwrap_or(0.0);
     metrics.coordination_number = coordination.unwrap_or(0.0);
     metrics.orientational_order = orientational_order.unwrap_or(0.0);
@@ -629,47 +658,113 @@ fn add_md_metrics(
     data.md_properties = Some(metrics);
 }
 
-/// Runs a molecular dynamics simulation of a number of copies of the molecule being analyzed,
-/// with no solvent. Returns both crystal/self-affinity descriptors and snapshots that can be
-/// used to visualize the dry pure-molecule run.
-pub fn estimate_from_md(
-    mol: &MoleculeSmall,
-    backend: MdBackend,
-) -> io::Result<(CrystalData, Vec<Snapshot>)> {
-    validate_mol(mol)?;
+fn gromacs_crystal_mol_name(ident: &str) -> String {
+    let name: String = ident
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .take(6)
+        .collect();
 
-    if backend != MdBackend::Dynamics {
+    if name.is_empty() {
+        "CRYST".to_string()
+    } else {
+        name
+    }
+}
+
+fn gromacs_crystal_molecule_input(
+    placed_mols: &[MolDynamics],
+    ident: &str,
+) -> io::Result<(MoleculeInput, Vec<usize>)> {
+    let Some(ff_params) = placed_mols
+        .iter()
+        .find_map(|mol| mol.mol_specific_params.clone())
+    else {
         return Err(io::Error::new(
-            ErrorKind::Unsupported,
-            "Crystal MD estimation currently supports only the built-in dynamics backend.",
+            ErrorKind::InvalidInput,
+            "Missing molecule-specific parameters for GROMACS crystal input.",
         ));
+    };
+
+    let atom_count: usize = placed_mols.iter().map(|mol| mol.atoms.len()).sum();
+    let bond_count: usize = placed_mols.iter().map(|mol| mol.bonds.len()).sum();
+    let mut atoms = Vec::with_capacity(atom_count);
+    let mut bonds = Vec::with_capacity(bond_count);
+    let mut mol_start_indices = Vec::with_capacity(placed_mols.len());
+    let mut next_serial = 1_u32;
+
+    for mol in placed_mols {
+        mol_start_indices.push(atoms.len());
+        let mut serial_map = HashMap::with_capacity(mol.atoms.len());
+
+        for (i, atom) in mol.atoms.iter().enumerate() {
+            let mut atom = atom.clone();
+            if let Some(posits) = &mol.atom_posits
+                && let Some(posit) = posits.get(i)
+            {
+                atom.posit = *posit;
+            }
+
+            let new_serial = next_serial;
+            next_serial = next_serial.checked_add(1).ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "Too many atoms for GROMACS crystal input serial numbers.",
+                )
+            })?;
+
+            serial_map.insert(atom.serial_number, new_serial);
+            atom.serial_number = new_serial;
+            atoms.push(atom);
+        }
+
+        for bond in &mol.bonds {
+            let (Some(&atom_0_sn), Some(&atom_1_sn)) = (
+                serial_map.get(&bond.atom_0_sn),
+                serial_map.get(&bond.atom_1_sn),
+            ) else {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "Crystal GROMACS input bond references an atom outside its molecule copy.",
+                ));
+            };
+
+            bonds.push(BondGeneric {
+                bond_type: bond.bond_type,
+                atom_0_sn,
+                atom_1_sn,
+            });
+        }
     }
 
-    let param_set = FfParamSet::new_amber()?;
-    let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
-    let char = characterization(&mol);
-    let setup = crystal_md_setup(&mol, &char);
+    Ok((
+        MoleculeInput {
+            name: gromacs_crystal_mol_name(ident),
+            atoms,
+            bonds,
+            ff_params: Some(ff_params),
+            count: 1,
+        },
+        mol_start_indices,
+    ))
+}
+
+fn run_crystal_dynamics(
+    mol: &MoleculeSmall,
+    param_set: &FfParamSet,
+    mol_specific_params: &HashMap<String, ForceFieldParams>,
+    char: &MolCharacterization,
+    setup: CrystalMdSetup,
+) -> io::Result<(CrystalData, Vec<Snapshot>)> {
     let cfg = build_md_cfg(setup.box_side);
     let dev = ComputationDevice::Cpu;
-
-    println!(
-        "Crystal MD setup: density target {:.2} g/cm^3, box side {:.1} A, copies {}",
-        setup.target_density_g_cm3, setup.box_side, setup.copy_count
-    );
-    if setup.copy_count < setup.requested_copy_count {
-        println!(
-            "Crystal MD setup: capped density-derived copies from {} to {} to keep packing \
-             inside the box and bound initial minimization work.",
-            setup.requested_copy_count, setup.copy_count
-        );
-    }
-
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, setup.copy_count)];
     let (mut md, _) = build_dynamics(
         &dev,
         &mols,
-        &param_set,
-        &mol_specific_params,
+        param_set,
+        mol_specific_params,
         &cfg,
         false,
         None,
@@ -685,10 +780,135 @@ pub fn estimate_from_md(
         ));
     }
 
-    let mut data = crystal_data_from_properties(&char, CrystalEstimateSource::MolecularDynamics);
-    add_md_metrics(&mut data, &char, &md, setup);
+    let atom_posits: Vec<_> = md.atoms.iter().map(|atom| atom.posit).collect();
+    let mut data = crystal_data_from_properties(char, CrystalEstimateSource::MolecularDynamics);
+    add_md_metrics(
+        &mut data,
+        char,
+        &md.snapshots,
+        &atom_posits,
+        &md.mol_start_indices,
+        md.cell.extent,
+        setup,
+    );
 
     Ok((data, md.snapshots))
+}
+
+fn run_crystal_gromacs(
+    mol: &MoleculeSmall,
+    param_set: &FfParamSet,
+    mol_specific_params: &HashMap<String, ForceFieldParams>,
+    char: &MolCharacterization,
+    mut setup: CrystalMdSetup,
+) -> io::Result<(CrystalData, Vec<Snapshot>)> {
+    let cfg = build_gromacs_md_cfg(setup.box_side);
+    let mols = vec![(FfMolType::SmallOrganic, &mol.common, setup.copy_count)];
+    let (placed_mols, _) = setup_mols_dyn(
+        &mols,
+        mol_specific_params,
+        false,
+        None,
+        Some((setup.box_side, setup.box_side, setup.box_side)),
+    )
+    .map_err(param_err)?;
+
+    if placed_mols.is_empty() {
+        return Err(io::Error::other(
+            "Crystal GROMACS setup did not place any molecule copies.",
+        ));
+    }
+
+    setup.copy_count = placed_mols.len();
+    let (mol_input, mol_start_indices) =
+        gromacs_crystal_molecule_input(&placed_mols, &mol.common.ident)?;
+    let mdp = cfg.to_gromacs(NUM_STEPS, DT);
+    let input = gromacs_backend::make_gromacs_input(
+        mdp,
+        &mols,
+        vec![mol_input],
+        param_set,
+        &cfg.sim_box,
+        &cfg.solvent,
+        cfg.max_init_relaxation_iters.is_some(),
+    )?;
+
+    let out = input.run()?;
+    if out.setup_failure {
+        return Err(io::Error::other(
+            "GROMACS setup failed while running crystal MD.",
+        ));
+    }
+    if out.log_text.contains("Fatal error") {
+        return Err(io::Error::other(
+            "GROMACS reported a fatal error while running crystal MD.",
+        ));
+    }
+
+    let snapshots = gromacs_frames_to_ss(&out);
+    if snapshots.is_empty() {
+        return Err(io::Error::other(
+            "GROMACS crystal MD completed without recording snapshots.",
+        ));
+    }
+
+    let last_atom_posits = snapshots
+        .last()
+        .map(|snap| snap.atom_posits.clone())
+        .unwrap_or_default();
+    let cell_extent = Vec3::new(setup.box_side, setup.box_side, setup.box_side);
+    let mut data = crystal_data_from_properties(char, CrystalEstimateSource::MolecularDynamics);
+    add_md_metrics(
+        &mut data,
+        char,
+        &snapshots,
+        &last_atom_posits,
+        &mol_start_indices,
+        cell_extent,
+        setup,
+    );
+
+    Ok((data, snapshots))
+}
+
+/// Runs a molecular dynamics simulation of a number of copies of the molecule being analyzed,
+/// with no solvent. Returns both crystal/self-affinity descriptors and snapshots that can be
+/// used to visualize the dry pure-molecule run.
+pub fn estimate_from_md(
+    mol: &MoleculeSmall,
+    backend: MdBackend,
+) -> io::Result<(CrystalData, Vec<Snapshot>)> {
+    validate_mol(mol)?;
+
+    let param_set = FfParamSet::new_amber()?;
+    let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
+    let char = characterization(&mol);
+    let setup = crystal_md_setup(&mol, &char);
+
+    println!(
+        "Crystal MD setup ({backend}): density target {:.2} g/cm^3, box side {:.1} A, copies {}",
+        setup.target_density_g_cm3, setup.box_side, setup.copy_count
+    );
+    if setup.copy_count < setup.requested_copy_count {
+        println!(
+            "Crystal MD setup: capped density-derived copies from {} to {} to keep packing \
+             inside the box and bound initial minimization work.",
+            setup.requested_copy_count, setup.copy_count
+        );
+    }
+
+    match backend {
+        MdBackend::Dynamics => {
+            run_crystal_dynamics(&mol, &param_set, &mol_specific_params, &char, setup)
+        }
+        MdBackend::Gromacs => {
+            run_crystal_gromacs(&mol, &param_set, &mol_specific_params, &char, setup)
+        }
+        MdBackend::Orca => Err(io::Error::new(
+            ErrorKind::Unsupported,
+            "Crystal MD estimation supports the Dynamics and GROMACS backends.",
+        )),
+    }
 }
 
 /// Attempts to infer crystal properties based on properties of the molecule, and other analytic or
