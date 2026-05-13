@@ -96,6 +96,7 @@ pub struct CrystalData {
     pub hydrophobicity: f32,
     pub aromatic_stacking_propensity: f32,
     pub flexibility_penalty: f32,
+    /// i.e., if the [slower] MD pipeline was run in addition to the analytic one.
     pub md_properties: Option<CrystalDataMdProperties>,
 }
 
