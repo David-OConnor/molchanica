@@ -232,6 +232,96 @@ fn mol_bounding_radius(m: &MolDynamics, center: Vec3) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
+fn centered_box_axis_shift(min: f64, max: f64, half_extent: f64) -> Option<f64> {
+    if max - min > half_extent * 2.0 {
+        return None;
+    }
+
+    let mut shift = 0.0;
+    if min < -half_extent {
+        shift = -half_extent - min;
+    }
+    if max + shift > half_extent {
+        shift += half_extent - (max + shift);
+    }
+
+    Some(shift)
+}
+
+fn shift_posits_into_centered_box(posits: &mut [Vec3], hx: f64, hy: f64, hz: f64) -> Option<Vec3> {
+    let (mut min, mut max) = (
+        Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+        Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+    );
+
+    for &p in posits.iter() {
+        min = min.min(p);
+        max = max.max(p);
+    }
+
+    let shift = Vec3::new(
+        centered_box_axis_shift(min.x, max.x, hx)?,
+        centered_box_axis_shift(min.y, max.y, hy)?,
+        centered_box_axis_shift(min.z, max.z, hz)?,
+    );
+
+    for p in posits {
+        *p += shift;
+    }
+
+    Some(shift)
+}
+
+fn min_image_delta(delta: Vec3, extent: Vec3) -> Vec3 {
+    Vec3::new(
+        if extent.x > 0.0 {
+            delta.x - (delta.x / extent.x).round() * extent.x
+        } else {
+            delta.x
+        },
+        if extent.y > 0.0 {
+            delta.y - (delta.y / extent.y).round() * extent.y
+        } else {
+            delta.y
+        },
+        if extent.z > 0.0 {
+            delta.z - (delta.z / extent.z).round() * extent.z
+        } else {
+            delta.z
+        },
+    )
+}
+
+fn min_dist_sq_to_placed(
+    posits: &[Vec3],
+    placed_atoms: &[Vec3],
+    centroid: Vec3,
+    search_sq: f64,
+    box_extent: Option<Vec3>,
+) -> f64 {
+    let mut min_sq = f64::MAX;
+    for &np in posits {
+        for &pp in placed_atoms {
+            let center_delta = pp - centroid;
+            let center_dist_sq = match box_extent {
+                Some(extent) => min_image_delta(center_delta, extent).magnitude_squared(),
+                None => center_delta.magnitude_squared(),
+            };
+            if center_dist_sq > search_sq {
+                continue;
+            }
+
+            let delta = np - pp;
+            let dist_sq = match box_extent {
+                Some(extent) => min_image_delta(delta, extent).magnitude_squared(),
+                None => delta.magnitude_squared(),
+            };
+            min_sq = min_sq.min(dist_sq);
+        }
+    }
+    min_sq
+}
+
 /// Add multiple copies of each molecule with random orientations.
 ///
 /// For fixed boxes (`box_dims = Some`): uses a regular cubic grid so every copy gets a
@@ -254,6 +344,8 @@ fn add_copies(
     // Preferred minimum atom-to-atom distance between copies.
     // Soft overlaps at this scale are resolved cleanly by the energy minimiser.
     const MIN_ATOM_DIST_SQ: f64 = 1.5 * 1.5;
+    // Match the hard inter-molecular overlap cutoff in dynamics' init validator.
+    const HARD_MIN_ATOM_DIST_SQ: f64 = 0.5 * 0.5;
     // Keep atom positions this far from the box walls.
     const WALL_MARGIN: f64 = 0.5;
     // Rotation candidates tried per grid cell.
@@ -342,6 +434,7 @@ fn add_copies(
             by as f64 / 2.0 - WALL_MARGIN,
             bz as f64 / 2.0 - WALL_MARGIN,
         );
+        let box_extent = Vec3::new(bx as f64, by as f64, bz as f64);
 
         // Greedy cell selection: for each copy, pick the available grid cell whose
         // centroid is furthest from all already-placed atom positions.  This ensures
@@ -375,6 +468,7 @@ fn add_copies(
                     .unwrap_or(0)
             };
             let centroid = grid.remove(best_cell_idx);
+            let mut placement_centroid = centroid;
             let mut best_rot = Quaternion::new(1., 0., 0., 0.);
             let mut best_posits: Vec<Vec3> = Vec::new();
             let mut best_min_sq = f64::NEG_INFINITY;
@@ -404,14 +498,16 @@ fn add_copies(
                 'check: for &np in &new_posits {
                     for &pp in &placed_atoms {
                         // Skip placed atoms that are too far away to clash.
-                        if (pp - centroid).magnitude_squared() > search_sq {
+                        if min_image_delta(pp - centroid, box_extent).magnitude_squared()
+                            > search_sq
+                        {
                             continue;
                         }
-                        let dsq = (np - pp).magnitude_squared();
+                        let dsq = min_image_delta(np - pp, box_extent).magnitude_squared();
                         if dsq < min_sq {
                             min_sq = dsq;
-                            if min_sq < MIN_ATOM_DIST_SQ {
-                                break 'check; // Already worse than best; try next rotation.
+                            if min_sq < HARD_MIN_ATOM_DIST_SQ {
+                                break 'check; // Hard overlap; try next rotation.
                             }
                         }
                     }
@@ -428,26 +524,55 @@ fn add_copies(
                 }
             }
 
+            // If every rotation attempt failed the wall check, fall back to identity.
+            // Keep that fallback inside the fixed box, and do not create hard overlaps
+            // that can make MD initialization or minimization pathological.
+            if best_posits.is_empty() {
+                best_posits = orig_local.iter().map(|&local| local + centroid).collect();
+                let Some(shift) = shift_posits_into_centered_box(&mut best_posits, hx, hy, hz)
+                else {
+                    eprintln!(
+                        "add_copies: copy {copy_i}: molecule cannot fit inside this fixed-box grid cell; skipping."
+                    );
+                    continue;
+                };
+                placement_centroid += shift;
+                best_min_sq = min_dist_sq_to_placed(
+                    &best_posits,
+                    &placed_atoms,
+                    placement_centroid,
+                    search_sq,
+                    Some(box_extent),
+                );
+            }
+
+            if best_min_sq < HARD_MIN_ATOM_DIST_SQ {
+                eprintln!(
+                    "add_copies: copy {copy_i}: best min atom dist {:.2} Å at \
+                     ({:.1},{:.1},{:.1}) — skipping to avoid a hard overlap.",
+                    best_min_sq.max(0.0).sqrt(),
+                    placement_centroid.x,
+                    placement_centroid.y,
+                    placement_centroid.z,
+                );
+                continue;
+            }
+
             if best_min_sq < MIN_ATOM_DIST_SQ {
                 eprintln!(
                     "add_copies: copy {copy_i}: best min atom dist {:.2} Å at \
                      ({:.1},{:.1},{:.1}) — placing; energy minimiser will resolve.",
                     best_min_sq.max(0.0).sqrt(),
-                    centroid.x,
-                    centroid.y,
-                    centroid.z,
+                    placement_centroid.x,
+                    placement_centroid.y,
+                    placement_centroid.z,
                 );
-            }
-
-            // If every rotation attempt failed the wall check, fall back to identity.
-            if best_posits.is_empty() {
-                best_posits = orig_local.iter().map(|&local| local + centroid).collect();
             }
 
             placed_atoms.extend_from_slice(&best_posits);
 
             let mut mol_copy = mol.clone();
-            let translation = centroid - orig_centroid;
+            let translation = placement_centroid - orig_centroid;
             apply_rot_trans(&mut mol_copy, best_rot, translation);
             mols.push(mol_copy);
         }
