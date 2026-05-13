@@ -28,13 +28,12 @@ use crate::{
     properties::mol_characterization::MolCharacterization,
 };
 
-const NUM_STEPS: usize = 10_000;
+const NUM_STEPS: usize = 2_000;
 const SNAPSHOT_INTERVAL: usize = 10;
 const TEMPERATURE: f32 = 300.; // K. todo: Set A/R
 const PRESSURE: f32 = 1.; // Bar. todo: A/R.
 const DT: f32 = 0.002; // ps
 
-const WATER_INIT_RELAXATION_ITERS: usize = 120;
 const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 const FIRST_HYDRATION_SHELL_CUTOFF_A: f32 = 3.6;
 
@@ -244,7 +243,6 @@ fn build_md_cfg() -> MdConfig {
         },
         sim_box: SimBoxInit::default(),
         solvent: Solvent::WaterOpc,
-        max_init_relaxation_iters: Some(WATER_INIT_RELAXATION_ITERS),
         recenter_sim_box: true,
         overrides: MdOverrides::default(),
         ..Default::default()
@@ -693,10 +691,11 @@ fn run_water_dynamics(
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     char: &MolCharacterization,
+    dev: &ComputationDevice,
 ) -> io::Result<(WaterSolData, Vec<Snapshot>)> {
     let cfg = build_md_cfg();
-    let dev = ComputationDevice::Cpu;
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
+
     let (mut md, _) = build_dynamics(
         &dev,
         &mols,
@@ -708,6 +707,8 @@ fn run_water_dynamics(
         &mut HashSet::new(),
     )
     .map_err(param_err)?;
+
+    println!("MD WATER COUNT: {}", md.water.len()); // todo temp
 
     // Keep the solute fully coupled, but enable interaction bookkeeping so snapshots
     // can report molecule-water attraction through dh/dlambda.
@@ -782,6 +783,7 @@ fn run_water_gromacs(
 pub fn estimate_from_md(
     mol: &MoleculeSmall,
     backend: MdBackend,
+    dev: &ComputationDevice,
 ) -> io::Result<(WaterSolData, Vec<Snapshot>)> {
     validate_mol(mol)?;
 
@@ -794,7 +796,9 @@ pub fn estimate_from_md(
     );
 
     match backend {
-        MdBackend::Dynamics => run_water_dynamics(&mol, &param_set, &mol_specific_params, &char),
+        MdBackend::Dynamics => {
+            run_water_dynamics(&mol, &param_set, &mol_specific_params, &char, dev)
+        }
         MdBackend::Gromacs => run_water_gromacs(&mol, &param_set, &mol_specific_params, &char),
         MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,

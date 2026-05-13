@@ -31,7 +31,7 @@ use crate::{
 
 // todo: Consider making this dynamic once basic functionality in this module works. I.e., run until
 // todo: a crystal structure is stable, and use this as an upper bound.
-const NUM_STEPS: usize = 10_000;
+const NUM_STEPS: usize = 20_000;
 const SNAPSHOT_INTERVAL: usize = 10;
 const TEMPERATURE: f32 = 300.; // K. todo: Set A/R
 const PRESSURE: f32 = 1.; // Bar. todo: A/R.
@@ -42,9 +42,21 @@ const MIN_CRYSTAL_DENSITY_G_CM3: f32 = 0.85;
 const MAX_CRYSTAL_DENSITY_G_CM3: f32 = 1.65;
 const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 const MIN_CRYSTAL_BOX_SIDE_A: f32 = 36.;
-const MIN_COPIES_FOR_MD: usize = 32;
-const MAX_COPIES_FOR_MD: usize = 96;
-const MAX_ATOMS_FOR_CRYSTAL_MD: usize = 2_000;
+
+// todo: Currently, we are having a difficult time packing. Given we probably don't want
+// todo: PBCs for this (Unlike, for example, a solvent) (Or do we), just start with a large number
+// todo of copies in a big box, and let it collapse into a crystal.
+
+const CRYSTAL_MD_SYSTEM_SIZE_MULTIPLIER: usize = 1;
+
+const BASE_MIN_COPIES_FOR_MD: usize = 32;
+const BASE_MAX_COPIES_FOR_MD: usize = 96;
+const BASE_MAX_ATOMS_FOR_CRYSTAL_MD: usize = 2_000;
+const MIN_COPIES_FOR_MD: usize = BASE_MIN_COPIES_FOR_MD * CRYSTAL_MD_SYSTEM_SIZE_MULTIPLIER;
+const MAX_COPIES_FOR_MD: usize = BASE_MAX_COPIES_FOR_MD * CRYSTAL_MD_SYSTEM_SIZE_MULTIPLIER;
+const MAX_ATOMS_FOR_CRYSTAL_MD: usize =
+    BASE_MAX_ATOMS_FOR_CRYSTAL_MD * CRYSTAL_MD_SYSTEM_SIZE_MULTIPLIER;
+
 const CRYSTAL_INIT_RELAXATION_ITERS: usize = 80;
 const MIN_WALL_PADDING_A: f32 = 2.;
 const CRYSTAL_GRID_WALL_MARGIN_A: f32 = 0.6;
@@ -276,32 +288,20 @@ fn box_side_for_density(mass: f32, copy_count: usize, density_g_cm3: f32) -> f32
     (mass * copy_count as f32 / target_density_amu_a3).cbrt()
 }
 
-fn cube_count(dim: usize) -> usize {
-    dim.saturating_mul(dim).saturating_mul(dim)
-}
-
-fn wall_safe_copy_cap(box_side: f32, mol_radius: f32) -> usize {
+fn grid_safe_box_side(copy_count: usize, mol_radius: f32) -> f32 {
     let required_half_cell = mol_radius + CRYSTAL_GRID_WALL_MARGIN_A;
     if required_half_cell <= 0.0 {
-        return MAX_COPIES_FOR_MD;
+        return 0.0;
     }
 
-    let grid_dim = (box_side / (2.0 * required_half_cell)).floor().max(1.0) as usize;
-    cube_count(grid_dim).max(1)
+    let grid_dim = (copy_count as f32).cbrt().ceil().max(3.0);
+    grid_dim * 2.0 * required_half_cell
 }
 
-fn bounded_crystal_copy_count(
-    requested_copy_count: usize,
-    min_box_side: f32,
-    mol_radius: f32,
-    atom_count: usize,
-) -> usize {
+fn bounded_crystal_copy_count(requested_copy_count: usize, atom_count: usize) -> usize {
     let atom_count = atom_count.max(1);
     let atom_limited_cap = (MAX_ATOMS_FOR_CRYSTAL_MD / atom_count).max(1);
-    let copy_cap = MAX_COPIES_FOR_MD
-        .min(atom_limited_cap)
-        .min(wall_safe_copy_cap(min_box_side, mol_radius))
-        .max(1);
+    let copy_cap = MAX_COPIES_FOR_MD.min(atom_limited_cap).max(1);
 
     requested_copy_count
         .min(copy_cap)
@@ -315,16 +315,15 @@ fn crystal_md_setup(mol: &MoleculeSmall, char: &MolCharacterization) -> CrystalM
     let min_box_side = min_crystal_box_side(mol);
     let mol_radius = mol_bounding_radius(mol);
 
-    let requested_copy_count = ((target_density_amu_a3 * min_box_side.powi(3)) / mass)
+    let base_requested_copy_count = ((target_density_amu_a3 * min_box_side.powi(3)) / mass)
         .ceil()
-        .max(MIN_COPIES_FOR_MD as f32) as usize;
-    let copy_count = bounded_crystal_copy_count(
-        requested_copy_count,
-        min_box_side,
-        mol_radius,
-        mol.common.atoms.len(),
-    );
-    let box_side = box_side_for_density(mass, copy_count, target_density_g_cm3).max(min_box_side);
+        .max(BASE_MIN_COPIES_FOR_MD as f32) as usize;
+    let requested_copy_count =
+        base_requested_copy_count.saturating_mul(CRYSTAL_MD_SYSTEM_SIZE_MULTIPLIER);
+    let copy_count = bounded_crystal_copy_count(requested_copy_count, mol.common.atoms.len());
+    let box_side = box_side_for_density(mass, copy_count, target_density_g_cm3)
+        .max(grid_safe_box_side(copy_count, mol_radius))
+        .max(min_box_side);
 
     CrystalMdSetup {
         copy_count,
@@ -755,12 +754,13 @@ fn run_crystal_dynamics(
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     char: &MolCharacterization,
     setup: CrystalMdSetup,
+    dev: &ComputationDevice,
 ) -> io::Result<(CrystalData, Vec<Snapshot>)> {
     let cfg = build_md_cfg(setup.box_side);
-    let dev = ComputationDevice::Cpu;
+
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, setup.copy_count)];
     let (mut md, _) = build_dynamics(
-        &dev,
+        dev,
         &mols,
         param_set,
         mol_specific_params,
@@ -876,6 +876,7 @@ fn run_crystal_gromacs(
 pub fn estimate_from_md(
     mol: &MoleculeSmall,
     backend: MdBackend,
+    dev: &ComputationDevice,
 ) -> io::Result<(CrystalData, Vec<Snapshot>)> {
     validate_mol(mol)?;
 
@@ -898,7 +899,7 @@ pub fn estimate_from_md(
 
     match backend {
         MdBackend::Dynamics => {
-            run_crystal_dynamics(&mol, &param_set, &mol_specific_params, &char, setup)
+            run_crystal_dynamics(&mol, &param_set, &mol_specific_params, &char, setup, dev)
         }
         MdBackend::Gromacs => {
             run_crystal_gromacs(&mol, &param_set, &mol_specific_params, &char, setup)

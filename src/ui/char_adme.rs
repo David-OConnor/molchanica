@@ -13,6 +13,7 @@ fn char_basics(
     ui: &mut Ui,
     run_logp_sim: &mut bool,
     run_crystal_sim: &mut bool,
+    run_water_sol_sim: &mut bool,
 ) {
     // Basics
     char_item(
@@ -171,6 +172,13 @@ fn char_basics(
         {
             *run_crystal_sim = true;
         }
+
+        if button!(ui, "Water sol sim", COLOR_ACTION, "Estimate solubility in water. " )
+            .clicked()
+        {
+            *run_water_sol_sim = true;
+        }
+
 
         ui.add_space(COL_SPACING / 2.);
 
@@ -378,6 +386,7 @@ pub(in crate::ui) fn mol_char_disp(
     ui: &mut Ui,
     run_logp_sim: &mut bool,
     run_crystal_sim: &mut bool,
+    run_water_sol_sim: &mut bool,
 ) {
     let Some(char) = &mol.characterization else {
         return;
@@ -417,7 +426,8 @@ pub(in crate::ui) fn mol_char_disp(
             ui.separator();
             ui.add_space(ROW_SPACING);
 
-            char_basics(char, ui, run_logp_sim, run_crystal_sim);
+            char_basics(char, ui, run_logp_sim, run_crystal_sim, run_water_sol_sim);
+
             ui.separator();
             ui.add_space(ROW_SPACING);
 

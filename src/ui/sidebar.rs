@@ -1,8 +1,10 @@
 use bio_files::FrameSlice;
+use dynamics::FfMolType;
 use egui::{Color32, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
+use crate::properties::water_sol;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -583,11 +585,18 @@ pub(in crate::ui) fn sidebar(
                 // Avoid double borrow.
                 let mut run_logp_sim = false;
                 let mut run_crystal_sim = false;
+                let mut run_water_sol_sim = false;
 
                 if let Some(m) = &state.active_mol()
                     && let MolGenericRef::Small(mol) = m
                 {
-                    char_adme::mol_char_disp(mol, ui, &mut run_logp_sim, &mut run_crystal_sim);
+                    char_adme::mol_char_disp(
+                        mol,
+                        ui,
+                        &mut run_logp_sim,
+                        &mut run_crystal_sim,
+                        &mut run_water_sol_sim,
+                    );
                 }
 
                 if run_logp_sim {
@@ -622,11 +631,9 @@ pub(in crate::ui) fn sidebar(
                             // }
 
                             // todo: Temp analyhtic
-                            // match crystal::estimate_from_md(&mol, MdBackend::Dynamics) {
-                            match crystal::estimate_from_md(&mol, MdBackend::Gromacs) {
+                            // todo: for testing, let the UI control this.
+                            match crystal::estimate_from_md(&mol, state.to_save.md_backend, &state.dev) {
                                 Ok((data, snaps)) => {
-                                    // state.volatile.md_local.viewer.snapshots = snaps;
-
                                     state.trajectories.push(Trajectory::new_in_memory(
                                         snaps,
                                         "Crystal sim".to_string(),
@@ -655,6 +662,71 @@ pub(in crate::ui) fn sidebar(
                                 Err(e) => handle_err(
                                     &mut state.ui,
                                     format!("Error running the crystal simulation: {e:?}"),
+                                ),
+                            }
+                        }
+                    }
+                }
+
+                if run_water_sol_sim {
+                    // Some gymnastics here to avoid a borrow error.
+                    if let Some(active_mol) = state.volatile.active_mol.as_ref() {
+                        let mol = state.get_small(active_mol.1).cloned();
+
+                        if let Some(mol) = mol {
+                            match water_sol::estimate_from_md(
+                                &mol,
+                                state.to_save.md_backend, // todo: for testing, let the UI control this.
+                                &state.dev,
+                            ) {
+                                Ok((data, snaps)) => {
+                                    let water_count = data
+                                        .md_properties
+                                        .as_ref()
+                                        .map(|props| props.water_molecule_count)
+                                        .or_else(|| {
+                                            snaps.last().map(|snap| snap.water_o_posits.len())
+                                        })
+                                        .unwrap_or_default();
+
+                                    state.trajectories.push(Trajectory::new_in_memory(
+                                        snaps.clone(),
+                                        "Water sol sim".to_string(),
+                                        0.002, // todo?
+                                    ));
+
+                                    let viewer_mols =
+                                        vec![(FfMolType::SmallOrganic, &mol.common, 1)];
+                                    state
+                                        .volatile
+                                        .md_local
+                                        .viewer
+                                        .add_mol_set(&viewer_mols, water_count);
+
+                                    let set_i = state
+                                        .volatile
+                                        .md_local
+                                        .viewer
+                                        .mol_sets
+                                        .len()
+                                        .saturating_sub(1);
+                                    if let Some(set) =
+                                        state.volatile.md_local.viewer.mol_sets.get_mut(set_i)
+                                    {
+                                        set.name = "Water sol sim".to_string();
+                                    }
+                                    state.volatile.md_local.viewer.mol_set_active = Some(set_i);
+                                    state.volatile.md_local.replace_snaps(snaps);
+                                    viewer::draw_mols(state, scene, updates);
+                                    redraw.set_all();
+
+                                    println!(
+                                        "Water sol sim result: {data:?}; viewer water mols: {water_count}"
+                                    );
+                                }
+                                Err(e) => handle_err(
+                                    &mut state.ui,
+                                    format!("Error running the water solubility simulation: {e:?}"),
                                 ),
                             }
                         }
