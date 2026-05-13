@@ -424,7 +424,7 @@ fn run_drag(
     state.volatile.md_local.mol_dynamics = Some(md);
 
     // todo temp; for visualizing this.
-    let gro_path = Path::new("./md_out").join(format!("logp_{}.gro", phase.name()));
+    let gro_path = Path::new("../../md_out").join(format!("logp_{}.gro", phase.name()));
 
     if let Some(mol_set) = state.volatile.md_local.viewer.mol_sets.last()
         && let Err(e) = save_mol_set_as_gro(mol_set, &gro_path)

@@ -26,7 +26,6 @@ use lin_alg::f64::Vec3;
 use na_seq::Element;
 
 use crate::{
-    mol_characterization::MolCharacterization,
     mol_components::MolComponents,
     molecules::{
         Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent, PHARMACOPHORE_POCKET_ATOMS_KEY,
@@ -35,6 +34,7 @@ use crate::{
         conformers::{Conformer, characterize_conformations},
         pocket::Pocket,
     },
+    properties::mol_characterization::MolCharacterization,
     screening::pharmacophore::{Pharmacophore, PharmacophoreFeature},
     therapeutic::{DatasetTdc, TherapeuticProperties, infer::Infer},
 };

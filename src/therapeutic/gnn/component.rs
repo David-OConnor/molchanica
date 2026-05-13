@@ -12,7 +12,6 @@ use bio_files::md_params::ForceFieldParams;
 use lin_alg::f64::Vec3;
 
 use crate::{
-    mol_characterization::RingType,
     mol_components::{
         Component, ComponentType, Connection, MolComponents, build_adjacency_list_conn,
     },
@@ -22,6 +21,7 @@ use crate::{
         },
         small::MoleculeSmall,
     },
+    properties::mol_characterization::RingType,
     therapeutic::{
         gnn,
         gnn::{DIHEDRAL_PARAM_SUMMARY_FEATS, vocab_lookup_element},

@@ -2,8 +2,8 @@ use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::{
     button, label,
-    mol_characterization::MolCharacterization,
     molecules::{MolIdent, small::MoleculeSmall},
+    properties::mol_characterization::MolCharacterization,
     therapeutic::{Adme, Toxicity},
     ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
 };

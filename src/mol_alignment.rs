@@ -27,6 +27,8 @@ use lin_alg::{
 use na_seq::{Element, Element::*};
 use rayon::prelude::*;
 
+use crate::properties::mol_characterization::Ring;
+
 // For initial rotation. Higher values take longer, but provide more precise results.
 pub const RING_ALIGN_ROT_COUNT: u16 = 1_000;
 pub const RING_ALIGN_ROT_COUNT_QUICK: u16 = 60;
@@ -55,7 +57,6 @@ const TEMP_COEFF: f64 = 0.01;
 use crate::{
     docking::Torsion,
     md::{build_dynamics, launch_md_energy_computation},
-    mol_characterization::Ring,
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::State,

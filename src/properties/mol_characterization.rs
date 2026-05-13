@@ -2049,8 +2049,8 @@ fn greasiness_asa_proxy(
     // Treat ASA with a solvent probe (consistent with typical SASA usage).
     let probe = SOLVENT_RAD as f64;
 
-    let mut total_asa = 0.0f64;
-    let mut hydrophobic_asa = 0.0f64;
+    let mut total_asa = 0.0;
+    let mut hydrophobic_asa = 0.0;
 
     for i in 0..n {
         let ri = mol.atoms[i].element.vdw_radius() as f64 + probe;

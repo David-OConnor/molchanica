@@ -20,9 +20,9 @@ use rayon::prelude::*;
 
 use crate::{
     copy_le,
-    mol_characterization::{MolCharacterization, RingType},
     molecules::{pocket::Pocket, small::MoleculeSmall},
     parse_le,
+    properties::mol_characterization::{MolCharacterization, RingType},
     render::Color,
     screening::parquet::ParquetMolDb,
 };

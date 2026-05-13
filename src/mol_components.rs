@@ -16,8 +16,8 @@ use bio_files::BondType;
 use na_seq::Element::{self, *};
 
 use crate::{
-    mol_characterization::RingType,
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
+    properties::mol_characterization::{Ring, RingType},
 };
 
 #[derive(Clone, Debug)]
@@ -626,7 +626,7 @@ fn methyl_component_atoms(
     }
 }
 
-fn ring_component_clusters(rings: &[crate::mol_characterization::Ring]) -> Vec<Vec<usize>> {
+fn ring_component_clusters(rings: &[Ring]) -> Vec<Vec<usize>> {
     let n = rings.len();
     if n == 0 {
         return Vec::new();

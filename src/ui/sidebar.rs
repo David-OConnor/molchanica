@@ -3,23 +3,21 @@ use egui::{Color32, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::md::trajectory::Trajectory;
-use crate::md::viewer::ViewerMolSet;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
-    crystal, label,
+    label,
     md::{
         MdBackend,
-        trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, TrajectorySource, close_traj},
+        trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj},
         viewer,
+        viewer::ViewerMolSet,
     },
-    mol_characterization::MolCharacterization,
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
+    properties::{crystal, logp_sim, mol_characterization::MolCharacterization},
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
-    therapeutic::logp_sim,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, highlighted_box, md_viewer, mol_editor_sidebar,

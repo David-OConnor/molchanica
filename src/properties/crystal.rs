@@ -24,10 +24,9 @@ use dynamics::{
 use lin_alg::f32::Vec3;
 
 use crate::{
-    gromacs as gromacs_backend,
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
-    mol_characterization::MolCharacterization,
     molecules::small::MoleculeSmall,
+    properties::mol_characterization::MolCharacterization,
 };
 
 // todo: Consider making this dynamic once basic functionality in this module works. I.e., run until
@@ -823,7 +822,7 @@ fn run_crystal_gromacs(
     let (mol_input, mol_start_indices) =
         gromacs_crystal_molecule_input(&placed_mols, &mol.common.ident)?;
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
-    let input = gromacs_backend::make_gromacs_input(
+    let input = crate::gromacs::make_gromacs_input(
         mdp,
         &mols,
         vec![mol_input],

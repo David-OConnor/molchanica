@@ -3,15 +3,20 @@
 
 use std::io;
 
-use crate::crystal;
-use crate::crystal::{CrystalDataMdProperties, CrystalEstimateSource};
-use crate::molecules::{
-    conformers::{
-        CONFORMER_MOTION_HIST_FEATS, CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer,
-    },
-    small::MoleculeSmall,
-};
 use bio_files::md_params::ForceFieldParams;
+
+use crate::{
+    molecules::{
+        conformers::{
+            CONFORMER_MOTION_HIST_FEATS, CONFORMER_SUMMARY_FEATS, Conformer, resolve_conformer,
+        },
+        small::MoleculeSmall,
+    },
+    properties::{
+        crystal,
+        crystal::{CrystalDataMdProperties, CrystalEstimateSource},
+    },
+};
 
 // Note: We can make variants of this A/R tuned to specific inference items. For now, we are using
 // a single set of features for all targets.

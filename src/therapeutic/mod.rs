@@ -20,7 +20,6 @@ pub mod train;
 #[cfg(feature = "train")]
 pub mod eval;
 mod gnn;
-pub(crate) mod logp_sim;
 mod mlp;
 mod mol_gen;
 mod non_nn_ml;
