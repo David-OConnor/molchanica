@@ -692,7 +692,7 @@ fn run_water_dynamics(
     println!("MD WATER COUNT: {}", md.water.len()); // todo temp
 
     // Keep the solute fully coupled, but enable interaction bookkeeping so snapshots
-    // can report molecule-water attraction through dh/dlambda.
+    // can report molecule-water attraction through dh/d_lambda.
     md.alchemical.mol_idx = Some(0);
     md.alchemical.lambda = 0.0;
 

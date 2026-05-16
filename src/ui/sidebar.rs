@@ -17,7 +17,7 @@ use crate::{
     },
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
-    properties::{crystal, logp_sim, mol_characterization::MolCharacterization},
+    properties::{crystal, logp, mol_characterization::MolCharacterization},
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
     ui::{
@@ -605,7 +605,7 @@ pub(in crate::ui) fn sidebar(
                         let mol = state.get_small(active_mol.1).cloned();
 
                         if let Some(mol) = mol {
-                            match logp_sim::run(&mol, state, scene, updates) {
+                            match logp::run(&mol, state, scene, updates) {
                                 Ok(v) => println!("Logp sim result: {v}"),
                                 Err(e) => handle_err(
                                     &mut state.ui,

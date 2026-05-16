@@ -3,7 +3,7 @@
 
 pub mod crystal;
 pub mod ionization;
-pub mod logp_sim;
+pub mod logp;
 pub mod mol_characterization;
 pub mod water_sol;
 mod water_sol_mix;
