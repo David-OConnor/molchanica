@@ -6,22 +6,23 @@
 //! that the lambda-dependent interaction scaling and `dH/dlambda` bookkeeping are
 //! consistent with the solvent templates in that crate.
 
+use std::{collections::HashSet, f64::consts::LN_10, path::Path};
+
 use bio_files::gromacs::OutputControl;
 use dynamics::{
     ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit,
     Solvent, TAU_TEMP_DEFAULT,
-    alchemical::{LambdaWindow, collect_window, free_energy_ti},
+    alchemical::{LambdaWindow, collect_window, free_energy_ti_with_sem},
     snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f32::Vec3;
-use std::f64::consts::LN_10;
-use std::{collections::HashSet, path::Path};
 
 use crate::{
     file_io::save_mol_set_as_gro,
     md::{MdBackend, build_dynamics, custom_solvents_to_mol_commons, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
+    properties::param_error,
     state::State,
     util::handle_success,
 };
@@ -121,20 +122,6 @@ fn build_cfg(phase: Phase) -> MdConfig {
     }
 }
 
-fn integrate_ti_sem(windows: &[LambdaWindow]) -> Option<f64> {
-    let mut variance = 0.0;
-
-    for pair in windows.windows(2) {
-        let delta_lambda = pair[1].lambda - pair[0].lambda;
-        let prefactor = 0.5 * delta_lambda;
-        let sem_0 = pair[0].sem_dh_dl?;
-        let sem_1 = pair[1].sem_dh_dl?;
-        variance += prefactor.powi(2) * (sem_0.powi(2) + sem_1.powi(2));
-    }
-
-    Some(variance.sqrt())
-}
-
 fn run_alchemical_window(
     mol: &MoleculeSmall,
     state: &State,
@@ -148,7 +135,7 @@ fn run_alchemical_window(
     let cfg = build_cfg(phase);
     let mut pep_atom_set = HashSet::new();
 
-    let dev = ComputationDevice::Cpu;
+    let dev = &state.dev;
     let (mut md, _) = build_dynamics(
         &dev,
         &mols,
@@ -160,9 +147,8 @@ fn run_alchemical_window(
         &mut pep_atom_set,
     )?;
 
-    // The solute is the first user-supplied molecule. Solvent and ions are appended later.
-    md.alchemical.mol_idx = Some(0);
-    md.alchemical.lambda = lambda;
+    md.configure_alchemical_window(&dev, 0, lambda)
+        .map_err(|e| param_error("Unable to configure LogP alchemical window", e))?;
 
     run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
     md.snapshots.clear();
@@ -174,7 +160,8 @@ fn run_alchemical_window(
         ));
     }
 
-    let window = collect_window(lambda, &md.snapshots).unwrap();
+    let window = collect_window(lambda, &md.snapshots)
+        .map_err(|e| param_error("Unable to collect LogP alchemical samples", e))?;
 
     println!(
         "Alchemical window complete: solvent={} lambda={lambda:.2} <dH/dlambda>={:.4} kcal/mol sem={}",
@@ -448,21 +435,21 @@ fn run_phase_free_energy(
         windows.push(run_alchemical_window(mol, state, phase, lambda)?);
     }
 
-    let dg_kcal_mol = free_energy_ti(&windows).unwrap();
-    let dg_sem_kcal_mol = integrate_ti_sem(&windows);
+    let ti = free_energy_ti_with_sem(&windows)
+        .map_err(|e| param_error("Unable to integrate LogP alchemical windows", e))?;
 
     println!(
         "TI complete for {}: dG={:.4} kcal/mol sem={}",
         phase.name(),
-        dg_kcal_mol,
-        dg_sem_kcal_mol
+        ti.dg_kcal_mol,
+        ti.dg_sem_kcal_mol
             .map(|v| format!("{v:.4}"))
             .unwrap_or_else(|| "n/a".to_string())
     );
 
     Ok(FreeEnergyEstimate {
-        dg_kcal_mol,
-        dg_sem_kcal_mol,
+        dg_kcal_mol: ti.dg_kcal_mol,
+        dg_sem_kcal_mol: ti.dg_sem_kcal_mol,
         windows,
     })
 }
@@ -540,7 +527,7 @@ pub fn run_alchemical(
 ///
 /// Both `dg_water` and `dg_octanol` should be the decoupling free energies
 /// (ΔG for turning off solute–solvent interactions), in kcal/mol, obtained from
-/// [`free_energy_ti`] run in each solvent.
+/// [`dynamics::alchemical::free_energy_ti`] run in each solvent.
 ///
 /// ```text
 /// LogP = (ΔG_octanol − ΔG_water) / (2.303 · R · T)
@@ -564,29 +551,9 @@ pub fn log_p(dg_water: f64, dg_octanol: f64, temperature_k: f64) -> f64 {
 pub fn run(
     mol: &MoleculeSmall,
     state: &mut State,
-    _scene: &mut Scene,
-    _updates: &mut EngineUpdates,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
-    println!("Starting LogP MD simulation...");
-
-    if state.to_save.md_backend != MdBackend::Dynamics {
-        println!(
-            "LogP alchemical free energy currently runs on the built-in dynamics backend (CPU), ignoring the active non-dynamics backend for this workflow."
-        );
-    }
-
-    // todo: Temp: Building a new sim box
-
-    handle_success(
-        &mut state.ui,
-        "Running alchemical free-energy windows for water and octanol...".to_string(),
-    );
-
-    println!("Running LogP MD for water...");
-    let water = run_drag(mol, state, Phase::Water)?;
-
-    println!("Running LogP MD for octanol...");
-    let octanol = run_drag(mol, state, Phase::Octanol)?;
-
-    Ok(0.)
+    println!("Starting LogP alchemical free-energy simulation...");
+    run_alchemical(mol, state, scene, updates)
 }

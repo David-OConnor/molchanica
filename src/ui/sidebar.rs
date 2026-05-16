@@ -4,7 +4,6 @@ use egui::{Color32, RichText, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
-use crate::properties::water_sol;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -17,7 +16,7 @@ use crate::{
     },
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon},
-    properties::{crystal, logp, mol_characterization::MolCharacterization},
+    properties::{crystal, logp, mol_characterization::MolCharacterization, water_sol},
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     state::{OperatingMode, PopupState, State},
     ui::{

@@ -16,7 +16,7 @@ use bio_files::{
 };
 use dynamics::{
     BarostatCfg, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MolDynamics,
-    ParamError, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    ParamError, SimBoxInit, Solvent, TAU_TEMP_DEFAULT, alchemical,
     params::FfParamSet,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
@@ -25,7 +25,7 @@ use lin_alg::f32::Vec3;
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
     molecules::small::MoleculeSmall,
-    properties::mol_characterization::MolCharacterization,
+    properties::{io_error, mol_characterization::MolCharacterization},
 };
 
 // todo: Consider making this dynamic once basic functionality in this module works. I.e., run until
@@ -84,7 +84,9 @@ pub struct CrystalDataMdProperties {
     pub volume_per_molecule_a3: f32,
     pub potential_energy_per_mol_kcal: f32,
     pub nonbonded_energy_per_mol_kcal: f32,
-    /// Inter-molecular non-bonded energy per molecule. More negative means stronger cohesion.
+    /// Inter-molecular non-bonded energy per molecule. Dynamics snapshots use alchemical
+    /// fully-coupled interaction bookkeeping; GROMACS snapshots fall back to pair energies.
+    /// More negative means stronger cohesion.
     pub cohesive_energy_per_mol_kcal: f32,
     pub mean_pair_interaction_kcal: f32,
     pub nearest_neighbor_distance_a: f32,
@@ -575,7 +577,7 @@ fn add_md_metrics(
 
     let mut potentials = Vec::new();
     let mut nonbonded = Vec::new();
-    let mut cohesive = Vec::new();
+    let mut pair_cohesive = Vec::new();
     let mut pair_interactions = Vec::new();
     let mut pressures = Vec::new();
     let mut temperatures = Vec::new();
@@ -599,14 +601,16 @@ fn add_md_metrics(
         if let Some((cohesive_per_mol, mean_pair)) =
             cohesive_energy_from_matrix(&e.energy_potential_between_mols, n_mol)
         {
-            cohesive.push(cohesive_per_mol);
+            pair_cohesive.push(cohesive_per_mol);
             pair_interactions.push(mean_pair);
         }
     }
 
     metrics.potential_energy_per_mol_kcal = mean(&potentials).unwrap_or(0.0);
     metrics.nonbonded_energy_per_mol_kcal = mean(&nonbonded).unwrap_or(0.0);
-    metrics.cohesive_energy_per_mol_kcal = mean(&cohesive).unwrap_or(0.0);
+    metrics.cohesive_energy_per_mol_kcal = alchemical::mean_coupled_interaction_kcal(snaps)
+        .or_else(|| mean(&pair_cohesive))
+        .unwrap_or(0.0);
     metrics.mean_pair_interaction_kcal = mean(&pair_interactions).unwrap_or(0.0);
     // metrics.mean_pressure_bar = mean(&pressures);
     // metrics.mean_temperature_k = mean(&temperatures);
@@ -737,6 +741,9 @@ fn run_crystal_dynamics(
         &mut HashSet::new(),
     )
     .map_err(param_err)?;
+
+    md.configure_alchemical_window(dev, 0, 0.)
+        .map_err(|e| io_error("Unable to configure crystal alchemical bookkeeping", e))?;
 
     run_dynamics_blocking(&mut md, &dev, DT, NUM_STEPS);
 

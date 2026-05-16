@@ -16,6 +16,7 @@ use bio_files::{
 use dynamics::{
     BarostatCfg, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError,
     SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    alchemical::mean_coupled_interaction_kcal,
     params::FfParamSet,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
@@ -25,7 +26,7 @@ use na_seq::Element;
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
-    properties::mol_characterization::MolCharacterization,
+    properties::{io_error, mol_characterization::MolCharacterization},
 };
 
 const NUM_STEPS: usize = 5_000;
@@ -549,7 +550,6 @@ fn add_md_metrics(
 
     let mut potentials = Vec::new();
     let mut nonbonded = Vec::new();
-    let mut solute_water_interactions = Vec::new();
     let mut pressures = Vec::new();
     let mut temperatures = Vec::new();
     let mut densities = Vec::new();
@@ -571,12 +571,6 @@ fn add_md_metrics(
             temperatures.push(e.temperature);
             densities.push(e.density * AMU_A3_TO_G_CM3);
             volumes.push(e.volume);
-
-            if let Some(dh_dl) = e.dh_dl {
-                if dh_dl != 0.0 {
-                    solute_water_interactions.push(-dh_dl);
-                }
-            }
         }
 
         let water_metrics = analyze_snapshot_water_contacts(mol, snap, cell_extent);
@@ -601,7 +595,7 @@ fn add_md_metrics(
 
     metrics.potential_energy_kcal = mean(&potentials).unwrap_or(0.0);
     metrics.nonbonded_energy_kcal = mean(&nonbonded).unwrap_or(0.0);
-    metrics.solute_water_interaction_kcal = mean(&solute_water_interactions).unwrap_or(0.0);
+    metrics.solute_water_interaction_kcal = mean_coupled_interaction_kcal(snaps).unwrap_or(0.0);
     metrics.mean_pressure_bar = mean(&pressures).unwrap_or(0.0);
     metrics.mean_temperature_k = mean(&temperatures).unwrap_or(0.0);
     metrics.density_g_cm3 = mean(&densities).unwrap_or(0.0);
@@ -691,10 +685,14 @@ fn run_water_dynamics(
 
     println!("MD WATER COUNT: {}", md.water.len()); // todo temp
 
-    // Keep the solute fully coupled, but enable interaction bookkeeping so snapshots
-    // can report molecule-water attraction through dh/d_lambda.
-    md.alchemical.mol_idx = Some(0);
-    md.alchemical.lambda = 0.0;
+    // Keep the solute fully coupled, but enable alchemical interaction bookkeeping
+    // through Dynamics so snapshots can report molecule-water attraction.
+    md.configure_alchemical_window(dev, 0, 0.).map_err(|e| {
+        io_error(
+            "Unable to configure water-solvation alchemical bookkeeping",
+            e,
+        )
+    })?;
 
     run_dynamics_blocking(&mut md, &dev, DT, NUM_STEPS);
 
