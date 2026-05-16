@@ -1198,7 +1198,7 @@ fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) {
                     .min_col_width(120.)
                     .spacing([COL_SPACING, 4.])
                     .show(ui, |ui| {
-                        for (smiles, meta) in &entries {
+                        for (_smiles, meta) in &entries {
                             match meta.pubchem_cid {
                                 Some(cid) => {
                                     label!(ui, cid.to_string(), Color32::LIGHT_BLUE)

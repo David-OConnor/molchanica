@@ -622,15 +622,6 @@ pub(in crate::ui) fn sidebar(
                         let mol = state.get_small(active_mol.1).cloned();
 
                         if let Some(mol) = mol {
-                            // match crystal::estimate_from_properties(&mol) {
-                            //     Ok(v) => println!("Crystal properties result: {v:?}"),
-                            //     Err(e) => handle_err(
-                            //         &mut state.ui,
-                            //         format!("Error running the crystal properties: {e:?}"),
-                            //     ),
-                            // }
-
-                            // todo: Temp analyhtic
                             // todo: for testing, let the UI control this.
                             match crystal::estimate_from_md(&mol, state.to_save.md_backend, &state.dev) {
                                 Ok((data, snaps)) => {

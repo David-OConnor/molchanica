@@ -1,7 +1,7 @@
 //! For, using MD for example, assess a molecule's properties in water, including
 //! its affinity for the water. This can be used, for example, in contrast with its self-affinity,
 //! or affinity for other solvents.
-#![allow(dead_code)]
+//!
 
 use std::{
     collections::{HashMap, HashSet},
@@ -28,7 +28,7 @@ use crate::{
     properties::mol_characterization::MolCharacterization,
 };
 
-const NUM_STEPS: usize = 2_000;
+const NUM_STEPS: usize = 5_000;
 const SNAPSHOT_INTERVAL: usize = 10;
 const TEMPERATURE: f32 = 300.; // K. todo: Set A/R
 const PRESSURE: f32 = 1.; // Bar. todo: A/R.
@@ -134,24 +134,6 @@ struct SnapshotWaterMetrics {
 
 fn param_err(e: ParamError) -> io::Error {
     io::Error::other(e.descrip)
-}
-
-fn characterization(mol: &MoleculeSmall) -> MolCharacterization {
-    match &mol.characterization {
-        Some(v) => v.clone(),
-        None => MolCharacterization::new(&mol.common),
-    }
-}
-
-fn validate_mol(mol: &MoleculeSmall) -> io::Result<()> {
-    if mol.common.atoms.is_empty() {
-        return Err(io::Error::new(
-            ErrorKind::InvalidInput,
-            "Water-solvation estimates require a molecule with at least one atom.",
-        ));
-    }
-
-    Ok(())
 }
 
 fn property_terms(char: &MolCharacterization) -> PropertyTerms {
@@ -265,8 +247,6 @@ fn prepare_mol_for_md(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
 ) -> io::Result<(MoleculeSmall, HashMap<String, ForceFieldParams>)> {
-    validate_mol(mol)?;
-
     let Some(gaff2) = param_set.small_mol.as_ref() else {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
@@ -539,6 +519,7 @@ fn analyze_snapshot_water_contacts(
     metrics
 }
 
+/// This is what we use to collect properties on self-affinity after the MD run.
 fn add_md_metrics(
     data: &mut WaterSolData,
     char: &MolCharacterization,
@@ -712,8 +693,8 @@ fn run_water_dynamics(
 
     // Keep the solute fully coupled, but enable interaction bookkeeping so snapshots
     // can report molecule-water attraction through dh/dlambda.
-    md.alch_mol_idx = Some(0);
-    md.lambda_alch = 0.0;
+    md.alchemical.mol_idx = Some(0);
+    md.alchemical.lambda = 0.0;
 
     run_dynamics_blocking(&mut md, &dev, DT, NUM_STEPS);
 
@@ -785,11 +766,13 @@ pub fn estimate_from_md(
     backend: MdBackend,
     dev: &ComputationDevice,
 ) -> io::Result<(WaterSolData, Vec<Snapshot>)> {
-    validate_mol(mol)?;
-
     let param_set = FfParamSet::new_amber()?;
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
-    let char = characterization(&mol);
+    let Some(char) = &mol.characterization else {
+        return Err(io::Error::other(
+            "Char missing when estimating crystal data",
+        ));
+    };
 
     println!(
         "Water-solvation MD setup ({backend}): OPC water, sim box pad from dynamics, one solute copy"
@@ -805,15 +788,4 @@ pub fn estimate_from_md(
             "Water-solvation MD estimation supports the Dynamics and GROMACS backends.",
         )),
     }
-}
-
-/// Attempts to infer water-solvation properties based on properties of the molecule, and
-/// other analytic or fast approaches which don't involve ML or MD.
-pub fn estimate_from_properties(mol: &MoleculeSmall) -> io::Result<WaterSolData> {
-    validate_mol(mol)?;
-
-    let char = characterization(mol);
-    let res = water_sol_data_from_properties(&char, WaterSolEstimateSource::Properties);
-
-    Ok(res)
 }

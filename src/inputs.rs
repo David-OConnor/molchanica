@@ -720,7 +720,7 @@ fn handle_scroll(
     redraw_in_place: &mut RedrawFlags,
     delta: MouseScrollDelta,
 ) -> bool {
-    let mut scroll = match delta {
+    let scroll = match delta {
         MouseScrollDelta::LineDelta(_, y) => y,
         MouseScrollDelta::PixelDelta(p) => p.y as f32 / 120.,
     };

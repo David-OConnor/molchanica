@@ -105,9 +105,7 @@ pub(in crate::ui) fn dynamics_viewer(
 
                 let viewer = &state.volatile.md_local.viewer;
 
-                if !viewer.snapshots.is_empty()
-                    && let Some(set) = &viewer.get_active_mol_set()
-                {
+                if !viewer.snapshots.is_empty() && viewer.get_active_mol_set().is_some() {
                     t.push_str(&format!(
                         "Traj: {} Mol set: {}",
                         state.volatile.md_local.viewer.snapshots[0]
@@ -827,7 +825,7 @@ pub(in crate::ui) fn viewer_mol_set(
             let max_count = 5;
             for group in sorted_groups_display.iter().take(max_count) {
                 ui.horizontal(|ui| {
-                    let mut text = if group.mol_count > 1 {
+                    let text = if group.mol_count > 1 {
                         format!(
                             "{} ({} mols) | Atoms: {} Range: {}-{}",
                             group.ident,

@@ -6,17 +6,17 @@
 //! that the lambda-dependent interaction scaling and `dH/dlambda` bookkeeping are
 //! consistent with the solvent templates in that crate.
 
-use std::{collections::HashSet, path::Path};
-
 use bio_files::gromacs::OutputControl;
 use dynamics::{
     ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit,
     Solvent, TAU_TEMP_DEFAULT,
-    alchemical::{LambdaWindow, collect_window, free_energy_ti, log_p},
+    alchemical::{LambdaWindow, collect_window, free_energy_ti},
     snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f32::Vec3;
+use std::f64::consts::LN_10;
+use std::{collections::HashSet, path::Path};
 
 use crate::{
     file_io::save_mol_set_as_gro,
@@ -161,8 +161,8 @@ fn run_alchemical_window(
     )?;
 
     // The solute is the first user-supplied molecule. Solvent and ions are appended later.
-    md.alch_mol_idx = Some(0);
-    md.lambda_alch = lambda;
+    md.alchemical.mol_idx = Some(0);
+    md.alchemical.lambda = lambda;
 
     run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
     md.snapshots.clear();
@@ -174,7 +174,7 @@ fn run_alchemical_window(
         ));
     }
 
-    let window = collect_window(lambda, &md.snapshots);
+    let window = collect_window(lambda, &md.snapshots).unwrap();
 
     println!(
         "Alchemical window complete: solvent={} lambda={lambda:.2} <dH/dlambda>={:.4} kcal/mol sem={}",
@@ -419,6 +419,7 @@ fn run_drag(
         .mol_sets
         .len()
         .saturating_sub(1);
+
     state.volatile.md_local.viewer.mol_set_active = Some(new_set_i);
     state.volatile.md_local.replace_snaps(md.snapshots.clone());
     state.volatile.md_local.mol_dynamics = Some(md);
@@ -447,7 +448,7 @@ fn run_phase_free_energy(
         windows.push(run_alchemical_window(mol, state, phase, lambda)?);
     }
 
-    let dg_kcal_mol = free_energy_ti(&windows);
+    let dg_kcal_mol = free_energy_ti(&windows).unwrap();
     let dg_sem_kcal_mol = integrate_ti_sem(&windows);
 
     println!(
@@ -533,6 +534,29 @@ pub fn run_alchemical(
     handle_success(&mut state.ui, msg);
 
     Ok(logp_value)
+}
+
+/// Compute **LogP** from free energies in solvent and octanol.
+///
+/// Both `dg_water` and `dg_octanol` should be the decoupling free energies
+/// (ΔG for turning off solute–solvent interactions), in kcal/mol, obtained from
+/// [`free_energy_ti`] run in each solvent.
+///
+/// ```text
+/// LogP = (ΔG_octanol − ΔG_water) / (2.303 · R · T)
+/// ```
+///
+/// `temperature_k` is the simulation temperature in Kelvin (typically 298.15 K).
+///
+/// A positive LogP means the solute prefers octanol (lipophilic), i.e. the
+/// decoupling free energy is larger in octanol than in water.
+///
+/// # Panics
+pub fn log_p(dg_water: f64, dg_octanol: f64, temperature_k: f64) -> f64 {
+    const GAS_CONST_R_KCAL: f64 = 0.001_987_204_1; // kcal / (mol · K)
+
+    let rt = GAS_CONST_R_KCAL * temperature_k;
+    (dg_octanol - dg_water) / (LN_10 * rt)
 }
 
 /// We shall try different techniques. For example: Dragging a molecule across both boxes,

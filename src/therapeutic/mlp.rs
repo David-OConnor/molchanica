@@ -78,9 +78,7 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol_with_conformer(
 
     // -----
 
-    // todo: experimenting with cryhstral data. Here may be a temp place to compute it.
-    // todo: is thsi being re-computed for each property?
-    let crystal_data = crystal::estimate_from_properties(mol).unwrap();
+    // let crystal_data = crystal::estimate_from_properties(mol).unwrap();
 
     let mut result = vec![
         ln(c.num_atoms as f32),
@@ -128,34 +126,34 @@ pub(in crate::therapeutic) fn mlp_feats_from_mol_with_conformer(
         ln(c.psa_topo / c.asa_topo),
         // ln(c.wiener_index.unwrap_or(0) as f32),
         c.rings.len() as f32 * 6. / c.num_atoms as f32, // todo temp
-        // ln(c.greasiness),
+                                                        // ln(c.greasiness),
 
-        // pub struct CrystalData {
-        //     pub source: CrystalEstimateSource,
-        //     pub self_affinity_score: f32,
-        //     /// Higher means stronger crystal/self-binding pressure against dissolution.
-        //     pub crystal_solubility_penalty: f32,
-        //     /// Fast descriptor-only component of `self_affinity_score`.
-        //     pub property_self_affinity_score: f32,
-        //     /// Fast proxy for water affinity; useful as a competing term in solubility estimates.
-        //     pub water_affinity_proxy: f32,
-        //     pub h_bond_capacity: f32,
-        //     pub hydrophobicity: f32,
-        //     pub aromatic_stacking_propensity: f32,
-        //     pub flexibility_penalty: f32,
-        //     pub md_properties: Option<CrystalDataMdProperties>,
-        // }
+                                                        // pub struct CrystalData {
+                                                        //     pub source: CrystalEstimateSource,
+                                                        //     pub self_affinity_score: f32,
+                                                        //     /// Higher means stronger crystal/self-binding pressure against dissolution.
+                                                        //     pub crystal_solubility_penalty: f32,
+                                                        //     /// Fast descriptor-only component of `self_affinity_score`.
+                                                        //     pub property_self_affinity_score: f32,
+                                                        //     /// Fast proxy for water affinity; useful as a competing term in solubility estimates.
+                                                        //     pub water_affinity_proxy: f32,
+                                                        //     pub h_bond_capacity: f32,
+                                                        //     pub hydrophobicity: f32,
+                                                        //     pub aromatic_stacking_propensity: f32,
+                                                        //     pub flexibility_penalty: f32,
+                                                        //     pub md_properties: Option<CrystalDataMdProperties>,
+                                                        // }
 
-        // todo: Ideally, we only use these cyrstal data things for specific
-        // todo properties, e.g. solubility
-        // todo: It seems `flexibility_penalty` and `hydrophobicity` have
-        // todo a notable negative correlation with solubility. But a very noisy one.
-        crystal_data.flexibility_penalty,
-        crystal_data.hydrophobicity,
-        // crystal_data.crystal_solubility_penalty,
-        // crystal_data.property_self_affinity_score,
-        // crystal_data.water_affinity_proxy,
-        // todo: Experimenting with crystal data
+                                                        // todo: Ideally, we only use these cyrstal data things for specific
+                                                        // todo properties, e.g. solubility
+                                                        // todo: It seems `flexibility_penalty` and `hydrophobicity` have
+                                                        // todo a notable negative correlation with solubility. But a very noisy one.
+                                                        // crystal_data.flexibility_penalty,
+                                                        // crystal_data.hydrophobicity,
+                                                        // crystal_data.crystal_solubility_penalty,
+                                                        // crystal_data.property_self_affinity_score,
+                                                        // crystal_data.water_affinity_proxy,
+                                                        // todo: Experimenting with crystal data
     ];
 
     if conformation_enabled {

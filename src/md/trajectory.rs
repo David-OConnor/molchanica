@@ -13,7 +13,7 @@ use std::{
 use bio_files::{
     FrameSlice,
     dcd::{DcdMetadata, read_dcd},
-    gromacs::output::{TrrMetadata, read_trr},
+    gromacs::trr::{TrrMetadata, read_trr},
     xtc::{XtcMetadata, read_xtc},
 };
 use dynamics::snapshot::Snapshot;

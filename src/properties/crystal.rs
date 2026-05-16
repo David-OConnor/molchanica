@@ -2,7 +2,6 @@
 //! for measuring self-affinity, for example, for the purposes of assessing solubility in water, or other
 //! solvents. It models and infers properties about how, for example, a drug-like molecule
 //! might exist as a crystalline powder.
-#![allow(dead_code)]
 
 use std::{
     collections::{HashMap, HashSet},
@@ -132,24 +131,6 @@ struct PropertyTerms {
 
 fn param_err(e: ParamError) -> io::Error {
     io::Error::other(e.descrip)
-}
-
-fn characterization(mol: &MoleculeSmall) -> MolCharacterization {
-    match &mol.characterization {
-        Some(v) => v.clone(),
-        None => MolCharacterization::new(&mol.common),
-    }
-}
-
-fn validate_mol(mol: &MoleculeSmall) -> io::Result<()> {
-    if mol.common.atoms.is_empty() {
-        return Err(io::Error::new(
-            ErrorKind::InvalidInput,
-            "Crystal estimates require a molecule with at least one atom.",
-        ));
-    }
-
-    Ok(())
 }
 
 fn property_terms(char: &MolCharacterization) -> PropertyTerms {
@@ -377,8 +358,6 @@ fn prepare_mol_for_md(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
 ) -> io::Result<(MoleculeSmall, HashMap<String, ForceFieldParams>)> {
-    validate_mol(mol)?;
-
     let Some(gaff2) = param_set.small_mol.as_ref() else {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
@@ -564,6 +543,7 @@ fn structural_metrics(
     )
 }
 
+/// This is what we use to collect properties on self-affinity after the MD run.
 fn add_md_metrics(
     data: &mut CrystalData,
     char: &MolCharacterization,
@@ -583,6 +563,7 @@ fn add_md_metrics(
     metrics.copy_count = n_mol;
     metrics.target_density_g_cm3 = setup.target_density_g_cm3;
     metrics.box_side_a = setup.box_side;
+
     // metrics.temperature_k = TEMPERATURE;
     // metrics.pressure_target_bar = PRESSURE;
 
@@ -656,21 +637,6 @@ fn add_md_metrics(
     data.md_properties = Some(metrics);
 }
 
-fn gromacs_crystal_mol_name(ident: &str) -> String {
-    let name: String = ident
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_uppercase())
-        .take(6)
-        .collect();
-
-    if name.is_empty() {
-        "CRYST".to_string()
-    } else {
-        name
-    }
-}
-
 fn gromacs_crystal_molecule_input(
     placed_mols: &[MolDynamics],
     ident: &str,
@@ -687,6 +653,7 @@ fn gromacs_crystal_molecule_input(
 
     let atom_count: usize = placed_mols.iter().map(|mol| mol.atoms.len()).sum();
     let bond_count: usize = placed_mols.iter().map(|mol| mol.bonds.len()).sum();
+
     let mut atoms = Vec::with_capacity(atom_count);
     let mut bonds = Vec::with_capacity(bond_count);
     let mut mol_start_indices = Vec::with_capacity(placed_mols.len());
@@ -738,7 +705,7 @@ fn gromacs_crystal_molecule_input(
 
     Ok((
         MoleculeInput {
-            name: gromacs_crystal_mol_name(ident),
+            name: ident.to_owned(),
             atoms,
             bonds,
             ff_params: Some(ff_params),
@@ -803,6 +770,7 @@ fn run_crystal_gromacs(
 ) -> io::Result<(CrystalData, Vec<Snapshot>)> {
     let cfg = build_gromacs_md_cfg(setup.box_side);
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, setup.copy_count)];
+
     let (placed_mols, _) = setup_mols_dyn(
         &mols,
         mol_specific_params,
@@ -821,6 +789,7 @@ fn run_crystal_gromacs(
     setup.copy_count = placed_mols.len();
     let (mol_input, mol_start_indices) =
         gromacs_crystal_molecule_input(&placed_mols, &mol.common.ident)?;
+
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
     let input = crate::gromacs::make_gromacs_input(
         mdp,
@@ -857,6 +826,7 @@ fn run_crystal_gromacs(
         .unwrap_or_default();
     let cell_extent = Vec3::new(setup.box_side, setup.box_side, setup.box_side);
     let mut data = crystal_data_from_properties(char, CrystalEstimateSource::MolecularDynamics);
+
     add_md_metrics(
         &mut data,
         char,
@@ -878,17 +848,22 @@ pub fn estimate_from_md(
     backend: MdBackend,
     dev: &ComputationDevice,
 ) -> io::Result<(CrystalData, Vec<Snapshot>)> {
-    validate_mol(mol)?;
-
     let param_set = FfParamSet::new_amber()?;
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
-    let char = characterization(&mol);
+
+    let Some(char) = &mol.characterization else {
+        return Err(io::Error::other(
+            "Char missing when estimating crystal data",
+        ));
+    };
+
     let setup = crystal_md_setup(&mol, &char);
 
     println!(
         "Crystal MD setup ({backend}): density target {:.2} g/cm^3, box side {:.1} A, copies {}",
         setup.target_density_g_cm3, setup.box_side, setup.copy_count
     );
+
     if setup.copy_count < setup.requested_copy_count {
         println!(
             "Crystal MD setup: capped density-derived copies from {} to {} to keep packing \
@@ -909,21 +884,4 @@ pub fn estimate_from_md(
             "Crystal MD estimation supports the Dynamics and GROMACS backends.",
         )),
     }
-}
-
-/// Attempts to infer crystal properties based on properties of the molecule, and other analytic or
-/// fast approaches which don't involve ML or MD.
-pub fn estimate_from_properties(mol: &MoleculeSmall) -> io::Result<CrystalData> {
-    // let start = Instant::now();
-    validate_mol(mol)?;
-
-    let char = characterization(mol);
-
-    let res = crystal_data_from_properties(&char, CrystalEstimateSource::Properties);
-
-    // todo: Too fast to need to log this.
-    // let elapsed = start.elapsed().as_micros();
-    // println!("\nEstimated crystal data from properties in {elapsed} μs");
-
-    Ok(res)
 }
