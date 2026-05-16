@@ -5,6 +5,7 @@ use std::{
 };
 
 use lin_alg::f64::Vec3;
+use na_seq::Element;
 use na_seq::Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur};
 use rayon::prelude::*;
 
@@ -18,13 +19,11 @@ const H_BOND_O_N_DIST: f64 = 2.9;
 
 const H_BOND_N_F_DIST: f64 = 2.75;
 const H_BOND_N_S_DIST: f64 = 3.35;
-// const H_BOND_S_O_DIST: f64 = 3.35;
-// const H_BOND_S_F_DIST: f64 = 3.2; // rarate
 
-const H_BOND_DIST_THRESH: f64 = 0.3;
+pub const H_BOND_DIST_THRESH: f64 = 0.3;
 const H_BOND_DIST_GRID: f64 = 3.6;
 
-const H_BOND_ANGLE_THRESH: f64 = TAU / 3.;
+pub const H_BOND_ANGLE_THRESH: f64 = TAU / 3.;
 
 // H-bond strength scoring: distance and angle ranges.
 const H_BOND_STRENGTH_DIST_MIN: f64 = 2.4; // Å — strongest
@@ -45,6 +44,59 @@ fn h_bond_candidate_el(atom: &Atom) -> bool {
     matches!(atom.element, Nitrogen | Oxygen | Sulfur | Fluorine)
 }
 
+pub fn h_bond_dist_thresh(d_e: Element, a_e: Element) -> f64 {
+    if d_e == Oxygen && a_e == Oxygen {
+        H_BOND_O_O_DIST
+    } else if d_e == Nitrogen && a_e == Nitrogen {
+        H_BOND_N_N_DIST
+    } else if (d_e == Oxygen && a_e == Nitrogen) || (d_e == Nitrogen && a_e == Oxygen) {
+        H_BOND_O_N_DIST
+    } else if (d_e == Fluorine && a_e == Nitrogen) || (d_e == Nitrogen && a_e == Fluorine) {
+        H_BOND_N_F_DIST
+    } else {
+        H_BOND_N_S_DIST // Good enough for other combos involving S and F, for now.
+    }
+}
+
+/// Returns `Some(strength)` if the donor / hydrogen / acceptor geometry satisfies the
+/// standard H-bond distance and angle criteria; otherwise `None`. Positions are used
+/// as-is — callers needing periodic minimum-image correction must apply it first.
+pub fn h_bond_geometry_strength(
+    donor_heavy_posit: Vec3,
+    donor_h_posit: Vec3,
+    acc_posit: Vec3,
+    donor_element: Element,
+    acceptor_element: Element,
+    relaxed_dist_thresh: bool,
+) -> Option<f32> {
+    // todo: Take into account typical lengths of donor and receptor; here your order isn't used.
+    let dist_thresh = h_bond_dist_thresh(donor_element, acceptor_element);
+
+    let modifier = if relaxed_dist_thresh {
+        H_BOND_DIST_THRESH * 2.
+    } else {
+        H_BOND_DIST_THRESH
+    };
+
+    let dist = (acc_posit - donor_heavy_posit).magnitude();
+    if dist < dist_thresh - modifier || dist > dist_thresh + modifier {
+        return None;
+    }
+
+    let donor_h = donor_h_posit - donor_heavy_posit;
+    let donor_acceptor = donor_heavy_posit - acc_posit;
+    let angle = donor_acceptor
+        .to_normalized()
+        .dot(donor_h.to_normalized())
+        .acos();
+
+    if angle <= H_BOND_ANGLE_THRESH {
+        return None;
+    }
+
+    Some(h_bond_strength(donor_heavy_posit, donor_h_posit, acc_posit))
+}
+
 fn hydrogen_bond_inner(
     donor_heavy: &Atom,
     donor_heavy_posit: Vec3,
@@ -56,52 +108,16 @@ fn hydrogen_bond_inner(
     acc_i: usize,
     relaxed_dist_thresh: bool,
 ) -> Option<HydrogenBond> {
-    let d_e = donor_heavy.element; // Cleans up the verbose code below.
-    let a_e = acc_candidate.element;
-    // todo: Take into account typical lenghs of donor and receptor; here your order isn't used.
-    let dist_thresh = if d_e == Oxygen && a_e == Oxygen {
-        H_BOND_O_O_DIST
-    } else if d_e == Nitrogen && a_e == Nitrogen {
-        H_BOND_N_N_DIST
-    } else if (d_e == Oxygen && a_e == Nitrogen) || (d_e == Nitrogen && a_e == Oxygen) {
-        H_BOND_O_N_DIST
-    } else if (d_e == Fluorine && a_e == Nitrogen) || (d_e == Nitrogen && a_e == Fluorine) {
-        H_BOND_N_F_DIST
-    } else {
-        H_BOND_N_S_DIST // Good enough for other combos involving S and F, for now.
-    };
-
-    let modifier = if relaxed_dist_thresh {
-        H_BOND_DIST_THRESH * 2.
-    } else {
-        H_BOND_DIST_THRESH
-    };
-
-    let dist_thresh_min = dist_thresh - modifier;
-    let dist_thresh_max = dist_thresh + modifier;
-
-    let dist = (acc_candidate_posit - donor_heavy_posit).magnitude();
-    if dist < dist_thresh_min || dist > dist_thresh_max {
-        return None;
-    }
-
-    let angle = {
-        let donor_h = donor_h_posit - donor_heavy_posit;
-        let donor_acceptor = donor_heavy_posit - acc_candidate_posit;
-
-        donor_acceptor
-            .to_normalized()
-            .dot(donor_h.to_normalized())
-            .acos()
-    };
-
-    if angle > H_BOND_ANGLE_THRESH {
-        let strength = h_bond_strength(donor_heavy_posit, donor_h_posit, acc_candidate_posit);
-        // Note: Assumes one way.
-        Some(HydrogenBond::new(donor_heavy_i, acc_i, donor_h_i, strength))
-    } else {
-        None
-    }
+    let strength = h_bond_geometry_strength(
+        donor_heavy_posit,
+        donor_h_posit,
+        acc_candidate_posit,
+        donor_heavy.element,
+        acc_candidate.element,
+        relaxed_dist_thresh,
+    )?;
+    // Note: Assumes one way.
+    Some(HydrogenBond::new(donor_heavy_i, acc_i, donor_h_i, strength))
 }
 
 type AcceptorGrid<'a> = HashMap<(i32, i32, i32), Vec<(usize, &'a Atom, Vec3)>>;

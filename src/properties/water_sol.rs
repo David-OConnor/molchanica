@@ -23,6 +23,9 @@ use dynamics::{
 use lin_alg::f32::Vec3;
 use na_seq::Element;
 
+use crate::bond_inference::h_bond_geometry_strength;
+use crate::properties::water_sol_analytic;
+use crate::properties::water_sol_analytic::WaterSolAnalyticProps;
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
@@ -37,17 +40,6 @@ const DT: f32 = 0.002; // ps
 
 const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 const FIRST_HYDRATION_SHELL_CUTOFF_A: f32 = 3.6;
-
-const H_BOND_O_O_DIST: f32 = 2.7;
-const H_BOND_N_N_DIST: f32 = 3.05;
-const H_BOND_O_N_DIST: f32 = 2.9;
-const H_BOND_N_F_DIST: f32 = 2.75;
-const H_BOND_N_S_DIST: f32 = 3.35;
-const H_BOND_DIST_THRESH: f32 = 0.3;
-const H_BOND_ANGLE_THRESH: f32 = std::f32::consts::TAU / 3.;
-const H_BOND_STRENGTH_DIST_MIN: f32 = 2.4;
-const H_BOND_STRENGTH_DIST_MAX: f32 = 3.6;
-const H_BOND_STRENGTH_ANGLE_MIN: f32 = std::f32::consts::PI * 2. / 3.;
 
 /// How the data was estimated.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,31 +87,9 @@ pub struct WaterSolDataMdProperties {
 #[derive(Clone, Debug)]
 pub struct WaterSolData {
     pub source: WaterSolEstimateSource,
-    pub water_affinity_score: f32,
-    /// Higher means the molecule is expected to be easier to hydrate or dissolve in water.
-    pub water_solubility_score: f32,
-    /// Fast descriptor-only component of `water_affinity_score`.
-    pub property_water_affinity_score: f32,
-    /// Higher means the molecule has hydrophobic or size-related resistance to hydration.
-    pub hydration_penalty: f32,
-    pub h_bond_capacity: f32,
-    pub polarity_score: f32,
-    pub hydrophobic_penalty: f32,
-    pub charge_affinity: f32,
-    pub tpsa_score: f32,
+    pub analytic_properties: WaterSolAnalyticProps,
     /// i.e., if the [slower] MD pipeline was run in addition to the analytic one.
     pub md_properties: Option<WaterSolDataMdProperties>,
-}
-
-struct PropertyTerms {
-    water_affinity: f32,
-    water_solubility: f32,
-    hydration_penalty: f32,
-    h_bond_capacity: f32,
-    polarity_score: f32,
-    hydrophobic_penalty: f32,
-    charge_affinity: f32,
-    tpsa_score: f32,
 }
 
 #[derive(Default)]
@@ -137,73 +107,15 @@ fn param_err(e: ParamError) -> io::Error {
     io::Error::other(e.descrip)
 }
 
-fn property_terms(char: &MolCharacterization) -> PropertyTerms {
-    let donors = char.h_bond_donor.len() as f32;
-    let acceptors = char.h_bond_acceptor.len() as f32;
-    let h_bond_capacity = donors + acceptors;
-
-    let tpsa_score = (char.tpsa_ertl / 90.0).clamp(0.0, 2.5);
-    let geom_psa_score = (char.psa_topo / 120.0).clamp(0.0, 1.5);
-    let hetero_score =
-        (char.num_hetero_atoms as f32 / char.num_heavy_atoms.max(1) as f32).clamp(0.0, 1.0);
-
-    let polarity_score = tpsa_score + geom_psa_score * 0.35 + hetero_score * 0.40;
-    let charge_affinity = char.abs_partial_charge_sum.unwrap_or_default() * 0.50
-        + char.net_partial_charge.unwrap_or_default().abs() * 0.40;
-
-    let hydrophobic_penalty = (char.log_p.max(0.0) * 0.35
-        + (char.greasiness / 6.0).clamp(0.0, 1.5) * 0.40
-        + char.hydrophobic_carbon.len() as f32 * 0.015)
-        .clamp(0.0, 3.5);
-
-    let size_penalty = (char.mol_weight / 550.0).clamp(0.0, 1.5) * 0.35
-        + (char.molar_refractivity / 120.0).clamp(0.0, 1.5) * 0.15;
-    let flexibility_penalty =
-        char.rotatable_bonds.len() as f32 * 0.04 + (char.flexibility / 12.0).clamp(0.0, 1.2);
-
-    let donor_score = donors.min(8.0) * 0.30;
-    let acceptor_score = acceptors.min(10.0) * 0.18;
-
-    let water_affinity = (polarity_score + donor_score + acceptor_score + charge_affinity
-        - hydrophobic_penalty * 0.45
-        - flexibility_penalty * 0.08)
-        .max(0.0);
-
-    let hydration_penalty = (hydrophobic_penalty + size_penalty + flexibility_penalty * 0.05
-        - polarity_score * 0.30)
-        .max(0.0);
-
-    let water_solubility = (water_affinity - hydration_penalty).max(0.0);
-
-    PropertyTerms {
-        water_affinity,
-        water_solubility,
-        hydration_penalty,
-        h_bond_capacity,
-        polarity_score,
-        hydrophobic_penalty,
-        charge_affinity,
-        tpsa_score,
-    }
-}
-
 fn water_sol_data_from_properties(
     char: &MolCharacterization,
     source: WaterSolEstimateSource,
 ) -> WaterSolData {
-    let terms = property_terms(char);
+    let analytic_properties = water_sol_analytic::property_terms(char);
 
     WaterSolData {
         source,
-        water_affinity_score: terms.water_affinity,
-        water_solubility_score: terms.water_solubility,
-        property_water_affinity_score: terms.water_affinity,
-        hydration_penalty: terms.hydration_penalty,
-        h_bond_capacity: terms.h_bond_capacity,
-        polarity_score: terms.polarity_score,
-        hydrophobic_penalty: terms.hydrophobic_penalty,
-        charge_affinity: terms.charge_affinity,
-        tpsa_score: terms.tpsa_score,
+        analytic_properties,
         md_properties: None,
     }
 }
@@ -308,41 +220,9 @@ fn h_bond_candidate_el(element: Element) -> bool {
     )
 }
 
-fn h_bond_dist_threshold(donor_element: Element, acceptor_element: Element) -> f32 {
-    if donor_element == Element::Oxygen && acceptor_element == Element::Oxygen {
-        H_BOND_O_O_DIST
-    } else if donor_element == Element::Nitrogen && acceptor_element == Element::Nitrogen {
-        H_BOND_N_N_DIST
-    } else if (donor_element == Element::Oxygen && acceptor_element == Element::Nitrogen)
-        || (donor_element == Element::Nitrogen && acceptor_element == Element::Oxygen)
-    {
-        H_BOND_O_N_DIST
-    } else if (donor_element == Element::Fluorine && acceptor_element == Element::Nitrogen)
-        || (donor_element == Element::Nitrogen && acceptor_element == Element::Fluorine)
-    {
-        H_BOND_N_F_DIST
-    } else {
-        H_BOND_N_S_DIST
-    }
-}
-
-fn h_bond_strength(donor_posit: Vec3, h_posit: Vec3, acc_posit: Vec3) -> f32 {
-    let dist = (donor_posit - acc_posit).magnitude();
-    let dist_score = ((H_BOND_STRENGTH_DIST_MAX - dist)
-        / (H_BOND_STRENGTH_DIST_MAX - H_BOND_STRENGTH_DIST_MIN))
-        .clamp(0., 1.);
-
-    let vec_hd = (donor_posit - h_posit).to_normalized();
-    let vec_ha = (acc_posit - h_posit).to_normalized();
-    let angle = vec_hd.dot(vec_ha).clamp(-1., 1.).acos();
-
-    let angle_score = ((angle - H_BOND_STRENGTH_ANGLE_MIN)
-        / (std::f32::consts::PI - H_BOND_STRENGTH_ANGLE_MIN))
-        .clamp(0., 1.);
-
-    dist_score * angle_score
-}
-
+/// Applies periodic minimum-image correction to the hydrogen and acceptor positions
+/// (relative to the donor heavy atom) and then defers to `bond_inference` for the
+/// distance/angle geometry test and strength scoring.
 fn h_bond_strength_if_present(
     donor_posit: Vec3,
     h_posit: Vec3,
@@ -351,31 +231,17 @@ fn h_bond_strength_if_present(
     acceptor_element: Element,
     cell_extent: Vec3,
 ) -> Option<f32> {
-    let dist_thresh = h_bond_dist_threshold(donor_element, acceptor_element);
-    let dist_thresh_min = dist_thresh - H_BOND_DIST_THRESH;
-    let dist_thresh_max = dist_thresh + H_BOND_DIST_THRESH;
+    let acc_imaged = donor_posit + min_image(acc_posit - donor_posit, cell_extent);
+    let h_imaged = donor_posit + min_image(h_posit - donor_posit, cell_extent);
 
-    let donor_acc = min_image(acc_posit - donor_posit, cell_extent);
-    let dist = donor_acc.magnitude();
-    if dist < dist_thresh_min || dist > dist_thresh_max {
-        return None;
-    }
-
-    let donor_h = min_image(h_posit - donor_posit, cell_extent);
-    let donor_acceptor = donor_acc * -1.0;
-
-    let angle = donor_acceptor
-        .to_normalized()
-        .dot(donor_h.to_normalized())
-        .clamp(-1., 1.)
-        .acos();
-
-    if angle <= H_BOND_ANGLE_THRESH {
-        return None;
-    }
-
-    let acc_imaged = donor_posit + donor_acc;
-    Some(h_bond_strength(donor_posit, h_posit, acc_imaged))
+    h_bond_geometry_strength(
+        donor_posit.into(),
+        h_imaged.into(),
+        acc_imaged.into(),
+        donor_element,
+        acceptor_element,
+        false,
+    )
 }
 
 fn solute_donor_candidates(
@@ -619,9 +485,12 @@ fn add_md_metrics(
     let shell_score = metrics.first_shell_water_per_heavy_atom.clamp(0.0, 3.0) * 0.30;
 
     let md_water_affinity = interaction_score + h_bond_score + shell_score;
-    data.water_affinity_score = (data.property_water_affinity_score + md_water_affinity).max(0.0);
-    data.water_solubility_score =
-        (data.water_affinity_score - data.hydration_penalty * 0.55).max(0.0);
+
+    data.analytic_properties.water_affinity =
+        (data.analytic_properties.property_water_affinity_score + md_water_affinity).max(0.0);
+    data.analytic_properties.water_solubility = (data.analytic_properties.water_affinity
+        - data.analytic_properties.hydration_penalty * 0.55)
+        .max(0.0);
 
     data.md_properties = Some(metrics);
 }
@@ -682,8 +551,6 @@ fn run_water_dynamics(
         &mut HashSet::new(),
     )
     .map_err(param_err)?;
-
-    println!("MD WATER COUNT: {}", md.water.len()); // todo temp
 
     // Keep the solute fully coupled, but enable alchemical interaction bookkeeping
     // through Dynamics so snapshots can report molecule-water attraction.

@@ -10,6 +10,7 @@ pub mod ionization;
 pub mod logp;
 pub mod mol_characterization;
 pub mod water_sol;
+mod water_sol_analytic;
 mod water_sol_mix;
 
 // todo: A/R
