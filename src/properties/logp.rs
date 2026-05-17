@@ -191,15 +191,15 @@ fn run_phase_free_energy(
     println!(
         "TI complete for {}: dG={:.4} kcal/mol sem={}",
         phase.name(),
-        ti.dg_kcal_mol,
-        ti.dg_sem_kcal_mol
+        ti.ti_free_energy,
+        ti.standard_error
             .map(|v| format!("{v:.4}"))
             .unwrap_or_else(|| "n/a".to_string())
     );
 
     Ok(FreeEnergyEstimate {
-        dg_kcal_mol: ti.dg_kcal_mol,
-        dg_sem_kcal_mol: ti.dg_sem_kcal_mol,
+        dg_kcal_mol: ti.ti_free_energy,
+        dg_sem_kcal_mol: ti.standard_error,
         windows,
     })
 }

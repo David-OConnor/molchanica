@@ -32,18 +32,23 @@ use crate::{
     properties::{io_error, mol_characterization::MolCharacterization},
 };
 
-const STRUCTURAL_STEPS: usize = 5_000;
+// todo: Set higher once confident this works.
+const NUM_STEPS: usize = 2_000;
 const SNAPSHOT_INTERVAL: usize = 10;
-const TEMPERATURE: f32 = 300.; // K. todo: Set A/R
-const PRESSURE: f32 = 1.; // Bar. todo: A/R.
+const TEMPERATURE: f32 = 300.; // K.
+const PRESSURE: f32 = 1.; // Bar.
 const DT: f32 = 0.002; // ps
 
+// TI: thermodynamic integration.
 // Free-energy settings. These are still short for production scientific work,
 // but they are long enough to collect a real TI estimate instead of a single
 // lambda=0 interaction proxy. Downstream consumers should inspect the SEM and window data.
 const HYDRATION_TI_BOX_SIZE_A: f32 = 35.0;
 const HYDRATION_TI_EQUIL_STEPS_PER_WINDOW: usize = 5_000;
 const HYDRATION_TI_PROD_STEPS_PER_WINDOW: usize = 20_000;
+const HYDRATION_TI_RETRY_DTS: &[f32] = &[DT, DT * 0.5, DT * 0.25];
+
+// These range from 0 (full interaction between solute and solvent) to 1 (no interaction).
 const HYDRATION_TI_LAMBDAS: &[f64] = &[
     0.0, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 1.0,
 ];
@@ -115,6 +120,12 @@ struct SnapshotWaterMetrics {
     nearest_water_o_distance_a: Option<f32>,
     first_shell_water_count: f32,
     first_shell_water_o_distance_sum: f32,
+}
+
+struct HydrationTiRun {
+    window: LambdaWindow,
+    snapshots: Vec<Snapshot>,
+    cell_extent: Vec3,
 }
 
 fn param_err(e: ParamError) -> io::Error {
@@ -216,11 +227,17 @@ fn prepare_mol_for_md(
 }
 
 fn mean(values: &[f32]) -> Option<f32> {
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.iter().sum::<f32>() / values.len() as f32)
+    let mut sum = 0.0;
+    let mut count = 0;
+
+    for &value in values {
+        if value.is_finite() {
+            sum += value;
+            count += 1;
+        }
     }
+
+    (count > 0).then_some(sum / count as f32)
 }
 
 fn min_image(mut delta: Vec3, extent: Vec3) -> Vec3 {
@@ -557,10 +574,10 @@ fn apply_hydration_free_energy(
     let ti = free_energy_ti_with_sem(&windows)
         .map_err(|e| io_error("Unable to integrate water-solvation alchemical windows", e))?;
 
-    data.alchemical_decoupling_free_energy_kcal_mol = Some(ti.dg_kcal_mol);
-    data.alchemical_decoupling_free_energy_sem_kcal_mol = ti.dg_sem_kcal_mol;
-    data.hydration_free_energy_kcal_mol = Some(-ti.dg_kcal_mol);
-    data.hydration_free_energy_sem_kcal_mol = ti.dg_sem_kcal_mol;
+    data.alchemical_decoupling_free_energy_kcal_mol = Some(ti.ti_free_energy);
+    data.alchemical_decoupling_free_energy_sem_kcal_mol = ti.standard_error;
+    data.hydration_free_energy_kcal_mol = Some(-ti.ti_free_energy);
+    data.hydration_free_energy_sem_kcal_mol = ti.standard_error;
     data.alchemical_windows = windows
         .iter()
         .map(water_sol_window_from_lambda_window)
@@ -569,13 +586,29 @@ fn apply_hydration_free_energy(
     Ok(())
 }
 
-fn run_hydration_ti_window(
+fn scaled_ti_steps(base_steps: usize, dt: f32) -> usize {
+    ((base_steps as f32) * (DT / dt)).round().max(1.0) as usize
+}
+
+fn collect_hydration_window(lambda: f64, snapshots: &[Snapshot]) -> io::Result<LambdaWindow> {
+    collect_window(lambda, snapshots).map_err(|e| {
+        io_error(
+            "Unable to collect water-solvation alchemical free-energy samples",
+            e,
+        )
+    })
+}
+
+/// Run MD for thermodynamic integration at a specific lambda and keep the production
+/// snapshots. The lambda=0 call is also used for water-contact descriptors and viewing.
+fn run_hydration_ti_window_once(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     dev: &ComputationDevice,
     lambda: f64,
-) -> io::Result<LambdaWindow> {
+    dt: f32,
+) -> io::Result<HydrationTiRun> {
     let cfg = build_hydration_ti_cfg();
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
 
@@ -599,9 +632,19 @@ fn run_hydration_ti_window(
             )
         })?;
 
-    run_dynamics_blocking(&mut md, dev, DT, HYDRATION_TI_EQUIL_STEPS_PER_WINDOW);
+    run_dynamics_blocking(
+        &mut md,
+        dev,
+        dt,
+        scaled_ti_steps(HYDRATION_TI_EQUIL_STEPS_PER_WINDOW, dt),
+    );
     md.snapshots.clear();
-    run_dynamics_blocking(&mut md, dev, DT, HYDRATION_TI_PROD_STEPS_PER_WINDOW);
+    run_dynamics_blocking(
+        &mut md,
+        dev,
+        dt,
+        scaled_ti_steps(HYDRATION_TI_PROD_STEPS_PER_WINDOW, dt),
+    );
 
     if md.snapshots.is_empty() {
         return Err(io::Error::other(format!(
@@ -609,12 +652,44 @@ fn run_hydration_ti_window(
         )));
     }
 
-    collect_window(lambda, &md.snapshots).map_err(|e| {
-        io_error(
-            "Unable to collect water-solvation alchemical free-energy samples",
-            e,
-        )
+    let window = collect_hydration_window(lambda, &md.snapshots)?;
+
+    Ok(HydrationTiRun {
+        window,
+        snapshots: md.snapshots,
+        cell_extent: md.cell.extent,
     })
+}
+
+fn run_hydration_ti_window(
+    mol: &MoleculeSmall,
+    param_set: &FfParamSet,
+    mol_specific_params: &HashMap<String, ForceFieldParams>,
+    dev: &ComputationDevice,
+    lambda: f64,
+) -> io::Result<HydrationTiRun> {
+    let mut last_err = None;
+
+    for (attempt, &dt) in HYDRATION_TI_RETRY_DTS.iter().enumerate() {
+        if attempt > 0 {
+            println!(
+                "Retrying water-solvation lambda={lambda:.3} with smaller timestep dt={dt:.4} ps..."
+            );
+        }
+
+        match run_hydration_ti_window_once(mol, param_set, mol_specific_params, dev, lambda, dt) {
+            Ok(run) => return Ok(run),
+            Err(e) => {
+                last_err = Some(e);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::other(format!(
+            "Water-solvation alchemical window lambda={lambda:.3} failed before starting.",
+        ))
+    }))
 }
 
 fn run_hydration_free_energy_ti(
@@ -622,14 +697,22 @@ fn run_hydration_free_energy_ti(
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     dev: &ComputationDevice,
+    initial_lambda_zero: LambdaWindow,
 ) -> io::Result<Vec<LambdaWindow>> {
     let mut windows = Vec::with_capacity(HYDRATION_TI_LAMBDAS.len());
+    windows.push(initial_lambda_zero);
 
     for &lambda in HYDRATION_TI_LAMBDAS {
-        println!("Running water-solvation alchemical window lambda={lambda:.3}...");
-        let window = run_hydration_ti_window(mol, param_set, mol_specific_params, dev, lambda)?;
+        if lambda == 0.0 {
+            continue;
+        }
+
+        println!("\n------Running water-solvation at λ={lambda:.3}...");
+        let run = run_hydration_ti_window(mol, param_set, mol_specific_params, dev, lambda)?;
+        let window = run.window;
+
         println!(
-            "Water-solvation window complete: lambda={lambda:.3} <dH/dlambda>={:.4} kcal/mol sem={}",
+            "Water-solvation window complete: λ={lambda:.3} <dH/dλ>={:.4} kcal/mol sem={}",
             window.mean_dh_dl,
             window
                 .sem_dh_dl
@@ -642,53 +725,38 @@ fn run_hydration_free_energy_ti(
     Ok(windows)
 }
 
-fn run_water_dynamics(
+fn run_dynamics(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     char: &MolCharacterization,
     dev: &ComputationDevice,
 ) -> io::Result<(WaterSolMdProperties, Vec<Snapshot>)> {
-    let cfg = build_md_cfg();
-    let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
+    println!("\n------Running water-solvation at lambda=0.000...");
+    let lambda_zero = run_hydration_ti_window(mol, param_set, mol_specific_params, dev, 0.0)?;
 
-    let (mut md, _) = build_dynamics(
-        dev,
-        &mols,
-        param_set,
-        mol_specific_params,
-        &cfg,
-        false,
-        None,
-        &mut HashSet::new(),
-    )
-    .map_err(param_err)?;
+    println!(
+        "Water-solvation window complete: lambda=0.000 <dH/dlambda>={:.4} kcal/mol sem={}",
+        lambda_zero.window.mean_dh_dl,
+        lambda_zero
+            .window
+            .sem_dh_dl
+            .map(|v| format!("{v:.4}"))
+            .unwrap_or_else(|| "n/a".to_string())
+    );
 
-    // Keep the solute fully coupled, but enable alchemical interaction bookkeeping
-    // through Dynamics so snapshots can report molecule-water attraction.
-    md.configure_alchemical_window(dev, 0, 0.).map_err(|e| {
-        io_error(
-            "Unable to configure water-solvation alchemical bookkeeping",
-            e,
-        )
-    })?;
+    let mut data =
+        create_water_sol_metrics(char, mol, &lambda_zero.snapshots, lambda_zero.cell_extent);
 
-    run_dynamics_blocking(&mut md, dev, DT, STRUCTURAL_STEPS);
-
-    if md.snapshots.is_empty() {
-        return Err(io::Error::other(
-            "Water-solvation MD completed without recording snapshots.",
-        ));
-    }
-
-    let mut data = create_water_sol_metrics(char, mol, &md.snapshots, md.cell.extent);
-    let windows = run_hydration_free_energy_ti(mol, param_set, mol_specific_params, dev)?;
+    let snapshots = lambda_zero.snapshots.clone();
+    let windows =
+        run_hydration_free_energy_ti(mol, param_set, mol_specific_params, dev, lambda_zero.window)?;
     apply_hydration_free_energy(&mut data, windows)?;
 
-    Ok((data, md.snapshots))
+    Ok((data, snapshots))
 }
 
-fn run_water_gromacs(
+fn run_gromacs(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
@@ -697,7 +765,7 @@ fn run_water_gromacs(
     let cfg = build_gromacs_md_cfg();
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
     let mol_input = gromacs_water_molecule_input(mol, mol_specific_params)?;
-    let mdp = cfg.to_gromacs(STRUCTURAL_STEPS, DT);
+    let mdp = cfg.to_gromacs(NUM_STEPS, DT);
     let input = crate::gromacs::make_gromacs_input(
         mdp,
         &mols,
@@ -738,6 +806,8 @@ fn run_water_gromacs(
 
 /// Runs a molecular dynamics simulation of the molecule in OPC water. Returns both
 /// water-affinity descriptors and snapshots that can be used to visualize the solvated run.
+///
+/// This is the entry point for this module.
 pub fn estimate_from_md(
     mol: &MoleculeSmall,
     backend: MdBackend,
@@ -751,15 +821,11 @@ pub fn estimate_from_md(
         ));
     };
 
-    println!(
-        "Water-solvation MD setup ({backend}): OPC water, sim box pad from dynamics, one solute copy"
-    );
+    println!("\nRunning water-solvation MD. Backend: {backend}");
 
     match backend {
-        MdBackend::Dynamics => {
-            run_water_dynamics(&mol, &param_set, &mol_specific_params, &char, dev)
-        }
-        MdBackend::Gromacs => run_water_gromacs(&mol, &param_set, &mol_specific_params, &char),
+        MdBackend::Dynamics => run_dynamics(&mol, &param_set, &mol_specific_params, &char, dev),
+        MdBackend::Gromacs => run_gromacs(&mol, &param_set, &mol_specific_params, &char),
         MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Water-solvation MD estimation supports the Dynamics and GROMACS backends.",
