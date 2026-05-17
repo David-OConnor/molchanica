@@ -622,7 +622,11 @@ pub(in crate::ui) fn sidebar(
 
                         if let Some(mol) = mol {
                             // todo: for testing, let the UI control this.
-                            match crystal::estimate_from_md(&mol, state.to_save.md_backend, &state.dev) {
+                            match crystal::estimate_from_md(
+                                &mol,
+                                state.to_save.md_backend,
+                                &state.dev,
+                            ) {
                                 Ok((data, snaps)) => {
                                     state.trajectories.push(Trajectory::new_in_memory(
                                         snaps,
@@ -710,9 +714,7 @@ pub(in crate::ui) fn sidebar(
                                     viewer::draw_mols(state, scene, updates);
                                     redraw.set_all();
 
-                                    println!(
-                                        "Water sol sim result: {data:?}; viewer water mols: {water_count}"
-                                    );
+                                    println!("\n\nWater sol sim result: {data:?}");
                                 }
                                 Err(e) => handle_err(
                                     &mut state.ui,

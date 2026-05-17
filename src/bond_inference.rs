@@ -5,8 +5,10 @@ use std::{
 };
 
 use lin_alg::f64::Vec3;
-use na_seq::Element;
-use na_seq::Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur};
+use na_seq::{
+    Element,
+    Element::{Fluorine, Hydrogen, Nitrogen, Oxygen, Sulfur},
+};
 use rayon::prelude::*;
 
 use crate::molecules::{Atom, Bond, HydrogenBond, HydrogenBondTwoMols};

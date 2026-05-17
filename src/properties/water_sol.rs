@@ -23,13 +23,14 @@ use dynamics::{
 use lin_alg::f32::Vec3;
 use na_seq::Element;
 
-use crate::bond_inference::h_bond_geometry_strength;
-use crate::properties::water_sol_analytic;
-use crate::properties::water_sol_analytic::WaterSolAnalyticProps;
 use crate::{
+    bond_inference::h_bond_geometry_strength,
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
-    properties::{io_error, mol_characterization::MolCharacterization},
+    properties::{
+        io_error, mol_characterization::MolCharacterization, water_sol_analytic,
+        water_sol_analytic::WaterSolAnalyticProps,
+    },
 };
 
 const NUM_STEPS: usize = 5_000;
@@ -50,7 +51,7 @@ pub enum WaterSolEstimateSource {
 
 /// todo: RM A/R
 #[derive(Clone, Debug, Default)]
-pub struct WaterSolDataMdProperties {
+pub struct WaterSolMdProperties {
     /// Number of OPC water molecules represented by the simulation cell.
     pub water_molecule_count: usize,
     pub box_volume_a3: f32,
@@ -78,20 +79,6 @@ pub struct WaterSolDataMdProperties {
     pub mean_first_shell_water_o_distance_a: f32,
 }
 
-/// Contains water-affinity and hydration results for a small organic molecule.
-///
-/// `water_affinity_score` is dimensionless: higher means stronger expected
-/// molecule-water affinity. It is intentionally separated from crystal/self-affinity
-/// so solubility models can combine this with `properties::crystal` instead of
-/// conflating dissolution forces.
-#[derive(Clone, Debug)]
-pub struct WaterSolData {
-    pub source: WaterSolEstimateSource,
-    pub analytic_properties: WaterSolAnalyticProps,
-    /// i.e., if the [slower] MD pipeline was run in addition to the analytic one.
-    pub md_properties: Option<WaterSolDataMdProperties>,
-}
-
 #[derive(Default)]
 struct SnapshotWaterMetrics {
     h_bonds: f32,
@@ -105,19 +92,6 @@ struct SnapshotWaterMetrics {
 
 fn param_err(e: ParamError) -> io::Error {
     io::Error::other(e.descrip)
-}
-
-fn water_sol_data_from_properties(
-    char: &MolCharacterization,
-    source: WaterSolEstimateSource,
-) -> WaterSolData {
-    let analytic_properties = water_sol_analytic::property_terms(char);
-
-    WaterSolData {
-        source,
-        analytic_properties,
-        md_properties: None,
-    }
 }
 
 fn build_md_cfg() -> MdConfig {
@@ -387,24 +361,19 @@ fn analyze_snapshot_water_contacts(
 }
 
 /// This is what we use to collect properties on self-affinity after the MD run.
-fn add_md_metrics(
-    data: &mut WaterSolData,
+fn create_water_sol_metrics(
     char: &MolCharacterization,
     mol: &MoleculeSmall,
     snapshots: &[Snapshot],
     cell_extent: Vec3,
-) {
-    if snapshots.is_empty() {
-        return;
-    }
-
+) -> WaterSolMdProperties {
     let snaps = if snapshots.len() > 4 {
         &snapshots[snapshots.len() / 2..]
     } else {
         snapshots
     };
 
-    let mut metrics = WaterSolDataMdProperties {
+    let mut res = WaterSolMdProperties {
         water_molecule_count: snapshots
             .last()
             .map(|snap| snap.water_o_posits.len())
@@ -459,40 +428,34 @@ fn add_md_metrics(
         }
     }
 
-    metrics.potential_energy_kcal = mean(&potentials).unwrap_or(0.0);
-    metrics.nonbonded_energy_kcal = mean(&nonbonded).unwrap_or(0.0);
-    metrics.solute_water_interaction_kcal = mean_coupled_interaction_kcal(snaps).unwrap_or(0.0);
-    metrics.mean_pressure_bar = mean(&pressures).unwrap_or(0.0);
-    metrics.mean_temperature_k = mean(&temperatures).unwrap_or(0.0);
-    metrics.density_g_cm3 = mean(&densities).unwrap_or(0.0);
-    metrics.box_volume_a3 = mean(&volumes).unwrap_or(metrics.box_volume_a3);
-    metrics.water_h_bonds = mean(&h_bonds).unwrap_or(0.0);
-    metrics.water_h_bonds_donated = mean(&h_bonds_donated).unwrap_or(0.0);
-    metrics.water_h_bonds_accepted = mean(&h_bonds_accepted).unwrap_or(0.0);
-    metrics.mean_water_h_bond_strength = mean(&h_bond_strength).unwrap_or(0.0);
-    metrics.nearest_water_o_distance_a = mean(&nearest_water).unwrap_or(0.0);
-    metrics.first_shell_water_count = mean(&first_shell_water).unwrap_or(0.0);
-    metrics.first_shell_water_per_heavy_atom =
-        metrics.first_shell_water_count / char.num_heavy_atoms.max(1) as f32;
-    metrics.mean_first_shell_water_o_distance_a = mean(&first_shell_dist).unwrap_or(0.0);
+    res.potential_energy_kcal = mean(&potentials).unwrap_or(0.0);
+    res.nonbonded_energy_kcal = mean(&nonbonded).unwrap_or(0.0);
+    res.solute_water_interaction_kcal = mean_coupled_interaction_kcal(snaps).unwrap_or(0.0);
+    res.mean_pressure_bar = mean(&pressures).unwrap_or(0.0);
+    res.mean_temperature_k = mean(&temperatures).unwrap_or(0.0);
+    res.density_g_cm3 = mean(&densities).unwrap_or(0.0);
+    res.box_volume_a3 = mean(&volumes).unwrap_or(res.box_volume_a3);
+    res.water_h_bonds = mean(&h_bonds).unwrap_or(0.0);
+    res.water_h_bonds_donated = mean(&h_bonds_donated).unwrap_or(0.0);
+    res.water_h_bonds_accepted = mean(&h_bonds_accepted).unwrap_or(0.0);
+    res.mean_water_h_bond_strength = mean(&h_bond_strength).unwrap_or(0.0);
+    res.nearest_water_o_distance_a = mean(&nearest_water).unwrap_or(0.0);
+    res.first_shell_water_count = mean(&first_shell_water).unwrap_or(0.0);
+    res.first_shell_water_per_heavy_atom =
+        res.first_shell_water_count / char.num_heavy_atoms.max(1) as f32;
+    res.mean_first_shell_water_o_distance_a = mean(&first_shell_dist).unwrap_or(0.0);
 
-    let interaction_score = if metrics.solute_water_interaction_kcal != 0.0 {
-        (-metrics.solute_water_interaction_kcal / 20.0).clamp(-3.0, 3.0)
+    let interaction_score = if res.solute_water_interaction_kcal != 0.0 {
+        (-res.solute_water_interaction_kcal / 20.0).clamp(-3.0, 3.0)
     } else {
         0.0
     };
-    let h_bond_score = metrics.water_h_bonds * 0.22 + metrics.mean_water_h_bond_strength * 0.65;
-    let shell_score = metrics.first_shell_water_per_heavy_atom.clamp(0.0, 3.0) * 0.30;
+    let h_bond_score = res.water_h_bonds * 0.22 + res.mean_water_h_bond_strength * 0.65;
+    let shell_score = res.first_shell_water_per_heavy_atom.clamp(0.0, 3.0) * 0.30;
 
     let md_water_affinity = interaction_score + h_bond_score + shell_score;
 
-    data.analytic_properties.water_affinity =
-        (data.analytic_properties.property_water_affinity_score + md_water_affinity).max(0.0);
-    data.analytic_properties.water_solubility = (data.analytic_properties.water_affinity
-        - data.analytic_properties.hydration_penalty * 0.55)
-        .max(0.0);
-
-    data.md_properties = Some(metrics);
+    res
 }
 
 fn gromacs_water_mol_name(ident: &str) -> String {
@@ -536,7 +499,7 @@ fn run_water_dynamics(
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     char: &MolCharacterization,
     dev: &ComputationDevice,
-) -> io::Result<(WaterSolData, Vec<Snapshot>)> {
+) -> io::Result<(WaterSolMdProperties, Vec<Snapshot>)> {
     let cfg = build_md_cfg();
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
 
@@ -569,8 +532,7 @@ fn run_water_dynamics(
         ));
     }
 
-    let mut data = water_sol_data_from_properties(char, WaterSolEstimateSource::MolecularDynamics);
-    add_md_metrics(&mut data, char, mol, &md.snapshots, md.cell.extent);
+    let data = create_water_sol_metrics(char, mol, &md.snapshots, md.cell.extent);
 
     Ok((data, md.snapshots))
 }
@@ -580,7 +542,7 @@ fn run_water_gromacs(
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     char: &MolCharacterization,
-) -> io::Result<(WaterSolData, Vec<Snapshot>)> {
+) -> io::Result<(WaterSolMdProperties, Vec<Snapshot>)> {
     let cfg = build_gromacs_md_cfg();
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
     let mol_input = gromacs_water_molecule_input(mol, mol_specific_params)?;
@@ -618,8 +580,7 @@ fn run_water_gromacs(
         ));
     }
 
-    let mut data = water_sol_data_from_properties(char, WaterSolEstimateSource::MolecularDynamics);
-    add_md_metrics(&mut data, char, mol, &snapshots, cell_extent);
+    let data = create_water_sol_metrics(char, mol, &snapshots, cell_extent);
 
     Ok((data, snapshots))
 }
@@ -630,7 +591,7 @@ pub fn estimate_from_md(
     mol: &MoleculeSmall,
     backend: MdBackend,
     dev: &ComputationDevice,
-) -> io::Result<(WaterSolData, Vec<Snapshot>)> {
+) -> io::Result<(WaterSolMdProperties, Vec<Snapshot>)> {
     let param_set = FfParamSet::new_amber()?;
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
     let Some(char) = &mol.characterization else {
