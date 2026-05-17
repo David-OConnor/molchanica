@@ -674,14 +674,13 @@ pub(in crate::ui) fn sidebar(
                                 &state.dev,
                             ) {
                                 Ok((data, snaps)) => {
-                                    let water_count = data
-                                        .md_properties
-                                        .as_ref()
-                                        .map(|props| props.water_molecule_count)
-                                        .or_else(|| {
-                                            snaps.last().map(|snap| snap.water_o_posits.len())
-                                        })
-                                        .unwrap_or_default();
+                                    let water_count = if data.water_molecule_count > 0 {
+                                        data.water_molecule_count
+                                    } else {
+                                        snaps.last()
+                                            .map(|snap| snap.water_o_posits.len())
+                                            .unwrap_or_default()
+                                    };
 
                                     state.trajectories.push(Trajectory::new_in_memory(
                                         snaps.clone(),
@@ -713,6 +712,18 @@ pub(in crate::ui) fn sidebar(
                                     state.volatile.md_local.replace_snaps(snaps);
                                     viewer::draw_mols(state, scene, updates);
                                     redraw.set_all();
+
+                                    let hydration_text = data
+                                        .hydration_free_energy_kcal_mol
+                                        .map(|dg| format!("{dg:.3} kcal/mol"))
+                                        .unwrap_or_else(|| "not measured".to_string());
+                                    handle_success(
+                                        &mut state.ui,
+                                        format!(
+                                            "Water solvation complete. Hydration dG: {hydration_text}; affinity score: {:.3}",
+                                            data.md_water_affinity_score
+                                        ),
+                                    );
 
                                     println!("\n\nWater sol sim result: {data:?}");
                                 }
