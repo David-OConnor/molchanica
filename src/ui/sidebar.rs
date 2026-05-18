@@ -713,10 +713,8 @@ pub(in crate::ui) fn sidebar(
                                     viewer::draw_mols(state, scene, updates);
                                     redraw.set_all();
 
-                                    let hydration_text = data
-                                        .hydration_free_energy_kcal_mol
-                                        .map(|dg| format!("{dg:.3} kcal/mol"))
-                                        .unwrap_or_else(|| "not measured".to_string());
+                                    let hydration_text = format!("{:.3} kcal/mol", data.hyd_free_energy);
+
                                     handle_success(
                                         &mut state.ui,
                                         format!(
@@ -725,7 +723,13 @@ pub(in crate::ui) fn sidebar(
                                         ),
                                     );
 
-                                    println!("\n\nWater sol sim result: {data:?}");
+                                    println!("\n\nWater sol sim result: {data:?}\n---\n");
+                                    println!("Free en: alch en: {:?}, al sem: {:?}, hyd free en: {:?}, hyd sem: {:?}",
+                                             data.alch_decoupling_free_energy,
+                                             data.alch_decoupling_free_energy_sem,
+                                             data.hyd_free_energy,
+                                             data.hyd_free_energy_sem
+                                    );
                                 }
                                 Err(e) => handle_err(
                                     &mut state.ui,

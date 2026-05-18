@@ -63,14 +63,15 @@ pub enum WaterSolEstimateSource {
 }
 
 #[derive(Clone, Debug)]
+/// Units for dh_dl: kcal/mol
 pub struct WaterSolAlchemicalWindow {
     pub lambda: f64,
-    pub mean_dh_dl_kcal_mol: f64,
-    pub sem_dh_dl_kcal_mol: Option<f64>,
+    pub mean_dh_dl: f64,
+    pub sem_dh_dl: f64,
 }
 
-/// todo: RM A/R
 #[derive(Clone, Debug, Default)]
+/// All energies are in Kcal/Mol
 pub struct WaterSolMdProperties {
     /// Number of OPC water molecules represented by the simulation cell.
     pub water_molecule_count: usize,
@@ -84,16 +85,18 @@ pub struct WaterSolMdProperties {
     /// Solute-environment interaction proxy from lambda=0 Dynamics alchemical bookkeeping.
     /// More negative means stronger attraction. This is not a free energy.
     /// `None` means the selected backend did not record alchemical dH/dlambda data.
-    pub solute_water_interaction_proxy_kcal_mol: Option<f32>,
+    /// todo: What does proxy mean here? Anecdotally, it usually means a garbage analytic
+    /// todo: computation an LLM created
+    pub solute_water_interaction_proxy_kcal_mol: f32,
     /// Thermodynamic-integration free energy for decoupling the solute from water.
     /// Positive values usually mean water stabilizes the coupled solute.
-    pub alchemical_decoupling_free_energy_kcal_mol: Option<f64>,
-    pub alchemical_decoupling_free_energy_sem_kcal_mol: Option<f64>,
+    pub alch_decoupling_free_energy: f64,
+    pub alch_decoupling_free_energy_sem: f64,
     /// Hydration free energy estimate derived as the negative of the decoupling
     /// free energy. This currently does not include finite-size, restraint, or
     /// standard-state corrections.
-    pub hydration_free_energy_kcal_mol: Option<f64>,
-    pub hydration_free_energy_sem_kcal_mol: Option<f64>,
+    pub hyd_free_energy: f64,
+    pub hyd_free_energy_sem: f64,
     pub alchemical_windows: Vec<WaterSolAlchemicalWindow>,
     pub md_water_affinity_score: f32,
     /// Geometrically inferred solute-water hydrogen bonds per snapshot.
@@ -496,7 +499,9 @@ fn create_water_sol_metrics(
 
     res.potential_energy_kcal = mean(&potentials).unwrap_or(0.0);
     res.nonbonded_energy_kcal = mean(&nonbonded).unwrap_or(0.0);
-    res.solute_water_interaction_proxy_kcal_mol = mean_coupled_interaction_kcal(snaps);
+
+    res.solute_water_interaction_proxy_kcal_mol = mean_coupled_interaction_kcal(snaps).unwrap();
+
     res.mean_pressure_bar = mean(&pressures).unwrap_or(0.0);
     res.mean_temperature_k = mean(&temperatures).unwrap_or(0.0);
     res.density_g_cm3 = mean(&densities).unwrap_or(0.0);
@@ -511,10 +516,8 @@ fn create_water_sol_metrics(
         res.first_shell_water_count / char.num_heavy_atoms.max(1) as f32;
     res.mean_first_shell_water_o_distance_a = mean(&first_shell_dist).unwrap_or(0.0);
 
-    let interaction_score = res
-        .solute_water_interaction_proxy_kcal_mol
-        .map(|interaction| (-interaction / 20.0).clamp(-3.0, 3.0))
-        .unwrap_or(0.0);
+    let interaction_score = (-res.solute_water_interaction_proxy_kcal_mol / 20.0).clamp(-3.0, 3.0);
+
     let h_bond_score = res.water_h_bonds * 0.22 + res.mean_water_h_bond_strength * 0.65;
     let shell_score = res.first_shell_water_per_heavy_atom.clamp(0.0, 3.0) * 0.30;
 
@@ -561,8 +564,8 @@ fn gromacs_water_molecule_input(
 fn water_sol_window_from_lambda_window(window: &LambdaWindow) -> WaterSolAlchemicalWindow {
     WaterSolAlchemicalWindow {
         lambda: window.lambda,
-        mean_dh_dl_kcal_mol: window.mean_dh_dl,
-        sem_dh_dl_kcal_mol: window.sem_dh_dl,
+        mean_dh_dl: window.mean_dh_dl,
+        sem_dh_dl: window.sem_dh_dl,
     }
 }
 
@@ -573,10 +576,10 @@ fn apply_hydration_free_energy(
     let ti = free_energy_ti_with_sem(&windows)
         .map_err(|e| io_error("Unable to integrate water-solvation alchemical windows", e))?;
 
-    data.alchemical_decoupling_free_energy_kcal_mol = Some(ti.ti_free_energy);
-    data.alchemical_decoupling_free_energy_sem_kcal_mol = ti.standard_error;
-    data.hydration_free_energy_kcal_mol = Some(-ti.ti_free_energy);
-    data.hydration_free_energy_sem_kcal_mol = ti.standard_error;
+    data.alch_decoupling_free_energy = ti.free_energy;
+    data.alch_decoupling_free_energy_sem = ti.standard_error;
+    data.hyd_free_energy = -ti.free_energy;
+    data.hyd_free_energy_sem = ti.standard_error;
     data.alchemical_windows = windows
         .iter()
         .map(water_sol_window_from_lambda_window)
@@ -662,12 +665,8 @@ fn run_hydration_free_energy_ti(
         let window = run.window;
 
         println!(
-            "Water-solvation window complete: λ={lambda:.3} <dH/dλ>={:.4} kcal/mol sem={}",
-            window.mean_dh_dl,
-            window
-                .sem_dh_dl
-                .map(|v| format!("{v:.4}"))
-                .unwrap_or_else(|| "n/a".to_string())
+            "Water-solvation window complete: λ={lambda:.3} <dH/dλ>={:.4} kcal/mol sem={:.4}",
+            window.mean_dh_dl, window.sem_dh_dl
         );
         windows.push(window);
     }
@@ -686,13 +685,8 @@ fn run_dynamics(
     let lambda_zero = run_hydration_ti_window(mol, param_set, mol_specific_params, dev, 0.0)?;
 
     println!(
-        "Water-solvation window complete: lambda=0.000 <dH/dλ>={:.4} kcal/mol sem={}",
-        lambda_zero.window.mean_dh_dl,
-        lambda_zero
-            .window
-            .sem_dh_dl
-            .map(|v| format!("{v:.4}"))
-            .unwrap_or_else(|| "n/a".to_string())
+        "Water-solvation window complete: lambda=0.000 <dH/dλ>={:.4} kcal/mol sem={:.4}",
+        lambda_zero.window.mean_dh_dl, lambda_zero.window.sem_dh_dl,
     );
 
     let mut data =

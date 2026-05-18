@@ -88,7 +88,7 @@ impl Phase {
 
 struct FreeEnergyEstimate {
     dg_kcal_mol: f64,
-    dg_sem_kcal_mol: Option<f64>,
+    dg_sem_kcal_mol: f64,
     windows: Vec<LambdaWindow>,
 }
 
@@ -165,10 +165,7 @@ fn run_alchemical_window(
         "Alchemical window complete: solvent={} lambda={lambda:.2} <dH/dlambda>={:.4} kcal/mol sem={}",
         phase.name(),
         window.mean_dh_dl,
-        window
-            .sem_dh_dl
-            .map(|v| format!("{v:.4}"))
-            .unwrap_or_else(|| "n/a".to_string())
+        format!("{:.4}", window.sem_dh_dl)
     );
 
     Ok(window)
@@ -189,16 +186,14 @@ fn run_phase_free_energy(
         .map_err(|e| param_error("Unable to integrate LogP alchemical windows", e))?;
 
     println!(
-        "TI complete for {}: dG={:.4} kcal/mol sem={}",
+        "TI complete for {}: dG={:.4} kcal/mol sem={:.4}",
         phase.name(),
-        ti.ti_free_energy,
+        ti.free_energy,
         ti.standard_error
-            .map(|v| format!("{v:.4}"))
-            .unwrap_or_else(|| "n/a".to_string())
     );
 
     Ok(FreeEnergyEstimate {
-        dg_kcal_mol: ti.ti_free_energy,
+        dg_kcal_mol: ti.free_energy,
         dg_sem_kcal_mol: ti.standard_error,
         windows,
     })
@@ -259,14 +254,12 @@ pub fn run_alchemical(
         water.dg_kcal_mol, octanol.dg_kcal_mol, logp_value
     );
 
-    if let (Some(w_sem), Some(o_sem)) = (water.dg_sem_kcal_mol, octanol.dg_sem_kcal_mol) {
-        msg.push_str(&format!(
-            " (TI SEMs: water {:.3}, octanol {:.3} kcal/mol; {} windows each)",
-            w_sem,
-            o_sem,
-            water.windows.len()
-        ));
-    }
+    msg.push_str(&format!(
+        " (TI SEMs: water {:.3}, octanol {:.3} kcal/mol; {} windows each)",
+        water.dg_sem_kcal_mol,
+        octanol.dg_sem_kcal_mol,
+        water.windows.len()
+    ));
 
     handle_success(&mut state.ui, msg);
 
