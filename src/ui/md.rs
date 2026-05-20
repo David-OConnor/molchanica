@@ -210,6 +210,10 @@ pub fn md_setup(
 
             ui.add_space(COL_SPACING / 2.);
 
+            alchemical_cfg(state, ui);
+
+            ui.add_space(COL_SPACING / 2.);
+
             output_control(state, ui);
 
             if state.to_save.num_md_steps != num_steps_prev {
@@ -702,6 +706,34 @@ where
         && let Ok(v) = s.parse::<T>()
     {
         *val = if v == T::default() { None } else { Some(v) };
+    }
+}
+
+/// Checkbox to enable alchemical free-energy decoupling at a single lambda window,
+/// plus a text edit for the lambda value (shown when enabled). The decoupling is
+/// applied to the first selected molecule, mirroring `water_sol.rs`'s pattern.
+fn alchemical_cfg(state: &mut State, ui: &mut Ui) {
+    let help = "Enable alchemical free-energy decoupling of the first selected molecule at \
+    a single lambda window. lambda=0 leaves the solute fully coupled to the solvent; \
+    lambda=1 fully decouples it. Useful for visually confirming the decoupling.";
+    ui.label("Alch λ:").on_hover_text(help);
+    ui.checkbox(&mut state.ui.md.alchemical_enabled, "")
+        .on_hover_text(help);
+
+    if state.ui.md.alchemical_enabled {
+        let help = "Alchemical lambda value in [0, 1]. 0 = fully coupled, 1 = fully decoupled.";
+        if ui
+            .add_sized(
+                [34., Ui::available_height(ui)],
+                TextEdit::singleline(&mut state.ui.md.alchemical_lambda_input),
+            )
+            .on_hover_text(help)
+            .changed()
+            && let Ok(v) = state.ui.md.alchemical_lambda_input.parse::<f64>()
+            && (0.0..=1.0).contains(&v)
+        {
+            state.ui.md.alchemical_lambda = v;
+        }
     }
 }
 

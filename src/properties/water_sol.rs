@@ -580,6 +580,7 @@ fn apply_hydration_free_energy(
     data.alch_decoupling_free_energy_sem = ti.standard_error;
     data.hyd_free_energy = -ti.free_energy;
     data.hyd_free_energy_sem = ti.standard_error;
+
     data.alchemical_windows = windows
         .iter()
         .map(water_sol_window_from_lambda_window)

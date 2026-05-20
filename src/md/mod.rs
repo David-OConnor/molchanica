@@ -786,6 +786,12 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         &state.to_save.md_config
     };
 
+    let alchemical = state
+        .ui
+        .md
+        .alchemical_enabled
+        .then_some(state.ui.md.alchemical_lambda);
+
     match build_dynamics(
         &state.dev,
         &mols,
@@ -796,7 +802,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         near_lig_thresh,
         &mut md_pep_sel,
     ) {
-        Ok((md, custom_solvent)) => {
+        Ok((mut md, custom_solvent)) => {
             let num_water = md.water.len();
 
             // Build viewer mols from the actual MD atoms (post hetero-filter, post H-addition)
@@ -929,6 +935,17 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                 .md_local
                 .viewer
                 .add_mol_set(&viewer_mol_refs, num_water);
+
+            if let Some(lambda) = alchemical {
+                // Decouple the first molecule, matching the water_sol.rs convention.
+                if let Err(e) = md.configure_alchemical_window(&state.dev, 0, lambda) {
+                    handle_err(
+                        &mut state.ui,
+                        format!("Unable to configure alchemical window: {e}"),
+                    );
+                    return;
+                }
+            }
 
             state.volatile.md_local.mol_dynamics = Some(md);
 
