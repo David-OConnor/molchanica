@@ -335,7 +335,7 @@ fn min_dist_sq_to_placed(
 ///
 /// For unbounded (`box_dims = None`): falls back to the original shell-expansion strategy
 /// (bounding-sphere exclusion), which is fine for dilute / Pad-box placements.
-fn add_copies(
+pub(crate) fn add_copies(
     mols: &mut Vec<MolDynamics>,
     mol: &MolDynamics,
     copies: usize,

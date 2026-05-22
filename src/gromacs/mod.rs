@@ -42,7 +42,8 @@ use na_seq::Element;
 
 use crate::{
     md::{
-        STATIC_ATOM_DIST_THRESH, filter_peptide_atoms, get_mols_sel_for_md, trajectory::Trajectory,
+        STATIC_ATOM_DIST_THRESH, add_copies, filter_peptide_atoms, get_mols_sel_for_md,
+        trajectory::Trajectory,
     },
     molecules::common::MoleculeCommon,
     state::State,
@@ -238,11 +239,12 @@ pub fn gromacs_input_from_state(
     let cfg = &state.to_save.md_config;
 
     // Build molecule entries for GROMACS input.
-    let (mols_input, md_pep_sel) = match build_molecule_inputs(
+    let (mols_input, _md_pep_sel) = match build_molecule_inputs(
         &mols,
         &state.mol_specific_params,
         state.ui.md.peptide_static,
         near_lig_thresh,
+        &cfg.sim_box,
     ) {
         Ok(m) => m,
         Err(e) => {
@@ -278,10 +280,16 @@ pub fn build_molecule_inputs(
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     static_peptide: bool,
     near_lig_thresh: Option<f64>,
+    sim_box_init: &SimBoxInit,
 ) -> Result<(Vec<MoleculeInput>, HashSet<(usize, usize)>), String> {
     let mut result = Vec::new();
+    let mut placed_mols = Vec::new();
 
     let mut pep_atom_set = HashSet::new();
+    let box_dims = match sim_box_init {
+        SimBoxInit::Fixed((lo, hi)) => Some((hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)),
+        SimBoxInit::Pad(_) => None,
+    };
 
     for (ff_mol_type, mol, count) in mols_in {
         if mol.selected_for_md.is_none() {
@@ -290,28 +298,72 @@ pub fn build_molecule_inputs(
         let count = (*count).max(1);
 
         // todo: Do we need to do anything with the pep atom set here?
-        let (atoms, bonds, name, pep_set) = if *ff_mol_type == FfMolType::Peptide {
+        let (dyn_mol, name, pep_set) = if *ff_mol_type == FfMolType::Peptide {
             // Apply the same peptide filtering as the built-in pipeline.
             let (atoms, pep_set) = filter_peptide_atoms(mol, mols_in, near_lig_thresh);
             let bonds = create_bonds(&atoms);
-            (atoms, bonds, "PEP".to_string(), pep_set)
+            (
+                MolDynamics {
+                    ff_mol_type: FfMolType::Peptide,
+                    atoms,
+                    atom_posits: None,
+                    atom_init_velocities: None,
+                    bonds,
+                    adjacency_list: None,
+                    static_: static_peptide,
+                    bonded_only: false,
+                    mol_specific_params: None,
+                },
+                "PEP".to_string(),
+                pep_set,
+            )
         } else {
             let atoms: Vec<AtomGeneric> = mol.atoms.iter().map(|a| a.to_generic()).collect();
             let bonds: Vec<BondGeneric> = mol.bonds.iter().map(|b| b.to_generic()).collect();
             // Use the molecule ident as the topology name, truncated to 6 chars.
             let name = sanitise_mol_name(&mol.ident);
-            (atoms, bonds, name, HashSet::new())
+            let ff_params = mol_specific_params.get(&mol.ident).cloned();
+            (
+                MolDynamics {
+                    ff_mol_type: *ff_mol_type,
+                    atoms,
+                    atom_posits: Some(mol.atom_posits.clone()),
+                    atom_init_velocities: None,
+                    bonds,
+                    adjacency_list: Some(mol.adjacency_list.clone()),
+                    static_: false,
+                    bonded_only: false,
+                    mol_specific_params: ff_params,
+                },
+                name,
+                HashSet::new(),
+            )
         };
 
-        let ff_params = mol_specific_params.get(&mol.ident).cloned();
+        let first_name = copy_mol_name(&name, 0, count);
+        result.push(molecule_input_from_dyn(first_name, &dyn_mol));
+        placed_mols.push(dyn_mol.clone());
 
-        result.push(MoleculeInput {
-            name,
-            atoms,
-            bonds,
-            ff_params,
-            count,
-        });
+        if count > 1 {
+            let before_extra = placed_mols.len();
+            add_copies(&mut placed_mols, &dyn_mol, count - 1, box_dims);
+            let placed_extra = placed_mols.len() - before_extra;
+            if placed_extra != count - 1 {
+                return Err(format!(
+                    "Could only place {placed_extra} of {} extra copies for {}",
+                    count - 1,
+                    mol.ident
+                ));
+            }
+
+            for (copy_i, placed_mol) in placed_mols[before_extra..].iter().enumerate() {
+                result.push(molecule_input_from_dyn(
+                    copy_mol_name(&name, copy_i + 1, count),
+                    placed_mol,
+                ));
+            }
+        }
+
         if *ff_mol_type == FfMolType::Peptide {
             pep_atom_set = pep_set;
         }
@@ -320,10 +372,35 @@ pub fn build_molecule_inputs(
         // pep_atom_set (already done inside filter_peptide_atoms above). GROMACS
         // handles frozen groups via `freezegrps` / `freezedim` MDP options; that
         // extension is left for future work.
-        let _ = static_peptide; // used via filter_peptide_atoms selection
+        let _ = static_peptide; // used via peptide MolDynamics construction
     }
 
     Ok((result, pep_atom_set))
+}
+
+fn copy_mol_name(base: &str, copy_i: usize, copy_count: usize) -> String {
+    if copy_count <= 1 {
+        base.to_string()
+    } else {
+        format!("{base}_{}", copy_i + 1)
+    }
+}
+
+fn molecule_input_from_dyn(name: String, mol: &MolDynamics) -> MoleculeInput {
+    let mut atoms = mol.atoms.clone();
+    if let Some(posits) = &mol.atom_posits {
+        for (atom, posit) in atoms.iter_mut().zip(posits) {
+            atom.posit = *posit;
+        }
+    }
+
+    MoleculeInput {
+        name,
+        atoms,
+        bonds: mol.bonds.clone(),
+        ff_params: mol.mol_specific_params.clone(),
+        count: 1,
+    }
 }
 
 /// Sanitise a molecule ident for use as a GROMACS molecule name:
@@ -522,4 +599,55 @@ pub fn on_gromacs_md_complete(
 pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
     let inp = gromacs_input_from_state(state)?;
     inp.save(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use bio_files::BondType;
+
+    use super::*;
+    use crate::molecules::{Atom, Bond};
+
+    fn carbon(serial_number: u32, x: f64) -> Atom {
+        Atom {
+            serial_number,
+            posit: Vec3F64::new(x, 0.0, 0.0),
+            element: Element::Carbon,
+            force_field_type: Some("c3".to_string()),
+            partial_charge: Some(0.0),
+            hetero: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn multi_copy_gromacs_inputs_do_not_reuse_coordinates() {
+        let atoms = vec![carbon(1, 0.0), carbon(2, 1.5)];
+        let bonds = vec![Bond::new_basic(1, 2, BondType::Single)];
+        let mut mol =
+            MoleculeCommon::new("ethanol".to_string(), atoms, bonds, HashMap::new(), None);
+        mol.selected_for_md = Some(2);
+
+        let (inputs, _) = build_molecule_inputs(
+            &[(FfMolType::SmallOrganic, &mol, 2)],
+            &HashMap::new(),
+            false,
+            None,
+            &SimBoxInit::Pad(10.0),
+        )
+        .unwrap();
+
+        assert_eq!(inputs.len(), 2);
+        assert!(inputs.iter().all(|m| m.count == 1));
+        assert_ne!(inputs[0].name, inputs[1].name);
+
+        let same_coordinates = inputs[0]
+            .atoms
+            .iter()
+            .zip(&inputs[1].atoms)
+            .all(|(a, b)| (a.posit - b.posit).magnitude() < 1e-9);
+        assert!(!same_coordinates);
+    }
 }
