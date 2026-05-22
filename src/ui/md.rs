@@ -65,14 +65,21 @@ pub fn md_setup(
             }
 
             if !state.lipids.is_empty() {
-                let prev_val = state.lipids[0].common.selected_for_md.is_some();
-                let color = if prev_val { COLOR_ACTIVE } else { COLOR_INACTIVE };
+                let all_selected = state
+                    .lipids
+                    .iter()
+                    .all(|l| l.common.selected_for_md.is_some());
+                let color = if all_selected { COLOR_ACTIVE } else { COLOR_INACTIVE };
 
                 if button!(ui, "All lipids", color, "Select all lipids for MD")
                     .clicked()
                 {
                     for l in &mut state.lipids {
-                        l.common.selected_for_md = !prev_val;
+                        l.common.selected_for_md = if all_selected {
+                            None
+                        } else {
+                            Some(l.common.selected_for_md.unwrap_or(1))
+                        };
                     }
                 }
             }
@@ -82,7 +89,11 @@ pub fn md_setup(
             // }
 
             for mol in &mut state.nucleic_acids {
-                flag_btn(&mut mol.common.selected_for_md.is_some(), &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
+                let mut selected = mol.common.selected_for_md.is_some();
+                flag_btn(&mut selected, &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
+                if selected != mol.common.selected_for_md.is_some() {
+                    mol.common.selected_for_md = selected.then_some(1);
+                }
             }
 
             // ui.add_space(COL_SPACING / 2.);
@@ -204,9 +215,6 @@ pub fn md_setup(
 
             let num_steps_prev = state.to_save.num_md_steps;
             num_field(&mut state.to_save.num_md_steps, "Steps:", 50, ui);
-
-            // todo: Copies must be moved to be a per-molecule basis.
-            num_field(&mut state.to_save.num_md_copies, "Copies:", 32, ui);
 
             ui.add_space(COL_SPACING / 2.);
 

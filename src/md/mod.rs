@@ -812,19 +812,10 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             // causes the viewer's atom_posits to mismatch the trajectory snapshot length,
             // producing out-of-bounds errors in change_snapshot.
             // Number of solute molecules as they appear in `mol_start_indices`. `add_copies`
-            // expands each SmallOrganic into `count` separate MolDynamics molecules (each gets
-            // its own mol_start_indices entry); every other type contributes one. Using
-            // `mols.len()` here would ignore copies and mislocate the ion region below.
-            let n_solute_mols: usize = mols
-                .iter()
-                .map(|(ff, _, count)| {
-                    if *ff == FfMolType::SmallOrganic {
-                        *count
-                    } else {
-                        1
-                    }
-                })
-                .sum();
+            // expands each selected molecule into `count` separate MolDynamics molecules, each
+            // with its own mol_start_indices entry. Using `mols.len()` here would ignore copies
+            // and mislocate the ion region below.
+            let n_solute_mols: usize = mols.iter().map(|(_, _, count)| (*count).max(1)).sum();
             let mut viewer_mol_data: Vec<(FfMolType, MoleculeCommon, usize)> = mols
                 .iter()
                 .enumerate()
@@ -1045,52 +1036,35 @@ pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamErro
 /// A helper to reduce repetition. Loads references to mols in state that are selected for MD.
 /// Doesn't convert to MolDynamics, but sets up in a way conducive to doing so.
 pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, usize)> {
-    // todo: Quantities only currently apply to ligands.
-
     let mut res = Vec::new();
 
     if let Some(p) = &state.peptide
-        && p.common.selected_for_md.is_some()
+        && let Some(copies) = p.common.selected_for_md
     {
-        res.push((FfMolType::Peptide, &p.common, 1));
+        res.push((FfMolType::Peptide, &p.common, copies.max(1)));
     }
 
-    let ligs: Vec<_> = state
-        .ligands
-        .iter()
-        .filter(|l| l.common.selected_for_md.is_some())
-        .collect();
-
-    let lipids: Vec<_> = state
-        .lipids
-        .iter()
-        .filter(|l| l.common.selected_for_md.is_some())
-        .collect();
-
-    let nucleic_acids: Vec<_> = state
-        .nucleic_acids
-        .iter()
-        .filter(|l| l.common.selected_for_md.is_some())
-        .collect();
-
-    for m in &ligs {
-        res.push((
-            FfMolType::SmallOrganic,
-            &m.common,
-            state.to_save.num_md_copies,
-        ));
+    for m in &state.ligands {
+        if let Some(copies) = m.common.selected_for_md {
+            res.push((FfMolType::SmallOrganic, &m.common, copies.max(1)));
+        }
     }
 
-    for m in &lipids {
-        res.push((FfMolType::Lipid, &m.common, 1));
+    for m in &state.lipids {
+        if let Some(copies) = m.common.selected_for_md {
+            res.push((FfMolType::Lipid, &m.common, copies.max(1)));
+        }
     }
 
-    for m in &nucleic_acids {
+    for m in &state.nucleic_acids {
+        let Some(copies) = m.common.selected_for_md else {
+            continue;
+        };
         let mol_type = match m.na_type {
             NucleicAcidType::Dna => FfMolType::Dna,
             NucleicAcidType::Rna => FfMolType::Rna,
         };
-        res.push((mol_type, &m.common, 1));
+        res.push((mol_type, &m.common, copies.max(1)));
     }
 
     res
@@ -1107,9 +1081,10 @@ pub(crate) fn setup_mols_dyn(
 
     let mut pep_atom_set = HashSet::new();
     for (ff_mol_type, mol, copies) in mols {
-        if !mol.selected_for_md.is_some() {
+        if mol.selected_for_md.is_none() {
             continue;
         }
+        let copies = (*copies).max(1);
 
         // In the case of Peptides, we perform optional filtering, e.g. for only atoms near a ligand.
         // If so, we must rebuild bonds, as the indices they refer to will have changed, and some bonds
@@ -1121,13 +1096,13 @@ pub(crate) fn setup_mols_dyn(
             println!(
                 "Peptide atom count: {}. Set count: {}",
                 atoms.len(),
-                pep_atom_set.len()
+                pep_set.len()
             );
-            pep_atom_set = pep_atom_set;
+            pep_atom_set = pep_set;
 
             let bonds = create_bonds(&atoms);
 
-            res.push(MolDynamics {
+            let mol = MolDynamics {
                 ff_mol_type: FfMolType::Peptide,
                 atoms,
                 atom_posits: None,
@@ -1137,7 +1112,8 @@ pub(crate) fn setup_mols_dyn(
                 static_: static_peptide,
                 bonded_only: false,
                 mol_specific_params: None,
-            });
+            };
+            add_copies(&mut res, &mol, copies, box_dims);
             continue;
         }
 
@@ -1169,11 +1145,7 @@ pub(crate) fn setup_mols_dyn(
             mol_specific_params: msp,
         };
 
-        if *ff_mol_type == FfMolType::SmallOrganic {
-            add_copies(&mut res, &mol, *copies, box_dims);
-        } else {
-            res.push(mol);
-        }
+        add_copies(&mut res, &mol, copies, box_dims);
     }
 
     Ok((res, pep_atom_set))
@@ -1206,7 +1178,7 @@ fn ready_to_run_helper(state: &mut State) -> bool {
 
     // Check that we have FF params and mol-specific parameters.
     for lig in &state.ligands {
-        if !lig.common.selected_for_md.is_some() {
+        if lig.common.selected_for_md.is_none() {
             continue;
         }
 

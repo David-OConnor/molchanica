@@ -284,9 +284,10 @@ pub fn build_molecule_inputs(
     let mut pep_atom_set = HashSet::new();
 
     for (ff_mol_type, mol, count) in mols_in {
-        if !mol.selected_for_md {
+        if mol.selected_for_md.is_none() {
             continue;
         }
+        let count = (*count).max(1);
 
         // todo: Do we need to do anything with the pep atom set here?
         let (atoms, bonds, name, pep_set) = if *ff_mol_type == FfMolType::Peptide {
@@ -309,8 +310,11 @@ pub fn build_molecule_inputs(
             atoms,
             bonds,
             ff_params,
-            count: *count,
+            count,
         });
+        if *ff_mol_type == FfMolType::Peptide {
+            pep_atom_set = pep_set;
+        }
 
         // If the peptide is static, set all its positions fixed by noting them in
         // pep_atom_set (already done inside filter_peptide_atoms above). GROMACS

@@ -265,7 +265,7 @@ pub struct ToSave {
     pub md_config: MdConfig,
     pub num_md_steps: u32,
     /// todo: We may move this to be per-molecule, etc.
-    pub num_md_copies: usize,
+    // pub num_md_copies: usize,
     pub md_dt: f32,
     pub md_backend: MdBackend,
     pub ph: f32,
@@ -308,7 +308,7 @@ impl Default for ToSave {
             sa_surface_precision: 0.55,
             md_config: Default::default(),
             num_md_steps: 100,
-            num_md_copies: 1,
+            // num_md_copies: 1,
             md_dt: 0.002,
             md_backend: Default::default(),
             ph: 7.4,

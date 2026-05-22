@@ -1,6 +1,6 @@
 use bio_files::FrameSlice;
 use dynamics::FfMolType;
-use egui::{Color32, RichText, Ui};
+use egui::{Color32, RichText, TextEdit, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 
@@ -9,7 +9,6 @@ use crate::{
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
     label,
     md::{
-        MdBackend,
         trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj},
         viewer,
         viewer::ViewerMolSet,
@@ -26,6 +25,21 @@ use crate::{
     },
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
+
+fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
+    let mut copies_str = copies.to_string();
+    if ui
+        .add_sized(
+            [36., ui.spacing().interact_size.y],
+            TextEdit::singleline(&mut copies_str),
+        )
+        .on_hover_text("Number of molecule copies to include in MD.")
+        .changed()
+        && let Ok(parsed) = copies_str.parse::<usize>()
+    {
+        *copies = parsed.max(1);
+    }
+}
 
 /// Abstracts over all molecule types. (Currently not protein though)
 /// A single row for the molecule.
@@ -72,21 +86,29 @@ fn mol_picker_one(
                     *close = Some((mol_type, i_mol));
                 }
 
-                let color_md = if mol.selected_for_md {
-                    COLOR_ACTIVE
-                } else {
-                    COLOR_INACTIVE
-                };
+                if mol_type != MolType::Pocket {
+                    if let Some(copies) = &mut mol.selected_for_md {
+                        md_copies_field(copies, ui);
+                    }
 
-                if mol_type != MolType::Pocket
-                    && ui
+                    let color_md = if mol.selected_for_md.is_some() {
+                        COLOR_ACTIVE
+                    } else {
+                        COLOR_INACTIVE
+                    };
+
+                    if ui
                         .button(RichText::new("MD").color(color_md))
                         .on_hover_text(
                             "Select or deselect this molecule for molecular dynamics simulation.",
                         )
                         .clicked()
-                {
-                    mol.selected_for_md = !mol.selected_for_md;
+                    {
+                        mol.selected_for_md = match mol.selected_for_md {
+                            Some(_) => None,
+                            None => Some(1),
+                        };
+                    }
                 }
 
                 let color_vis = if mol.visible {
@@ -633,11 +655,6 @@ pub(in crate::ui) fn sidebar(
                                         "Crystal sim".to_string(),
                                         0.002, // todo?
                                     ));
-
-                                    println!(
-                                        "Copies: {:?}",
-                                        data.md_properties.as_ref().unwrap().copy_count
-                                    ); // todo temp
 
                                     let mol_set = ViewerMolSet::from_mols(
                                         "Crystal sim".to_string(),

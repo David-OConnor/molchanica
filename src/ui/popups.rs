@@ -746,7 +746,11 @@ fn alignment(
 
         for (i, mol) in state.ligands.iter_mut().enumerate() {
             // Required to make our snapshots work, in the current implementation.
-            mol.common.selected_for_md = i == state.volatile.alignment.mols_to_align[1];
+            mol.common.selected_for_md = if i == state.volatile.alignment.mols_to_align[1] {
+                Some(1)
+            } else {
+                None
+            };
         }
 
         *redraw_lig = true;

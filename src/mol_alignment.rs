@@ -263,7 +263,7 @@ fn run_md(
     // This is what we use for the MD and synthetic force. It's the same as mol_query,
     // but has updated atom positions.
     let mut mol_q_md = MoleculeCommon {
-        selected_for_md: true,
+        selected_for_md: Some(1),
         atom_posits: posits_query.to_vec(),
         ..mol_query.clone()
     };
