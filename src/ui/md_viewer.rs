@@ -1,6 +1,6 @@
 use dynamics::snapshot::Snapshot;
 use egui::{Color32, RichText, ScrollArea, Slider, TextEdit, Ui};
-use graphics::{EngineUpdates, FWD_VEC, Scene};
+use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use na_seq::Element;
 
 use crate::{
@@ -872,14 +872,6 @@ pub(in crate::ui) fn viewer_mol_set(
 
             ui.separator();
 
-            if let Some(i) = close {
-                state
-                    .volatile
-                    .md_local
-                    .viewer
-                    .close_mol_set(&mut state.to_save.open_history, i);
-            }
-
             if set_clicked {
                 // We have this as the function calls in this branch which call state have a borrow
                 // error otherwise; the flag setting is convenience.
@@ -902,5 +894,34 @@ pub(in crate::ui) fn viewer_mol_set(
                 redraw.set_all();
             }
         });
+    }
+
+    if let Some(i) = close {
+        state
+            .volatile
+            .md_local
+            .viewer
+            .close_mol_set(&mut state.to_save.open_history, i);
+
+        if state.volatile.md_local.draw_md_mols {
+            if state.volatile.md_local.viewer.mol_set_active.is_some() {
+                let snap_i = state.volatile.md_local.viewer.current_snapshot.unwrap_or(0);
+
+                if state
+                    .volatile
+                    .md_local
+                    .viewer
+                    .change_snapshot(snap_i)
+                    .is_err()
+                {
+                    handle_err(&mut state.ui, "Error changing snaps".to_string());
+                }
+
+                viewer::draw_mols(state, scene, updates);
+            } else {
+                scene.entities.clear();
+                updates.entities = EntityUpdate::All;
+            }
+        }
     }
 }

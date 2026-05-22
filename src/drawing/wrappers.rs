@@ -3,7 +3,7 @@
 
 // todo: Drawing module A/R.
 
-use graphics::{EngineUpdates, Entity, Scene};
+use graphics::{EngineUpdates, Entity, EntityUpdate, Scene};
 
 use crate::{
     drawing,
@@ -18,15 +18,30 @@ fn helper_a(scene: &Scene, class: u32) -> (usize, usize) {
     // Assumes all entities are this class are contiguous in the entity list.
     let initial_ent_count = scene.entities.iter().filter(|e| e.class == class).count();
 
-    let mut ent_i_start = 0;
-    for (i, ent) in scene.entities.iter().enumerate() {
-        if ent.class == class {
-            ent_i_start = i;
-            break;
-        }
-    }
+    let ent_i_start = scene
+        .entities
+        .iter()
+        .position(|ent| ent.class == class)
+        .unwrap_or(scene.entities.len());
 
     (initial_ent_count, ent_i_start)
+}
+
+fn remove_class_entities(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    class: u32,
+) {
+    let len_before = scene.entities.len();
+    scene.entities.retain(|ent| ent.class != class);
+
+    if scene.entities.len() == len_before {
+        return;
+    }
+
+    clear_mol_entity_indices(state, None);
+    updates.entities = EntityUpdate::All;
 }
 
 /// Note: We can get rid of these helpers and simplify things further if we can abstract over
@@ -39,6 +54,7 @@ fn helper_b(
     initial_ent_count: usize,
     ent_i_start: usize,
     mol_type: MolType,
+    updates: &mut EngineUpdates,
 ) {
     let end = ent_i_start + initial_ent_count;
     if entities.len() == initial_ent_count && end <= scene.entities.len() {
@@ -51,12 +67,20 @@ fn helper_b(
             ent.color = entities[i].color;
             ent.overlay_text = entities[i].overlay_text.clone();
         }
+        updates.entities.push_class(class);
     } else {
         // Full rebuild
-        scene.entities.retain(|ent| ent.class != class);
-        scene.entities.extend(entities);
+        if initial_ent_count == 0 {
+            scene.entities.extend(entities);
+        } else if end <= scene.entities.len() {
+            scene.entities.splice(ent_i_start..end, entities);
+        } else {
+            scene.entities.retain(|ent| ent.class != class);
+            scene.entities.extend(entities);
+        }
 
         clear_mol_entity_indices(state, Some(mol_type));
+        updates.entities = EntityUpdate::All;
     }
 }
 
@@ -121,7 +145,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, updates: &mut EngineU
 
     if state.ui.visibility.hide_ligand || state.volatile.operating_mode == OperatingMode::MolEditor
     {
-        scene.entities.retain(|ent| ent.class != class);
+        remove_class_entities(state, scene, updates, class);
         return;
     }
 
@@ -158,8 +182,6 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, updates: &mut EngineU
         mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
     }
 
-    updates.entities.push_class(EntityClass::Ligand as u32);
-
     helper_b(
         state,
         scene,
@@ -168,6 +190,7 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, updates: &mut EngineU
         initial_ent_count,
         ent_i_start,
         MolType::Ligand,
+        updates,
     );
 }
 
@@ -182,7 +205,7 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene, updates: &mu
     if state.ui.visibility.hide_nucleic_acids
         || state.volatile.operating_mode == OperatingMode::MolEditor
     {
-        scene.entities.retain(|ent| ent.class != class);
+        remove_class_entities(state, scene, updates, class);
         return;
     }
 
@@ -217,10 +240,6 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene, updates: &mu
 
         mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
     }
-    //
-    // updates.entities = EntityUpdate::All;
-    updates.entities.push_class(EntityClass::NucleicAcid as u32);
-
     helper_b(
         state,
         scene,
@@ -229,6 +248,7 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene, updates: &mu
         initial_ent_count,
         ent_i_start,
         MolType::NucleicAcid,
+        updates,
     );
 }
 
@@ -242,7 +262,7 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene, updates: &mut Engin
 
     if state.ui.visibility.hide_lipids || state.volatile.operating_mode == OperatingMode::MolEditor
     {
-        scene.entities.retain(|ent| ent.class != class);
+        remove_class_entities(state, scene, updates, class);
         return;
     }
 
@@ -278,9 +298,6 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene, updates: &mut Engin
         mol.common.entity_i_range = Some((start_i_mol, end_i_mol));
     }
 
-    // updates.entities = EntityUpdate::All;
-    updates.entities.push_class(EntityClass::Lipid as u32);
-
     helper_b(
         state,
         scene,
@@ -289,6 +306,7 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene, updates: &mut Engin
         initial_ent_count,
         ent_i_start,
         MolType::Lipid,
+        updates,
     );
 }
 
@@ -298,13 +316,13 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, updates: &mut Engi
     let (initial_ent_count, ent_i_start) = helper_a(scene, class);
 
     if state.ui.visibility.hide_pockets {
-        scene.entities.retain(|ent| ent.class != class);
+        remove_class_entities(state, scene, updates, class);
         return;
     }
 
     // Edit small molecules only; not proteins.
     if state.volatile.operating_mode == OperatingMode::MolEditor {
-        scene.entities.retain(|ent| ent.class != class);
+        remove_class_entities(state, scene, updates, class);
         return;
     }
 
@@ -356,8 +374,6 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, updates: &mut Engi
         }
     }
 
-    updates.entities.push_class(EntityClass::Pocket as u32);
-
     helper_b(
         state,
         scene,
@@ -366,6 +382,7 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, updates: &mut Engi
         initial_ent_count,
         ent_i_start,
         MolType::Pocket,
+        updates,
     );
 }
 

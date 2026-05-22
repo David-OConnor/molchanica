@@ -811,7 +811,20 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             // and may gain or lose H during prepare_peptide. Using the original atom count
             // causes the viewer's atom_posits to mismatch the trajectory snapshot length,
             // producing out-of-bounds errors in change_snapshot.
-            let n_input_mols = mols.len();
+            // Number of solute molecules as they appear in `mol_start_indices`. `add_copies`
+            // expands each SmallOrganic into `count` separate MolDynamics molecules (each gets
+            // its own mol_start_indices entry); every other type contributes one. Using
+            // `mols.len()` here would ignore copies and mislocate the ion region below.
+            let n_solute_mols: usize = mols
+                .iter()
+                .map(|(ff, _, count)| {
+                    if *ff == FfMolType::SmallOrganic {
+                        *count
+                    } else {
+                        1
+                    }
+                })
+                .sum();
             let mut viewer_mol_data: Vec<(FfMolType, MoleculeCommon, usize)> = mols
                 .iter()
                 .enumerate()
@@ -881,13 +894,14 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             // so they need a matching ViewerMolecule or the non-water atom count in
             // mols_and_traj_synced will fall short of snapshot.atom_posits.len().
             //
-            // mol_start_indices layout: [input_mol_0, ..., input_mol_{n-1},
+            // mol_start_indices layout: [solute_mol_0, ..., solute_mol_{M-1},
             //                            custom_solvent_0, ..., custom_solvent_{K-1},
             //                            ion_0, ion_1, ...]
-            // We must skip past BOTH input mols and custom solvents to reach the ions.
+            // where M counts solute molecules *after* copy expansion. We must skip past BOTH
+            // the solute mols and custom solvents to reach the ions.
             let ion_start = md
                 .mol_start_indices
-                .get(n_input_mols + custom_solvent.len())
+                .get(n_solute_mols + custom_solvent.len())
                 .copied()
                 .unwrap_or(md.atoms.len());
             for a in &md.atoms[ion_start..] {
