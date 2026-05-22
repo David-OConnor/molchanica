@@ -127,7 +127,7 @@ fn run_alchemical_window(
     lambda: f64,
 ) -> Result<LambdaWindow, ParamError> {
     let mut mol = mol.clone();
-    mol.common.selected_for_md = true;
+    mol.common.selected_for_md = Some(1);
 
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
     let cfg = build_cfg(phase);

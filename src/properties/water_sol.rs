@@ -205,7 +205,7 @@ fn prepare_mol_for_md(
     };
 
     let mut mol = mol.clone();
-    mol.common.selected_for_md = true;
+    mol.common.selected_for_md = Some(1);
     // This function has no access to the application's state-level frcmod cache, so force
     // a fresh local molecule-specific parameter inference for the water simulation.
     mol.frcmod_loaded = false;

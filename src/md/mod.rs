@@ -910,19 +910,21 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                     y: a.posit.y as f64,
                     z: a.posit.z as f64,
                 };
+
                 let ion_atom = Atom {
                     serial_number: a.serial_number,
                     element: a.element,
                     posit,
                     ..Default::default()
                 };
+
                 viewer_mol_data.push((
                     FfMolType::SmallOrganic,
                     MoleculeCommon {
                         ident: a.force_field_type.clone(),
                         atoms: vec![ion_atom],
                         atom_posits: vec![posit],
-                        selected_for_md: true,
+                        selected_for_md: Some(1),
                         ..Default::default()
                     },
                     1,
@@ -1048,7 +1050,7 @@ pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, us
     let mut res = Vec::new();
 
     if let Some(p) = &state.peptide
-        && p.common.selected_for_md
+        && p.common.selected_for_md.is_some()
     {
         res.push((FfMolType::Peptide, &p.common, 1));
     }
@@ -1056,19 +1058,19 @@ pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, us
     let ligs: Vec<_> = state
         .ligands
         .iter()
-        .filter(|l| l.common.selected_for_md)
+        .filter(|l| l.common.selected_for_md.is_some())
         .collect();
 
     let lipids: Vec<_> = state
         .lipids
         .iter()
-        .filter(|l| l.common.selected_for_md)
+        .filter(|l| l.common.selected_for_md.is_some())
         .collect();
 
     let nucleic_acids: Vec<_> = state
         .nucleic_acids
         .iter()
-        .filter(|l| l.common.selected_for_md)
+        .filter(|l| l.common.selected_for_md.is_some())
         .collect();
 
     for m in &ligs {
@@ -1105,7 +1107,7 @@ pub(crate) fn setup_mols_dyn(
 
     let mut pep_atom_set = HashSet::new();
     for (ff_mol_type, mol, copies) in mols {
-        if !mol.selected_for_md {
+        if !mol.selected_for_md.is_some() {
             continue;
         }
 
@@ -1204,7 +1206,7 @@ fn ready_to_run_helper(state: &mut State) -> bool {
 
     // Check that we have FF params and mol-specific parameters.
     for lig in &state.ligands {
-        if !lig.common.selected_for_md {
+        if !lig.common.selected_for_md.is_some() {
             continue;
         }
 

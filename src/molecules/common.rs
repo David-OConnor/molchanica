@@ -50,7 +50,10 @@ pub struct MoleculeCommon {
     pub path: Option<PathBuf>,
     /// This is a cached derivative of `path`.
     pub filename: String,
-    pub selected_for_md: bool,
+    // pub selected_for_md: bool,
+    // pub md_copies: 1,
+    /// Inner valuje is the number of copies.
+    pub selected_for_md: Option<usize>,
     pub entity_i_range: Option<(usize, usize)>,
     // todo: Consider if we should move this to MoleculeSmall etc.
     // todo: This index only/always applies to small molecules.
@@ -78,7 +81,7 @@ impl Default for MoleculeCommon {
             visible: true,
             path: None,
             filename: String::new(),
-            selected_for_md: false,
+            selected_for_md: None,
             entity_i_range: None,
             copy_for_md: None,
             next_atom_sn: 1,

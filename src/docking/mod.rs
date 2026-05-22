@@ -91,8 +91,8 @@ pub fn dock(
     // Move the ligand away from the docking site prior to vectoring it towards it.
 
     // todo: QC if you need these.
-    pep.common.selected_for_md = true; // Required to properly re-assign snapshot indices.
-    mol.common.selected_for_md = true; // Required to not get filtered out in `build_dynamics`.
+    pep.common.selected_for_md = Some(1); // Required to properly re-assign snapshot indices.
+    mol.common.selected_for_md = Some(1); // Required to not get filtered out in `build_dynamics`.
 
     let start_dist = 8.;
     let speed = 120.; // Å/ps

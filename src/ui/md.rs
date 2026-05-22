@@ -57,15 +57,15 @@ pub fn md_setup(
             if let Some(mol) = &mut state.peptide {
                 // flag_btn(&mut mol.common.selected_for_md, &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
 
-                let num_ligs = state.ligands.iter().filter(|l| l.common.selected_for_md).count();
-                if mol.common.selected_for_md && num_ligs > 0 {
+                let num_ligs = state.ligands.iter().filter(|l| l.common.selected_for_md.is_some()).count();
+                if mol.common.selected_for_md.is_some() && num_ligs > 0 {
                     flag_btn(&mut state.ui.md.peptide_only_near_ligs, "Pep only near lig", "Only model the subset of peptide atoms near a small molecule", ui);
                     flag_btn(&mut state.ui.md.peptide_static, "Pep static", "Let peptide (protein) atoms affect other molecules, but they don't move themselves", ui);
                 }
             }
 
             if !state.lipids.is_empty() {
-                let prev_val = state.lipids[0].common.selected_for_md;
+                let prev_val = state.lipids[0].common.selected_for_md.is_some();
                 let color = if prev_val { COLOR_ACTIVE } else { COLOR_INACTIVE };
 
                 if button!(ui, "All lipids", color, "Select all lipids for MD")
@@ -82,7 +82,7 @@ pub fn md_setup(
             // }
 
             for mol in &mut state.nucleic_acids {
-                flag_btn(&mut mol.common.selected_for_md, &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
+                flag_btn(&mut mol.common.selected_for_md.is_some(), &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
             }
 
             // ui.add_space(COL_SPACING / 2.);

@@ -1861,11 +1861,11 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
 
         if state.volatile.md_local.mol_dynamics.is_some()
             && state.ui.md.peptide_only_near_ligs
-            && mol.common.selected_for_md
+            && mol.common.selected_for_md.is_some()
             && state
                 .ligands
                 .iter()
-                .filter(|l| l.common.selected_for_md)
+                .filter(|l| l.common.selected_for_md.is_some())
                 .count()
                 != 0
         // todo: Come back to this.
