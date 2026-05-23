@@ -45,6 +45,7 @@ mod properties;
 mod screening;
 mod selection;
 mod smiles;
+pub mod sonification;
 mod state;
 mod tautomers;
 #[cfg(test)]

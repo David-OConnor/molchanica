@@ -71,6 +71,8 @@ cudarc = { version = "0.19.2", default-features = false, features = ["std", "dri
 # Convenient for our large quantity of model files.
 include_dir = "0.7.4"
 
+rodio = "0.22.2"  # For sonification of bonds etc (Experimental)
+
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
 #graphics = { path = "../../graphics" }
