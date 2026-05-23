@@ -3,6 +3,7 @@
 //! logic in them.
 
 use std::{
+    f32::consts::TAU,
     process::{Command, Stdio},
     sync::mpsc,
     thread,
@@ -1349,4 +1350,21 @@ pub fn mdtraj_avail() -> bool {
         }
         Err(_) => false,
     }
+}
+
+/// Returns the frequency of a covalent bond, in ps^-1, assuming classical MD params.
+/// `k_b` is in kcal/mol/Å². Masses are in AMU.
+///
+/// Mass may be taken from MD parameters, or the element default.
+pub fn bond_freq(k_b: f32, mass_0: f32, mass_1: f32) -> f64 {
+    // todo: What is up with this reduced mass?
+    let mass_0 = mass_0.max(1.0);
+    let mass_1 = mass_1.max(1.0);
+
+    let reduced_mass_kg = (mass_0 * mass_1 / (mass_0 + mass_1)) * crate::sonification::AMU_TO_KG;
+
+    // Amber bond stretching uses U = k_b(r-r0)^2, so the harmonic curvature is 2*k_b.
+    let spring_n_per_m = 2.0 * k_b * crate::sonification::KCAL_PER_MOL_A2_TO_N_PER_M;
+
+    (spring_n_per_m / reduced_mass_kg).sqrt() / TAU
 }

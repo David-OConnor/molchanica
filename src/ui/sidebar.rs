@@ -27,7 +27,7 @@ use crate::{
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
 
-const SONIFICATION_INCLUDE_H: bool = false;
+const SONIFICATION_INCLUDE_H: bool = true;
 
 #[derive(Clone, Copy)]
 enum AudioAction {
@@ -49,7 +49,7 @@ fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
     }
 }
 
-/// Abstracts over all molecule types. (Currently not protein though)
+/// Abstracts over all molecule types. (Currently vnot protein though)
 /// A single row for the molecule.
 fn mol_picker_one(
     active_mol: &mut Option<(MolType, usize)>,

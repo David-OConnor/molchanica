@@ -10,7 +10,7 @@ use bio_files::{BondType, md_params::ForceFieldParams};
 use na_seq::Element::Hydrogen;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source, source::SineWave};
 
-use crate::molecules::common::MoleculeCommon;
+use crate::{molecules::common::MoleculeCommon, util};
 
 const AMU_TO_KG: f32 = 1.660_539e-27;
 const KCAL_PER_MOL_A2_TO_N_PER_M: f32 = 0.694_77;
@@ -75,7 +75,23 @@ pub fn play(
 
     let amplitude = VOLUME / (freqs.len() as f32).sqrt();
     for freq in &freqs {
-        stream.mixer().add(SineWave::new(*freq).amplify(amplitude));
+        println!(
+            "sonification: played {:.2} Hz | original {:.3e} Hz | atoms #{} {} - #{} {} | k_b {:.3} kcal/(mol A^2) | r_0 {:.3} A | masses {:.3}, {:.3} amu",
+            freq.played_freq,
+            freq.original_freq,
+            freq.atom_serial_0,
+            freq.ff_type_0,
+            freq.atom_serial_1,
+            freq.ff_type_1,
+            freq.k_b,
+            freq.r_0,
+            freq.mass_0,
+            freq.mass_1,
+        );
+
+        stream
+            .mixer()
+            .add(SineWave::new(freq.played_freq).amplify(amplitude));
     }
 
     Ok(MoleculeSonification {
@@ -84,11 +100,26 @@ pub fn play(
     })
 }
 
+struct BondFrequency {
+    /// ps^-1
+    original_freq: f32,
+    /// Hz
+    played_freq: f32,
+    atom_serial_0: u32,
+    atom_serial_1: u32,
+    ff_type_0: String,
+    ff_type_1: String,
+    k_b: f32,
+    r_0: f32,
+    mass_0: f32,
+    mass_1: f32,
+}
+
 fn bond_frequencies(
     mol: &MoleculeCommon,
     ff_params: &ForceFieldParams,
     include_h: bool,
-) -> io::Result<Vec<f32>> {
+) -> io::Result<Vec<BondFrequency>> {
     let mut result = Vec::with_capacity(mol.bonds.len());
 
     for bond in &mol.bonds {
@@ -112,6 +143,7 @@ fn bond_frequencies(
 
         let ff_type_0 = force_field_type(mol, bond.atom_0)?;
         let ff_type_1 = force_field_type(mol, bond.atom_1)?;
+
         let bond_params = ff_params
             .get_bond(&(ff_type_0.to_owned(), ff_type_1.to_owned()), true)
             .ok_or_else(|| missing_bond_params(ff_type_0, ff_type_1))?;
@@ -120,27 +152,37 @@ fn bond_frequencies(
             .mass
             .get(ff_type_0)
             .map(|m| m.mass)
-            .unwrap_or_else(|| atom_0.element.atomic_weight() as f32);
+            .unwrap_or_else(|| atom_0.element.atomic_weight());
+
         let mass_1 = ff_params
             .mass
             .get(ff_type_1)
             .map(|m| m.mass)
-            .unwrap_or_else(|| atom_1.element.atomic_weight() as f32);
-        result.push(bond_frequency_hz(mass_0, mass_1, bond_params.k_b));
+            .unwrap_or_else(|| atom_1.element.atomic_weight());
+
+        let original_freq = util::bond_freq(bond_params.k_b, mass_0, mass_1);
+        let played_freq_hz = map_bond_freq_to_audio_freq(original_freq as f32);
+
+        result.push(BondFrequency {
+            original_freq: original_freq as f32,
+            played_freq: played_freq_hz,
+            atom_serial_0: atom_0.serial_number,
+            atom_serial_1: atom_1.serial_number,
+            ff_type_0: ff_type_0.to_string(),
+            ff_type_1: ff_type_1.to_string(),
+            k_b: bond_params.k_b,
+            r_0: bond_params.r_0,
+            mass_0,
+            mass_1,
+        });
     }
 
     Ok(result)
 }
 
-fn bond_frequency_hz(mass_0: f32, mass_1: f32, k_b: f32) -> f32 {
-    let mass_0 = mass_0.max(1.0);
-    let mass_1 = mass_1.max(1.0);
-    let reduced_mass_kg = (mass_0 * mass_1 / (mass_0 + mass_1)) * AMU_TO_KG;
-
-    // Amber bond stretching uses U = k_b(r-r0)^2, so the harmonic curvature is 2*k_b.
-    let spring_n_per_m = 2.0 * k_b * KCAL_PER_MOL_A2_TO_N_PER_M;
-    let freq = (spring_n_per_m / reduced_mass_kg).sqrt() / TAU;
-
+/// Adjusts the output frequency of a bond to map suitably to human hearing. The input
+/// bond frequency is in ps^-1. The output frequency is in Hz.
+fn map_bond_freq_to_audio_freq(freq: f32) -> f32 {
     (freq * AUDIO_TRANSPOSITION).clamp(MIN_FREQ_HZ, MAX_FREQ_HZ)
 }
 
