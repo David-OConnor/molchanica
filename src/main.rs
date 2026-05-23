@@ -30,7 +30,7 @@ mod util;
 mod cli;
 mod reflection;
 
-pub mod cam;
+mod cam;
 mod drug_design;
 mod gromacs;
 mod lod_generalization;

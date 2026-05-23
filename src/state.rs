@@ -43,6 +43,7 @@ use crate::{
     },
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
+    sonification::MoleculeSonification,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
     util::{gromacs_avail, mdtraj_avail, orca_avail},
@@ -329,6 +330,8 @@ pub struct StateVolatile {
     pub parquet_dbs: Vec<ParquetMolDb>,
     /// Index to `parquet_dbs`.
     pub parquet_db_active: Option<usize>,
+    /// Playback handle for the molecule currently being sonified, if any.
+    pub playing_audio: Option<PlayingAudio>,
 }
 
 impl StateVolatile {
@@ -340,6 +343,48 @@ impl StateVolatile {
             mdtraj_avail: mdtraj_avail(),
             ..Default::default()
         }
+    }
+
+    pub fn is_playing_audio_for(&self, mol_type: MolType, i_mol: usize) -> bool {
+        self.playing_audio
+            .as_ref()
+            .is_some_and(|audio| audio.is_for(mol_type, i_mol))
+    }
+
+    pub fn update_playing_audio_after_close(&mut self, mol_type: MolType, i_mol: usize) {
+        let Some(audio) = &mut self.playing_audio else {
+            return;
+        };
+
+        if audio.mol_type != mol_type {
+            return;
+        }
+
+        if audio.i_mol == i_mol {
+            self.playing_audio = None;
+        } else if audio.i_mol > i_mol {
+            audio.i_mol -= 1;
+        }
+    }
+}
+
+pub struct PlayingAudio {
+    pub mol_type: MolType,
+    pub i_mol: usize,
+    pub _handle: MoleculeSonification,
+}
+
+impl PlayingAudio {
+    pub fn new(mol_type: MolType, i_mol: usize, handle: MoleculeSonification) -> Self {
+        Self {
+            mol_type,
+            i_mol,
+            _handle: handle,
+        }
+    }
+
+    pub fn is_for(&self, mol_type: MolType, i_mol: usize) -> bool {
+        self.mol_type == mol_type && self.i_mol == i_mol
     }
 }
 

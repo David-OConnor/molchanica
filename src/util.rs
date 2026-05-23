@@ -495,12 +495,17 @@ pub fn close_mol(
 ) {
     state.volatile.mol_manip.mode = ManipMode::None;
 
-    let Some(mol) = state.get_mol(mol_type, i) else {
-        eprintln!("Error: Out of bounds when closing a mol");
-        return;
+    let path = {
+        let Some(mol) = state.get_mol(mol_type, i) else {
+            eprintln!("Error: Out of bounds when closing a mol");
+            return;
+        };
+
+        mol.common().path.clone()
     };
 
-    let path = mol.common().path.clone();
+    state.volatile.update_playing_audio_after_close(mol_type, i);
+
     if let Some(path) = path {
         for history in &mut state.to_save.open_history {
             let ot: OpenType = mol_type.into();

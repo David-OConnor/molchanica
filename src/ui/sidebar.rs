@@ -1,5 +1,5 @@
-use bio_files::FrameSlice;
-use dynamics::FfMolType;
+use bio_files::{FrameSlice, md_params::ForceFieldParams};
+use dynamics::{FfMolType, merge_params};
 use egui::{Color32, RichText, TextEdit, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
@@ -14,10 +14,11 @@ use crate::{
         viewer::ViewerMolSet,
     },
     mol_manip::{ManipMode, set_manip},
-    molecules::{MolGenericRef, MolType, common::MoleculeCommon},
+    molecules::{MolGenericRef, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType},
     properties::{crystal, logp, mol_characterization::MolCharacterization, water_sol},
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
-    state::{OperatingMode, PopupState, State},
+    sonification,
+    state::{OperatingMode, PlayingAudio, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, char_adme, highlighted_box, md_viewer, mol_editor_sidebar,
@@ -25,6 +26,13 @@ use crate::{
     },
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
+
+const SONIFICATION_INCLUDE_H: bool = false;
+
+#[derive(Clone, Copy)]
+enum AudioAction {
+    Toggle(MolType, usize),
+}
 
 fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
     let mut copies_str = copies.to_string();
@@ -62,6 +70,8 @@ fn mol_picker_one(
     cam_snapshot: &mut Option<usize>,
     pep_center: Vec3,
     reset_fog: &mut bool,
+    mol_audio_playing: &Option<PlayingAudio>,
+    audio_action: &mut Option<AudioAction>,
 ) {
     let active = match active_mol {
         Some((mol_type_active, i)) => *mol_type_active == mol_type && *i == i_mol,
@@ -192,8 +202,145 @@ fn mol_picker_one(
         {
             pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_state, ui);
         }
+
+        let playing_this_mol = mol_audio_playing
+            .as_ref()
+            .is_some_and(|audio| audio.is_for(mol_type, i_mol));
+
+        let (text, color, hover_text) = if playing_this_mol {
+            ("Pause", COLOR_ACTIVE, "Stop sonifying this molecule.")
+        } else {
+            (
+                "Play",
+                COLOR_ACTION,
+                "Sonify this molecule using its force-field bond-stretching parameters.",
+            )
+        };
+
+        if mol_type != MolType::Pocket
+            && ui
+                .button(RichText::new(text).color(color))
+                .on_hover_text(hover_text)
+                .clicked()
+        {
+            *audio_action = Some(AudioAction::Toggle(mol_type, i_mol));
+        }
+
         ui.separator();
     });
+}
+
+fn toggle_audio(state: &mut State, mol_type: MolType, i_mol: usize) {
+    if state.volatile.is_playing_audio_for(mol_type, i_mol) {
+        state.volatile.playing_audio = None;
+        return;
+    }
+
+    let (mol, ff_params) = match sonification_input(state, mol_type, i_mol) {
+        Ok(input) => input,
+        Err(e) => {
+            handle_err(&mut state.ui, e);
+            return;
+        }
+    };
+
+    match sonification::play(&mol, &ff_params, SONIFICATION_INCLUDE_H) {
+        Ok(handle) => {
+            state.volatile.playing_audio = Some(PlayingAudio::new(mol_type, i_mol, handle));
+        }
+        Err(e) => handle_err(&mut state.ui, format!("Unable to play molecule audio: {e}")),
+    }
+}
+
+fn sonification_input(
+    state: &State,
+    mol_type: MolType,
+    i_mol: usize,
+) -> Result<(MoleculeCommon, ForceFieldParams), String> {
+    match mol_type {
+        MolType::Peptide => {
+            let mol = state
+                .peptide
+                .as_ref()
+                .ok_or_else(|| "No peptide is loaded.".to_string())?;
+            let params = state
+                .ff_param_set
+                .peptide
+                .as_ref()
+                .ok_or_else(|| "No peptide force-field parameters are loaded.".to_string())?;
+
+            Ok((mol.common.clone(), params.clone()))
+        }
+        MolType::Ligand => {
+            let mol = state
+                .ligands
+                .get(i_mol)
+                .ok_or_else(|| "Ligand index is out of bounds.".to_string())?;
+            let params = state.ff_param_set.small_mol.as_ref().ok_or_else(|| {
+                "No small-molecule force-field parameters are loaded.".to_string()
+            })?;
+
+            Ok((
+                mol.common.clone(),
+                merge_mol_specific_params(
+                    params,
+                    mol_specific_params(&state.mol_specific_params, &mol.common.ident),
+                ),
+            ))
+        }
+        MolType::NucleicAcid => {
+            let mol = state
+                .nucleic_acids
+                .get(i_mol)
+                .ok_or_else(|| "Nucleic acid index is out of bounds.".to_string())?;
+            let params = match mol.na_type {
+                NucleicAcidType::Dna => &state.ff_param_set.dna,
+                NucleicAcidType::Rna => &state.ff_param_set.rna,
+            }
+            .as_ref()
+            .ok_or_else(|| format!("No {} force-field parameters are loaded.", mol.na_type))?;
+
+            Ok((mol.common.clone(), params.clone()))
+        }
+        MolType::Lipid => {
+            let mol = state
+                .lipids
+                .get(i_mol)
+                .ok_or_else(|| "Lipid index is out of bounds.".to_string())?;
+            let params = state
+                .ff_param_set
+                .lipids
+                .as_ref()
+                .ok_or_else(|| "No lipid force-field parameters are loaded.".to_string())?;
+
+            Ok((mol.common.clone(), params.clone()))
+        }
+        MolType::Pocket | MolType::Water => {
+            Err("This molecule type cannot be sonified.".to_string())
+        }
+    }
+}
+
+fn mol_specific_params<'a>(
+    params: &'a std::collections::HashMap<String, ForceFieldParams>,
+    ident: &str,
+) -> Option<&'a ForceFieldParams> {
+    params.get(ident).or_else(|| {
+        params
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(ident))
+            .map(|(_, params)| params)
+    })
+}
+
+fn merge_mol_specific_params(
+    general: &ForceFieldParams,
+    specific: Option<&ForceFieldParams>,
+) -> ForceFieldParams {
+    match specific {
+        Some(specific) => merge_params(general, specific),
+        None => general.clone(),
+    }
 }
 
 /// Select, close, hide etc molecules from ones opened.
@@ -214,6 +361,7 @@ fn mol_picker(
     };
 
     let mut reset_fog = false;
+    let mut audio_action = None;
 
     if let Some(mol) = &mut state.peptide {
         mol_picker_one(
@@ -235,6 +383,8 @@ fn mol_picker(
             &mut state.ui.cam_snapshot,
             pep_center,
             &mut reset_fog,
+            &state.volatile.playing_audio,
+            &mut audio_action,
         );
     }
 
@@ -258,6 +408,8 @@ fn mol_picker(
             &mut state.ui.cam_snapshot,
             pep_center,
             &mut reset_fog,
+            &state.volatile.playing_audio,
+            &mut audio_action,
         );
     }
 
@@ -281,6 +433,8 @@ fn mol_picker(
             &mut state.ui.cam_snapshot,
             pep_center,
             &mut reset_fog,
+            &state.volatile.playing_audio,
+            &mut audio_action,
         );
     }
 
@@ -305,6 +459,8 @@ fn mol_picker(
             &mut state.ui.cam_snapshot,
             pep_center,
             &mut reset_fog,
+            &state.volatile.playing_audio,
+            &mut audio_action,
         );
     }
 
@@ -329,6 +485,8 @@ fn mol_picker(
             &mut state.ui.cam_snapshot,
             pep_center,
             &mut reset_fog,
+            &state.volatile.playing_audio,
+            &mut audio_action,
         );
     }
 
@@ -355,6 +513,10 @@ fn mol_picker(
     // }
 
     // todo: AAs here too?
+
+    if let Some(AudioAction::Toggle(mol_type, i_mol)) = audio_action {
+        toggle_audio(state, mol_type, i_mol);
+    }
 
     if let Some((mol_type, i_mol)) = close {
         close_mol(mol_type, i_mol, state, scene, redraw, updates);

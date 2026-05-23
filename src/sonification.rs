@@ -4,17 +4,20 @@
 //! diatomic oscillator, then transposed into the audible range. The ordering is chemically
 //! meaningful: lighter atoms and stronger/shorter bonds produce higher tones.
 
-use std::io;
+use std::{f32::consts::TAU, io};
 
-use bio_files::BondType;
+use bio_files::{BondType, md_params::ForceFieldParams};
 use na_seq::Element::Hydrogen;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source, source::SineWave};
 
 use crate::molecules::common::MoleculeCommon;
 
-const BASE_FREQ_HZ: f32 = 2_200.0;
+const AMU_TO_KG: f32 = 1.660_539e-27;
+const KCAL_PER_MOL_A2_TO_N_PER_M: f32 = 0.694_77;
+const AUDIO_TRANSPOSITION: f32 = 2.0e-11;
 const MIN_FREQ_HZ: f32 = 80.0;
-const MAX_FREQ_HZ: f32 = 2_600.0;
+// const MAX_FREQ_HZ: f32 = 2_600.0;
+const MAX_FREQ_HZ: f32 = 5_000.0;
 const VOLUME: f32 = 0.16;
 
 /// Playback handle for one molecule.
@@ -27,8 +30,12 @@ pub struct MoleculeSonification {
 
 impl MoleculeSonification {
     /// Start playing audio/harmonies from all covalent bonds in a molecule.
-    pub fn start(mol: &MoleculeCommon, include_h: bool) -> io::Result<Self> {
-        play(mol, include_h)
+    pub fn start(
+        mol: &MoleculeCommon,
+        ff_params: &ForceFieldParams,
+        include_h: bool,
+    ) -> io::Result<Self> {
+        play(mol, ff_params, include_h)
     }
 
     /// Stop playback. Calling this more than once is harmless.
@@ -49,13 +56,17 @@ impl MoleculeSonification {
 ///
 /// Set `include_h` to false to omit bonds to hydrogen, which otherwise tend to sit at
 /// the high end of the sonified pitch range.
-pub fn play(mol: &MoleculeCommon, include_h: bool) -> io::Result<MoleculeSonification> {
-    let freqs = bond_frequencies(mol, include_h)?;
+pub fn play(
+    mol: &MoleculeCommon,
+    ff_params: &ForceFieldParams,
+    include_h: bool,
+) -> io::Result<MoleculeSonification> {
+    let freqs = bond_frequencies(mol, ff_params, include_h)?;
 
     if freqs.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "molecule has no covalent bonds to sonify",
+            "molecule has no parameterized covalent bonds to sonify",
         ));
     }
 
@@ -73,7 +84,11 @@ pub fn play(mol: &MoleculeCommon, include_h: bool) -> io::Result<MoleculeSonific
     })
 }
 
-fn bond_frequencies(mol: &MoleculeCommon, include_h: bool) -> io::Result<Vec<f32>> {
+fn bond_frequencies(
+    mol: &MoleculeCommon,
+    ff_params: &ForceFieldParams,
+    include_h: bool,
+) -> io::Result<Vec<f32>> {
     let mut result = Vec::with_capacity(mol.bonds.len());
 
     for bond in &mol.bonds {
@@ -81,6 +96,7 @@ fn bond_frequencies(mol: &MoleculeCommon, include_h: bool) -> io::Result<Vec<f32
             .atoms
             .get(bond.atom_0)
             .ok_or_else(|| invalid_bond("atom_0"))?;
+
         let atom_1 = mol
             .atoms
             .get(bond.atom_1)
@@ -90,60 +106,66 @@ fn bond_frequencies(mol: &MoleculeCommon, include_h: bool) -> io::Result<Vec<f32
             continue;
         }
 
-        let Some(bond_order) = effective_bond_order(bond.bond_type) else {
+        if !is_parameterized_bond(bond.bond_type) {
             continue;
-        };
+        }
 
-        let Some(bond_len) = bond_length(mol, bond.atom_0, bond.atom_1) else {
-            return Err(invalid_bond("position"));
-        };
+        let ff_type_0 = force_field_type(mol, bond.atom_0)?;
+        let ff_type_1 = force_field_type(mol, bond.atom_1)?;
+        let bond_params = ff_params
+            .get_bond(&(ff_type_0.to_owned(), ff_type_1.to_owned()), true)
+            .ok_or_else(|| missing_bond_params(ff_type_0, ff_type_1))?;
 
-        result.push(bond_frequency_hz(
-            atom_0.element.atomic_weight() as f32,
-            atom_1.element.atomic_weight() as f32,
-            bond_len,
-            bond_order,
-        ));
+        let mass_0 = ff_params
+            .mass
+            .get(ff_type_0)
+            .map(|m| m.mass)
+            .unwrap_or_else(|| atom_0.element.atomic_weight() as f32);
+        let mass_1 = ff_params
+            .mass
+            .get(ff_type_1)
+            .map(|m| m.mass)
+            .unwrap_or_else(|| atom_1.element.atomic_weight() as f32);
+        result.push(bond_frequency_hz(mass_0, mass_1, bond_params.k_b));
     }
 
     Ok(result)
 }
 
-fn bond_length(mol: &MoleculeCommon, atom_0: usize, atom_1: usize) -> Option<f32> {
-    let posit_0 = mol
-        .atom_posits
-        .get(atom_0)
-        .or_else(|| mol.atoms.get(atom_0).map(|a| &a.posit))?;
-    let posit_1 = mol
-        .atom_posits
-        .get(atom_1)
-        .or_else(|| mol.atoms.get(atom_1).map(|a| &a.posit))?;
-
-    Some((*posit_0 - *posit_1).magnitude() as f32)
-}
-
-fn bond_frequency_hz(mass_0: f32, mass_1: f32, bond_len: f32, bond_order: f32) -> f32 {
+fn bond_frequency_hz(mass_0: f32, mass_1: f32, k_b: f32) -> f32 {
     let mass_0 = mass_0.max(1.0);
     let mass_1 = mass_1.max(1.0);
-    let reduced_mass = mass_0 * mass_1 / (mass_0 + mass_1);
-    let bond_len = bond_len.max(0.6);
+    let reduced_mass_kg = (mass_0 * mass_1 / (mass_0 + mass_1)) * AMU_TO_KG;
 
-    let stiffness_proxy = bond_order / bond_len.powi(3);
-    let freq = BASE_FREQ_HZ * (stiffness_proxy / reduced_mass).sqrt();
+    // Amber bond stretching uses U = k_b(r-r0)^2, so the harmonic curvature is 2*k_b.
+    let spring_n_per_m = 2.0 * k_b * KCAL_PER_MOL_A2_TO_N_PER_M;
+    let freq = (spring_n_per_m / reduced_mass_kg).sqrt() / TAU;
 
-    freq.clamp(MIN_FREQ_HZ, MAX_FREQ_HZ)
+    (freq * AUDIO_TRANSPOSITION).clamp(MIN_FREQ_HZ, MAX_FREQ_HZ)
 }
 
-fn effective_bond_order(bond_type: BondType) -> Option<f32> {
+fn is_parameterized_bond(bond_type: BondType) -> bool {
     match bond_type {
-        BondType::Single | BondType::PolymericLink | BondType::Unknown => Some(1.0),
-        BondType::Amide => Some(1.3),
-        BondType::Aromatic | BondType::Delocalized => Some(1.5),
-        BondType::Double => Some(2.0),
-        BondType::Triple => Some(3.0),
-        BondType::Quadruple => Some(4.0),
-        BondType::Dummy | BondType::NotConnected => None,
+        BondType::Dummy | BondType::NotConnected => false,
+        _ => true,
     }
+}
+
+fn force_field_type(mol: &MoleculeCommon, atom_i: usize) -> io::Result<&str> {
+    let atom = mol.atoms.get(atom_i).ok_or_else(|| invalid_bond("atom"))?;
+    atom.force_field_type.as_deref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("atom #{} is missing a force-field type", atom.serial_number),
+        )
+    })
+}
+
+fn missing_bond_params(ff_type_0: &str, ff_type_1: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("missing bond-stretch params for {ff_type_0}-{ff_type_1}"),
+    )
 }
 
 fn invalid_bond(field: &str) -> io::Error {
