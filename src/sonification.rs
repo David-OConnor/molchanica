@@ -4,7 +4,7 @@
 //! diatomic oscillator, then transposed into the audible range. The ordering is chemically
 //! meaningful: lighter atoms and stronger/shorter bonds produce higher tones.
 
-use std::{f32::consts::TAU, io};
+use std::io;
 
 use bio_files::{BondType, md_params::ForceFieldParams};
 use na_seq::Element::Hydrogen;
@@ -12,9 +12,8 @@ use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source, source::SineWave};
 
 use crate::{molecules::common::MoleculeCommon, util};
 
-const AMU_TO_KG: f32 = 1.660_539e-27;
-const KCAL_PER_MOL_A2_TO_N_PER_M: f32 = 0.694_77;
-const AUDIO_TRANSPOSITION: f32 = 2.0e-11;
+const AUDIO_TRANSPOSITION_FROM_HZ: f64 = 2.0e-11;
+const PS_INV_TO_HZ: f64 = 1.0e12;
 const MIN_FREQ_HZ: f32 = 80.0;
 // const MAX_FREQ_HZ: f32 = 2_600.0;
 const MAX_FREQ_HZ: f32 = 5_000.0;
@@ -76,9 +75,9 @@ pub fn play(
     let amplitude = VOLUME / (freqs.len() as f32).sqrt();
     for freq in &freqs {
         println!(
-            "sonification: played {:.2} Hz | original {:.3e} Hz | atoms #{} {} - #{} {} | k_b {:.3} kcal/(mol A^2) | r_0 {:.3} A | masses {:.3}, {:.3} amu",
-            freq.played_freq,
-            freq.original_freq,
+            "sonification: played {:.2} Hz | bond {:.3} ps^-1 | atoms #{} {} - #{} {} | k_b {:.3} kcal/(mol A^2) | r_0 {:.3} A | masses {:.3}, {:.3} amu",
+            freq.audio_freq_hz,
+            freq.bond_freq_ps,
             freq.atom_serial_0,
             freq.ff_type_0,
             freq.atom_serial_1,
@@ -91,7 +90,7 @@ pub fn play(
 
         stream
             .mixer()
-            .add(SineWave::new(freq.played_freq).amplify(amplitude));
+            .add(SineWave::new(freq.audio_freq_hz).amplify(amplitude));
     }
 
     Ok(MoleculeSonification {
@@ -102,9 +101,9 @@ pub fn play(
 
 struct BondFrequency {
     /// ps^-1
-    original_freq: f32,
+    bond_freq_ps: f64,
     /// Hz
-    played_freq: f32,
+    audio_freq_hz: f32,
     atom_serial_0: u32,
     atom_serial_1: u32,
     ff_type_0: String,
@@ -160,12 +159,12 @@ fn bond_frequencies(
             .map(|m| m.mass)
             .unwrap_or_else(|| atom_1.element.atomic_weight());
 
-        let original_freq = util::bond_freq(bond_params.k_b, mass_0, mass_1);
-        let played_freq_hz = map_bond_freq_to_audio_freq(original_freq as f32);
+        let bond_freq_ps = util::bond_freq(bond_params.k_b, mass_0, mass_1);
+        let audio_freq_hz = map_bond_freq_to_audio_freq(bond_freq_ps);
 
         result.push(BondFrequency {
-            original_freq: original_freq as f32,
-            played_freq: played_freq_hz,
+            bond_freq_ps,
+            audio_freq_hz,
             atom_serial_0: atom_0.serial_number,
             atom_serial_1: atom_1.serial_number,
             ff_type_0: ff_type_0.to_string(),
@@ -182,8 +181,9 @@ fn bond_frequencies(
 
 /// Adjusts the output frequency of a bond to map suitably to human hearing. The input
 /// bond frequency is in ps^-1. The output frequency is in Hz.
-fn map_bond_freq_to_audio_freq(freq: f32) -> f32 {
-    (freq * AUDIO_TRANSPOSITION).clamp(MIN_FREQ_HZ, MAX_FREQ_HZ)
+fn map_bond_freq_to_audio_freq(freq_ps: f64) -> f32 {
+    (freq_ps * PS_INV_TO_HZ * AUDIO_TRANSPOSITION_FROM_HZ)
+        .clamp(f64::from(MIN_FREQ_HZ), f64::from(MAX_FREQ_HZ)) as f32
 }
 
 fn is_parameterized_bond(bond_type: BondType) -> bool {

@@ -2,7 +2,7 @@
 
 use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
 use bio_files::{ResidueType, md_params::ForceFieldParams};
-use dynamics::params::FfParamSet;
+use dynamics::merge_params;
 use egui::{Color32, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -17,6 +17,7 @@ use crate::{
     label,
     molecules::{
         Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
+        nucleic_acid::NucleicAcidType,
         pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
     },
     render::MESH_POCKET_START,
@@ -110,26 +111,24 @@ fn disp_atom_data(
     }
 }
 
-// todo: This would ideally be a method on FfParamSet, but that lib doesn't have access to our MolType enum.
-/// Get params for a single molecule type.
-pub(in crate::ui) fn get_params(set: &FfParamSet, mol_type: MolType) -> &Option<ForceFieldParams> {
-    match mol_type {
-        MolType::Peptide => &set.peptide,
-        MolType::Ligand => &set.small_mol,
-        MolType::NucleicAcid => &set.dna, // todo: Could be RNA
-        MolType::Lipid => &set.lipids,
-        _ => &None,
-    }
+fn ligand_params(state: &State, ident: &str) -> Option<ForceFieldParams> {
+    let general = state.ff_param_set.small_mol.as_ref()?;
+    let specific = state.mol_specific_params.get(ident).or_else(|| {
+        state
+            .mol_specific_params
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(ident))
+            .map(|(_, params)| params)
+    });
+
+    Some(match specific {
+        Some(specific) => merge_params(general, specific),
+        None => general.clone(),
+    })
 }
 
 /// `posit_override` is for example, relative atom positions, such as a positioned ligand.
-fn disp_bond_data(
-    bond: &Bond,
-    atoms: &[Atom],
-    mol_type: MolType,
-    params: &FfParamSet,
-    ui: &mut Ui,
-) {
+fn disp_bond_data(bond: &Bond, atoms: &[Atom], params: Option<&ForceFieldParams>, ui: &mut Ui) {
     let atom_0 = &atoms[bond.atom_0];
     let atom_1 = &atoms[bond.atom_1];
 
@@ -158,7 +157,7 @@ fn disp_bond_data(
 
     label!(ui, format!("{dist:.3} Å"), Color32::LIGHT_YELLOW);
 
-    if let Some(p) = get_params(params, mol_type)
+    if let Some(p) = params
         && let (Some(ff_0), Some(ff_1)) = (
             atom_0.force_field_type.as_deref(),
             atom_1.force_field_type.as_deref(),
@@ -183,7 +182,7 @@ fn disp_bond_data(
         // todo: Cache this; don't compute in the UI.
         let freq = util::bond_freq(b.k_b, mass_0, mass_1);
 
-        ui.label(format!("Freq: {freq:.1}ps^-1"));
+        ui.label(format!("Freq: {freq:.2} ps^-1"));
     }
 }
 
@@ -331,8 +330,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
-                    MolType::Peptide,
-                    &state.ff_param_set,
+                    state.ff_param_set.peptide.as_ref(),
                     ui,
                 );
             }
@@ -344,18 +342,14 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     return;
                 };
 
-                disp_bond_data(
-                    bond,
-                    &mol.common.atoms,
-                    MolType::Ligand,
-                    &state.ff_param_set,
-                    ui,
-                );
+                let params = ligand_params(state, &mol.common.ident);
+                disp_bond_data(bond, &mol.common.atoms, params.as_ref(), ui);
             }
             Selection::BondsLig((mol_i, bond_is)) => {
                 let Some(mol) = state.get_small(*mol_i) else {
                     return;
                 };
+                let params = ligand_params(state, &mol.common.ident);
 
                 for bond_i in bond_is {
                     if *bond_i >= mol.common.bonds.len() {
@@ -363,13 +357,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     }
 
                     let bond = &mol.common.bonds[*bond_i];
-                    disp_bond_data(
-                        bond,
-                        &mol.common.atoms,
-                        MolType::Ligand,
-                        &state.ff_param_set,
-                        ui,
-                    );
+                    disp_bond_data(bond, &mol.common.atoms, params.as_ref(), ui);
                 }
             }
             Selection::BondNucleicAcid((mol_i, bond_i)) => {
@@ -380,13 +368,12 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     return;
                 };
 
-                disp_bond_data(
-                    bond,
-                    &mol.common.atoms,
-                    MolType::NucleicAcid,
-                    &state.ff_param_set,
-                    ui,
-                );
+                let params = match mol.na_type {
+                    NucleicAcidType::Dna => state.ff_param_set.dna.as_ref(),
+                    NucleicAcidType::Rna => state.ff_param_set.rna.as_ref(),
+                };
+
+                disp_bond_data(bond, &mol.common.atoms, params, ui);
             }
             Selection::BondLipid((mol_i, bond_i)) => {
                 let Some(mol) = state.get_lipid(*mol_i) else {
@@ -399,8 +386,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
-                    MolType::Lipid,
-                    &state.ff_param_set,
+                    state.ff_param_set.lipids.as_ref(),
                     ui,
                 );
             }
@@ -412,13 +398,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     return;
                 };
 
-                disp_bond_data(
-                    bond,
-                    &mol.common.atoms,
-                    MolType::Pocket,
-                    &state.ff_param_set,
-                    ui,
-                );
+                disp_bond_data(bond, &mol.common.atoms, None, ui);
             }
             Selection::ComponentEditor(_) => {}
             Selection::None => {}
