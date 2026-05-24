@@ -15,9 +15,8 @@ use crate::{molecules::common::MoleculeCommon, util};
 const AUDIO_TRANSPOSITION_FROM_HZ: f64 = 2.0e-11;
 const PS_INV_TO_HZ: f64 = 1.0e12;
 const MIN_FREQ_HZ: f32 = 80.0;
-// const MAX_FREQ_HZ: f32 = 2_600.0;
 const MAX_FREQ_HZ: f32 = 5_000.0;
-const VOLUME: f32 = 0.16;
+const VOLUME: f32 = 0.08;
 
 /// Playback handle for one molecule.
 ///
