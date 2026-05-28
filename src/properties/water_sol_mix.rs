@@ -6,17 +6,14 @@
 
 use std::{
     collections::HashMap,
-    fmt::Write as _,
-    fs,
-    io::{self, ErrorKind, Write as _},
-    path::Path,
+    io::{self, ErrorKind},
 };
 
 use bio_files::{
     BondGeneric,
     gromacs::{
-        self as bf_gromacs, GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
-        OutputEnergy, output::parse_gro_traj,
+        self as bf_gromacs, MoleculeInput, OutputControl,
+        gro::{AtomGro, Gro},
     },
     md_params::ForceFieldParams,
 };
@@ -30,11 +27,13 @@ use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3 as Vec3F64},
 };
+use na_seq::Element;
 use rand::Rng;
 
 use crate::{
     md::{MdBackend, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
+    properties::prepare_mol_for_md,
 };
 
 const TARGET_TOTAL_MOLECULES: usize = 200;
@@ -58,17 +57,6 @@ const LAYER_INIT_RELAXATION_ITERS: usize = 120;
 const TEMPERATURE: f32 = 300.0;
 const DT: f32 = 0.002;
 const AMU_A3_TO_G_CM3: f32 = 1.660_539;
-
-const GROMACS_LAYER_DIR: &str = "gromacs_layer_out";
-const GROMACS_CONF: &str = "conf.gro";
-const GROMACS_TOP: &str = "topo.top";
-const GROMACS_MDP: &str = "md.mdp";
-const GROMACS_EM_MDP: &str = "em.mdp";
-const GROMACS_TRAJ_GRO: &str = "traj.gro";
-const GROMACS_TRR: &str = "traj.trr";
-const GROMACS_XTC: &str = "traj.xtc";
-const GROMACS_EDR: &str = "energy.edr";
-const GROMACS_LOG: &str = "md.log";
 
 const OPC_OH_A: f64 = 0.872_433_13;
 const OPC_HOH_RAD: f64 = 1.808_161_105_066;
@@ -120,39 +108,6 @@ fn param_err(e: ParamError) -> io::Error {
 fn mean(values: &[f32]) -> Option<f32> {
     let finite: Vec<_> = values.iter().copied().filter(|v| v.is_finite()).collect();
     (!finite.is_empty()).then(|| finite.iter().sum::<f32>() / finite.len() as f32)
-}
-
-fn prepare_mol_for_md(
-    mol: &MoleculeSmall,
-    param_set: &FfParamSet,
-) -> io::Result<(MoleculeSmall, HashMap<String, ForceFieldParams>)> {
-    let Some(gaff2) = param_set.small_mol.as_ref() else {
-        return Err(io::Error::new(
-            ErrorKind::InvalidInput,
-            "Missing GAFF2 small-molecule parameters.",
-        ));
-    };
-
-    let mut mol = mol.clone();
-    mol.common.selected_for_md = Some(1);
-    mol.frcmod_loaded = false;
-
-    let mut mol_specific_params = HashMap::new();
-    mol.update_ff_related(&mut mol_specific_params, gaff2, false);
-
-    if !mol.ff_params_loaded || !mol.frcmod_loaded {
-        return Err(io::Error::new(
-            ErrorKind::InvalidInput,
-            format!(
-                "Unable to infer force-field parameters for {}.",
-                mol.common.ident
-            ),
-        ));
-    }
-
-    mol.update_characterization();
-
-    Ok((mol, mol_specific_params))
 }
 
 fn mol_bounding_radius(mol: &MoleculeSmall) -> f64 {
@@ -521,34 +476,35 @@ fn gromacs_layer_molecule_input(
     })
 }
 
-fn write_gro_atom_line(
-    out: &mut String,
+fn gro_posit_nm(posit_a: Vec3F64, shift_a: Vec3F64) -> Vec3F64 {
+    (posit_a + shift_a) / 10.0
+}
+
+fn layer_gro_atom(
     mol_id: usize,
     mol_name: &str,
     atom_name: &str,
     atom_serial: usize,
+    element: Element,
     posit_a: Vec3F64,
     shift_a: Vec3F64,
-) {
-    let p_nm = (posit_a + shift_a) / 10.0;
-    let _ = writeln!(
-        out,
-        "{:>5}{:<5}{:>5}{:>5}{:>8.3}{:>8.3}{:>8.3}",
-        mol_id % 100_000,
-        &mol_name[..mol_name.len().min(5)],
-        &atom_name[..atom_name.len().min(5)],
-        atom_serial % 100_000,
-        p_nm.x,
-        p_nm.y,
-        p_nm.z,
-    );
+) -> AtomGro {
+    AtomGro {
+        mol_id: mol_id as u32,
+        mol_name: mol_name.to_string(),
+        element,
+        atom_type: atom_name.to_string(),
+        serial_number: atom_serial as u32,
+        posit: gro_posit_nm(posit_a, shift_a),
+        velocity: None,
+    }
 }
 
 fn make_layer_gro(
     solute: &MoleculeInput,
     waters: &[WaterGeometry],
     setup: BoundaryLayerSetup,
-) -> String {
+) -> io::Result<String> {
     let total_atoms = solute.atoms.len() + waters.len() * 4;
     let shift = Vec3F64::new(
         setup.box_extent_a.x as f64 / 2.0,
@@ -556,46 +512,57 @@ fn make_layer_gro(
         setup.box_extent_a.z as f64 / 2.0,
     );
 
-    let mut out = String::from("Molchanica boundary-layer solute/water preset\n");
-    let _ = writeln!(out, "{total_atoms}");
-
+    let mut atoms = Vec::with_capacity(total_atoms);
     let mut atom_serial = 1usize;
     for atom in &solute.atoms {
         let atom_name = gromacs_atom_name(atom, atom_serial);
-        write_gro_atom_line(
-            &mut out,
+        atoms.push(layer_gro_atom(
             1,
             &solute.name,
             &atom_name,
             atom_serial,
+            atom.element,
             atom.posit,
             shift,
-        );
+        ));
         atom_serial += 1;
     }
 
     for (water_i, water) in waters.iter().enumerate() {
         let mol_id = water_i + 2;
-        for (name, posit) in [
-            ("OW", water.o),
-            ("HW1", water.h0),
-            ("HW2", water.h1),
-            ("MW", water.m),
+        for (name, element, posit) in [
+            ("OW", Element::Oxygen, water.o),
+            ("HW1", Element::Hydrogen, water.h0),
+            ("HW2", Element::Hydrogen, water.h1),
+            ("MW", Element::Oxygen, water.m),
         ] {
-            write_gro_atom_line(&mut out, mol_id, "SOL", name, atom_serial, posit, shift);
+            atoms.push(layer_gro_atom(
+                mol_id,
+                "SOL",
+                name,
+                atom_serial,
+                element,
+                posit,
+                shift,
+            ));
             atom_serial += 1;
         }
     }
 
-    let _ = writeln!(
-        out,
-        "{:>10.5}{:>10.5}{:>10.5}",
-        setup.box_extent_a.x / 10.0,
-        setup.box_extent_a.y / 10.0,
-        setup.box_extent_a.z / 10.0,
-    );
+    let gro = Gro {
+        atoms,
+        head_text: "Molchanica boundary-layer solute/water preset".to_string(),
+        box_vec: Vec3F64::new(
+            setup.box_extent_a.x as f64 / 10.0,
+            setup.box_extent_a.y as f64 / 10.0,
+            setup.box_extent_a.z as f64 / 10.0,
+        ),
+    };
 
-    out
+    let mut bytes = Vec::new();
+    gro.write_to(&mut bytes)?;
+    String::from_utf8(bytes)
+        .map_err(|e| io::Error::other(format!("Invalid UTF-8 writing layer GRO: {e}")))
 }
 
 fn boundary_layer_data_from_setup(setup: BoundaryLayerSetup) -> BoundaryLayerMdData {
@@ -678,36 +645,16 @@ fn run_dynamics_backend(
     Ok((data, md.snapshots))
 }
 
-fn em_mdp_str() -> &'static str {
-    "; Energy minimization - generated by Molchanica\n\
-     integrator               = steep\n\
-     nsteps                   = 5000\n\
-     emtol                    = 1000.0\n\
-     emstep                   = 0.01\n\
-     \n\
-     cutoff-scheme            = Verlet\n\
-     coulombtype              = PME\n\
-     fourierspacing           = 0.16\n\
-     rcoulomb                 = 1.0\n\
-     vdw-type                 = Cut-off\n\
-     rvdw                     = 1.0\n\
-     \n\
-     pbc                      = xyz\n\
-     constraints              = none\n"
-}
-
-fn save_text(path: impl AsRef<Path>, text: &str) -> io::Result<()> {
-    let mut f = fs::File::create(path)?;
-    write!(f, "{text}")?;
-    Ok(())
-}
-
-fn make_layer_top(
-    solute_input: MoleculeInput,
+fn run_gromacs_backend(
+    placed_mols: &[MolDynamics],
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
     setup: BoundaryLayerSetup,
-) -> io::Result<String> {
+) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
+    let solute_input = gromacs_layer_molecule_input(placed_mols, &mol.common.ident)?;
+    let waters = make_water_layer(setup);
+    let gro_text = make_layer_gro(&solute_input, &waters, setup)?;
+
     let cfg = make_md_cfg(setup, Solvent::None, false);
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
     let mols = vec![(
@@ -724,6 +671,7 @@ fn make_layer_top(
         &Solvent::None,
         true,
     )?;
+    input.initial_gro = Some(gro_text);
     input.solvent = Some(bf_gromacs::solvate::Solvent::Custom(
         bf_gromacs::solvate::CustomSolventTemplate {
             gro_text: String::new(),
@@ -731,133 +679,18 @@ fn make_layer_top(
             include_opc_water: true,
         },
     ));
+    input
+        .extra_molecule_counts
+        .push(("SOL".to_string(), waters.len()));
 
-    let mut top = input.make_top()?;
-    top.push_str(&format!("{:<14}  {}\n", "SOL", setup.water_molecule_count));
-    Ok(top)
-}
-
-fn run_gromacs_backend(
-    placed_mols: &[MolDynamics],
-    mol: &MoleculeSmall,
-    param_set: &FfParamSet,
-    setup: BoundaryLayerSetup,
-) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
-    let solute_input = gromacs_layer_molecule_input(placed_mols, &mol.common.ident)?;
-    let waters = make_water_layer(setup);
-    let gro_text = make_layer_gro(&solute_input, &waters, setup);
-    let top = make_layer_top(solute_input.clone(), mol, param_set, setup)?;
-
-    let cfg = make_md_cfg(setup, Solvent::None, false);
-    let input_for_run = GromacsInput {
-        mdp: cfg.to_gromacs(NUM_STEPS, DT),
-        molecules: vec![solute_input],
-        box_nm: Some((
-            setup.box_extent_a.x as f64 / 10.0,
-            setup.box_extent_a.y as f64 / 10.0,
-            setup.box_extent_a.z as f64 / 10.0,
-        )),
-        ff_global: None,
-        solvent: None,
-        minimize_energy: true,
-    };
-
-    let dir = Path::new(GROMACS_LAYER_DIR);
-    fs::create_dir_all(dir)?;
-    save_text(dir.join(GROMACS_TOP), &top)?;
-
-    let out = {
-        save_text(dir.join(GROMACS_CONF), &gro_text)?;
-        save_text(dir.join(GROMACS_MDP), &input_for_run.make_mdp())?;
-        save_text(dir.join(GROMACS_EM_MDP), em_mdp_str())?;
-
-        bf_gromacs::run_gmx(
-            dir,
-            &[
-                "grompp",
-                "-f",
-                GROMACS_EM_MDP,
-                "-c",
-                GROMACS_CONF,
-                "-p",
-                GROMACS_TOP,
-                "-o",
-                "em.tpr",
-                "-maxwarn",
-                "5",
-            ],
-        )?;
-        bf_gromacs::run_gmx(
-            dir,
-            &[
-                "mdrun", "-s", "em.tpr", "-c", "em.gro", "-e", "em.edr", "-g", "em.log",
-            ],
-        )?;
-        bf_gromacs::run_gmx(
-            dir,
-            &[
-                "grompp",
-                "-f",
-                GROMACS_MDP,
-                "-c",
-                "em.gro",
-                "-p",
-                GROMACS_TOP,
-                "-o",
-                "topol.tpr",
-                "-maxwarn",
-                "5",
-            ],
-        )?;
-        bf_gromacs::run_gmx(
-            dir,
-            &[
-                "mdrun",
-                "-s",
-                "topol.tpr",
-                "-o",
-                GROMACS_TRR,
-                "-x",
-                GROMACS_XTC,
-                "-c",
-                "confout.gro",
-                "-e",
-                GROMACS_EDR,
-                "-g",
-                GROMACS_LOG,
-            ],
-        )?;
-        bf_gromacs::run_gmx_stdin(
-            dir,
-            &[
-                "trjconv",
-                "-f",
-                GROMACS_TRR,
-                "-s",
-                "topol.tpr",
-                "-o",
-                GROMACS_TRAJ_GRO,
-            ],
-            b"0\n",
-        )?;
-
-        let log_text = fs::read_to_string(dir.join(GROMACS_LOG)).unwrap_or_default();
-        let traj_text = fs::read_to_string(dir.join(GROMACS_TRAJ_GRO))?;
-        let frames = parse_gro_traj(&traj_text)?;
-        let energies = OutputEnergy::from_edr(&dir.join(GROMACS_EDR)).unwrap_or_default();
-        GromacsOutput::new(
-            log_text,
-            frames,
-            energies,
-            input_for_run.solute_atom_count(),
-        )?
-    };
+    let out = input.run()?;
 
     if out.setup_failure {
         return Err(io::Error::other(
             "GROMACS setup failed while running boundary-layer MD.",
         ));
     }
+
     if out.log_text.contains("Fatal error") {
         return Err(io::Error::other(
             "GROMACS reported a fatal error while running boundary-layer MD.",
