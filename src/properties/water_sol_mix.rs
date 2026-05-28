@@ -21,6 +21,7 @@ use dynamics::{
     ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState, MolDynamics,
     ParamError, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     params::FfParamSet,
+    random_quaternion,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::{
@@ -29,6 +30,7 @@ use lin_alg::{
 };
 use na_seq::Element;
 use rand::Rng;
+use rand::distr::Uniform;
 
 use crate::{
     md::{MdBackend, run_dynamics_blocking},
@@ -222,12 +224,6 @@ fn make_md_cfg(setup: BoundaryLayerSetup, solvent: Solvent, memory_snapshots: bo
     }
 }
 
-fn random_quaternion(rng: &mut impl Rng) -> Quaternion {
-    let (w, x, y, z): (f64, f64, f64, f64) =
-        (rng.random(), rng.random(), rng.random(), rng.random());
-    Quaternion::new(w, x, y, z).to_normalized()
-}
-
 fn solute_template(
     mol: &MoleculeSmall,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
@@ -273,6 +269,8 @@ fn place_solute_layer(template: &MolDynamics, setup: BoundaryLayerSetup) -> Vec<
 
     let mut placed = Vec::with_capacity(setup.solute_copy_count);
 
+    let distro = Uniform::<f32>::new(0.0, 1.0).unwrap();
+
     'copies: for iz in 0..nz {
         for iy in 0..ny {
             for ix in 0..nx {
@@ -285,7 +283,8 @@ fn place_solute_layer(template: &MolDynamics, setup: BoundaryLayerSetup) -> Vec<
                     -grid_width_y / 2.0 + iy as f64 * setup.solute_spacing_a,
                     z0 + iz as f64 * setup.solute_z_spacing_a,
                 );
-                let rot = random_quaternion(&mut rng);
+                let rot: Quaternion = random_quaternion(&mut rng, Some(distro)).into();
+
                 let posits: Vec<_> = locals
                     .iter()
                     .map(|local| rot.rotate_vec(*local) + center)
@@ -304,8 +303,10 @@ fn place_solute_layer(template: &MolDynamics, setup: BoundaryLayerSetup) -> Vec<
     placed
 }
 
+// todo: This is hella sus. This should be in dynamics.
 fn make_water_geometry(o: Vec3F64, rng: &mut impl Rng) -> WaterGeometry {
-    let rot = random_quaternion(rng);
+    let rot: Quaternion = random_quaternion(rng, None).into();
+
     let z_local = rot.rotate_vec(Vec3F64::new(0.0, 0.0, 1.0));
     let x_local = rot.rotate_vec(Vec3F64::new(1.0, 0.0, 0.0));
     let half_angle = OPC_HOH_RAD / 2.0;
