@@ -387,6 +387,8 @@ pub(in crate::ui) fn mol_char_disp(
     run_logp_sim: &mut bool,
     run_crystal_sim: &mut bool,
     run_water_sol_sim: &mut bool,
+    run_water_sol_sim_layers: &mut bool,
+    // run_water_sol_sim_layers_middle: &mut bool,
 ) {
     let Some(char) = &mol.characterization else {
         return;
