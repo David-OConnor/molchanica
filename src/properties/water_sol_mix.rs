@@ -6,7 +6,9 @@
 
 use std::{
     collections::HashMap,
+    f32::consts::PI,
     io::{self, ErrorKind},
+    path::Path,
 };
 
 use bio_files::{
@@ -19,7 +21,8 @@ use bio_files::{
 };
 use dynamics::{
     ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState, MolDynamics,
-    ParamError, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    ParamError, ShrinkingBoxPackingCfg, SimBox, SimBoxInit, Solvent, SolventTemplateType,
+    TAU_TEMP_DEFAULT, WaterInitTemplate, pack_solvent_with_shrinking_box_cfg,
     params::FfParamSet,
     random_quaternion,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
@@ -30,10 +33,9 @@ use lin_alg::{
 };
 use na_seq::Element;
 use rand::Rng;
-use rand::distr::Uniform;
 
 use crate::{
-    md::{MdBackend, run_dynamics_blocking},
+    md::{MdBackend, add_copies, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
     properties::prepare_mol_for_md,
 };
@@ -45,7 +47,13 @@ const MAX_SOLUTE_COPIES: usize = 64;
 const MAX_SOLUTE_ATOMS: usize = 1_800;
 const MIN_WATER_MOLECULES: usize = 96;
 
-const MIN_LAYER_SIDE_A: f32 = 42.0;
+const MIN_LAYER_SIDE_A: f32 = 32.0;
+const MIN_SOLUTE_LAYER_DEPTH_A: f32 = 10.0;
+const SOLUTE_PACKING_FRACTION: f32 = 0.62;
+const SOLUTE_LAYER_WALL_MARGIN_A: f32 = 1.2;
+const SOLUTE_PACKING_INITIAL_BOX_SCALE: f32 = 1.8;
+const SOLUTE_PACKING_SHRINK_PER_STEP_A: f32 = 0.05;
+const SOLUTE_PACKING_EQUILIBRATION_STEPS: usize = 750;
 const MIN_WATER_DEPTH_A: f32 = 14.0;
 const LAYER_MARGIN_A: f32 = 2.0;
 const INTERFACE_GAP_A: f32 = 2.2;
@@ -53,13 +61,15 @@ const WATER_O_SPACING_A: f32 = 3.05;
 const WATER_WALL_MARGIN_A: f32 = 1.7;
 const WATER_MOLS_PER_A3: f32 = 0.030;
 
-const NUM_STEPS: usize = 5_000;
+const NUM_STEPS: usize = 2_000;
+
 const SNAPSHOT_INTERVAL: usize = 10;
 const LAYER_INIT_RELAXATION_ITERS: usize = 120;
 const TEMPERATURE: f32 = 300.0;
 const DT: f32 = 0.002;
 const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 
+// todo: Hmmmm. Not sure we want this here vs in bio_files/gromacs and dynamics.
 const OPC_OH_A: f64 = 0.872_433_13;
 const OPC_HOH_RAD: f64 = 1.808_161_105_066;
 const OPC_VS_A: f64 = 0.147_803;
@@ -84,10 +94,6 @@ pub struct BoundaryLayerMdData {
 struct BoundaryLayerSetup {
     solute_copy_count: usize,
     water_molecule_count: usize,
-    solute_grid: (usize, usize, usize),
-    solute_spacing_a: f64,
-    solute_z_spacing_a: f64,
-    solute_radius_a: f64,
     box_extent_a: Vec3F32,
     solute_layer_depth_a: f32,
     water_layer_depth_a: f32,
@@ -125,38 +131,53 @@ fn mol_bounding_radius(mol: &MoleculeSmall) -> f64 {
         .fold(2.0, f64::max)
 }
 
-fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
+fn mol_volume_estimate_a3(mol: &MoleculeSmall, radius_a: f32) -> f32 {
+    mol.characterization
+        .as_ref()
+        .and_then(|char| {
+            char.volume_pubchem
+                .filter(|volume| *volume > 0.0)
+                .or_else(|| (char.volume > 0.0).then_some(char.volume))
+        })
+        .unwrap_or_else(|| (4.0 / 3.0) * PI * radius_a.powi(3) * 0.45)
+        .max(40.0)
+}
+
+fn bounded_solute_copy_count(mol: &MoleculeSmall, mol_volume_a3: f32, min_depth_a: f32) -> usize {
     let atom_count = mol.common.atoms.len().max(1);
     let atom_limited_cap = (MAX_SOLUTE_ATOMS / atom_count).max(1);
     let copy_cap = MAX_SOLUTE_COPIES.min(atom_limited_cap).max(1);
-    let solute_copy_count = TARGET_SOLUTE_COPIES
-        .min(copy_cap)
-        .max(MIN_SOLUTE_COPIES.min(copy_cap));
+    let min_copies = MIN_SOLUTE_COPIES.min(copy_cap);
+
+    let min_layer_capacity = MIN_LAYER_SIDE_A.powi(2) * min_depth_a * SOLUTE_PACKING_FRACTION;
+    let fill_min_layer_count = (min_layer_capacity / mol_volume_a3)
+        .ceil()
+        .max(MIN_SOLUTE_COPIES as f32) as usize;
+    let requested = TARGET_SOLUTE_COPIES.max(fill_min_layer_count.min(MAX_SOLUTE_COPIES));
+
+    requested.min(copy_cap).max(min_copies)
+}
+
+fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
+    let solute_radius_a = mol_bounding_radius(mol) as f32;
+    let mol_volume_a3 = mol_volume_estimate_a3(mol, solute_radius_a);
+    let solute_min_depth =
+        MIN_SOLUTE_LAYER_DEPTH_A.max(2.0 * solute_radius_a + 2.0 * SOLUTE_LAYER_WALL_MARGIN_A);
+
+    let solute_copy_count = bounded_solute_copy_count(mol, mol_volume_a3, solute_min_depth);
 
     let water_molecule_count = TARGET_TOTAL_MOLECULES
         .saturating_sub(solute_copy_count)
         .max(MIN_WATER_MOLECULES);
 
-    let solute_radius_a = mol_bounding_radius(mol);
-    let solute_layers_z = if solute_copy_count >= 24 { 2 } else { 1 };
-    let solutes_per_z = solute_copy_count.div_ceil(solute_layers_z);
-    let solute_nx = (solutes_per_z as f64).sqrt().ceil() as usize;
-    let solute_ny = solutes_per_z.div_ceil(solute_nx).max(1);
-
-    let solute_spacing_a = (2.0 * solute_radius_a + 2.8).max(5.0);
-    let solute_z_spacing_a = (2.0 * solute_radius_a + 2.0).max(4.5);
-
-    let solute_grid_width_x = (solute_nx.saturating_sub(1) as f64 * solute_spacing_a) as f32;
-    let solute_grid_width_y = (solute_ny.saturating_sub(1) as f64 * solute_spacing_a) as f32;
-    let fit_margin = (solute_radius_a as f32 + LAYER_MARGIN_A) * 2.0;
-
-    let box_x = (solute_grid_width_x + fit_margin).max(MIN_LAYER_SIDE_A);
-    let box_y = (solute_grid_width_y + fit_margin).max(MIN_LAYER_SIDE_A);
-
-    let solute_layer_depth = ((solute_layers_z.saturating_sub(1) as f64 * solute_z_spacing_a)
-        + 2.0 * solute_radius_a
-        + 1.0) as f32;
-    let interface_area = box_x * box_y;
+    let target_solute_layer_volume =
+        solute_copy_count as f32 * mol_volume_a3 / SOLUTE_PACKING_FRACTION;
+    let footprint_side = (target_solute_layer_volume / solute_min_depth)
+        .sqrt()
+        .max(MIN_LAYER_SIDE_A)
+        .max(2.0 * solute_radius_a + 2.0 * LAYER_MARGIN_A);
+    let interface_area = footprint_side * footprint_side;
+    let solute_layer_depth = (target_solute_layer_volume / interface_area).max(solute_min_depth);
     let density_depth = water_molecule_count as f32 / (WATER_MOLS_PER_A3 * interface_area);
     let water_layer_depth = density_depth.max(MIN_WATER_DEPTH_A);
     let box_z =
@@ -168,11 +189,7 @@ fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
     BoundaryLayerSetup {
         solute_copy_count,
         water_molecule_count,
-        solute_grid: (solute_nx, solute_ny, solute_layers_z),
-        solute_spacing_a,
-        solute_z_spacing_a,
-        solute_radius_a,
-        box_extent_a: Vec3F32::new(box_x, box_y, box_z),
+        box_extent_a: Vec3F32::new(footprint_side, footprint_side, box_z),
         solute_layer_depth_a: solute_layer_depth,
         water_layer_depth_a: water_layer_depth,
         water_slab_low_z_a: water_slab_low_z,
@@ -180,7 +197,12 @@ fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
     }
 }
 
-fn make_md_cfg(setup: BoundaryLayerSetup, solvent: Solvent, memory_snapshots: bool) -> MdConfig {
+fn make_md_cfg(
+    setup: BoundaryLayerSetup,
+    solvent: Solvent,
+    memory_snapshots: bool,
+    solvent_template_type: Option<SolventTemplateType>,
+) -> MdConfig {
     MdConfig {
         integrator: Integrator::VerletVelocity {
             thermostat: Some(TAU_TEMP_DEFAULT),
@@ -217,6 +239,7 @@ fn make_md_cfg(setup: BoundaryLayerSetup, solvent: Solvent, memory_snapshots: bo
             ),
         )),
         solvent,
+        solvent_template_type: solvent_template_type.unwrap_or_default(),
         max_init_relaxation_iters: Some(LAYER_INIT_RELAXATION_ITERS),
         recenter_sim_box: false,
         overrides: MdOverrides::default(),
@@ -248,59 +271,126 @@ fn solute_template(
     })
 }
 
-fn place_solute_layer(template: &MolDynamics, setup: BoundaryLayerSetup) -> Vec<MolDynamics> {
-    let mut rng = rand::rng();
-    let template_posits = template
-        .atom_posits
-        .clone()
-        .unwrap_or_else(|| template.atoms.iter().map(|a| a.posit).collect());
+fn solute_layer_center_z(setup: BoundaryLayerSetup) -> f32 {
+    -setup.box_extent_a.z / 2.0 + LAYER_MARGIN_A + setup.solute_layer_depth_a / 2.0
+}
 
-    let centroid = template_posits
-        .iter()
-        .fold(Vec3F64::new(0.0, 0.0, 0.0), |acc, p| acc + *p)
-        / template_posits.len().max(1) as f64;
-    let locals: Vec<_> = template_posits.iter().map(|p| *p - centroid).collect();
+fn centered_solute_packing_cell(setup: BoundaryLayerSetup) -> SimBox {
+    let half_x = (setup.box_extent_a.x / 2.0 - SOLUTE_LAYER_WALL_MARGIN_A).max(1.0);
+    let half_y = (setup.box_extent_a.y / 2.0 - SOLUTE_LAYER_WALL_MARGIN_A).max(1.0);
+    let half_z = (setup.solute_layer_depth_a / 2.0 - SOLUTE_LAYER_WALL_MARGIN_A).max(1.0);
 
-    let (nx, ny, nz) = setup.solute_grid;
-    let grid_width_x = nx.saturating_sub(1) as f64 * setup.solute_spacing_a;
-    let grid_width_y = ny.saturating_sub(1) as f64 * setup.solute_spacing_a;
-    let solute_low_z = -(setup.box_extent_a.z as f64) / 2.0 + LAYER_MARGIN_A as f64;
-    let z0 = solute_low_z + setup.solute_radius_a + 0.5;
+    SimBox::new(
+        Vec3F32::new(-half_x, -half_y, -half_z),
+        Vec3F32::new(half_x, half_y, half_z),
+    )
+}
 
-    let mut placed = Vec::with_capacity(setup.solute_copy_count);
-
-    let distro = Uniform::<f32>::new(0.0, 1.0).unwrap();
-
-    'copies: for iz in 0..nz {
-        for iy in 0..ny {
-            for ix in 0..nx {
-                if placed.len() == setup.solute_copy_count {
-                    break 'copies;
-                }
-
-                let center = Vec3F64::new(
-                    -grid_width_x / 2.0 + ix as f64 * setup.solute_spacing_a,
-                    -grid_width_y / 2.0 + iy as f64 * setup.solute_spacing_a,
-                    z0 + iz as f64 * setup.solute_z_spacing_a,
-                );
-                let rot: Quaternion = random_quaternion(&mut rng, Some(distro)).into();
-
-                let posits: Vec<_> = locals
-                    .iter()
-                    .map(|local| rot.rotate_vec(*local) + center)
-                    .collect();
-
-                let mut mol = template.clone();
-                for (atom, posit) in mol.atoms.iter_mut().zip(posits.iter()) {
-                    atom.posit = *posit;
-                }
-                mol.atom_posits = Some(posits);
-                placed.push(mol);
+fn translate_mols(mols: &mut [MolDynamics], offset: Vec3F64) {
+    for mol in mols {
+        if let Some(posits) = &mut mol.atom_posits {
+            for (atom, posit) in mol.atoms.iter_mut().zip(posits.iter_mut()) {
+                *posit += offset;
+                atom.posit = *posit;
             }
+        } else {
+            let posits: Vec<_> = mol
+                .atoms
+                .iter_mut()
+                .map(|atom| {
+                    atom.posit += offset;
+                    atom.posit
+                })
+                .collect();
+            mol.atom_posits = Some(posits);
         }
     }
+}
 
-    placed
+fn fallback_solute_layer(
+    template: &MolDynamics,
+    setup: BoundaryLayerSetup,
+) -> io::Result<Vec<MolDynamics>> {
+    let mut placed = Vec::with_capacity(setup.solute_copy_count);
+    add_copies(
+        &mut placed,
+        template,
+        setup.solute_copy_count,
+        Some((
+            (setup.box_extent_a.x - 2.0 * SOLUTE_LAYER_WALL_MARGIN_A).max(1.0),
+            (setup.box_extent_a.y - 2.0 * SOLUTE_LAYER_WALL_MARGIN_A).max(1.0),
+            (setup.solute_layer_depth_a - 2.0 * SOLUTE_LAYER_WALL_MARGIN_A).max(1.0),
+        )),
+    );
+
+    if placed.len() != setup.solute_copy_count {
+        return Err(io::Error::other(format!(
+            "Boundary-layer solute packing placed {} / {} requested copies.",
+            placed.len(),
+            setup.solute_copy_count
+        )));
+    }
+
+    translate_mols(
+        &mut placed,
+        Vec3F64::new(0.0, 0.0, solute_layer_center_z(setup) as f64),
+    );
+    Ok(placed)
+}
+
+fn pack_solute_layer(
+    template: &MolDynamics,
+    setup: BoundaryLayerSetup,
+    param_set: &FfParamSet,
+    dev: &ComputationDevice,
+) -> io::Result<Vec<MolDynamics>> {
+    let cfg = ShrinkingBoxPackingCfg {
+        initial_box_scale: SOLUTE_PACKING_INITIAL_BOX_SCALE,
+        dt: 0.001,
+        box_shrink_per_step: SOLUTE_PACKING_SHRINK_PER_STEP_A,
+        equilibration_steps: SOLUTE_PACKING_EQUILIBRATION_STEPS,
+        snapshot_interval: None,
+        gromacs_output_interval: None,
+        save_gro: false,
+    };
+
+    let packed = pack_solvent_with_shrinking_box_cfg(
+        dev,
+        template,
+        "MOL",
+        setup.solute_copy_count,
+        0,
+        centered_solute_packing_cell(setup),
+        param_set,
+        Path::new("./md_out"),
+        cfg,
+    );
+
+    let mut placed = match packed {
+        Ok((mols, _)) if mols.len() == setup.solute_copy_count => mols,
+        Ok((mols, _)) => {
+            eprintln!(
+                "Boundary-layer shrink packing placed {} / {} solute copies; falling back to grid packing.",
+                mols.len(),
+                setup.solute_copy_count
+            );
+            return fallback_solute_layer(template, setup);
+        }
+        Err(e) => {
+            eprintln!(
+                "Boundary-layer shrink packing failed: {}; falling back to grid packing.",
+                e.descrip
+            );
+            return fallback_solute_layer(template, setup);
+        }
+    };
+
+    translate_mols(
+        &mut placed,
+        Vec3F64::new(0.0, 0.0, solute_layer_center_z(setup) as f64),
+    );
+
+    Ok(placed)
 }
 
 // todo: This is hella sus. This should be in dynamics.
@@ -379,6 +469,35 @@ fn make_water_layer(setup: BoundaryLayerSetup) -> Vec<WaterGeometry> {
     }
 
     waters
+}
+
+fn water_layer_init_template(
+    setup: BoundaryLayerSetup,
+    waters: &[WaterGeometry],
+) -> io::Result<WaterInitTemplate> {
+    let to_f32 = |v: Vec3F64| Vec3F32::new(v.x as f32, v.y as f32, v.z as f32);
+    let zero_vel = Vec3F32::new(0.0, 0.0, 0.0);
+
+    WaterInitTemplate::from_parts(
+        waters.iter().map(|water| to_f32(water.o)).collect(),
+        waters.iter().map(|water| to_f32(water.h0)).collect(),
+        waters.iter().map(|water| to_f32(water.h1)).collect(),
+        vec![zero_vel; waters.len()],
+        vec![zero_vel; waters.len()],
+        vec![zero_vel; waters.len()],
+        SimBox::new(
+            Vec3F32::new(
+                -setup.box_extent_a.x / 2.0,
+                -setup.box_extent_a.y / 2.0,
+                -setup.box_extent_a.z / 2.0,
+            ),
+            Vec3F32::new(
+                setup.box_extent_a.x / 2.0,
+                setup.box_extent_a.y / 2.0,
+                setup.box_extent_a.z / 2.0,
+            ),
+        ),
+    )
 }
 
 fn gromacs_mol_name(ident: &str) -> String {
@@ -625,10 +744,13 @@ fn run_dynamics_backend(
     setup: BoundaryLayerSetup,
     dev: &ComputationDevice,
 ) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
+    let waters = make_water_layer(setup);
+    let water_template = water_layer_init_template(setup, &waters)?;
     let cfg = make_md_cfg(
         setup,
         Solvent::WaterOpcSpecifyMolCount(setup.water_molecule_count),
         true,
+        Some(SolventTemplateType::Custom(water_template)),
     );
 
     let (mut md, _) = MdState::new(dev, &cfg, placed_mols, param_set).map_err(param_err)?;
@@ -656,8 +778,9 @@ fn run_gromacs_backend(
     let waters = make_water_layer(setup);
     let gro_text = make_layer_gro(&solute_input, &waters, setup)?;
 
-    let cfg = make_md_cfg(setup, Solvent::None, false);
+    let cfg = make_md_cfg(setup, Solvent::None, false, None);
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
+
     let mols = vec![(
         FfMolType::SmallOrganic,
         &mol.common,
@@ -672,6 +795,7 @@ fn run_gromacs_backend(
         &Solvent::None,
         true,
     )?;
+
     input.initial_gro = Some(gro_text);
     input.solvent = Some(bf_gromacs::solvate::Solvent::Custom(
         bf_gromacs::solvate::CustomSolventTemplate {
@@ -722,14 +846,16 @@ pub fn boundary_layer_solute_water(
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
     let template = solute_template(&mol, &mol_specific_params)?;
     let setup = boundary_layer_setup(&mol);
-    let placed_mols = place_solute_layer(&template, setup);
+    let placed_mols = pack_solute_layer(&template, setup, &param_set, dev)?;
 
     println!(
-        "Boundary-layer MD setup ({backend}): {} solute copies, {} waters, box {:.1} x {:.1} x {:.1} A",
+        "Boundary-layer MD setup ({backend}): {} solute copies, {} waters, footprint {:.1} x {:.1} A, depths {:.1}/{:.1} A, box z {:.1} A",
         setup.solute_copy_count,
         setup.water_molecule_count,
         setup.box_extent_a.x,
         setup.box_extent_a.y,
+        setup.solute_layer_depth_a,
+        setup.water_layer_depth_a,
         setup.box_extent_a.z,
     );
 
