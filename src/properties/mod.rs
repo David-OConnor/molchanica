@@ -11,7 +11,7 @@ pub mod logp;
 pub mod mol_characterization;
 pub mod water_sol;
 mod water_sol_analytic;
-mod water_sol_mix;
+pub mod water_sol_mix;
 
 // todo: A/R
 pub fn param_error(context: &str, err: AlchemicalError) -> ParamError {

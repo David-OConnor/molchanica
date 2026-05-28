@@ -15,7 +15,9 @@ use crate::{
     },
     mol_manip::{ManipMode, set_manip},
     molecules::{MolGenericRef, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType},
-    properties::{crystal, logp, mol_characterization::MolCharacterization, water_sol},
+    properties::{
+        crystal, logp, mol_characterization::MolCharacterization, water_sol, water_sol_mix,
+    },
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     sonification,
     state::{OperatingMode, PlayingAudio, PopupState, State},
@@ -1185,6 +1187,70 @@ fn md_property_runners(
         }
     }
 
-    // todo: Fill in
-    if run_water_sol_sim_layers {}
+    if run_water_sol_sim_layers {
+        match water_sol_mix::boundary_layer_solute_water(&mol, state.to_save.md_backend, &state.dev)
+        {
+            Ok((data, snaps)) => {
+                let water_count = if data.water_molecule_count > 0 {
+                    data.water_molecule_count
+                } else {
+                    snaps
+                        .last()
+                        .map(|snap| snap.water_o_posits.len())
+                        .unwrap_or_default()
+                };
+
+                state.trajectories.push(Trajectory::new_in_memory(
+                    snaps.clone(),
+                    "Water/solute layer sim".to_string(),
+                    0.002,
+                ));
+
+                let viewer_mols =
+                    vec![(FfMolType::SmallOrganic, &mol.common, data.solute_copy_count)];
+                state
+                    .volatile
+                    .md_local
+                    .viewer
+                    .add_mol_set(&viewer_mols, water_count);
+
+                let set_i = state
+                    .volatile
+                    .md_local
+                    .viewer
+                    .mol_sets
+                    .len()
+                    .saturating_sub(1);
+                if let Some(set) = state.volatile.md_local.viewer.mol_sets.get_mut(set_i) {
+                    set.name = "Water/solute layer sim".to_string();
+                }
+                state.volatile.md_local.viewer.mol_set_active = Some(set_i);
+                state.volatile.md_local.replace_snaps(snaps);
+                viewer::draw_mols(state, scene, updates);
+                redraw.set_all();
+
+                handle_success(
+                    &mut state.ui,
+                    format!(
+                        "Boundary-layer simulation complete. {} solute copies, {} waters requested / {} loaded, box {:.1} x {:.1} x {:.1} A, slabs {:.1}/{:.1} A over {:.0} A2.",
+                        data.solute_copy_count,
+                        data.requested_water_molecule_count,
+                        water_count,
+                        data.box_extent_a.x,
+                        data.box_extent_a.y,
+                        data.box_extent_a.z,
+                        data.solute_layer_depth_a,
+                        data.water_layer_depth_a,
+                        data.interface_area_a2,
+                    ),
+                );
+
+                println!("\n\nWater/solute layer sim result: {data:?}\n---\n");
+            }
+            Err(e) => handle_err(
+                &mut state.ui,
+                format!("Error running the water/solute layer simulation: {e:?}"),
+            ),
+        }
+    }
 }

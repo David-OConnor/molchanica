@@ -14,6 +14,7 @@ fn char_basics(
     run_logp_sim: &mut bool,
     run_crystal_sim: &mut bool,
     run_water_sol_sim: &mut bool,
+    run_water_sol_sim_layers: &mut bool,
 ) {
     // Basics
     char_item(
@@ -177,6 +178,12 @@ fn char_basics(
             .clicked()
         {
             *run_water_sol_sim = true;
+        }
+
+        if button!(ui, "Layer sim", COLOR_ACTION, "Run a boundary-layer solute/water simulation. " )
+            .clicked()
+        {
+            *run_water_sol_sim_layers = true;
         }
 
 
@@ -428,7 +435,14 @@ pub(in crate::ui) fn mol_char_disp(
             ui.separator();
             ui.add_space(ROW_SPACING);
 
-            char_basics(char, ui, run_logp_sim, run_crystal_sim, run_water_sol_sim);
+            char_basics(
+                char,
+                ui,
+                run_logp_sim,
+                run_crystal_sim,
+                run_water_sol_sim,
+                run_water_sol_sim_layers,
+            );
 
             ui.separator();
             ui.add_space(ROW_SPACING);
