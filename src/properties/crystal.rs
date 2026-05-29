@@ -346,7 +346,9 @@ fn build_md_cfg(box_side: f32) -> MdConfig {
 
 fn build_gromacs_md_cfg(box_side: f32) -> MdConfig {
     let mut cfg = build_md_cfg(box_side);
+
     cfg.snapshot_handlers.memory = None;
+
     cfg.snapshot_handlers.gromacs = OutputControl {
         nstxout: Some(SNAPSHOT_INTERVAL as u32),
         nstcalcenergy: Some(SNAPSHOT_INTERVAL as u32),

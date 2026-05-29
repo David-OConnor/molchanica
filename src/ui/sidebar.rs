@@ -1191,14 +1191,10 @@ fn md_property_runners(
         match water_sol_mix::boundary_layer_solute_water(&mol, state.to_save.md_backend, &state.dev)
         {
             Ok((data, snaps)) => {
-                let water_count = if data.water_molecule_count > 0 {
-                    data.water_molecule_count
-                } else {
-                    snaps
-                        .last()
-                        .map(|snap| snap.water_o_posits.len())
-                        .unwrap_or_default()
-                };
+                let water_count = snaps
+                    .last()
+                    .map(|snap| snap.water_o_posits.len())
+                    .unwrap_or_default();
 
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps.clone(),
