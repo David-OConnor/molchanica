@@ -1232,9 +1232,8 @@ fn md_property_runners(
                 handle_success(
                     &mut state.ui,
                     format!(
-                        "Boundary-layer simulation complete. {} solute copies, {} waters requested / {} loaded, box {:.1} x {:.1} x {:.1} A, slabs {:.1}/{:.1} A over {:.0} A2.",
+                        "Boundary-layer simulation complete. {} solute copies, {} waters loaded, box {:.1} x {:.1} x {:.1} A, slabs {:.1}/{:.1} A over {:.0} A2.",
                         data.solute_copy_count,
-                        data.requested_water_molecule_count,
                         water_count,
                         data.box_extent_a.x,
                         data.box_extent_a.y,
