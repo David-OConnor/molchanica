@@ -20,7 +20,6 @@ use graphics::{EngineUpdates, Scene};
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
-    properties::param_error,
     state::State,
     util::handle_success,
 };
@@ -145,8 +144,7 @@ fn run_alchemical_window(
         &mut pep_atom_set,
     )?;
 
-    md.configure_alchemical_window(&dev, 0, lambda)
-        .map_err(|e| param_error("Unable to configure LogP alchemical window", e))?;
+    md.configure_alchemical_window(&dev, 0, lambda).into()?;
 
     run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
     md.snapshots.clear();
@@ -158,8 +156,7 @@ fn run_alchemical_window(
         ));
     }
 
-    let window = collect_window(lambda, &md.snapshots)
-        .map_err(|e| param_error("Unable to collect LogP alchemical samples", e))?;
+    let window = collect_window(lambda, &md.snapshots).into()?;
 
     println!(
         "Alchemical window complete: solvent={} lambda={lambda:.2} <dH/dlambda>={:.4} kcal/mol sem={}",
@@ -182,8 +179,7 @@ fn run_phase_free_energy(
         windows.push(run_alchemical_window(mol, state, phase, lambda)?);
     }
 
-    let ti = free_energy_ti_with_sem(&windows)
-        .map_err(|e| param_error("Unable to integrate LogP alchemical windows", e))?;
+    let ti = free_energy_ti_with_sem(&windows).into()?;
 
     println!(
         "TI complete for {}: dG={:.4} kcal/mol sem={:.4}",

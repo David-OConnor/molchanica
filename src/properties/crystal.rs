@@ -23,6 +23,7 @@ use dynamics::{
 use lin_alg::f32::Vec3;
 
 use crate::gromacs::make_gromacs_input;
+use crate::properties::{mean, min_image, mol_bounding_radius};
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
     molecules::small::MoleculeSmall,
@@ -132,10 +133,6 @@ struct PropertyTerms {
     crystal_solubility_penalty: f32,
 }
 
-fn param_err(e: ParamError) -> io::Error {
-    io::Error::other(e.descrip)
-}
-
 fn property_terms(char: &MolCharacterization) -> PropertyTerms {
     let donors = char.h_bond_donor.len() as f32;
     let acceptors = char.h_bond_acceptor.len() as f32;
@@ -211,19 +208,6 @@ fn mol_mass_from_atoms(mol: &MoleculeSmall) -> f32 {
         .iter()
         .map(|a| a.element.atomic_weight())
         .sum()
-}
-
-fn mol_bounding_radius(mol: &MoleculeSmall) -> f32 {
-    if mol.common.atom_posits.is_empty() {
-        return 0.0;
-    }
-
-    let center = mol.common.centroid();
-    mol.common
-        .atom_posits
-        .iter()
-        .map(|p| (*p - center).magnitude() as f32)
-        .fold(0.0, f32::max)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -686,8 +670,7 @@ fn run_dynamics(
         false,
         None,
         &mut HashSet::new(),
-    )
-    .map_err(param_err)?;
+    )?;
 
     md.configure_alchemical_window(dev, 0, 0.)
         .map_err(|e| io_error("Unable to configure crystal alchemical bookkeeping", e))?;

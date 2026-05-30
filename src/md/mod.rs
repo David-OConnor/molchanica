@@ -226,6 +226,7 @@ fn mol_bounding_radius(m: &MolDynamics, center: Vec3) -> f64 {
     } else {
         m.atoms.iter().map(|a| a.posit).collect()
     };
+
     posits
         .iter()
         .map(|p| (*p - center).magnitude())

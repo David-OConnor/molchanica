@@ -16,11 +16,6 @@ pub mod water_sol;
 mod water_sol_analytic;
 pub mod water_sol_mix;
 
-// todo: A/R
-pub fn param_error(context: &str, err: AlchemicalError) -> ParamError {
-    ParamError::new(&format!("{context}: {err}"))
-}
-
 pub fn io_error(context: &str, err: AlchemicalError) -> io::Error {
     io::Error::other(format!("{context}: {err}"))
 }
@@ -82,4 +77,17 @@ pub(in crate::properties) fn min_image(mut delta: Vec3, extent: Vec3) -> Vec3 {
     }
 
     delta
+}
+
+pub(in crate::properties) fn mol_bounding_radius(mol: &MoleculeSmall) -> f32 {
+    if mol.common.atom_posits.is_empty() {
+        return 0.0;
+    }
+
+    let center = mol.common.centroid();
+    mol.common
+        .atom_posits
+        .iter()
+        .map(|p| (*p - center).magnitude() as f32)
+        .fold(0.0, f32::max)
 }

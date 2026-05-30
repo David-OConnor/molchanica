@@ -36,7 +36,7 @@ use lin_alg::{
 use na_seq::Element;
 
 use crate::gromacs::make_gromacs_input;
-use crate::properties::mean;
+use crate::properties::{mean, mol_bounding_radius};
 use crate::{
     md::{MdBackend, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
@@ -95,23 +95,6 @@ struct BoundaryLayerSetup {
     water_slab_high_z_a: f32,
 }
 
-fn param_err(e: ParamError) -> io::Error {
-    io::Error::other(e.descrip)
-}
-
-fn mol_bounding_radius(mol: &MoleculeSmall) -> f64 {
-    if mol.common.atom_posits.is_empty() {
-        return 2.0;
-    }
-
-    let center = mol.common.centroid();
-    mol.common
-        .atom_posits
-        .iter()
-        .map(|p| (*p - center).magnitude())
-        .fold(2.0, f64::max)
-}
-
 fn mol_volume_estimate_a3(mol: &MoleculeSmall, radius_a: f32) -> f32 {
     mol.characterization
         .as_ref()
@@ -140,7 +123,7 @@ fn bounded_solute_copy_count(mol: &MoleculeSmall, mol_volume_a3: f32, min_depth_
 }
 
 fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
-    let solute_radius_a = mol_bounding_radius(mol) as f32;
+    let solute_radius_a = mol_bounding_radius(mol);
     let mol_volume_a3 = mol_volume_estimate_a3(mol, solute_radius_a);
 
     // Buffer around the placement region: wall margin plus the molecule's bounding
@@ -786,7 +769,7 @@ fn run_dynamics(
 
     let cfg = make_md_cfg(setup, Solvent::WaterOpcPrepositioned(water_template), true);
 
-    let (mut md, _) = MdState::new(dev, &cfg, placed_mols, param_set).map_err(param_err)?;
+    let (mut md, _) = MdState::new(dev, &cfg, placed_mols, param_set).into()?;
 
     run_dynamics_blocking(&mut md, dev, DT, NUM_STEPS);
 

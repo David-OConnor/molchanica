@@ -26,13 +26,13 @@ use lin_alg::f32::Vec3;
 use na_seq::Element;
 
 use crate::gromacs::make_gromacs_input;
+use crate::properties::{mean, min_image};
 use crate::{
     bond_inference::h_bond_geometry_strength,
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
     properties::{io_error, mol_characterization::MolCharacterization, prepare_mol_for_md},
 };
-use crate::properties::{mean, min_image};
 
 // todo: Set higher once confident this works.
 const NUM_STEPS: usize = 2_000;
@@ -220,7 +220,7 @@ fn h_bond_strength_if_present(
         donor_posit.into(),
         h_imaged.into(),
         acc_imaged.into(),
-        donor_element,`````
+        donor_element,
         acceptor_element,
         false,
     )
