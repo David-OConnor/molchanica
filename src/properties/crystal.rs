@@ -16,7 +16,7 @@ use bio_files::{
 };
 use dynamics::{
     BarostatCfg, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MolDynamics,
-    ParamError, SimBoxInit, Solvent, TAU_TEMP_DEFAULT, alchemical,
+    SimBoxInit, Solvent, TAU_TEMP_DEFAULT, alchemical,
     params::FfParamSet,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
@@ -670,7 +670,8 @@ fn run_dynamics(
         false,
         None,
         &mut HashSet::new(),
-    )?;
+    )
+    .map_err(|e| io::Error::other(e.descrip))?;
 
     md.configure_alchemical_window(dev, 0, 0.)
         .map_err(|e| io_error("Unable to configure crystal alchemical bookkeeping", e))?;

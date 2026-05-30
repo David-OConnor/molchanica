@@ -12,7 +12,7 @@ use bio_files::gromacs::OutputControl;
 use dynamics::{
     FfMolType, Integrator, MdConfig, MdOverrides, ParamError, SimBoxInit, Solvent,
     TAU_TEMP_DEFAULT,
-    alchemical::{LambdaWindow, collect_window, free_energy_ti_with_sem},
+    alchemical::{AlchemicalError, LambdaWindow, collect_window, free_energy_ti_with_sem},
     snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
@@ -43,6 +43,10 @@ const OCTANOL_PER_UNIT_VOL: f32 = 356. / (46. * 46. * 46.);
 // todo: or 0.26? I'm getting different values from different sources.
 const WATER_MOL_PER_OCTANOL: f32 = 0.38;
 // const OCTANOL_BOX_WATER_COUNT: usize = (OCTANOL_COUNT as f32 * WATER_MOL_PER_OCTANOL) as usize;
+
+fn alchemical_param_err(context: &str, err: AlchemicalError) -> ParamError {
+    ParamError::new(&format!("{context}: {err}"))
+}
 
 const DT: f32 = 0.002; // ps
 
@@ -144,7 +148,8 @@ fn run_alchemical_window(
         &mut pep_atom_set,
     )?;
 
-    md.configure_alchemical_window(&dev, 0, lambda).into()?;
+    md.configure_alchemical_window(&dev, 0, lambda)
+        .map_err(|e| alchemical_param_err("Unable to configure alchemical window", e))?;
 
     run_dynamics_blocking(&mut md, &dev, DT, EQUIL_STEPS_PER_WINDOW);
     md.snapshots.clear();
@@ -156,7 +161,8 @@ fn run_alchemical_window(
         ));
     }
 
-    let window = collect_window(lambda, &md.snapshots).into()?;
+    let window = collect_window(lambda, &md.snapshots)
+        .map_err(|e| alchemical_param_err("Unable to collect alchemical samples", e))?;
 
     println!(
         "Alchemical window complete: solvent={} lambda={lambda:.2} <dH/dlambda>={:.4} kcal/mol sem={}",
@@ -179,7 +185,8 @@ fn run_phase_free_energy(
         windows.push(run_alchemical_window(mol, state, phase, lambda)?);
     }
 
-    let ti = free_energy_ti_with_sem(&windows).into()?;
+    let ti = free_energy_ti_with_sem(&windows)
+        .map_err(|e| alchemical_param_err("Unable to integrate alchemical windows", e))?;
 
     println!(
         "TI complete for {}: dG={:.4} kcal/mol sem={:.4}",

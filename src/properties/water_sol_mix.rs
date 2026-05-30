@@ -13,28 +13,22 @@ use std::{
 
 use bio_files::{
     BondGeneric,
-    gromacs::{
-        self as bf_gromacs, MoleculeInput, OutputControl,
-        gro::{AtomGro, Gro},
-    },
+    gromacs::{MoleculeInput, OutputControl},
     md_params::ForceFieldParams,
 };
 
 use dynamics::{
-    AtomDynamics, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
-    MolDynamics, ParamError, ShrinkingBoxPackingCfg, SimBox, SimBoxInit, Solvent,
-    SolventTemplateType, TAU_TEMP_DEFAULT, WaterInitTemplate, WaterMolOpc,
+    ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState, MolDynamics,
+    ShrinkingBoxPackingCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     pack_solvent_with_shrinking_box_cfg,
     params::FfParamSet,
     random_quaternion,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
-    water_mols_from_template_in_region,
 };
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3 as Vec3F64},
 };
-use na_seq::Element;
 
 use crate::gromacs::make_gromacs_input;
 use crate::properties::{mean, mol_bounding_radius};
@@ -117,7 +111,7 @@ fn bounded_solute_copy_count(mol: &MoleculeSmall, mol_volume: f32, min_depth: f3
 
 fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
     let solute_radius_a = mol_bounding_radius(mol);
-    let mol_volume = mol.characterization.unwrap().volume; // todo: Handle
+    let mol_volume = mol.characterization.as_ref().unwrap().volume; // todo: Handle
 
     // Buffer around the placement region: wall margin plus the molecule's bounding
     // radius. Centroids placed inside the inset volume have all atoms strictly
@@ -459,60 +453,6 @@ fn pack_solute_layer(
     Ok(placed)
 }
 
-fn placed_solute_atoms(placed_mols: &[MolDynamics]) -> Vec<AtomDynamics> {
-    let atom_count: usize = placed_mols.iter().map(|mol| mol.atoms.len()).sum();
-    let mut result = Vec::with_capacity(atom_count);
-
-    for mol in placed_mols {
-        for (i, atom) in mol.atoms.iter().enumerate() {
-            let posit = mol
-                .atom_posits
-                .as_ref()
-                .and_then(|posits| posits.get(i).copied())
-                .unwrap_or(atom.posit);
-
-            result.push(AtomDynamics {
-                serial_number: atom.serial_number,
-                static_: mol.static_,
-                bonded_only: mol.bonded_only,
-                force_field_type: atom.force_field_type.clone().unwrap_or_default(),
-                element: atom.element,
-                posit: Vec3F32::new(posit.x as f32, posit.y as f32, posit.z as f32),
-                partial_charge: atom.partial_charge.unwrap_or_default(),
-                ..Default::default()
-            });
-        }
-    }
-
-    result
-}
-
-// fn make_water_slab(
-//     placed_mols: &[MolDynamics],
-//     setup: BoundaryLayerSetup,
-// ) -> io::Result<Vec<WaterMolOpc>> {
-//     let cell = boundary_layer_cell(setup);
-//     let water_region = water_layer_cell(setup);
-//     let solute_atoms = placed_solute_atoms(placed_mols);
-//
-//     let waters = water_mols_from_template_in_region(
-//         &cell,
-//         &water_region,
-//         &solute_atoms,
-//         None,
-//         &SolventTemplateType::Tip4Gromacs,
-//         false,
-//     )?;
-//
-//     if waters.is_empty() {
-//         return Err(io::Error::other(
-//             "Boundary-layer water slab initialization produced no waters.",
-//         ));
-//     }
-//
-//     Ok(waters)
-// }
-
 fn gromacs_layer_mol_name(ident: &str) -> String {
     let name: String = ident
         .chars()
@@ -601,105 +541,6 @@ fn gromacs_layer_molecule_input(
     })
 }
 
-fn gro_posit_nm(posit_a: Vec3F64, shift_a: Vec3F64) -> Vec3F64 {
-    (posit_a + shift_a) / 10.0
-}
-
-fn gro_water_posit_nm(posit_a: Vec3F32, shift_a: Vec3F32) -> Vec3F64 {
-    ((posit_a + shift_a) / 10.0).into()
-}
-
-fn layer_gro_atom(
-    mol_id: usize,
-    mol_name: &str,
-    atom_name: &str,
-    atom_serial: usize,
-    element: Element,
-    posit_nm: Vec3F64,
-) -> AtomGro {
-    AtomGro {
-        mol_id: mol_id as u32,
-        mol_name: mol_name.to_string(),
-        element,
-        atom_type: atom_name.to_string(),
-        serial_number: atom_serial as u32,
-        posit: posit_nm,
-        velocity: None,
-    }
-}
-
-fn make_layer_gro(
-    solute: &MoleculeInput,
-    waters: &[WaterMolOpc],
-    setup: BoundaryLayerSetup,
-) -> io::Result<String> {
-    let total_atoms = solute.atoms.len() + waters.len() * 4;
-    let shift_f32 = Vec3F32::new(
-        setup.box_extent_a.x / 2.0,
-        setup.box_extent_a.y / 2.0,
-        setup.box_extent_a.z / 2.0,
-    );
-    let shift_f64 = Vec3F64::new(
-        setup.box_extent_a.x as f64 / 2.0,
-        setup.box_extent_a.y as f64 / 2.0,
-        setup.box_extent_a.z as f64 / 2.0,
-    );
-
-    let mut atoms = Vec::with_capacity(total_atoms);
-    let mut atom_serial = 1;
-
-    for atom in &solute.atoms {
-        let atom_name = atom.force_field_type.unwrap();
-
-        atoms.push(layer_gro_atom(
-            1,
-            &solute.name,
-            &atom_name,
-            atom_serial,
-            atom.element,
-            gro_posit_nm(atom.posit, shift_f64),
-        ));
-        atom_serial += 1;
-    }
-
-    // todo: I don't like this.
-    for (water_i, water) in waters.iter().enumerate() {
-        let mol_id = water_i + 2;
-
-        for (name, element, posit) in [
-            ("OW", Element::Oxygen, water.o.posit),
-            ("HW1", Element::Hydrogen, water.h0.posit),
-            ("HW2", Element::Hydrogen, water.h1.posit),
-            ("MW", Element::Oxygen, water.m.posit),
-        ] {
-            atoms.push(layer_gro_atom(
-                mol_id,
-                "SOL",
-                name,
-                atom_serial,
-                element,
-                gro_water_posit_nm(posit, shift_f32),
-            ));
-            atom_serial += 1;
-        }
-    }
-
-    let gro = Gro {
-        atoms,
-        head_text: "Molchanica boundary-layer solute/water preset".to_string(),
-        box_vec: Vec3F64::new(
-            setup.box_extent_a.x as f64 / 10.0,
-            setup.box_extent_a.y as f64 / 10.0,
-            setup.box_extent_a.z as f64 / 10.0,
-        ),
-    };
-
-    let mut bytes = Vec::new();
-    gro.write_to(&mut bytes)?;
-    String::from_utf8(bytes)
-        .map_err(|e| io::Error::other(format!("Invalid UTF-8 writing layer GRO: {e}")))
-}
-
 fn boundary_layer_data_from_setup(setup: BoundaryLayerSetup) -> BoundaryLayerMdData {
     BoundaryLayerMdData {
         solute_copy_count: setup.solute_copy_count,
@@ -761,7 +602,8 @@ fn run_dynamics(
         true,
     );
 
-    let (mut md, _) = MdState::new(dev, &cfg, solute_mols, param_set).into()?;
+    let (mut md, _) =
+        MdState::new(dev, &cfg, solute_mols, param_set).map_err(|e| io::Error::other(e.descrip))?;
 
     run_dynamics_blocking(&mut md, dev, DT, NUM_STEPS);
 
@@ -779,40 +621,25 @@ fn run_gromacs(
     param_set: &FfParamSet,
     setup: BoundaryLayerSetup,
 ) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
-    let cfg = make_md_cfg(setup, Solvent::None, false);
+    let cfg = make_md_cfg(
+        setup,
+        Solvent::WaterOpcCustomRegions(vec![water_cell]),
+        false,
+    );
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
 
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
 
     let solute_input = gromacs_layer_molecule_input(solute_mols, &mol.common.ident)?;
-    let gro_text = make_layer_gro(&solute_input, water_mols, setup)?;
-
-    let input = {
-        let mut v = make_gromacs_input(
-            mdp,
-            &mols,
-            vec![solute_input],
-            param_set,
-            &cfg.sim_box,
-            &cfg.solvent,
-            true,
-        )?;
-
-        v.initial_gro = Some(gro_text);
-
-        v.solvent = Some(bf_gromacs::solvate::Solvent::Custom(
-            bf_gromacs::solvate::CustomSolventTemplate {
-                gro_text: String::new(),
-                topology_molecules: Vec::new(),
-                include_opc_water: true,
-            },
-        ));
-
-        v.extra_molecule_counts
-            .push(("SOL".to_string(), water_mols.len()));
-
-        v
-    };
+    let input = make_gromacs_input(
+        mdp,
+        &mols,
+        vec![solute_input],
+        param_set,
+        &cfg.sim_box,
+        &cfg.solvent,
+        cfg.max_init_relaxation_iters.is_some(),
+    )?;
 
     let out = input.run()?;
 
@@ -856,13 +683,12 @@ pub fn run_boundary_layer_sol_sim(
 
     let solute_mols = pack_solute_layer(&template, setup, &param_set, dev)?;
 
-    // We rely on the backends' respective code to generate OPC or similar rigid water to fill this cell.
-    let water_cell = boundary_layer_cell(setup);
+    // We rely on the backends' respective code to generate OPC or similar rigid water in this slab.
+    let water_cell = water_layer_cell(setup);
 
     println!(
         "Boundary-layer MD setup ({backend}): {} solute copies, footprint {:.1} x {:.1} A, solute depth {:.1} A, water depth {:.1} A, box z {:.1} A",
         setup.solute_copy_count,
-        // water_mols.len(),
         setup.box_extent_a.x,
         setup.box_extent_a.y,
         setup.solute_layer_depth_a,

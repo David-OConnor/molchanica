@@ -5,7 +5,7 @@ use std::{collections::HashMap, io};
 
 use crate::molecules::small::MoleculeSmall;
 use bio_files::md_params::ForceFieldParams;
-use dynamics::{ParamError, alchemical::AlchemicalError, params::FfParamSet};
+use dynamics::{alchemical::AlchemicalError, params::FfParamSet};
 use lin_alg::f32::Vec3;
 
 pub mod crystal;

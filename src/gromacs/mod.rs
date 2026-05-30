@@ -34,10 +34,10 @@ use bio_files::{
     md_params::ForceFieldParams,
 };
 use dynamics::{
-    FfMolType, MolDynamics, OCTANOL_WATER_TEMPLATE, SimBoxInit, Solvent, make_octanol,
+    FfMolType, MolDynamics, OCTANOL_WATER_TEMPLATE, SimBox, SimBoxInit, Solvent, make_octanol,
     params::FfParamSet,
 };
-use lin_alg::f64::Vec3 as Vec3F64;
+use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3 as Vec3F64};
 use na_seq::Element;
 
 use crate::{
@@ -99,21 +99,34 @@ pub fn make_gromacs_input(
 
     let solvent_gmx = match solvent {
         Solvent::None => None,
-        Solvent::WaterOpc => Some(gromacs::solvate::Solvent::Opc),
+        Solvent::WaterOpc => Some(gromacs::solvate::Solvent::WaterOpc),
         // todo: Implement.
         Solvent::WaterOpcSpecifyMolCount(_) => None,
-        Solvent::WaterOpcPrepositioned(_) => None,
+        Solvent::WaterOpcCustomRegions(regions) => {
+            Some(gromacs::solvate::Solvent::WaterOpcCustomRegions(
+                gromacs_regions_nm(regions, sim_box_init)?,
+            ))
+        }
         Solvent::OctanolWithWater => Some(octanol_with_water_solvent()),
         Solvent::Custom(_) => None,
         // todo: Implment this.
         // Solvent::Custom(_) => Some(gromacs::solvate::Solvent::Custom(WaterInitTemplate)),
     };
 
+    let coordinate_origin_a =
+        match (solvent, sim_box_init) {
+            (Solvent::WaterOpcCustomRegions(_), SimBoxInit::Fixed((box_low, _))) => Some(
+                Vec3F64::new(box_low.x as f64, box_low.y as f64, box_low.z as f64),
+            ),
+            _ => None,
+        };
+
     Ok(
         GromacsInput {
             mdp,
             molecules: mols_input,
             box_nm,
+            coordinate_origin_a,
             ff_global: Some(ff_global),
             solvent: solvent_gmx,
             initial_gro: None,
@@ -122,6 +135,28 @@ pub fn make_gromacs_input(
         },
         // mols_owned,
     )
+}
+
+fn gromacs_regions_nm(
+    regions: &[SimBox],
+    sim_box_init: &SimBoxInit,
+) -> io::Result<Vec<(Vec3F32, Vec3F32)>> {
+    let SimBoxInit::Fixed((box_low, _)) = sim_box_init else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "GROMACS custom solvent regions require a fixed simulation box.",
+        ));
+    };
+
+    Ok(regions
+        .iter()
+        .map(|region| {
+            (
+                (region.bounds_low - *box_low) * ANGSTROM_TO_NM as f32,
+                (region.bounds_high - *box_low) * ANGSTROM_TO_NM as f32,
+            )
+        })
+        .collect())
 }
 
 fn octanol_with_water_solvent() -> gromacs::solvate::Solvent {
@@ -652,5 +687,49 @@ mod tests {
             .zip(&inputs[1].atoms)
             .all(|(a, b)| (a.posit - b.posit).magnitude() < 1e-9);
         assert!(!same_coordinates);
+    }
+
+    #[test]
+    fn custom_water_regions_use_the_fixed_gromacs_box_frame() {
+        let sim_box = SimBoxInit::Fixed((
+            Vec3F32::new(-20.0, -20.0, -30.0),
+            Vec3F32::new(20.0, 20.0, 30.0),
+        ));
+        let water_region = SimBox::new(
+            Vec3F32::new(-20.0, -20.0, 4.0),
+            Vec3F32::new(20.0, 20.0, 28.0),
+        );
+
+        let input = make_gromacs_input(
+            MdpParams::default(),
+            &[],
+            Vec::new(),
+            &FfParamSet::default(),
+            &sim_box,
+            &Solvent::WaterOpcCustomRegions(vec![water_region]),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            input.coordinate_origin_a,
+            Some(Vec3F64::new(-20.0, -20.0, -30.0))
+        );
+        let Some(gromacs::solvate::Solvent::WaterOpcCustomRegions(regions)) = input.solvent else {
+            panic!("Expected custom-region OPC solvent");
+        };
+        assert_eq!(regions.len(), 1);
+
+        let (low, high) = regions[0];
+        for (actual, expected) in [
+            (low.x, 0.0),
+            (low.y, 0.0),
+            (low.z, 3.4),
+            (high.x, 4.0),
+            (high.y, 4.0),
+            (high.z, 5.8),
+        ] {
+            assert!((actual - expected).abs() < 1e-6);
+        }
     }
 }
