@@ -679,6 +679,7 @@ fn run_dynamics(
 
     let atom_posits: Vec<_> = md.atoms.iter().map(|atom| atom.posit).collect();
     let mut data = crystal_data_from_properties(char, CrystalEstimateSource::MolecularDynamics);
+
     add_md_metrics(
         &mut data,
         char,
@@ -692,6 +693,7 @@ fn run_dynamics(
     Ok((data, md.snapshots))
 }
 
+/// Launch using the GROMACS backend.
 fn run_gromacs(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
@@ -711,7 +713,7 @@ fn run_gromacs(
         None,
         Some((setup.box_side, setup.box_side, setup.box_side)),
     )
-    .map_err(param_err)?;
+    .map_err(io::Error::other)?;
 
     if placed_mols.is_empty() {
         return Err(io::Error::other(
