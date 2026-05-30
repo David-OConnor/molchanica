@@ -3,10 +3,10 @@
 
 use std::{collections::HashMap, io};
 
+use crate::molecules::small::MoleculeSmall;
 use bio_files::md_params::ForceFieldParams;
 use dynamics::{ParamError, alchemical::AlchemicalError, params::FfParamSet};
-
-use crate::molecules::small::MoleculeSmall;
+use lin_alg::f32::Vec3;
 
 pub mod crystal;
 pub mod ionization;
@@ -29,7 +29,7 @@ pub fn io_error(context: &str, err: AlchemicalError) -> io::Error {
 ///
 /// These presets do not have access to the application's state-level frcmod
 /// cache, so they force a fresh local molecule-specific GAFF2 parameter pass.
-pub(crate) fn prepare_mol_for_md(
+pub(in crate::properties) fn prepare_mol_for_md(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
 ) -> io::Result<(MoleculeSmall, HashMap<String, ForceFieldParams>)> {
@@ -60,4 +60,26 @@ pub(crate) fn prepare_mol_for_md(
     mol.update_characterization();
 
     Ok((mol, mol_specific_params))
+}
+
+pub(in crate::properties) fn mean(values: &[f32]) -> Option<f32> {
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.iter().sum::<f32>() / values.len() as f32)
+    }
+}
+
+pub(in crate::properties) fn min_image(mut delta: Vec3, extent: Vec3) -> Vec3 {
+    if extent.x > 0.0 {
+        delta.x -= extent.x * (delta.x / extent.x).round();
+    }
+    if extent.y > 0.0 {
+        delta.y -= extent.y * (delta.y / extent.y).round();
+    }
+    if extent.z > 0.0 {
+        delta.z -= extent.z * (delta.z / extent.z).round();
+    }
+
+    delta
 }

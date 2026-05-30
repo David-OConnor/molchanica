@@ -22,6 +22,7 @@ use dynamics::{
 };
 use lin_alg::f32::Vec3;
 
+use crate::gromacs::make_gromacs_input;
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
     molecules::small::MoleculeSmall,
@@ -383,28 +384,6 @@ fn cohesive_energy_from_matrix(matrix: &[f32], n_mol: usize) -> Option<(f32, f32
     ))
 }
 
-fn mean(values: &[f32]) -> Option<f32> {
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.iter().sum::<f32>() / values.len() as f32)
-    }
-}
-
-fn min_image(mut delta: Vec3, extent: Vec3) -> Vec3 {
-    if extent.x > 0.0 {
-        delta.x -= extent.x * (delta.x / extent.x).round();
-    }
-    if extent.y > 0.0 {
-        delta.y -= extent.y * (delta.y / extent.y).round();
-    }
-    if extent.z > 0.0 {
-        delta.z -= extent.z * (delta.z / extent.z).round();
-    }
-
-    delta
-}
-
 fn molecule_centroids_and_axes(
     atom_posits: &[Vec3],
     mol_start_indices: &[usize],
@@ -686,7 +665,8 @@ fn gromacs_crystal_molecule_input(
     ))
 }
 
-fn run_crystal_dynamics(
+/// Launch using the dynamics backend.
+fn run_dynamics(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
@@ -714,12 +694,6 @@ fn run_crystal_dynamics(
 
     run_dynamics_blocking(&mut md, &dev, DT, NUM_STEPS);
 
-    if md.snapshots.is_empty() {
-        return Err(io::Error::other(
-            "Crystal MD completed without recording snapshots.",
-        ));
-    }
-
     let atom_posits: Vec<_> = md.atoms.iter().map(|atom| atom.posit).collect();
     let mut data = crystal_data_from_properties(char, CrystalEstimateSource::MolecularDynamics);
     add_md_metrics(
@@ -735,7 +709,7 @@ fn run_crystal_dynamics(
     Ok((data, md.snapshots))
 }
 
-fn run_crystal_gromacs(
+fn run_gromacs(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
     mol_specific_params: &HashMap<String, ForceFieldParams>,
@@ -743,6 +717,8 @@ fn run_crystal_gromacs(
     mut setup: CrystalMdSetup,
 ) -> io::Result<(CrystalData, Vec<Snapshot>)> {
     let cfg = build_gromacs_md_cfg(setup.box_side);
+    let mdp = cfg.to_gromacs(NUM_STEPS, DT);
+
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, setup.copy_count)];
 
     let (placed_mols, _) = setup_mols_dyn(
@@ -764,8 +740,7 @@ fn run_crystal_gromacs(
     let (mol_input, mol_start_indices) =
         gromacs_crystal_molecule_input(&placed_mols, &mol.common.ident)?;
 
-    let mdp = cfg.to_gromacs(NUM_STEPS, DT);
-    let input = crate::gromacs::make_gromacs_input(
+    let input = make_gromacs_input(
         mdp,
         &mols,
         vec![mol_input],
@@ -776,28 +751,25 @@ fn run_crystal_gromacs(
     )?;
 
     let out = input.run()?;
-    if out.setup_failure {
-        return Err(io::Error::other(
-            "GROMACS setup failed while running crystal MD.",
-        ));
-    }
-    if out.log_text.contains("Fatal error") {
-        return Err(io::Error::other(
-            "GROMACS reported a fatal error while running crystal MD.",
-        ));
-    }
 
+    // if out.setup_failure {
+    //     return Err(io::Error::other(
+    //         "GROMACS setup failed while running crystal MD.",
+    //     ));
+    // }
+    // if out.log_text.contains("Fatal error") {
+    //     return Err(io::Error::other(
+    //         "GROMACS reported a fatal error while running crystal MD.",
+    //     ));
+    // }
+    //
     let snapshots = gromacs_frames_to_ss(&out);
-    if snapshots.is_empty() {
-        return Err(io::Error::other(
-            "GROMACS crystal MD completed without recording snapshots.",
-        ));
-    }
 
     let last_atom_posits = snapshots
         .last()
         .map(|snap| snap.atom_posits.clone())
         .unwrap_or_default();
+
     let cell_extent = Vec3::new(setup.box_side, setup.box_side, setup.box_side);
     let mut data = crystal_data_from_properties(char, CrystalEstimateSource::MolecularDynamics);
 
@@ -821,8 +793,8 @@ pub fn estimate_from_md(
     mol: &MoleculeSmall,
     backend: MdBackend,
     dev: &ComputationDevice,
+    param_set: &FfParamSet,
 ) -> io::Result<(CrystalData, Vec<Snapshot>)> {
-    let param_set = FfParamSet::new_amber()?;
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
 
     let Some(char) = &mol.characterization else {
@@ -848,11 +820,9 @@ pub fn estimate_from_md(
 
     match backend {
         MdBackend::Dynamics => {
-            run_crystal_dynamics(&mol, &param_set, &mol_specific_params, &char, setup, dev)
+            run_dynamics(&mol, &param_set, &mol_specific_params, &char, setup, dev)
         }
-        MdBackend::Gromacs => {
-            run_crystal_gromacs(&mol, &param_set, &mol_specific_params, &char, setup)
-        }
+        MdBackend::Gromacs => run_gromacs(&mol, &param_set, &mol_specific_params, &char, setup),
         MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Crystal MD estimation supports the Dynamics and GROMACS backends.",

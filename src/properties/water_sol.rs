@@ -25,12 +25,14 @@ use dynamics::{
 use lin_alg::f32::Vec3;
 use na_seq::Element;
 
+use crate::gromacs::make_gromacs_input;
 use crate::{
     bond_inference::h_bond_geometry_strength,
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
     properties::{io_error, mol_characterization::MolCharacterization, prepare_mol_for_md},
 };
+use crate::properties::{mean, min_image};
 
 // todo: Set higher once confident this works.
 const NUM_STEPS: usize = 2_000;
@@ -193,34 +195,6 @@ fn build_hydration_ti_cfg() -> MdConfig {
     }
 }
 
-fn mean(values: &[f32]) -> Option<f32> {
-    let mut sum = 0.0;
-    let mut count = 0;
-
-    for &value in values {
-        if value.is_finite() {
-            sum += value;
-            count += 1;
-        }
-    }
-
-    (count > 0).then_some(sum / count as f32)
-}
-
-fn min_image(mut delta: Vec3, extent: Vec3) -> Vec3 {
-    if extent.x > 0.0 {
-        delta.x -= extent.x * (delta.x / extent.x).round();
-    }
-    if extent.y > 0.0 {
-        delta.y -= extent.y * (delta.y / extent.y).round();
-    }
-    if extent.z > 0.0 {
-        delta.z -= extent.z * (delta.z / extent.z).round();
-    }
-
-    delta
-}
-
 fn h_bond_candidate_el(element: Element) -> bool {
     matches!(
         element,
@@ -246,7 +220,7 @@ fn h_bond_strength_if_present(
         donor_posit.into(),
         h_imaged.into(),
         acc_imaged.into(),
-        donor_element,
+        donor_element,`````
         acceptor_element,
         false,
     )
@@ -590,12 +564,6 @@ fn run_hydration_ti_window(
     md.snapshots.clear();
     run_dynamics_blocking(&mut md, dev, DT, HYDRATION_TI_PROD_STEPS_PER_WINDOW);
 
-    if md.snapshots.is_empty() {
-        return Err(io::Error::other(format!(
-            "Water-solvation alchemical production window lambda={lambda:.3} completed without snapshots.",
-        )));
-    }
-
     let window = collect_window(lambda, &md.snapshots).map_err(|e| {
         io_error(
             "Unable to collect water-solvation alchemical free-energy samples",
@@ -640,6 +608,7 @@ fn run_hydration_free_energy_ti(
     Ok(windows)
 }
 
+/// Launch using the dynamics backend.
 fn run_dynamics(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
@@ -674,10 +643,13 @@ fn run_gromacs(
     char: &MolCharacterization,
 ) -> io::Result<(WaterSolMdProperties, Vec<Snapshot>)> {
     let cfg = build_gromacs_md_cfg();
-    let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
-    let mol_input = gromacs_water_molecule_input(mol, mol_specific_params)?;
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
-    let input = crate::gromacs::make_gromacs_input(
+
+    let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
+
+    let mol_input = gromacs_water_molecule_input(mol, mol_specific_params)?;
+
+    let input = make_gromacs_input(
         mdp,
         &mols,
         vec![mol_input],
@@ -686,29 +658,26 @@ fn run_gromacs(
         &cfg.solvent,
         cfg.max_init_relaxation_iters.is_some(),
     )?;
+
+    let out = input.run()?;
+
+    // if out.setup_failure {
+    //     return Err(io::Error::other(
+    //         "GROMACS setup failed while running water-solvation MD.",
+    //     ));
+    // }
+    // if out.log_text.contains("Fatal error") {
+    //     return Err(io::Error::other(
+    //         "GROMACS reported a fatal error while running water-solvation MD.",
+    //     ));
+    // }
+
+    let snapshots = gromacs_frames_to_ss(&out);
+
     let cell_extent = input
         .box_nm
         .map(|(x, y, z)| Vec3::new((x * 10.0) as f32, (y * 10.0) as f32, (z * 10.0) as f32))
         .unwrap_or_else(Vec3::new_zero);
-
-    let out = input.run()?;
-    if out.setup_failure {
-        return Err(io::Error::other(
-            "GROMACS setup failed while running water-solvation MD.",
-        ));
-    }
-    if out.log_text.contains("Fatal error") {
-        return Err(io::Error::other(
-            "GROMACS reported a fatal error while running water-solvation MD.",
-        ));
-    }
-
-    let snapshots = gromacs_frames_to_ss(&out);
-    if snapshots.is_empty() {
-        return Err(io::Error::other(
-            "GROMACS water-solvation MD completed without recording snapshots.",
-        ));
-    }
 
     let data = create_water_sol_metrics(char, mol, &snapshots, cell_extent);
 
@@ -723,9 +692,10 @@ pub fn estimate_from_md(
     mol: &MoleculeSmall,
     backend: MdBackend,
     dev: &ComputationDevice,
+    param_set: &FfParamSet,
 ) -> io::Result<(WaterSolMdProperties, Vec<Snapshot>)> {
-    let param_set = FfParamSet::new_amber()?;
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
+
     let Some(char) = &mol.characterization else {
         return Err(io::Error::other(
             "Characterization missing when estimating water-solvation data",

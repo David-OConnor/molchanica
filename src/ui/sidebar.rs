@@ -1088,7 +1088,12 @@ fn md_property_runners(
 
     if run_crystal_sim {
         // todo: for testing, let the UI control this.
-        match crystal::estimate_from_md(&mol, state.to_save.md_backend, &state.dev) {
+        match crystal::estimate_from_md(
+            &mol,
+            state.to_save.md_backend,
+            &state.dev,
+            &state.ff_param_set,
+        ) {
             Ok((data, snaps)) => {
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps,
@@ -1122,6 +1127,7 @@ fn md_property_runners(
             &mol,
             state.to_save.md_backend, // todo: for testing, let the UI control this.
             &state.dev,
+            &state.ff_param_set,
         ) {
             Ok((data, snaps)) => {
                 let water_count = if data.water_molecule_count > 0 {
@@ -1188,8 +1194,12 @@ fn md_property_runners(
     }
 
     if run_water_sol_sim_layers {
-        match water_sol_mix::boundary_layer_solute_water(&mol, state.to_save.md_backend, &state.dev)
-        {
+        match water_sol_mix::boundary_layer_solute_water(
+            &mol,
+            state.to_save.md_backend,
+            &state.dev,
+            &state.ff_param_set,
+        ) {
             Ok((data, snaps)) => {
                 let water_count = snaps
                     .last()

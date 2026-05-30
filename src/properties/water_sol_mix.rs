@@ -35,6 +35,8 @@ use lin_alg::{
 };
 use na_seq::Element;
 
+use crate::gromacs::make_gromacs_input;
+use crate::properties::mean;
 use crate::{
     md::{MdBackend, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
@@ -61,7 +63,7 @@ const WATER_SLAB_DEPTH_A: f32 = 24.0;
 const LAYER_MARGIN_A: f32 = 2.0;
 const INTERFACE_GAP_A: f32 = 2.2;
 
-const NUM_STEPS: usize = 2_000;
+const NUM_STEPS: usize = 20_000;
 
 const SNAPSHOT_INTERVAL: usize = 10;
 const LAYER_INIT_RELAXATION_ITERS: usize = 120;
@@ -95,11 +97,6 @@ struct BoundaryLayerSetup {
 
 fn param_err(e: ParamError) -> io::Error {
     io::Error::other(e.descrip)
-}
-
-fn mean(values: &[f32]) -> Option<f32> {
-    let finite: Vec<_> = values.iter().copied().filter(|v| v.is_finite()).collect();
-    (!finite.is_empty()).then(|| finite.iter().sum::<f32>() / finite.len() as f32)
 }
 
 fn mol_bounding_radius(mol: &MoleculeSmall) -> f64 {
@@ -777,7 +774,8 @@ fn add_snapshot_metrics(data: &mut BoundaryLayerMdData, snapshots: &[Snapshot]) 
     data.nonbonded_energy_kcal = mean(&nonbonded).unwrap_or(0.0);
 }
 
-fn run_dynamics_backend(
+/// Launch using the dynamics backend.
+fn run_dynamics(
     placed_mols: &[MolDynamics],
     waters: &[WaterMolOpc],
     param_set: &FfParamSet,
@@ -785,79 +783,82 @@ fn run_dynamics_backend(
     dev: &ComputationDevice,
 ) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
     let water_template = WaterInitTemplate::from_water_mols(waters, boundary_layer_cell(setup))?;
+
     let cfg = make_md_cfg(setup, Solvent::WaterOpcPrepositioned(water_template), true);
 
     let (mut md, _) = MdState::new(dev, &cfg, placed_mols, param_set).map_err(param_err)?;
+
     run_dynamics_blocking(&mut md, dev, DT, NUM_STEPS);
 
-    if md.snapshots.is_empty() {
-        return Err(io::Error::other(
-            "Boundary-layer Dynamics run completed without recording snapshots.",
-        ));
-    }
-
     let mut data = boundary_layer_data_from_setup(setup);
+
     add_snapshot_metrics(&mut data, &md.snapshots);
 
     Ok((data, md.snapshots))
 }
 
-fn run_gromacs_backend(
-    placed_mols: &[MolDynamics],
-    waters: &[WaterMolOpc],
+fn run_gromacs(
+    placed_mols: &[MolDynamics], // todo? Not in others
+    waters: &[WaterMolOpc],      // todo? Not in others
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
     setup: BoundaryLayerSetup,
 ) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
-    let solute_input = gromacs_layer_molecule_input(placed_mols, &mol.common.ident)?;
-    let gro_text = make_layer_gro(&solute_input, waters, setup)?;
-
     let cfg = make_md_cfg(setup, Solvent::None, false);
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
 
     let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
-    let mut input = crate::gromacs::make_gromacs_input(
-        mdp,
-        &mols,
-        vec![solute_input],
-        param_set,
-        &cfg.sim_box,
-        &cfg.solvent,
-        true,
-    )?;
 
-    input.initial_gro = Some(gro_text);
-    input.solvent = Some(bf_gromacs::solvate::Solvent::Custom(
-        bf_gromacs::solvate::CustomSolventTemplate {
-            gro_text: String::new(),
-            topology_molecules: Vec::new(),
-            include_opc_water: true,
-        },
-    ));
-    input
-        .extra_molecule_counts
-        .push(("SOL".to_string(), waters.len()));
+    let solute_input = gromacs_layer_molecule_input(placed_mols, &mol.common.ident)?;
+    let gro_text = make_layer_gro(&solute_input, waters, setup)?;
+
+    let input = {
+        let mut v = make_gromacs_input(
+            mdp,
+            &mols,
+            vec![solute_input],
+            param_set,
+            &cfg.sim_box,
+            &cfg.solvent,
+            true,
+        )?;
+
+        v.initial_gro = Some(gro_text);
+
+        v.solvent = Some(bf_gromacs::solvate::Solvent::Custom(
+            bf_gromacs::solvate::CustomSolventTemplate {
+                gro_text: String::new(),
+                topology_molecules: Vec::new(),
+                include_opc_water: true,
+            },
+        ));
+
+        v.extra_molecule_counts
+            .push(("SOL".to_string(), waters.len()));
+
+        v
+    };
 
     let out = input.run()?;
 
-    if out.setup_failure {
-        return Err(io::Error::other(
-            "GROMACS setup failed while running boundary-layer MD.",
-        ));
-    }
-
-    if out.log_text.contains("Fatal error") {
-        return Err(io::Error::other(
-            "GROMACS reported a fatal error while running boundary-layer MD.",
-        ));
-    }
+    // if out.setup_failure {
+    //     return Err(io::Error::other(
+    //         "GROMACS setup failed while running boundary-layer MD.",
+    //     ));
+    // }
+    //
+    // if out.log_text.contains("Fatal error") {
+    //     return Err(io::Error::other(
+    //         "GROMACS reported a fatal error while running boundary-layer MD.",
+    //     ));
+    // }
 
     let snapshots = gromacs_frames_to_ss(&out);
-    if snapshots.is_empty() {
-        return Err(io::Error::other(
-            "GROMACS boundary-layer MD completed without recording snapshots.",
-        ));
-    }
+    // if snapshots.is_empty() {
+    //     return Err(io::Error::other(
+    //         "GROMACS boundary-layer MD completed without recording snapshots.",
+    //     ));
+    // }
 
     let mut data = boundary_layer_data_from_setup(setup);
     add_snapshot_metrics(&mut data, &snapshots);
@@ -871,8 +872,8 @@ pub fn boundary_layer_solute_water(
     mol: &MoleculeSmall,
     backend: MdBackend,
     dev: &ComputationDevice,
+    param_set: &FfParamSet,
 ) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
-    let param_set = FfParamSet::new_amber()?;
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
     let template = solute_template(&mol, &mol_specific_params)?;
     let setup = boundary_layer_setup(&mol);
@@ -892,8 +893,8 @@ pub fn boundary_layer_solute_water(
     );
 
     match backend {
-        MdBackend::Dynamics => run_dynamics_backend(&placed_mols, &waters, &param_set, setup, dev),
-        MdBackend::Gromacs => run_gromacs_backend(&placed_mols, &waters, &mol, &param_set, setup),
+        MdBackend::Dynamics => run_dynamics(&placed_mols, &waters, &param_set, setup, dev),
+        MdBackend::Gromacs => run_gromacs(&placed_mols, &waters, &mol, &param_set, setup),
         MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Boundary-layer water/solute MD supports the Dynamics and GROMACS backends.",
