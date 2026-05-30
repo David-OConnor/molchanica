@@ -688,7 +688,7 @@ fn run_gromacs(
 /// water-affinity descriptors and snapshots that can be used to visualize the solvated run.
 ///
 /// This is the entry point for this module.
-pub fn estimate_from_md(
+pub fn run_sol_sim(
     mol: &MoleculeSmall,
     backend: MdBackend,
     dev: &ComputationDevice,

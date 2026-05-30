@@ -1,4 +1,5 @@
-//! Preset two-layer solute/water simulations.
+//! A 2-layer solute/water simulation, used to assess solubility in water. Attempts to model
+//! both self-affinity of the target molecule, and its affinity to water.
 //!
 //! The initial system is a rectangular slab of solute copies touching a rectangular
 //! slab of OPC water. The goal is a cheap boundary-layer experiment rather than a
@@ -6,7 +7,6 @@
 
 use std::{
     collections::HashMap,
-    f32::consts::PI,
     io::{self, ErrorKind},
     path::Path,
 };
@@ -19,6 +19,7 @@ use bio_files::{
     },
     md_params::ForceFieldParams,
 };
+
 use dynamics::{
     AtomDynamics, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
     MolDynamics, ParamError, ShrinkingBoxPackingCfg, SimBox, SimBoxInit, Solvent,
@@ -95,28 +96,20 @@ struct BoundaryLayerSetup {
     water_slab_high_z_a: f32,
 }
 
-fn mol_volume_estimate_a3(mol: &MoleculeSmall, radius_a: f32) -> f32 {
-    mol.characterization
-        .as_ref()
-        .and_then(|char| {
-            char.volume_pubchem
-                .filter(|volume| *volume > 0.0)
-                .or_else(|| (char.volume > 0.0).then_some(char.volume))
-        })
-        .unwrap_or_else(|| (4.0 / 3.0) * PI * radius_a.powi(3) * 0.45)
-        .max(40.0)
-}
+/// Volume is in Angstrom^3; depth is in Angstrom
+fn bounded_solute_copy_count(mol: &MoleculeSmall, mol_volume: f32, min_depth: f32) -> usize {
+    let atom_count = mol.common.atoms.len();
 
-fn bounded_solute_copy_count(mol: &MoleculeSmall, mol_volume_a3: f32, min_depth_a: f32) -> usize {
-    let atom_count = mol.common.atoms.len().max(1);
-    let atom_limited_cap = (MAX_SOLUTE_ATOMS / atom_count).max(1);
-    let copy_cap = MAX_SOLUTE_COPIES.min(atom_limited_cap).max(1);
+    let atom_limited_cap = MAX_SOLUTE_ATOMS / atom_count;
+    let copy_cap = MAX_SOLUTE_COPIES.min(atom_limited_cap);
     let min_copies = MIN_SOLUTE_COPIES.min(copy_cap);
 
-    let min_layer_capacity = MIN_LAYER_SIDE_A.powi(2) * min_depth_a * SOLUTE_PACKING_FRACTION;
-    let fill_min_layer_count = (min_layer_capacity / mol_volume_a3)
+    let min_layer_capacity = MIN_LAYER_SIDE_A.powi(2) * min_depth * SOLUTE_PACKING_FRACTION;
+
+    let fill_min_layer_count = (min_layer_capacity / mol_volume)
         .ceil()
         .max(MIN_SOLUTE_COPIES as f32) as usize;
+
     let requested = TARGET_SOLUTE_COPIES.max(fill_min_layer_count.min(MAX_SOLUTE_COPIES));
 
     requested.min(copy_cap).max(min_copies)
@@ -124,7 +117,7 @@ fn bounded_solute_copy_count(mol: &MoleculeSmall, mol_volume_a3: f32, min_depth_
 
 fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
     let solute_radius_a = mol_bounding_radius(mol);
-    let mol_volume_a3 = mol_volume_estimate_a3(mol, solute_radius_a);
+    let mol_volume = mol.characterization.unwrap().volume; // todo: Handle
 
     // Buffer around the placement region: wall margin plus the molecule's bounding
     // radius. Centroids placed inside the inset volume have all atoms strictly
@@ -134,13 +127,13 @@ fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
         MIN_LAYER_SIDE_A.max(2.0 * inset_a + 2.0 * solute_radius_a + 2.0 * LAYER_MARGIN_A);
     let fillable_side = (footprint_side - 2.0 * inset_a).max(2.0 * solute_radius_a);
 
-    let solute_copy_count = bounded_solute_copy_count(mol, mol_volume_a3, MIN_SOLUTE_LAYER_DEPTH_A);
+    let solute_copy_count = bounded_solute_copy_count(mol, mol_volume, MIN_SOLUTE_LAYER_DEPTH_A);
 
     // Fillable depth: enough to hold N molecules at the packing fraction inside
     // a `fillable_side × fillable_side` cross-section, but never thinner than one
     // molecule diameter.
     let fillable_min_depth = (2.0 * solute_radius_a).max(1.0);
-    let target_fillable_vol = solute_copy_count as f32 * mol_volume_a3 / SOLUTE_PACKING_FRACTION;
+    let target_fillable_vol = solute_copy_count as f32 * mol_volume / SOLUTE_PACKING_FRACTION;
     let fillable_depth =
         (target_fillable_vol / (fillable_side * fillable_side)).max(fillable_min_depth);
     let solute_layer_depth = (fillable_depth + 2.0 * inset_a).max(MIN_SOLUTE_LAYER_DEPTH_A);
@@ -270,6 +263,7 @@ fn translate_mols(mols: &mut [MolDynamics], offset: Vec3F64) {
                     atom.posit
                 })
                 .collect();
+
             mol.atom_posits = Some(posits);
         }
     }
@@ -519,14 +513,6 @@ fn make_water_slab(
     Ok(waters)
 }
 
-fn gromacs_atom_name(atom: &bio_files::AtomGeneric, serial: usize) -> String {
-    atom.force_field_type
-        .clone()
-        .or_else(|| atom.type_in_res.as_ref().map(|t| t.to_string()))
-        .or_else(|| atom.type_in_res_general.clone())
-        .unwrap_or_else(|| format!("{}{}", atom.element.to_letter(), serial))
-}
-
 fn gromacs_layer_mol_name(ident: &str) -> String {
     let name: String = ident
         .chars()
@@ -660,9 +646,11 @@ fn make_layer_gro(
     );
 
     let mut atoms = Vec::with_capacity(total_atoms);
-    let mut atom_serial = 1usize;
+    let mut atom_serial = 1;
+
     for atom in &solute.atoms {
-        let atom_name = gromacs_atom_name(atom, atom_serial);
+        let atom_name = atom.force_field_type.unwrap();
+
         atoms.push(layer_gro_atom(
             1,
             &solute.name,
@@ -674,8 +662,10 @@ fn make_layer_gro(
         atom_serial += 1;
     }
 
+    // todo: I don't like this.
     for (water_i, water) in waters.iter().enumerate() {
         let mol_id = water_i + 2;
+
         for (name, element, posit) in [
             ("OW", Element::Oxygen, water.o.posit),
             ("HW1", Element::Hydrogen, water.h0.posit),
@@ -851,23 +841,24 @@ fn run_gromacs(
 
 /// A simulation of two touching layers, with no probe molecule: one layer is the
 /// molecule being measured, and the other is OPC water.
-pub fn boundary_layer_solute_water(
+pub fn run_boundary_layer_sol_sim(
     mol: &MoleculeSmall,
     backend: MdBackend,
     dev: &ComputationDevice,
     param_set: &FfParamSet,
 ) -> io::Result<(BoundaryLayerMdData, Vec<Snapshot>)> {
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, &param_set)?;
+
     let template = solute_template(&mol, &mol_specific_params)?;
     let setup = boundary_layer_setup(&mol);
 
-    let placed_mols = pack_solute_layer(&template, setup, &param_set, dev)?;
-    let waters = make_water_slab(&placed_mols, setup)?;
+    let solute_mols = pack_solute_layer(&template, setup, &param_set, dev)?;
+    let water_mols = make_water_slab(&solute_mols, setup)?;
 
     println!(
         "Boundary-layer MD setup ({backend}): {} solute copies, {} waters, footprint {:.1} x {:.1} A, solute depth {:.1} A, water depth {:.1} A, box z {:.1} A",
         setup.solute_copy_count,
-        waters.len(),
+        water_mols.len(),
         setup.box_extent_a.x,
         setup.box_extent_a.y,
         setup.solute_layer_depth_a,
@@ -876,8 +867,8 @@ pub fn boundary_layer_solute_water(
     );
 
     match backend {
-        MdBackend::Dynamics => run_dynamics(&placed_mols, &waters, &param_set, setup, dev),
-        MdBackend::Gromacs => run_gromacs(&placed_mols, &waters, &mol, &param_set, setup),
+        MdBackend::Dynamics => run_dynamics(&solute_mols, &water_mols, &param_set, setup, dev),
+        MdBackend::Gromacs => run_gromacs(&solute_mols, &water_mols, &mol, &param_set, setup),
         MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Boundary-layer water/solute MD supports the Dynamics and GROMACS backends.",

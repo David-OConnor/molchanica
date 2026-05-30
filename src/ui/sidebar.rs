@@ -1088,7 +1088,7 @@ fn md_property_runners(
 
     if run_crystal_sim {
         // todo: for testing, let the UI control this.
-        match crystal::estimate_from_md(
+        match crystal::run_crystal_sim(
             &mol,
             state.to_save.md_backend,
             &state.dev,
@@ -1123,7 +1123,7 @@ fn md_property_runners(
     }
 
     if run_water_sol_sim_mix {
-        match water_sol::estimate_from_md(
+        match water_sol::run_sol_sim(
             &mol,
             state.to_save.md_backend, // todo: for testing, let the UI control this.
             &state.dev,
@@ -1194,7 +1194,7 @@ fn md_property_runners(
     }
 
     if run_water_sol_sim_layers {
-        match water_sol_mix::boundary_layer_solute_water(
+        match water_sol_mix::run_boundary_layer_sol_sim(
             &mol,
             state.to_save.md_backend,
             &state.dev,

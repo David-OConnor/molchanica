@@ -772,7 +772,7 @@ fn run_gromacs(
 /// Runs a molecular dynamics simulation of a number of copies of the molecule being analyzed,
 /// with no solvent. Returns both crystal/self-affinity descriptors and snapshots that can be
 /// used to visualize the dry pure-molecule run.
-pub fn estimate_from_md(
+pub fn run_crystal_sim(
     mol: &MoleculeSmall,
     backend: MdBackend,
     dev: &ComputationDevice,
