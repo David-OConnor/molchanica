@@ -16,6 +16,8 @@ pub mod water_sol;
 mod water_sol_analytic;
 pub mod water_sol_mix;
 
+pub (in crate::properties) const AMU_A3_TO_G_CM3: f32 = 1.660_539;
+
 pub fn io_error(context: &str, err: AlchemicalError) -> io::Error {
     io::Error::other(format!("{context}: {err}"))
 }

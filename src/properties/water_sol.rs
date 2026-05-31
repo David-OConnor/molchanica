@@ -26,7 +26,7 @@ use lin_alg::f32::Vec3;
 use na_seq::Element;
 
 use crate::gromacs::make_gromacs_input;
-use crate::properties::{mean, min_image};
+use crate::properties::{mean, min_image, AMU_A3_TO_G_CM3};
 use crate::{
     bond_inference::h_bond_geometry_strength,
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
@@ -54,7 +54,6 @@ const HYDRATION_TI_LAMBDAS: &[f64] = &[
     0.0, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 1.0,
 ];
 
-const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 const FIRST_HYDRATION_SHELL_CUTOFF_A: f32 = 3.6;
 
 /// How the data was estimated.

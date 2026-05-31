@@ -28,7 +28,7 @@ use lin_alg::{
 };
 
 use crate::gromacs::{make_gromacs_input, molecule_input_from_packed_copies};
-use crate::properties::{mean, mol_bounding_radius};
+use crate::properties::{mean, mol_bounding_radius, AMU_A3_TO_G_CM3};
 use crate::{
     md::{MdBackend, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
@@ -36,13 +36,10 @@ use crate::{
 };
 
 const TARGET_SOLUTE_COPIES: usize = 30;
-const MIN_SOLUTE_COPIES: usize = 12;
-const MAX_SOLUTE_COPIES: usize = 64;
-const MAX_SOLUTE_ATOMS: usize = 1_800;
 
 // Footprint side of the solute slab; sets the solute/water contact area.
-const MIN_LAYER_SIDE_A: f32 = 30.0;
-const MIN_SOLUTE_LAYER_DEPTH_A: f32 = 12.0;
+const MIN_LAYER_SIDE_A: f32 = 26.0;
+const MIN_SOLUTE_LAYER_DEPTH_A: f32 = 20.0;
 
 // Random-orientation grid placement can't reach crystal-like fractions; 0.45
 // is a realistic upper bound and gives the relaxation step room to breathe.
@@ -51,18 +48,18 @@ const SOLUTE_LAYER_WALL_MARGIN_A: f32 = 1.2;
 const SOLUTE_PACKING_INITIAL_BOX_SCALE: f32 = 1.8;
 const SOLUTE_PACKING_SHRINK_PER_STEP_A: f32 = 0.05;
 const SOLUTE_PACKING_EQUILIBRATION_STEPS: usize = 750;
+
 // Water thickness for the explicit slab against the solute layer.
-const WATER_SLAB_DEPTH_A: f32 = 24.0;
+const WATER_SLAB_DEPTH_A: f32 = 30.0;
 const LAYER_MARGIN_A: f32 = 2.0;
 const INTERFACE_GAP_A: f32 = 2.2;
 
-const NUM_STEPS: usize = 100_000;
+const NUM_STEPS: usize = 10_000;
 
 const SNAPSHOT_INTERVAL: usize = 10;
 const LAYER_INIT_RELAXATION_ITERS: usize = 120;
 const TEMPERATURE: f32 = 300.0;
 const DT: f32 = 0.002;
-const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 
 #[derive(Clone, Debug)]
 pub struct BoundaryLayerMdData {
@@ -88,25 +85,6 @@ struct BoundaryLayerSetup {
     water_slab_high_z_a: f32,
 }
 
-/// Volume is in Angstrom^3; depth is in Angstrom
-fn bounded_solute_copy_count(mol: &MoleculeSmall, mol_volume: f32, min_depth: f32) -> usize {
-    let atom_count = mol.common.atoms.len();
-
-    let atom_limited_cap = MAX_SOLUTE_ATOMS / atom_count;
-    let copy_cap = MAX_SOLUTE_COPIES.min(atom_limited_cap);
-    let min_copies = MIN_SOLUTE_COPIES.min(copy_cap);
-
-    let min_layer_capacity = MIN_LAYER_SIDE_A.powi(2) * min_depth * SOLUTE_PACKING_FRACTION;
-
-    let fill_min_layer_count = (min_layer_capacity / mol_volume)
-        .ceil()
-        .max(MIN_SOLUTE_COPIES as f32) as usize;
-
-    let requested = TARGET_SOLUTE_COPIES.max(fill_min_layer_count.min(MAX_SOLUTE_COPIES));
-
-    requested.min(copy_cap).max(min_copies)
-}
-
 fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
     let solute_radius_a = mol_bounding_radius(mol);
     let mol_volume = mol.characterization.as_ref().unwrap().volume; // todo: Handle
@@ -117,9 +95,14 @@ fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
     let inset_a = SOLUTE_LAYER_WALL_MARGIN_A + solute_radius_a;
     let footprint_side =
         MIN_LAYER_SIDE_A.max(2.0 * inset_a + 2.0 * solute_radius_a + 2.0 * LAYER_MARGIN_A);
+
     let fillable_side = (footprint_side - 2.0 * inset_a).max(2.0 * solute_radius_a);
 
-    let solute_copy_count = bounded_solute_copy_count(mol, mol_volume, MIN_SOLUTE_LAYER_DEPTH_A);
+    // todo hmm. I believe this should be a function based on density; e.g. not tied
+    // todo to a fixed amount, but packing as tightly as is realistic. todo: Add functionality
+    // todo to dynamics to pack using the shrinking box approach until a density becomes
+    // todo too high?
+    let solute_copy_count = TARGET_SOLUTE_COPIES;
 
     // Fillable depth: enough to hold N molecules at the packing fraction inside
     // a `fillable_side × fillable_side` cross-section, but never thinner than one
@@ -133,6 +116,7 @@ fn boundary_layer_setup(mol: &MoleculeSmall) -> BoundaryLayerSetup {
     // Two explicit slabs in one fixed cell: solute below, OPC water above.
     let box_z =
         LAYER_MARGIN_A + solute_layer_depth + INTERFACE_GAP_A + WATER_SLAB_DEPTH_A + LAYER_MARGIN_A;
+
     let water_slab_low_z = -box_z / 2.0 + LAYER_MARGIN_A + solute_layer_depth + INTERFACE_GAP_A;
     let water_slab_high_z = water_slab_low_z + WATER_SLAB_DEPTH_A;
 
@@ -176,6 +160,7 @@ fn water_layer_cell(setup: BoundaryLayerSetup) -> SimBox {
     )
 }
 
+/// Used directly by the `dnamics` backend, or converted to a GROMACS config.
 fn make_md_cfg(setup: BoundaryLayerSetup, solvent: Solvent, memory_snapshots: bool) -> MdConfig {
     let cell = boundary_layer_cell(setup);
 
@@ -312,10 +297,12 @@ fn fallback_solute_layer(
         .clone()
         .unwrap_or_else(|| template.atoms.iter().map(|a| a.posit).collect());
     let atom_count = template_posits.len().max(1);
+
     let centroid = template_posits
         .iter()
         .fold(Vec3F64::new(0.0, 0.0, 0.0), |s, &p| s + p)
         * (1.0 / atom_count as f64);
+
     let local: Vec<Vec3F64> = template_posits.iter().map(|&p| p - centroid).collect();
 
     // Largest centroid-to-atom distance — any rotation keeps every atom inside a

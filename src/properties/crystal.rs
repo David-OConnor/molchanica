@@ -22,7 +22,7 @@ use dynamics::{
 use lin_alg::f32::Vec3;
 
 use crate::gromacs::{make_gromacs_input, molecule_input_from_packed_copies};
-use crate::properties::{mean, min_image, mol_bounding_radius};
+use crate::properties::{mean, min_image, mol_bounding_radius, AMU_A3_TO_G_CM3};
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
     molecules::small::MoleculeSmall,
@@ -40,7 +40,6 @@ const DT: f32 = 0.002; // ps
 const DEFAULT_CRYSTAL_DENSITY_G_CM3: f32 = 1.20;
 const MIN_CRYSTAL_DENSITY_G_CM3: f32 = 0.85;
 const MAX_CRYSTAL_DENSITY_G_CM3: f32 = 1.65;
-const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 const MIN_CRYSTAL_BOX_SIDE_A: f32 = 36.;
 
 // todo: Currently, we are having a difficult time packing. Given we probably don't want
@@ -540,9 +539,9 @@ fn add_md_metrics(
     metrics.cohesive_energy_per_mol_kcal = alchemical::mean_coupled_interaction_kcal(snaps)
         .or_else(|| mean(&pair_cohesive))
         .unwrap_or(0.0);
+
     metrics.mean_pair_interaction_kcal = mean(&pair_interactions).unwrap_or(0.0);
-    // metrics.mean_pressure_bar = mean(&pressures);
-    // metrics.mean_temperature_k = mean(&temperatures);
+
     metrics.density_g_cm3 = mean(&densities).unwrap_or(setup.target_density_g_cm3);
     metrics.volume_per_molecule_a3 =
         mean(&volumes_per_mol).unwrap_or_else(|| setup.box_side.powi(3) / n_mol as f32);
@@ -555,10 +554,12 @@ fn add_md_metrics(
 
     let (nearest, coordination, orientational_order) =
         structural_metrics(atom_posits, mol_start_indices, cell_extent, n_mol);
+
     metrics.nearest_neighbor_distance_a = nearest.unwrap_or(0.0);
     metrics.coordination_number = coordination.unwrap_or(0.0);
     metrics.orientational_order = orientational_order.unwrap_or(0.0);
 
+    // todo: Magic?
     let md_self_affinity = metrics.cohesive_energy_per_mol_kcal
         + metrics.density_g_cm3 * 0.20
         + metrics.h_bonds_per_molecule * 0.10
@@ -677,17 +678,6 @@ fn run_gromacs(
 
     let out = input.run()?;
 
-    // if out.setup_failure {
-    //     return Err(io::Error::other(
-    //         "GROMACS setup failed while running crystal MD.",
-    //     ));
-    // }
-    // if out.log_text.contains("Fatal error") {
-    //     return Err(io::Error::other(
-    //         "GROMACS reported a fatal error while running crystal MD.",
-    //     ));
-    // }
-    //
     let snapshots = gromacs_frames_to_ss(&out);
 
     let last_atom_posits = snapshots

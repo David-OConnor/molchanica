@@ -47,7 +47,7 @@ use crate::{
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
 };
 
-const AMU_TO_KG: f64 = 1.660_539e-27;
+pub const AMU_TO_KG: f64 = 1.660_539e-27;
 const KCAL_PER_MOL_A2_TO_N_PER_M: f64 = 0.694_77;
 const HZ_TO_PS_INV: f64 = 1.0e-12;
 
