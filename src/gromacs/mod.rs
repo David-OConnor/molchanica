@@ -54,7 +54,7 @@ const ANGSTROM_TO_NM: f64 = 0.10;
 
 pub fn make_gromacs_input(
     mdp: MdpParams,
-    mols: &[(FfMolType, &MoleculeCommon, usize)],
+    ff_mol_types: &[FfMolType],
     mols_input: Vec<MoleculeInput>,
     ff_param_set: &FfParamSet,
     sim_box_init: &SimBoxInit,
@@ -64,31 +64,31 @@ pub fn make_gromacs_input(
     // Warning: We could possibly have FF name conflicts between sets, downstream of this merge.
     let mut ff_global = ForceFieldParams::default();
 
-    if mols.iter().any(|m| m.0 == FfMolType::Peptide) {
+    if ff_mol_types.contains(&FfMolType::Peptide) {
         if let Some(ff) = &ff_param_set.peptide {
             ff_global = ff_global.merge_with(ff);
         }
     }
 
-    if mols.iter().any(|m| m.0 == FfMolType::SmallOrganic) {
+    if ff_mol_types.contains(&FfMolType::SmallOrganic) {
         if let Some(ff) = &ff_param_set.small_mol {
             ff_global = ff_global.merge_with(ff);
         }
     }
 
-    if mols.iter().any(|m| m.0 == FfMolType::Lipid) {
+    if ff_mol_types.contains(&FfMolType::Lipid) {
         if let Some(ff) = &ff_param_set.lipids {
             ff_global = ff_global.merge_with(ff);
         }
     }
 
-    if mols.iter().any(|m| m.0 == FfMolType::Dna) {
+    if ff_mol_types.contains(&FfMolType::Dna) {
         if let Some(ff) = &ff_param_set.dna {
             ff_global = ff_global.merge_with(ff);
         }
     }
 
-    if mols.iter().any(|m| m.0 == FfMolType::Rna) {
+    if ff_mol_types.contains(&FfMolType::Rna) {
         if let Some(ff) = &ff_param_set.rna {
             ff_global = ff_global.merge_with(ff);
         }
@@ -244,6 +244,7 @@ fn molecule_input_from_template(name: &str, mol: &MolDynamics) -> MoleculeInput 
         bonds: mol.bonds.clone(),
         ff_params: mol.mol_specific_params.clone(),
         count: 0,
+        copy_atom_posits: None,
     }
 }
 
@@ -301,9 +302,13 @@ pub fn gromacs_input_from_state(
         .to_gromacs(state.to_save.num_md_steps as usize, state.to_save.md_dt);
 
     let minimize_energy = cfg.max_init_relaxation_iters.is_some();
+    let ff_mol_types: Vec<_> = mols
+        .iter()
+        .map(|(ff_mol_type, _, _)| *ff_mol_type)
+        .collect();
     make_gromacs_input(
         mdp,
-        &mols,
+        &ff_mol_types,
         mols_input,
         &state.ff_param_set,
         &cfg.sim_box,
@@ -438,7 +443,71 @@ fn molecule_input_from_dyn(name: String, mol: &MolDynamics) -> MoleculeInput {
         bonds: mol.bonds.clone(),
         ff_params: mol.mol_specific_params.clone(),
         count: 1,
+        copy_atom_posits: None,
     }
+}
+
+/// Build one GROMACS molecule topology with explicit coordinates for each packed copy.
+///
+/// GROMACS topology counts and coordinate-file copies are separate concerns. Keeping
+/// them separate avoids turning a packed collection into one disconnected molecule.
+pub(crate) fn molecule_input_from_packed_copies(
+    name: String,
+    placed_mols: &[MolDynamics],
+) -> io::Result<MoleculeInput> {
+    let Some(template) = placed_mols.first() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Cannot build a packed GROMACS molecule input without any copies.",
+        ));
+    };
+
+    let atom_count = template.atoms.len();
+    let bond_count = template.bonds.len();
+    let mut copy_atom_posits = Vec::with_capacity(placed_mols.len());
+
+    for (copy_i, mol) in placed_mols.iter().enumerate() {
+        if mol.atoms.len() != atom_count || mol.bonds.len() != bond_count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Packed GROMACS molecule copy {} does not match the template topology.",
+                    copy_i + 1,
+                ),
+            ));
+        }
+
+        let posits = mol
+            .atom_posits
+            .clone()
+            .unwrap_or_else(|| mol.atoms.iter().map(|atom| atom.posit).collect());
+        if posits.len() != atom_count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Packed GROMACS molecule copy {} has {} positions for {} atoms.",
+                    copy_i + 1,
+                    posits.len(),
+                    atom_count,
+                ),
+            ));
+        }
+        copy_atom_posits.push(posits);
+    }
+
+    let mut atoms = template.atoms.clone();
+    for (atom, posit) in atoms.iter_mut().zip(&copy_atom_posits[0]) {
+        atom.posit = *posit;
+    }
+
+    Ok(MoleculeInput {
+        name,
+        atoms,
+        bonds: template.bonds.clone(),
+        ff_params: template.mol_specific_params.clone(),
+        count: placed_mols.len(),
+        copy_atom_posits: Some(copy_atom_posits),
+    })
 }
 
 /// Sanitise a molecule ident for use as a GROMACS molecule name:
@@ -471,11 +540,21 @@ pub fn sim_box_nm(mols: &[MoleculeInput], box_type: &SimBoxInit) -> Option<(f64,
 
             let mut atom_count = 0;
             for mol in mols {
-                for a in &mol.atoms {
-                    min = min.min(a.posit.into());
-                    max = max.max(a.posit.into());
+                if let Some(copy_atom_posits) = &mol.copy_atom_posits {
+                    for posits in copy_atom_posits {
+                        for posit in posits {
+                            min = min.min(*posit);
+                            max = max.max(*posit);
+                            atom_count += 1;
+                        }
+                    }
+                } else if mol.count > 0 {
+                    for atom in &mol.atoms {
+                        min = min.min(atom.posit.into());
+                        max = max.max(atom.posit.into());
+                        atom_count += 1;
+                    }
                 }
-                atom_count += 1;
             }
 
             if atom_count == 0 {
@@ -687,6 +766,44 @@ mod tests {
             .zip(&inputs[1].atoms)
             .all(|(a, b)| (a.posit - b.posit).magnitude() < 1e-9);
         assert!(!same_coordinates);
+    }
+
+    #[test]
+    fn packed_copy_input_keeps_one_topology_and_explicit_positions() {
+        let template = MolDynamics {
+            ff_mol_type: FfMolType::SmallOrganic,
+            atoms: vec![carbon(1, 0.0).to_generic(), carbon(2, 1.5).to_generic()],
+            atom_posits: Some(vec![
+                Vec3F64::new(0.0, 0.0, 0.0),
+                Vec3F64::new(1.5, 0.0, 0.0),
+            ]),
+            atom_init_velocities: None,
+            bonds: vec![BondGeneric {
+                bond_type: BondType::Single,
+                atom_0_sn: 1,
+                atom_1_sn: 2,
+            }],
+            adjacency_list: None,
+            static_: false,
+            bonded_only: false,
+            mol_specific_params: None,
+        };
+        let mut second = template.clone();
+        second.atom_posits = Some(vec![
+            Vec3F64::new(10.0, 0.0, 0.0),
+            Vec3F64::new(11.5, 0.0, 0.0),
+        ]);
+
+        let input =
+            molecule_input_from_packed_copies("MOL".to_string(), &[template, second]).unwrap();
+
+        assert_eq!(input.count, 2);
+        assert_eq!(input.atoms.len(), 2);
+        assert_eq!(input.bonds.len(), 1);
+        assert_eq!(
+            input.copy_atom_posits.unwrap()[1][0],
+            Vec3F64::new(10.0, 0.0, 0.0)
+        );
     }
 
     #[test]

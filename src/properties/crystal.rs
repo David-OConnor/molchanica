@@ -10,7 +10,6 @@ use std::{
 };
 
 use bio_files::{
-    BondGeneric,
     gromacs::{MoleculeInput, OutputControl},
     md_params::ForceFieldParams,
 };
@@ -22,7 +21,7 @@ use dynamics::{
 };
 use lin_alg::f32::Vec3;
 
-use crate::gromacs::make_gromacs_input;
+use crate::gromacs::{make_gromacs_input, molecule_input_from_packed_copies};
 use crate::properties::{mean, min_image, mol_bounding_radius};
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
@@ -575,78 +574,18 @@ fn gromacs_crystal_molecule_input(
     placed_mols: &[MolDynamics],
     ident: &str,
 ) -> io::Result<(MoleculeInput, Vec<usize>)> {
-    let Some(ff_params) = placed_mols
-        .iter()
-        .find_map(|mol| mol.mol_specific_params.clone())
-    else {
+    let input = molecule_input_from_packed_copies(ident.to_owned(), placed_mols)?;
+    if input.ff_params.is_none() {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
             "Missing molecule-specific parameters for GROMACS crystal input.",
         ));
-    };
-
-    let atom_count: usize = placed_mols.iter().map(|mol| mol.atoms.len()).sum();
-    let bond_count: usize = placed_mols.iter().map(|mol| mol.bonds.len()).sum();
-
-    let mut atoms = Vec::with_capacity(atom_count);
-    let mut bonds = Vec::with_capacity(bond_count);
-    let mut mol_start_indices = Vec::with_capacity(placed_mols.len());
-    let mut next_serial = 1_u32;
-
-    for mol in placed_mols {
-        mol_start_indices.push(atoms.len());
-        let mut serial_map = HashMap::with_capacity(mol.atoms.len());
-
-        for (i, atom) in mol.atoms.iter().enumerate() {
-            let mut atom = atom.clone();
-            if let Some(posits) = &mol.atom_posits
-                && let Some(posit) = posits.get(i)
-            {
-                atom.posit = *posit;
-            }
-
-            let new_serial = next_serial;
-            next_serial = next_serial.checked_add(1).ok_or_else(|| {
-                io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "Too many atoms for GROMACS crystal input serial numbers.",
-                )
-            })?;
-
-            serial_map.insert(atom.serial_number, new_serial);
-            atom.serial_number = new_serial;
-            atoms.push(atom);
-        }
-
-        for bond in &mol.bonds {
-            let (Some(&atom_0_sn), Some(&atom_1_sn)) = (
-                serial_map.get(&bond.atom_0_sn),
-                serial_map.get(&bond.atom_1_sn),
-            ) else {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "Crystal GROMACS input bond references an atom outside its molecule copy.",
-                ));
-            };
-
-            bonds.push(BondGeneric {
-                bond_type: bond.bond_type,
-                atom_0_sn,
-                atom_1_sn,
-            });
-        }
     }
 
-    Ok((
-        MoleculeInput {
-            name: ident.to_owned(),
-            atoms,
-            bonds,
-            ff_params: Some(ff_params),
-            count: 1,
-        },
-        mol_start_indices,
-    ))
+    let atom_count = input.atoms.len();
+    let mol_start_indices = (0..input.count).map(|copy_i| copy_i * atom_count).collect();
+
+    Ok((input, mol_start_indices))
 }
 
 /// Launch using the dynamics backend.
@@ -728,7 +667,7 @@ fn run_gromacs(
 
     let input = make_gromacs_input(
         mdp,
-        &mols,
+        &[FfMolType::SmallOrganic],
         vec![mol_input],
         param_set,
         &cfg.sim_box,

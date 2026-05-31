@@ -497,6 +497,7 @@ fn gromacs_water_molecule_input(
         bonds: mol.common.bonds.iter().map(|b| b.to_generic()).collect(),
         ff_params: Some(ff_params),
         count: 1,
+        copy_atom_posits: None,
     })
 }
 
@@ -645,13 +646,11 @@ fn run_gromacs(
     let cfg = build_gromacs_md_cfg();
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
 
-    let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
-
     let mol_input = gromacs_water_molecule_input(mol, mol_specific_params)?;
 
     let input = make_gromacs_input(
         mdp,
-        &mols,
+        &[FfMolType::SmallOrganic],
         vec![mol_input],
         param_set,
         &cfg.sim_box,

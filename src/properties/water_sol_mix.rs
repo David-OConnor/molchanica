@@ -11,11 +11,8 @@ use std::{
     path::Path,
 };
 
-use bio_files::{
-    BondGeneric,
-    gromacs::{MoleculeInput, OutputControl},
-    md_params::ForceFieldParams,
-};
+use bio_files::gromacs::{MoleculeInput, OutputControl};
+use bio_files::md_params::ForceFieldParams;
 
 use dynamics::{
     ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState, MolDynamics,
@@ -30,7 +27,7 @@ use lin_alg::{
     f64::{Quaternion, Vec3 as Vec3F64},
 };
 
-use crate::gromacs::make_gromacs_input;
+use crate::gromacs::{make_gromacs_input, molecule_input_from_packed_copies};
 use crate::properties::{mean, mol_bounding_radius};
 use crate::{
     md::{MdBackend, run_dynamics_blocking},
@@ -38,14 +35,15 @@ use crate::{
     properties::prepare_mol_for_md,
 };
 
-const TARGET_SOLUTE_COPIES: usize = 40;
+const TARGET_SOLUTE_COPIES: usize = 30;
 const MIN_SOLUTE_COPIES: usize = 12;
 const MAX_SOLUTE_COPIES: usize = 64;
 const MAX_SOLUTE_ATOMS: usize = 1_800;
 
 // Footprint side of the solute slab; sets the solute/water contact area.
-const MIN_LAYER_SIDE_A: f32 = 44.0;
+const MIN_LAYER_SIDE_A: f32 = 30.0;
 const MIN_SOLUTE_LAYER_DEPTH_A: f32 = 12.0;
+
 // Random-orientation grid placement can't reach crystal-like fractions; 0.45
 // is a realistic upper bound and gives the relaxation step room to breathe.
 const SOLUTE_PACKING_FRACTION: f32 = 0.45;
@@ -58,7 +56,7 @@ const WATER_SLAB_DEPTH_A: f32 = 24.0;
 const LAYER_MARGIN_A: f32 = 2.0;
 const INTERFACE_GAP_A: f32 = 2.2;
 
-const NUM_STEPS: usize = 20_000;
+const NUM_STEPS: usize = 100_000;
 
 const SNAPSHOT_INTERVAL: usize = 10;
 const LAYER_INIT_RELAXATION_ITERS: usize = 120;
@@ -472,73 +470,14 @@ fn gromacs_layer_molecule_input(
     placed_mols: &[MolDynamics],
     ident: &str,
 ) -> io::Result<MoleculeInput> {
-    let Some(ff_params) = placed_mols
-        .iter()
-        .find_map(|mol| mol.mol_specific_params.clone())
-    else {
+    let input = molecule_input_from_packed_copies(gromacs_layer_mol_name(ident), placed_mols)?;
+    if input.ff_params.is_none() {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
             "Missing molecule-specific parameters for boundary-layer GROMACS input.",
         ));
-    };
-
-    let atom_count: usize = placed_mols.iter().map(|mol| mol.atoms.len()).sum();
-    let bond_count: usize = placed_mols.iter().map(|mol| mol.bonds.len()).sum();
-
-    let mut atoms = Vec::with_capacity(atom_count);
-    let mut bonds = Vec::with_capacity(bond_count);
-    let mut next_serial = 1_u32;
-
-    for mol in placed_mols {
-        let mut serial_map = HashMap::with_capacity(mol.atoms.len());
-
-        for (i, atom) in mol.atoms.iter().enumerate() {
-            let mut atom = atom.clone();
-            if let Some(posits) = &mol.atom_posits
-                && let Some(posit) = posits.get(i)
-            {
-                atom.posit = *posit;
-            }
-
-            let new_serial = next_serial;
-            next_serial = next_serial.checked_add(1).ok_or_else(|| {
-                io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "Too many atoms for boundary-layer GROMACS serial numbers.",
-                )
-            })?;
-
-            serial_map.insert(atom.serial_number, new_serial);
-            atom.serial_number = new_serial;
-            atoms.push(atom);
-        }
-
-        for bond in &mol.bonds {
-            let (Some(&atom_0_sn), Some(&atom_1_sn)) = (
-                serial_map.get(&bond.atom_0_sn),
-                serial_map.get(&bond.atom_1_sn),
-            ) else {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "Boundary-layer GROMACS input bond references an atom outside its copy.",
-                ));
-            };
-
-            bonds.push(BondGeneric {
-                bond_type: bond.bond_type,
-                atom_0_sn,
-                atom_1_sn,
-            });
-        }
     }
-
-    Ok(MoleculeInput {
-        name: gromacs_layer_mol_name(ident),
-        atoms,
-        bonds,
-        ff_params: Some(ff_params),
-        count: 1,
-    })
+    Ok(input)
 }
 
 fn boundary_layer_data_from_setup(setup: BoundaryLayerSetup) -> BoundaryLayerMdData {
@@ -628,12 +567,11 @@ fn run_gromacs(
     );
     let mdp = cfg.to_gromacs(NUM_STEPS, DT);
 
-    let mols = vec![(FfMolType::SmallOrganic, &mol.common, 1)];
-
     let solute_input = gromacs_layer_molecule_input(solute_mols, &mol.common.ident)?;
+
     let input = make_gromacs_input(
         mdp,
-        &mols,
+        &[FfMolType::SmallOrganic],
         vec![solute_input],
         param_set,
         &cfg.sim_box,
@@ -643,24 +581,7 @@ fn run_gromacs(
 
     let out = input.run()?;
 
-    // if out.setup_failure {
-    //     return Err(io::Error::other(
-    //         "GROMACS setup failed while running boundary-layer MD.",
-    //     ));
-    // }
-    //
-    // if out.log_text.contains("Fatal error") {
-    //     return Err(io::Error::other(
-    //         "GROMACS reported a fatal error while running boundary-layer MD.",
-    //     ));
-    // }
-
     let snapshots = gromacs_frames_to_ss(&out);
-    // if snapshots.is_empty() {
-    //     return Err(io::Error::other(
-    //         "GROMACS boundary-layer MD completed without recording snapshots.",
-    //     ));
-    // }
 
     let mut data = boundary_layer_data_from_setup(setup);
     add_snapshot_metrics(&mut data, &snapshots);
