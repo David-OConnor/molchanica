@@ -131,6 +131,7 @@ pub fn make_gromacs_input(
             solvent: solvent_gmx,
             initial_gro: None,
             extra_molecule_counts: Vec::new(),
+            mdrun_extra_args: Vec::new(),
             minimize_energy,
         },
         // mols_owned,

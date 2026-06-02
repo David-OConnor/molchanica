@@ -15,6 +15,7 @@ fn char_basics(
     run_crystal_sim: &mut bool,
     run_water_sol_sim: &mut bool,
     run_water_sol_sim_layers: &mut bool,
+    run_shrinking_box: &mut bool,
 ) {
     // Basics
     char_item(
@@ -184,6 +185,12 @@ fn char_basics(
             .clicked()
         {
             *run_water_sol_sim_layers = true;
+        }
+
+        if button!(ui, "Shrinking box sim", COLOR_ACTION, "Run a gradually compressed water/solute simulation. " )
+            .clicked()
+        {
+            *run_shrinking_box = true;
         }
 
 
@@ -395,6 +402,7 @@ pub(in crate::ui) fn mol_char_disp(
     run_crystal_sim: &mut bool,
     run_water_sol_sim: &mut bool,
     run_water_sol_sim_layers: &mut bool,
+    run_shrinking_box: &mut bool,
     // run_water_sol_sim_layers_middle: &mut bool,
 ) {
     let Some(char) = &mol.characterization else {
@@ -442,6 +450,7 @@ pub(in crate::ui) fn mol_char_disp(
                 run_crystal_sim,
                 run_water_sol_sim,
                 run_water_sol_sim_layers,
+                run_shrinking_box,
             );
 
             ui.separator();

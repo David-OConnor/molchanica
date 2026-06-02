@@ -349,7 +349,11 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
 
         for mol in &state.volatile.alignment.mols_passed_screening {
             // todo: Load this to state when clicked etc.
-            label!(ui, format!("- {}", mol.common.name()), Color32::WHITE);
+            label!(
+                ui,
+                format!("- {}", mol.common.name(Some(&mol.idents))),
+                Color32::WHITE
+            );
 
             shown += 1;
             if shown > max_to_show {
@@ -703,7 +707,7 @@ fn alignment(
         };
 
         if ui
-            .button(RichText::new(mol.common.name()).color(color))
+            .button(RichText::new(mol.common.name(Some(&mol.idents))).color(color))
             .clicked()
         {
             match selected_pos {

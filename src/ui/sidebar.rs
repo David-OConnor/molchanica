@@ -14,9 +14,12 @@ use crate::{
         viewer::ViewerMolSet,
     },
     mol_manip::{ManipMode, set_manip},
-    molecules::{MolGenericRef, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType},
+    molecules::{
+        MolGenericRef, MolIdent, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType,
+    },
     properties::{
-        crystal, logp, mol_characterization::MolCharacterization, water_sol, water_sol_mix,
+        crystal, logp, mol_characterization::MolCharacterization, sol_shrinking_box, water_sol,
+        water_sol_mix,
     },
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
     sonification,
@@ -59,6 +62,7 @@ fn mol_picker_one(
     ph_state: &mut PharmacophoreState,
     i_mol: usize,
     mol: &mut MoleculeCommon,
+    idents: Option<&Vec<MolIdent>>, // For small mols,
     mol_char: &Option<MolCharacterization>,
     pharmacophore: Option<&Pharmacophore>,
     mol_type: MolType,
@@ -166,7 +170,7 @@ fn mol_picker_one(
                 let sel_btn = ui
                     .add_sized(
                         egui::vec2(ui.available_width(), row_h),
-                        egui::Button::new(RichText::new(mol.name()).color(color)),
+                        egui::Button::new(RichText::new(mol.name(idents)).color(color)),
                     )
                     .on_hover_text(help_text);
 
@@ -372,6 +376,7 @@ fn mol_picker(
             &mut state.pharmacophore,
             0,
             &mut mol.common,
+            None,
             &None,
             None,
             MolType::Peptide,
@@ -397,6 +402,7 @@ fn mol_picker(
             &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
+            Some(&mol.idents),
             &mol.characterization,
             Some(&mol.pharmacophore),
             MolType::Ligand,
@@ -422,6 +428,7 @@ fn mol_picker(
             &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
+            None,
             &None,
             None,
             MolType::Lipid,
@@ -448,6 +455,7 @@ fn mol_picker(
             &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
+            None,
             &None,
             None,
             MolType::NucleicAcid,
@@ -474,6 +482,7 @@ fn mol_picker(
             &mut state.pharmacophore,
             i_mol,
             &mut mol.common,
+            None,
             &None,
             None,
             MolType::Pocket,
@@ -769,6 +778,7 @@ pub(in crate::ui) fn sidebar(
                 let mut run_crystal_sim = false;
                 let mut run_water_sol_sim_mix = false;
                 let mut run_water_sol_sim_layers = false;
+                let mut run_shrinking_box = false;
                 // let mut run_water_sol_sim_layers_middle = false;
 
                 if let Some(m) = &state.active_mol()
@@ -781,6 +791,7 @@ pub(in crate::ui) fn sidebar(
                         &mut run_crystal_sim,
                         &mut run_water_sol_sim_mix,
                         &mut run_water_sol_sim_layers,
+                        &mut run_shrinking_box,
                         // &mut run_water_sol_sim_layers_middle,
                     );
                 }
@@ -798,6 +809,7 @@ pub(in crate::ui) fn sidebar(
                     run_crystal_sim,
                     run_water_sol_sim_mix,
                     run_water_sol_sim_layers,
+                    run_shrinking_box,
                     // run_water_sol_sim_layers_middle,
                 );
             }
@@ -1067,6 +1079,7 @@ fn md_property_runners(
     run_crystal_sim: bool,
     run_water_sol_sim_mix: bool,
     run_water_sol_sim_layers: bool,
+    run_shrinking_box: bool,
     // run_water_sol_sim_layers_middle: bool,
 ) {
     let Some(active_mol) = state.volatile.active_mol.as_ref() else {
@@ -1255,6 +1268,71 @@ fn md_property_runners(
             Err(e) => handle_err(
                 &mut state.ui,
                 format!("Error running the water/solute layer simulation: {e:?}"),
+            ),
+        }
+    }
+
+    if run_shrinking_box {
+        match sol_shrinking_box::run_shrinking_box_sim(
+            &mol,
+            sol_shrinking_box::ShrinkingBoxMode::HomogeneousMix,
+            // sol_shrinking_box::ShrinkingBoxMode::WaterSoluteLayers
+            state.to_save.md_backend,
+            &state.dev,
+            &state.ff_param_set,
+        ) {
+            Ok((data, snaps)) => {
+                let water_count = snaps
+                    .last()
+                    .map(|snap| snap.water_o_posits.len())
+                    .unwrap_or(data.water_molecule_count);
+
+                state.trajectories.push(Trajectory::new_in_memory(
+                    snaps.clone(),
+                    "Shrinking box sim".to_string(),
+                    0.002,
+                ));
+
+                let viewer_mols =
+                    vec![(FfMolType::SmallOrganic, &mol.common, data.solute_copy_count)];
+                state
+                    .volatile
+                    .md_local
+                    .viewer
+                    .add_mol_set(&viewer_mols, water_count);
+
+                let set_i = state
+                    .volatile
+                    .md_local
+                    .viewer
+                    .mol_sets
+                    .len()
+                    .saturating_sub(1);
+                if let Some(set) = state.volatile.md_local.viewer.mol_sets.get_mut(set_i) {
+                    set.name = "Shrinking box sim".to_string();
+                }
+                state.volatile.md_local.viewer.mol_set_active = Some(set_i);
+                state.volatile.md_local.replace_snaps(snaps);
+                viewer::draw_mols(state, scene, updates);
+                redraw.set_all();
+
+                handle_success(
+                    &mut state.ui,
+                    format!(
+                        "Shrinking-box simulation complete. {} solute copies, {} waters, density {:.3} g/cm3, box {:.1} -> {:.1} A.",
+                        data.solute_copy_count,
+                        water_count,
+                        data.density_g_cm3,
+                        data.initial_box_extent_a.x,
+                        data.final_box_extent_a.x,
+                    ),
+                );
+
+                println!("\n\nShrinking box sim result: {data:?}\n---\n");
+            }
+            Err(e) => handle_err(
+                &mut state.ui,
+                format!("Error running the shrinking-box simulation: {e:?}"),
             ),
         }
     }

@@ -11,12 +11,13 @@ use std::{
     path::Path,
 };
 
-use bio_files::gromacs::{MoleculeInput, OutputControl};
-use bio_files::md_params::ForceFieldParams;
-
+use bio_files::{
+    gromacs::{MoleculeInput, OutputControl},
+    md_params::ForceFieldParams,
+};
 use dynamics::{
-    ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState, MolDynamics,
-    ShrinkingBoxPackingCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    ComputationDevice, CustomSolventCount, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
+    MolDynamics, ShrinkingBoxPackingCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     pack_solvent_with_shrinking_box_cfg,
     params::FfParamSet,
     random_quaternion,
@@ -27,12 +28,11 @@ use lin_alg::{
     f64::{Quaternion, Vec3 as Vec3F64},
 };
 
-use crate::gromacs::{make_gromacs_input, molecule_input_from_packed_copies};
-use crate::properties::{mean, mol_bounding_radius, AMU_A3_TO_G_CM3};
 use crate::{
+    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
     md::{MdBackend, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
-    properties::prepare_mol_for_md,
+    properties::{AMU_A3_TO_G_CM3, mean, mol_bounding_radius, prepare_mol_for_md},
 };
 
 const TARGET_SOLUTE_COPIES: usize = 30;
@@ -397,13 +397,14 @@ fn pack_solute_layer(
         snapshot_interval: None,
         gromacs_output_interval: None,
         save_gro: false,
+        // count: CustomSolventCount::Specified(setup.solute_copy_count),
+        count: CustomSolventCount::Auto(0.95),
     };
 
     let packed = pack_solvent_with_shrinking_box_cfg(
         dev,
         template,
         "MOL",
-        setup.solute_copy_count,
         0,
         centered_solute_packing_cell(setup),
         param_set,

@@ -25,13 +25,15 @@ use dynamics::{
 use lin_alg::f32::Vec3;
 use na_seq::Element;
 
-use crate::gromacs::make_gromacs_input;
-use crate::properties::{mean, min_image, AMU_A3_TO_G_CM3};
 use crate::{
     bond_inference::h_bond_geometry_strength,
+    gromacs::make_gromacs_input,
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
     molecules::small::MoleculeSmall,
-    properties::{io_error, mol_characterization::MolCharacterization, prepare_mol_for_md},
+    properties::{
+        AMU_A3_TO_G_CM3, io_error, mean, min_image, mol_characterization::MolCharacterization,
+        prepare_mol_for_md,
+    },
 };
 
 // todo: Set higher once confident this works.

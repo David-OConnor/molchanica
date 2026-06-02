@@ -3,20 +3,22 @@
 
 use std::{collections::HashMap, io};
 
-use crate::molecules::small::MoleculeSmall;
 use bio_files::md_params::ForceFieldParams;
 use dynamics::{alchemical::AlchemicalError, params::FfParamSet};
 use lin_alg::f32::Vec3;
+
+use crate::molecules::small::MoleculeSmall;
 
 pub mod crystal;
 pub mod ionization;
 pub mod logp;
 pub mod mol_characterization;
+pub mod sol_shrinking_box;
 pub mod water_sol;
 mod water_sol_analytic;
 pub mod water_sol_mix;
 
-pub (in crate::properties) const AMU_A3_TO_G_CM3: f32 = 1.660_539;
+pub(in crate::properties) const AMU_A3_TO_G_CM3: f32 = 1.660_539;
 
 pub fn io_error(context: &str, err: AlchemicalError) -> io::Error {
     io::Error::other(format!("{context}: {err}"))

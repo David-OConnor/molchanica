@@ -225,7 +225,6 @@ pub fn run_alchemical(
     //         &state.dev,
     //         &make_octanol(),
     //         "octanol",
-    //         OCTANOL_COUNT,
     //         OCTANOL_BOX_WATER_COUNT,
     //         cell,
     //         &state.ff_param_set,

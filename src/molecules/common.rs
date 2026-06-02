@@ -19,7 +19,7 @@ use na_seq::{
 use crate::mol_editor::add_atoms::{hydrogens_avail, remove_hydrogens};
 // // Used by the mol editor, and alignment. Be careful with this!
 // pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);
-use crate::molecules::{Atom, Bond, build_adjacency_list};
+use crate::molecules::{Atom, Bond, MolIdent, build_adjacency_list};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum BondGeom {
@@ -329,13 +329,33 @@ impl MoleculeCommon {
         result
     }
 
-    /// Uses both the indentifier and filename, if different.
-    pub fn name(&self) -> String {
+    /// Uses both the identifier and filename, if different.
+    /// Can also use a pubchem title if available. , for example, allows viewing the common name of the
+    /// molecule, where the ident may be a CID etc.
+    ///
+    /// We use MolIdent only for small molecules
+    pub fn name(&self, idents: Option<&Vec<MolIdent>>) -> String {
         let mut result = self.ident.to_string();
 
-        if self.filename.to_lowercase() != result.to_lowercase() {
+        if let Some(idents_) = idents {
+            // Alternatively, the IupacName ident will also work. here.
+            for ident in idents_ {
+                if let MolIdent::PubchemTitle(t) = ident {
+                    result.push_str(&format!(" | {t}"));
+                    break;
+                }
+            }
+        }
+
+        // This check prevents a duplicate if the filename is effectively
+        // the PubChem title.
+        if !result
+            .to_lowercase()
+            .contains(self.filename.to_lowercase().trim())
+        {
             let filename = self.filename.as_str();
 
+            // Don't show the full filename if it's long.
             let (truncated, did_truncate) = if filename.chars().count() > 12 {
                 let mut s: String = filename.chars().take(12).collect();
                 s.push_str("...");
@@ -347,8 +367,7 @@ impl MoleculeCommon {
             // (did_truncate is unused but kept to make intent obvious; remove if you want)
             let _ = did_truncate;
 
-            result.push_str(" | ");
-            result.push_str(&truncated);
+            result.push_str(&format!(" | {truncated}"));
         }
 
         result

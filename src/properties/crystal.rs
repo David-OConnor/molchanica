@@ -21,12 +21,14 @@ use dynamics::{
 };
 use lin_alg::f32::Vec3;
 
-use crate::gromacs::{make_gromacs_input, molecule_input_from_packed_copies};
-use crate::properties::{mean, min_image, mol_bounding_radius, AMU_A3_TO_G_CM3};
 use crate::{
+    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
     molecules::small::MoleculeSmall,
-    properties::{io_error, mol_characterization::MolCharacterization, prepare_mol_for_md},
+    properties::{
+        AMU_A3_TO_G_CM3, io_error, mean, min_image, mol_bounding_radius,
+        mol_characterization::MolCharacterization, prepare_mol_for_md,
+    },
 };
 
 // todo: Consider making this dynamic once basic functionality in this module works. I.e., run until
