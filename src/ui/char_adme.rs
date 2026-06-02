@@ -159,6 +159,13 @@ fn char_basics(
             ],
         );
 
+        char_item(
+            ui,
+            &[
+                ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
+            ],
+        );
+
         ui.add_space(COL_SPACING / 2.);
 
         if button!(ui, "LogP sim", COLOR_ACTION, "Estimate LogP by performing a simulation of the molecule \
@@ -195,14 +202,6 @@ fn char_basics(
 
 
         ui.add_space(COL_SPACING / 2.);
-
-        char_item(
-            ui,
-            &[
-                ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
-            ],
-        );
-
     });
 
     char_item(

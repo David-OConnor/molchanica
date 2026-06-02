@@ -12,7 +12,7 @@ use std::{
 
 use bio_files::{
     gromacs::{
-        GromacsInput, MoleculeInput, OutputControl,
+        GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
         gro::{AtomGro, Gro},
         solvate::Solvent as GromacsSolvent,
     },
@@ -39,21 +39,27 @@ use crate::{
 
 const SOLUTE_COPY_COUNT: usize = 24;
 const MIN_TARGET_BOX_SIDE_A: f32 = 34.0;
+const MIN_COMPRESSION_BOX_SIDE_A: f32 = 24.0;
+const COMPRESSION_LIMIT_SCALE: f32 = 0.65;
 const WATER_MOLAR_VOLUME_A3: f32 = 29.97;
 const HOMOGENEOUS_SOLUTE_VOLUME_FRACTION: f32 = 0.22;
-const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.72;
+const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.84;
 const LAYER_SOLUTE_VOLUME_FRACTION: f32 = 0.42;
 const LAYER_WATER_VOLUME_FRACTION: f32 = 0.50;
 const LAYER_INTERFACE_GAP_A: f32 = 2.4;
 const SOLUTE_WALL_MARGIN_A: f32 = 1.0;
 
-const INITIAL_BOX_SCALE: f32 = 1.8;
-const BOX_SHRINK_PER_STEP_A: f32 = 0.04;
-const DYNAMICS_EQUILIBRATION_STEPS: usize = 3_000;
+const INITIAL_BOX_SCALE: f32 = 2.0;
+const BOX_SHRINK_PER_STEP_A: f32 = 0.002;
+const DYNAMICS_EQUILIBRATION_STEPS: usize = 5_000;
 const SNAPSHOT_INTERVAL: usize = 10;
-const PRESSURE_WINDOW_SNAPSHOTS: usize = 4;
-const MAX_SHRINK_PRESSURE_BAR: f32 = 2_500.0;
-const SUFFICIENT_DENSITY_G_CM3: f32 = 0.95;
+const CONTROL_WINDOW_SNAPSHOTS: usize = 5;
+const GROMACS_CHUNK_STEPS: usize = 500;
+const MAX_SHRINK_PRESSURE_BAR: f32 = 10_000.0;
+const MAX_TEMPERATURE_K: f32 = 450.0;
+const MAX_DENSITY_G_CM3: f32 = 2.5;
+const MAX_ATOM_DENSITY_A3: f32 = 0.18;
+const MAX_FORCE_KCAL_MOL_A: f32 = 500.0;
 const TEMPERATURE_K: f32 = 300.0;
 const DT_PS: f32 = 0.002;
 
@@ -74,6 +80,17 @@ impl fmt::Display for ShrinkingBoxMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompressionStopReason {
+    Pressure,
+    Temperature,
+    MassDensity,
+    AtomDensity,
+    Force,
+    CompressionLimit,
+    GromacsChunkFailure,
+}
+
 #[derive(Clone, Debug)]
 pub struct ShrinkingBoxMdData {
     pub mode: ShrinkingBoxMode,
@@ -82,9 +99,14 @@ pub struct ShrinkingBoxMdData {
     pub initial_box_extent_a: Vec3F32,
     pub final_box_extent_a: Vec3F32,
     pub target_box_extent_a: Vec3F32,
+    pub compression_limit_box_extent_a: Vec3F32,
     pub reached_target_box: bool,
+    pub reached_compression_limit: bool,
     pub stopped_for_density: bool,
     pub stopped_for_pressure: bool,
+    pub stopped_for_temperature: bool,
+    pub stopped_for_force: bool,
+    pub stop_reason: Option<CompressionStopReason>,
     pub mean_temperature_k: f32,
     pub mean_pressure_bar: f32,
     pub density_g_cm3: f32,
@@ -98,6 +120,7 @@ struct ShrinkingBoxSetup {
     solute_copy_count: usize,
     water_molecule_count: usize,
     target_cell: SimBox,
+    compression_limit_cell: SimBox,
     initial_cell: SimBox,
     shrink_cfg: ShrinkingBoxCfg,
 }
@@ -143,6 +166,10 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         .max(molecule_limited_side_a);
     let target_volume_a3 = target_side_a.powi(3);
     let target_cell = centered_cube(target_side_a);
+    let compression_limit_side_a = (target_side_a * COMPRESSION_LIMIT_SCALE)
+        .max(MIN_COMPRESSION_BOX_SIDE_A)
+        .max(molecule_limited_side_a);
+    let compression_limit_cell = centered_cube(compression_limit_side_a);
     let target_water_volume_a3 = match mode {
         // Leave headroom for solute excluded volume and driven compression. Unlike the
         // Dynamics loop, a single GROMACS deform run cannot stop early on high pressure.
@@ -161,6 +188,7 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         solute_copy_count: SOLUTE_COPY_COUNT,
         water_molecule_count,
         target_cell,
+        compression_limit_cell,
         initial_cell: shrink_cfg.initial_cell(target_cell),
         shrink_cfg,
     })
@@ -387,23 +415,139 @@ fn build_initial_state(
     Ok(md)
 }
 
-fn recent_pressure_too_high(snapshots: &[Snapshot]) -> bool {
-    let pressures: Vec<_> = snapshots
+fn recent_energy_mean(
+    snapshots: &[Snapshot],
+    value: impl Fn(&dynamics::snapshot::SnapshotEnergyData) -> f32,
+) -> Option<f32> {
+    let values: Vec<_> = snapshots
         .iter()
         .rev()
-        .filter_map(|snap| snap.energy_data.as_ref().map(|data| data.pressure))
-        .take(PRESSURE_WINDOW_SNAPSHOTS)
+        .filter_map(|snap| snap.energy_data.as_ref().map(&value))
+        .take(CONTROL_WINDOW_SNAPSHOTS)
         .collect();
 
-    pressures.len() == PRESSURE_WINDOW_SNAPSHOTS
-        && mean(&pressures).is_some_and(|pressure| pressure >= MAX_SHRINK_PRESSURE_BAR)
+    (values.len() == CONTROL_WINDOW_SNAPSHOTS)
+        .then(|| mean(&values))
+        .flatten()
 }
 
-fn latest_density_is_sufficient(snapshots: &[Snapshot]) -> bool {
-    snapshots
-        .last()
-        .and_then(|snap| snap.energy_data.as_ref())
-        .is_some_and(|data| data.density * AMU_A3_TO_G_CM3 >= SUFFICIENT_DENSITY_G_CM3)
+fn physical_atom_count(solute_atom_count: usize, water_molecule_count: usize) -> usize {
+    solute_atom_count + 3 * water_molecule_count
+}
+
+fn latest_stop_reason(
+    snapshots: &[Snapshot],
+    atom_count: usize,
+    max_force_kcal_mol_a: Option<f32>,
+) -> Option<CompressionStopReason> {
+    if max_force_kcal_mol_a.is_some_and(|force| !force.is_finite() || force >= MAX_FORCE_KCAL_MOL_A)
+    {
+        return Some(CompressionStopReason::Force);
+    }
+
+    let latest = snapshots.last()?.energy_data.as_ref()?;
+    if !latest.temperature.is_finite()
+        || recent_energy_mean(snapshots, |data| data.temperature)
+            .is_some_and(|temperature| temperature >= MAX_TEMPERATURE_K)
+    {
+        return Some(CompressionStopReason::Temperature);
+    }
+
+    let density_g_cm3 = latest.density * AMU_A3_TO_G_CM3;
+    if !density_g_cm3.is_finite() || density_g_cm3 >= MAX_DENSITY_G_CM3 {
+        return Some(CompressionStopReason::MassDensity);
+    }
+
+    if latest.volume > 0.0 {
+        let atom_density = atom_count as f32 / latest.volume;
+        if !atom_density.is_finite() || atom_density >= MAX_ATOM_DENSITY_A3 {
+            return Some(CompressionStopReason::AtomDensity);
+        }
+    }
+
+    recent_energy_mean(snapshots, |data| data.pressure)
+        .is_some_and(|pressure| pressure >= MAX_SHRINK_PRESSURE_BAR)
+        .then_some(CompressionStopReason::Pressure)
+}
+
+fn mark_stop(data: &mut ShrinkingBoxMdData, reason: CompressionStopReason) {
+    data.stop_reason = Some(reason);
+    data.stopped_for_density = matches!(
+        reason,
+        CompressionStopReason::MassDensity | CompressionStopReason::AtomDensity
+    );
+    data.stopped_for_pressure = reason == CompressionStopReason::Pressure;
+    data.stopped_for_temperature = reason == CompressionStopReason::Temperature;
+    data.stopped_for_force = matches!(
+        reason,
+        CompressionStopReason::Force | CompressionStopReason::GromacsChunkFailure
+    );
+    data.reached_compression_limit = reason == CompressionStopReason::CompressionLimit;
+}
+
+fn cell_at_or_below(cell: SimBox, limit: SimBox) -> bool {
+    cell.extent.x <= limit.extent.x
+        && cell.extent.y <= limit.extent.y
+        && cell.extent.z <= limit.extent.z
+}
+
+fn shrink_step_count_between(initial_cell: SimBox, target_cell: SimBox) -> usize {
+    let shrink_needed = initial_cell.extent - target_cell.extent;
+    let max_shrink = shrink_needed.x.max(shrink_needed.y).max(shrink_needed.z);
+    (max_shrink / BOX_SHRINK_PER_STEP_A.max(f32::EPSILON)).ceil() as usize
+}
+
+fn max_dynamics_force(md: &MdState) -> Option<f32> {
+    md.atoms
+        .iter()
+        .map(|atom| atom.force.magnitude())
+        .chain(md.water.iter().flat_map(|water| {
+            [
+                water.o.force.magnitude(),
+                water.h0.force.magnitude(),
+                water.h1.force.magnitude(),
+                water.m.force.magnitude(),
+            ]
+        }))
+        .reduce(f32::max)
+}
+
+fn max_gromacs_force(out: &GromacsOutput) -> Option<f32> {
+    const KJ_NM_TO_KCAL_ANG: f32 = 1.0 / 41.84;
+
+    out.trajectory
+        .iter()
+        .rev()
+        .take(CONTROL_WINDOW_SNAPSHOTS)
+        .flat_map(|frame| &frame.atom_forces)
+        .map(|force| force.magnitude() as f32 * KJ_NM_TO_KCAL_ANG)
+        .reduce(f32::max)
+}
+
+fn shrink_cell_by_steps(current_cell: SimBox, limit_cell: SimBox, steps: usize) -> SimBox {
+    let shrink_a = BOX_SHRINK_PER_STEP_A * steps as f32;
+    let extent = Vec3F32::new(
+        (current_cell.extent.x - shrink_a).max(limit_cell.extent.x),
+        (current_cell.extent.y - shrink_a).max(limit_cell.extent.y),
+        (current_cell.extent.z - shrink_a).max(limit_cell.extent.z),
+    );
+    let center = current_cell.center();
+    let half = extent / 2.0;
+    SimBox::new(center - half, center + half)
+}
+
+fn gromacs_deform_nm_ps(current_cell: SimBox, next_cell: SimBox, steps: usize) -> [f32; 6] {
+    let duration_ps = steps.max(1) as f32 * DT_PS;
+    let rate = |current: f32, next: f32| (next - current) * 0.1 / duration_ps;
+
+    [
+        rate(current_cell.extent.x, next_cell.extent.x),
+        rate(current_cell.extent.y, next_cell.extent.y),
+        rate(current_cell.extent.z, next_cell.extent.z),
+        0.0,
+        0.0,
+        0.0,
+    ]
 }
 
 fn initial_data(setup: ShrinkingBoxSetup, water_molecule_count: usize) -> ShrinkingBoxMdData {
@@ -414,9 +558,14 @@ fn initial_data(setup: ShrinkingBoxSetup, water_molecule_count: usize) -> Shrink
         initial_box_extent_a: setup.initial_cell.extent,
         final_box_extent_a: setup.initial_cell.extent,
         target_box_extent_a: setup.target_cell.extent,
+        compression_limit_box_extent_a: setup.compression_limit_cell.extent,
         reached_target_box: false,
+        reached_compression_limit: false,
         stopped_for_density: false,
         stopped_for_pressure: false,
+        stopped_for_temperature: false,
+        stopped_for_force: false,
+        stop_reason: None,
         mean_temperature_k: 0.0,
         mean_pressure_bar: 0.0,
         density_g_cm3: 0.0,
@@ -463,26 +612,34 @@ fn run_dynamics(
 ) -> io::Result<(ShrinkingBoxMdData, Vec<Snapshot>)> {
     let mut md = build_initial_state(setup, placed_solutes, param_set, dev, true, false)?;
     let mut data = initial_data(setup, md.water.len());
-    let shrink_steps = setup.shrink_cfg.shrink_step_count(setup.target_cell);
+    let shrink_steps = shrink_step_count_between(setup.initial_cell, setup.compression_limit_cell);
     let mut equilibration_steps = 0;
 
     for _ in 0..shrink_steps + DYNAMICS_EQUILIBRATION_STEPS {
-        if !data.reached_target_box && !data.stopped_for_density && !data.stopped_for_pressure {
-            if latest_density_is_sufficient(&md.snapshots) {
-                data.stopped_for_density = true;
-            } else if recent_pressure_too_high(&md.snapshots) {
-                data.stopped_for_pressure = true;
-            } else {
-                let shrank = md.shrink_cell_towards(dev, setup.target_cell, setup.shrink_cfg);
-                data.reached_target_box = !shrank || md.cell == setup.target_cell;
+        if data.stop_reason.is_none() {
+            if let Some(reason) = latest_stop_reason(
+                &md.snapshots,
+                physical_atom_count(md.atoms.len(), md.water.len()),
+                max_dynamics_force(&md),
+            ) {
+                mark_stop(&mut data, reason);
+                break;
             }
-        } else {
+
+            let shrank =
+                md.shrink_cell_towards(dev, setup.compression_limit_cell, setup.shrink_cfg);
+            data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
+
+            if !shrank || cell_at_or_below(md.cell, setup.compression_limit_cell) {
+                mark_stop(&mut data, CompressionStopReason::CompressionLimit);
+            }
+        } else if data.reached_compression_limit {
             equilibration_steps += 1;
         }
 
         md.step(dev, DT_PS, None);
 
-        if equilibration_steps >= DYNAMICS_EQUILIBRATION_STEPS {
+        if data.reached_compression_limit && equilibration_steps >= DYNAMICS_EQUILIBRATION_STEPS {
             break;
         }
     }
@@ -601,15 +758,7 @@ fn run_gromacs(
     dev: &ComputationDevice,
 ) -> io::Result<(ShrinkingBoxMdData, Vec<Snapshot>)> {
     let md = build_initial_state(setup, placed_solutes, param_set, dev, false, true)?;
-    let shrink_steps = setup.shrink_cfg.shrink_step_count(setup.target_cell);
     let cfg = make_md_cfg(setup, false, true);
-    let mut mdp = cfg.to_gromacs(shrink_steps, DT_PS);
-    mdp.deform = Some(
-        setup
-            .shrink_cfg
-            .gromacs_deform_nm_ps(setup.target_cell, DT_PS),
-    );
-    mdp.deform_init_flow = true;
     let solute_input = gromacs_solute_input(&mol.common.ident, &placed_solutes.mols)?;
     let solute_atom_count = solute_input.atoms.len() * solute_input.count;
     let initial_gro = gro_text_from_state(
@@ -619,6 +768,14 @@ fn run_gromacs(
         &solute_input.name,
     )?;
     let water_molecule_count = md.water.len();
+    let atom_count = physical_atom_count(solute_atom_count, water_molecule_count);
+    let mut mdp = cfg.to_gromacs(GROMACS_CHUNK_STEPS, DT_PS);
+    mdp.output_control.nstxout = Some(SNAPSHOT_INTERVAL as u32);
+    mdp.output_control.nstvout = Some(SNAPSHOT_INTERVAL as u32);
+    mdp.output_control.nstfout = Some(SNAPSHOT_INTERVAL as u32);
+    mdp.output_control.nstcalcenergy = Some(SNAPSHOT_INTERVAL as u32);
+    mdp.output_control.nstenergy = Some(SNAPSHOT_INTERVAL as u32);
+    mdp.deform_init_flow = true;
     let mut input: GromacsInput = make_gromacs_input(
         mdp,
         &[FfMolType::SmallOrganic],
@@ -635,11 +792,67 @@ fn run_gromacs(
         .extra_molecule_counts
         .push(("SOL".to_string(), water_molecule_count));
     input.mdrun_extra_args = vec!["-ntmpi".to_string(), "1".to_string()];
-
-    let snapshots = gromacs_frames_to_ss(&input.run()?);
     let mut data = initial_data(setup, water_molecule_count);
-    data.final_box_extent_a = setup.target_cell.extent;
-    data.reached_target_box = true;
+    let mut snapshots = Vec::new();
+    let mut current_cell = setup.initial_cell;
+    let mut elapsed_ps = 0.0;
+    let mut first_chunk = true;
+
+    while !cell_at_or_below(current_cell, setup.compression_limit_cell) {
+        let steps_remaining = shrink_step_count_between(current_cell, setup.compression_limit_cell);
+        let chunk_steps = steps_remaining.min(GROMACS_CHUNK_STEPS);
+        let next_cell =
+            shrink_cell_by_steps(current_cell, setup.compression_limit_cell, chunk_steps);
+
+        input.mdp.nsteps = chunk_steps as u64;
+        input.mdp.deform = Some(gromacs_deform_nm_ps(current_cell, next_cell, chunk_steps));
+        input.mdp.gen_vel = first_chunk;
+        input.mdp.deform_init_flow = first_chunk;
+        input.minimize_energy = first_chunk;
+
+        let out = match input.run() {
+            Ok(out) => out,
+            Err(err) if !snapshots.is_empty() => {
+                eprintln!(
+                    "Stopping adaptive GROMACS shrinking-box compression after a failed chunk: {err}"
+                );
+                mark_stop(&mut data, CompressionStopReason::GromacsChunkFailure);
+                break;
+            }
+            Err(err) => return Err(err),
+        };
+
+        let max_force = max_gromacs_force(&out);
+        let mut chunk_snapshots = gromacs_frames_to_ss(&out);
+        for snapshot in &mut chunk_snapshots {
+            snapshot.time += elapsed_ps;
+        }
+        elapsed_ps += chunk_steps as f64 * DT_PS as f64;
+        snapshots.extend(chunk_snapshots);
+        current_cell = next_cell;
+        data.reached_target_box |= cell_at_or_below(current_cell, setup.target_cell);
+
+        if let Some(reason) = latest_stop_reason(&snapshots, atom_count, max_force) {
+            mark_stop(&mut data, reason);
+            break;
+        }
+
+        if cell_at_or_below(current_cell, setup.compression_limit_cell) {
+            mark_stop(&mut data, CompressionStopReason::CompressionLimit);
+            break;
+        }
+
+        input.initial_gro = Some(out.final_gro_text.ok_or_else(|| {
+            io::Error::other("GROMACS shrinking-box chunk did not write final coordinates.")
+        })?);
+        input.topology_override = Some(out.final_topology_text.ok_or_else(|| {
+            io::Error::other("GROMACS shrinking-box chunk did not preserve its topology.")
+        })?);
+        input.skip_counterion_insertion = true;
+        first_chunk = false;
+    }
+
+    data.final_box_extent_a = current_cell.extent;
     add_snapshot_metrics(&mut data, &snapshots);
 
     Ok((data, snapshots))
@@ -659,19 +872,100 @@ pub fn run_shrinking_box_sim(
     let placed_solutes = place_solute_copies(&mol, &template, setup)?;
 
     println!(
-        "Shrinking-box MD setup ({backend}, {mode}): {} solute copies, {} waters, {:.1} A -> {:.1} A box",
+        "Shrinking-box MD setup ({backend}, {mode}): {} solute copies, {} waters, {:.1} A -> adaptive stop (estimated {:.1} A, safety floor {:.1} A)",
         setup.solute_copy_count,
         setup.water_molecule_count,
         setup.initial_cell.extent.x,
         setup.target_cell.extent.x,
+        setup.compression_limit_cell.extent.x,
     );
 
-    match backend {
+    let result = match backend {
         MdBackend::Dynamics => run_dynamics(setup, &placed_solutes, param_set, dev),
         MdBackend::Gromacs => run_gromacs(&mol, setup, &placed_solutes, param_set, dev),
         MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Shrinking-box MD supports the Dynamics and GROMACS backends.",
         )),
+    }?;
+
+    println!(
+        "Shrinking-box MD stopped at {:.1} A: {:?} (mean {:.0} K, {:.0} bar, {:.3} g/cm^3)",
+        result.0.final_box_extent_a.x,
+        result.0.stop_reason,
+        result.0.mean_temperature_k,
+        result.0.mean_pressure_bar,
+        result.0.density_g_cm3,
+    );
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use dynamics::snapshot::SnapshotEnergyData;
+
+    use super::*;
+
+    fn snapshot(temp_k: f32, pressure_bar: f32, density_g_cm3: f32, volume_a3: f32) -> Snapshot {
+        Snapshot {
+            energy_data: Some(SnapshotEnergyData {
+                energy_kinetic: 0.0,
+                energy_potential: 0.0,
+                energy_potential_between_mols: Vec::new(),
+                energy_potential_nonbonded: 0.0,
+                energy_potential_bonded: 0.0,
+                hydrogen_bonds: Vec::new(),
+                temperature: temp_k,
+                pressure: pressure_bar,
+                dh_dl: None,
+                volume: volume_a3,
+                density: density_g_cm3 / AMU_A3_TO_G_CM3,
+            }),
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn gromacs_chunk_shrinks_one_angstrom_at_the_expected_rate() {
+        let current = centered_cube(68.0);
+        let limit = centered_cube(24.0);
+        let next = shrink_cell_by_steps(current, limit, GROMACS_CHUNK_STEPS);
+        let deform = gromacs_deform_nm_ps(current, next, GROMACS_CHUNK_STEPS);
+
+        assert_eq!(next.extent, Vec3F32::splat(67.0));
+        assert_eq!(&deform[..3], &[-0.1, -0.1, -0.1]);
+    }
+
+    #[test]
+    fn adaptive_stop_detects_force_and_atom_density_limits() {
+        let stable = snapshot(300.0, 1.0, 1.0, 100.0);
+
+        assert_eq!(
+            latest_stop_reason(&[stable.clone()], 1, Some(MAX_FORCE_KCAL_MOL_A)),
+            Some(CompressionStopReason::Force)
+        );
+        assert_eq!(
+            latest_stop_reason(&[stable], 19, None),
+            Some(CompressionStopReason::AtomDensity)
+        );
+    }
+
+    #[test]
+    fn adaptive_temperature_stop_ignores_a_transient_but_detects_sustained_heat() {
+        let hot = snapshot(MAX_TEMPERATURE_K, 1.0, 1.0, 100.0);
+        let stable = snapshot(300.0, 1.0, 1.0, 100.0);
+
+        assert_eq!(latest_stop_reason(&[hot.clone()], 1, None), None);
+
+        let sustained = vec![hot; CONTROL_WINDOW_SNAPSHOTS];
+        assert_eq!(
+            latest_stop_reason(&sustained, 1, None),
+            Some(CompressionStopReason::Temperature)
+        );
+
+        let mut settling = sustained;
+        settling.push(stable);
+        assert_eq!(latest_stop_reason(&settling, 1, None), None);
     }
 }
