@@ -14,15 +14,16 @@ use bio_files::{
     gromacs::{
         GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
         gro::{AtomGro, Gro},
+        mdp::{ConstraintAlgorithm, Constraints},
         solvate::Solvent as GromacsSolvent,
     },
     md_params::ForceFieldParams,
 };
 use dynamics::{
-    ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState, MolDynamics,
+    AtomDynamics, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
+    MolDynamics,
     ShrinkingBoxCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     params::FfParamSet,
-    random_quaternion,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::{
@@ -33,7 +34,7 @@ use lin_alg::{
 use crate::{
     gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
     md::MdBackend,
-    molecules::small::MoleculeSmall,
+    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
     properties::{AMU_A3_TO_G_CM3, mean, mol_bounding_radius, prepare_mol_for_md},
 };
 
@@ -48,20 +49,26 @@ const LAYER_SOLUTE_VOLUME_FRACTION: f32 = 0.42;
 const LAYER_WATER_VOLUME_FRACTION: f32 = 0.50;
 const LAYER_INTERFACE_GAP_A: f32 = 2.4;
 const SOLUTE_WALL_MARGIN_A: f32 = 1.0;
+const INITIAL_SOLUTE_CLEARANCE_A: f32 = 1.5;
 
 const INITIAL_BOX_SCALE: f32 = 2.0;
 const BOX_SHRINK_PER_STEP_A: f32 = 0.002;
 const DYNAMICS_EQUILIBRATION_STEPS: usize = 5_000;
 const SNAPSHOT_INTERVAL: usize = 10;
 const CONTROL_WINDOW_SNAPSHOTS: usize = 5;
-const GROMACS_CHUNK_STEPS: usize = 500;
+const GROMACS_DT_PS: f32 = 0.001;
+const GROMACS_EQUILIBRATION_STEPS: usize = 2_000;
+const GROMACS_CHUNK_STEPS: usize = 1_000;
+const GROMACS_SHRINK_PER_CHUNK_A: f32 = 0.5;
 const MAX_SHRINK_PRESSURE_BAR: f32 = 10_000.0;
 const MAX_TEMPERATURE_K: f32 = 450.0;
 const MAX_DENSITY_G_CM3: f32 = 2.5;
 const MAX_ATOM_DENSITY_A3: f32 = 0.18;
 const MAX_FORCE_KCAL_MOL_A: f32 = 500.0;
-const TEMPERATURE_K: f32 = 300.0;
-const DT_PS: f32 = 0.002;
+
+const TEMP: f32 = 300.0; // K
+
+const DT: f32 = 0.002; // ps
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShrinkingBoxMode {
@@ -114,6 +121,12 @@ pub struct ShrinkingBoxMdData {
     pub nonbonded_energy_kcal: f32,
 }
 
+pub struct ShrinkingBoxPlaybackMol {
+    pub mol_type: FfMolType,
+    pub mol: MoleculeCommon,
+    pub count: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ShrinkingBoxSetup {
     mode: ShrinkingBoxMode,
@@ -129,12 +142,71 @@ struct PlacedSolutes {
     mols: Vec<MolDynamics>,
 }
 
+struct ShrinkingBoxBackendResult {
+    data: ShrinkingBoxMdData,
+    snapshots: Vec<Snapshot>,
+    extra_non_water_mols: Vec<MoleculeCommon>,
+}
+
 fn centered_cube(side: f32) -> SimBox {
     let half = side / 2.0;
     SimBox::new(
         Vec3F32::new(-half, -half, -half),
         Vec3F32::new(half, half, half),
     )
+}
+
+fn solute_grid_inset_a(mol_radius_a: f32) -> f32 {
+    SOLUTE_WALL_MARGIN_A + mol_radius_a
+}
+
+fn solute_region_extent(initial_side_a: f32, mode: ShrinkingBoxMode) -> Vec3F32 {
+    match mode {
+        ShrinkingBoxMode::HomogeneousMix => Vec3F32::splat(initial_side_a),
+        ShrinkingBoxMode::WaterSoluteLayers => Vec3F32::new(
+            initial_side_a,
+            initial_side_a,
+            initial_side_a / 2.0 - LAYER_INTERFACE_GAP_A / 2.0,
+        ),
+    }
+}
+
+fn initial_cell_for_solutes(
+    target_side_a: f32,
+    mode: ShrinkingBoxMode,
+    copies: usize,
+    mol_radius_a: f32,
+) -> SimBox {
+    let inset_a = solute_grid_inset_a(mol_radius_a);
+    let min_spacing_a = 2.0 * mol_radius_a + INITIAL_SOLUTE_CLEARANCE_A;
+    let mut side_a = target_side_a * INITIAL_BOX_SCALE;
+
+    loop {
+        let usable_extent = solute_region_extent(side_a, mode) - Vec3F32::splat(2.0 * inset_a);
+        if usable_extent.x > 0.0 && usable_extent.y > 0.0 && usable_extent.z > 0.0 {
+            let (nx, ny, nz) = grid_dims(copies, usable_extent);
+            let spacing = Vec3F32::new(
+                usable_extent.x / nx as f32,
+                usable_extent.y / ny as f32,
+                usable_extent.z / nz as f32,
+            );
+
+            if spacing.x >= min_spacing_a
+                && spacing.y >= min_spacing_a
+                && spacing.z >= min_spacing_a
+            {
+                return centered_cube(side_a);
+            }
+
+            let scale = (min_spacing_a / spacing.x)
+                .max(min_spacing_a / spacing.y)
+                .max(min_spacing_a / spacing.z)
+                .max(1.05);
+            side_a *= scale;
+        } else {
+            side_a *= 1.5;
+        }
+    }
 }
 
 fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<ShrinkingBoxSetup> {
@@ -171,8 +243,7 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         .max(molecule_limited_side_a);
     let compression_limit_cell = centered_cube(compression_limit_side_a);
     let target_water_volume_a3 = match mode {
-        // Leave headroom for solute excluded volume and driven compression. Unlike the
-        // Dynamics loop, a single GROMACS deform run cannot stop early on high pressure.
+        // Leave headroom for solute excluded volume and driven compression.
         ShrinkingBoxMode::HomogeneousMix => target_volume_a3 * HOMOGENEOUS_WATER_VOLUME_FRACTION,
         ShrinkingBoxMode::WaterSoluteLayers => target_volume_a3 * LAYER_WATER_VOLUME_FRACTION,
     };
@@ -182,6 +253,8 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         initial_box_scale: INITIAL_BOX_SCALE,
         box_shrink_per_step: BOX_SHRINK_PER_STEP_A,
     };
+    let initial_cell =
+        initial_cell_for_solutes(target_side_a, mode, SOLUTE_COPY_COUNT, mol_radius_a);
 
     Ok(ShrinkingBoxSetup {
         mode,
@@ -189,7 +262,7 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         water_molecule_count,
         target_cell,
         compression_limit_cell,
-        initial_cell: shrink_cfg.initial_cell(target_cell),
+        initial_cell,
         shrink_cfg,
     })
 }
@@ -278,10 +351,9 @@ fn place_solute_copies(
         .iter()
         .map(|posit| *posit - centroid)
         .collect();
-    // Centroids contract toward the box center while each molecule keeps its rigid
-    // size. Reserve the final wall inset in the expanded starting cell as well.
-    let inset_a =
-        (SOLUTE_WALL_MARGIN_A + mol_bounding_radius(mol)) * setup.shrink_cfg.initial_box_scale;
+    // The setup has already enlarged the dilute initial cell enough that bounding
+    // spheres in neighboring grid cells cannot overlap, regardless of rotation.
+    let inset_a = solute_grid_inset_a(mol_bounding_radius(mol));
     let usable_extent = region.extent - Vec3F32::splat(2.0 * inset_a);
 
     if usable_extent.x <= 0.0 || usable_extent.y <= 0.0 || usable_extent.z <= 0.0 {
@@ -315,7 +387,7 @@ fn place_solute_copies(
             low.y + (iy as f64 + 0.5) * spacing.y,
             low.z + (iz as f64 + 0.5) * spacing.z,
         );
-        let rotation: Quaternion = random_quaternion(&mut rng, None).into();
+        let rotation = Quaternion::random(&mut rng, None);
         let posits: Vec<_> = local_posits
             .iter()
             .map(|posit| rotation.rotate_vec(*posit) + center)
@@ -341,7 +413,7 @@ fn make_md_cfg(
             thermostat: Some(TAU_TEMP_DEFAULT),
         },
         zero_com_drift: true,
-        temp_target: TEMPERATURE_K,
+        temp_target: TEMP,
         barostat_cfg: None,
         snapshot_handlers: SnapshotHandlers {
             memory: memory_snapshots.then_some(SNAPSHOT_INTERVAL),
@@ -497,6 +569,17 @@ fn shrink_step_count_between(initial_cell: SimBox, target_cell: SimBox) -> usize
     (max_shrink / BOX_SHRINK_PER_STEP_A.max(f32::EPSILON)).ceil() as usize
 }
 
+fn shrink_cell_by_amount(current_cell: SimBox, limit_cell: SimBox, shrink_a: f32) -> SimBox {
+    let extent = Vec3F32::new(
+        (current_cell.extent.x - shrink_a).max(limit_cell.extent.x),
+        (current_cell.extent.y - shrink_a).max(limit_cell.extent.y),
+        (current_cell.extent.z - shrink_a).max(limit_cell.extent.z),
+    );
+    let center = current_cell.center();
+    let half = extent / 2.0;
+    SimBox::new(center - half, center + half)
+}
+
 fn max_dynamics_force(md: &MdState) -> Option<f32> {
     md.atoms
         .iter()
@@ -524,20 +607,13 @@ fn max_gromacs_force(out: &GromacsOutput) -> Option<f32> {
         .reduce(f32::max)
 }
 
-fn shrink_cell_by_steps(current_cell: SimBox, limit_cell: SimBox, steps: usize) -> SimBox {
-    let shrink_a = BOX_SHRINK_PER_STEP_A * steps as f32;
-    let extent = Vec3F32::new(
-        (current_cell.extent.x - shrink_a).max(limit_cell.extent.x),
-        (current_cell.extent.y - shrink_a).max(limit_cell.extent.y),
-        (current_cell.extent.z - shrink_a).max(limit_cell.extent.z),
-    );
-    let center = current_cell.center();
-    let half = extent / 2.0;
-    SimBox::new(center - half, center + half)
-}
-
-fn gromacs_deform_nm_ps(current_cell: SimBox, next_cell: SimBox, steps: usize) -> [f32; 6] {
-    let duration_ps = steps.max(1) as f32 * DT_PS;
+fn gromacs_deform_nm_ps(
+    current_cell: SimBox,
+    next_cell: SimBox,
+    steps: usize,
+    dt_ps: f32,
+) -> [f32; 6] {
+    let duration_ps = steps.max(1) as f32 * dt_ps;
     let rate = |current: f32, next: f32| (next - current) * 0.1 / duration_ps;
 
     [
@@ -604,12 +680,48 @@ fn add_snapshot_metrics(data: &mut ShrinkingBoxMdData, snapshots: &[Snapshot]) {
     data.nonbonded_energy_kcal = mean(&nonbonded).unwrap_or(0.0);
 }
 
+fn single_atom_viewer_mol(atom: &AtomDynamics) -> MoleculeCommon {
+    let posit: Vec3F64 = atom.posit.into();
+    let ident = if atom.force_field_type.is_empty() {
+        atom.element.to_letter()
+    } else {
+        atom.force_field_type.clone()
+    };
+    let atom = Atom {
+        serial_number: atom.serial_number,
+        posit,
+        element: atom.element,
+        type_in_res_general: Some(ident.clone()),
+        force_field_type: Some(ident.clone()),
+        hetero: true,
+        ..Default::default()
+    };
+
+    MoleculeCommon {
+        ident,
+        atoms: vec![atom],
+        atom_posits: vec![posit],
+        selected_for_md: Some(1),
+        ..Default::default()
+    }
+}
+
+fn md_extra_non_water_mols(md: &MdState, placed_solutes: &PlacedSolutes) -> Vec<MoleculeCommon> {
+    let solute_atom_count: usize = placed_solutes.mols.iter().map(|mol| mol.atoms.len()).sum();
+
+    md.atoms
+        .iter()
+        .skip(solute_atom_count)
+        .map(single_atom_viewer_mol)
+        .collect()
+}
+
 fn run_dynamics(
     setup: ShrinkingBoxSetup,
     placed_solutes: &PlacedSolutes,
     param_set: &FfParamSet,
     dev: &ComputationDevice,
-) -> io::Result<(ShrinkingBoxMdData, Vec<Snapshot>)> {
+) -> io::Result<ShrinkingBoxBackendResult> {
     let mut md = build_initial_state(setup, placed_solutes, param_set, dev, true, false)?;
     let mut data = initial_data(setup, md.water.len());
     let shrink_steps = shrink_step_count_between(setup.initial_cell, setup.compression_limit_cell);
@@ -637,7 +749,7 @@ fn run_dynamics(
             equilibration_steps += 1;
         }
 
-        md.step(dev, DT_PS, None);
+        md.step(dev, DT, None);
 
         if data.reached_compression_limit && equilibration_steps >= DYNAMICS_EQUILIBRATION_STEPS {
             break;
@@ -647,7 +759,13 @@ fn run_dynamics(
     data.final_box_extent_a = md.cell.extent;
     add_snapshot_metrics(&mut data, &md.snapshots);
 
-    Ok((data, md.snapshots))
+    let extra_non_water_mols = md_extra_non_water_mols(&md, placed_solutes);
+
+    Ok(ShrinkingBoxBackendResult {
+        data,
+        snapshots: md.snapshots,
+        extra_non_water_mols,
+    })
 }
 
 fn gromacs_mol_name(ident: &str) -> String {
@@ -756,7 +874,7 @@ fn run_gromacs(
     placed_solutes: &PlacedSolutes,
     param_set: &FfParamSet,
     dev: &ComputationDevice,
-) -> io::Result<(ShrinkingBoxMdData, Vec<Snapshot>)> {
+) -> io::Result<ShrinkingBoxBackendResult> {
     let md = build_initial_state(setup, placed_solutes, param_set, dev, false, true)?;
     let cfg = make_md_cfg(setup, false, true);
     let solute_input = gromacs_solute_input(&mol.common.ident, &placed_solutes.mols)?;
@@ -769,13 +887,14 @@ fn run_gromacs(
     )?;
     let water_molecule_count = md.water.len();
     let atom_count = physical_atom_count(solute_atom_count, water_molecule_count);
-    let mut mdp = cfg.to_gromacs(GROMACS_CHUNK_STEPS, DT_PS);
+    let mut mdp = cfg.to_gromacs(GROMACS_CHUNK_STEPS, GROMACS_DT_PS);
     mdp.output_control.nstxout = Some(SNAPSHOT_INTERVAL as u32);
     mdp.output_control.nstvout = Some(SNAPSHOT_INTERVAL as u32);
     mdp.output_control.nstfout = Some(SNAPSHOT_INTERVAL as u32);
     mdp.output_control.nstcalcenergy = Some(SNAPSHOT_INTERVAL as u32);
     mdp.output_control.nstenergy = Some(SNAPSHOT_INTERVAL as u32);
-    mdp.deform_init_flow = true;
+    mdp.tau_t = vec![0.05];
+    mdp.constraints = Constraints::HBonds(ConstraintAlgorithm::Lincs { order: 8, iter: 2 });
     let mut input: GromacsInput = make_gromacs_input(
         mdp,
         &[FfMolType::SmallOrganic],
@@ -796,19 +915,52 @@ fn run_gromacs(
     let mut snapshots = Vec::new();
     let mut current_cell = setup.initial_cell;
     let mut elapsed_ps = 0.0;
-    let mut first_chunk = true;
 
-    while !cell_at_or_below(current_cell, setup.compression_limit_cell) {
-        let steps_remaining = shrink_step_count_between(current_cell, setup.compression_limit_cell);
-        let chunk_steps = steps_remaining.min(GROMACS_CHUNK_STEPS);
-        let next_cell =
-            shrink_cell_by_steps(current_cell, setup.compression_limit_cell, chunk_steps);
+    input.mdp.nsteps = GROMACS_EQUILIBRATION_STEPS as u64;
+    input.mdp.dt = GROMACS_DT_PS;
+    input.mdp.deform = None;
+    input.mdp.gen_vel = true;
+    input.mdp.deform_init_flow = false;
+    input.minimize_energy = true;
 
-        input.mdp.nsteps = chunk_steps as u64;
-        input.mdp.deform = Some(gromacs_deform_nm_ps(current_cell, next_cell, chunk_steps));
-        input.mdp.gen_vel = first_chunk;
-        input.mdp.deform_init_flow = first_chunk;
-        input.minimize_energy = first_chunk;
+    let out = input.run()?;
+    let max_force = max_gromacs_force(&out);
+    let mut equilibration_snapshots = gromacs_frames_to_ss(&out);
+    snapshots.append(&mut equilibration_snapshots);
+    elapsed_ps += GROMACS_EQUILIBRATION_STEPS as f64 * GROMACS_DT_PS as f64;
+
+    input.initial_gro = Some(out.final_gro_text.ok_or_else(|| {
+        io::Error::other("GROMACS shrinking-box equilibration did not write final coordinates.")
+    })?);
+    input.topology_override = Some(out.final_topology_text.ok_or_else(|| {
+        io::Error::other("GROMACS shrinking-box equilibration did not preserve its topology.")
+    })?);
+    input.skip_counterion_insertion = true;
+    input.minimize_energy = false;
+
+    if let Some(reason) = latest_stop_reason(&snapshots, atom_count, max_force) {
+        mark_stop(&mut data, reason);
+    }
+
+    while data.stop_reason.is_none()
+        && !cell_at_or_below(current_cell, setup.compression_limit_cell)
+    {
+        let next_cell = shrink_cell_by_amount(
+            current_cell,
+            setup.compression_limit_cell,
+            GROMACS_SHRINK_PER_CHUNK_A,
+        );
+
+        input.mdp.nsteps = GROMACS_CHUNK_STEPS as u64;
+        input.mdp.dt = GROMACS_DT_PS;
+        input.mdp.deform = Some(gromacs_deform_nm_ps(
+            current_cell,
+            next_cell,
+            GROMACS_CHUNK_STEPS,
+            GROMACS_DT_PS,
+        ));
+        input.mdp.gen_vel = false;
+        input.mdp.deform_init_flow = false;
 
         let out = match input.run() {
             Ok(out) => out,
@@ -827,7 +979,7 @@ fn run_gromacs(
         for snapshot in &mut chunk_snapshots {
             snapshot.time += elapsed_ps;
         }
-        elapsed_ps += chunk_steps as f64 * DT_PS as f64;
+        elapsed_ps += GROMACS_CHUNK_STEPS as f64 * GROMACS_DT_PS as f64;
         snapshots.extend(chunk_snapshots);
         current_cell = next_cell;
         data.reached_target_box |= cell_at_or_below(current_cell, setup.target_cell);
@@ -849,13 +1001,16 @@ fn run_gromacs(
             io::Error::other("GROMACS shrinking-box chunk did not preserve its topology.")
         })?);
         input.skip_counterion_insertion = true;
-        first_chunk = false;
     }
 
     data.final_box_extent_a = current_cell.extent;
     add_snapshot_metrics(&mut data, &snapshots);
 
-    Ok((data, snapshots))
+    Ok(ShrinkingBoxBackendResult {
+        data,
+        snapshots,
+        extra_non_water_mols: Vec::new(),
+    })
 }
 
 /// Run a driven shrinking-box property simulation.
@@ -865,7 +1020,11 @@ pub fn run_shrinking_box_sim(
     backend: MdBackend,
     dev: &ComputationDevice,
     param_set: &FfParamSet,
-) -> io::Result<(ShrinkingBoxMdData, Vec<Snapshot>)> {
+) -> io::Result<(
+    ShrinkingBoxMdData,
+    Vec<Snapshot>,
+    Vec<ShrinkingBoxPlaybackMol>,
+)> {
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, param_set)?;
     let setup = setup_for(&mol, mode)?;
     let template = solute_template(&mol, &mol_specific_params)?;
@@ -891,81 +1050,28 @@ pub fn run_shrinking_box_sim(
 
     println!(
         "Shrinking-box MD stopped at {:.1} A: {:?} (mean {:.0} K, {:.0} bar, {:.3} g/cm^3)",
-        result.0.final_box_extent_a.x,
-        result.0.stop_reason,
-        result.0.mean_temperature_k,
-        result.0.mean_pressure_bar,
-        result.0.density_g_cm3,
+        result.data.final_box_extent_a.x,
+        result.data.stop_reason,
+        result.data.mean_temperature_k,
+        result.data.mean_pressure_bar,
+        result.data.density_g_cm3,
     );
 
-    Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use dynamics::snapshot::SnapshotEnergyData;
-
-    use super::*;
-
-    fn snapshot(temp_k: f32, pressure_bar: f32, density_g_cm3: f32, volume_a3: f32) -> Snapshot {
-        Snapshot {
-            energy_data: Some(SnapshotEnergyData {
-                energy_kinetic: 0.0,
-                energy_potential: 0.0,
-                energy_potential_between_mols: Vec::new(),
-                energy_potential_nonbonded: 0.0,
-                energy_potential_bonded: 0.0,
-                hydrogen_bonds: Vec::new(),
-                temperature: temp_k,
-                pressure: pressure_bar,
-                dh_dl: None,
-                volume: volume_a3,
-                density: density_g_cm3 / AMU_A3_TO_G_CM3,
+    let mut playback_mols = vec![ShrinkingBoxPlaybackMol {
+        mol_type: FfMolType::SmallOrganic,
+        mol: mol.common,
+        count: setup.solute_copy_count,
+    }];
+    playback_mols.extend(
+        result
+            .extra_non_water_mols
+            .into_iter()
+            .map(|mol| ShrinkingBoxPlaybackMol {
+                mol_type: FfMolType::SmallOrganic,
+                mol,
+                count: 1,
             }),
-            ..Snapshot::default()
-        }
-    }
+    );
 
-    #[test]
-    fn gromacs_chunk_shrinks_one_angstrom_at_the_expected_rate() {
-        let current = centered_cube(68.0);
-        let limit = centered_cube(24.0);
-        let next = shrink_cell_by_steps(current, limit, GROMACS_CHUNK_STEPS);
-        let deform = gromacs_deform_nm_ps(current, next, GROMACS_CHUNK_STEPS);
-
-        assert_eq!(next.extent, Vec3F32::splat(67.0));
-        assert_eq!(&deform[..3], &[-0.1, -0.1, -0.1]);
-    }
-
-    #[test]
-    fn adaptive_stop_detects_force_and_atom_density_limits() {
-        let stable = snapshot(300.0, 1.0, 1.0, 100.0);
-
-        assert_eq!(
-            latest_stop_reason(&[stable.clone()], 1, Some(MAX_FORCE_KCAL_MOL_A)),
-            Some(CompressionStopReason::Force)
-        );
-        assert_eq!(
-            latest_stop_reason(&[stable], 19, None),
-            Some(CompressionStopReason::AtomDensity)
-        );
-    }
-
-    #[test]
-    fn adaptive_temperature_stop_ignores_a_transient_but_detects_sustained_heat() {
-        let hot = snapshot(MAX_TEMPERATURE_K, 1.0, 1.0, 100.0);
-        let stable = snapshot(300.0, 1.0, 1.0, 100.0);
-
-        assert_eq!(latest_stop_reason(&[hot.clone()], 1, None), None);
-
-        let sustained = vec![hot; CONTROL_WINDOW_SNAPSHOTS];
-        assert_eq!(
-            latest_stop_reason(&sustained, 1, None),
-            Some(CompressionStopReason::Temperature)
-        );
-
-        let mut settling = sustained;
-        settling.push(stable);
-        assert_eq!(latest_stop_reason(&settling, 1, None), None);
-    }
+    Ok((result.data, result.snapshots, playback_mols))
 }

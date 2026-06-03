@@ -20,7 +20,6 @@ use dynamics::{
     MolDynamics, ShrinkingBoxPackingCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     pack_solvent_with_shrinking_box_cfg,
     params::FfParamSet,
-    random_quaternion,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::{
@@ -366,7 +365,7 @@ fn fallback_solute_layer(
             z0 + (iz as f64 + 0.5) * sz,
         );
 
-        let rot: Quaternion = random_quaternion(&mut rng, None).into();
+        let rot = Quaternion::random(&mut rng, None::<rand::distr::Uniform<f64>>);
         let posits: Vec<Vec3F64> = local
             .iter()
             .map(|&l| rot.rotate_vec(l) + cell_center)

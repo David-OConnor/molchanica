@@ -32,6 +32,7 @@ pub mod screening;
 pub mod selection;
 pub mod sfc_mesh;
 pub mod smiles;
+pub mod sonification;
 pub mod state;
 pub mod tautomers;
 pub mod therapeutic;

@@ -16,7 +16,7 @@ use dynamics::{
 };
 use graphics::{EngineUpdates, Entity, FWD_VEC, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
-use rand::Rng;
+use rand::RngExt;
 use viewer::SnapshotViewer;
 
 use crate::{

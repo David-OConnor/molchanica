@@ -1281,7 +1281,7 @@ fn md_property_runners(
             &state.dev,
             &state.ff_param_set,
         ) {
-            Ok((data, snaps)) => {
+            Ok((data, snaps, playback_mols)) => {
                 let water_count = snaps
                     .last()
                     .map(|snap| snap.water_o_posits.len())
@@ -1293,8 +1293,10 @@ fn md_property_runners(
                     0.002,
                 ));
 
-                let viewer_mols =
-                    vec![(FfMolType::SmallOrganic, &mol.common, data.solute_copy_count)];
+                let viewer_mols = playback_mols
+                    .iter()
+                    .map(|mol| (mol.mol_type, &mol.mol, mol.count))
+                    .collect::<Vec<_>>();
                 state
                     .volatile
                     .md_local

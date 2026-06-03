@@ -38,7 +38,7 @@ rayon = "1.10.0"  # Parallel execution on CPU using thread pools.
 # For electron density reflections
 rustfft = "6.4.1"
 
-rand = "0.9.2"
+rand = "0.10.1"
 regex = "1.12.3"
 chrono = "0.4.43"
 serde = { version = "1.0.228", features = ["derive"] }

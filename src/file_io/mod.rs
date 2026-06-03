@@ -19,7 +19,7 @@ use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::{AaIdent, Element};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::{
     cam,
