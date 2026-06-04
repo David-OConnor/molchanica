@@ -12,6 +12,7 @@ use crate::molecules::small::MoleculeSmall;
 pub mod crystal;
 pub mod ionization;
 pub mod logp;
+mod mixing_analysis;
 pub mod mol_characterization;
 pub mod sol_shrinking_box;
 pub mod water_sol;

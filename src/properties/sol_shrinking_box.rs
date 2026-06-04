@@ -10,12 +10,6 @@ use std::{
     io::{self, ErrorKind},
 };
 
-use crate::{
-    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
-    md::MdBackend,
-    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
-    properties::{AMU_A3_TO_G_CM3, mean, mol_bounding_radius, prepare_mol_for_md},
-};
 use bio_files::{
     gromacs::{
         GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
@@ -37,6 +31,13 @@ use lin_alg::{
 };
 use na_seq::Element;
 
+use crate::{
+    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
+    md::MdBackend,
+    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
+    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
+};
+
 const SOLUTE_COPY_COUNT: usize = 24;
 const MIN_TARGET_BOX_SIDE_A: f32 = 34.0;
 const MIN_COMPRESSION_BOX_SIDE_A: f32 = 24.0;
@@ -55,21 +56,20 @@ const BOX_SHRINK_PER_STEP_A: f32 = 0.002;
 const DYNAMICS_EQUILIBRATION_STEPS: usize = 5_000;
 const SNAPSHOT_INTERVAL: usize = 10;
 const CONTROL_WINDOW_SNAPSHOTS: usize = 5;
-const GROMACS_DT_PS: f32 = 0.001;
+
 const GROMACS_EQUILIBRATION_STEPS: usize = 2_000;
 const GROMACS_CHUNK_STEPS: usize = 1_000;
 const GROMACS_SHRINK_PER_CHUNK_A: f32 = 0.5;
+
 const MAX_SHRINK_PRESSURE_BAR: f32 = 10_000.0;
 const MAX_TEMPERATURE_K: f32 = 450.0;
 const MAX_DENSITY_G_CM3: f32 = 2.5;
 const MAX_ATOM_DENSITY_A3: f32 = 0.18;
 const MAX_FORCE_KCAL_MOL_A: f32 = 500.0;
-const SOLUBILITY_KERNEL_SIGMAS_A: [f32; 3] = [4.0, 7.0, 10.0];
-const SOLUBILITY_CONTACT_CUTOFF_A: f32 = 4.2;
 
 const TEMP: f32 = 300.0; // K
 
-const DT: f32 = 0.002; // ps
+const DT: f32 = 0.001; // ps
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShrinkingBoxMode {
@@ -890,7 +890,8 @@ fn run_gromacs(
     )?;
     let water_molecule_count = md.water.len();
     let atom_count = physical_atom_count(solute_atom_count, water_molecule_count);
-    let mut mdp = cfg.to_gromacs(GROMACS_CHUNK_STEPS, GROMACS_DT_PS);
+    let mut mdp = cfg.to_gromacs(GROMACS_CHUNK_STEPS, DT);
+
     mdp.output_control.nstxout = Some(SNAPSHOT_INTERVAL as u32);
     mdp.output_control.nstvout = Some(SNAPSHOT_INTERVAL as u32);
     mdp.output_control.nstfout = Some(SNAPSHOT_INTERVAL as u32);
@@ -920,7 +921,7 @@ fn run_gromacs(
     let mut elapsed_ps = 0.0;
 
     input.mdp.nsteps = GROMACS_EQUILIBRATION_STEPS as u64;
-    input.mdp.dt = GROMACS_DT_PS;
+    input.mdp.dt = DT;
     input.mdp.deform = None;
     input.mdp.gen_vel = true;
     input.mdp.deform_init_flow = false;
@@ -930,7 +931,7 @@ fn run_gromacs(
     let max_force = max_gromacs_force(&out);
     let mut equilibration_snapshots = gromacs_frames_to_ss(&out);
     snapshots.append(&mut equilibration_snapshots);
-    elapsed_ps += GROMACS_EQUILIBRATION_STEPS as f64 * GROMACS_DT_PS as f64;
+    elapsed_ps += GROMACS_EQUILIBRATION_STEPS as f64 * DT as f64;
 
     input.initial_gro = Some(out.final_gro_text.ok_or_else(|| {
         io::Error::other("GROMACS shrinking-box equilibration did not write final coordinates.")
@@ -955,12 +956,12 @@ fn run_gromacs(
         );
 
         input.mdp.nsteps = GROMACS_CHUNK_STEPS as u64;
-        input.mdp.dt = GROMACS_DT_PS;
+        input.mdp.dt = DT;
         input.mdp.deform = Some(gromacs_deform_nm_ps(
             current_cell,
             next_cell,
             GROMACS_CHUNK_STEPS,
-            GROMACS_DT_PS,
+            DT,
         ));
         input.mdp.gen_vel = false;
         input.mdp.deform_init_flow = false;
@@ -982,7 +983,7 @@ fn run_gromacs(
         for snapshot in &mut chunk_snapshots {
             snapshot.time += elapsed_ps;
         }
-        elapsed_ps += GROMACS_CHUNK_STEPS as f64 * GROMACS_DT_PS as f64;
+        elapsed_ps += GROMACS_CHUNK_STEPS as f64 * DT as f64;
         snapshots.extend(chunk_snapshots);
         current_cell = next_cell;
         data.reached_target_box |= cell_at_or_below(current_cell, setup.target_cell);
@@ -1014,372 +1015,6 @@ fn run_gromacs(
         snapshots,
         extra_non_water_mols: Vec::new(),
     })
-}
-
-fn finite_posit(posit: Vec3F32) -> bool {
-    posit.x.is_finite() && posit.y.is_finite() && posit.z.is_finite()
-}
-
-fn valid_solubility_cell(cell: &SimBox) -> bool {
-    cell.extent.x.is_finite()
-        && cell.extent.y.is_finite()
-        && cell.extent.z.is_finite()
-        && cell.extent.x > f32::EPSILON
-        && cell.extent.y > f32::EPSILON
-        && cell.extent.z > f32::EPSILON
-}
-
-fn gaussian_weight(d2: f32, sigma_a: f32) -> f32 {
-    (-0.5 * d2 / sigma_a.powi(2)).exp()
-}
-
-fn solubility_kernel_sigmas(cell: &SimBox) -> [f32; 3] {
-    let half_min_extent = 0.5 * cell.extent.x.min(cell.extent.y).min(cell.extent.z).max(1.0);
-
-    SOLUBILITY_KERNEL_SIGMAS_A.map(|sigma| sigma.min(0.9 * half_min_extent).max(1.0))
-}
-
-fn selected_solute_mols(
-    solute_atom_posits: &[Vec3F32],
-    atoms_per_solute: usize,
-    solute_atom_indices: &[usize],
-) -> Vec<Vec<Vec3F32>> {
-    if atoms_per_solute == 0 {
-        return Vec::new();
-    }
-
-    let mut result = Vec::new();
-
-    for mol in solute_atom_posits.chunks_exact(atoms_per_solute) {
-        let mut selected = Vec::new();
-
-        if solute_atom_indices.is_empty() {
-            selected.extend(mol.iter().copied().filter(|posit| finite_posit(*posit)));
-        } else {
-            for &atom_i in solute_atom_indices {
-                if let Some(&posit) = mol.get(atom_i) {
-                    if finite_posit(posit) {
-                        selected.push(posit);
-                    }
-                }
-            }
-
-            if selected.is_empty() {
-                selected.extend(mol.iter().copied().filter(|posit| finite_posit(*posit)));
-            }
-        }
-
-        if !selected.is_empty() {
-            result.push(selected);
-        }
-    }
-
-    result
-}
-
-fn local_solute_water_mixing_score(
-    solute_mols: &[Vec<Vec3F32>],
-    water_o_posits: &[Vec3F32],
-    cell: &SimBox,
-) -> f32 {
-    let solute_atom_count: usize = solute_mols.iter().map(Vec::len).sum();
-    if solute_atom_count == 0 {
-        return 0.0;
-    }
-
-    let sigmas = solubility_kernel_sigmas(cell);
-    let water_norm = water_o_posits.len().max(1) as f32;
-    let mut total_score = 0.0;
-
-    for sigma in sigmas {
-        let mut scale_score = 0.0;
-
-        for (mol_i, mol) in solute_mols.iter().enumerate() {
-            let solute_norm = solute_atom_count.saturating_sub(mol.len()).max(1) as f32;
-
-            for &solute_posit in mol {
-                let mut local_solute = 0.0;
-                let mut local_water = 0.0;
-
-                for (other_mol_i, other_mol) in solute_mols.iter().enumerate() {
-                    if mol_i == other_mol_i {
-                        continue;
-                    }
-
-                    for &other_posit in other_mol {
-                        let d2 = cell
-                            .min_image(other_posit - solute_posit)
-                            .magnitude_squared();
-                        if d2.is_finite() {
-                            local_solute += gaussian_weight(d2, sigma);
-                        }
-                    }
-                }
-
-                for &water_posit in water_o_posits {
-                    let d2 = cell
-                        .min_image(water_posit - solute_posit)
-                        .magnitude_squared();
-                    if d2.is_finite() {
-                        local_water += gaussian_weight(d2, sigma);
-                    }
-                }
-
-                let local_solute = local_solute / solute_norm;
-                let local_water = local_water / water_norm;
-                let local_density = local_solute + local_water;
-                let atom_score = if local_density > f32::EPSILON {
-                    (2.0 * local_water / local_density).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-
-                scale_score += atom_score;
-            }
-        }
-
-        total_score += scale_score / solute_atom_count as f32;
-    }
-
-    total_score / sigmas.len() as f32
-}
-
-fn solute_mol_center(mol: &[Vec3F32], cell: &SimBox) -> Vec3F32 {
-    let anchor = cell.wrap(mol[0]);
-    let mut sum = Vec3F32::new_zero();
-
-    for &posit in mol {
-        sum += anchor + cell.min_image(posit - anchor);
-    }
-
-    cell.wrap(sum / mol.len() as f32)
-}
-
-fn solute_mol_centers(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> Vec<Vec3F32> {
-    solute_mols
-        .iter()
-        .map(|mol| solute_mol_center(mol, cell))
-        .collect()
-}
-
-fn solute_center_dispersion_score(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
-    if solute_mols.len() < 2 {
-        return 1.0;
-    }
-
-    let expected_uniform_rms =
-        ((cell.extent.x.powi(2) + cell.extent.y.powi(2) + cell.extent.z.powi(2)) / 12.0).sqrt();
-    if expected_uniform_rms <= f32::EPSILON {
-        return 0.0;
-    }
-
-    let centers = solute_mol_centers(solute_mols, cell);
-    let mut sampled_pairs = 0usize;
-    let mut d2_sum = 0.0;
-
-    for (i, &a) in centers.iter().enumerate() {
-        for &b in &centers[i + 1..] {
-            let d2 = cell.min_image(b - a).magnitude_squared();
-            if d2.is_finite() {
-                d2_sum += d2 as f64;
-                sampled_pairs += 1;
-            }
-        }
-    }
-
-    if sampled_pairs == 0 {
-        return 0.0;
-    }
-
-    let observed_rms = (d2_sum / sampled_pairs as f64).sqrt() as f32;
-    (observed_rms / expected_uniform_rms).clamp(0.0, 1.0)
-}
-
-fn solute_mols_touch(a: &[Vec3F32], b: &[Vec3F32], cell: &SimBox) -> bool {
-    let cutoff_d2 = SOLUBILITY_CONTACT_CUTOFF_A.powi(2);
-
-    for &pa in a {
-        for &pb in b {
-            let d2 = cell.min_image(pb - pa).magnitude_squared();
-            if d2.is_finite() && d2 <= cutoff_d2 {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-fn find_root(parent: &mut [usize], i: usize) -> usize {
-    if parent[i] != i {
-        parent[i] = find_root(parent, parent[i]);
-    }
-
-    parent[i]
-}
-
-fn union_roots(parent: &mut [usize], a: usize, b: usize) {
-    let a_root = find_root(parent, a);
-    let b_root = find_root(parent, b);
-
-    if a_root != b_root {
-        parent[b_root] = a_root;
-    }
-}
-
-fn solute_aggregation_gate(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
-    let n = solute_mols.len();
-    if n < 2 {
-        return 1.0;
-    }
-
-    let mut parent: Vec<_> = (0..n).collect();
-    let mut degree = vec![0usize; n];
-
-    for i in 0..n {
-        for j in i + 1..n {
-            if solute_mols_touch(&solute_mols[i], &solute_mols[j], cell) {
-                union_roots(&mut parent, i, j);
-                degree[i] += 1;
-                degree[j] += 1;
-            }
-        }
-    }
-
-    let mut component_sizes = vec![0usize; n];
-    for i in 0..n {
-        let root = find_root(&mut parent, i);
-        component_sizes[root] += 1;
-    }
-
-    let largest_component = component_sizes.into_iter().max().unwrap_or(1);
-    let contacted_fraction = degree.iter().filter(|&&degree| degree > 0).count() as f32 / n as f32;
-    let largest_cluster_penalty = (largest_component.saturating_sub(1) as f32
-        / n.saturating_sub(1).max(1) as f32)
-        .clamp(0.0, 1.0);
-    let component_gate = 1.0 - largest_cluster_penalty.powf(1.25);
-    let contact_gate = 1.0 - 0.70 * contacted_fraction.powi(2);
-
-    (component_gate * contact_gate).clamp(0.0, 1.0)
-}
-
-/// Estimate solubility from the final frame of the simulation.
-///
-/// This will eventually share a similar scale to that used by AqSolDb, but for now, it is arbitrary.
-/// It is intended to order solutes correctly, but the absolute scale is arbitrary. Higher values
-/// mean higher solubility.
-///
-/// `solute_atom_posits` is for all solute atoms, grouped by solute copy. `solute_atom_indices`
-/// may exclude hydrogens.
-///
-/// We treat a relatively high solute atom aggregation as less soluble. For now, results are on a 0 to 1 scale. 0 means that all of the
-/// solute is aggregated in one blob with no water between them. 1 means an (as even as possible given potentially bulky solute mols)
-/// even distribution of solute and solvent in space.
-///
-/// We use a sim cell with PBCs, so distance calculations take periodic images into account.
-fn compute_solubility(
-    solute_atom_posits: &[Vec3F32],
-    atoms_per_solute: usize,
-    solute_atom_indices: &[usize],
-    water_o_posits: &[Vec3F32],
-    cell: &SimBox,
-) -> f32 {
-    if !valid_solubility_cell(cell) || solute_atom_posits.is_empty() || water_o_posits.is_empty() {
-        return 0.0;
-    }
-
-    let solute_mols =
-        selected_solute_mols(solute_atom_posits, atoms_per_solute, solute_atom_indices);
-    let water_o_posits: Vec<_> = water_o_posits
-        .iter()
-        .copied()
-        .filter(|posit| finite_posit(*posit))
-        .collect();
-
-    if solute_mols.is_empty() || water_o_posits.is_empty() {
-        return 0.0;
-    }
-
-    let aggregation_gate = solute_aggregation_gate(&solute_mols, cell);
-    let local_mixing = local_solute_water_mixing_score(&solute_mols, &water_o_posits, cell);
-    let solute_dispersion = solute_center_dispersion_score(&solute_mols, cell);
-    let mixture_score = 0.60 * local_mixing + 0.40 * solute_dispersion;
-
-    (aggregation_gate * mixture_score).clamp(0.0, 1.0)
-}
-
-#[cfg(test)]
-mod solubility_tests {
-    use super::*;
-
-    fn lattice_points(start: f32, step: f32, n: usize) -> Vec<Vec3F32> {
-        let mut result = Vec::with_capacity(n * n * n);
-
-        for ix in 0..n {
-            for iy in 0..n {
-                for iz in 0..n {
-                    result.push(Vec3F32::new(
-                        start + step * ix as f32,
-                        start + step * iy as f32,
-                        start + step * iz as f32,
-                    ));
-                }
-            }
-        }
-
-        result
-    }
-
-    #[test]
-    fn connected_solute_aggregate_scores_low_even_with_nearby_water() {
-        let cell = centered_cube(40.0);
-        let aggregate: Vec<_> = (0..24)
-            .map(|i| Vec3F32::new(-11.5 + i as f32, 0.0, 0.0))
-            .collect();
-        let aggregate_water: Vec<_> = aggregate
-            .iter()
-            .map(|posit| *posit + Vec3F32::new(0.0, 3.0, 0.0))
-            .collect();
-        let dispersed: Vec<_> = lattice_points(-12.0, 8.0, 3).into_iter().take(24).collect();
-        let dispersed_water: Vec<_> = dispersed
-            .iter()
-            .map(|posit| *posit + Vec3F32::new(3.0, 3.0, 3.0))
-            .collect();
-
-        let aggregate_score = compute_solubility(&aggregate, 1, &[0], &aggregate_water, &cell);
-        let dispersed_score = compute_solubility(&dispersed, 1, &[0], &dispersed_water, &cell);
-
-        assert!(aggregate_score < 0.15, "aggregate_score={aggregate_score}");
-        assert!(
-            dispersed_score > aggregate_score + 0.35,
-            "dispersed_score={dispersed_score}, aggregate_score={aggregate_score}"
-        );
-    }
-
-    #[test]
-    fn periodic_boundary_contact_contributes_to_aggregation() {
-        let cell = centered_cube(24.0);
-        let mut boundary_cluster = Vec::new();
-        for &x in &[-11.4, 11.4] {
-            for y in [-1.5, 0.0, 1.5] {
-                for z in [-1.5, 0.0, 1.5] {
-                    boundary_cluster.push(Vec3F32::new(x, y, z));
-                }
-            }
-        }
-
-        let dispersed: Vec<_> = lattice_points(-9.0, 6.0, 3).into_iter().take(18).collect();
-        let water = lattice_points(-8.0, 5.5, 4);
-
-        let boundary_score = compute_solubility(&boundary_cluster, 1, &[0], &water, &cell);
-        let dispersed_score = compute_solubility(&dispersed, 1, &[0], &water, &cell);
-
-        assert!(boundary_score < 0.25, "boundary_score={boundary_score}");
-        assert!(
-            boundary_score < dispersed_score,
-            "boundary_score={boundary_score}, dispersed_score={dispersed_score}"
-        );
-    }
 }
 
 /// Run a driven shrinking-box property simulation.
@@ -1447,7 +1082,7 @@ pub fn run_shrinking_box_sim(
             let half_extent = result.data.final_box_extent_a / 2.0;
             let final_cell = SimBox::new(center - half_extent, center + half_extent);
 
-            compute_solubility(
+            mixing_analysis::compute_solubility(
                 &snapshot.atom_posits[..solute_end],
                 atoms_per_solute,
                 &solubility_atom_indices,
