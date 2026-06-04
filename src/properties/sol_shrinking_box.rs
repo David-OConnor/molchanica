@@ -38,38 +38,63 @@ use crate::{
     properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
 };
 
+// Number of solute molecule copies packed into each shrinking-box simulation.
 const SOLUTE_COPY_COUNT: usize = 24;
+// Smallest target box side length allowed for the final packed cell, in angstroms.
 const MIN_TARGET_BOX_SIDE_A: f32 = 34.0;
+// Smallest box side length allowed while compressing past the target, in angstroms.
 const MIN_COMPRESSION_BOX_SIDE_A: f32 = 24.0;
+// Fraction of the target side length used as the compression-limit side length.
 const COMPRESSION_LIMIT_SCALE: f32 = 0.65;
+// Approximate volume occupied by one water molecule, in cubic angstroms.
 const WATER_MOLAR_VOLUME_A3: f32 = 29.97;
+
+// Target solute volume fraction for homogeneous solute/water packing.
 const HOMOGENEOUS_SOLUTE_VOLUME_FRACTION: f32 = 0.22;
+// Target water volume fraction for homogeneous solute/water packing.
 const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.84;
+
+// Target solute volume fraction when starting from layered slabs.
 const LAYER_SOLUTE_VOLUME_FRACTION: f32 = 0.42;
+// Target water volume fraction when starting from layered slabs.
 const LAYER_WATER_VOLUME_FRACTION: f32 = 0.50;
+// Empty spacing kept between the initial water and solute slabs, in angstroms.
 const LAYER_INTERFACE_GAP_A: f32 = 2.4;
+
+// Minimum distance from each solute bounding sphere to the box wall, in angstroms.
 const SOLUTE_WALL_MARGIN_A: f32 = 1.0;
+// Minimum extra center-to-center clearance between initial solute copies, in angstroms.
 const INITIAL_SOLUTE_CLEARANCE_A: f32 = 1.5;
 
+// Starting box side-length multiplier relative to the target cell.
 const INITIAL_BOX_SCALE: f32 = 2.0;
+// Box side-length reduction applied per MD shrink step, in angstroms.
 const BOX_SHRINK_PER_STEP_A: f32 = 0.002;
-const DYNAMICS_EQUILIBRATION_STEPS: usize = 5_000;
+// Relaxation length before or after driven shrinking, in MD steps.
+const EQUILIBRATION_STEPS: usize = 2_000;
+// Interval between saved snapshots and backend energy outputs, in MD steps.
 const SNAPSHOT_INTERVAL: usize = 10;
+// Number of recent snapshots averaged for stop-condition control signals.
 const CONTROL_WINDOW_SNAPSHOTS: usize = 5;
+// Number of MD shrink steps batched into one deform run by chunked backends.
+const SHRINK_CHUNK_STEPS: usize = 250;
 
-const GROMACS_EQUILIBRATION_STEPS: usize = 2_000;
-const GROMACS_CHUNK_STEPS: usize = 1_000;
-const GROMACS_SHRINK_PER_CHUNK_A: f32 = 0.5;
-
+// Maximum recent mean pressure before stopping compression, in bar.
 const MAX_SHRINK_PRESSURE_BAR: f32 = 10_000.0;
+// Maximum recent mean temperature before stopping compression, in kelvin.
 const MAX_TEMPERATURE_K: f32 = 450.0;
+// Maximum mass density before stopping compression, in grams per cubic centimeter.
 const MAX_DENSITY_G_CM3: f32 = 2.5;
+// Maximum atom number density before stopping compression, in atoms per cubic angstrom.
 const MAX_ATOM_DENSITY_A3: f32 = 0.18;
+// Maximum force magnitude before stopping compression, in kcal/mol/angstrom.
 const MAX_FORCE_KCAL_MOL_A: f32 = 500.0;
 
-const TEMP: f32 = 300.0; // K
+// Thermostat target temperature used by both backends, in kelvin.
+const TEMP: f32 = 300.0;
 
-const DT: f32 = 0.001; // ps
+// MD integration timestep used by both backends, in picoseconds.
+const DT: f32 = 0.001;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShrinkingBoxMode {
@@ -730,7 +755,7 @@ fn run_dynamics(
     let shrink_steps = shrink_step_count_between(setup.initial_cell, setup.compression_limit_cell);
     let mut equilibration_steps = 0;
 
-    for _ in 0..shrink_steps + DYNAMICS_EQUILIBRATION_STEPS {
+    for _ in 0..shrink_steps + EQUILIBRATION_STEPS {
         if data.stop_reason.is_none() {
             if let Some(reason) = latest_stop_reason(
                 &md.snapshots,
@@ -754,7 +779,7 @@ fn run_dynamics(
 
         md.step(dev, DT, None);
 
-        if data.reached_compression_limit && equilibration_steps >= DYNAMICS_EQUILIBRATION_STEPS {
+        if data.reached_compression_limit && equilibration_steps >= EQUILIBRATION_STEPS {
             break;
         }
     }
@@ -890,7 +915,7 @@ fn run_gromacs(
     )?;
     let water_molecule_count = md.water.len();
     let atom_count = physical_atom_count(solute_atom_count, water_molecule_count);
-    let mut mdp = cfg.to_gromacs(GROMACS_CHUNK_STEPS, DT);
+    let mut mdp = cfg.to_gromacs(SHRINK_CHUNK_STEPS, DT);
 
     mdp.output_control.nstxout = Some(SNAPSHOT_INTERVAL as u32);
     mdp.output_control.nstvout = Some(SNAPSHOT_INTERVAL as u32);
@@ -920,7 +945,7 @@ fn run_gromacs(
     let mut current_cell = setup.initial_cell;
     let mut elapsed_ps = 0.0;
 
-    input.mdp.nsteps = GROMACS_EQUILIBRATION_STEPS as u64;
+    input.mdp.nsteps = EQUILIBRATION_STEPS as u64;
     input.mdp.dt = DT;
     input.mdp.deform = None;
     input.mdp.gen_vel = true;
@@ -931,7 +956,7 @@ fn run_gromacs(
     let max_force = max_gromacs_force(&out);
     let mut equilibration_snapshots = gromacs_frames_to_ss(&out);
     snapshots.append(&mut equilibration_snapshots);
-    elapsed_ps += GROMACS_EQUILIBRATION_STEPS as f64 * DT as f64;
+    elapsed_ps += EQUILIBRATION_STEPS as f64 * DT as f64;
 
     input.initial_gro = Some(out.final_gro_text.ok_or_else(|| {
         io::Error::other("GROMACS shrinking-box equilibration did not write final coordinates.")
@@ -952,15 +977,15 @@ fn run_gromacs(
         let next_cell = shrink_cell_by_amount(
             current_cell,
             setup.compression_limit_cell,
-            GROMACS_SHRINK_PER_CHUNK_A,
+            BOX_SHRINK_PER_STEP_A * SHRINK_CHUNK_STEPS as f32,
         );
 
-        input.mdp.nsteps = GROMACS_CHUNK_STEPS as u64;
+        input.mdp.nsteps = SHRINK_CHUNK_STEPS as u64;
         input.mdp.dt = DT;
         input.mdp.deform = Some(gromacs_deform_nm_ps(
             current_cell,
             next_cell,
-            GROMACS_CHUNK_STEPS,
+            SHRINK_CHUNK_STEPS,
             DT,
         ));
         input.mdp.gen_vel = false;
@@ -983,7 +1008,7 @@ fn run_gromacs(
         for snapshot in &mut chunk_snapshots {
             snapshot.time += elapsed_ps;
         }
-        elapsed_ps += GROMACS_CHUNK_STEPS as f64 * DT as f64;
+        elapsed_ps += SHRINK_CHUNK_STEPS as f64 * DT as f64;
         snapshots.extend(chunk_snapshots);
         current_cell = next_cell;
         data.reached_target_box |= cell_at_or_below(current_cell, setup.target_cell);

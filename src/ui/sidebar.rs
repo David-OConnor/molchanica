@@ -1297,6 +1297,7 @@ fn md_property_runners(
                     .iter()
                     .map(|mol| (mol.mol_type, &mol.mol, mol.count))
                     .collect::<Vec<_>>();
+
                 state
                     .volatile
                     .md_local
@@ -1310,18 +1311,22 @@ fn md_property_runners(
                     .mol_sets
                     .len()
                     .saturating_sub(1);
+
                 if let Some(set) = state.volatile.md_local.viewer.mol_sets.get_mut(set_i) {
                     set.name = "Shrinking box sim".to_string();
                 }
+
                 state.volatile.md_local.viewer.mol_set_active = Some(set_i);
                 state.volatile.md_local.replace_snaps(snaps);
+
                 viewer::draw_mols(state, scene, updates);
                 redraw.set_all();
 
                 handle_success(
                     &mut state.ui,
                     format!(
-                        "Shrinking-box simulation complete. {} solute copies, {} waters, density {:.3} g/cm3, solubility {:.3}, box {:.1} -> {:.1} A.",
+                        "Shrinking-box simulation complete. | Sol est: {:.4} |, {} solute copies, {} waters, density {:.3} g/cm3, solubility {:.3}, box {:.1} -> {:.1} A.",
+                        data.solubility_estimate,
                         data.solute_copy_count,
                         water_count,
                         data.density_g_cm3,

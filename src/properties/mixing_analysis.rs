@@ -1,11 +1,13 @@
 //! Analyzes a set of molecules (e.g. from an MD snapshot), to assess how well
-//! mixed they are. E.g. of a solute and solute to assess solubility.
+//! mixed they are. E.g. of a solute and solvent to assess solubility.
 
 use dynamics::SimBox;
 use lin_alg::f32::Vec3 as Vec3F32;
 
 const SOLUBILITY_KERNEL_SIGMAS_A: [f32; 3] = [4.0, 7.0, 10.0];
 const SOLUBILITY_CONTACT_CUTOFF_A: f32 = 4.2;
+const SOLUBILITY_AGGREGATION_PENALTY_STRENGTH: f32 = 3.5;
+const SOLUBILITY_LOG_EXPANSION_GAIN: f32 = 80.0;
 
 fn valid_solubility_cell(cell: &SimBox) -> bool {
     cell.extent.x.is_finite()
@@ -58,7 +60,7 @@ fn finite_posit(posit: Vec3F32) -> bool {
     posit.x.is_finite() && posit.y.is_finite() && posit.z.is_finite()
 }
 
-fn solute_aggregation_gate(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
+fn solute_aggregation_factor(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
     let n = solute_mols.len();
     if n < 2 {
         return 1.0;
@@ -66,6 +68,7 @@ fn solute_aggregation_gate(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
 
     let mut parent: Vec<_> = (0..n).collect();
     let mut degree = vec![0usize; n];
+    let mut contact_pairs = 0usize;
 
     for i in 0..n {
         for j in i + 1..n {
@@ -73,6 +76,7 @@ fn solute_aggregation_gate(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
                 union_roots(&mut parent, i, j);
                 degree[i] += 1;
                 degree[j] += 1;
+                contact_pairs += 1;
             }
         }
     }
@@ -85,13 +89,23 @@ fn solute_aggregation_gate(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
 
     let largest_component = component_sizes.into_iter().max().unwrap_or(1);
     let contacted_fraction = degree.iter().filter(|&&degree| degree > 0).count() as f32 / n as f32;
+    let possible_contact_pairs = n.saturating_sub(1) * n / 2;
+    let contact_pair_fraction = if possible_contact_pairs > 0 {
+        contact_pairs as f32 / possible_contact_pairs as f32
+    } else {
+        0.0
+    };
     let largest_cluster_penalty = (largest_component.saturating_sub(1) as f32
         / n.saturating_sub(1).max(1) as f32)
         .clamp(0.0, 1.0);
-    let component_gate = 1.0 - largest_cluster_penalty.powf(1.25);
-    let contact_gate = 1.0 - 0.70 * contacted_fraction.powi(2);
+    let aggregation_penalty = (0.55 * largest_cluster_penalty.powf(1.25)
+        + 0.30 * contacted_fraction.powi(2)
+        + 0.15 * contact_pair_fraction.sqrt())
+    .clamp(0.0, 1.0);
 
-    (component_gate * contact_gate).clamp(0.0, 1.0)
+    (-SOLUBILITY_AGGREGATION_PENALTY_STRENGTH * aggregation_penalty)
+        .exp()
+        .clamp(0.0, 1.0)
 }
 
 fn local_solute_water_mixing_score(
@@ -236,6 +250,13 @@ fn gaussian_weight(d2: f32, sigma_a: f32) -> f32 {
     (-0.5 * d2 / sigma_a.powi(2)).exp()
 }
 
+fn log_expanded_solubility_score(raw_score: f32) -> f32 {
+    let raw_score = raw_score.clamp(0.0, 1.0);
+
+    (1.0 + SOLUBILITY_LOG_EXPANSION_GAIN * raw_score).ln()
+        / (1.0 + SOLUBILITY_LOG_EXPANSION_GAIN).ln()
+}
+
 fn solute_mol_center(mol: &[Vec3F32], cell: &SimBox) -> Vec3F32 {
     let anchor = cell.wrap(mol[0]);
     let mut sum = Vec3F32::new_zero();
@@ -263,9 +284,11 @@ fn solute_mol_centers(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> Vec<Vec3F3
 /// `solute_atom_posits` is for all solute atoms, grouped by solute copy. `solute_atom_indices`
 /// may exclude hydrogens.
 ///
-/// We treat a relatively high solute atom aggregation as less soluble. For now, results are on a 0 to 1 scale. 0 means that all of the
-/// solute is aggregated in one blob with no water between them. 1 means an (as even as possible given potentially bulky solute mols)
-/// even distribution of solute and solvent in space.
+/// We treat relatively high solute aggregation as less soluble. Results are on a log-expanded
+/// 0 to 1 scale: 0 means no useful water/solute mixing evidence, while 1 means an even
+/// distribution of solute and solvent in space. The scale is intentionally not linear; low raw
+/// scores get more room so poorly soluble bulky/lipid-like molecules do not all collapse to
+/// `0.000`.
 ///
 /// We use a sim cell with PBCs, so distance calculations take periodic images into account.
 pub(in crate::properties) fn compute_solubility(
@@ -291,10 +314,49 @@ pub(in crate::properties) fn compute_solubility(
         return 0.0;
     }
 
-    let aggregation_gate = solute_aggregation_gate(&solute_mols, cell);
+    let aggregation_factor = solute_aggregation_factor(&solute_mols, cell);
     let local_mixing = local_solute_water_mixing_score(&solute_mols, &water_o_posits, cell);
     let solute_dispersion = solute_center_dispersion_score(&solute_mols, cell);
     let mixture_score = 0.60 * local_mixing + 0.40 * solute_dispersion;
+    let raw_score = (aggregation_factor * mixture_score).clamp(0.0, 1.0);
 
-    (aggregation_gate * mixture_score).clamp(0.0, 1.0)
+    log_expanded_solubility_score(raw_score)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_expansion_preserves_bounds_and_order() {
+        let low = log_expanded_solubility_score(0.001);
+        let mid = log_expanded_solubility_score(0.10);
+        let high = log_expanded_solubility_score(1.0);
+
+        assert_eq!(log_expanded_solubility_score(0.0), 0.0);
+        assert!(low > 0.001);
+        assert!(low < mid);
+        assert!(mid < high);
+        assert_eq!(high, 1.0);
+    }
+
+    #[test]
+    fn aggregation_factor_keeps_clustered_cases_distinguishable() {
+        let cell = SimBox::new(Vec3F32::splat(-20.0), Vec3F32::splat(20.0));
+        let isolated = vec![
+            vec![Vec3F32::new(-8.0, 0.0, 0.0)],
+            vec![Vec3F32::new(8.0, 0.0, 0.0)],
+        ];
+        let touching = vec![
+            vec![Vec3F32::new(-1.0, 0.0, 0.0)],
+            vec![Vec3F32::new(1.0, 0.0, 0.0)],
+        ];
+
+        let isolated_factor = solute_aggregation_factor(&isolated, &cell);
+        let touching_factor = solute_aggregation_factor(&touching, &cell);
+
+        assert_eq!(isolated_factor, 1.0);
+        assert!(touching_factor > 0.0);
+        assert!(touching_factor < isolated_factor);
+    }
 }
