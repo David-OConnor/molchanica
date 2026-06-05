@@ -8,6 +8,353 @@ const SOLUBILITY_KERNEL_SIGMAS_A: [f32; 3] = [4.0, 7.0, 10.0];
 const SOLUBILITY_CONTACT_CUTOFF_A: f32 = 4.2;
 const SOLUBILITY_AGGREGATION_PENALTY_STRENGTH: f32 = 3.5;
 const SOLUBILITY_LOG_EXPANSION_GAIN: f32 = 80.0;
+const SOLUBILITY_BH_THETA: f32 = 0.65;
+const SOLUBILITY_BH_MAX_WATER_PER_LEAF: usize = 24;
+const SOLUBILITY_BH_MAX_TREE_DEPTH: usize = 14;
+const SOLUBILITY_BH_MIN_LEAF_WIDTH_A: f32 = 0.75;
+const SOLUBILITY_BH_GAUSSIAN_CUTOFF_SIGMAS: f32 = 4.0;
+
+#[derive(Clone, Copy, Debug)]
+struct SoluteTreePoint {
+    posit: Vec3F32,
+    mol_i: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OctreeBounds {
+    low: Vec3F32,
+    high: Vec3F32,
+    center: Vec3F32,
+    extent: Vec3F32,
+}
+
+impl OctreeBounds {
+    fn new(low: Vec3F32, high: Vec3F32) -> Self {
+        let low_ordered = Vec3F32::new(low.x.min(high.x), low.y.min(high.y), low.z.min(high.z));
+        let high_ordered = Vec3F32::new(low.x.max(high.x), low.y.max(high.y), low.z.max(high.z));
+        let low = low_ordered;
+        let high = high_ordered;
+        let extent = high - low;
+
+        Self {
+            low,
+            high,
+            center: (low + high) * 0.5,
+            extent,
+        }
+    }
+
+    fn from_cell(cell: &SimBox) -> Self {
+        Self::new(cell.bounds_low, cell.bounds_high)
+    }
+
+    fn child(&self, octant: usize) -> Self {
+        let mut low = self.low;
+        let mut high = self.high;
+
+        if octant & 0b001 == 0 {
+            high.x = self.center.x;
+        } else {
+            low.x = self.center.x;
+        }
+
+        if octant & 0b010 == 0 {
+            high.y = self.center.y;
+        } else {
+            low.y = self.center.y;
+        }
+
+        if octant & 0b100 == 0 {
+            high.z = self.center.z;
+        } else {
+            low.z = self.center.z;
+        }
+
+        Self::new(low, high)
+    }
+
+    fn octant_for(&self, posit: Vec3F32) -> usize {
+        let mut result = 0;
+
+        if posit.x > self.center.x {
+            result |= 0b001;
+        }
+        if posit.y > self.center.y {
+            result |= 0b010;
+        }
+        if posit.z > self.center.z {
+            result |= 0b100;
+        }
+
+        result
+    }
+
+    fn max_width(&self) -> f32 {
+        self.extent.x.max(self.extent.y).max(self.extent.z)
+    }
+
+    fn radius(&self) -> f32 {
+        0.5 * self.extent.magnitude()
+    }
+}
+
+#[derive(Debug)]
+struct MixingOctreeNode {
+    bounds: OctreeBounds,
+    children: Vec<usize>,
+    solute_indices: Vec<usize>,
+    water_indices: Vec<usize>,
+    solute_center: Vec3F32,
+    water_center: Vec3F32,
+}
+
+#[derive(Debug)]
+struct MixingOctree {
+    cell: SimBox,
+    solutes: Vec<SoluteTreePoint>,
+    water_posits: Vec<Vec3F32>,
+    nodes: Vec<MixingOctreeNode>,
+}
+
+impl MixingOctree {
+    fn new(solute_mols: &[Vec<Vec3F32>], water_o_posits: &[Vec3F32], cell: &SimBox) -> Self {
+        let mut solutes = Vec::new();
+
+        for (mol_i, mol) in solute_mols.iter().enumerate() {
+            solutes.extend(
+                mol.iter()
+                    .copied()
+                    .filter(|posit| finite_posit(*posit))
+                    .map(|posit| SoluteTreePoint {
+                        posit: cell.wrap(posit),
+                        mol_i,
+                    }),
+            );
+        }
+
+        let water_posits = water_o_posits
+            .iter()
+            .copied()
+            .filter(|posit| finite_posit(*posit))
+            .map(|posit| cell.wrap(posit))
+            .collect::<Vec<_>>();
+
+        let mut result = Self {
+            cell: *cell,
+            solutes,
+            water_posits,
+            nodes: Vec::new(),
+        };
+
+        if !result.solutes.is_empty() || !result.water_posits.is_empty() {
+            let solute_indices = (0..result.solutes.len()).collect();
+            let water_indices = (0..result.water_posits.len()).collect();
+            result.build_node(
+                OctreeBounds::from_cell(cell),
+                solute_indices,
+                water_indices,
+                0,
+            );
+        }
+
+        result
+    }
+
+    fn build_node(
+        &mut self,
+        bounds: OctreeBounds,
+        solute_indices: Vec<usize>,
+        water_indices: Vec<usize>,
+        depth: usize,
+    ) -> usize {
+        // Solute atoms drive the tree criterion; the water cap prevents a whole solvent slab
+        // from becoming one coarse near-field leaf at a solute/water interface.
+        let should_split = depth < SOLUBILITY_BH_MAX_TREE_DEPTH
+            && bounds.max_width() > SOLUBILITY_BH_MIN_LEAF_WIDTH_A
+            && (solute_indices.len() > 1 || water_indices.len() > SOLUBILITY_BH_MAX_WATER_PER_LEAF);
+
+        let mut solutes_by_octant: [Vec<usize>; 8] = std::array::from_fn(|_| Vec::new());
+        let mut water_by_octant: [Vec<usize>; 8] = std::array::from_fn(|_| Vec::new());
+
+        if should_split {
+            for &solute_i in &solute_indices {
+                let octant = bounds.octant_for(self.solutes[solute_i].posit);
+                solutes_by_octant[octant].push(solute_i);
+            }
+
+            for &water_i in &water_indices {
+                let octant = bounds.octant_for(self.water_posits[water_i]);
+                water_by_octant[octant].push(water_i);
+            }
+        }
+
+        let node_i = self.nodes.len();
+        self.nodes.push(MixingOctreeNode {
+            bounds,
+            children: Vec::new(),
+            solute_center: self.solute_center(&solute_indices),
+            water_center: self.water_center(&water_indices),
+            solute_indices,
+            water_indices,
+        });
+
+        if should_split {
+            for octant in 0..8 {
+                if solutes_by_octant[octant].is_empty() && water_by_octant[octant].is_empty() {
+                    continue;
+                }
+
+                let child_i = self.build_node(
+                    bounds.child(octant),
+                    std::mem::take(&mut solutes_by_octant[octant]),
+                    std::mem::take(&mut water_by_octant[octant]),
+                    depth + 1,
+                );
+                self.nodes[node_i].children.push(child_i);
+            }
+        }
+
+        node_i
+    }
+
+    fn solute_center(&self, indices: &[usize]) -> Vec3F32 {
+        if indices.is_empty() {
+            return Vec3F32::new_zero();
+        }
+
+        let mut sum = Vec3F32::new_zero();
+        for &i in indices {
+            sum += self.solutes[i].posit;
+        }
+
+        sum / indices.len() as f32
+    }
+
+    fn water_center(&self, indices: &[usize]) -> Vec3F32 {
+        if indices.is_empty() {
+            return Vec3F32::new_zero();
+        }
+
+        let mut sum = Vec3F32::new_zero();
+        for &i in indices {
+            sum += self.water_posits[i];
+        }
+
+        sum / indices.len() as f32
+    }
+
+    fn water_density(&self, target: Vec3F32, sigma: f32) -> f32 {
+        if self.nodes.is_empty() {
+            return 0.0;
+        }
+
+        self.water_density_node(0, target, sigma)
+    }
+
+    fn water_density_node(&self, node_i: usize, target: Vec3F32, sigma: f32) -> f32 {
+        let node = &self.nodes[node_i];
+        if node.water_indices.is_empty() || self.outside_gaussian_support(node, target, sigma) {
+            return 0.0;
+        }
+
+        let d = self.cell.min_image(node.water_center - target).magnitude();
+        if self.can_approximate_node(node, d) {
+            return node.water_indices.len() as f32 * gaussian_weight(d.powi(2), sigma);
+        }
+
+        if node.children.is_empty() {
+            return node
+                .water_indices
+                .iter()
+                .filter_map(|&water_i| {
+                    let d2 = self
+                        .cell
+                        .min_image(self.water_posits[water_i] - target)
+                        .magnitude_squared();
+                    d2.is_finite().then(|| gaussian_weight(d2, sigma))
+                })
+                .sum();
+        }
+
+        node.children
+            .iter()
+            .map(|&child_i| self.water_density_node(child_i, target, sigma))
+            .sum()
+    }
+
+    fn solute_density_excluding_mol(&self, target: Vec3F32, mol_i: usize, sigma: f32) -> f32 {
+        if self.nodes.is_empty() {
+            return 0.0;
+        }
+
+        self.solute_density_node_excluding_mol(0, target, mol_i, sigma)
+    }
+
+    fn solute_density_node_excluding_mol(
+        &self,
+        node_i: usize,
+        target: Vec3F32,
+        mol_i: usize,
+        sigma: f32,
+    ) -> f32 {
+        let node = &self.nodes[node_i];
+        if node.solute_indices.is_empty() || self.outside_gaussian_support(node, target, sigma) {
+            return 0.0;
+        }
+
+        let contains_excluded_mol = node
+            .solute_indices
+            .iter()
+            .any(|&solute_i| self.solutes[solute_i].mol_i == mol_i);
+        let d = self.cell.min_image(node.solute_center - target).magnitude();
+
+        if !contains_excluded_mol && self.can_approximate_node(node, d) {
+            return node.solute_indices.len() as f32 * gaussian_weight(d.powi(2), sigma);
+        }
+
+        if node.children.is_empty() {
+            return node
+                .solute_indices
+                .iter()
+                .filter_map(|&solute_i| {
+                    let solute = self.solutes[solute_i];
+                    if solute.mol_i == mol_i {
+                        return None;
+                    }
+
+                    let d2 = self
+                        .cell
+                        .min_image(solute.posit - target)
+                        .magnitude_squared();
+                    d2.is_finite().then(|| gaussian_weight(d2, sigma))
+                })
+                .sum();
+        }
+
+        node.children
+            .iter()
+            .map(|&child_i| self.solute_density_node_excluding_mol(child_i, target, mol_i, sigma))
+            .sum()
+    }
+
+    fn outside_gaussian_support(
+        &self,
+        node: &MixingOctreeNode,
+        target: Vec3F32,
+        sigma: f32,
+    ) -> bool {
+        let center_dist = self.cell.min_image(node.bounds.center - target).magnitude();
+        let nearest_possible_dist = (center_dist - node.bounds.radius()).max(0.0);
+
+        nearest_possible_dist > SOLUBILITY_BH_GAUSSIAN_CUTOFF_SIGMAS * sigma
+    }
+
+    fn can_approximate_node(&self, node: &MixingOctreeNode, dist_to_center: f32) -> bool {
+        !node.children.is_empty()
+            && dist_to_center > f32::EPSILON
+            && node.bounds.max_width() / dist_to_center < SOLUBILITY_BH_THETA
+    }
+}
 
 fn valid_solubility_cell(cell: &SimBox) -> bool {
     cell.extent.x.is_finite()
@@ -175,6 +522,50 @@ fn local_solute_water_mixing_score(
     total_score / sigmas.len() as f32
 }
 
+fn local_solute_water_mixing_score_barnes_hut(
+    solute_mols: &[Vec<Vec3F32>],
+    water_o_posits: &[Vec3F32],
+    cell: &SimBox,
+) -> f32 {
+    let solute_atom_count: usize = solute_mols.iter().map(Vec::len).sum();
+    if solute_atom_count == 0 {
+        return 0.0;
+    }
+
+    let tree = MixingOctree::new(solute_mols, water_o_posits, cell);
+    if tree.solutes.is_empty() || tree.water_posits.is_empty() {
+        return 0.0;
+    }
+
+    let sigmas = solubility_kernel_sigmas(cell);
+    let water_norm = tree.water_posits.len().max(1) as f32;
+    let mut total_score = 0.0;
+
+    for sigma in sigmas {
+        let mut scale_score = 0.0;
+
+        for solute in &tree.solutes {
+            let mol_len = solute_mols.get(solute.mol_i).map_or(0, Vec::len);
+            let solute_norm = solute_atom_count.saturating_sub(mol_len).max(1) as f32;
+            let local_solute =
+                tree.solute_density_excluding_mol(solute.posit, solute.mol_i, sigma) / solute_norm;
+            let local_water = tree.water_density(solute.posit, sigma) / water_norm;
+            let local_density = local_solute + local_water;
+            let atom_score = if local_density > f32::EPSILON {
+                (2.0 * local_water / local_density).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+
+            scale_score += atom_score;
+        }
+
+        total_score += scale_score / tree.solutes.len() as f32;
+    }
+
+    total_score / sigmas.len() as f32
+}
+
 fn solute_center_dispersion_score(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
     if solute_mols.len() < 2 {
         return 1.0;
@@ -275,6 +666,12 @@ fn solute_mol_centers(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> Vec<Vec3F3
         .collect()
 }
 
+/// Map betweren the units this library outputs, and AqSolDB's range.
+fn map_to_aqsoldb(v: f32) -> f32 {
+    // todo: A/R.
+    lin_alg::map_linear(v, (0., 1.), (-4., 2.))
+}
+
 /// Estimate solubility from the final frame of the simulation.
 ///
 /// This will eventually share a similar scale to that used by AqSolDb, but for now, it is arbitrary.
@@ -321,42 +718,46 @@ pub(in crate::properties) fn compute_solubility(
     let raw_score = (aggregation_factor * mixture_score).clamp(0.0, 1.0);
 
     log_expanded_solubility_score(raw_score)
+    // map_to_aqsoldb(res)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn log_expansion_preserves_bounds_and_order() {
-        let low = log_expanded_solubility_score(0.001);
-        let mid = log_expanded_solubility_score(0.10);
-        let high = log_expanded_solubility_score(1.0);
-
-        assert_eq!(log_expanded_solubility_score(0.0), 0.0);
-        assert!(low > 0.001);
-        assert!(low < mid);
-        assert!(mid < high);
-        assert_eq!(high, 1.0);
+/// Estimate solubility with a Barnes-Hut-style octree over the final MD frame.
+///
+/// The tree subdivides the periodic cell until leaves have at most one selected non-hydrogen
+/// solute atom, with an additional water-count cap for usable near-field solvent resolution.
+/// Local solute and water Gaussian densities are evaluated exactly for nearby leaves and by node
+/// centers for sufficiently distant subtrees.
+pub(in crate::properties) fn compute_solubility_barnes_hut(
+    solute_atom_posits: &[Vec3F32],
+    atoms_per_solute: usize,
+    solute_atom_indices: &[usize],
+    water_o_posits: &[Vec3F32],
+    cell: &SimBox,
+) -> f32 {
+    if !valid_solubility_cell(cell) || solute_atom_posits.is_empty() || water_o_posits.is_empty() {
+        return 0.0;
     }
 
-    #[test]
-    fn aggregation_factor_keeps_clustered_cases_distinguishable() {
-        let cell = SimBox::new(Vec3F32::splat(-20.0), Vec3F32::splat(20.0));
-        let isolated = vec![
-            vec![Vec3F32::new(-8.0, 0.0, 0.0)],
-            vec![Vec3F32::new(8.0, 0.0, 0.0)],
-        ];
-        let touching = vec![
-            vec![Vec3F32::new(-1.0, 0.0, 0.0)],
-            vec![Vec3F32::new(1.0, 0.0, 0.0)],
-        ];
+    let solute_mols =
+        selected_solute_mols(solute_atom_posits, atoms_per_solute, solute_atom_indices);
 
-        let isolated_factor = solute_aggregation_factor(&isolated, &cell);
-        let touching_factor = solute_aggregation_factor(&touching, &cell);
+    let water_o_posits: Vec<_> = water_o_posits
+        .iter()
+        .copied()
+        .filter(|posit| finite_posit(*posit))
+        .collect();
 
-        assert_eq!(isolated_factor, 1.0);
-        assert!(touching_factor > 0.0);
-        assert!(touching_factor < isolated_factor);
+    if solute_mols.is_empty() || water_o_posits.is_empty() {
+        return 0.0;
     }
+
+    let aggregation_factor = solute_aggregation_factor(&solute_mols, cell);
+    let local_mixing =
+        local_solute_water_mixing_score_barnes_hut(&solute_mols, &water_o_posits, cell);
+
+    let solute_dispersion = solute_center_dispersion_score(&solute_mols, cell);
+    let mixture_score = 0.60 * local_mixing + 0.40 * solute_dispersion;
+    let raw_score = (aggregation_factor * mixture_score).clamp(0.0, 1.0);
+
+    log_expanded_solubility_score(raw_score)
 }

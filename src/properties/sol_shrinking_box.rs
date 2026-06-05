@@ -39,25 +39,35 @@ use crate::{
 };
 
 // Number of solute molecule copies packed into each shrinking-box simulation.
-const SOLUTE_COPY_COUNT: usize = 24;
+// Water account is adjusted relative to this. A higher count may produce more reliable
+// and accurate results. A smaller count results in a faster simulation.
+const SOLUTE_COPY_COUNT: usize = 32;
+
 // Smallest target box side length allowed for the final packed cell, in angstroms.
 const MIN_TARGET_BOX_SIDE_A: f32 = 34.0;
 // Smallest box side length allowed while compressing past the target, in angstroms.
 const MIN_COMPRESSION_BOX_SIDE_A: f32 = 24.0;
+
 // Fraction of the target side length used as the compression-limit side length.
-const COMPRESSION_LIMIT_SCALE: f32 = 0.65;
+// Lower values make the resulting box smaller, with tighter compression.
+const COMPRESSION_LIMIT_SCALE: f32 = 0.55;
+
 // Approximate volume occupied by one water molecule, in cubic angstroms.
 const WATER_MOLAR_VOLUME_A3: f32 = 29.97;
 
 // Target solute volume fraction for homogeneous solute/water packing.
 const HOMOGENEOUS_SOLUTE_VOLUME_FRACTION: f32 = 0.22;
-// Target water volume fraction for homogeneous solute/water packing.
-const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.84;
+
+// Target water volume fraction for homogeneous solute/water packing. Higher results
+// in more water, and overall molecules.
+// const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.84;
+const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.70;
 
 // Target solute volume fraction when starting from layered slabs.
 const LAYER_SOLUTE_VOLUME_FRACTION: f32 = 0.42;
 // Target water volume fraction when starting from layered slabs.
 const LAYER_WATER_VOLUME_FRACTION: f32 = 0.50;
+
 // Empty spacing kept between the initial water and solute slabs, in angstroms.
 const LAYER_INTERFACE_GAP_A: f32 = 2.4;
 
@@ -66,17 +76,24 @@ const SOLUTE_WALL_MARGIN_A: f32 = 1.0;
 // Minimum extra center-to-center clearance between initial solute copies, in angstroms.
 const INITIAL_SOLUTE_CLEARANCE_A: f32 = 1.5;
 
-// Starting box side-length multiplier relative to the target cell.
-const INITIAL_BOX_SCALE: f32 = 2.0;
+// Starting box side-length multiplier relative to the target cell. Reduce this if
+// the starting concentration is too dilute. Higher values
+// require more steps, and produces a more dramatic compression.
+const INITIAL_BOX_SCALE: f32 = 3.0;
+
 // Box side-length reduction applied per MD shrink step, in angstroms.
-const BOX_SHRINK_PER_STEP_A: f32 = 0.002;
+const BOX_SHRINK_PER_STEP: f32 = 0.006;
+
 // Relaxation length before or after driven shrinking, in MD steps.
-const EQUILIBRATION_STEPS: usize = 2_000;
+const EQUILIBRATION_STEPS: usize = 1_000;
+
 // Interval between saved snapshots and backend energy outputs, in MD steps.
 const SNAPSHOT_INTERVAL: usize = 10;
 // Number of recent snapshots averaged for stop-condition control signals.
 const CONTROL_WINDOW_SNAPSHOTS: usize = 5;
-// Number of MD shrink steps batched into one deform run by chunked backends.
+
+// Number of MD shrink steps batched into one deform run. Lower this to
+// make the simulation faster?
 const SHRINK_CHUNK_STEPS: usize = 250;
 
 // Maximum recent mean pressure before stopping compression, in bar.
@@ -146,6 +163,7 @@ pub struct ShrinkingBoxMdData {
     pub potential_energy_kcal: f32,
     pub nonbonded_energy_kcal: f32,
     pub solubility_estimate: f32,
+    pub solubility_estimate_barnes_hut: f32,
 }
 
 pub struct ShrinkingBoxPlaybackMol {
@@ -278,7 +296,7 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         ((target_water_volume_a3 / WATER_MOLAR_VOLUME_A3).round() as usize).max(1);
     let shrink_cfg = ShrinkingBoxCfg {
         initial_box_scale: INITIAL_BOX_SCALE,
-        box_shrink_per_step: BOX_SHRINK_PER_STEP_A,
+        box_shrink_per_step: BOX_SHRINK_PER_STEP,
     };
     let initial_cell =
         initial_cell_for_solutes(target_side_a, mode, SOLUTE_COPY_COUNT, mol_radius_a);
@@ -593,7 +611,7 @@ fn cell_at_or_below(cell: SimBox, limit: SimBox) -> bool {
 fn shrink_step_count_between(initial_cell: SimBox, target_cell: SimBox) -> usize {
     let shrink_needed = initial_cell.extent - target_cell.extent;
     let max_shrink = shrink_needed.x.max(shrink_needed.y).max(shrink_needed.z);
-    (max_shrink / BOX_SHRINK_PER_STEP_A.max(f32::EPSILON)).ceil() as usize
+    (max_shrink / BOX_SHRINK_PER_STEP.max(f32::EPSILON)).ceil() as usize
 }
 
 fn shrink_cell_by_amount(current_cell: SimBox, limit_cell: SimBox, shrink_a: f32) -> SimBox {
@@ -675,6 +693,7 @@ fn initial_data(setup: ShrinkingBoxSetup, water_molecule_count: usize) -> Shrink
         potential_energy_kcal: 0.0,
         nonbonded_energy_kcal: 0.0,
         solubility_estimate: 0.0,
+        solubility_estimate_barnes_hut: 0.0,
     }
 }
 
@@ -904,6 +923,7 @@ fn run_gromacs(
     dev: &ComputationDevice,
 ) -> io::Result<ShrinkingBoxBackendResult> {
     let md = build_initial_state(setup, placed_solutes, param_set, dev, false, true)?;
+
     let cfg = make_md_cfg(setup, false, true);
     let solute_input = gromacs_solute_input(&mol.common.ident, &placed_solutes.mols)?;
     let solute_atom_count = solute_input.atoms.len() * solute_input.count;
@@ -915,6 +935,7 @@ fn run_gromacs(
     )?;
     let water_molecule_count = md.water.len();
     let atom_count = physical_atom_count(solute_atom_count, water_molecule_count);
+
     let mut mdp = cfg.to_gromacs(SHRINK_CHUNK_STEPS, DT);
 
     mdp.output_control.nstxout = Some(SNAPSHOT_INTERVAL as u32);
@@ -924,6 +945,7 @@ fn run_gromacs(
     mdp.output_control.nstenergy = Some(SNAPSHOT_INTERVAL as u32);
     mdp.tau_t = vec![0.05];
     mdp.constraints = Constraints::HBonds(ConstraintAlgorithm::Lincs { order: 8, iter: 2 });
+
     let mut input: GromacsInput = make_gromacs_input(
         mdp,
         &[FfMolType::SmallOrganic],
@@ -940,6 +962,7 @@ fn run_gromacs(
         .extra_molecule_counts
         .push(("SOL".to_string(), water_molecule_count));
     input.mdrun_extra_args = vec!["-ntmpi".to_string(), "1".to_string()];
+
     let mut data = initial_data(setup, water_molecule_count);
     let mut snapshots = Vec::new();
     let mut current_cell = setup.initial_cell;
@@ -971,13 +994,14 @@ fn run_gromacs(
         mark_stop(&mut data, reason);
     }
 
+    println!("Starting GROMACS shrinking box loop...");
     while data.stop_reason.is_none()
         && !cell_at_or_below(current_cell, setup.compression_limit_cell)
     {
         let next_cell = shrink_cell_by_amount(
             current_cell,
             setup.compression_limit_cell,
-            BOX_SHRINK_PER_STEP_A * SHRINK_CHUNK_STEPS as f32,
+            BOX_SHRINK_PER_STEP * SHRINK_CHUNK_STEPS as f32,
         );
 
         input.mdp.nsteps = SHRINK_CHUNK_STEPS as u64;
@@ -1009,6 +1033,7 @@ fn run_gromacs(
             snapshot.time += elapsed_ps;
         }
         elapsed_ps += SHRINK_CHUNK_STEPS as f64 * DT as f64;
+
         snapshots.extend(chunk_snapshots);
         current_cell = next_cell;
         data.reached_target_box |= cell_at_or_below(current_cell, setup.target_cell);
@@ -1060,6 +1085,7 @@ pub fn run_shrinking_box_sim(
     let placed_solutes = place_solute_copies(&mol, &template, setup)?;
     let atoms_per_solute = template.atoms.len();
     let solute_atom_count: usize = placed_solutes.mols.iter().map(|mol| mol.atoms.len()).sum();
+
     let mut solubility_atom_indices: Vec<_> = mol
         .common
         .atoms
@@ -1098,27 +1124,37 @@ pub fn run_shrinking_box_sim(
         result.data.density_g_cm3,
     );
 
-    let solubility_estimate = result
-        .snapshots
-        .last()
-        .map(|snapshot| {
-            let solute_end = solute_atom_count.min(snapshot.atom_posits.len());
-            let center = setup.initial_cell.center();
-            let half_extent = result.data.final_box_extent_a / 2.0;
-            let final_cell = SimBox::new(center - half_extent, center + half_extent);
+    let (solubility_estimate, solubility_estimate_barnes_hut) = {
+        let ss = result.snapshots.last().unwrap(); // todo: ERrror handling
 
+        let solute_end = solute_atom_count.min(ss.atom_posits.len());
+        let center = setup.initial_cell.center();
+        let half_extent = result.data.final_box_extent_a / 2.0;
+        let final_cell = SimBox::new(center - half_extent, center + half_extent);
+
+        (
             mixing_analysis::compute_solubility(
-                &snapshot.atom_posits[..solute_end],
+                &ss.atom_posits[..solute_end],
                 atoms_per_solute,
                 &solubility_atom_indices,
-                &snapshot.water_o_posits,
+                &ss.water_o_posits,
                 &final_cell,
-            )
-        })
-        .unwrap_or(0.0);
+            ),
+            mixing_analysis::compute_solubility_barnes_hut(
+                &ss.atom_posits[..solute_end],
+                atoms_per_solute,
+                &solubility_atom_indices,
+                &ss.water_o_posits,
+                &final_cell,
+            ),
+        )
+    };
 
     result.data.solubility_estimate = solubility_estimate;
-    println!("\n\n---\nSolubility: {solubility_estimate:.3}\n\n");
+    result.data.solubility_estimate_barnes_hut = solubility_estimate_barnes_hut;
+    println!(
+        "\n\n---\nSolubility: {solubility_estimate:.3} BH: {solubility_estimate_barnes_hut:.3}\n\n"
+    );
 
     let mut playback_mols = vec![ShrinkingBoxPlaybackMol {
         mol_type: FfMolType::SmallOrganic,

@@ -1325,8 +1325,9 @@ fn md_property_runners(
                 handle_success(
                     &mut state.ui,
                     format!(
-                        "Shrinking-box simulation complete. | Sol est: {:.4} |, {} solute copies, {} waters, density {:.3} g/cm3, solubility {:.3}, box {:.1} -> {:.1} A.",
+                        "Shrinking-box simulation complete. | Sol est: {:.4} BH: {:.4} |, {} solute copies, {} waters, density {:.3} g/cm3, solubility {:.3}, box {:.1} -> {:.1} A.",
                         data.solubility_estimate,
+                        data.solubility_estimate_barnes_hut,
                         data.solute_copy_count,
                         water_count,
                         data.density_g_cm3,
