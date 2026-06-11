@@ -39,11 +39,19 @@ use std::{
     io::{self, ErrorKind},
 };
 
-// Number of solute molecule copies packed into each shrinking-box simulation.
-// Water account is adjusted relative to this. A higher count may produce more reliable
-// and accurate results. A smaller count results in a faster simulation.
+// Baseline number of solute molecule copies. Molecules large enough that their own
+// excluded volume sets the target box use exactly this count. Smaller molecules, whose
+// target box is pinned to `MIN_TARGET_BOX_SIDE_A`, instead get *more* copies (see
+// `solute_copies_for_fraction`) so the solute volume fraction stays fixed rather than
+// falling with molecular size. A higher baseline may produce more reliable and accurate
+// results; a smaller one runs faster.
 // const SOLUTE_COPY_COUNT: usize = 32;
 const SOLUTE_COPY_COUNT: usize = 40;
+
+// Upper bound on the size-compensated copy count, so a very small solute cannot demand a
+// pathological number of copies. Solutes tiny enough to hit this cap fall below the target
+// volume fraction; everything else is held at it.
+const MAX_SOLUTE_COPY_COUNT: usize = 512;
 
 // Smallest target box side length allowed for the final packed cell, in angstroms.
 const MIN_TARGET_BOX_SIDE_A: f32 = 34.0;
@@ -273,6 +281,21 @@ fn initial_cell_for_solutes(
     }
 }
 
+/// Number of solute copies needed to fill `box_volume_a3` to `solute_volume_fraction`,
+/// mirroring how the water count fills the same cell to its water fraction. Holding this
+/// fraction fixed across molecules - rather than the copy count - keeps small and large
+/// solutes at the same concentration, so the mixing score reflects solubility rather than
+/// molecular size. Clamped to `[SOLUTE_COPY_COUNT, MAX_SOLUTE_COPY_COUNT]`.
+fn solute_copies_for_fraction(
+    box_volume_a3: f32,
+    mol_volume_a3: f32,
+    solute_volume_fraction: f32,
+) -> usize {
+    let ideal = (solute_volume_fraction * box_volume_a3 / mol_volume_a3.max(1.0)).round();
+
+    (ideal as usize).clamp(SOLUTE_COPY_COUNT, MAX_SOLUTE_COPY_COUNT)
+}
+
 fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<ShrinkingBoxSetup> {
     let Some(char) = &mol.characterization else {
         return Err(io::Error::new(
@@ -287,7 +310,10 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
     };
     let mol_volume_a3 = char.volume.max(1.0);
     let min_volume_a3 = MIN_TARGET_BOX_SIDE_A.powi(3);
-    let solute_limited_volume_a3 =
+    // Box volume that realizes `solute_volume_fraction` at the baseline copy count. For
+    // large molecules this sets the target box; for small ones the `min_volume_a3` floor
+    // wins, and we compensate below by scaling the copy count instead of the box.
+    let baseline_solute_volume_a3 =
         SOLUTE_COPY_COUNT as f32 * mol_volume_a3 / solute_volume_fraction;
     let mol_radius_a = mol_bounding_radius(mol);
     let molecule_limited_side_a = match mode {
@@ -297,11 +323,18 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         }
     };
     let target_side_a = min_volume_a3
-        .max(solute_limited_volume_a3)
+        .max(baseline_solute_volume_a3)
         .cbrt()
         .max(molecule_limited_side_a);
     let target_volume_a3 = target_side_a.powi(3);
     let target_cell = centered_cube(target_side_a);
+    // Hold the solute volume fraction fixed across molecules: fill the *actual* target
+    // cell (which the floors above may have forced larger than `baseline_solute_volume_a3`)
+    // to `solute_volume_fraction`, exactly as the water count fills it to the water
+    // fraction. Without this, the box floor leaves small molecules far more dilute than
+    // large ones, and the mixing score tracks molecular size instead of solubility.
+    let solute_copy_count =
+        solute_copies_for_fraction(target_volume_a3, mol_volume_a3, solute_volume_fraction);
     let compression_limit_side_a = (target_side_a * COMPRESSION_LIMIT_SCALE)
         .max(MIN_COMPRESSION_BOX_SIDE_A)
         .max(molecule_limited_side_a);
@@ -318,11 +351,11 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         box_shrink_per_step: BOX_SHRINK_PER_STEP,
     };
     let initial_cell =
-        initial_cell_for_solutes(target_side_a, mode, SOLUTE_COPY_COUNT, mol_radius_a);
+        initial_cell_for_solutes(target_side_a, mode, solute_copy_count, mol_radius_a);
 
     Ok(ShrinkingBoxSetup {
         mode,
-        solute_copy_count: SOLUTE_COPY_COUNT,
+        solute_copy_count,
         water_molecule_count,
         target_cell,
         compression_limit_cell,
