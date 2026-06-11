@@ -4,12 +4,6 @@
 //! simulation itself: snapshots cover the gradual compression from a dilute
 //! starting cell to a target-density cell.
 
-use std::{
-    collections::HashMap,
-    fmt,
-    io::{self, ErrorKind},
-};
-
 use bio_files::{
     gromacs::{
         GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
@@ -30,6 +24,12 @@ use lin_alg::{
     f64::{Quaternion, Vec3 as Vec3F64},
 };
 use na_seq::Element;
+use std::time::Instant;
+use std::{
+    collections::HashMap,
+    fmt,
+    io::{self, ErrorKind},
+};
 
 use crate::{
     gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
@@ -41,7 +41,8 @@ use crate::{
 // Number of solute molecule copies packed into each shrinking-box simulation.
 // Water account is adjusted relative to this. A higher count may produce more reliable
 // and accurate results. A smaller count results in a faster simulation.
-const SOLUTE_COPY_COUNT: usize = 32;
+// const SOLUTE_COPY_COUNT: usize = 32;
+const SOLUTE_COPY_COUNT: usize = 40;
 
 // Smallest target box side length allowed for the final packed cell, in angstroms.
 const MIN_TARGET_BOX_SIDE_A: f32 = 34.0;
@@ -82,10 +83,13 @@ const INITIAL_SOLUTE_CLEARANCE_A: f32 = 1.5;
 const INITIAL_BOX_SCALE: f32 = 3.0;
 
 // Box side-length reduction applied per MD shrink step, in angstroms.
-const BOX_SHRINK_PER_STEP: f32 = 0.006;
+// Higher values result in a briefer simulation; too high may produce anomalies in
+// the system.
+// const BOX_SHRINK_PER_STEP: f32 = 0.006;
+const BOX_SHRINK_PER_STEP: f32 = 0.012;
 
-// Relaxation length before or after driven shrinking, in MD steps.
-const EQUILIBRATION_STEPS: usize = 1_000;
+// Fixed-cell relaxation length after driven shrinking, in MD steps.
+const EQUILIBRATION_STEPS: usize = 2_000;
 
 // Interval between saved snapshots and backend energy outputs, in MD steps.
 const SNAPSHOT_INTERVAL: usize = 10;
@@ -97,7 +101,8 @@ const CONTROL_WINDOW_SNAPSHOTS: usize = 5;
 const SHRINK_CHUNK_STEPS: usize = 250;
 
 // Maximum recent mean pressure before stopping compression, in bar.
-const MAX_SHRINK_PRESSURE_BAR: f32 = 10_000.0;
+// const MAX_SHRINK_PRESSURE_BAR: f32 = 10_000.0;
+const MAX_SHRINK_PRESSURE_BAR: f32 = 20_000.0;
 // Maximum recent mean temperature before stopping compression, in kelvin.
 const MAX_TEMPERATURE_K: f32 = 450.0;
 // Maximum mass density before stopping compression, in grams per cubic centimeter.
@@ -602,6 +607,10 @@ fn mark_stop(data: &mut ShrinkingBoxMdData, reason: CompressionStopReason) {
     data.reached_compression_limit = reason == CompressionStopReason::CompressionLimit;
 }
 
+fn should_run_post_shrink_equilibration(reason: Option<CompressionStopReason>) -> bool {
+    !matches!(reason, Some(CompressionStopReason::GromacsChunkFailure))
+}
+
 fn cell_at_or_below(cell: SimBox, limit: SimBox) -> bool {
     cell.extent.x <= limit.extent.x
         && cell.extent.y <= limit.extent.y
@@ -772,9 +781,26 @@ fn run_dynamics(
     let mut md = build_initial_state(setup, placed_solutes, param_set, dev, true, false)?;
     let mut data = initial_data(setup, md.water.len());
     let shrink_steps = shrink_step_count_between(setup.initial_cell, setup.compression_limit_cell);
-    let mut equilibration_steps = 0;
 
-    for _ in 0..shrink_steps + EQUILIBRATION_STEPS {
+    for _ in 0..shrink_steps {
+        if let Some(reason) = latest_stop_reason(
+            &md.snapshots,
+            physical_atom_count(md.atoms.len(), md.water.len()),
+            max_dynamics_force(&md),
+        ) {
+            mark_stop(&mut data, reason);
+            break;
+        }
+
+        let shrank = md.shrink_cell_towards(dev, setup.compression_limit_cell, setup.shrink_cfg);
+        data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
+
+        if !shrank || cell_at_or_below(md.cell, setup.compression_limit_cell) {
+            mark_stop(&mut data, CompressionStopReason::CompressionLimit);
+        }
+
+        md.step(dev, DT, None);
+
         if data.stop_reason.is_none() {
             if let Some(reason) = latest_stop_reason(
                 &md.snapshots,
@@ -782,24 +808,17 @@ fn run_dynamics(
                 max_dynamics_force(&md),
             ) {
                 mark_stop(&mut data, reason);
-                break;
             }
-
-            let shrank =
-                md.shrink_cell_towards(dev, setup.compression_limit_cell, setup.shrink_cfg);
-            data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
-
-            if !shrank || cell_at_or_below(md.cell, setup.compression_limit_cell) {
-                mark_stop(&mut data, CompressionStopReason::CompressionLimit);
-            }
-        } else if data.reached_compression_limit {
-            equilibration_steps += 1;
         }
 
-        md.step(dev, DT, None);
-
-        if data.reached_compression_limit && equilibration_steps >= EQUILIBRATION_STEPS {
+        if data.stop_reason.is_some() {
             break;
+        }
+    }
+
+    if should_run_post_shrink_equilibration(data.stop_reason) {
+        for _ in 0..EQUILIBRATION_STEPS {
+            md.step(dev, DT, None);
         }
     }
 
@@ -847,15 +866,10 @@ fn gro_text_from_state(
     solute_mol_count: usize,
     mol_name: &str,
 ) -> io::Result<String> {
-    let offset = md.cell.bounds_low;
-    let to_nm = |posit: Vec3F32| -> Vec3F64 {
-        let posit = posit - offset;
-        Vec3F64::new(
-            posit.x as f64 / 10.0,
-            posit.y as f64 / 10.0,
-            posit.z as f64 / 10.0,
-        )
-    };
+    // Keep coordinates centered around the Molchanica cell origin. GROMACS `deform`
+    // applies its flow field relative to the coordinate origin, so translating into
+    // a 0..L frame would make compression pull from one corner.
+    let to_nm = centered_posit_nm;
     let mut atoms = Vec::new();
     let mut serial_number = 1_u32;
     let solute_atoms_per_mol = solute_atom_count / solute_mol_count.max(1);
@@ -915,6 +929,50 @@ fn gro_text_from_state(
     String::from_utf8(bytes).map_err(io::Error::other)
 }
 
+fn centered_posit_nm(posit: Vec3F32) -> Vec3F64 {
+    Vec3F64::new(
+        posit.x as f64 / 10.0,
+        posit.y as f64 / 10.0,
+        posit.z as f64 / 10.0,
+    )
+}
+
+fn append_gromacs_snapshots(
+    snapshots: &mut Vec<Snapshot>,
+    out: &GromacsOutput,
+    elapsed_ps: &mut f64,
+    steps: usize,
+) {
+    let mut new_snapshots = gromacs_frames_to_ss(out);
+    for snapshot in &mut new_snapshots {
+        snapshot.time += *elapsed_ps;
+    }
+    *elapsed_ps += steps as f64 * DT as f64;
+
+    snapshots.extend(new_snapshots);
+}
+
+fn update_gromacs_restart_input(
+    input: &mut GromacsInput,
+    out: &mut GromacsOutput,
+    context: &str,
+) -> io::Result<()> {
+    input.initial_gro = Some(out.final_gro_text.take().ok_or_else(|| {
+        io::Error::other(format!(
+            "GROMACS shrinking-box {context} did not write final coordinates."
+        ))
+    })?);
+    input.topology_override = Some(out.final_topology_text.take().ok_or_else(|| {
+        io::Error::other(format!(
+            "GROMACS shrinking-box {context} did not preserve its topology."
+        ))
+    })?);
+    input.skip_counterion_insertion = true;
+    input.minimize_energy = false;
+
+    Ok(())
+}
+
 fn run_gromacs(
     mol: &MoleculeSmall,
     setup: ShrinkingBoxSetup,
@@ -968,33 +1026,9 @@ fn run_gromacs(
     let mut current_cell = setup.initial_cell;
     let mut elapsed_ps = 0.0;
 
-    input.mdp.nsteps = EQUILIBRATION_STEPS as u64;
-    input.mdp.dt = DT;
-    input.mdp.deform = None;
-    input.mdp.gen_vel = true;
-    input.mdp.deform_init_flow = false;
-    input.minimize_energy = true;
-
-    let out = input.run()?;
-    let max_force = max_gromacs_force(&out);
-    let mut equilibration_snapshots = gromacs_frames_to_ss(&out);
-    snapshots.append(&mut equilibration_snapshots);
-    elapsed_ps += EQUILIBRATION_STEPS as f64 * DT as f64;
-
-    input.initial_gro = Some(out.final_gro_text.ok_or_else(|| {
-        io::Error::other("GROMACS shrinking-box equilibration did not write final coordinates.")
-    })?);
-    input.topology_override = Some(out.final_topology_text.ok_or_else(|| {
-        io::Error::other("GROMACS shrinking-box equilibration did not preserve its topology.")
-    })?);
-    input.skip_counterion_insertion = true;
-    input.minimize_energy = false;
-
-    if let Some(reason) = latest_stop_reason(&snapshots, atom_count, max_force) {
-        mark_stop(&mut data, reason);
-    }
-
     println!("Starting GROMACS shrinking box loop...");
+    let mut initialize_deform_flow = true;
+    let mut generate_initial_velocities = true;
     while data.stop_reason.is_none()
         && !cell_at_or_below(current_cell, setup.compression_limit_cell)
     {
@@ -1012,10 +1046,11 @@ fn run_gromacs(
             SHRINK_CHUNK_STEPS,
             DT,
         ));
-        input.mdp.gen_vel = false;
-        input.mdp.deform_init_flow = false;
+        input.mdp.gen_vel = generate_initial_velocities;
+        input.mdp.deform_init_flow = initialize_deform_flow;
+        input.minimize_energy = generate_initial_velocities;
 
-        let out = match input.run() {
+        let mut out = match input.run() {
             Ok(out) => out,
             Err(err) if !snapshots.is_empty() => {
                 eprintln!(
@@ -1028,14 +1063,12 @@ fn run_gromacs(
         };
 
         let max_force = max_gromacs_force(&out);
-        let mut chunk_snapshots = gromacs_frames_to_ss(&out);
-        for snapshot in &mut chunk_snapshots {
-            snapshot.time += elapsed_ps;
-        }
-        elapsed_ps += SHRINK_CHUNK_STEPS as f64 * DT as f64;
-
-        snapshots.extend(chunk_snapshots);
+        append_gromacs_snapshots(&mut snapshots, &out, &mut elapsed_ps, SHRINK_CHUNK_STEPS);
         current_cell = next_cell;
+        update_gromacs_restart_input(&mut input, &mut out, "chunk")?;
+        generate_initial_velocities = false;
+        initialize_deform_flow = false;
+
         data.reached_target_box |= cell_at_or_below(current_cell, setup.target_cell);
 
         if let Some(reason) = latest_stop_reason(&snapshots, atom_count, max_force) {
@@ -1047,14 +1080,21 @@ fn run_gromacs(
             mark_stop(&mut data, CompressionStopReason::CompressionLimit);
             break;
         }
+    }
 
-        input.initial_gro = Some(out.final_gro_text.ok_or_else(|| {
-            io::Error::other("GROMACS shrinking-box chunk did not write final coordinates.")
-        })?);
-        input.topology_override = Some(out.final_topology_text.ok_or_else(|| {
-            io::Error::other("GROMACS shrinking-box chunk did not preserve its topology.")
-        })?);
-        input.skip_counterion_insertion = true;
+    if should_run_post_shrink_equilibration(data.stop_reason) && !snapshots.is_empty() {
+        println!("Starting GROMACS post-shrink equilibration...");
+
+        input.mdp.nsteps = EQUILIBRATION_STEPS as u64;
+        input.mdp.dt = DT;
+        input.mdp.deform = None;
+        input.mdp.gen_vel = false;
+        input.mdp.deform_init_flow = false;
+        input.minimize_energy = false;
+
+        let mut out = input.run()?;
+        append_gromacs_snapshots(&mut snapshots, &out, &mut elapsed_ps, EQUILIBRATION_STEPS);
+        update_gromacs_restart_input(&mut input, &mut out, "post-shrink equilibration")?;
     }
 
     data.final_box_extent_a = current_cell.extent;
@@ -1079,6 +1119,8 @@ pub fn run_shrinking_box_sim(
     Vec<Snapshot>,
     Vec<ShrinkingBoxPlaybackMol>,
 )> {
+    let start = Instant::now();
+
     let (mol, mol_specific_params) = prepare_mol_for_md(mol, param_set)?;
     let setup = setup_for(&mol, mode)?;
     let template = solute_template(&mol, &mol_specific_params)?;
@@ -1140,7 +1182,7 @@ pub fn run_shrinking_box_sim(
                 &ss.water_o_posits,
                 &final_cell,
             ),
-            mixing_analysis::compute_solubility_barnes_hut(
+            mixing_analysis::compute_solubility_cell_list(
                 &ss.atom_posits[..solute_end],
                 atoms_per_solute,
                 &solubility_atom_indices,
@@ -1170,5 +1212,31 @@ pub fn run_shrinking_box_sim(
         }
     }));
 
+    let elapsed = start.elapsed().as_secs();
+    println!("\nShrinking box sim complete in {elapsed} s\n");
+
     Ok((result.data, result.snapshots, playback_mols))
+}
+
+/// A hard-coded test; no output, but prints the results.
+pub fn run_on_select_mols(dev: &ComputationDevice, param_set: &FfParamSet) {
+    let mols = [];
+
+    println!("\n------\nShrinking box sim results:\n");
+    for mol in mols {
+        let (data, _, _) = run_shrinking_box_sim(
+            mol,
+            ShrinkingBoxMode::HomogeneousMix,
+            MdBackend::Gromacs,
+            dev,
+            param_set,
+        )
+        .unwrap();
+
+        println!(
+            "Mol {}, Nominal sol: {:.4}  Comp sol: {:.4}: ",
+            mol.common.ident, 0., data.solubility_estimate,
+        )
+    }
+    println!("\n------\n");
 }
