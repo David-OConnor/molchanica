@@ -7,24 +7,24 @@
 use crate::{
     gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
     md::MdBackend,
-    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
-    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
+    molecules::{common::MoleculeCommon, small::MoleculeSmall, Atom},
+    properties::{mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md, AMU_A3_TO_G_CM3},
 };
 use bio_files::{
-    Sdf,
     gromacs::{
-        GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
         gro::{AtomGro, Gro},
         mdp::{ConstraintAlgorithm, Constraints},
         solvate::Solvent as GromacsSolvent,
+        GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
     },
     md_params::ForceFieldParams,
+    Sdf,
 };
 use dynamics::{
+    params::FfParamSet,
+    snapshot::{gromacs_frames_to_ss, Snapshot, SnapshotHandlers},
     AtomDynamics, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
     MolDynamics, ShrinkingBoxCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
-    params::FfParamSet,
-    snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::{
     f32::Vec3 as Vec3F32,
@@ -119,6 +119,9 @@ const TEMP: f32 = 300.0;
 // MD integration timestep used by both backends, in picoseconds.
 const DT: f32 = 0.001;
 
+const AVOGADRO_PER_MOL: f64 = 6.022_140_76e23;
+const A3_TO_L: f64 = 1.0e-27;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShrinkingBoxMode {
     /// Interleave OPC water and solute copies throughout the whole cell.
@@ -166,10 +169,20 @@ pub struct ShrinkingBoxMdData {
     pub mean_temperature_k: f32,
     pub mean_pressure_bar: f32,
     pub density_g_cm3: f32,
+    pub final_solute_molarity_m: f32,
     pub potential_energy_kcal: f32,
     pub nonbonded_energy_kcal: f32,
     pub solubility_estimate: f32,
     pub solubility_estimate_barnes_hut: f32,
+    pub solubility_raw_score: f32,
+    pub solubility_local_mixing: f32,
+    pub solubility_solute_dispersion: f32,
+    pub solubility_mixture_score: f32,
+    pub solubility_aggregation_factor: f32,
+    pub solubility_aggregation_penalty: f32,
+    pub solubility_largest_cluster_fraction: f32,
+    pub solubility_contacted_fraction: f32,
+    pub solubility_contact_pair_fraction: f32,
 }
 
 pub struct ShrinkingBoxPlaybackMol {
@@ -700,10 +713,20 @@ fn initial_data(setup: ShrinkingBoxSetup, water_molecule_count: usize) -> Shrink
         mean_temperature_k: 0.0,
         mean_pressure_bar: 0.0,
         density_g_cm3: 0.0,
+        final_solute_molarity_m: 0.0,
         potential_energy_kcal: 0.0,
         nonbonded_energy_kcal: 0.0,
         solubility_estimate: 0.0,
         solubility_estimate_barnes_hut: 0.0,
+        solubility_raw_score: 0.0,
+        solubility_local_mixing: 0.0,
+        solubility_solute_dispersion: 0.0,
+        solubility_mixture_score: 0.0,
+        solubility_aggregation_factor: 0.0,
+        solubility_aggregation_penalty: 0.0,
+        solubility_largest_cluster_fraction: 0.0,
+        solubility_contacted_fraction: 0.0,
+        solubility_contact_pair_fraction: 0.0,
     }
 }
 
@@ -735,6 +758,35 @@ fn add_snapshot_metrics(data: &mut ShrinkingBoxMdData, snapshots: &[Snapshot]) {
     data.density_g_cm3 = mean(&densities).unwrap_or(0.0);
     data.potential_energy_kcal = mean(&potentials).unwrap_or(0.0);
     data.nonbonded_energy_kcal = mean(&nonbonded).unwrap_or(0.0);
+}
+
+fn solute_molarity_m(copy_count: usize, cell: &SimBox) -> f32 {
+    let volume_l = cell.volume() as f64 * A3_TO_L;
+    if volume_l <= f64::EPSILON {
+        return 0.0;
+    }
+
+    (copy_count as f64 / (AVOGADRO_PER_MOL * volume_l)) as f32
+}
+
+fn add_solubility_diagnostics(
+    data: &mut ShrinkingBoxMdData,
+    diagnostics: mixing_analysis::SolubilityMixingDiagnostics,
+    barnes_hut: f32,
+    final_cell: &SimBox,
+) {
+    data.final_solute_molarity_m = solute_molarity_m(data.solute_copy_count, final_cell);
+    data.solubility_estimate = diagnostics.score;
+    data.solubility_estimate_barnes_hut = barnes_hut;
+    data.solubility_raw_score = diagnostics.raw_score;
+    data.solubility_local_mixing = diagnostics.local_mixing;
+    data.solubility_solute_dispersion = diagnostics.solute_dispersion;
+    data.solubility_mixture_score = diagnostics.mixture_score;
+    data.solubility_aggregation_factor = diagnostics.aggregation_factor;
+    data.solubility_aggregation_penalty = diagnostics.aggregation_penalty;
+    data.solubility_largest_cluster_fraction = diagnostics.largest_cluster_fraction;
+    data.solubility_contacted_fraction = diagnostics.contacted_fraction;
+    data.solubility_contact_pair_fraction = diagnostics.contact_pair_fraction;
 }
 
 fn single_atom_viewer_mol(atom: &AtomDynamics) -> MoleculeCommon {
@@ -1167,7 +1219,7 @@ pub fn run_shrinking_box_sim(
         result.data.density_g_cm3,
     );
 
-    let (solubility_estimate, solubility_estimate_barnes_hut) = {
+    let (solubility_diagnostics, solubility_estimate_barnes_hut, final_cell) = {
         let ss = result.snapshots.last().unwrap(); // todo: ERrror handling
 
         let solute_end = solute_atom_count.min(ss.atom_posits.len());
@@ -1176,7 +1228,7 @@ pub fn run_shrinking_box_sim(
         let final_cell = SimBox::new(center - half_extent, center + half_extent);
 
         (
-            mixing_analysis::compute_solubility(
+            mixing_analysis::compute_solubility_diagnostics(
                 &ss.atom_posits[..solute_end],
                 atoms_per_solute,
                 &solubility_atom_indices,
@@ -1190,13 +1242,26 @@ pub fn run_shrinking_box_sim(
                 &ss.water_o_posits,
                 &final_cell,
             ),
+            final_cell,
         )
     };
 
-    result.data.solubility_estimate = solubility_estimate;
-    result.data.solubility_estimate_barnes_hut = solubility_estimate_barnes_hut;
+    add_solubility_diagnostics(
+        &mut result.data,
+        solubility_diagnostics,
+        solubility_estimate_barnes_hut,
+        &final_cell,
+    );
+    let solubility_estimate = result.data.solubility_estimate;
     println!(
-        "\n\n---\nSolubility: {solubility_estimate:.3} BH: {solubility_estimate_barnes_hut:.3}\n\n"
+        "\n\n---\nSolubility: {solubility_estimate:.3} BH: {solubility_estimate_barnes_hut:.3}\n\
+         raw: {:.3} mix: {:.3} disp: {:.3} agg: {:.3} contact pairs: {:.3} molarity: {:.3} M\n\n",
+        result.data.solubility_raw_score,
+        result.data.solubility_local_mixing,
+        result.data.solubility_solute_dispersion,
+        result.data.solubility_aggregation_factor,
+        result.data.solubility_contact_pair_fraction,
+        result.data.final_solute_molarity_m,
     );
 
     let mut playback_mols = vec![ShrinkingBoxPlaybackMol {

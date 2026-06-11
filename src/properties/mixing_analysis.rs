@@ -13,6 +13,41 @@ const SOLUBILITY_BH_MIN_LEAF_WIDTH_A: f32 = 0.75;
 const SOLUBILITY_BH_HYDRATION_SHELL_A: f32 = SOLUBILITY_CONTACT_CUTOFF_A;
 const SOLUBILITY_BH_EXPECTED_WATER_FLOOR: f32 = 0.75;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(in crate::properties) struct SolubilityMixingDiagnostics {
+    pub score: f32,
+    pub raw_score: f32,
+    pub local_mixing: f32,
+    pub solute_dispersion: f32,
+    pub mixture_score: f32,
+    pub aggregation_factor: f32,
+    pub aggregation_penalty: f32,
+    pub largest_cluster_fraction: f32,
+    pub contacted_fraction: f32,
+    pub contact_pair_fraction: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AggregationDiagnostics {
+    factor: f32,
+    penalty: f32,
+    largest_cluster_fraction: f32,
+    contacted_fraction: f32,
+    contact_pair_fraction: f32,
+}
+
+impl Default for AggregationDiagnostics {
+    fn default() -> Self {
+        Self {
+            factor: 1.0,
+            penalty: 0.0,
+            largest_cluster_fraction: 0.0,
+            contacted_fraction: 0.0,
+            contact_pair_fraction: 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SoluteTreePoint {
     posit: Vec3F32,
@@ -281,10 +316,13 @@ fn finite_posit(posit: Vec3F32) -> bool {
     posit.x.is_finite() && posit.y.is_finite() && posit.z.is_finite()
 }
 
-fn solute_aggregation_factor(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32 {
+fn solute_aggregation_diagnostics(
+    solute_mols: &[Vec<Vec3F32>],
+    cell: &SimBox,
+) -> AggregationDiagnostics {
     let n = solute_mols.len();
     if n < 2 {
-        return 1.0;
+        return AggregationDiagnostics::default();
     }
 
     let mut parent: Vec<_> = (0..n).collect();
@@ -324,9 +362,17 @@ fn solute_aggregation_factor(solute_mols: &[Vec<Vec3F32>], cell: &SimBox) -> f32
         + 0.15 * contact_pair_fraction.sqrt())
     .clamp(0.0, 1.0);
 
-    (-SOLUBILITY_AGGREGATION_PENALTY_STRENGTH * aggregation_penalty)
+    let factor = (-SOLUBILITY_AGGREGATION_PENALTY_STRENGTH * aggregation_penalty)
         .exp()
-        .clamp(0.0, 1.0)
+        .clamp(0.0, 1.0);
+
+    AggregationDiagnostics {
+        factor,
+        penalty: aggregation_penalty,
+        largest_cluster_fraction: largest_cluster_penalty,
+        contacted_fraction,
+        contact_pair_fraction,
+    }
 }
 
 fn local_solute_water_mixing_score(
@@ -598,6 +644,7 @@ fn map_to_aqsoldb(v: f32) -> f32 {
 /// `0.000`.
 ///
 /// We use a sim cell with PBCs, so distance calculations take periodic images into account.
+#[allow(dead_code)]
 pub(in crate::properties) fn compute_solubility(
     solute_atom_posits: &[Vec3F32],
     atoms_per_solute: usize,
@@ -605,8 +652,25 @@ pub(in crate::properties) fn compute_solubility(
     water_o_posits: &[Vec3F32],
     cell: &SimBox,
 ) -> f32 {
+    compute_solubility_diagnostics(
+        solute_atom_posits,
+        atoms_per_solute,
+        solute_atom_indices,
+        water_o_posits,
+        cell,
+    )
+    .score
+}
+
+pub(in crate::properties) fn compute_solubility_diagnostics(
+    solute_atom_posits: &[Vec3F32],
+    atoms_per_solute: usize,
+    solute_atom_indices: &[usize],
+    water_o_posits: &[Vec3F32],
+    cell: &SimBox,
+) -> SolubilityMixingDiagnostics {
     if !valid_solubility_cell(cell) || solute_atom_posits.is_empty() || water_o_posits.is_empty() {
-        return 0.0;
+        return SolubilityMixingDiagnostics::default();
     }
 
     let solute_mols =
@@ -618,16 +682,28 @@ pub(in crate::properties) fn compute_solubility(
         .collect();
 
     if solute_mols.is_empty() || water_o_posits.is_empty() {
-        return 0.0;
+        return SolubilityMixingDiagnostics::default();
     }
 
-    let aggregation_factor = solute_aggregation_factor(&solute_mols, cell);
+    let aggregation = solute_aggregation_diagnostics(&solute_mols, cell);
     let local_mixing = local_solute_water_mixing_score(&solute_mols, &water_o_posits, cell);
     let solute_dispersion = solute_center_dispersion_score(&solute_mols, cell);
     let mixture_score = 0.60 * local_mixing + 0.40 * solute_dispersion;
-    let raw_score = (aggregation_factor * mixture_score).clamp(0.0, 1.0);
+    let raw_score = (aggregation.factor * mixture_score).clamp(0.0, 1.0);
+    let score = log_expanded_solubility_score(raw_score);
 
-    log_expanded_solubility_score(raw_score)
+    SolubilityMixingDiagnostics {
+        score,
+        raw_score,
+        local_mixing,
+        solute_dispersion,
+        mixture_score,
+        aggregation_factor: aggregation.factor,
+        aggregation_penalty: aggregation.penalty,
+        largest_cluster_fraction: aggregation.largest_cluster_fraction,
+        contacted_fraction: aggregation.contacted_fraction,
+        contact_pair_fraction: aggregation.contact_pair_fraction,
+    }
     // map_to_aqsoldb(res)
 }
 
