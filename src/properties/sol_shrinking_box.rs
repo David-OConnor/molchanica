@@ -4,7 +4,14 @@
 //! simulation itself: snapshots cover the gradual compression from a dilute
 //! starting cell to a target-density cell.
 
+use crate::{
+    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
+    md::MdBackend,
+    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
+    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
+};
 use bio_files::{
+    Sdf,
     gromacs::{
         GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
         gro::{AtomGro, Gro},
@@ -24,18 +31,12 @@ use lin_alg::{
     f64::{Quaternion, Vec3 as Vec3F64},
 };
 use na_seq::Element;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use std::{
     collections::HashMap,
-    fmt,
+    fmt, fs,
     io::{self, ErrorKind},
-};
-
-use crate::{
-    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
-    md::MdBackend,
-    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
-    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
 };
 
 // Number of solute molecule copies packed into each shrinking-box simulation.
@@ -1218,25 +1219,106 @@ pub fn run_shrinking_box_sim(
     Ok((result.data, result.snapshots, playback_mols))
 }
 
+fn file_stem_has_id(path: &Path, id: usize) -> bool {
+    let id = id.to_string();
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| {
+            stem.split(|c: char| !c.is_ascii_digit())
+                .any(|part| part == id)
+        })
+}
+
+fn find_sdf_by_id(path: &Path, id: usize) -> io::Result<PathBuf> {
+    let mut candidates = fs::read_dir(path)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("sdf"))
+                && file_stem_has_id(path, id)
+        })
+        .collect::<Vec<_>>();
+
+    candidates.sort();
+    candidates.into_iter().next().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::NotFound,
+            format!("No SDF file containing molecule id {id} found under {path:?}."),
+        )
+    })
+}
+
+fn load_sdf_molecule(path: &Path) -> io::Result<MoleculeSmall> {
+    let mut mol: MoleculeSmall = Sdf::load(path)?.try_into()?;
+    mol.common.update_path(path);
+    Ok(mol)
+}
+
 /// A hard-coded test; no output, but prints the results.
 pub fn run_on_select_mols(dev: &ComputationDevice, param_set: &FfParamSet) {
-    let mols = [];
+    let mols = [
+        (206, 1.2330),
+        (226, -0.1376),
+        (603, -0.6910),
+        (30, -0.7630),
+        (169, -0.8450),
+        (217, -0.9832),
+        (590, -1.7470),
+        (54, -1.7796),
+        (508, -2.7440),
+        (16, -2.4660),
+        (569, -2.8200),
+        (18, -3.4100),
+        (579, -3.8000),
+    ];
+
+    let path = PathBuf::from("C:/Users/the_a/Desktop/bio_misc/tdc_data/solubility_aqsoldb");
 
     println!("\n------\nShrinking box sim results:\n");
-    for mol in mols {
-        let (data, _, _) = run_shrinking_box_sim(
-            mol,
+    for (mol_id, nominal_solubility) in mols {
+        let mol_path = match find_sdf_by_id(&path, mol_id) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("Skipping molecule id {mol_id}: {e}");
+                continue;
+            }
+        };
+        let mol = match load_sdf_molecule(&mol_path) {
+            Ok(mol) => mol,
+            Err(e) => {
+                eprintln!("Skipping molecule id {mol_id}; unable to load {mol_path:?}: {e}");
+                continue;
+            }
+        };
+
+        let data = match run_shrinking_box_sim(
+            &mol,
             ShrinkingBoxMode::HomogeneousMix,
             MdBackend::Gromacs,
             dev,
             param_set,
-        )
-        .unwrap();
+        ) {
+            Ok((data, _, _)) => data,
+            Err(e) => {
+                eprintln!("Skipping molecule id {mol_id}; shrinking-box simulation failed: {e}");
+                continue;
+            }
+        };
 
         println!(
-            "Mol {}, Nominal sol: {:.4}  Comp sol: {:.4}: ",
-            mol.common.ident, 0., data.solubility_estimate,
-        )
+            "Mol #{mol_id} {} | Nominal sol: {nominal_solubility:.4} | Comp sol: {:.4} BH: {:.4} | raw {:.4}, mix {:.4}, disp {:.4}, agg {:.4}, contacts {:.4}, {:.3} M",
+            mol.common.ident,
+            data.solubility_estimate,
+            data.solubility_estimate_barnes_hut,
+            data.solubility_raw_score,
+            data.solubility_local_mixing,
+            data.solubility_solute_dispersion,
+            data.solubility_aggregation_factor,
+            data.solubility_contact_pair_fraction,
+            data.final_solute_molarity_m,
+        );
     }
     println!("\n------\n");
 }
