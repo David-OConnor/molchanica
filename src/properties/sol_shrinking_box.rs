@@ -21,8 +21,9 @@ use bio_files::{
     md_params::ForceFieldParams,
 };
 use dynamics::{
-    AtomDynamics, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
-    MolDynamics, ShrinkingBoxCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    AtomDynamics, ComputationDevice, FfMolType, HydrogenConstraint, Integrator, MdConfig,
+    MdOverrides, MdState, MolDynamics, ShrinkingBoxCfg, SimBox, SimBoxInit, Solvent,
+    TAU_TEMP_DEFAULT,
     params::FfParamSet,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
@@ -126,6 +127,11 @@ const TEMP: f32 = 300.0;
 
 // MD integration timestep used by both backends, in picoseconds.
 const DT: f32 = 0.001;
+
+const SHRINK_TAU_TEMP_PS: f64 = 0.05;
+const SHRINK_LINCS_ORDER: u8 = 8;
+const SHRINK_LINCS_ITER: u8 = 2;
+const PRE_SHRINK_MINIMIZATION_STEPS: usize = 5_000;
 
 const AVOGADRO_PER_MOL: f64 = 6.022_140_76e23;
 const A3_TO_L: f64 = 1.0e-27;
@@ -858,6 +864,21 @@ fn md_extra_non_water_mols(md: &MdState, placed_solutes: &PlacedSolutes) -> Vec<
         .collect()
 }
 
+fn prepare_dynamics_shrinking_state(md: &mut MdState, dev: &ComputationDevice) {
+    md.cfg.integrator = Integrator::VerletVelocity {
+        thermostat: Some(SHRINK_TAU_TEMP_PS),
+    };
+    md.cfg.hydrogen_constraint = HydrogenConstraint::Linear {
+        order: SHRINK_LINCS_ORDER,
+        iter: SHRINK_LINCS_ITER,
+    };
+
+    md.minimize_energy(dev, PRE_SHRINK_MINIMIZATION_STEPS, None);
+
+    let zero_com_drift = md.cfg.zero_com_drift;
+    md.initialize_velocities(TEMP, zero_com_drift);
+}
+
 fn run_dynamics(
     setup: ShrinkingBoxSetup,
     placed_solutes: &PlacedSolutes,
@@ -865,44 +886,46 @@ fn run_dynamics(
     dev: &ComputationDevice,
 ) -> io::Result<ShrinkingBoxBackendResult> {
     let mut md = build_initial_state(setup, placed_solutes, param_set, dev, true, false)?;
-    let mut data = initial_data(setup, md.water.len());
-    let shrink_steps = shrink_step_count_between(setup.initial_cell, setup.compression_limit_cell);
+    prepare_dynamics_shrinking_state(&mut md, dev);
 
-    for _ in 0..shrink_steps {
-        if let Some(reason) = latest_stop_reason(
-            &md.snapshots,
-            physical_atom_count(md.atoms.len(), md.water.len()),
-            max_dynamics_force(&md),
-        ) {
+    let mut data = initial_data(setup, md.water.len());
+    let atom_count = physical_atom_count(md.atoms.len(), md.water.len());
+
+    println!("Starting Dynamics shrinking box loop...");
+    while data.stop_reason.is_none() && !cell_at_or_below(md.cell, setup.compression_limit_cell) {
+        let shrink_steps_remaining =
+            shrink_step_count_between(md.cell, setup.compression_limit_cell);
+        let chunk_steps = shrink_steps_remaining.min(SHRINK_CHUNK_STEPS).max(1);
+        let mut reached_compression_limit = false;
+
+        for _ in 0..chunk_steps {
+            let shrank =
+                md.shrink_cell_towards(dev, setup.compression_limit_cell, setup.shrink_cfg);
+            data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
+
+            reached_compression_limit |=
+                !shrank || cell_at_or_below(md.cell, setup.compression_limit_cell);
+
+            md.step(dev, DT, None);
+
+            if reached_compression_limit {
+                break;
+            }
+        }
+
+        if let Some(reason) = latest_stop_reason(&md.snapshots, atom_count, max_dynamics_force(&md))
+        {
             mark_stop(&mut data, reason);
             break;
         }
 
-        let shrank = md.shrink_cell_towards(dev, setup.compression_limit_cell, setup.shrink_cfg);
-        data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
-
-        if !shrank || cell_at_or_below(md.cell, setup.compression_limit_cell) {
+        if reached_compression_limit {
             mark_stop(&mut data, CompressionStopReason::CompressionLimit);
-        }
-
-        md.step(dev, DT, None);
-
-        if data.stop_reason.is_none() {
-            if let Some(reason) = latest_stop_reason(
-                &md.snapshots,
-                physical_atom_count(md.atoms.len(), md.water.len()),
-                max_dynamics_force(&md),
-            ) {
-                mark_stop(&mut data, reason);
-            }
-        }
-
-        if data.stop_reason.is_some() {
             break;
         }
     }
 
-    if should_run_post_shrink_equilibration(data.stop_reason) {
+    if should_run_post_shrink_equilibration(data.stop_reason) && !md.snapshots.is_empty() {
         for _ in 0..EQUILIBRATION_STEPS {
             md.step(dev, DT, None);
         }
