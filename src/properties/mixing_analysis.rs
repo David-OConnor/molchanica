@@ -475,7 +475,8 @@ fn local_solute_water_mixing_score_barnes_hut(
         let shell_water = occupancy_count_score(shell_water_count, shell_expected);
         let partition_size =
             partition_size_score(node.bounds.volume(), reference_leaf_volume, solute_count);
-        let leaf_score = 0.25 * same_leaf_water + 0.55 * shell_water + 0.20 * partition_size;
+        let hydration_score = (0.25 * same_leaf_water + 0.55 * shell_water) / 0.80;
+        let leaf_score = hydration_score * (0.80 + 0.20 * partition_size);
 
         weighted_score += leaf_score * solute_count as f32;
         solute_weight += solute_count;
@@ -688,7 +689,7 @@ pub(in crate::properties) fn compute_solubility_diagnostics(
     let aggregation = solute_aggregation_diagnostics(&solute_mols, cell);
     let local_mixing = local_solute_water_mixing_score(&solute_mols, &water_o_posits, cell);
     let solute_dispersion = solute_center_dispersion_score(&solute_mols, cell);
-    let mixture_score = 0.60 * local_mixing + 0.40 * solute_dispersion;
+    let mixture_score = local_mixing * (0.60 + 0.40 * solute_dispersion);
     let raw_score = (aggregation.factor * mixture_score).clamp(0.0, 1.0);
     let score = log_expanded_solubility_score(raw_score);
 
@@ -741,4 +742,161 @@ pub(in crate::properties) fn compute_solubility_cell_list(
     let raw_score = local_solute_water_mixing_score_barnes_hut(&solute_mols, &water_o_posits, cell);
 
     log_expanded_solubility_score(raw_score)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXTREME_EPS: f32 = 1.0e-3;
+    const SLAB_HALF_WIDTH_A: f32 = 40_000.0;
+
+    struct SolubilitySnapshot {
+        solute_atom_posits: Vec<Vec3F32>,
+        water_o_posits: Vec<Vec3F32>,
+    }
+
+    fn extreme_test_cell() -> SimBox {
+        SimBox::new(
+            Vec3F32::new(-SLAB_HALF_WIDTH_A, -SLAB_HALF_WIDTH_A, -SLAB_HALF_WIDTH_A),
+            Vec3F32::new(SLAB_HALF_WIDTH_A, SLAB_HALF_WIDTH_A, SLAB_HALF_WIDTH_A),
+        )
+    }
+
+    fn vec3(x: f32, y: f32, z: f32) -> Vec3F32 {
+        Vec3F32::new(x, y, z)
+    }
+
+    fn evenly_mixed_grid_snapshot() -> SolubilitySnapshot {
+        let mut solute_atom_posits = Vec::new();
+        let mut water_o_posits = Vec::new();
+        let offsets = [-20_000.0, 20_000.0];
+
+        for &x in &offsets {
+            for &y in &offsets {
+                for &z in &offsets {
+                    solute_atom_posits.push(vec3(x, y, z));
+                    water_o_posits.push(vec3(x + 1.0, y + 1.0, z + 1.0));
+                }
+            }
+        }
+
+        SolubilitySnapshot {
+            solute_atom_posits,
+            water_o_posits,
+        }
+    }
+
+    fn split_slab_snapshot() -> SolubilitySnapshot {
+        let mut solute_atom_posits = Vec::new();
+        let mut water_o_posits = Vec::new();
+        let xy = [-20_000.0, 20_000.0];
+        let solute_z = [-24_000.0, -16_000.0];
+        let solvent_z = [16_000.0, 24_000.0];
+
+        for &x in &xy {
+            for &y in &xy {
+                for &z in &solute_z {
+                    solute_atom_posits.push(vec3(x, y, z));
+                }
+
+                for &z in &solvent_z {
+                    water_o_posits.push(vec3(x, y, z));
+                }
+            }
+        }
+
+        SolubilitySnapshot {
+            solute_atom_posits,
+            water_o_posits,
+        }
+    }
+
+    fn assert_score(name: &str, actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= EXTREME_EPS,
+            "{name}: expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn compute_solubility_extremes_for_mixed_grid_and_split_slabs() {
+        let cell = extreme_test_cell();
+        let atoms_per_solute = 1;
+        let solute_atom_indices = [0];
+
+        let mixed = evenly_mixed_grid_snapshot();
+        let mixed_diagnostics = compute_solubility_diagnostics(
+            &mixed.solute_atom_posits,
+            atoms_per_solute,
+            &solute_atom_indices,
+            &mixed.water_o_posits,
+            &cell,
+        );
+
+        assert_score(
+            "compute_solubility mixed grid",
+            compute_solubility(
+                &mixed.solute_atom_posits,
+                atoms_per_solute,
+                &solute_atom_indices,
+                &mixed.water_o_posits,
+                &cell,
+            ),
+            1.0,
+        );
+        assert_score(
+            "compute_solubility_diagnostics mixed grid",
+            mixed_diagnostics.score,
+            1.0,
+        );
+        assert_score(
+            "compute_solubility_cell_list mixed grid",
+            compute_solubility_cell_list(
+                &mixed.solute_atom_posits,
+                atoms_per_solute,
+                &solute_atom_indices,
+                &mixed.water_o_posits,
+                &cell,
+            ),
+            1.0,
+        );
+
+        let split = split_slab_snapshot();
+        let split_diagnostics = compute_solubility_diagnostics(
+            &split.solute_atom_posits,
+            atoms_per_solute,
+            &solute_atom_indices,
+            &split.water_o_posits,
+            &cell,
+        );
+
+        assert_score(
+            "compute_solubility split slabs",
+            compute_solubility(
+                &split.solute_atom_posits,
+                atoms_per_solute,
+                &solute_atom_indices,
+                &split.water_o_posits,
+                &cell,
+            ),
+            0.0,
+        );
+        assert_score(
+            "compute_solubility_diagnostics split slabs",
+            split_diagnostics.score,
+            0.0,
+        );
+        assert_score(
+            "compute_solubility_cell_list split slabs",
+            compute_solubility_cell_list(
+                &split.solute_atom_posits,
+                atoms_per_solute,
+                &solute_atom_indices,
+                &split.water_o_posits,
+                &cell,
+            ),
+            0.0,
+        );
+    }
 }

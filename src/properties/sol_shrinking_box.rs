@@ -7,24 +7,24 @@
 use crate::{
     gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
     md::MdBackend,
-    molecules::{common::MoleculeCommon, small::MoleculeSmall, Atom},
-    properties::{mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md, AMU_A3_TO_G_CM3},
+    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
+    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
 };
 use bio_files::{
+    Sdf,
     gromacs::{
+        GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
         gro::{AtomGro, Gro},
         mdp::{ConstraintAlgorithm, Constraints},
         solvate::Solvent as GromacsSolvent,
-        GromacsInput, GromacsOutput, MoleculeInput, OutputControl,
     },
     md_params::ForceFieldParams,
-    Sdf,
 };
 use dynamics::{
-    params::FfParamSet,
-    snapshot::{gromacs_frames_to_ss, Snapshot, SnapshotHandlers},
     AtomDynamics, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
     MolDynamics, ShrinkingBoxCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    params::FfParamSet,
+    snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::{
     f32::Vec3 as Vec3F32,
@@ -1374,7 +1374,7 @@ pub fn run_on_select_mols(dev: &ComputationDevice, param_set: &FfParamSet) {
 
     let path = PathBuf::from("C:/Users/the_a/Desktop/bio_misc/tdc_data/solubility_aqsoldb");
 
-    println!("\n------\nShrinking box sim results:\n");
+    let mut results = Vec::new();
     for (mol_id, nominal_solubility) in mols {
         let mol_path = match find_sdf_by_id(&path, mol_id) {
             Ok(path) => path,
@@ -1405,9 +1405,13 @@ pub fn run_on_select_mols(dev: &ComputationDevice, param_set: &FfParamSet) {
             }
         };
 
+        results.push((mol_id, mol.common.ident.clone(), nominal_solubility, data));
+    }
+
+    println!("\n------\nShrinking box sim results:\n");
+    for (mol_id, ident, nominal_solubility, data) in &results {
         println!(
-            "Mol #{mol_id} {} | Nominal sol: {nominal_solubility:.4} | Comp sol: {:.4} BH: {:.4} | raw {:.4}, mix {:.4}, disp {:.4}, agg {:.4}, contacts {:.4}, {:.3} M",
-            mol.common.ident,
+            "---Mol #{mol_id} {ident} | Nominal sol: {nominal_solubility:.4} | Comp sol: {:.4} BH: {:.4} | raw {:.4}, mix {:.4}, disp {:.4}, agg {:.4}, contacts {:.4}, {:.3} M\n------\n",
             data.solubility_estimate,
             data.solubility_estimate_barnes_hut,
             data.solubility_raw_score,

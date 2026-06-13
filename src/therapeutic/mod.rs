@@ -39,6 +39,7 @@ use std::{
 };
 
 use bio_files::md_params::ForceFieldParams;
+use na_seq::Element;
 
 #[cfg(not(feature = "train"))]
 use crate::therapeutic::train::MODEL_INCLUDE;
@@ -346,12 +347,89 @@ pub struct TherapeuticProperties {
     pub breakdown_products: Vec<MoleculeSmall>,
 }
 
+/// Counts disconnected components (fragments) in a molecule's covalent-bond graph,
+/// traversing every atom via the adjacency list. Only non-hydrogen atoms seed a new
+/// component, so isolated counterions (e.g. a lone `[Br-]` or metal cation) still count
+/// as their own fragment while stray hydrogens never inflate the total. A clean,
+/// fully-bonded molecule returns 1.
+fn count_connected_components(mol: &MoleculeSmall) -> usize {
+    let adj = &mol.common.adjacency_list;
+    let atoms = &mol.common.atoms;
+    let n = adj.len();
+    if n == 0 {
+        return 0;
+    }
+
+    let is_heavy = |i: usize| -> bool {
+        atoms
+            .get(i)
+            .map_or(true, |a| a.element != Element::Hydrogen)
+    };
+
+    let mut visited = vec![false; n];
+    let mut stack = Vec::new();
+    let mut components = 0;
+
+    for start in 0..n {
+        if visited[start] || !is_heavy(start) {
+            continue;
+        }
+        components += 1;
+        visited[start] = true;
+        stack.push(start);
+
+        while let Some(node) = stack.pop() {
+            for &neighbor in &adj[node] {
+                if neighbor < n && !visited[neighbor] {
+                    visited[neighbor] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+    }
+
+    components
+}
+
+/// Rejects "split" molecules — those whose covalent-bond graph has more than one
+/// disconnected component (salts, counterions, and the multi-component SMILES mixtures
+/// that arrive through some TDC/AqSolDB rows). A single measured target value cannot be
+/// attributed to one structure when several are present, so split molecules are barred
+/// from every therapeutic pipeline: training, validation, evaluation, and inference.
+///
+/// Logs an explanation and returns an error when the molecule is split. Batch-loading
+/// callers (training/eval data load) skip the offending molecule; single-molecule
+/// inference callers propagate the error.
+pub(in crate::therapeutic) fn ensure_single_component(mol: &MoleculeSmall) -> io::Result<()> {
+    let n_components = count_connected_components(mol);
+    if n_components > 1 {
+        let ident = &mol.common.ident;
+        let smiles = mol.get_smiles().unwrap_or("");
+        eprintln!(
+            "\n--Skipping split molecule (ident: '{ident}', {n_components} disconnected \
+             components, SMILES: '{smiles}'): multi-component molecules (salts/mixtures) \
+             are not supported by the therapeutic pipelines, since one target value cannot \
+             be attributed to a single structure.\n"
+        );
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            format!("split molecule with {n_components} disconnected components"),
+        ));
+    }
+    Ok(())
+}
+
 impl TherapeuticProperties {
     pub fn new(
         mol: &MoleculeSmall,
         models: &mut HashMap<DatasetTdc, Infer>,
         ff_params: &ForceFieldParams,
     ) -> io::Result<Self> {
+        // Defensive guard: never infer on split molecules (salts/counterions/mixtures).
+        // This is the app-level inference entry point; rejecting here gives a single clean
+        // error instead of one failure per dataset further down in `infer_general`.
+        ensure_single_component(mol)?;
+
         println!("Inferring ADME properties...");
         let start = Instant::now();
 

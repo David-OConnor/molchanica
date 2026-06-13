@@ -64,7 +64,7 @@ use crate::{
     molecules::{conformers::resolve_conformer, small::MoleculeSmall},
     screening::pharmacophore::Pharmacophore,
     therapeutic::{
-        DatasetTdc, gnn,
+        DatasetTdc, ensure_single_component, gnn,
         gnn::{
             GRAPH_ANALYSIS_FEATURE_VERSION,
             atom_bond::{
@@ -1528,6 +1528,13 @@ pub(in crate::therapeutic) fn load_training_data(
                 }
             }
         };
+
+        // Defensive guard: never train/validate/evaluate on split molecules (salts,
+        // counterions, or multi-component mixtures whose SMILES contained `.` separators).
+        // The guard logs an explanation; we skip the row so the remaining splits stay valid.
+        if ensure_single_component(&mol).is_err() {
+            continue;
+        }
 
         // Note: We are skipping populating mol-specific parameters. These are generally dihedrals,
         // but less commonly valence angles.

@@ -20,7 +20,7 @@ use crate::{
         small::MoleculeSmall,
     },
     therapeutic::{
-        DatasetTdc,
+        DatasetTdc, ensure_single_component,
         gnn::{
             GRAPH_ANALYSIS_FEATURE_VERSION,
             atom_bond::{
@@ -237,6 +237,9 @@ impl Infer {
     ) -> io::Result<f32> {
         #[allow(unused)]
         let start = Instant::now();
+
+        // Defensive guard: never infer on split molecules (salts/counterions/mixtures).
+        ensure_single_component(mol)?;
 
         if feat_params.len() != self.global_input_dim {
             return Err(io::Error::other(format!(
@@ -565,6 +568,9 @@ impl Infer {
         let mut feat_dim = 0;
 
         for mol in mols {
+            // Defensive guard: never infer on split molecules (salts/counterions/mixtures).
+            ensure_single_component(mol)?;
+
             let conformer = if self.conformation_enabled {
                 resolve_conformer(mol, ff_params)
             } else {
