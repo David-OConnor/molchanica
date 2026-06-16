@@ -8,6 +8,7 @@
 
 // todo: Consider reorging, then trimming down this list.
 
+pub mod antibody;
 pub mod bond_inference;
 pub mod cam;
 pub mod cli;

@@ -30,6 +30,7 @@ mod util;
 mod cli;
 mod reflection;
 
+pub mod antibody;
 mod cam;
 mod drug_design;
 mod gromacs;

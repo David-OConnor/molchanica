@@ -1273,13 +1273,12 @@ fn md_property_runners(
     }
 
     if run_shrinking_box {
-        // todo temp
-        // sol_shrinking_box::run_on_select_mols(&state.dev, &state.ff_param_set);
+        // sol_shrinking_box::runner::run_on_select_mols(&state.dev, &state.ff_param_set);
 
         match sol_shrinking_box::run_shrinking_box_sim(
             &mol,
-            sol_shrinking_box::ShrinkingBoxMode::HomogeneousMix,
-            // sol_shrinking_box::ShrinkingBoxMode::WaterSoluteLayers
+            // sol_shrinking_box::ShrinkingBoxMode::HomogeneousMix,
+            sol_shrinking_box::ShrinkingBoxMode::WaterSoluteLayers,
             state.to_save.md_backend,
             &state.dev,
             &state.ff_param_set,
