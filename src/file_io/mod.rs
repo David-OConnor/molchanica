@@ -97,7 +97,7 @@ impl State {
             "gro" => {
                 self.volatile.md_local.viewer.load_gro(path)?;
 
-                self.update_history(path, OpenType::MdMols);
+                self.update_history(path, OpenType::MdMols, None);
             }
             "prmtop" => {
                 // todo
@@ -195,7 +195,7 @@ impl State {
 
                         self.load_density(dm);
 
-                        self.update_history(path, OpenType::Map);
+                        self.update_history(path, OpenType::Map, None);
                         // Save the open history.
                         self.update_save_prefs();
 
@@ -300,7 +300,7 @@ impl State {
         let dm = DensityMap::load(path)?;
         self.load_density(dm);
 
-        self.update_history(path, OpenType::Map);
+        self.update_history(path, OpenType::Map, None);
         // Save the open history.
         self.update_save_prefs();
 
@@ -312,7 +312,7 @@ impl State {
         let dm = DensityMap::load_sf_or_mtz(path, gemmi_path())?;
         self.load_density(dm);
 
-        self.update_history(path, OpenType::Map);
+        self.update_history(path, OpenType::Map, None);
         // Save the open history.
         self.update_save_prefs();
 
@@ -392,7 +392,7 @@ impl State {
 
                 // self.to_save.last_frcmod_opened = Some(path.to_owned());
                 // self.update_history(path, OpenType::Frcmod, mol_name.as_str());
-                self.update_history(path, OpenType::Frcmod);
+                self.update_history(path, OpenType::Frcmod, None);
                 // Save the open history.
                 self.update_save_prefs();
 
@@ -414,7 +414,7 @@ impl State {
         let traj = Trajectory::new(path)?;
         self.trajectories.push(traj);
 
-        self.update_history(path, OpenType::Trajectory);
+        self.update_history(path, OpenType::Trajectory, None);
         self.update_save_prefs();
 
         Ok(())
@@ -432,7 +432,7 @@ impl State {
             self.to_save.md_config
         );
 
-        self.update_history(path, OpenType::MdParams);
+        self.update_history(path, OpenType::MdParams, None);
         self.update_save_prefs();
 
         Ok(())
@@ -457,7 +457,7 @@ impl State {
 
         // self.pharmacophores.push(ph);
 
-        self.update_history(path, OpenType::Map);
+        self.update_history(path, OpenType::Map, Some(ph.name));
         // Save the open history.
         self.update_save_prefs();
 
@@ -586,7 +586,16 @@ impl State {
             }
         };
 
-        self.update_history(path, open_type);
+        // For molecule file types (Mol2, SDF, XYZ, PDBQT, some CIF variants etc.), record the
+        // molecule's identifier in the open history.
+        let ident = match open_type {
+            OpenType::Ligand | OpenType::Pocket => {
+                self.active_mol().map(|m| m.common().ident.clone())
+            }
+            _ => None,
+        };
+
+        self.update_history(path, open_type, ident);
         // Save the open history.
         self.update_save_prefs();
 
@@ -698,7 +707,7 @@ impl State {
     }
 
     /// Add a history event, or update its timestamp and restor the list.
-    pub fn update_history(&mut self, path: &Path, type_: OpenType) {
+    pub fn update_history(&mut self, path: &Path, type_: OpenType, ident: Option<String>) {
         let mut first_i = None;
         let mut to_delete = Vec::new();
 
@@ -728,7 +737,7 @@ impl State {
         } else {
             self.to_save
                 .open_history
-                .push(OpenHistory::new(path, type_));
+                .push(OpenHistory::new(path, type_, ident));
         }
     }
 
@@ -930,7 +939,7 @@ impl State {
         }
 
         if let Some(p) = path {
-            self.update_history(p, open_type);
+            self.update_history(p, open_type, Some(ident.clone()));
         }
 
         // Save the open history.

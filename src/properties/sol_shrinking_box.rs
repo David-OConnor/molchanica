@@ -62,9 +62,21 @@ const MIN_COMPRESSION_BOX_SIDE_A: f32 = 24.0;
 // Fraction of the target side length used as the compression-limit side length.
 // Lower values make the resulting box smaller, with tighter compression.
 const COMPRESSION_LIMIT_SCALE: f32 = 0.55;
+// Layered slabs get an extra final X-only compression after Y/Z packing. This multiplier
+// applies only to that final X push: `2.0` asks the X shrink to continue for twice the
+// current distance, subject to `MIN_LAYER_X_PUSH_BOX_SIDE_A` and molecule-size clamping.
+const LAYER_X_PUSH_DURATION_SCALE: f32 = 2.0;
+// Layered-only lower bound for the final X side length. Lower values permit a smaller,
+// higher-pressure final layered box, but may trigger stop guards earlier.
+const MIN_LAYER_X_PUSH_BOX_SIDE_A: f32 = MIN_COMPRESSION_BOX_SIDE_A * 0.5;
+// If true, slab mode first compresses Y/Z to pack the solute layer before the final X push.
+// If false, slab mode only compresses along X, pushing the water and solute slabs together.
+const SLAB_COMPRESS_LATERALLY: bool = true;
 
 // Approximate volume occupied by one water molecule, in cubic angstroms.
 const WATER_MOLAR_VOLUME_A3: f32 = 29.97;
+// Extra OPC waters added after the mode-specific target water volume is computed.
+const WATER_MOLECULE_COUNT_SCALE: f32 = 1.20;
 
 // Target solute volume fraction for homogeneous solute/water packing. Lower values
 // enlarge the final target box for the same solute volume and therefore add more water.
@@ -105,6 +117,9 @@ const INITIAL_BOX_SCALE: f32 = 3.0;
 // the system.
 // const BOX_SHRINK_PER_STEP: f32 = 0.006;
 const BOX_SHRINK_PER_STEP: f32 = 0.012;
+// Use a slower final X push for layered slabs, giving the solvent/solute interface
+// more steps to relax as it is compressed together.
+const LAYER_X_PUSH_SHRINK_PER_STEP: f32 = BOX_SHRINK_PER_STEP * 0.5;
 
 // Fixed-cell relaxation length after driven shrinking, in MD steps.
 const EQUILIBRATION_STEPS: usize = 2_000;
@@ -220,6 +235,7 @@ struct ShrinkingBoxSetup {
     water_molecule_count: usize,
     target_cell: SimBox,
     compression_limit_cell: SimBox,
+    layer_x_push_min_side_a: f32,
     initial_cell: SimBox,
     shrink_cfg: ShrinkingBoxCfg,
 }
@@ -370,13 +386,16 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         .max(MIN_COMPRESSION_BOX_SIDE_A)
         .max(molecule_limited_side_a);
     let compression_limit_cell = centered_cube(compression_limit_side_a);
+    let layer_x_push_min_side_a = MIN_LAYER_X_PUSH_BOX_SIDE_A.max(molecule_limited_side_a);
     let target_water_volume_a3 = match mode {
         // Leave headroom for solute excluded volume and driven compression.
         ShrinkingBoxMode::HomogeneousMix => target_volume_a3 * HOMOGENEOUS_WATER_VOLUME_FRACTION,
         ShrinkingBoxMode::WaterSoluteLayers => target_volume_a3 * LAYER_WATER_VOLUME_FRACTION,
     };
-    let water_molecule_count =
-        ((target_water_volume_a3 / WATER_MOLAR_VOLUME_A3).round() as usize).max(1);
+    let water_molecule_count = ((target_water_volume_a3 * WATER_MOLECULE_COUNT_SCALE
+        / WATER_MOLAR_VOLUME_A3)
+        .round() as usize)
+        .max(1);
     let shrink_cfg = ShrinkingBoxCfg {
         initial_box_scale: INITIAL_BOX_SCALE,
         box_shrink_per_step: BOX_SHRINK_PER_STEP,
@@ -390,6 +409,7 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         water_molecule_count,
         target_cell,
         compression_limit_cell,
+        layer_x_push_min_side_a,
         initial_cell,
         shrink_cfg,
     })
@@ -703,8 +723,16 @@ fn layer_yz_pack_cell(setup: ShrinkingBoxSetup) -> SimBox {
 }
 
 fn layer_x_push_cell(current_cell: SimBox, setup: ShrinkingBoxSetup) -> SimBox {
+    let default_x_limit_a = setup.compression_limit_cell.extent.x;
+    let current_x_a = current_cell.extent.x;
+    let x_shrink_a = (current_x_a - default_x_limit_a).max(0.0);
+    let extended_x_limit_a = current_x_a - x_shrink_a * LAYER_X_PUSH_DURATION_SCALE.max(1.0);
+    let x_limit_a = extended_x_limit_a
+        .max(setup.layer_x_push_min_side_a)
+        .min(default_x_limit_a);
+
     centered_cell_with_extent(Vec3F32::new(
-        setup.compression_limit_cell.extent.x,
+        x_limit_a,
         current_cell.extent.y,
         current_cell.extent.z,
     ))
@@ -722,10 +750,14 @@ fn latest_layer_pack_handoff_reason(snapshots: &[Snapshot]) -> Option<Compressio
         .then_some(CompressionStopReason::Pressure)
 }
 
-fn shrink_step_count_between(initial_cell: SimBox, target_cell: SimBox) -> usize {
+fn shrink_step_count_between(
+    initial_cell: SimBox,
+    target_cell: SimBox,
+    shrink_per_step: f32,
+) -> usize {
     let shrink_needed = initial_cell.extent - target_cell.extent;
     let max_shrink = shrink_needed.x.max(shrink_needed.y).max(shrink_needed.z);
-    (max_shrink / BOX_SHRINK_PER_STEP.max(f32::EPSILON)).ceil() as usize
+    (max_shrink / shrink_per_step.max(f32::EPSILON)).ceil() as usize
 }
 
 fn shrink_cell_by_amount(current_cell: SimBox, limit_cell: SimBox, shrink_a: f32) -> SimBox {
@@ -938,16 +970,22 @@ fn run_dynamics_shrink_phase(
     data: &mut ShrinkingBoxMdData,
     atom_count: usize,
     phase_target_cell: SimBox,
+    box_shrink_per_step: f32,
     layer_pack_handoff: bool,
     mark_compression_limit_on_target: bool,
 ) {
     while data.stop_reason.is_none() && !cell_at_or_below(md.cell, phase_target_cell) {
-        let shrink_steps_remaining = shrink_step_count_between(md.cell, phase_target_cell);
+        let shrink_steps_remaining =
+            shrink_step_count_between(md.cell, phase_target_cell, box_shrink_per_step);
         let chunk_steps = shrink_steps_remaining.min(SHRINK_CHUNK_STEPS).max(1);
         let mut reached_phase_target = false;
+        let shrink_cfg = ShrinkingBoxCfg {
+            box_shrink_per_step,
+            ..setup.shrink_cfg
+        };
 
         for _ in 0..chunk_steps {
-            let shrank = md.shrink_cell_towards(dev, phase_target_cell, setup.shrink_cfg);
+            let shrank = md.shrink_cell_towards(dev, phase_target_cell, shrink_cfg);
             data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
 
             reached_phase_target |= !shrank || cell_at_or_below(md.cell, phase_target_cell);
@@ -1007,22 +1045,26 @@ fn run_dynamics(
                 &mut data,
                 atom_count,
                 setup.compression_limit_cell,
+                BOX_SHRINK_PER_STEP,
                 false,
                 true,
             );
         }
         ShrinkingBoxMode::WaterSoluteLayers => {
-            println!("Starting Dynamics Y/Z layer packing phase...");
-            run_dynamics_shrink_phase(
-                &mut md,
-                dev,
-                setup,
-                &mut data,
-                atom_count,
-                layer_yz_pack_cell(setup),
-                true,
-                false,
-            );
+            if SLAB_COMPRESS_LATERALLY {
+                println!("Starting Dynamics Y/Z layer packing phase...");
+                run_dynamics_shrink_phase(
+                    &mut md,
+                    dev,
+                    setup,
+                    &mut data,
+                    atom_count,
+                    layer_yz_pack_cell(setup),
+                    BOX_SHRINK_PER_STEP,
+                    true,
+                    false,
+                );
+            }
 
             if data.stop_reason.is_none() {
                 println!("Starting Dynamics X layer compression phase...");
@@ -1035,6 +1077,7 @@ fn run_dynamics(
                     &mut data,
                     atom_count,
                     x_push_cell,
+                    LAYER_X_PUSH_SHRINK_PER_STEP,
                     false,
                     true,
                 );
@@ -1208,6 +1251,7 @@ fn run_gromacs_shrink_phase(
     atom_count: usize,
     setup_target_cell: SimBox,
     phase_target_cell: SimBox,
+    box_shrink_per_step: f32,
     layer_pack_handoff: bool,
     mark_compression_limit_on_target: bool,
     initialize_deform_flow: &mut bool,
@@ -1217,7 +1261,7 @@ fn run_gromacs_shrink_phase(
         let next_cell = shrink_cell_by_amount(
             *current_cell,
             phase_target_cell,
-            BOX_SHRINK_PER_STEP * SHRINK_CHUNK_STEPS as f32,
+            box_shrink_per_step * SHRINK_CHUNK_STEPS as f32,
         );
 
         input.mdp.nsteps = SHRINK_CHUNK_STEPS as u64;
@@ -1347,6 +1391,7 @@ fn run_gromacs(
                 atom_count,
                 setup.target_cell,
                 setup.compression_limit_cell,
+                BOX_SHRINK_PER_STEP,
                 false,
                 true,
                 &mut initialize_deform_flow,
@@ -1354,21 +1399,24 @@ fn run_gromacs(
             )?;
         }
         ShrinkingBoxMode::WaterSoluteLayers => {
-            println!("Starting GROMACS Y/Z layer packing phase...");
-            run_gromacs_shrink_phase(
-                &mut input,
-                &mut snapshots,
-                &mut elapsed_ps,
-                &mut current_cell,
-                &mut data,
-                atom_count,
-                setup.target_cell,
-                layer_yz_pack_cell(setup),
-                true,
-                false,
-                &mut initialize_deform_flow,
-                &mut generate_initial_velocities,
-            )?;
+            if SLAB_COMPRESS_LATERALLY {
+                println!("Starting GROMACS Y/Z layer packing phase...");
+                run_gromacs_shrink_phase(
+                    &mut input,
+                    &mut snapshots,
+                    &mut elapsed_ps,
+                    &mut current_cell,
+                    &mut data,
+                    atom_count,
+                    setup.target_cell,
+                    layer_yz_pack_cell(setup),
+                    BOX_SHRINK_PER_STEP,
+                    true,
+                    false,
+                    &mut initialize_deform_flow,
+                    &mut generate_initial_velocities,
+                )?;
+            }
 
             if data.stop_reason.is_none() {
                 println!("Starting GROMACS X layer compression phase...");
@@ -1383,6 +1431,7 @@ fn run_gromacs(
                     atom_count,
                     setup.target_cell,
                     x_push_cell,
+                    LAYER_X_PUSH_SHRINK_PER_STEP,
                     false,
                     true,
                     &mut initialize_deform_flow,

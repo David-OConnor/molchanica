@@ -530,6 +530,10 @@ pub struct PopupState {
     pub residue_selector: bool,
     pub rama_plot: bool,
     pub recent_files: bool,
+    /// Current page in the recent-files popup.
+    pub recent_files_page: usize,
+    /// Filename filter text for the recent-files popup.
+    pub recent_files_filter: String,
     pub metadata: Option<(MolType, usize)>,
     pub alignment: bool,
     pub alignment_screening: bool,

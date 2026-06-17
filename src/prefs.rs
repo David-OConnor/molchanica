@@ -142,6 +142,7 @@ pub struct OpenHistory {
     pub timestamp: DateTime<Utc>,
     pub path: PathBuf,
     pub type_: OpenType,
+    pub ident: Option<String>,
     /// Only applicable for molecules and similar. A single central position.
     /// todo: We may wish to add per-atom positions later.
     pub position: Option<Vec3>,
@@ -170,6 +171,7 @@ impl Encode for OpenHistory {
 
         self.path.encode(encoder)?;
         self.type_.encode(encoder)?;
+        self.ident.encode(encoder)?;
         self.position.encode(encoder)?;
         self.last_session.encode(encoder)?;
 
@@ -182,6 +184,7 @@ impl<T> Decode<T> for OpenHistory {
         let ts = i64::decode(decoder)?;
         let path = PathBuf::decode(decoder)?;
         let type_ = OpenType::decode(decoder)?;
+        let ident = Option::<String>::decode(decoder)?;
         let position = Option::<Vec3>::decode(decoder)?;
         let last_session = bool::decode(decoder)?;
 
@@ -192,6 +195,7 @@ impl<T> Decode<T> for OpenHistory {
                 .ok_or_else(|| DecodeError::OtherString("invalid timestamp".to_string()))?,
             path,
             type_,
+            ident,
             position,
             last_session,
         })
@@ -209,10 +213,11 @@ impl<'de, C> BorrowDecode<'de, C> for OpenHistory {
 
 impl OpenHistory {
     // pub fn new(path: &Path, type_: OpenType, position: Option<Vec3>) -> Self {
-    pub fn new(path: &Path, type_: OpenType) -> Self {
+    pub fn new(path: &Path, type_: OpenType, ident: Option<String>) -> Self {
         Self {
             timestamp: Utc::now(),
             path: path.to_owned(),
+            ident,
             type_,
             position: None,
             last_session: true,
