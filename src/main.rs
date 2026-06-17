@@ -42,6 +42,7 @@ mod mol_editor;
 mod mol_manip;
 mod molecules;
 mod orca;
+mod prefs_file_format;
 mod properties;
 mod screening;
 mod selection;

@@ -4,12 +4,14 @@
 //! simulation itself: snapshots cover the gradual compression from a dilute
 //! starting cell to a target-density cell.
 
-use crate::{
-    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
-    md::MdBackend,
-    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
-    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
+use std::{
+    collections::HashMap,
+    fmt, fs,
+    io::{self, ErrorKind},
+    path::{Path, PathBuf},
+    time::Instant,
 };
+
 use bio_files::{
     Sdf,
     gromacs::{
@@ -32,12 +34,12 @@ use lin_alg::{
     f64::{Quaternion, Vec3 as Vec3F64},
 };
 use na_seq::Element;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use std::{
-    collections::HashMap,
-    fmt, fs,
-    io::{self, ErrorKind},
+
+use crate::{
+    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
+    md::MdBackend,
+    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
+    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
 };
 
 // Baseline number of solute molecule copies. Molecules large enough that their own
