@@ -115,7 +115,7 @@ pub fn dock(
         // For now at least. Constrained seems to be blowing up proteins in general, not just
         // for docking.
         hydrogen_constraint: HydrogenConstraint::Flexible,
-        ..state.to_save.md_config.clone()
+        ..state.to_save.md.config.clone()
     };
 
     // todo: Examine and revamp which peptide atoms are included in the sim.

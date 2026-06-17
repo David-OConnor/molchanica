@@ -42,7 +42,6 @@ mod mol_editor;
 mod mol_manip;
 mod molecules;
 mod orca;
-mod prefs_file_format;
 mod properties;
 mod screening;
 mod selection;
@@ -123,20 +122,20 @@ fn main() {
 
     {
         // Set these UI strings for numerical values up after loading prefs
-        state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
+        state.volatile.md_local.run_time = state.to_save.md.num_steps as f32 * state.to_save.md.dt;
         state.ui.ph_input = state.to_save.ph.to_string();
 
         state
             .ui
             .md
-            .sync(&state.to_save.md_config, state.to_save.md_dt);
+            .sync(&state.to_save.md.config, state.to_save.md.dt);
 
-        state.ui.md.langevin_γ = match state.to_save.md_config.integrator {
+        state.ui.md.langevin_γ = match state.to_save.md.config.integrator {
             Integrator::LangevinMiddle { gamma } => gamma.to_string(),
             _ => "0.".to_string(),
         };
 
-        state.ui.md.temp_tau = match state.to_save.md_config.integrator {
+        state.ui.md.temp_tau = match state.to_save.md.config.integrator {
             Integrator::VerletVelocity { thermostat } => match thermostat {
                 Some(tau) => tau.to_string(),
                 None => "0.".to_string(),
@@ -145,10 +144,10 @@ fn main() {
         };
 
         // Graphics settings
-        state.graphics_settings.msaa_samples = state.to_save.msaa as u8 as u32;
-        state.graphics_settings.ambient_occlusion = state.to_save.ambient_occlusion;
-        state.graphics_settings.edge_cueing = state.to_save.edge_cueing;
-        state.graphics_settings.depth_aware_halos = state.to_save.depth_aware_halos;
+        state.graphics_settings.msaa_samples = state.to_save.graphics.msaa as u8 as u32;
+        state.graphics_settings.ambient_occlusion = state.to_save.graphics.ambient_occlusion;
+        state.graphics_settings.edge_cueing = state.to_save.graphics.edge_cueing;
+        state.graphics_settings.depth_aware_halos = state.to_save.graphics.depth_aware_halos;
     }
 
     match load_lipid_templates() {

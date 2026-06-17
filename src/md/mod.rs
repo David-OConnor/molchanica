@@ -136,7 +136,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     state.trajectories.push(Trajectory::new_in_memory(
         snaps,
         format!("In-memory run {}", run_n + 1),
-        state.to_save.md_dt,
+        state.to_save.md.dt,
     ));
 
     // Auto-save the mol set as a GRO file alongside the trajectory files.
@@ -733,7 +733,7 @@ impl State {
         };
 
         for _ in 0..MD_STEPS_PER_APPLICATION_FRAME {
-            if md.step_count >= self.to_save.num_md_steps as usize {
+            if md.step_count >= self.to_save.md.num_steps as usize {
                 println!(
                     "\nMD computation time: {} \n Total run time: {} ms",
                     md.computation_time().unwrap(),
@@ -743,7 +743,7 @@ impl State {
                 post_run_cleanup(self, scene, engine_updates);
                 break;
             }
-            md.step(&self.dev, self.to_save.md_dt, None);
+            md.step(&self.dev, self.to_save.md.dt, None);
         }
     }
 }
@@ -781,10 +781,10 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         &MdConfig {
             solvent: Solvent::None,
             max_init_relaxation_iters: None,
-            ..state.to_save.md_config.clone()
+            ..state.to_save.md.config.clone()
         }
     } else {
-        &state.to_save.md_config
+        &state.to_save.md.config
     };
 
     let alchemical = state
@@ -1204,7 +1204,7 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
     // todo: Set a loading indicator, and trigger the build next GUI frame.
     move_cam_to_active_mol(state, scene, center, updates);
 
-    match state.to_save.md_backend {
+    match state.to_save.md.backend {
         MdBackend::Dynamics => {
             handle_success(
                 &mut state.ui,

@@ -585,49 +585,49 @@ fn graphics_settings(
 ) {
     let mut changed = false;
 
-    let msaa_prev = state.to_save.msaa;
+    let msaa_prev = state.to_save.graphics.msaa;
     ComboBox::from_id_salt(10)
         .width(40.)
-        .selected_text(state.to_save.msaa.to_str())
+        .selected_text(state.to_save.graphics.msaa.to_str())
         .show_ui(ui, |ui| {
             ui.selectable_value(
-                &mut state.to_save.msaa,
+                &mut state.to_save.graphics.msaa,
                 MsaaSetting::None,
                 MsaaSetting::None.to_str(),
             );
             ui.selectable_value(
-                &mut state.to_save.msaa,
+                &mut state.to_save.graphics.msaa,
                 MsaaSetting::Four,
                 MsaaSetting::Four.to_str(),
             );
         });
 
-    if state.to_save.msaa != msaa_prev {
+    if state.to_save.graphics.msaa != msaa_prev {
         state.update_save_prefs();
 
-        state.graphics_settings.msaa_samples = state.to_save.msaa as u32;
+        state.graphics_settings.msaa_samples = state.to_save.graphics.msaa as u32;
         changed = true;
     }
 
     ui.add_space(COL_SPACING);
 
     ui.label("Ambient occlusion");
-    let mut ao_en = state.to_save.ambient_occlusion == AmbientOcclusion::Ssao;
+    let mut ao_en = state.to_save.graphics.ambient_occlusion == AmbientOcclusion::Ssao;
     if ui.checkbox(&mut ao_en, "").changed() {
-        state.to_save.ambient_occlusion = if ao_en {
+        state.to_save.graphics.ambient_occlusion = if ao_en {
             AmbientOcclusion::Ssao
         } else {
             AmbientOcclusion::None
         };
 
-        state.graphics_settings.ambient_occlusion = state.to_save.ambient_occlusion;
+        state.graphics_settings.ambient_occlusion = state.to_save.graphics.ambient_occlusion;
         changed = true;
     }
 
     ui.add_space(COL_SPACING);
     {
         // todo: I don't like this constant mul.
-        let mut val = (state.to_save.edge_cueing.unwrap_or_default() * 100.) as u16;
+        let mut val = (state.to_save.graphics.edge_cueing.unwrap_or_default() * 100.) as u16;
         let prev = val;
         ui.spacing_mut().slider_width = 160.;
 
@@ -635,13 +635,13 @@ fn graphics_settings(
         ui.add(Slider::new(&mut val, 0..=300));
 
         if val != prev {
-            state.to_save.edge_cueing = if val == 0 {
+            state.to_save.graphics.edge_cueing = if val == 0 {
                 None
             } else {
                 Some(val as f32 / 100.)
             };
 
-            state.graphics_settings.edge_cueing = state.to_save.edge_cueing;
+            state.graphics_settings.edge_cueing = state.to_save.graphics.edge_cueing;
             changed = true;
         }
     }
@@ -650,7 +650,7 @@ fn graphics_settings(
     // todo: DRY. Helper?
     {
         // todo: I don't like this constant mul.
-        let mut val = (state.to_save.depth_aware_halos.unwrap_or_default() * 1000.) as u16;
+        let mut val = (state.to_save.graphics.depth_aware_halos.unwrap_or_default() * 1000.) as u16;
         let prev = val;
         ui.spacing_mut().slider_width = 160.;
 
@@ -658,13 +658,13 @@ fn graphics_settings(
         ui.add(Slider::new(&mut val, 0..=100));
 
         if val != prev {
-            state.to_save.depth_aware_halos = if val == 0 {
+            state.to_save.graphics.depth_aware_halos = if val == 0 {
                 None
             } else {
                 Some(val as f32 / 1000.)
             };
 
-            state.graphics_settings.depth_aware_halos = state.to_save.depth_aware_halos;
+            state.graphics_settings.depth_aware_halos = state.to_save.graphics.depth_aware_halos;
             changed = true;
         }
     }
@@ -698,13 +698,14 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut Eng
             .changed()
         {
             if let Ok(v) = &mut state.ui.movement_speed_input.parse::<u8>() {
-                state.to_save.movement_speed = *v;
+                state.to_save.control_settings.movement_speed = *v;
                 scene.input_settings.move_sens = *v as f32;
 
                 state.update_save_prefs();
             } else {
                 // reset
-                state.ui.movement_speed_input = state.to_save.movement_speed.to_string();
+                state.ui.movement_speed_input =
+                    state.to_save.control_settings.movement_speed.to_string();
             }
         }
 
@@ -715,13 +716,14 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut Eng
             .changed()
         {
             if let Ok(v) = &mut state.ui.rotation_sens_input.parse::<u8>() {
-                state.to_save.rotation_sens = *v;
+                state.to_save.control_settings.rotation_sens = *v;
                 scene.input_settings.rotate_sens = *v as f32 / 100.;
 
                 state.update_save_prefs();
             } else {
                 // reset
-                state.ui.rotation_sens_input = state.to_save.rotation_sens.to_string();
+                state.ui.rotation_sens_input =
+                    state.to_save.control_settings.rotation_sens.to_string();
             }
         }
 
@@ -734,26 +736,28 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut Eng
             .changed()
         {
             if let Ok(v) = &mut state.ui.mol_move_sens_input.parse::<u8>() {
-                state.to_save.mol_move_sens = *v;
+                state.to_save.control_settings.mol_move_sens = *v;
                 state.update_save_prefs();
             } else {
                 // reset
-                state.ui.mol_move_sens_input = state.to_save.mol_move_sens.to_string();
+                state.ui.mol_move_sens_input =
+                    state.to_save.control_settings.mol_move_sens.to_string();
             }
         }
 
         ui.add_space(COL_SPACING / 2.);
         if ui.button("Reset sensitivities").clicked() {
-            state.to_save.movement_speed = MOVEMENT_SENS as u8;
-            state.ui.movement_speed_input = state.to_save.movement_speed.to_string();
+            state.to_save.control_settings.movement_speed = MOVEMENT_SENS as u8;
+            state.ui.movement_speed_input =
+                state.to_save.control_settings.movement_speed.to_string();
             scene.input_settings.move_sens = MOVEMENT_SENS;
 
-            state.to_save.rotation_sens = (ROTATE_SENS * 100.) as u8;
-            state.ui.rotation_sens_input = state.to_save.rotation_sens.to_string();
+            state.to_save.control_settings.rotation_sens = (ROTATE_SENS * 100.) as u8;
+            state.ui.rotation_sens_input = state.to_save.control_settings.rotation_sens.to_string();
             scene.input_settings.rotate_sens = ROTATE_SENS;
 
-            state.to_save.mol_move_sens = (SENS_MOL_MOVE_SCROLL * 1_000.) as u8;
-            state.ui.mol_move_sens_input = state.to_save.mol_move_sens.to_string();
+            state.to_save.control_settings.mol_move_sens = (SENS_MOL_MOVE_SCROLL * 1_000.) as u8;
+            state.ui.mol_move_sens_input = state.to_save.control_settings.mol_move_sens.to_string();
 
             state.update_save_prefs();
         }

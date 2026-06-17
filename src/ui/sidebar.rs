@@ -1103,7 +1103,7 @@ fn md_property_runners(
         // todo: for testing, let the UI control this.
         match crystal::run_crystal_sim(
             &mol,
-            state.to_save.md_backend,
+            state.to_save.md.backend,
             &state.dev,
             &state.ff_param_set,
         ) {
@@ -1138,7 +1138,7 @@ fn md_property_runners(
     if run_water_sol_sim_mix {
         match water_sol::run_sol_sim(
             &mol,
-            state.to_save.md_backend, // todo: for testing, let the UI control this.
+            state.to_save.md.backend, // todo: for testing, let the UI control this.
             &state.dev,
             &state.ff_param_set,
         ) {
@@ -1209,7 +1209,7 @@ fn md_property_runners(
     if run_water_sol_sim_layers {
         match water_sol_mix::run_boundary_layer_sol_sim(
             &mol,
-            state.to_save.md_backend,
+            state.to_save.md.backend,
             &state.dev,
             &state.ff_param_set,
         ) {
@@ -1279,7 +1279,7 @@ fn md_property_runners(
             &mol,
             // sol_shrinking_box::ShrinkingBoxMode::HomogeneousMix,
             sol_shrinking_box::ShrinkingBoxMode::WaterSoluteLayers,
-            state.to_save.md_backend,
+            state.to_save.md.backend,
             &state.dev,
             &state.ff_param_set,
         ) {

@@ -422,14 +422,14 @@ impl State {
 
     /// Open a GROMACS MD params file. This configures MD run params.
     pub fn open_mdp(&mut self, path: &Path) -> io::Result<()> {
-        self.to_save.md_config = MdConfig::load_from_mdp(path)?;
+        self.to_save.md.config = MdConfig::load_from_mdp(path)?;
 
-        self.ui.md.sync(&self.to_save.md_config, self.to_save.md_dt);
+        self.ui.md.sync(&self.to_save.md.config, self.to_save.md.dt);
 
         // todo temp
         println!(
             "\nLoaded MdConfig from MDP: {:?}\n\n",
-            self.to_save.md_config
+            self.to_save.md.config
         );
 
         self.update_history(path, OpenType::MdParams, None);

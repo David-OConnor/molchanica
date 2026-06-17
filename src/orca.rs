@@ -70,7 +70,7 @@ pub fn update_snapshots(state: &mut State, out: DynamicsOutput) {
             md.snapshots = Vec::new();
 
             for (i, step) in out.trajectory.iter().enumerate() {
-                let time = i as f32 * state.to_save.md_dt * 1_000.;
+                let time = i as f32 * state.to_save.md.dt * 1_000.;
 
                 // todo: You still need to reassign the atoms to this
                 // todo for the playback.

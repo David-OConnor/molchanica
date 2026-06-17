@@ -242,7 +242,7 @@ pub(in crate::ui) fn editor(
                     &state.dev,
                     &mut state.mol_editor,
                     &state.ff_param_set,
-                    &state.to_save.md_config,
+                    &state.to_save.md.config,
                 ) {
                     Ok(d) => state.mol_editor.md.md = Some(d),
                     Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
@@ -334,7 +334,7 @@ pub(in crate::ui) fn editor(
                     &state.dev,
                     &mut state.mol_editor,
                     &state.ff_param_set,
-                    &state.to_save.md_config,
+                    &state.to_save.md.config,
                 ) {
                     Ok(md) => {
                         state.mol_editor.md.md = Some(md);

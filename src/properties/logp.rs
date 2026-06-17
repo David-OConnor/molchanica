@@ -209,7 +209,7 @@ pub fn run_alchemical(
     _scene: &mut Scene,
     _updates: &mut EngineUpdates,
 ) -> Result<f32, ParamError> {
-    if state.to_save.md_backend != MdBackend::Dynamics {
+    if state.to_save.md.backend != MdBackend::Dynamics {
         println!(
             "LogP alchemical free energy currently runs on the built-in dynamics backend (CPU),\
              ignoring the active non-dynamics backend for this workflow."

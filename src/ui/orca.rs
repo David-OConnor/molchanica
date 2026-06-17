@@ -267,13 +267,13 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                     TaskType::MbisCharges => Task::MbisCharges(Default::default()),
                     TaskType::MolDynamics => Task::MolDynamics(Dynamics {
                         // Convert ps to fs.
-                        timestep: state.to_save.md_dt * 1_000., // ps to fs.
-                        init_vel: state.to_save.md_config.temp_target,
+                        timestep: state.to_save.md.dt * 1_000., // ps to fs.
+                        init_vel: state.to_save.md.config.temp_target,
                         thermostat: Thermostat::Csvr,
-                        thermostat_temp: state.to_save.md_config.temp_target,
+                        thermostat_temp: state.to_save.md.config.temp_target,
                         thermostat_timecon: 10., // between 10 and 100 generally.
                         traj_out_dir: PathBuf::from_str("out_traj.xyz").unwrap(),
-                        steps: state.to_save.num_md_steps,
+                        steps: state.to_save.md.num_steps,
                     })
                 };
 
