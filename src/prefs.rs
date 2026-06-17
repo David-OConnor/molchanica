@@ -334,7 +334,7 @@ impl Default for UiPrefs {
 ///
 /// Note that this contains things which often fit cleanly in other state structs like `StateUi`,
 /// but are here due to our save mechanic.
-#[derive(Clone, PartialEq, Encode, Decode)]
+#[derive(Clone, PartialEq)]
 pub struct ToSave {
     pub per_mol: HashMap<String, PerMolToSave>,
     pub open_history: Vec<OpenHistory>,
