@@ -178,6 +178,20 @@ fn conformation_summary_features(
     }
 }
 
+fn empty_analysis_features(
+    conformer: Option<&Conformer>,
+    analysis_tools: &GnnAnalysisTools,
+) -> Vec<f32> {
+    let conformer_summary = conformation_summary_features(conformer, analysis_tools);
+    let base_feature_count = analysis_tools
+        .feature_dim()
+        .saturating_sub(conformer_summary.len());
+
+    let mut features = vec![0.0; base_feature_count];
+    features.extend(conformer_summary);
+    features
+}
+
 fn setup_edge_feats(num_nodes: usize, dist_mat: &[f32]) -> (Vec<f32>, Vec<f32>) {
     // Edge features and adjacency (fully connected; all pairs connected).
     let n_sq = num_nodes.pow(2);
@@ -292,10 +306,11 @@ impl GraphDataSpacial {
         analysis_tools: &GnnAnalysisTools,
         conformer: Option<&Conformer>,
     ) -> io::Result<Self> {
-        let conformer_summary = conformation_summary_features(conformer, analysis_tools);
-
         let Some(char) = mol.characterization.as_ref() else {
-            return Ok(Self::empty_with_analysis(conformer_summary));
+            return Ok(Self::empty_with_analysis(empty_analysis_features(
+                conformer,
+                analysis_tools,
+            )));
         };
 
         let atom_posits: Vec<_> = mol.common.atoms.iter().map(|atom| atom.posit).collect();
@@ -361,7 +376,10 @@ impl GraphDataSpacial {
 
         let num_nodes = nodes.len();
         if num_nodes == 0 {
-            return Ok(Self::empty_with_analysis(conformer_summary));
+            return Ok(Self::empty_with_analysis(empty_analysis_features(
+                conformer,
+                analysis_tools,
+            )));
         }
 
         // Precompute all pairwise Euclidean distances (symmetric).
@@ -399,7 +417,7 @@ impl GraphDataSpacial {
         }
         let mut analysis_features =
             non_nn_ml::graph_analysis_features(analysis_tools, &base_labels, &analysis_adj);
-        analysis_features.extend(conformer_summary);
+        analysis_features.extend(conformation_summary_features(conformer, analysis_tools));
 
         let (edge_feats, adj) = setup_edge_feats(num_nodes, &dist_mat);
 
@@ -413,5 +431,19 @@ impl GraphDataSpacial {
             edge_feats,
             num_nodes,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_analysis_features_keep_configured_width() {
+        let tools = non_nn_ml::spacial_graph_analysis_tools();
+        let features = empty_analysis_features(None, &tools);
+
+        assert_eq!(features.len(), tools.feature_dim());
+        assert!(features.iter().all(|value| *value == 0.0));
     }
 }

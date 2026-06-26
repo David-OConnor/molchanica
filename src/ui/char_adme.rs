@@ -167,42 +167,68 @@ fn char_basics(
         );
 
         ui.add_space(COL_SPACING / 2.);
+    });
 
-        if button!(ui, "LogP sim", COLOR_ACTION, "Estimate LogP by performing a simulation of the molecule \
-                        in water and " )
-            .clicked()
+    // todo: This is temp in its form for solubility etc sims
+    ui.horizontal_wrapped(|ui| {
+        if button!(
+            ui,
+            "LogP sim",
+            COLOR_ACTION,
+            "Estimate LogP by performing a simulation of the molecule \
+                        in water and "
+        )
+        .clicked()
         {
             *run_logp_sim = true;
         }
 
-        if button!(ui, "Crystal sim", COLOR_ACTION, "Estimate solubility by performing a simulation of the molecule \
-                        as a crystal of itself, with no solvent. Display the results. " )
-            .clicked()
+        if button!(
+            ui,
+            "Crystal sim",
+            COLOR_ACTION,
+            "Estimate solubility by performing a simulation of the molecule \
+                        as a crystal of itself, with no solvent. Display the results. "
+        )
+        .clicked()
         {
             *run_crystal_sim = true;
         }
 
-        if button!(ui, "Water sol sim", COLOR_ACTION, "Estimate solubility in water. " )
-            .clicked()
+        if button!(
+            ui,
+            "Water sol sim",
+            COLOR_ACTION,
+            "Estimate solubility in water. "
+        )
+        .clicked()
         {
             *run_water_sol_sim = true;
         }
 
-        if button!(ui, "Layer sim", COLOR_ACTION, "Run a boundary-layer solute/water simulation. " )
-            .clicked()
+        if button!(
+            ui,
+            "Layer sim",
+            COLOR_ACTION,
+            "Run a boundary-layer solute/water simulation. "
+        )
+        .clicked()
         {
             *run_water_sol_sim_layers = true;
         }
 
-        if button!(ui, "Shrinking box sim", COLOR_ACTION, "Run a gradually compressed water/solute simulation. " )
-            .clicked()
+        if button!(
+            ui,
+            "Shrinking box sim",
+            COLOR_ACTION,
+            "Run a gradually compressed water/solute simulation. "
+        )
+        .clicked()
         {
             *run_shrinking_box = true;
         }
-
-
-        ui.add_space(COL_SPACING / 2.);
     });
+    // todo end temp sol sim etc btns
 
     char_item(
         ui,
