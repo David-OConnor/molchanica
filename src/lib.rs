@@ -1,20 +1,19 @@
 #![cfg(feature = "train")]
 #![recursion_limit = "256"] // todo: Troubleshooting a strange error with the  WGPU backend.
 
-//! Experimenting with giving the ML training access to Molecule related  data
+//! We expose here components which would make sense to be called by training or other
+//! *external* modules. The only current use of this is for our ML training and evaluation executable.
 //!
-//! We expose here components which would make sense to be called byt training or other
-//! *external* modules.
+//! This includes much of the application, as it's directly or indirectly used
+//! in the training executable. Wee should not, declare any modules here not used by our training pipeline.
 
 // todo: Consider reorging, then trimming down this list.
 
-pub mod antibody;
 pub mod bond_inference;
 pub mod cam;
 pub mod cli;
 pub mod docking;
 pub mod drawing;
-pub mod drug_design;
 pub mod file_io;
 pub mod gromacs;
 pub mod inputs;

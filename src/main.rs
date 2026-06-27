@@ -32,6 +32,7 @@ mod reflection;
 
 pub mod antibody;
 mod cam;
+mod crystal;
 mod drug_design;
 mod gromacs;
 mod lod_generalization;
