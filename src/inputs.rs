@@ -374,6 +374,31 @@ fn handle_mouse_button(
     }
 }
 
+fn cycle_primary_view(state: &mut State, redraw: &mut RedrawFlags, forward: bool) {
+    let peptide_only_scene = state.volatile.active_mol.is_none()
+        && state.peptide.is_some()
+        && state.ligands.is_empty()
+        && state.nucleic_acids.is_empty()
+        && state.lipids.is_empty();
+
+    if matches!(state.volatile.active_mol, Some((MolType::Peptide, _))) || peptide_only_scene {
+        state.ui.mol_view_peptide = if forward {
+            state.ui.mol_view_peptide.next()
+        } else {
+            state.ui.mol_view_peptide.prev()
+        };
+        redraw.peptide = true;
+    } else {
+        state.ui.mol_view = if forward {
+            state.ui.mol_view.next_non_peptide()
+        } else {
+            state.ui.mol_view.prev_non_peptide()
+        };
+        redraw.ligand = true;
+        redraw.na = true;
+        redraw.lipid = true;
+    }
+}
 /// Handles keyboard input from either device, or window events.
 fn handle_physical_key(
     state: &mut State,
@@ -474,9 +499,7 @@ fn handle_physical_key(
                 }
                 KeyCode::BracketLeft => match op_mode {
                     OperatingMode::Primary => {
-                        state.ui.mol_view = state.ui.mol_view.prev();
-
-                        redraw.set_all();
+                        cycle_primary_view(state, redraw, false);
                     }
                     OperatingMode::MolEditor => {
                         state.ui.mol_view = state.ui.mol_view.prev_editor();
@@ -486,9 +509,7 @@ fn handle_physical_key(
                 },
                 KeyCode::BracketRight => match op_mode {
                     OperatingMode::Primary => {
-                        state.ui.mol_view = state.ui.mol_view.next();
-
-                        redraw.set_all();
+                        cycle_primary_view(state, redraw, true);
                     }
                     OperatingMode::MolEditor => {
                         state.ui.mol_view = state.ui.mol_view.next_editor();

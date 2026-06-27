@@ -210,6 +210,7 @@ pub struct UiPrefs {
     pub selection: Selection,
     pub cam_snapshots: Vec<CamSnapshot>,
     pub mol_view: MoleculeView,
+    pub mol_view_peptide: MoleculeView,
     pub view_sel_level: ViewSelLevel,
     pub visibility: Visibility,
     pub ui_visibility: UiVisibility,
@@ -223,7 +224,8 @@ impl Default for UiPrefs {
         Self {
             selection: Default::default(),
             cam_snapshots: Default::default(),
-            mol_view: Default::default(),
+            mol_view: MoleculeView::DEFAULT_NON_PEPTIDE,
+            mol_view_peptide: MoleculeView::default(),
             view_sel_level: Default::default(),
             near_sel_only: Default::default(),
             near_lig_only: Default::default(),
@@ -552,7 +554,8 @@ impl State {
 
         self.to_save.ui_prefs.selection = self.ui.selection.clone();
         self.to_save.ui_prefs.cam_snapshots = self.cam_snapshots.clone();
-        self.to_save.ui_prefs.mol_view = self.ui.mol_view;
+        self.to_save.ui_prefs.mol_view = self.ui.mol_view.non_peptide_or_default();
+        self.to_save.ui_prefs.mol_view_peptide = self.ui.mol_view_peptide;
         self.to_save.ui_prefs.view_sel_level = self.ui.view_sel_level;
         self.to_save.ui_prefs.near_sel_only = self.ui.show_near_sel_only;
         self.to_save.ui_prefs.near_lig_only = self.ui.show_near_lig_only;
@@ -599,7 +602,8 @@ impl State {
 
         self.ui.selection = self.to_save.ui_prefs.selection.clone();
         self.cam_snapshots = self.to_save.ui_prefs.cam_snapshots.clone();
-        self.ui.mol_view = self.to_save.ui_prefs.mol_view;
+        self.ui.mol_view = self.to_save.ui_prefs.mol_view.non_peptide_or_default();
+        self.ui.mol_view_peptide = self.to_save.ui_prefs.mol_view_peptide;
         self.ui.view_sel_level = self.to_save.ui_prefs.view_sel_level;
         self.ui.show_near_sel_only = self.to_save.ui_prefs.near_sel_only;
         self.ui.show_near_lig_only = self.to_save.ui_prefs.near_lig_only;

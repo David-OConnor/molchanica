@@ -155,7 +155,7 @@ fn chain_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                 .clicked()
             {
                 chain.visible = !chain.visible;
-                if state.ui.mol_view == MoleculeView::Ribbon {
+                if state.ui.mol_view_peptide == MoleculeView::Ribbon {
                     state.volatile.flags.update_ss_mesh = true;
                 } else {
                     state.volatile.flags.ss_mesh_dirty = true;
@@ -380,7 +380,7 @@ fn add_aa_seq(selection: &mut Selection, seq_text: &str, ui: &mut Ui, redraw: &m
 
 pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, include_res: bool) {
     let help_text = "(Hotkeys:  ;  and  '  )";
-    ui.label("View/Select:").on_hover_text(help_text);
+    ui.label("View/Sel:").on_hover_text(help_text);
     let prev_view = state.ui.view_sel_level;
 
     let mut views = vec![ViewSelLevel::Atom, ViewSelLevel::Bond];
@@ -403,7 +403,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
 
     if state.ui.view_sel_level != prev_view {
         *redraw = true;
-        if state.ui.mol_view == MoleculeView::Ribbon {
+        if state.ui.mol_view_peptide == MoleculeView::Ribbon {
             state.volatile.flags.update_ss_mesh = true;
         } else {
             state.volatile.flags.ss_mesh_dirty = true;
@@ -468,7 +468,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                     state.volatile.flags.update_sas_coloring = true;
                 }
 
-                if state.ui.mol_view == MoleculeView::Ribbon {
+                if state.ui.mol_view_peptide == MoleculeView::Ribbon {
                     state.volatile.flags.update_ss_mesh = true;
                 } else {
                     state.volatile.flags.ss_mesh_dirty = true;

@@ -139,8 +139,12 @@ pub fn handle_cmd(
     // Note: We don't have show and hide for the varous display items; this sets the display.
     if let Some(caps) = re_show.captures(&input) {
         let mode = &caps[1];
+        let view = mode.parse()?;
 
-        state.ui.mol_view = mode.parse()?;
+        state.ui.mol_view_peptide = view;
+        if view.is_non_peptide() {
+            state.ui.mol_view = view;
+        }
         *redraw = true;
         return Ok("Complete".to_owned());
     }

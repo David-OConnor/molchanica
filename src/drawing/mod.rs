@@ -303,6 +303,30 @@ pub enum MoleculeView {
 }
 
 impl MoleculeView {
+    pub const PEPTIDE_OPTIONS: [Self; 7] = [
+        Self::Backbone,
+        Self::Sticks,
+        Self::BallAndStick,
+        Self::Ribbon,
+        Self::SpaceFill,
+        Self::Surface,
+        Self::Dots,
+    ];
+    pub const NON_PEPTIDE_OPTIONS: [Self; 3] = [Self::Sticks, Self::BallAndStick, Self::SpaceFill];
+    pub const DEFAULT_NON_PEPTIDE: Self = Self::BallAndStick;
+
+    pub fn is_non_peptide(self) -> bool {
+        Self::NON_PEPTIDE_OPTIONS.contains(&self)
+    }
+
+    pub fn non_peptide_or_default(self) -> Self {
+        if self.is_non_peptide() {
+            self
+        } else {
+            Self::DEFAULT_NON_PEPTIDE
+        }
+    }
+
     pub fn next(self) -> Self {
         match self {
             Self::Backbone => Self::Sticks,
@@ -344,6 +368,24 @@ impl MoleculeView {
             Self::BallAndStick => Self::Sticks,
             Self::SpaceFill => Self::BallAndStick,
             _ => Self::Sticks,
+        }
+    }
+
+    pub fn next_non_peptide(self) -> Self {
+        match self.non_peptide_or_default() {
+            Self::Sticks => Self::BallAndStick,
+            Self::BallAndStick => Self::SpaceFill,
+            Self::SpaceFill => Self::Sticks,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn prev_non_peptide(self) -> Self {
+        match self.non_peptide_or_default() {
+            Self::Sticks => Self::SpaceFill,
+            Self::BallAndStick => Self::Sticks,
+            Self::SpaceFill => Self::BallAndStick,
+            _ => unreachable!(),
         }
     }
 }
@@ -1419,8 +1461,9 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         .count();
 
     let ui = &state.ui;
+    let mol_view = ui.mol_view_peptide;
 
-    if ui.mol_view == MoleculeView::Ribbon {
+    if mol_view == MoleculeView::Ribbon {
         // Flush any deferred chain-visibility change into a full rebuild.
         if state.volatile.flags.ss_mesh_dirty {
             state.volatile.flags.update_ss_mesh = true;
@@ -1435,7 +1478,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     }
 
     // Note that this renders over a sticks model.
-    if !state.ui.visibility.hide_protein && ui.mol_view == MoleculeView::Dots {
+    if !state.ui.visibility.hide_protein && mol_view == MoleculeView::Dots {
         draw_dots(
             &mut state.volatile.flags.update_sas_mesh,
             state.volatile.flags.sas_mesh_created,
@@ -1444,7 +1487,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     }
 
     // todo: Consider if you handle this here, or in a sep fn.
-    if !state.ui.visibility.hide_protein && ui.mol_view == MoleculeView::Surface {
+    if !state.ui.visibility.hide_protein && mol_view == MoleculeView::Surface {
         draw_sa_surface(
             &mut state.volatile.flags.update_sas_mesh,
             state.volatile.flags.sas_mesh_created,
@@ -1461,10 +1504,8 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     };
 
     // If sticks view, draw water molecules as balls.
-    if matches!(
-        ui.mol_view,
-        MoleculeView::Sticks | MoleculeView::BallAndStick
-    ) && !state.ui.visibility.hide_water
+    if matches!(mol_view, MoleculeView::Sticks | MoleculeView::BallAndStick)
+        && !state.ui.visibility.hide_water
     {
         for (i_atom, atom) in mol.common.atoms.iter().enumerate() {
             if atom.hetero {
@@ -1509,7 +1550,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
 
     // Draw atoms.
     if matches!(
-        ui.mol_view,
+        mol_view,
         MoleculeView::BallAndStick | MoleculeView::SpaceFill
     ) {
         for (i_atom, atom) in mol.common.atoms.iter().enumerate() {
@@ -1518,7 +1559,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
                 if let Some(role) = atom.role {
                     water = role == AtomRole::Water;
                 }
-                if !water && ui.mol_view == MoleculeView::SpaceFill {
+                if !water && mol_view == MoleculeView::SpaceFill {
                     // Don't draw VDW spheres for hetero atoms; draw as sticks.
                     continue;
                 }
@@ -1544,13 +1585,12 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
             }
 
             if let Some(role) = atom.role {
-                if (state.ui.visibility.hide_sidechains
-                    || state.ui.mol_view == MoleculeView::Backbone)
+                if (state.ui.visibility.hide_sidechains || mol_view == MoleculeView::Backbone)
                     && matches!(role, AtomRole::Sidechain | AtomRole::H_Sidechain)
                 {
                     continue;
                 }
-                if (state.ui.visibility.hide_water || ui.mol_view == MoleculeView::SpaceFill)
+                if (state.ui.visibility.hide_water || mol_view == MoleculeView::SpaceFill)
                     && role == AtomRole::Water
                 {
                     continue;
@@ -1567,7 +1607,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
 
             // todo: Use your new peptide field for filtered, instead of computing these each time.
 
-            let (mut radius, mesh) = match ui.mol_view {
+            let (mut radius, mesh) = match mol_view {
                 MoleculeView::SpaceFill => (atom.element.vdw_radius(), MESH_SPACEFILL_SPHERE),
                 _ => match atom.element {
                     Element::Hydrogen => (BALL_STICK_RADIUS_H, MESH_BALL_STICK_SPHERE),
@@ -1694,14 +1734,14 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
 
     // Draw bonds.
     for (i_bond, bond) in mol.common.bonds.iter().enumerate() {
-        if ui.mol_view == MoleculeView::Backbone && !bond.is_backbone {
+        if mol_view == MoleculeView::Backbone && !bond.is_backbone {
             continue;
         }
 
         let atom_0 = &mol.common.atoms[bond.atom_0];
         let atom_1 = &mol.common.atoms[bond.atom_1];
 
-        if ui.mol_view == MoleculeView::Ribbon && !atom_0.hetero && !atom_1.hetero {
+        if mol_view == MoleculeView::Ribbon && !atom_0.hetero && !atom_1.hetero {
             continue;
         }
 
@@ -1709,7 +1749,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         let atom_1_posit = mol.common.atom_posits[bond.atom_1];
 
         // Don't draw bonds if on the spacefill view, and the atoms aren't hetero.
-        if ui.mol_view == MoleculeView::SpaceFill && !atom_0.hetero && !atom_1.hetero {
+        if mol_view == MoleculeView::SpaceFill && !atom_0.hetero && !atom_1.hetero {
             continue;
         }
 
@@ -1735,7 +1775,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         }
 
         // Assuming water won't be bonded to the main molecule.
-        if (state.ui.visibility.hide_sidechains || state.ui.mol_view == MoleculeView::Backbone)
+        if (state.ui.visibility.hide_sidechains || mol_view == MoleculeView::Backbone)
             && let Some(role_0) = atom_0.role
             && let Some(role_1) = atom_1.role
             && (role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain)
@@ -1902,7 +1942,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
             MolType::Peptide,
             &mol.common.ident,
             false,
-            state.ui.mol_view != MoleculeView::BallAndStick,
+            mol_view != MoleculeView::BallAndStick,
             neighbor_posit,
             false,
             to_hydrogen,
@@ -1910,7 +1950,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
 
         if !ents_new.is_empty()
             && !matches!(
-                ui.mol_view,
+                mol_view,
                 MoleculeView::BallAndStick | MoleculeView::SpaceFill
             )
         {
@@ -1934,17 +1974,14 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     // todo: This incorrectly hides hetero-only H bonds.
     if !state.ui.visibility.hide_h_bonds
         && !state.ui.visibility.hide_protein
-        && !matches!(
-            state.ui.mol_view,
-            MoleculeView::SpaceFill | MoleculeView::Ribbon
-        )
+        && !matches!(mol_view, MoleculeView::SpaceFill | MoleculeView::Ribbon)
     {
         for bond in &mol.bonds_hydrogen {
             let atom_donor = &mol.common.atoms[bond.donor];
             let atom_acceptor = &mol.common.atoms[bond.acceptor];
 
             // todo: DRY with above.
-            if (state.ui.visibility.hide_sidechains || state.ui.mol_view == MoleculeView::Backbone)
+            if (state.ui.visibility.hide_sidechains || mol_view == MoleculeView::Backbone)
                 && let Some(role_0) = atom_donor.role
                 && let Some(role_1) = atom_acceptor.role
                 && (role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain)

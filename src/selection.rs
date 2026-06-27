@@ -95,6 +95,15 @@ const SELECTION_DIST_THRESH_BOND: f32 = 0.6; // e.g. ball + stick, or stick.
 const SELECTION_DIST_THRESH_LARGE: f32 = 1.2; // e.g. VDW views like spheres.
 
 const SEL_NEAR_PAD: f32 = 4.;
+fn selection_dist_thresh(view: MoleculeView, view_sel_level: ViewSelLevel) -> f32 {
+    match view {
+        MoleculeView::SpaceFill => SELECTION_DIST_THRESH_LARGE,
+        _ => match view_sel_level {
+            ViewSelLevel::Bond => SELECTION_DIST_THRESH_BOND,
+            _ => SELECTION_DIST_THRESH_SMALL,
+        },
+    }
+}
 
 #[derive(Debug)]
 struct Nearest {
@@ -196,7 +205,7 @@ pub fn find_sel_from_cursor_ray(
             &atoms_pep[*i_atom]
         };
 
-        if (ui.visibility.hide_sidechains || matches!(ui.mol_view, MoleculeView::Backbone))
+        if (ui.visibility.hide_sidechains || matches!(ui.mol_view_peptide, MoleculeView::Backbone))
             && let Some(role) = atom.role
             && (role == AtomRole::Sidechain || role == AtomRole::H_Sidechain)
         {
@@ -210,7 +219,7 @@ pub fn find_sel_from_cursor_ray(
             if role == AtomRole::Water
                 && (ui.visibility.hide_water
                     || matches!(
-                        ui.mol_view,
+                        ui.mol_view_peptide,
                         MoleculeView::SpaceFill | MoleculeView::Backbone
                     ))
             {
@@ -833,23 +842,20 @@ pub(crate) fn handle_selection_attempt(
     // If we don't scale the selection distance appropriately, an atom etc
     // behind the desired one, but closer to the ray, may be selected; likely
     // this is undesired.
-    let dist_thresh = match state.ui.mol_view {
-        MoleculeView::SpaceFill => SELECTION_DIST_THRESH_LARGE,
-        _ => match state.ui.view_sel_level {
-            ViewSelLevel::Bond => SELECTION_DIST_THRESH_BOND,
-            _ => SELECTION_DIST_THRESH_SMALL,
-        },
-    };
+    let dist_thresh_peptide =
+        selection_dist_thresh(state.ui.mol_view_peptide, state.ui.view_sel_level);
+    let dist_thresh_mol = selection_dist_thresh(state.ui.mol_view, state.ui.view_sel_level);
 
     let (sel_atoms, dist_atoms) = {
         let atoms_along_ray_pep =
-            points_along_ray_atom_peptide(selected_ray, pep_atoms, dist_thresh);
+            points_along_ray_atom_peptide(selected_ray, pep_atoms, dist_thresh_peptide);
 
-        let atoms_along_ray_lig = points_along_ray_atom(selected_ray, &lig_atoms, dist_thresh);
-        let atoms_along_ray_na = points_along_ray_atom(selected_ray, &na_atoms, dist_thresh);
-        let atoms_along_ray_lipid = points_along_ray_atom(selected_ray, &lipid_atoms, dist_thresh);
+        let atoms_along_ray_lig = points_along_ray_atom(selected_ray, &lig_atoms, dist_thresh_mol);
+        let atoms_along_ray_na = points_along_ray_atom(selected_ray, &na_atoms, dist_thresh_mol);
+        let atoms_along_ray_lipid =
+            points_along_ray_atom(selected_ray, &lipid_atoms, dist_thresh_mol);
         let atoms_along_ray_pocket =
-            points_along_ray_atom(selected_ray, &pocket_atoms, dist_thresh);
+            points_along_ray_atom(selected_ray, &pocket_atoms, dist_thresh_mol);
 
         find_sel_from_cursor_ray(
             &atoms_along_ray_pep,
@@ -904,15 +910,15 @@ pub(crate) fn handle_selection_attempt(
         }
 
         let atoms_along_ray_pep =
-            points_along_ray_bond_peptide(selected_ray, &pep_bonds, pep_atoms, dist_thresh);
+            points_along_ray_bond_peptide(selected_ray, &pep_bonds, pep_atoms, dist_thresh_peptide);
         let atoms_along_ray_lig =
-            points_along_ray_bond(selected_ray, &lig_bonds, &lig_atoms, dist_thresh);
+            points_along_ray_bond(selected_ray, &lig_bonds, &lig_atoms, dist_thresh_mol);
         let atoms_along_ray_lipid =
-            points_along_ray_bond(selected_ray, &lipid_bonds, &lipid_atoms, dist_thresh);
+            points_along_ray_bond(selected_ray, &lipid_bonds, &lipid_atoms, dist_thresh_mol);
         let atoms_along_ray_na =
-            points_along_ray_bond(selected_ray, &na_bonds, &na_atoms, dist_thresh);
+            points_along_ray_bond(selected_ray, &na_bonds, &na_atoms, dist_thresh_mol);
         let atoms_along_ray_pocket =
-            points_along_ray_bond(selected_ray, &pocket_bonds, &pocket_atoms, dist_thresh);
+            points_along_ray_bond(selected_ray, &pocket_bonds, &pocket_atoms, dist_thresh_mol);
 
         find_sel_from_cursor_ray(
             &atoms_along_ray_pep,
@@ -1056,10 +1062,7 @@ pub fn handle_selection_attempt_mol_editor(
 
     selected_ray.0 += diff.to_normalized() * SEL_NEAR_PAD;
 
-    let dist_thresh = match state.ui.mol_view {
-        MoleculeView::SpaceFill => SELECTION_DIST_THRESH_LARGE,
-        _ => SELECTION_DIST_THRESH_SMALL,
-    };
+    let dist_thresh = selection_dist_thresh(state.ui.mol_view, ViewSelLevel::Atom);
 
     let mol = &state.mol_editor.mol;
 

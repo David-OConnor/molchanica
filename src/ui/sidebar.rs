@@ -794,7 +794,6 @@ pub(in crate::ui) fn sidebar(
                         &mut run_water_sol_sim_layers,
                         &mut run_shrinking_box,
                         &mut new_crystal_mol,
-                        // &mut run_water_sol_sim_layers_middle,
                     );
                 }
 

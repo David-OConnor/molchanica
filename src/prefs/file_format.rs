@@ -1107,6 +1107,7 @@ impl UiPrefs {
         out.push(self.near_sel_only as u8);
         out.push(self.near_lig_only as u8);
         out.extend_from_slice(&self.nearby_dist_thresh.to_le_bytes());
+        out.push(self.mol_view_peptide.to_u8());
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1141,10 +1142,17 @@ impl UiPrefs {
         let near_lig_only = data[i] != 0;
         i += 1;
         let nearby_dist_thresh = parse_le!(data, u16, i..i + 2);
+        i += 2;
+        let mol_view_peptide = if i < data.len() {
+            MoleculeView::from_u8(data[i])
+        } else {
+            mol_view
+        };
         Ok(Self {
             selection,
             cam_snapshots,
-            mol_view,
+            mol_view: mol_view.non_peptide_or_default(),
+            mol_view_peptide,
             view_sel_level,
             visibility,
             ui_visibility,
