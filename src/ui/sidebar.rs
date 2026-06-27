@@ -779,6 +779,7 @@ pub(in crate::ui) fn sidebar(
                 let mut run_water_sol_sim_mix = false;
                 let mut run_water_sol_sim_layers = false;
                 let mut run_shrinking_box = false;
+                let mut new_crystal_mol = None;
                 // let mut run_water_sol_sim_layers_middle = false;
 
                 if let Some(m) = &state.active_mol()
@@ -792,8 +793,18 @@ pub(in crate::ui) fn sidebar(
                         &mut run_water_sol_sim_mix,
                         &mut run_water_sol_sim_layers,
                         &mut run_shrinking_box,
+                        &mut new_crystal_mol,
                         // &mut run_water_sol_sim_layers_middle,
                     );
+                }
+
+                if let Some(mol) = new_crystal_mol {
+                    let new_i = state.ligands.len();
+                    state.ligands.push(mol);
+
+                    state.volatile.active_mol = Some((MolType::Ligand, new_i));
+                    state.volatile.orbit_center = Some((MolType::Ligand, new_i));
+                    redraw.ligand = true;
                 }
 
                 // Run triggers for experimental MD-based algorithms. Most of these will be changed
