@@ -15,6 +15,7 @@ pub mod rotatable_bonds;
 pub mod small;
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt::{self, Display, Formatter},
     io,
@@ -209,6 +210,18 @@ impl<'a> MolGenericRef<'a> {
             NucleicAcid(_) => MolType::NucleicAcid,
             Lipid(_) => MolType::Lipid,
             Pocket(_) => MolType::Pocket,
+        }
+    }
+
+    /// Cow to avoid a double borrow to get m.idents and m.common at the same time.
+    pub fn name(&self) -> Cow<'_, str> {
+        use MolGenericRef::*;
+        match self {
+            Peptide(m) => Cow::Borrowed(&m.common.ident),
+            Small(m) => Cow::Owned(m.common.name(Some(&m.idents))),
+            NucleicAcid(m) => Cow::Borrowed(&m.common.ident),
+            Lipid(m) => Cow::Borrowed(&m.common.ident),
+            Pocket(m) => Cow::Borrowed(&m.common.ident),
         }
     }
 

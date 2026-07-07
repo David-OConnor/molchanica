@@ -3,6 +3,12 @@
 //! nucleic acid.
 //!
 //! To start, we begin with Carbon: Graphite, Diamond etc.
+//!
+//! On MD: Small organic molecules may work directly with GAFF2. NaCL should be used with
+//! something like Joung-Cheatham (JC) or Tosi-Fumi, or Smith-Dang are highly optimized for alkali halides.
+//! Diamond/graphite etc (Extended covalent networks) may need a different approach due to the
+//! non-localized covalent bonds. We should probably use an approach similar to LAMMPS; GROMACS and Dynamics
+//! both assume fixed topology.
 
 use std::collections::{HashMap, HashSet};
 
@@ -162,10 +168,11 @@ impl CrystalCell {
         }
     }
 
-    /// Create a molecule which we can use elsewhere in the application.
+    /// Create a molecule which we can use elsewhere in the application. We do this by tiling the unit cell
+    /// to an arbitrary size.
     /// Attempts to create a volume roughly spanning between bounds_low and bounds_high.
     /// todo: how should we specify size? Num cells? volume? a bounding box?
-    pub fn to_mol(&self, bounds_low: Vec3, bounds_high: Vec3) -> MoleculeCommon {
+    pub fn make_supercell(&self, bounds_low: Vec3, bounds_high: Vec3) -> MoleculeCommon {
         let bounds = Bounds::new(bounds_low, bounds_high);
         let Some(inv_lattice) = inverse_lattice(self.lattice_vectors) else {
             return MoleculeCommon::new(

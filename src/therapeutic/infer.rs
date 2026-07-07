@@ -11,7 +11,7 @@ use burn::{
     module::Module,
     prelude::Int,
     record::{FullPrecisionSettings, NamedMpkFileRecorder},
-    tensor::{Tensor, TensorData, backend::Backend},
+    tensor::{Device, Tensor, TensorData, backend::Backend},
 };
 
 use crate::{
@@ -56,7 +56,7 @@ type InferBackend = NdArray;
 pub struct Infer {
     model: Model<InferBackend>,
     scaler: StandardScaler,
-    device: <InferBackend as Backend>::Device,
+    device: Device<InferBackend>,
     atom_graph_analysis: GnnAnalysisTools,
     comp_graph_analysis: GnnAnalysisTools,
     spacial_graph_analysis: GnnAnalysisTools,

@@ -241,7 +241,7 @@ fn char_basics(
         {
             // todo: DRY among these crystal constructors.
             let crystal = CrystalCell::new_sodium_chloride();
-            let mol_common = crystal.to_mol(-dim, dim);
+            let mol_common = crystal.make_supercell(-dim, dim);
 
             *new_crystal_mol = Some(MoleculeSmall {
                 common: mol_common,
@@ -262,7 +262,7 @@ fn char_basics(
         {
             // todo: DRY among these crystal constructors.
             let crystal = CrystalCell::new_graphite();
-            let mol_common = crystal.to_mol(-dim, dim);
+            let mol_common = crystal.make_supercell(-dim, dim);
 
             *new_crystal_mol = Some(MoleculeSmall {
                 common: mol_common,
@@ -276,7 +276,7 @@ fn char_basics(
         if button!(ui, "Make diamond", COLOR_ACTION, "Create a diamond crystal").clicked() {
             // todo: DRY among these crystal constructors.
             let crystal = CrystalCell::new_diamond();
-            let mol_common = crystal.to_mol(-dim, dim);
+            let mol_common = crystal.make_supercell(-dim, dim);
 
             *new_crystal_mol = Some(MoleculeSmall {
                 common: mol_common,

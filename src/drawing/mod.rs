@@ -146,8 +146,7 @@ static LIG_N: OnceLock<Color> = OnceLock::new();
 
 // todo: If more than a certain atom count, draw atom labels every Xth atom.
 
-/// This is a backup to drawing on atoms; for modes where atoms are not visible, but
-/// bonds are.
+/// Display the molecule name, atom name, etc, depending on label configuration.
 fn text_overlay(
     entity: &mut Entity,
     mol_ident: &str,
@@ -761,7 +760,7 @@ pub fn draw_mol(
                 // Note: We draw these on the bond entities if not in a view that shows atoms.
                 text_overlay(
                     &mut entity,
-                    &mol.common().ident,
+                    &mol.name(),
                     i_atom,
                     atom,
                     mol_active,
@@ -1014,7 +1013,7 @@ pub fn draw_mol(
         {
             text_overlay(
                 &mut entities[0],
-                &mol.common().ident,
+                &mol.name(),
                 bond.atom_0,
                 atom_0,
                 mol_active, // todo
@@ -1198,6 +1197,7 @@ fn ribbon_text_overlay_entities(
             } else {
                 LABEL_COLOR_MOL
             };
+
             let mut ent = Entity::new(
                 MESH_CUBE,
                 posit.into(),
@@ -1206,12 +1206,14 @@ fn ribbon_text_overlay_entities(
                 (0., 0., 0.),
                 ATOM_SHININESS,
             );
+
             ent.overlay_text = Some(TextOverlay {
                 text: mol.common.ident.clone(),
                 size: LABEL_SIZE_MOL,
                 color,
                 font_family: FontFamily::Proportional,
             });
+
             ent.class = EntityClass::Protein as u32;
             result.push(ent);
         }

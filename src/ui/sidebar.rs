@@ -149,6 +149,7 @@ fn mol_picker_one(
                     } else {
                         pep_center
                     };
+
                     // Setting mol center to 0 if no mol.
                     move_cam_to_mol(
                         mol,
