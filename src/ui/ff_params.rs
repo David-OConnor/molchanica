@@ -23,6 +23,9 @@ use crate::{
 const CELL_H: f32 = 18.;
 const TABLE_HEIGHT: f32 = 1_200.;
 
+/// Gap left between the bottom of the popup and the bottom of the window.
+const SCREEN_MARGIN: f32 = 16.;
+
 // Column widths.
 const W_TYPE: f32 = 54.;
 const W_VAL: f32 = 84.;
@@ -698,6 +701,12 @@ fn not_loaded(ui: &mut Ui) {
 
 /// View and edit the general force field parameters. E.g. Amber's parm19, gaff2, and amino19.
 pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
+    // A popup's area is only `spacing.default_area_size` (400px) tall, and the table's scroll area
+    // can't exceed the height available to it: without this, `TABLE_HEIGHT` has no effect. Give it
+    // everything between the top of the popup and the bottom of the window.
+    let avail_h = ui.ctx().screen_rect().bottom() - ui.min_rect().top() - SCREEN_MARGIN;
+    ui.set_max_height(avail_h);
+
     // Disjoint borrows; the tables below edit the params in place.
     let params = &mut state.ff_param_set;
     let st = &mut state.ui.ff_params;

@@ -72,8 +72,9 @@ pub struct MolMeta {
 }
 
 pub struct ParquetMolDb {
+    /// Path of the parquet file.
     pub path: PathBuf,
-    /// Lightweight metadata index loaded eagerly on open: smiles → MolMeta.
+    /// Lightweight metadata index loaded eagerly on open: smiles: MolMeta.
     /// Does NOT include the heavy mol_data blob; that is read from disk on demand.
     pub index_meta: HashMap<String, MolMeta>,
 }
