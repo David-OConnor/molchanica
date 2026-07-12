@@ -1291,8 +1291,6 @@ pub fn rotate_atoms_about_point(atoms: &mut [Atom], pivot: Vec3, rotator: Quater
     }
 }
 
-// Note: If you haven't generated this file yet when compiling (e.g. from a freshly-cloned repo),
-// make an edit to one of the CUDA files (e.g. add a newline), then run, to create this file.
 #[cfg(feature = "cuda")]
 pub const PTX: &str = include_str!("../molchanica.ptx");
 

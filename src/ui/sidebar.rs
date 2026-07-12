@@ -34,6 +34,9 @@ use crate::{
 
 const SONIFICATION_INCLUDE_H: bool = true;
 
+/// Width of the strip left in place of the sidebar when it's hidden; fits the show button.
+const SIDEBAR_HIDDEN_WIDTH: f32 = 40.;
+
 #[derive(Clone, Copy)]
 enum AudioAction {
     Toggle(MolType, usize),
@@ -690,14 +693,32 @@ pub(in crate::ui) fn sidebar(
 ) {
     let edit_mode = state.volatile.operating_mode == OperatingMode::MolEditor;
 
+    // When hidden, all that remains of the sidebar is a narrow strip with a button to show it again.
+    if !state.ui.ui_vis.sidebar {
+        let out = egui::Panel::left("sidebar_hidden")
+            .resizable(false)
+            .exact_size(SIDEBAR_HIDDEN_WIDTH)
+            .show_inside(ui, |ui| {
+                if button!(ui, "▶", COLOR_ACTION, "Show the sidebar").clicked() {
+                    state.ui.ui_vis.sidebar = true;
+                }
+            });
+
+        updates.ui_reserved_px.0 = out.response.rect.width();
+        return;
+    }
+
     let out = egui::Panel::left("sidebar")
         .resizable(true) // let user drag the width
         .default_size(140.0)
         .size_range(60.0..=800.0)
         .show_inside(ui, |ui| {
-            ui.label("Molecules opened");
-
             ui.horizontal(|ui| {
+                if button!(ui, "◀", COLOR_ACTION, "Hide the sidebar").clicked() {
+                    state.ui.ui_vis.sidebar = false;
+                }
+                ui.add_space(COL_SPACING);
+                
                 let color_open_tools = if state.peptide.is_none() && state.ligands.is_empty() {
                     COLOR_ACTION
                 } else {

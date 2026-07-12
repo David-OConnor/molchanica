@@ -165,9 +165,9 @@ fn char_basics(
                 ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
             ],
         );
+    });
 
-        ui.add_space(COL_SPACING / 2.);
-
+    ui.horizontal(|ui| {
         if button!(ui, "LogP sim", COLOR_ACTION, "Estimate LogP by performing a simulation of the molecule \
                         in water and " )
             .clicked()

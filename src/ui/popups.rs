@@ -34,11 +34,14 @@ use crate::{
     state::{MsaaSetting, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        md_viewer, mol_data::metadata, pharmacophore, rama_plot, recent_files,
+        ff_params, md_viewer, mol_data::metadata, pharmacophore, rama_plot, recent_files,
         recent_files::NUM_TO_SHOW,
     },
     util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
 };
+
+/// Where popups start, unless they override it.
+const POPUP_POS: Pos2 = Pos2::new(300., 300.);
 
 pub(in crate::ui) fn close_btn(ui: &mut Ui, popup: &mut bool) {
     if ui
@@ -147,6 +150,15 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.md_mol_set_editor {
         popup("md_mol_set_editor", ui).show(|ui| {
             md_viewer::md_mol_set_editor(state, ui);
+        });
+    }
+
+    if state.ui.popup.ff_params {
+        let (dx, dy) = ff_params::POPUP_OFFSET;
+        let pos = Pos2::new(POPUP_POS.x + dx, POPUP_POS.y + dy);
+
+        popup("ff_params", ui).at_position(pos).show(|ui| {
+            ff_params::ff_param_editor(state, ui);
         });
     }
 }
@@ -862,7 +874,7 @@ fn popup<'a>(name: &'a str, ui: &'a mut Ui) -> Popup<'a> {
     Popup::new(
         popup_id,
         ui.ctx().clone(),
-        PopupAnchor::Position(Pos2::new(300., 300.)),
+        PopupAnchor::Position(POPUP_POS),
         ui.layer_id(), // draw on top of the current layer
     )
     .align(RectAlign::BOTTOM_START)

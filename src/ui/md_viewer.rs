@@ -734,6 +734,16 @@ pub(in crate::ui) fn viewer_mol_set(
             state.ui.popup.md_mol_set_editor = !state.ui.popup.md_mol_set_editor;
         }
 
+        if button!(
+            ui,
+            "FF params",
+            COLOR_HIGHLIGHT,
+            "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
+            gaff2, amino19, and lipid21."
+        ).clicked() {
+            state.ui.popup.ff_params = !state.ui.popup.ff_params;
+        }
+
     });
 
     if empty {

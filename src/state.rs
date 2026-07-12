@@ -46,6 +46,7 @@ use crate::{
     sonification::MoleculeSonification,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
+    ui::ff_params::FfParamsUi,
     util::{gromacs_avail, mdtraj_avail, orca_avail},
 };
 
@@ -447,6 +448,8 @@ pub struct StateUi {
     // peptide_atom_posits: PeptideAtomPosits,
     pub popup: PopupState,
     pub md: StateUiMd,
+    /// Selection state for the force-field parameter viewer/editor popup.
+    pub ff_params: FfParamsUi,
     pub ph_input: String,
     pub mesh_coloring: MeshColoring,
     /// Color ligands by molecule, to contrast.
@@ -538,6 +541,7 @@ pub struct PopupState {
     pub lig_pocket_creation: bool,
     pub parquet_db: bool,
     pub md_mol_set_editor: bool,
+    pub ff_params: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
@@ -770,6 +774,8 @@ pub struct UiVisibility {
     pub orca: bool,
     pub mol_char: bool,
     pub pharmacophore_list: bool,
+    /// The left-side panel. When hidden, a narrow strip with a button to re-show it remains.
+    pub sidebar: bool,
 }
 
 impl Default for UiVisibility {
@@ -785,6 +791,7 @@ impl Default for UiVisibility {
             orca: false,
             mol_char: true, // todo: For now.
             pharmacophore_list: false,
+            sidebar: true,
         }
     }
 }

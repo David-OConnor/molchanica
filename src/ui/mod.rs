@@ -45,6 +45,7 @@ use crate::{
 };
 
 mod char_adme;
+pub mod ff_params;
 mod md;
 mod md_viewer;
 pub mod misc;

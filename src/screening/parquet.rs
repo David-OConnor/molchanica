@@ -17,9 +17,11 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
+
 use bio_files::BondType;
 use lin_alg::f32::{Vec3 as Vec3f32, Vec3};
 use na_seq::Element;
+
 use parquet::{
     arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, arrow_writer::ArrowWriter},
     basic::Compression,
