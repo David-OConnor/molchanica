@@ -95,6 +95,8 @@ impl Default for State {
             view_depth: (VIEW_DEPTH_NEAR_MIN, FOG_DIST_DEFAULT),
             nearby_dist_thresh: 15,
             density_iso_level: 1.8,
+            mol_view_peptide: MoleculeView::default(),
+            mol_view: MoleculeView::DEFAULT_NON_PEPTIDE,
             ..Default::default()
         };
 
@@ -393,6 +395,9 @@ impl PlayingAudio {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
+    /// View mode for proteins/peptides.
+    pub mol_view_peptide: MoleculeView,
+    /// View mode for everything other than proteins/peptides.
     pub mol_view: MoleculeView,
     pub view_sel_level: ViewSelLevel,
     /// Mouse cursor
@@ -413,20 +418,13 @@ pub struct StateUi {
     // For selecting residues from the GUI.
     pub chain_to_pick_res: Option<usize>,
     /// Workaround for a bug or limitation in EGUI's `is_pointer_button_down_on`.
-    // inputs_commanded: InputsCommanded,
     pub visibility: Visibility,
     pub selection: Selection,
     pub left_click_down: bool,
     pub middle_click_down: bool,
     pub mouse_in_window: bool,
-    // pub docking_site_x: String,
-    // pub docking_site_y: String,
-    // pub docking_site_z: String,
-    // pub docking_site_size: String,
     /// For the arc/orbit cam only.
     pub orbit_selected_atom: bool,
-    // todo: Re-implement A/R
-    // binding_energy_disp: Option<BindingEnergy>,
     /// A flag so we know to update the flashlight upon loading a new model; this should be done within
     /// a callback.
     pub show_docking_tools: bool,
@@ -533,6 +531,10 @@ pub struct PopupState {
     pub residue_selector: bool,
     pub rama_plot: bool,
     pub recent_files: bool,
+    /// Current page in the recent-files popup.
+    pub recent_files_page: usize,
+    /// Filename filter text for the recent-files popup.
+    pub recent_files_filter: String,
     pub metadata: Option<(MolType, usize)>,
     pub alignment: bool,
     pub alignment_screening: bool,

@@ -704,7 +704,7 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
     // A popup's area is only `spacing.default_area_size` (400px) tall, and the table's scroll area
     // can't exceed the height available to it: without this, `TABLE_HEIGHT` has no effect. Give it
     // everything between the top of the popup and the bottom of the window.
-    let avail_h = ui.ctx().screen_rect().bottom() - ui.min_rect().top() - SCREEN_MARGIN;
+    let avail_h = ui.ctx().content_rect().bottom() - ui.min_rect().top() - SCREEN_MARGIN;
     ui.set_max_height(avail_h);
 
     // Disjoint borrows; the tables below edit the params in place.

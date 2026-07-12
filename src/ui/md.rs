@@ -118,14 +118,14 @@ pub fn md_setup(
             if ui.button(RichText::new("Reset").color(Color32::LIGHT_RED))
                 .on_hover_text("Reset all MD settings to defaults.")
                 .clicked() {
-                state.to_save.md_config = Default::default();
+                state.to_save.md.config = Default::default();
 
                 let to_save_default = ToSave::default();
 
-                state.to_save.md_dt = to_save_default.md_dt;
-                state.to_save.num_md_steps = to_save_default.num_md_steps;
+                state.to_save.md.dt = to_save_default.md.dt;
+                state.to_save.md.num_steps = to_save_default.md.num_steps;
 
-                state.ui.md.sync(&state.to_save.md_config, state.to_save.md_dt);
+                state.ui.md.sync(&state.to_save.md.config, state.to_save.md.dt);
             }
 
             if let Some(ss) = state.volatile.md_local.viewer.get_active_snap() && ss.water_o_posits.is_empty() && ui
@@ -168,10 +168,10 @@ pub fn md_setup(
 
                 ComboBox::from_id_salt(523)
                     .width(80.)
-                    .selected_text(state.to_save.md_backend.to_string())
+                    .selected_text(state.to_save.md.backend.to_string())
                     .show_ui(ui, |ui| {
                         for v in backends {
-                            ui.selectable_value(&mut state.to_save.md_backend, v.clone(), v.to_string());
+                            ui.selectable_value(&mut state.to_save.md.backend, v.clone(), v.to_string());
                         }
                     })
                     .response
@@ -205,7 +205,7 @@ pub fn md_setup(
                     ui.label(
                         RichText::new(format!(
                             "MD running. Step {} of {}",
-                            count, state.to_save.num_md_steps
+                            count, state.to_save.md.num_steps
                         ))
                             .color(COLOR_HIGHLIGHT),
                     );
@@ -223,8 +223,8 @@ pub fn md_setup(
             //
             // }
 
-            let num_steps_prev = state.to_save.num_md_steps;
-            num_field(&mut state.to_save.num_md_steps, "Steps:", 50, ui);
+            let num_steps_prev = state.to_save.md.num_steps;
+            num_field(&mut state.to_save.md.num_steps, "Steps:", 50, ui);
 
             ui.add_space(COL_SPACING / 2.);
 
@@ -234,16 +234,16 @@ pub fn md_setup(
 
             output_control(state, ui);
 
-            if state.to_save.num_md_steps != num_steps_prev {
-                state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * state.to_save.md_dt;
+            if state.to_save.md.num_steps != num_steps_prev {
+                state.volatile.md_local.run_time = state.to_save.md.num_steps as f32 * state.to_save.md.dt;
             }
 
             ui.add_space(COL_SPACING / 2.);
 
             // todo: Add snapshot cfg
-            // num_field(&mut state.to_save.md_config.snapshot_ratio_memory, "Snapshot ratio:", 22, ui);
+            // num_field(&mut state.to_save.md.config.snapshot_ratio_memory, "Snapshot ratio:", 22, ui);
 
-            // int_field_usize(&mut state.to_save.md_config.snapshot_ratio_file, "Snapshot ratio:", ui);
+            // int_field_usize(&mut state.to_save.md.config.snapshot_ratio_file, "Snapshot ratio:", ui);
 
 
             ui.add_space(COL_SPACING / 2.);
@@ -260,8 +260,8 @@ pub fn md_setup(
 
             ui.add_space(COL_SPACING / 2.);
             ui.label("Cutoffs (Å).").on_hover_text(help);
-            num_field(&mut state.to_save.md_config.coulomb_cutoff, "Coulomb:", 34, ui);
-            num_field(&mut state.to_save.md_config.lj_cutoff, "LJ:", 34, ui);
+            num_field(&mut state.to_save.md.config.coulomb_cutoff, "Coulomb:", 34, ui);
+            num_field(&mut state.to_save.md.config.lj_cutoff, "LJ:", 34, ui);
         });
 
         ui.add_space(ROW_SPACING / 2.);
@@ -291,10 +291,10 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
             "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
         ui.label("Integrator:").on_hover_text(help_text);
 
-        let prev = state.to_save.md_config.integrator.clone();
+        let prev = state.to_save.md.config.integrator.clone();
         ComboBox::from_id_salt(4)
             .width(80.)
-            .selected_text(state.to_save.md_config.integrator.to_string())
+            .selected_text(state.to_save.md.config.integrator.to_string())
             .show_ui(ui, |ui| {
                 for v in &[
                     Integrator::Leapfrog {
@@ -308,7 +308,7 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
                     },
                 ] {
                     ui.selectable_value(
-                        &mut state.to_save.md_config.integrator,
+                        &mut state.to_save.md.config.integrator,
                         v.clone(),
                         v.to_string(),
                     );
@@ -317,14 +317,14 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
             .response
             .on_hover_text(help_text);
 
-        if state.to_save.md_config.integrator != prev {
-            if let Integrator::LangevinMiddle { gamma } = state.to_save.md_config.integrator
+        if state.to_save.md.config.integrator != prev {
+            if let Integrator::LangevinMiddle { gamma } = state.to_save.md.config.integrator
                 && !matches!(prev, Integrator::LangevinMiddle { gamma: _ })
             {
                 state.ui.md.langevin_γ = gamma.to_string();
             }
 
-            if let Integrator::VerletVelocity { thermostat } = state.to_save.md_config.integrator
+            if let Integrator::VerletVelocity { thermostat } = state.to_save.md.config.integrator
                 && !matches!(prev, Integrator::VerletVelocity { thermostat: _ })
             {
                 if let Some(tau) = thermostat {
@@ -347,8 +347,8 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
         .changed()
         && let Ok(v) = state.ui.md.dt_input.parse::<f32>()
     {
-        state.to_save.md_dt = v;
-        state.volatile.md_local.run_time = state.to_save.num_md_steps as f32 * v;
+        state.to_save.md.dt = v;
+        state.volatile.md_local.run_time = state.to_save.md.num_steps as f32 * v;
     }
 
     ui.add_space(COL_SPACING / 2.);
@@ -359,7 +359,7 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
         ui.label("H:").on_hover_text(help_text);
         ComboBox::from_id_salt(5)
             .width(80.)
-            .selected_text(state.to_save.md_config.hydrogen_constraint.to_string())
+            .selected_text(state.to_save.md.config.hydrogen_constraint.to_string())
             .show_ui(ui, |ui| {
                 // todo: Don't hard-code shake tol
                 for v in &[
@@ -373,7 +373,7 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
                     HydrogenConstraint::Flexible,
                 ] {
                     ui.selectable_value(
-                        &mut state.to_save.md_config.hydrogen_constraint,
+                        &mut state.to_save.md.config.hydrogen_constraint,
                         *v,
                         v.to_string(),
                     );
@@ -388,7 +388,7 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
         ui.label("Solvent:").on_hover_text(help_text);
         ComboBox::from_id_salt(6)
             .width(80.)
-            .selected_text(state.to_save.md_config.solvent.to_string())
+            .selected_text(state.to_save.md.config.solvent.to_string())
             .show_ui(ui, |ui| {
                 // todo: Don't hard-code shake tol
                 for v in &[
@@ -399,7 +399,7 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
                     // Solvent::Custom(),
                 ] {
                     ui.selectable_value(
-                        &mut state.to_save.md_config.solvent,
+                        &mut state.to_save.md.config.solvent,
                         v.clone(),
                         v.to_string(),
                     );
@@ -414,7 +414,7 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
     ui.add_space(COL_SPACING / 2.);
 
     {
-        let mut relax = state.to_save.md_config.max_init_relaxation_iters.is_some();
+        let mut relax = state.to_save.md.config.max_init_relaxation_iters.is_some();
         let relax_prev = relax;
         ui.label("Relax:");
         ui.checkbox(&mut relax, "").on_hover_text(
@@ -423,10 +423,10 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
         );
         if relax != relax_prev {
             if relax {
-                state.to_save.md_config.max_init_relaxation_iters =
+                state.to_save.md.config.max_init_relaxation_iters =
                     MdConfig::default().max_init_relaxation_iters;
             } else {
-                state.to_save.md_config.max_init_relaxation_iters = None;
+                state.to_save.md.config.max_init_relaxation_iters = None;
             }
         }
     }
@@ -439,7 +439,7 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     ui.add_space(COL_SPACING / 2.);
 
     let mut therm_en_ = false;
-    match &mut state.to_save.md_config.integrator {
+    match &mut state.to_save.md.config.integrator {
         Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
             let help_text = "Enable or disable the thermostat";
             ui.label("Therm:").on_hover_text(help_text);
@@ -507,28 +507,28 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
             .changed()
             && let Ok(v) = &mut state.ui.md.temp_tgt.parse::<f32>()
         {
-            state.to_save.md_config.temp_target = *v;
+            state.to_save.md.config.temp_target = *v;
         }
     }
 
     ui.add_space(COL_SPACING / 2.);
 
     // todo: A/R
-    // ui.checkbox(&mut state.to_save.md_config.zero_com_drift, "Zero drift")
+    // ui.checkbox(&mut state.to_save.md.config.zero_com_drift, "Zero drift")
     //     .on_hover_text("Zero the center-of-mass of items in the simulation.");
 
     let help = "Enable or disable the barostat";
     ui.label("Baro:").on_hover_text(help);
-    let mut baro_en = state.to_save.md_config.barostat_cfg.is_some();
+    let mut baro_en = state.to_save.md.config.barostat_cfg.is_some();
     if ui.checkbox(&mut baro_en, "").on_hover_text(help).changed() {
-        state.to_save.md_config.barostat_cfg = if baro_en {
+        state.to_save.md.config.barostat_cfg = if baro_en {
             Some(dynamics::BarostatCfg::default())
         } else {
             None
         };
     }
 
-    if let Some(bc) = &mut state.to_save.md_config.barostat_cfg {
+    if let Some(bc) = &mut state.to_save.md.config.barostat_cfg {
         let help = "The target pressure, in bar, for the barostat to maintain. The sim box changes size in \
     order to meet this.";
         ui.label("Pres (bar):").on_hover_text(help);
@@ -570,13 +570,13 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
         ui.label("Box (Å):").on_hover_text(help);
 
         // Select Fixed or Pad
-        let txt = if matches!(state.to_save.md_config.sim_box, SimBoxInit::Fixed(_)) {
+        let txt = if matches!(state.to_save.md.config.sim_box, SimBoxInit::Fixed(_)) {
             "Fixed"
         } else {
             "Pad"
         };
 
-        let prev = state.to_save.md_config.sim_box.clone();
+        let prev = state.to_save.md.config.sim_box.clone();
         ComboBox::from_id_salt(10)
             .width(60.)
             .selected_text(txt)
@@ -588,20 +588,20 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
                         "Fixed",
                     ),
                 ] {
-                    ui.selectable_value(&mut state.to_save.md_config.sim_box, v.0.clone(), v.1);
+                    ui.selectable_value(&mut state.to_save.md.config.sim_box, v.0.clone(), v.1);
                 }
             });
 
-        if state.to_save.md_config.sim_box != prev {
+        if state.to_save.md.config.sim_box != prev {
             state
                 .ui
                 .md
-                .sync(&state.to_save.md_config, state.to_save.md_dt);
+                .sync(&state.to_save.md.config, state.to_save.md.dt);
         }
 
         ui.add_space(COL_SPACING / 2.);
 
-        match &mut state.to_save.md_config.sim_box {
+        match &mut state.to_save.md.config.sim_box {
             SimBoxInit::Pad(pad_v) => {
                 let hover_text = "Set the minimum distance to pad the molecule in solvent atoms. Large values \
             can be more realistic, but significantly increase computation time. This also sets the periodic boundary \
@@ -767,7 +767,7 @@ fn output_control(state: &mut State, ui: &mut Ui) {
     let default_file = sh_def.memory.map(|v| v as u32);
 
     // Memory
-    if state.to_save.md_backend == MdBackend::Dynamics {
+    if state.to_save.md.backend == MdBackend::Dynamics {
         let help = "Save snapshots in memory.";
         ui.label("Mem:").on_hover_text(help);
         if ui
@@ -775,16 +775,16 @@ fn output_control(state: &mut State, ui: &mut Ui) {
             .on_hover_text(help)
             .changed()
         {
-            state.to_save.md_config.snapshot_handlers.memory = if state.ui.md.mem_enabled {
+            state.to_save.md.config.snapshot_handlers.memory = if state.ui.md.mem_enabled {
                 sh_def.memory
             } else {
                 None
             };
             sync_ui = true;
         }
-        if state.to_save.md_config.snapshot_handlers.memory.is_some() {
+        if state.to_save.md.config.snapshot_handlers.memory.is_some() {
             num_field_option(
-                &mut state.to_save.md_config.snapshot_handlers.memory,
+                &mut state.to_save.md.config.snapshot_handlers.memory,
                 "",
                 W,
                 ui,
@@ -801,7 +801,7 @@ fn output_control(state: &mut State, ui: &mut Ui) {
             .on_hover_text(help)
             .changed()
         {
-            let g = &mut state.to_save.md_config.snapshot_handlers.gromacs;
+            let g = &mut state.to_save.md.config.snapshot_handlers.gromacs;
             if state.ui.md.trr_enabled {
                 g.nstxout = default_file;
                 g.nstvout = default_file;
@@ -815,13 +815,13 @@ fn output_control(state: &mut State, ui: &mut Ui) {
         }
 
         if state.ui.md.trr_enabled {
-            let g = &mut state.to_save.md_config.snapshot_handlers.gromacs;
+            let g = &mut state.to_save.md.config.snapshot_handlers.gromacs;
             num_field_option(&mut g.nstxout, "Pos:", W, ui);
             num_field_option(&mut g.nstvout, "V:", W, ui);
             num_field_option(&mut g.nstfout, "F:", W, ui);
         }
 
-        let g = &mut state.to_save.md_config.snapshot_handlers.gromacs;
+        let g = &mut state.to_save.md.config.snapshot_handlers.gromacs;
 
         let en_prev = g.nstenergy;
         num_field_option(&mut g.nstenergy, "En:", W, ui);
@@ -841,7 +841,8 @@ fn output_control(state: &mut State, ui: &mut Ui) {
         {
             state
                 .to_save
-                .md_config
+                .md
+                .config
                 .snapshot_handlers
                 .gromacs
                 .nstxout_compressed = if state.ui.md.xtc_enabled {
@@ -853,7 +854,8 @@ fn output_control(state: &mut State, ui: &mut Ui) {
         }
         if state
             .to_save
-            .md_config
+            .md
+            .config
             .snapshot_handlers
             .gromacs
             .nstxout_compressed
@@ -862,7 +864,8 @@ fn output_control(state: &mut State, ui: &mut Ui) {
             num_field_option(
                 &mut state
                     .to_save
-                    .md_config
+                    .md
+                    .config
                     .snapshot_handlers
                     .gromacs
                     .nstxout_compressed,
@@ -874,7 +877,7 @@ fn output_control(state: &mut State, ui: &mut Ui) {
     }
 
     // DCD
-    if state.to_save.md_backend != MdBackend::Gromacs {
+    if state.to_save.md.backend != MdBackend::Gromacs {
         let help = "Save trajectory to a DCD file.";
         ui.label("DCD:").on_hover_text(help);
         if ui
@@ -882,7 +885,7 @@ fn output_control(state: &mut State, ui: &mut Ui) {
             .on_hover_text(help)
             .changed()
         {
-            state.to_save.md_config.snapshot_handlers.dcd = if state.ui.md.dcd_enabled {
+            state.to_save.md.config.snapshot_handlers.dcd = if state.ui.md.dcd_enabled {
                 sh_def.memory
             } else {
                 None
@@ -890,9 +893,9 @@ fn output_control(state: &mut State, ui: &mut Ui) {
             sync_ui = true;
         }
 
-        if state.to_save.md_config.snapshot_handlers.dcd.is_some() {
+        if state.to_save.md.config.snapshot_handlers.dcd.is_some() {
             num_field_option(
-                &mut state.to_save.md_config.snapshot_handlers.dcd,
+                &mut state.to_save.md.config.snapshot_handlers.dcd,
                 "",
                 W,
                 ui,
@@ -904,6 +907,6 @@ fn output_control(state: &mut State, ui: &mut Ui) {
         state
             .ui
             .md
-            .sync(&state.to_save.md_config, state.to_save.md_dt);
+            .sync(&state.to_save.md.config, state.to_save.md.dt);
     }
 }

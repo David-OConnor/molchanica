@@ -1,5 +1,7 @@
 use egui::Color32;
-pub const NUM_TO_SHOW: usize = 30;
+
+/// Number of recent-file rows shown per page in the recent-files popup.
+pub const PER_PAGE: usize = 15;
 
 // todo: Return a color too
 pub fn recentness_descrip(age_min: i64) -> (String, Color32) {

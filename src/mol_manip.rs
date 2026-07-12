@@ -377,7 +377,7 @@ pub fn handle_mol_manip_in_out(
                 state.volatile.mol_manip.view_dir = Some(view_dir);
 
                 let dist = (pivot - scene.camera.position).magnitude();
-                let step = state.to_save.mol_move_sens as f32 / 1_000. * dist;
+                let step = state.to_save.control_settings.mol_move_sens as f32 / 1_000. * dist;
 
                 let dv = view_dir * (scroll * step);
                 let movement_vec: Vec3F64 = dv.into();

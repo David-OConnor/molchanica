@@ -17,6 +17,30 @@ use crate::{
     util::{RedrawFlags, clear_mol_entity_indices},
 };
 
+fn molecule_view_selector(
+    ui: &mut Ui,
+    label: &str,
+    id_salt: impl std::hash::Hash,
+    view: &mut MoleculeView,
+    options: &[MoleculeView],
+    help_text: &str,
+) -> bool {
+    ui.label(label).on_hover_text(help_text);
+    let prev_view = *view;
+
+    ComboBox::from_id_salt(id_salt)
+        .width(80.)
+        .selected_text(view.to_string())
+        .show_ui(ui, |ui| {
+            for option in options {
+                ui.selectable_value(view, *option, option.to_string());
+            }
+        })
+        .response
+        .on_hover_text(help_text);
+
+    *view != prev_view
+}
 pub fn view_settings(
     state: &mut State,
     scene: &mut Scene,
@@ -26,42 +50,45 @@ pub fn view_settings(
 ) {
     section_box().show(ui, |ui| {
         ui.horizontal(|ui| {
-            let help_text = "(Hotkeys: square brackets [ ]). Change the way we display molecules";
+            let mol_help =
+                "(Hotkeys: square brackets [ ]). Change the way we display non-peptide molecules";
+            let peptide_help = "Change the way we display proteins/peptides";
 
-            ui.label("View:").on_hover_text(help_text);
-            let prev_view = state.ui.mol_view;
-
-            ComboBox::from_id_salt(0)
-                .width(80.)
-                .selected_text(state.ui.mol_view.to_string())
-                .show_ui(ui, |ui| {
-                    for view in &[
-                        MoleculeView::Backbone,
-                        MoleculeView::Sticks,
-                        MoleculeView::BallAndStick,
-                        MoleculeView::Ribbon,
-                        MoleculeView::SpaceFill,
-                        MoleculeView::Surface,
-                        MoleculeView::Dots,
-                    ] {
-                        ui.selectable_value(&mut state.ui.mol_view, *view, view.to_string());
-                    }
-                })
-                .response
-                .on_hover_text(help_text);
-
-            if state.ui.mol_view != prev_view {
-                redraw.set_all();
+            if molecule_view_selector(
+                ui,
+                "Mol:",
+                "mol_view_non_peptide",
+                &mut state.ui.mol_view,
+                &MoleculeView::NON_PEPTIDE_OPTIONS,
+                mol_help,
+            ) {
+                state.ui.mol_view = state.ui.mol_view.non_peptide_or_default();
+                redraw.ligand = true;
+                redraw.na = true;
+                redraw.lipid = true;
             }
 
-            if state.ui.mol_view == MoleculeView::Surface || !state.pockets.is_empty() {
+            if state.peptide.is_some() {
+                ui.add_space(COL_SPACING / 2.);
+                if molecule_view_selector(
+                    ui,
+                    "Peptide:",
+                    "mol_view_peptide",
+                    &mut state.ui.mol_view_peptide,
+                    &MoleculeView::PEPTIDE_OPTIONS,
+                    peptide_help,
+                ) {
+                    redraw.peptide = true;
+                }
+            }
+
+            if state.ui.mol_view_peptide == MoleculeView::Surface || !state.pockets.is_empty() {
                 mesh_coloring_selector(
                     &mut state.ui.mesh_coloring,
                     &mut state.volatile.flags.update_sas_coloring,
                     ui,
                 );
             }
-
             // Update any pocket meshes as well. Separate from the threaded protein one; this is
             // fast enough to do directly.
             for pocket in &mut state.pockets {

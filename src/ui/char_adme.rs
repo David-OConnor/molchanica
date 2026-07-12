@@ -1,5 +1,4 @@
-use egui::{Color32, RichText, ScrollArea, Ui};
-
+use crate::crystal::CrystalCell;
 use crate::{
     button, label,
     molecules::{MolIdent, small::MoleculeSmall},
@@ -7,6 +6,8 @@ use crate::{
     therapeutic::{Adme, Toxicity},
     ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
 };
+use egui::{Color32, RichText, ScrollArea, Ui};
+use lin_alg::f64::Vec3;
 
 fn char_basics(
     char: &MolCharacterization,
@@ -16,6 +17,7 @@ fn char_basics(
     run_water_sol_sim: &mut bool,
     run_water_sol_sim_layers: &mut bool,
     run_shrinking_box: &mut bool,
+    new_crystal_mol: &mut Option<MoleculeSmall>,
 ) {
     // Basics
     char_item(
@@ -165,44 +167,127 @@ fn char_basics(
                 ("Mol Refrac", &format!("{:.2}", char.molar_refractivity), ""),
             ],
         );
+
+        ui.add_space(COL_SPACING / 2.);
     });
 
-    ui.horizontal(|ui| {
-        if button!(ui, "LogP sim", COLOR_ACTION, "Estimate LogP by performing a simulation of the molecule \
-                        in water and " )
-            .clicked()
+    // todo: This is temp in its form for solubility etc sims
+    ui.horizontal_wrapped(|ui| {
+        if button!(
+            ui,
+            "LogP sim",
+            COLOR_ACTION,
+            "Estimate LogP by performing a simulation of the molecule \
+                        in water and "
+        )
+        .clicked()
         {
             *run_logp_sim = true;
         }
 
-        if button!(ui, "Crystal sim", COLOR_ACTION, "Estimate solubility by performing a simulation of the molecule \
-                        as a crystal of itself, with no solvent. Display the results. " )
-            .clicked()
+        if button!(
+            ui,
+            "Crystal sim",
+            COLOR_ACTION,
+            "Estimate solubility by performing a simulation of the molecule \
+                        as a crystal of itself, with no solvent. Display the results. "
+        )
+        .clicked()
         {
             *run_crystal_sim = true;
         }
 
-        if button!(ui, "Water sol sim", COLOR_ACTION, "Estimate solubility in water. " )
-            .clicked()
+        if button!(
+            ui,
+            "Water sol sim",
+            COLOR_ACTION,
+            "Estimate solubility in water. "
+        )
+        .clicked()
         {
             *run_water_sol_sim = true;
         }
 
-        if button!(ui, "Layer sim", COLOR_ACTION, "Run a boundary-layer solute/water simulation. " )
-            .clicked()
+        if button!(
+            ui,
+            "Layer sim",
+            COLOR_ACTION,
+            "Run a boundary-layer solute/water simulation. "
+        )
+        .clicked()
         {
             *run_water_sol_sim_layers = true;
         }
 
-        if button!(ui, "Shrinking box sim", COLOR_ACTION, "Run a gradually compressed water/solute simulation. " )
-            .clicked()
+        if button!(
+            ui,
+            "Shrinking box sim",
+            COLOR_ACTION,
+            "Run a gradually compressed water/solute simulation. "
+        )
+        .clicked()
         {
             *run_shrinking_box = true;
         }
 
+        let dim = Vec3::new(6., 6., 6.);
+        if button!(
+            ui,
+            "Make NaCl",
+            COLOR_ACTION,
+            "Create a sodium chloride crystal"
+        )
+        .clicked()
+        {
+            // todo: DRY among these crystal constructors.
+            let crystal = CrystalCell::new_sodium_chloride();
+            let mol_common = crystal.make_supercell(-dim, dim);
 
-        ui.add_space(COL_SPACING / 2.);
+            *new_crystal_mol = Some(MoleculeSmall {
+                common: mol_common,
+                idents: vec![MolIdent::PubchemTitle("NaCl".to_string())],
+                ff_params_loaded: false, // todo: Handle this?
+                frcmod_loaded: false,    // todo?
+                ..Default::default()
+            });
+        }
+
+        if button!(
+            ui,
+            "Make graphite",
+            COLOR_ACTION,
+            "Create a graphite crystal"
+        )
+        .clicked()
+        {
+            // todo: DRY among these crystal constructors.
+            let crystal = CrystalCell::new_graphite();
+            let mol_common = crystal.make_supercell(-dim, dim);
+
+            *new_crystal_mol = Some(MoleculeSmall {
+                common: mol_common,
+                idents: vec![MolIdent::PubchemTitle("Graphite".to_string())],
+                ff_params_loaded: false, // todo: Handle this?
+                frcmod_loaded: false,    // todo?
+                ..Default::default()
+            });
+        }
+
+        if button!(ui, "Make diamond", COLOR_ACTION, "Create a diamond crystal").clicked() {
+            // todo: DRY among these crystal constructors.
+            let crystal = CrystalCell::new_diamond();
+            let mol_common = crystal.make_supercell(-dim, dim);
+
+            *new_crystal_mol = Some(MoleculeSmall {
+                common: mol_common,
+                idents: vec![MolIdent::PubchemTitle("Diamond".to_string())],
+                ff_params_loaded: false, // todo: Handle this?
+                frcmod_loaded: false,    // todo?
+                ..Default::default()
+            });
+        }
     });
+    // todo end temp sol sim etc btns
 
     char_item(
         ui,
@@ -402,6 +487,7 @@ pub(in crate::ui) fn mol_char_disp(
     run_water_sol_sim: &mut bool,
     run_water_sol_sim_layers: &mut bool,
     run_shrinking_box: &mut bool,
+    new_crystal_mol: &mut Option<MoleculeSmall>,
     // run_water_sol_sim_layers_middle: &mut bool,
 ) {
     let Some(char) = &mol.characterization else {
@@ -450,6 +536,7 @@ pub(in crate::ui) fn mol_char_disp(
                 run_water_sol_sim,
                 run_water_sol_sim_layers,
                 run_shrinking_box,
+                new_crystal_mol,
             );
 
             ui.separator();

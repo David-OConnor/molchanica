@@ -605,7 +605,7 @@ impl State {
                     self.volatile.parquet_db_active = Some(0);
                 }
 
-                self.update_history(path, OpenType::ParquetDb);
+                self.update_history(path, OpenType::ParquetDb, None);
             }
             Err(e) => handle_err(&mut self.ui, format!("Error loading Parquet database: {e}")),
         }

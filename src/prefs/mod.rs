@@ -7,26 +7,20 @@
 use std::{
     collections::HashMap,
     fmt::Display,
+    io,
     path::{Path, PathBuf},
 };
 
-use bincode::{
-    BorrowDecode, Decode, Encode,
-    de::{BorrowDecoder, Decoder},
-    enc::Encoder,
-    error::{DecodeError, EncodeError},
-};
 use bio_apis::{
     pubchem,
     rcsb::{FilesAvailable, PdbDataResults},
 };
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use dynamics::MdConfig;
-use graphics::{
-    AmbientOcclusion, ControlScheme,
-    app_utils::{load, save},
-};
+use graphics::{AmbientOcclusion, ControlScheme};
 use lin_alg::f64::Vec3;
+
+mod file_format;
 
 use crate::{
     docking::DockingSite,
@@ -60,35 +54,8 @@ macro_rules! copy_le {
     ($dest:expr, $src:expr, $range:expr) => {{ $dest[$range].copy_from_slice(&$src.to_le_bytes()) }};
 }
 
-#[allow(unused)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u8)]
-pub enum PrefsPacketType {
-    OpenHistory = 0,
-    Misc = 1,
-}
-
-#[allow(unused)]
-pub struct PrefsPacketHeader {
-    pub packet_type: PrefsPacketType,
-    // In bytes
-    pub len: usize,
-}
-
-impl PrefsPacketHeader {
-    #[allow(unused)]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut result = vec![0; 5];
-        result[0] = self.packet_type as u8;
-
-        copy_le!(result, self.len as u32, 1..5);
-
-        result
-    }
-}
-
 /// Used to sequence how we handle each file type.
-#[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum OpenType {
     Peptide,
     Ligand,
@@ -142,6 +109,7 @@ pub struct OpenHistory {
     pub timestamp: DateTime<Utc>,
     pub path: PathBuf,
     pub type_: OpenType,
+    pub ident: Option<String>,
     /// Only applicable for molecules and similar. A single central position.
     /// todo: We may wish to add per-atom positions later.
     pub position: Option<Vec3>,
@@ -150,69 +118,12 @@ pub struct OpenHistory {
 }
 
 impl OpenHistory {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut result = Vec::new();
-
-        result
-    }
-
-    // pub fn from_bytes(bytes: &[u8]) -> Self {
-    //
-    // }
-}
-
-// Manual bincode impls
-impl Encode for OpenHistory {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        // Store timestamp as i64 (seconds since Unix epoch)
-        let ts = self.timestamp.timestamp();
-        ts.encode(encoder)?;
-
-        self.path.encode(encoder)?;
-        self.type_.encode(encoder)?;
-        self.position.encode(encoder)?;
-        self.last_session.encode(encoder)?;
-
-        Ok(())
-    }
-}
-
-impl<T> Decode<T> for OpenHistory {
-    fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let ts = i64::decode(decoder)?;
-        let path = PathBuf::decode(decoder)?;
-        let type_ = OpenType::decode(decoder)?;
-        let position = Option::<Vec3>::decode(decoder)?;
-        let last_session = bool::decode(decoder)?;
-
-        Ok(OpenHistory {
-            timestamp: Utc
-                .timestamp_opt(ts, 0)
-                .single()
-                .ok_or_else(|| DecodeError::OtherString("invalid timestamp".to_string()))?,
-            path,
-            type_,
-            position,
-            last_session,
-        })
-    }
-}
-
-impl<'de, C> BorrowDecode<'de, C> for OpenHistory {
-    fn borrow_decode<D>(decoder: &mut D) -> Result<Self, DecodeError>
-    where
-        D: BorrowDecoder<'de, Context = C>,
-    {
-        Decode::decode(decoder)
-    }
-}
-
-impl OpenHistory {
     // pub fn new(path: &Path, type_: OpenType, position: Option<Vec3>) -> Self {
-    pub fn new(path: &Path, type_: OpenType) -> Self {
+    pub fn new(path: &Path, type_: OpenType, ident: Option<String>) -> Self {
         Self {
             timestamp: Utc::now(),
             path: path.to_owned(),
+            ident,
             type_,
             position: None,
             last_session: true,
@@ -220,7 +131,7 @@ impl OpenHistory {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Encode, Decode)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ControlSchemeType {
     Free,
     Arc,
@@ -237,6 +148,93 @@ impl ControlSchemeType {
         }
     }
 }
+#[derive(Clone, PartialEq)]
+pub struct Graphics {
+    pub msaa: MsaaSetting,
+    pub ambient_occlusion: AmbientOcclusion,
+    pub edge_cueing: Option<f32>,
+    pub depth_aware_halos: Option<f32>,
+}
+
+impl Default for Graphics {
+    fn default() -> Self {
+        Self {
+            msaa: Default::default(),
+            ambient_occlusion: Default::default(),
+            edge_cueing: Some(1.),
+            depth_aware_halos: Some(0.03),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ControlSettings {
+    /// Direct conversion from engine standard
+    pub movement_speed: u8,
+    /// Divide this by 100 to get engine standard.
+    pub rotation_sens: u8,
+    pub mol_move_sens: u8,
+}
+
+impl Default for ControlSettings {
+    fn default() -> Self {
+        Self {
+            movement_speed: MOVEMENT_SENS as u8,
+            rotation_sens: (ROTATE_SENS * 100.) as u8,
+            mol_move_sens: (SENS_MOL_MOVE_SCROLL * 1_000.) as u8,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct MdPrefs {
+    pub config: MdConfig,
+    pub num_steps: u32,
+    pub dt: f32,
+    pub backend: MdBackend,
+}
+
+impl Default for MdPrefs {
+    fn default() -> Self {
+        Self {
+            config: Default::default(),
+            num_steps: 100,
+            dt: 0.002,
+            backend: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct UiPrefs {
+    pub selection: Selection,
+    pub cam_snapshots: Vec<CamSnapshot>,
+    pub mol_view: MoleculeView,
+    pub mol_view_peptide: MoleculeView,
+    pub view_sel_level: ViewSelLevel,
+    pub visibility: Visibility,
+    pub ui_visibility: UiVisibility,
+    pub near_sel_only: bool,
+    pub near_lig_only: bool,
+    pub nearby_dist_thresh: u16,
+}
+
+impl Default for UiPrefs {
+    fn default() -> Self {
+        Self {
+            selection: Default::default(),
+            cam_snapshots: Default::default(),
+            mol_view: MoleculeView::DEFAULT_NON_PEPTIDE,
+            mol_view_peptide: MoleculeView::default(),
+            view_sel_level: Default::default(),
+            near_sel_only: Default::default(),
+            near_lig_only: Default::default(),
+            nearby_dist_thresh: Default::default(),
+            visibility: Default::default(),
+            ui_visibility: Default::default(),
+        }
+    }
+}
 
 /// We maintain some of the state that is saved in the preferences file here, to keep
 /// the save/load state streamlined, instead of in an intermediate struct between main state, and
@@ -244,40 +242,19 @@ impl ControlSchemeType {
 ///
 /// Note that this contains things which often fit cleanly in other state structs like `StateUi`,
 /// but are here due to our save mechanic.
-#[derive(Clone, PartialEq, Encode, Decode)]
+#[derive(Clone, PartialEq)]
 pub struct ToSave {
     pub per_mol: HashMap<String, PerMolToSave>,
     pub open_history: Vec<OpenHistory>,
     pub control_scheme: ControlSchemeType,
-    // todo: Grraphics settinkgs substruct?
-    pub msaa: MsaaSetting,
-    pub ambient_occlusion: AmbientOcclusion,
-    pub edge_cueing: Option<f32>,
-    pub depth_aware_halos: Option<f32>,
-    /// Direct conversion from engine standard
-    pub movement_speed: u8,
-    /// Divide this by 100 to get engine standard.
-    pub rotation_sens: u8,
-    pub mol_move_sens: u8,
+    pub graphics: Graphics,
+    pub control_settings: ControlSettings,
     /// Solvent-accessible surface (and dots) precision. Lower is higher precision. A value of 0.5 - 0.6
     /// is a good default. Too low will cause crashes and very poor performance. Higher is too coarse.
     pub sa_surface_precision: f32,
-    pub md_config: MdConfig,
-    pub num_md_steps: u32,
-    /// todo: We may move this to be per-molecule, etc.
-    // pub num_md_copies: usize,
-    pub md_dt: f32,
-    pub md_backend: MdBackend,
+    pub md: MdPrefs,
+    pub ui_prefs: UiPrefs,
     pub ph: f32,
-    pub selection: Selection,
-    pub cam_snapshots: Vec<CamSnapshot>,
-    pub mol_view: MoleculeView,
-    pub view_sel_level: ViewSelLevel,
-    pub visibility: Visibility,
-    pub ui_visibility: UiVisibility,
-    pub near_sel_only: bool,
-    pub near_lig_only: bool,
-    pub nearby_dist_thresh: u16,
     pub pubchem_properties_map: HashMap<MolIdent, pubchem::Properties>,
     /// We use this to mark that we should perform a save, even if one
     /// of the fields here didn't change. E.g. after moving a molecule.
@@ -287,8 +264,6 @@ pub struct ToSave {
     pub nucleic_acid: NucleicAcidUi,
     pub mesh_coloring: MeshColoring,
     pub auto_fog: bool,
-    // Screening path deprecated in favor of using Parquet databases.
-    // pub screening_path: Option<PathBuf>,
 }
 
 impl Default for ToSave {
@@ -297,43 +272,25 @@ impl Default for ToSave {
             per_mol: Default::default(),
             open_history: Default::default(),
             control_scheme: ControlSchemeType::Free,
-            msaa: Default::default(),
-            ambient_occlusion: Default::default(),
-            edge_cueing: Some(1.),
-            depth_aware_halos: Some(0.03),
-            movement_speed: MOVEMENT_SENS as u8,
-            rotation_sens: (ROTATE_SENS * 100.) as u8,
-            mol_move_sens: (SENS_MOL_MOVE_SCROLL * 1_000.) as u8,
+            graphics: Default::default(),
+            control_settings: Default::default(),
             // We override this based on protein atom count.
             sa_surface_precision: 0.55,
-            md_config: Default::default(),
-            num_md_steps: 100,
-            // num_md_copies: 1,
-            md_dt: 0.002,
-            md_backend: Default::default(),
+            md: Default::default(),
+            ui_prefs: Default::default(),
             ph: 7.4,
-            selection: Default::default(),
-            cam_snapshots: Default::default(),
-            mol_view: Default::default(),
-            view_sel_level: Default::default(),
-            near_sel_only: Default::default(),
-            near_lig_only: Default::default(),
-            nearby_dist_thresh: Default::default(),
-            visibility: Default::default(),
-            ui_visibility: Default::default(),
             pubchem_properties_map: Default::default(),
             save_flag: false,
             lipid: Default::default(),
             nucleic_acid: Default::default(),
             mesh_coloring: Default::default(),
             auto_fog: true,
-            // screening_path: None,
         }
     }
 }
 
 /// Generally, data here only applies if a protein is present.
-#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PerMolToSave {
     chain_vis: Vec<bool>,
     chain_to_pick_res: Option<usize>,
@@ -397,15 +354,167 @@ impl PerMolToSave {
             lig_atom_positions,
         }
     }
+
+    // Hand-rolled (de)serialization, inline with the `copy_le!` / `parse_le!` macros. Defined here,
+    // rather than in `prefs_file_format`, so it can access this struct's private fields. The
+    // deeply-nested external types (`PdbDataResults`, `FilesAvailable`, `Vec3`) are stored as
+    // length-prefixed bincode blobs; everything else is hand-rolled.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        out.extend_from_slice(&(self.chain_vis.len() as u32).to_le_bytes());
+        for v in &self.chain_vis {
+            out.push(*v as u8);
+        }
+
+        match self.chain_to_pick_res {
+            Some(x) => {
+                out.push(1);
+                out.extend_from_slice(&(x as u64).to_le_bytes());
+            }
+            None => out.push(0),
+        }
+
+        let ds = self.docking_site.to_bytes();
+        out.extend_from_slice(&(ds.len() as u32).to_le_bytes());
+        out.extend_from_slice(&ds);
+
+        out.push(self.show_docking_tools as u8);
+        out.push(self.res_coloring.to_u8());
+        out.push(self.aatom_color_by_charge as u8);
+        out.push(self.show_aa_seq as u8);
+
+        match &self.rcsb_data {
+            Some(x) => {
+                out.push(1);
+                let b = bincode::encode_to_vec(x, bincode::config::standard()).unwrap_or_default();
+                out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                out.extend_from_slice(&b);
+            }
+            None => out.push(0),
+        }
+        match &self.rcsb_files_avail {
+            Some(x) => {
+                out.push(1);
+                let b = bincode::encode_to_vec(x, bincode::config::standard()).unwrap_or_default();
+                out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                out.extend_from_slice(&b);
+            }
+            None => out.push(0),
+        }
+
+        let c = bincode::encode_to_vec(&self.docking_site_posit, bincode::config::standard())
+            .unwrap_or_default();
+        out.extend_from_slice(&(c.len() as u32).to_le_bytes());
+        out.extend_from_slice(&c);
+        let l = bincode::encode_to_vec(&self.lig_atom_positions, bincode::config::standard())
+            .unwrap_or_default();
+        out.extend_from_slice(&(l.len() as u32).to_le_bytes());
+        out.extend_from_slice(&l);
+
+        out
+    }
+
+    #[allow(unused_assignments)]
+    pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
+        let mut i = 0;
+
+        let n = parse_le!(data, u32, i..i + 4) as usize;
+        i += 4;
+        let mut chain_vis = Vec::with_capacity(n);
+        for _ in 0..n {
+            chain_vis.push(data[i] != 0);
+            i += 1;
+        }
+
+        let has = data[i] != 0;
+        i += 1;
+        let chain_to_pick_res = if has {
+            let x = parse_le!(data, u64, i..i + 8) as usize;
+            i += 8;
+            Some(x)
+        } else {
+            None
+        };
+
+        let len = parse_le!(data, u32, i..i + 4) as usize;
+        i += 4;
+        let docking_site = DockingSite::from_bytes(&data[i..i + len])?;
+        i += len;
+
+        let show_docking_tools = data[i] != 0;
+        i += 1;
+        let res_coloring = ResColoring::from_u8(data[i]);
+        i += 1;
+        let aatom_color_by_charge = data[i] != 0;
+        i += 1;
+        let show_aa_seq = data[i] != 0;
+        i += 1;
+
+        let has = data[i] != 0;
+        i += 1;
+        let rcsb_data = if has {
+            let len = parse_le!(data, u32, i..i + 4) as usize;
+            i += 4;
+            let v = bincode::decode_from_slice(&data[i..i + len], bincode::config::standard())
+                .unwrap()
+                .0;
+            i += len;
+            Some(v)
+        } else {
+            None
+        };
+        let has = data[i] != 0;
+        i += 1;
+        let rcsb_files_avail = if has {
+            let len = parse_le!(data, u32, i..i + 4) as usize;
+            i += 4;
+            let v = bincode::decode_from_slice(&data[i..i + len], bincode::config::standard())
+                .unwrap()
+                .0;
+            i += len;
+            Some(v)
+        } else {
+            None
+        };
+
+        let len = parse_le!(data, u32, i..i + 4) as usize;
+        i += 4;
+        let docking_site_posit =
+            bincode::decode_from_slice(&data[i..i + len], bincode::config::standard())
+                .unwrap()
+                .0;
+        i += len;
+        let len = parse_le!(data, u32, i..i + 4) as usize;
+        i += 4;
+        let lig_atom_positions =
+            bincode::decode_from_slice(&data[i..i + len], bincode::config::standard())
+                .unwrap()
+                .0;
+
+        Ok(Self {
+            chain_vis,
+            chain_to_pick_res,
+            docking_site,
+            show_docking_tools,
+            res_coloring,
+            aatom_color_by_charge,
+            show_aa_seq,
+            rcsb_data,
+            rcsb_files_avail,
+            docking_site_posit,
+            lig_atom_positions,
+        })
+    }
 }
 
 impl State {
     /// We run this after loading a molecule.
     pub fn update_save_prefs_no_mol(&mut self) {
-        if let Err(e) = save(
-            &self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE),
-            &self.to_save,
-        ) {
+        if let Err(e) = self
+            .to_save
+            .save(&self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE))
+        {
             eprintln!("Error saving state: {e:?}");
         }
     }
@@ -426,6 +535,7 @@ impl State {
                 }
             }
         }
+
         for mol in &self.pockets {
             for oh in &mut self.to_save.open_history {
                 if let Some(p) = &mol.common.path
@@ -442,23 +552,24 @@ impl State {
             self.to_save.per_mol.insert(mol.common.ident.clone(), data);
         }
 
-        self.to_save.selection = self.ui.selection.clone();
-        self.to_save.cam_snapshots = self.cam_snapshots.clone();
-        self.to_save.mol_view = self.ui.mol_view;
-        self.to_save.view_sel_level = self.ui.view_sel_level;
-        self.to_save.near_sel_only = self.ui.show_near_sel_only;
-        self.to_save.near_lig_only = self.ui.show_near_lig_only;
-        self.to_save.nearby_dist_thresh = self.ui.nearby_dist_thresh;
-        self.to_save.visibility = self.ui.visibility.clone();
-        self.to_save.ui_visibility = self.ui.ui_vis.clone();
+        self.to_save.ui_prefs.selection = self.ui.selection.clone();
+        self.to_save.ui_prefs.cam_snapshots = self.cam_snapshots.clone();
+        self.to_save.ui_prefs.mol_view = self.ui.mol_view.non_peptide_or_default();
+        self.to_save.ui_prefs.mol_view_peptide = self.ui.mol_view_peptide;
+        self.to_save.ui_prefs.view_sel_level = self.ui.view_sel_level;
+        self.to_save.ui_prefs.near_sel_only = self.ui.show_near_sel_only;
+        self.to_save.ui_prefs.near_lig_only = self.ui.show_near_lig_only;
+        self.to_save.ui_prefs.nearby_dist_thresh = self.ui.nearby_dist_thresh;
+        self.to_save.ui_prefs.visibility = self.ui.visibility.clone();
+        self.to_save.ui_prefs.ui_visibility = self.ui.ui_vis.clone();
         self.to_save.mesh_coloring = self.ui.mesh_coloring;
 
         self.to_save_prev = self.to_save.clone();
 
-        if let Err(e) = save(
-            &self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE),
-            &self.to_save,
-        ) {
+        if let Err(e) = self
+            .to_save
+            .save(&self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE))
+        {
             eprintln!("Error saving state: {e:?}");
         }
     }
@@ -489,26 +600,27 @@ impl State {
             mol.rcsb_files_avail = data.rcsb_files_avail.clone();
         }
 
-        self.ui.selection = self.to_save.selection.clone();
-        self.cam_snapshots = self.to_save.cam_snapshots.clone();
-        self.ui.mol_view = self.to_save.mol_view;
-        self.ui.view_sel_level = self.to_save.view_sel_level;
-        self.ui.show_near_sel_only = self.to_save.near_sel_only;
-        self.ui.show_near_lig_only = self.to_save.near_lig_only;
-        self.ui.nearby_dist_thresh = self.to_save.nearby_dist_thresh;
-        self.ui.visibility = self.to_save.visibility.clone();
-        self.ui.ui_vis = self.to_save.ui_visibility.clone();
+        self.ui.selection = self.to_save.ui_prefs.selection.clone();
+        self.cam_snapshots = self.to_save.ui_prefs.cam_snapshots.clone();
+        self.ui.mol_view = self.to_save.ui_prefs.mol_view.non_peptide_or_default();
+        self.ui.mol_view_peptide = self.to_save.ui_prefs.mol_view_peptide;
+        self.ui.view_sel_level = self.to_save.ui_prefs.view_sel_level;
+        self.ui.show_near_sel_only = self.to_save.ui_prefs.near_sel_only;
+        self.ui.show_near_lig_only = self.to_save.ui_prefs.near_lig_only;
+        self.ui.nearby_dist_thresh = self.to_save.ui_prefs.nearby_dist_thresh;
+        self.ui.visibility = self.to_save.ui_prefs.visibility.clone();
+        self.ui.ui_vis = self.to_save.ui_prefs.ui_visibility.clone();
 
-        self.ui.movement_speed_input = self.to_save.movement_speed.to_string();
-        self.ui.rotation_sens_input = self.to_save.rotation_sens.to_string();
-        self.ui.mol_move_sens_input = self.to_save.mol_move_sens.to_string();
+        self.ui.movement_speed_input = self.to_save.control_settings.movement_speed.to_string();
+        self.ui.rotation_sens_input = self.to_save.control_settings.rotation_sens.to_string();
+        self.ui.mol_move_sens_input = self.to_save.control_settings.mol_move_sens.to_string();
         self.ui.mesh_coloring = self.to_save.mesh_coloring;
 
         println!("Done");
     }
 
     pub fn load_prefs(&mut self) {
-        match load(&PathBuf::from(DEFAULT_PREFS_FILE)) {
+        match ToSave::load(&self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE)) {
             Ok(p) => self.to_save = p,
             Err(e) => {
                 eprintln!("Unable to load save file; possibly the first time running: {e:?}.")

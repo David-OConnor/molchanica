@@ -278,7 +278,7 @@ pub fn gromacs_input_from_state(
         None
     };
 
-    let cfg = &state.to_save.md_config;
+    let cfg = &state.to_save.md.config;
 
     // Build molecule entries for GROMACS input.
     let (mols_input, _md_pep_sel) = match build_molecule_inputs(
@@ -301,8 +301,9 @@ pub fn gromacs_input_from_state(
     // Map MdConfig + explicit dt/n_steps onto MdpParams.
     let mdp = state
         .to_save
-        .md_config
-        .to_gromacs(state.to_save.num_md_steps as usize, state.to_save.md_dt);
+        .md
+        .config
+        .to_gromacs(state.to_save.md.num_steps as usize, state.to_save.md.dt);
 
     let minimize_energy = cfg.max_init_relaxation_iters.is_some();
     let ff_mol_types: Vec<_> = mols

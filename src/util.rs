@@ -713,7 +713,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
 
                 // We draw the molecule here
                 if matches!(
-                    state.ui.mol_view,
+                    state.ui.mol_view_peptide,
                     MoleculeView::Dots | MoleculeView::Surface
                 ) {
                     // The dots are drawn from the mesh vertices

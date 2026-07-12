@@ -4,12 +4,14 @@
 //! simulation itself: snapshots cover the gradual compression from a dilute
 //! starting cell to a target-density cell.
 
-use crate::{
-    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
-    md::MdBackend,
-    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
-    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
+use std::{
+    collections::HashMap,
+    fmt, fs,
+    io::{self, ErrorKind},
+    path::{Path, PathBuf},
+    time::Instant,
 };
+
 use bio_files::{
     Sdf,
     gromacs::{
@@ -21,8 +23,9 @@ use bio_files::{
     md_params::ForceFieldParams,
 };
 use dynamics::{
-    AtomDynamics, ComputationDevice, FfMolType, Integrator, MdConfig, MdOverrides, MdState,
-    MolDynamics, ShrinkingBoxCfg, SimBox, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    AtomDynamics, ComputationDevice, FfMolType, HydrogenConstraint, Integrator, MdConfig,
+    MdOverrides, MdState, MolDynamics, ShrinkingBoxCfg, SimBox, SimBoxInit, Solvent,
+    TAU_TEMP_DEFAULT,
     params::FfParamSet,
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
@@ -31,12 +34,12 @@ use lin_alg::{
     f64::{Quaternion, Vec3 as Vec3F64},
 };
 use na_seq::Element;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use std::{
-    collections::HashMap,
-    fmt, fs,
-    io::{self, ErrorKind},
+
+use crate::{
+    gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
+    md::MdBackend,
+    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
+    properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
 };
 
 // Baseline number of solute molecule copies. Molecules large enough that their own
@@ -61,17 +64,30 @@ const MIN_COMPRESSION_BOX_SIDE_A: f32 = 24.0;
 // Fraction of the target side length used as the compression-limit side length.
 // Lower values make the resulting box smaller, with tighter compression.
 const COMPRESSION_LIMIT_SCALE: f32 = 0.55;
+// Layered slabs get an extra final X-only compression after Y/Z packing. This multiplier
+// applies only to that final X push: `2.0` asks the X shrink to continue for twice the
+// current distance, subject to `MIN_LAYER_X_PUSH_BOX_SIDE_A` and molecule-size clamping.
+const LAYER_X_PUSH_DURATION_SCALE: f32 = 2.0;
+// Layered-only lower bound for the final X side length. Lower values permit a smaller,
+// higher-pressure final layered box, but may trigger stop guards earlier.
+const MIN_LAYER_X_PUSH_BOX_SIDE_A: f32 = MIN_COMPRESSION_BOX_SIDE_A * 0.5;
+// If true, slab mode first compresses Y/Z to pack the solute layer before the final X push.
+// If false, slab mode only compresses along X, pushing the water and solute slabs together.
+const SLAB_COMPRESS_LATERALLY: bool = true;
 
 // Approximate volume occupied by one water molecule, in cubic angstroms.
 const WATER_MOLAR_VOLUME_A3: f32 = 29.97;
+// Extra OPC waters added after the mode-specific target water volume is computed.
+const WATER_MOLECULE_COUNT_SCALE: f32 = 1.20;
 
-// Target solute volume fraction for homogeneous solute/water packing.
-const HOMOGENEOUS_SOLUTE_VOLUME_FRACTION: f32 = 0.22;
+// Target solute volume fraction for homogeneous solute/water packing. Lower values
+// enlarge the final target box for the same solute volume and therefore add more water.
+const HOMOGENEOUS_SOLUTE_VOLUME_FRACTION: f32 = 0.14;
 
-// Target water volume fraction for homogeneous solute/water packing. Higher results
-// in more water, and overall molecules.
-// const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.84;
-const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.70;
+// Target water volume fraction for homogeneous solute/water packing. Keep this below
+// `1.0 - HOMOGENEOUS_SOLUTE_VOLUME_FRACTION` to leave modest packing headroom near
+// the target cell.
+const HOMOGENEOUS_WATER_VOLUME_FRACTION: f32 = 0.84;
 
 // Target solute volume fraction when starting from layered slabs.
 const LAYER_SOLUTE_VOLUME_FRACTION: f32 = 0.42;
@@ -80,6 +96,13 @@ const LAYER_WATER_VOLUME_FRACTION: f32 = 0.50;
 
 // Empty spacing kept between the initial water and solute slabs, in angstroms.
 const LAYER_INTERFACE_GAP_A: f32 = 2.4;
+// Fractional X position of the center of the water/solute gap. Values above 0.5
+// give the low-X solute slab a thicker starting layer than the high-X water slab.
+const LAYER_SOLUTE_SLAB_FRACTION: f32 = 0.58;
+// Phase-one handoff targets for layered boxes. The pressure threshold is deliberately
+// below the hard safety stop because small driven boxes have noisy virials.
+const LAYER_PACK_TARGET_DENSITY_G_CM3: f32 = 0.95;
+const LAYER_PACK_PRESSURE_HANDOFF_BAR: f32 = 5_000.0;
 
 // Minimum distance from each solute bounding sphere to the box wall, in angstroms.
 const SOLUTE_WALL_MARGIN_A: f32 = 1.0;
@@ -96,6 +119,9 @@ const INITIAL_BOX_SCALE: f32 = 3.0;
 // the system.
 // const BOX_SHRINK_PER_STEP: f32 = 0.006;
 const BOX_SHRINK_PER_STEP: f32 = 0.012;
+// Use a slower final X push for layered slabs, giving the solvent/solute interface
+// more steps to relax as it is compressed together.
+const LAYER_X_PUSH_SHRINK_PER_STEP: f32 = BOX_SHRINK_PER_STEP * 0.5;
 
 // Fixed-cell relaxation length after driven shrinking, in MD steps.
 const EQUILIBRATION_STEPS: usize = 2_000;
@@ -126,6 +152,11 @@ const TEMP: f32 = 300.0;
 
 // MD integration timestep used by both backends, in picoseconds.
 const DT: f32 = 0.001;
+
+const SHRINK_TAU_TEMP_PS: f64 = 0.05;
+const SHRINK_LINCS_ORDER: u8 = 8;
+const SHRINK_LINCS_ITER: u8 = 2;
+const PRE_SHRINK_MINIMIZATION_STEPS: usize = 5_000;
 
 const AVOGADRO_PER_MOL: f64 = 6.022_140_76e23;
 const A3_TO_L: f64 = 1.0e-27;
@@ -206,6 +237,7 @@ struct ShrinkingBoxSetup {
     water_molecule_count: usize,
     target_cell: SimBox,
     compression_limit_cell: SimBox,
+    layer_x_push_min_side_a: f32,
     initial_cell: SimBox,
     shrink_cfg: ShrinkingBoxCfg,
 }
@@ -228,6 +260,11 @@ fn centered_cube(side: f32) -> SimBox {
     )
 }
 
+fn centered_cell_with_extent(extent: Vec3F32) -> SimBox {
+    let half = extent / 2.0;
+    SimBox::new(-half, half)
+}
+
 fn solute_grid_inset_a(mol_radius_a: f32) -> f32 {
     SOLUTE_WALL_MARGIN_A + mol_radius_a
 }
@@ -236,11 +273,23 @@ fn solute_region_extent(initial_side_a: f32, mode: ShrinkingBoxMode) -> Vec3F32 
     match mode {
         ShrinkingBoxMode::HomogeneousMix => Vec3F32::splat(initial_side_a),
         ShrinkingBoxMode::WaterSoluteLayers => Vec3F32::new(
+            initial_side_a * LAYER_SOLUTE_SLAB_FRACTION - LAYER_INTERFACE_GAP_A / 2.0,
             initial_side_a,
             initial_side_a,
-            initial_side_a / 2.0 - LAYER_INTERFACE_GAP_A / 2.0,
         ),
     }
+}
+
+fn layer_gap_center_x(cell: SimBox) -> f32 {
+    cell.bounds_low.x + cell.extent.x * LAYER_SOLUTE_SLAB_FRACTION
+}
+
+fn layer_solute_high_x(cell: SimBox) -> f32 {
+    layer_gap_center_x(cell) - LAYER_INTERFACE_GAP_A / 2.0
+}
+
+fn layer_solvent_low_x(cell: SimBox) -> f32 {
+    layer_gap_center_x(cell) + LAYER_INTERFACE_GAP_A / 2.0
 }
 
 fn initial_cell_for_solutes(
@@ -339,13 +388,16 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         .max(MIN_COMPRESSION_BOX_SIDE_A)
         .max(molecule_limited_side_a);
     let compression_limit_cell = centered_cube(compression_limit_side_a);
+    let layer_x_push_min_side_a = MIN_LAYER_X_PUSH_BOX_SIDE_A.max(molecule_limited_side_a);
     let target_water_volume_a3 = match mode {
         // Leave headroom for solute excluded volume and driven compression.
         ShrinkingBoxMode::HomogeneousMix => target_volume_a3 * HOMOGENEOUS_WATER_VOLUME_FRACTION,
         ShrinkingBoxMode::WaterSoluteLayers => target_volume_a3 * LAYER_WATER_VOLUME_FRACTION,
     };
-    let water_molecule_count =
-        ((target_water_volume_a3 / WATER_MOLAR_VOLUME_A3).round() as usize).max(1);
+    let water_molecule_count = ((target_water_volume_a3 * WATER_MOLECULE_COUNT_SCALE
+        / WATER_MOLAR_VOLUME_A3)
+        .round() as usize)
+        .max(1);
     let shrink_cfg = ShrinkingBoxCfg {
         initial_box_scale: INITIAL_BOX_SCALE,
         box_shrink_per_step: BOX_SHRINK_PER_STEP,
@@ -359,6 +411,7 @@ fn setup_for(mol: &MoleculeSmall, mode: ShrinkingBoxMode) -> io::Result<Shrinkin
         water_molecule_count,
         target_cell,
         compression_limit_cell,
+        layer_x_push_min_side_a,
         initial_cell,
         shrink_cfg,
     })
@@ -392,13 +445,13 @@ fn solute_region(setup: ShrinkingBoxSetup) -> SimBox {
     match setup.mode {
         ShrinkingBoxMode::HomogeneousMix => setup.initial_cell,
         ShrinkingBoxMode::WaterSoluteLayers => {
-            let mid_z = setup.initial_cell.center().z - LAYER_INTERFACE_GAP_A / 2.0;
+            let high_x = layer_solute_high_x(setup.initial_cell);
             SimBox::new(
                 setup.initial_cell.bounds_low,
                 Vec3F32::new(
-                    setup.initial_cell.bounds_high.x,
+                    high_x,
                     setup.initial_cell.bounds_high.y,
-                    mid_z,
+                    setup.initial_cell.bounds_high.z,
                 ),
             )
         }
@@ -543,21 +596,20 @@ fn make_md_cfg(
     }
 }
 
-fn move_water_to_upper_layer(md: &mut MdState) {
+fn move_water_to_solvent_layer(md: &mut MdState) {
     let cell = md.cell;
-    let center_z = cell.center().z;
-    let low_z = center_z + LAYER_INTERFACE_GAP_A / 2.0;
-    let high_z = cell.bounds_high.z;
-    let scale_z = (high_z - low_z) / cell.extent.z;
+    let low_x = layer_solvent_low_x(cell);
+    let high_x = cell.bounds_high.x;
+    let scale_x = (high_x - low_x) / cell.extent.x;
 
     for water in &mut md.water {
-        let old_z = water.o.posit.z;
-        let new_z = low_z + (old_z - cell.bounds_low.z) * scale_z;
-        let dz = new_z - old_z;
-        water.o.posit.z += dz;
-        water.h0.posit.z += dz;
-        water.h1.posit.z += dz;
-        water.m.posit.z += dz;
+        let old_x = water.o.posit.x;
+        let new_x = low_x + (old_x - cell.bounds_low.x) * scale_x;
+        let dx = new_x - old_x;
+        water.o.posit.x += dx;
+        water.h0.posit.x += dx;
+        water.h1.posit.x += dx;
+        water.m.posit.x += dx;
     }
 }
 
@@ -576,7 +628,7 @@ fn build_initial_state(
     match setup.mode {
         ShrinkingBoxMode::HomogeneousMix => {}
         ShrinkingBoxMode::WaterSoluteLayers => {
-            move_water_to_upper_layer(&mut md);
+            move_water_to_solvent_layer(&mut md);
             md.rebuild_spatial_caches(dev);
         }
     }
@@ -664,10 +716,50 @@ fn cell_at_or_below(cell: SimBox, limit: SimBox) -> bool {
         && cell.extent.z <= limit.extent.z
 }
 
-fn shrink_step_count_between(initial_cell: SimBox, target_cell: SimBox) -> usize {
+fn layer_yz_pack_cell(setup: ShrinkingBoxSetup) -> SimBox {
+    centered_cell_with_extent(Vec3F32::new(
+        setup.initial_cell.extent.x,
+        setup.compression_limit_cell.extent.y,
+        setup.compression_limit_cell.extent.z,
+    ))
+}
+
+fn layer_x_push_cell(current_cell: SimBox, setup: ShrinkingBoxSetup) -> SimBox {
+    let default_x_limit_a = setup.compression_limit_cell.extent.x;
+    let current_x_a = current_cell.extent.x;
+    let x_shrink_a = (current_x_a - default_x_limit_a).max(0.0);
+    let extended_x_limit_a = current_x_a - x_shrink_a * LAYER_X_PUSH_DURATION_SCALE.max(1.0);
+    let x_limit_a = extended_x_limit_a
+        .max(setup.layer_x_push_min_side_a)
+        .min(default_x_limit_a);
+
+    centered_cell_with_extent(Vec3F32::new(
+        x_limit_a,
+        current_cell.extent.y,
+        current_cell.extent.z,
+    ))
+}
+
+fn latest_layer_pack_handoff_reason(snapshots: &[Snapshot]) -> Option<CompressionStopReason> {
+    let latest = snapshots.last()?.energy_data.as_ref()?;
+    let density_g_cm3 = latest.density * AMU_A3_TO_G_CM3;
+    if density_g_cm3.is_finite() && density_g_cm3 >= LAYER_PACK_TARGET_DENSITY_G_CM3 {
+        return Some(CompressionStopReason::MassDensity);
+    }
+
+    recent_energy_mean(snapshots, |data| data.pressure)
+        .is_some_and(|pressure| pressure.is_finite() && pressure >= LAYER_PACK_PRESSURE_HANDOFF_BAR)
+        .then_some(CompressionStopReason::Pressure)
+}
+
+fn shrink_step_count_between(
+    initial_cell: SimBox,
+    target_cell: SimBox,
+    shrink_per_step: f32,
+) -> usize {
     let shrink_needed = initial_cell.extent - target_cell.extent;
     let max_shrink = shrink_needed.x.max(shrink_needed.y).max(shrink_needed.z);
-    (max_shrink / BOX_SHRINK_PER_STEP.max(f32::EPSILON)).ceil() as usize
+    (max_shrink / shrink_per_step.max(f32::EPSILON)).ceil() as usize
 }
 
 fn shrink_cell_by_amount(current_cell: SimBox, limit_cell: SimBox, shrink_a: f32) -> SimBox {
@@ -858,6 +950,81 @@ fn md_extra_non_water_mols(md: &MdState, placed_solutes: &PlacedSolutes) -> Vec<
         .collect()
 }
 
+fn prepare_dynamics_shrinking_state(md: &mut MdState, dev: &ComputationDevice) {
+    md.cfg.integrator = Integrator::VerletVelocity {
+        thermostat: Some(SHRINK_TAU_TEMP_PS),
+    };
+    md.cfg.hydrogen_constraint = HydrogenConstraint::Linear {
+        order: SHRINK_LINCS_ORDER,
+        iter: SHRINK_LINCS_ITER,
+    };
+
+    md.minimize_energy(dev, PRE_SHRINK_MINIMIZATION_STEPS, None);
+
+    let zero_com_drift = md.cfg.zero_com_drift;
+    md.initialize_velocities(TEMP, zero_com_drift);
+}
+
+fn run_dynamics_shrink_phase(
+    md: &mut MdState,
+    dev: &ComputationDevice,
+    setup: ShrinkingBoxSetup,
+    data: &mut ShrinkingBoxMdData,
+    atom_count: usize,
+    phase_target_cell: SimBox,
+    box_shrink_per_step: f32,
+    layer_pack_handoff: bool,
+    mark_compression_limit_on_target: bool,
+) {
+    while data.stop_reason.is_none() && !cell_at_or_below(md.cell, phase_target_cell) {
+        let shrink_steps_remaining =
+            shrink_step_count_between(md.cell, phase_target_cell, box_shrink_per_step);
+        let chunk_steps = shrink_steps_remaining.min(SHRINK_CHUNK_STEPS).max(1);
+        let mut reached_phase_target = false;
+        let shrink_cfg = ShrinkingBoxCfg {
+            box_shrink_per_step,
+            ..setup.shrink_cfg
+        };
+
+        for _ in 0..chunk_steps {
+            let shrank = md.shrink_cell_towards(dev, phase_target_cell, shrink_cfg);
+            data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
+
+            reached_phase_target |= !shrank || cell_at_or_below(md.cell, phase_target_cell);
+
+            md.step(dev, DT, None);
+
+            if reached_phase_target {
+                break;
+            }
+        }
+
+        if let Some(reason) = latest_stop_reason(&md.snapshots, atom_count, max_dynamics_force(md))
+        {
+            mark_stop(data, reason);
+            break;
+        }
+
+        if layer_pack_handoff && latest_layer_pack_handoff_reason(&md.snapshots).is_some() {
+            break;
+        }
+
+        if reached_phase_target {
+            if mark_compression_limit_on_target {
+                mark_stop(data, CompressionStopReason::CompressionLimit);
+            }
+            break;
+        }
+    }
+
+    if mark_compression_limit_on_target
+        && data.stop_reason.is_none()
+        && cell_at_or_below(md.cell, phase_target_cell)
+    {
+        mark_stop(data, CompressionStopReason::CompressionLimit);
+    }
+}
+
 fn run_dynamics(
     setup: ShrinkingBoxSetup,
     placed_solutes: &PlacedSolutes,
@@ -865,44 +1032,62 @@ fn run_dynamics(
     dev: &ComputationDevice,
 ) -> io::Result<ShrinkingBoxBackendResult> {
     let mut md = build_initial_state(setup, placed_solutes, param_set, dev, true, false)?;
+    prepare_dynamics_shrinking_state(&mut md, dev);
+
     let mut data = initial_data(setup, md.water.len());
-    let shrink_steps = shrink_step_count_between(setup.initial_cell, setup.compression_limit_cell);
+    let atom_count = physical_atom_count(md.atoms.len(), md.water.len());
 
-    for _ in 0..shrink_steps {
-        if let Some(reason) = latest_stop_reason(
-            &md.snapshots,
-            physical_atom_count(md.atoms.len(), md.water.len()),
-            max_dynamics_force(&md),
-        ) {
-            mark_stop(&mut data, reason);
-            break;
+    println!("Starting Dynamics shrinking box loop...");
+    match setup.mode {
+        ShrinkingBoxMode::HomogeneousMix => {
+            run_dynamics_shrink_phase(
+                &mut md,
+                dev,
+                setup,
+                &mut data,
+                atom_count,
+                setup.compression_limit_cell,
+                BOX_SHRINK_PER_STEP,
+                false,
+                true,
+            );
         }
-
-        let shrank = md.shrink_cell_towards(dev, setup.compression_limit_cell, setup.shrink_cfg);
-        data.reached_target_box |= cell_at_or_below(md.cell, setup.target_cell);
-
-        if !shrank || cell_at_or_below(md.cell, setup.compression_limit_cell) {
-            mark_stop(&mut data, CompressionStopReason::CompressionLimit);
-        }
-
-        md.step(dev, DT, None);
-
-        if data.stop_reason.is_none() {
-            if let Some(reason) = latest_stop_reason(
-                &md.snapshots,
-                physical_atom_count(md.atoms.len(), md.water.len()),
-                max_dynamics_force(&md),
-            ) {
-                mark_stop(&mut data, reason);
+        ShrinkingBoxMode::WaterSoluteLayers => {
+            if SLAB_COMPRESS_LATERALLY {
+                println!("Starting Dynamics Y/Z layer packing phase...");
+                run_dynamics_shrink_phase(
+                    &mut md,
+                    dev,
+                    setup,
+                    &mut data,
+                    atom_count,
+                    layer_yz_pack_cell(setup),
+                    BOX_SHRINK_PER_STEP,
+                    true,
+                    false,
+                );
             }
-        }
 
-        if data.stop_reason.is_some() {
-            break;
+            if data.stop_reason.is_none() {
+                println!("Starting Dynamics X layer compression phase...");
+                let x_push_cell = layer_x_push_cell(md.cell, setup);
+                data.compression_limit_box_extent_a = x_push_cell.extent;
+                run_dynamics_shrink_phase(
+                    &mut md,
+                    dev,
+                    setup,
+                    &mut data,
+                    atom_count,
+                    x_push_cell,
+                    LAYER_X_PUSH_SHRINK_PER_STEP,
+                    false,
+                    true,
+                );
+            }
         }
     }
 
-    if should_run_post_shrink_equilibration(data.stop_reason) {
+    if should_run_post_shrink_equilibration(data.stop_reason) && !md.snapshots.is_empty() {
         for _ in 0..EQUILIBRATION_STEPS {
             md.step(dev, DT, None);
         }
@@ -1059,6 +1244,88 @@ fn update_gromacs_restart_input(
     Ok(())
 }
 
+fn run_gromacs_shrink_phase(
+    input: &mut GromacsInput,
+    snapshots: &mut Vec<Snapshot>,
+    elapsed_ps: &mut f64,
+    current_cell: &mut SimBox,
+    data: &mut ShrinkingBoxMdData,
+    atom_count: usize,
+    setup_target_cell: SimBox,
+    phase_target_cell: SimBox,
+    box_shrink_per_step: f32,
+    layer_pack_handoff: bool,
+    mark_compression_limit_on_target: bool,
+    initialize_deform_flow: &mut bool,
+    generate_initial_velocities: &mut bool,
+) -> io::Result<()> {
+    while data.stop_reason.is_none() && !cell_at_or_below(*current_cell, phase_target_cell) {
+        let next_cell = shrink_cell_by_amount(
+            *current_cell,
+            phase_target_cell,
+            box_shrink_per_step * SHRINK_CHUNK_STEPS as f32,
+        );
+
+        input.mdp.nsteps = SHRINK_CHUNK_STEPS as u64;
+        input.mdp.dt = DT;
+        input.mdp.deform = Some(gromacs_deform_nm_ps(
+            *current_cell,
+            next_cell,
+            SHRINK_CHUNK_STEPS,
+            DT,
+        ));
+        input.mdp.gen_vel = *generate_initial_velocities;
+        input.mdp.deform_init_flow = *initialize_deform_flow;
+        input.minimize_energy = *generate_initial_velocities;
+
+        let mut out = match input.run() {
+            Ok(out) => out,
+            Err(err) if !snapshots.is_empty() => {
+                eprintln!(
+                    "Stopping adaptive GROMACS shrinking-box compression after a failed chunk: {err}"
+                );
+                mark_stop(data, CompressionStopReason::GromacsChunkFailure);
+                break;
+            }
+            Err(err) => return Err(err),
+        };
+
+        let max_force = max_gromacs_force(&out);
+        append_gromacs_snapshots(snapshots, &out, elapsed_ps, SHRINK_CHUNK_STEPS);
+        *current_cell = next_cell;
+        update_gromacs_restart_input(input, &mut out, "chunk")?;
+        *generate_initial_velocities = false;
+        *initialize_deform_flow = false;
+
+        data.reached_target_box |= cell_at_or_below(*current_cell, setup_target_cell);
+
+        if let Some(reason) = latest_stop_reason(snapshots, atom_count, max_force) {
+            mark_stop(data, reason);
+            break;
+        }
+
+        if layer_pack_handoff && latest_layer_pack_handoff_reason(snapshots).is_some() {
+            break;
+        }
+
+        if cell_at_or_below(*current_cell, phase_target_cell) {
+            if mark_compression_limit_on_target {
+                mark_stop(data, CompressionStopReason::CompressionLimit);
+            }
+            break;
+        }
+    }
+
+    if mark_compression_limit_on_target
+        && data.stop_reason.is_none()
+        && cell_at_or_below(*current_cell, phase_target_cell)
+    {
+        mark_stop(data, CompressionStopReason::CompressionLimit);
+    }
+
+    Ok(())
+}
+
 fn run_gromacs(
     mol: &MoleculeSmall,
     setup: ShrinkingBoxSetup,
@@ -1115,56 +1382,64 @@ fn run_gromacs(
     println!("Starting GROMACS shrinking box loop...");
     let mut initialize_deform_flow = true;
     let mut generate_initial_velocities = true;
-    while data.stop_reason.is_none()
-        && !cell_at_or_below(current_cell, setup.compression_limit_cell)
-    {
-        let next_cell = shrink_cell_by_amount(
-            current_cell,
-            setup.compression_limit_cell,
-            BOX_SHRINK_PER_STEP * SHRINK_CHUNK_STEPS as f32,
-        );
-
-        input.mdp.nsteps = SHRINK_CHUNK_STEPS as u64;
-        input.mdp.dt = DT;
-        input.mdp.deform = Some(gromacs_deform_nm_ps(
-            current_cell,
-            next_cell,
-            SHRINK_CHUNK_STEPS,
-            DT,
-        ));
-        input.mdp.gen_vel = generate_initial_velocities;
-        input.mdp.deform_init_flow = initialize_deform_flow;
-        input.minimize_energy = generate_initial_velocities;
-
-        let mut out = match input.run() {
-            Ok(out) => out,
-            Err(err) if !snapshots.is_empty() => {
-                eprintln!(
-                    "Stopping adaptive GROMACS shrinking-box compression after a failed chunk: {err}"
-                );
-                mark_stop(&mut data, CompressionStopReason::GromacsChunkFailure);
-                break;
-            }
-            Err(err) => return Err(err),
-        };
-
-        let max_force = max_gromacs_force(&out);
-        append_gromacs_snapshots(&mut snapshots, &out, &mut elapsed_ps, SHRINK_CHUNK_STEPS);
-        current_cell = next_cell;
-        update_gromacs_restart_input(&mut input, &mut out, "chunk")?;
-        generate_initial_velocities = false;
-        initialize_deform_flow = false;
-
-        data.reached_target_box |= cell_at_or_below(current_cell, setup.target_cell);
-
-        if let Some(reason) = latest_stop_reason(&snapshots, atom_count, max_force) {
-            mark_stop(&mut data, reason);
-            break;
+    match setup.mode {
+        ShrinkingBoxMode::HomogeneousMix => {
+            run_gromacs_shrink_phase(
+                &mut input,
+                &mut snapshots,
+                &mut elapsed_ps,
+                &mut current_cell,
+                &mut data,
+                atom_count,
+                setup.target_cell,
+                setup.compression_limit_cell,
+                BOX_SHRINK_PER_STEP,
+                false,
+                true,
+                &mut initialize_deform_flow,
+                &mut generate_initial_velocities,
+            )?;
         }
+        ShrinkingBoxMode::WaterSoluteLayers => {
+            if SLAB_COMPRESS_LATERALLY {
+                println!("Starting GROMACS Y/Z layer packing phase...");
+                run_gromacs_shrink_phase(
+                    &mut input,
+                    &mut snapshots,
+                    &mut elapsed_ps,
+                    &mut current_cell,
+                    &mut data,
+                    atom_count,
+                    setup.target_cell,
+                    layer_yz_pack_cell(setup),
+                    BOX_SHRINK_PER_STEP,
+                    true,
+                    false,
+                    &mut initialize_deform_flow,
+                    &mut generate_initial_velocities,
+                )?;
+            }
 
-        if cell_at_or_below(current_cell, setup.compression_limit_cell) {
-            mark_stop(&mut data, CompressionStopReason::CompressionLimit);
-            break;
+            if data.stop_reason.is_none() {
+                println!("Starting GROMACS X layer compression phase...");
+                let x_push_cell = layer_x_push_cell(current_cell, setup);
+                data.compression_limit_box_extent_a = x_push_cell.extent;
+                run_gromacs_shrink_phase(
+                    &mut input,
+                    &mut snapshots,
+                    &mut elapsed_ps,
+                    &mut current_cell,
+                    &mut data,
+                    atom_count,
+                    setup.target_cell,
+                    x_push_cell,
+                    LAYER_X_PUSH_SHRINK_PER_STEP,
+                    false,
+                    true,
+                    &mut initialize_deform_flow,
+                    &mut generate_initial_velocities,
+                )?;
+            }
         }
     }
 
@@ -1317,110 +1592,189 @@ pub fn run_shrinking_box_sim(
     Ok((result.data, result.snapshots, playback_mols))
 }
 
-fn file_stem_has_id(path: &Path, id: usize) -> bool {
-    let id = id.to_string();
-    path.file_stem()
-        .and_then(|stem| stem.to_str())
-        .is_some_and(|stem| {
-            stem.split(|c: char| !c.is_ascii_digit())
-                .any(|part| part == id)
-        })
-}
+/// For running multiple molecules in sequence.
+pub mod runner {
+    use super::*;
 
-fn find_sdf_by_id(path: &Path, id: usize) -> io::Result<PathBuf> {
-    let mut candidates = fs::read_dir(path)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("sdf"))
-                && file_stem_has_id(path, id)
-        })
-        .collect::<Vec<_>>();
-
-    candidates.sort();
-    candidates.into_iter().next().ok_or_else(|| {
-        io::Error::new(
-            ErrorKind::NotFound,
-            format!("No SDF file containing molecule id {id} found under {path:?}."),
-        )
-    })
-}
-
-fn load_sdf_molecule(path: &Path) -> io::Result<MoleculeSmall> {
-    let mut mol: MoleculeSmall = Sdf::load(path)?.try_into()?;
-    mol.common.update_path(path);
-    Ok(mol)
-}
-
-/// A hard-coded test; no output, but prints the results.
-pub fn run_on_select_mols(dev: &ComputationDevice, param_set: &FfParamSet) {
-    let mols = [
-        (206, 1.2330),
-        (226, -0.1376),
-        (603, -0.6910),
-        (30, -0.7630),
-        (169, -0.8450),
-        (217, -0.9832),
-        (590, -1.7470),
-        (54, -1.7796),
-        (508, -2.7440),
-        (16, -2.4660),
-        (569, -2.8200),
-        (18, -3.4100),
-        (579, -3.8000),
-    ];
-
-    let path = PathBuf::from("C:/Users/the_a/Desktop/bio_misc/tdc_data/solubility_aqsoldb");
-
-    let mut results = Vec::new();
-    for (mol_id, nominal_solubility) in mols {
-        let mol_path = match find_sdf_by_id(&path, mol_id) {
-            Ok(path) => path,
-            Err(e) => {
-                eprintln!("Skipping molecule id {mol_id}: {e}");
-                continue;
-            }
-        };
-        let mol = match load_sdf_molecule(&mol_path) {
-            Ok(mol) => mol,
-            Err(e) => {
-                eprintln!("Skipping molecule id {mol_id}; unable to load {mol_path:?}: {e}");
-                continue;
-            }
-        };
-
-        let data = match run_shrinking_box_sim(
-            &mol,
-            ShrinkingBoxMode::HomogeneousMix,
-            MdBackend::Gromacs,
-            dev,
-            param_set,
-        ) {
-            Ok((data, _, _)) => data,
-            Err(e) => {
-                eprintln!("Skipping molecule id {mol_id}; shrinking-box simulation failed: {e}");
-                continue;
-            }
-        };
-
-        results.push((mol_id, mol.common.ident.clone(), nominal_solubility, data));
+    fn file_stem_has_id(path: &Path, id: usize) -> bool {
+        let id = id.to_string();
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| {
+                stem.split(|c: char| !c.is_ascii_digit())
+                    .any(|part| part == id)
+            })
     }
 
-    println!("\n------\nShrinking box sim results:\n");
-    for (mol_id, ident, nominal_solubility, data) in &results {
-        println!(
-            "---Mol #{mol_id} {ident} | Nominal sol: {nominal_solubility:.4} | Comp sol: {:.4} BH: {:.4} | raw {:.4}, mix {:.4}, disp {:.4}, agg {:.4}, contacts {:.4}, {:.3} M\n------\n",
-            data.solubility_estimate,
-            data.solubility_estimate_barnes_hut,
-            data.solubility_raw_score,
-            data.solubility_local_mixing,
-            data.solubility_solute_dispersion,
-            data.solubility_aggregation_factor,
-            data.solubility_contact_pair_fraction,
-            data.final_solute_molarity_m,
-        );
+    fn find_sdf_by_id(path: &Path, id: usize) -> io::Result<PathBuf> {
+        let mut candidates = fs::read_dir(path)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("sdf"))
+                    && file_stem_has_id(path, id)
+            })
+            .collect::<Vec<_>>();
+
+        candidates.sort();
+        candidates.into_iter().next().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::NotFound,
+                format!("No SDF file containing molecule id {id} found under {path:?}."),
+            )
+        })
     }
-    println!("\n------\n");
+
+    fn load_sdf_molecule(path: &Path) -> io::Result<MoleculeSmall> {
+        let mut mol: MoleculeSmall = Sdf::load(path)?.try_into()?;
+        mol.common.update_path(path);
+        Ok(mol)
+    }
+
+    fn parse_csv_line(line: &str) -> Vec<String> {
+        let mut fields = Vec::new();
+        let mut field = String::new();
+        let mut chars = line.chars().peekable();
+        let mut in_quotes = false;
+
+        while let Some(c) = chars.next() {
+            match c {
+                '"' if in_quotes && chars.peek() == Some(&'"') => {
+                    field.push('"');
+                    chars.next();
+                }
+                '"' => in_quotes = !in_quotes,
+                ',' if !in_quotes => fields.push(std::mem::take(&mut field)),
+                _ => field.push(c),
+            }
+        }
+
+        fields.push(field);
+        fields
+    }
+
+    fn load_nominal_solubilities(csv_path: &Path) -> io::Result<HashMap<usize, f32>> {
+        let csv = fs::read_to_string(csv_path)?;
+        let mut lines = csv.lines();
+        let header = lines.next().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!("Solubility CSV {csv_path:?} is empty."),
+            )
+        })?;
+        let header_fields = parse_csv_line(header);
+        let target_col = header_fields
+            .iter()
+            .position(|field| field.trim() == "Y")
+            .ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::InvalidData,
+                    format!("Solubility CSV {csv_path:?} does not contain a Y column."),
+                )
+            })?;
+
+        let mut result = HashMap::new();
+        for (row_i, line) in lines.enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let fields = parse_csv_line(line);
+            let Some(target_str) = fields.get(target_col) else {
+                continue;
+            };
+            let Ok(target) = target_str.trim().parse() else {
+                continue;
+            };
+
+            result.insert(row_i, target);
+        }
+
+        Ok(result)
+    }
+
+    /// A hard-coded test; no output, but prints the results.
+    pub fn run_on_select_mols(dev: &ComputationDevice, param_set: &FfParamSet) {
+        let mols = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 206, 226, 603, 30, 169, 217, 590, 54, 508,
+            16, 569, 18, 579,
+        ];
+
+        let csv_path =
+            PathBuf::from("C:/Users/the_a/Desktop/bio_misc/tdc_data/solubility_aqsoldb.csv");
+        let path = PathBuf::from("C:/Users/the_a/Desktop/bio_misc/tdc_data/solubility_aqsoldb");
+        let nominal_solubilities = match load_nominal_solubilities(&csv_path) {
+            Ok(values) => values,
+            Err(e) => {
+                eprintln!("Unable to read nominal solubilities from {csv_path:?}: {e}");
+                return;
+            }
+        };
+
+        let mut results = Vec::new();
+
+        for mol_id in mols {
+            println!("Running on mol {mol_id}");
+
+            let Some(nominal_solubility) = nominal_solubilities.get(&mol_id).copied() else {
+                eprintln!(
+                    "Skipping molecule id {mol_id}; no nominal solubility found in {csv_path:?}."
+                );
+                continue;
+            };
+
+            let mol_path = match find_sdf_by_id(&path, mol_id) {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Skipping molecule id {mol_id}: {e}");
+                    continue;
+                }
+            };
+            let mol = match load_sdf_molecule(&mol_path) {
+                Ok(mol) => mol,
+                Err(e) => {
+                    eprintln!("Skipping molecule id {mol_id}; unable to load {mol_path:?}: {e}");
+                    continue;
+                }
+            };
+
+            let data = match run_shrinking_box_sim(
+                &mol,
+                ShrinkingBoxMode::HomogeneousMix,
+                MdBackend::Gromacs,
+                dev,
+                param_set,
+            ) {
+                Ok((data, _, _)) => data,
+                Err(e) => {
+                    eprintln!(
+                        "Skipping molecule id {mol_id}; shrinking-box simulation failed: {e}"
+                    );
+                    continue;
+                }
+            };
+
+            println!("-- Sol for {mol_id}: {:.4}", data.solubility_estimate);
+
+            results.push((mol_id, mol.common.ident.clone(), nominal_solubility, data));
+        }
+
+        println!("\n------\nShrinking box sim results:\n");
+        for (mol_id, ident, nominal_solubility, data) in &results {
+            println!(
+                "---Mol #{mol_id} {ident} | Nominal sol: {nominal_solubility:.4} | Comp sol: {:.4} BH: {:.4} | raw {:.4}, mix {:.4}, disp {:.4}, agg {:.4}, contacts {:.4}, {:.3} M\n------\n",
+                data.solubility_estimate,
+                data.solubility_estimate_barnes_hut,
+                data.solubility_raw_score,
+                data.solubility_local_mixing,
+                data.solubility_solute_dispersion,
+                data.solubility_aggregation_factor,
+                data.solubility_contact_pair_fraction,
+                data.final_solute_molarity_m,
+            );
+        }
+        println!("\n------\n");
+    }
 }

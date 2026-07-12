@@ -48,8 +48,8 @@ use burn::{
         backend::{AutodiffBackend, Backend},
     },
     train::{
-        InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput, TrainStep,
-        TrainingStrategy, metric::LossMetric,
+        ExecutionStrategy, InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput,
+        TrainStep, TrainingStrategy, metric::LossMetric,
     },
 };
 use dynamics::params::FfParamSet;
@@ -1829,7 +1829,9 @@ pub(in crate::therapeutic) fn train_with_samples(
     )
     .metrics((LossMetric::new(),))
     .num_epochs(80)
-    .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
+    .with_training_strategy(TrainingStrategy::Default(ExecutionStrategy::SingleDevice(
+        device.clone(),
+    )))
     .summary();
 
     let result = training.launch(Learner::new(model, optim, lr_scheduler));
