@@ -21,7 +21,7 @@ use crate::{
 /// Height of a table cell; matches EGUI's default `interact_size.y`. Rows must be exactly this
 /// tall, or the virtualized scroll position will drift from the rows drawn.
 const CELL_H: f32 = 18.;
-const TABLE_HEIGHT: f32 = 1_200.;
+const TABLE_HEIGHT: f32 = 800.;
 
 /// Gap left between the bottom of the popup and the bottom of the window.
 const SCREEN_MARGIN: f32 = 16.;

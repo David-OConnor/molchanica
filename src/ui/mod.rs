@@ -766,6 +766,16 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 enter_edit_mode(state, scene, &mut updates);
             }
 
+            if button!(
+                ui,
+                "FF params",
+                COLOR_HIGHLIGHT,
+                "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
+                gaff2, amino19, and lipid21."
+            ).clicked() {
+                state.ui.popup.ff_params = !state.ui.popup.ff_params;
+            }
+
             let metadata_loaded = false; // avoids borrow error.
             display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);
 

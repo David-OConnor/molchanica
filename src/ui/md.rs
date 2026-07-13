@@ -105,16 +105,6 @@ pub fn md_setup(
                 state.volatile.dialogs.save_md.pick_directory();
             }
 
-            if button!(
-                ui,
-                "FF params",
-                COLOR_HIGHLIGHT,
-                "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
-                gaff2, amino19, and lipid21."
-            ).clicked() {
-                state.ui.popup.ff_params = !state.ui.popup.ff_params;
-            }
-
             if ui.button(RichText::new("Reset").color(Color32::LIGHT_RED))
                 .on_hover_text("Reset all MD settings to defaults.")
                 .clicked() {
