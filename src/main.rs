@@ -48,8 +48,9 @@ mod properties;
 mod screening;
 mod selection;
 mod smiles;
-pub mod sonification;
+mod sonification;
 mod state;
+mod structure_prediction;
 mod tautomers;
 #[cfg(test)]
 mod tests;
