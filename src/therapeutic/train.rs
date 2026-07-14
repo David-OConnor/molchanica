@@ -48,8 +48,8 @@ use burn::{
         backend::{AutodiffBackend, Backend},
     },
     train::{
-        ExecutionStrategy, InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput,
-        TrainStep, TrainingStrategy, metric::LossMetric,
+        ExecutionStrategy, InferenceStep, Learner, RegressionOutput, SupervisedTraining,
+        TrainOutput, TrainStep, TrainingStrategy, metric::LossMetric,
     },
 };
 use dynamics::params::FfParamSet;

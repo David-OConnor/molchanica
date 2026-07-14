@@ -20,11 +20,11 @@ use rayon::prelude::*;
 
 use crate::{
     copy_le,
+    mol_db::ParquetMolDb,
     molecules::{pocket::Pocket, small::MoleculeSmall},
     parse_le,
     properties::mol_characterization::{MolCharacterization, RingType},
     render::Color,
-    screening::parquet::ParquetMolDb,
 };
 // #[derive(Clone, Debug)]
 // pub struct PocketBinding {

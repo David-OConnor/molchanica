@@ -12,7 +12,7 @@ use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
 use crate::{
-    button, cam,
+    cam,
     cam::move_cam_to_mol,
     drawing::wrappers::draw_all_pockets,
     file_io::download_mols::load_atom_coords_rcsb,
@@ -26,15 +26,12 @@ use crate::{
     },
     prefs::OpenType,
     render::MESH_POCKET_START,
-    screening::{
-        parquet::{MolMeta, ParquetMolDb},
-        screen_by_alignment,
-    },
+    screening::screen_by_alignment,
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        ff_params, md_viewer, mol_data::metadata, pharmacophore, rama_plot, recent_files,
+        ff_params, md_viewer, mol_data::metadata, mol_dbs, pharmacophore, rama_plot, recent_files,
         recent_files::PER_PAGE,
     },
     util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
@@ -143,7 +140,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.parquet_db {
         popup("parquet_db", ui).show(|ui| {
-            parquet_db(state, ui);
+            mol_dbs::parquet_db(state, ui);
         });
     }
 
@@ -1140,221 +1137,5 @@ fn lig_pocket_from_het_res(
 
     if let Some(res) = &create_lig_from_res {
         make_lig_from_res(state, res, scene, updates);
-    }
-}
-
-fn parquet_db(state: &mut State, ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        label!(ui, "Molecule databases", Color32::WHITE);
-
-        ui.add_space(COL_SPACING);
-
-        if button!(
-        ui,
-        "Create DB",
-        COLOR_ACTION,
-        "Create a Parquet molecule database, for use with screening \
-                algorithms. Saves it to disk. Much faster than screening a folder full of molecule files directly."
-    )
-            .clicked()
-        {
-            state.volatile.dialogs.parquet_db_save.save_file();
-        }
-
-        if button!(
-        ui,
-        "Load DB",
-        COLOR_ACTION,
-        "Load a Parquet molecule database. Can use this for screening, or add more molecules to it."
-    )
-            .clicked()
-        {
-            state.volatile.dialogs.parquet_db_load.pick_file();
-        }
-
-        ui.add_space(COL_SPACING);
-
-        close_btn(ui, &mut state.ui.popup.parquet_db);
-    });
-
-    db_selector(state, ui);
-
-    // Display DB-specific data if there is an active one.
-    if let Some(db_i) = state.volatile.parquet_db_active {
-        if db_i >= state.volatile.parquet_dbs.len() {
-            handle_err(
-                &mut state.ui,
-                String::from("Error: Invalid Parquet DB active index"),
-            );
-            return;
-        }
-
-        let db = &mut state.volatile.parquet_dbs[db_i];
-
-        ui.add_space(ROW_SPACING);
-
-        ui.horizontal(|ui| {
-            if button!(
-                ui,
-                "Add mols to DB",
-                COLOR_ACTION,
-                "Add molecules to this database."
-            )
-            .clicked()
-            {
-                state.volatile.dialogs.parquet_mols_dir.pick_directory();
-                state.volatile.parquet_db_active = Some(db_i);
-            }
-
-            ui.add_space(COL_SPACING);
-        });
-
-        //     if button!(
-        //         ui,
-        //         "Load all mols",
-        //         COLOR_ACTION,
-        //         "Load all molecule data in this database into memory"
-        //     )
-        //     .clicked()
-        //     {
-        //         match db.load_all() {
-        //             Ok(mols) => {
-        //                 // todo temp
-        //                 for mol in &mols {
-        //                     println!("MOL loaded: {:?}", mol);
-        //                 }
-        //             }
-        //             Err(e) => {
-        //                 handle_err(&mut state.ui, format!("Error loading molecules: {e:?}"));
-        //             }
-        //         }
-        //     }
-
-        db_summary_table(db, db_i, ui);
-    }
-}
-
-pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
-    ui.add_space(ROW_SPACING);
-    ui.separator();
-    label!(ui, "Databases loaded", Color32::GRAY);
-
-    let mut close_db = None;
-    for (i, db) in state.volatile.parquet_dbs.iter().enumerate() {
-        let Some(file_name) = db.path.file_name() else {
-            eprintln!("Error loading file path");
-            continue;
-        };
-
-        let file_name = file_name.to_string_lossy();
-
-        let active = state.volatile.parquet_db_active == Some(i);
-
-        ui.horizontal(|ui| {
-            label!(
-                ui,
-                format!("{file_name} : {} mols", db.index_meta.len()),
-                Color32::WHITE
-            );
-
-            let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
-
-            ui.add_space(COL_SPACING);
-
-            if button!(
-                ui,
-                "Select",
-                color,
-                "Select this as the active database. View or modify it."
-            )
-            .clicked()
-            {
-                state.volatile.parquet_db_active = Some(i);
-            }
-
-            if button!(ui, "Close", Color32::LIGHT_RED, "Close this database").clicked() {
-                close_db = Some(i);
-
-                // Make sure this doesn't cause a jump in the selected DB.
-                if let Some(i_active) = state.volatile.parquet_db_active {
-                    if i_active == i {
-                        state.volatile.parquet_db_active = None;
-                    } else if i_active > i {
-                        state.volatile.parquet_db_active = Some(i_active - 1);
-                    }
-                }
-
-                for history in &mut state.to_save.open_history {
-                    if OpenType::ParquetDb == history.type_ && history.path == db.path {
-                        history.last_session = false;
-                    }
-                }
-            }
-        });
-    }
-
-    if let Some(i) = close_db {
-        state.volatile.parquet_dbs.remove(i);
-        state.update_save_prefs(); // to save teh history change.
-    }
-}
-
-/// todo: More to ui::parquet A/R
-/// todo: This would make more sense in a ui::parquet module.
-fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) {
-    if !db.index_meta.is_empty() {
-        ui.add_space(ROW_SPACING);
-
-        // Sort by ident for stable display order.
-        let mut entries: Vec<(&String, &MolMeta)> = db.index_meta.iter().collect();
-        entries.sort_by_key(|(ident, _)| ident.as_str());
-
-        // Column headers (outside the scroll area so they stay fixed).
-        Grid::new(format!("parquet_mol_headers_{db_i}"))
-            .num_columns(3)
-            .min_col_width(120.)
-            .spacing([COL_SPACING, 4.])
-            .show(ui, |ui| {
-                label!(ui, "PubChem CID", Color32::GRAY);
-                label!(ui, "SMILES", Color32::GRAY);
-                label!(ui, "Heavy atoms", Color32::GRAY);
-                ui.end_row();
-            });
-
-        ui.separator();
-
-        ScrollArea::vertical()
-            .id_salt(format!("parquet_mol_list_{db_i}"))
-            .min_scrolled_height(400.)
-            .max_height(800.)
-            .show(ui, |ui| {
-                Grid::new(format!("parquet_mol_grid_{db_i}"))
-                    .num_columns(3)
-                    .striped(true)
-                    .min_col_width(120.)
-                    .spacing([COL_SPACING, 4.])
-                    .show(ui, |ui| {
-                        for (_smiles, meta) in &entries {
-                            match meta.pubchem_cid {
-                                Some(cid) => {
-                                    label!(ui, cid.to_string(), Color32::LIGHT_BLUE)
-                                }
-                                None => label!(ui, "—", Color32::DARK_GRAY),
-                            };
-
-                            let smiles_preview: String = if meta.smiles.chars().count() > 10 {
-                                let s: String = meta.smiles.chars().take(10).collect();
-                                format!("{s}...")
-                            } else {
-                                meta.smiles.clone()
-                            };
-                            label!(ui, smiles_preview, Color32::GRAY);
-
-                            label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
-
-                            ui.end_row();
-                        }
-                    });
-            });
     }
 }

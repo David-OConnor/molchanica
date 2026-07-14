@@ -50,6 +50,7 @@ mod md;
 mod md_viewer;
 pub mod misc;
 mod mol_data;
+mod mol_dbs;
 mod mol_editor;
 mod mol_editor_sidebar;
 mod mol_type_tools;

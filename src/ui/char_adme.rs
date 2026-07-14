@@ -1,13 +1,15 @@
-use crate::crystal::CrystalCell;
+use egui::{Color32, RichText, ScrollArea, Ui};
+use lin_alg::f64::Vec3;
+
 use crate::{
-    button, label,
+    button,
+    crystal::CrystalCell,
+    label,
     molecules::{MolIdent, small::MoleculeSmall},
     properties::mol_characterization::MolCharacterization,
     therapeutic::{Adme, Toxicity},
     ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
 };
-use egui::{Color32, RichText, ScrollArea, Ui};
-use lin_alg::f64::Vec3;
 
 fn char_basics(
     char: &MolCharacterization,

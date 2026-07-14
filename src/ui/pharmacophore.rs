@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, slice};
 
 use egui::{Align, Color32, ComboBox, Layout, RichText, ScrollArea, Ui};
 use graphics::{EngineUpdates, Scene};
@@ -16,7 +16,7 @@ use crate::{
     selection::Selection,
     state::{PopupState, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popups::db_selector,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, mol_dbs::db_selector,
         util::color_egui_from_f32,
     },
     util::{RedrawFlags, handle_err, make_egui_color},
@@ -572,7 +572,16 @@ pub(in crate::ui) fn pharmacophore_screen(
 
     if let Some(smiles) = smiles_to_load {
         match state.volatile.parquet_dbs[db_i].load_mol(&smiles) {
-            Ok(mol) => {
+            Ok(mut mol) => {
+                // Screening only reads `mol_data`; now that we're opening this molecule for
+                // viewing, load its idents and metadata too. Non-fatal: the molecule is still
+                // usable without them.
+                if let Err(e) =
+                    state.volatile.parquet_dbs[db_i].apply_idents_meta(slice::from_mut(&mut mol))
+                {
+                    eprintln!("Error loading idents and metadata for '{smiles}': {e}");
+                }
+
                 state.load_mol_to_state(MoleculeGeneric::Small(mol), scene, updates, None);
             }
             Err(e) => handle_err(

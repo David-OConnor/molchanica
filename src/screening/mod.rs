@@ -20,7 +20,6 @@ use crate::{
     molecules::small::MoleculeSmall,
 };
 
-pub mod parquet;
 pub mod pharmacophore;
 
 // We load molecules from disk in batches, to prevent using too much memory. We use

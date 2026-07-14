@@ -39,6 +39,7 @@ mod lod_generalization;
 mod md;
 mod mol_alignment;
 mod mol_components;
+mod mol_db;
 mod mol_editor;
 mod mol_manip;
 mod molecules;

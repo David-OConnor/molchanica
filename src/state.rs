@@ -25,6 +25,7 @@ use crate::{
     file_io::FileDialogs,
     md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
+    mol_db::ParquetMolDb,
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     molecules::{
@@ -37,10 +38,7 @@ use crate::{
     },
     orca::StateOrca,
     prefs::ToSave,
-    screening::{
-        parquet::ParquetMolDb,
-        pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
-    },
+    screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
     sonification::MoleculeSonification,
@@ -542,6 +540,9 @@ pub struct PopupState {
     pub pharmacophore_screening: bool,
     pub lig_pocket_creation: bool,
     pub parquet_db: bool,
+    /// A molecule the user has asked to delete from a molecule DB, pending confirmation:
+    /// (index into `parquet_dbs`, SMILES key of the row).
+    pub parquet_db_mol_del: Option<(usize, String)>,
     pub md_mol_set_editor: bool,
     pub ff_params: bool,
 }

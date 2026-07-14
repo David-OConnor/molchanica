@@ -43,7 +43,6 @@ use crate::{
 #[derive(Debug, Default, Clone)]
 pub struct MoleculeSmall {
     pub common: MoleculeCommon,
-    // pub lig_data: Option<Ligand>,
     pub idents: Vec<MolIdent>,
     /// FF type and partial charge on all atoms. Quick lookup flag.
     pub ff_params_loaded: bool,
@@ -52,9 +51,6 @@ pub struct MoleculeSmall {
     pub frcmod_loaded: bool,
     /// E.g. loaded proteins from Pubchem.
     pub associated_structures: Vec<ProteinStructure>,
-    // /// Simplified Molecular Input Line Entry System
-    // /// A cache for display as required. This is a text representation of a molecular formula.
-    // pub smiles: Option<String>,
     pub characterization: Option<MolCharacterization>,
     pub conformer: Option<Conformer>,
     pub pharmacophore: Pharmacophore,

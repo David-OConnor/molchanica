@@ -1,5 +1,5 @@
 //! A viewer and editor for the general force field parameters (`FfParamSet`) loaded at startup,
-//! e.g. from Amber's parm19, ff19SB, gaff2, lipid21, and OL24.
+//! e.g. from Amber's parm19, ff19SB, gaff2, lipid21, and OL24. Implemented as a popup.
 //!
 //! Values typed into these tables are applied to `State::ff_param_set` immediately.
 
@@ -356,8 +356,20 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
                 label_cell(ui, &key.0, W_TYPE, Color32::WHITE);
                 label_cell(ui, &key.1, W_TYPE, Color32::WHITE);
 
-                num_cell(ui, &format!("bond_k_{key:?}"), &mut val.k_b, W_VAL, cell_edit);
-                num_cell(ui, &format!("bond_r_{key:?}"), &mut val.r_0, W_VAL, cell_edit);
+                num_cell(
+                    ui,
+                    &format!("bond_k_{key:?}"),
+                    &mut val.k_b,
+                    W_VAL,
+                    cell_edit,
+                );
+                num_cell(
+                    ui,
+                    &format!("bond_r_{key:?}"),
+                    &mut val.r_0,
+                    W_VAL,
+                    cell_edit,
+                );
 
                 comment_cell(ui, &val.comment);
             });
@@ -394,7 +406,13 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
                 label_cell(ui, &key.1, W_TYPE, Color32::WHITE);
                 label_cell(ui, &key.2, W_TYPE, Color32::WHITE);
 
-                num_cell(ui, &format!("angle_k_{key:?}"), &mut val.k, W_VAL, cell_edit);
+                num_cell(
+                    ui,
+                    &format!("angle_k_{key:?}"),
+                    &mut val.k,
+                    W_VAL,
+                    cell_edit,
+                );
                 angle_cell(
                     ui,
                     &format!("angle_theta_{key:?}"),
@@ -407,7 +425,11 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
         }
         FfKind::Dihedral | FfKind::Improper => {
             let improper = kind == FfKind::Improper;
-            let id = if improper { "ff_improper" } else { "ff_dihedral" };
+            let id = if improper {
+                "ff_improper"
+            } else {
+                "ff_dihedral"
+            };
 
             let map = if improper {
                 &mut params.improper
@@ -421,10 +443,7 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
             for (key, terms) in map.iter() {
                 total += terms.len();
 
-                if !matches(
-                    &filter,
-                    &format!("{}-{}-{}-{}", key.0, key.1, key.2, key.3),
-                ) {
+                if !matches(&filter, &format!("{}-{}-{}-{}", key.0, key.1, key.2, key.3)) {
                     continue;
                 }
 

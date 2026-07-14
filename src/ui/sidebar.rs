@@ -719,7 +719,7 @@ pub(in crate::ui) fn sidebar(
                     state.ui.ui_vis.sidebar = false;
                 }
                 ui.add_space(COL_SPACING);
-                
+
                 let color_open_tools = if state.peptide.is_none() && state.ligands.is_empty() {
                     COLOR_ACTION
                 } else {
