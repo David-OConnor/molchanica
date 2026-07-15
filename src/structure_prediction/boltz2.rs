@@ -2,8 +2,12 @@
 //!
 //! Boltz is intentionally not a Molchanica dependency. Install it independently (for example,
 //! `pip install -U "boltz[cuda]"`) and make `boltz` available on `PATH`, or point
+//!
+//! BOltz (CAO 2026-07-15) requires Numpy < 2.0, which requires Python 3.11 or 3.12; use UV.
+//!
 //! `MOLCHANICA_BOLTZ` at the executable. Protein inputs use Boltz's public MSA server; DNA inputs
 //! do not require an MSA.
+//!
 
 use std::{fs, io, process::Command};
 

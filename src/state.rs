@@ -6,7 +6,7 @@ use std::{
     fmt::{Display, Formatter},
     path::PathBuf,
 };
-
+use std::time::Instant;
 use bincode::{Decode, Encode};
 use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
@@ -47,6 +47,7 @@ use crate::{
     ui::ff_params::FfParamsUi,
     util::{gromacs_avail, mdtraj_avail, orca_avail},
 };
+use crate::util::{boltz2_avail, gemmi_avail, open_dde_avail};
 
 pub struct State {
     pub ui: StateUi,
@@ -278,6 +279,56 @@ impl State {
     }
 }
 
+/// Indicates if these third party tools are installed, and able to be run.
+/// Generally requires them to be available on the system Path.
+#[derive(Default)]
+pub struct IntegrationsAvail {
+    /// ORCA is available on the system path.
+    pub orca: bool,
+    /// GROMACS is available on the system path.
+    pub gromacs: bool,
+    /// For handling MTZ electron density measurements
+    pub gemmi: bool,
+    /// For reading and writing XTC files.
+    pub mdtraj: bool,
+    /// Protein structure prediction
+    pub boltz2: bool,
+    /// Structure prediction for a range of molecule types, and more
+    pub open_dde: bool,
+}
+
+impl Default for IntegrationsAvail {
+    fn default() -> Self {
+        // todo temp timing to make sure this isn't slow.
+        let start = Instant::now();
+        let result = Self {
+            orca: orca_avail(),
+            gromacs: gromacs_avail(),
+            gemmi: gemmi_avail(),
+            mdtraj: mdtraj_avail(),
+            boltz2: boltz2_avail(),
+            open_dde: open_dde_avail(),
+        };
+
+        // todo: Warning! Boltz2 and Open_DDE are python imports. These checks for them
+        // todo may be very slow, slowing down the whole application's startup!
+
+        let elapsed = start.elapsed().as_millis();
+        println!("Identified integrated programs in {elapsed}ms");
+
+        result
+    }
+}
+
+impl IntegrationsAvail {
+    pub fn descrip(&self) -> String {
+        format!(
+            "\nAuxillary programs available: ORCA: {}, GROMACS: {}, Gemmi: {}, MdTraj: {}, Boltz-2: {}, OpenDDE: {}\n",
+            self.orca, self.gromacs, self.gemmi, self.mdtraj, self.boltz2, self.open_dde
+        );
+    }
+}
+
 /// Temporary, and generated state.
 #[derive(Default)]
 pub struct StateVolatile {
@@ -309,15 +360,8 @@ pub struct StateVolatile {
     pub primary_mode_cam: Camera,
     pub md_local: MdStateLocal,
     pub orbit_center: Option<(MolType, usize)>,
-    /// ORCA is available on the system path.
-    pub orca_avail: bool,
-    /// GROMACS is available on the system path.
-    pub gromacs_avail: bool,
-    /// For handling MTZ electron density measurements
-    pub gemmi_avail: bool,
-    /// For reading and writing XTC files.
-    pub mdtraj_avail: bool,
-    // /// Per-protein. Computed as required; None before then.
+    pub integrations_avail: IntegrationsAvail,
+     // /// Per-protein. Computed as required; None before then.
     // hydropathy_data: Option<Vec<Vec<(usize, usize)>>>,
     // /// If present, there must be one per vertex. Rebuild this whenever we
     // /// rebuild this mesh.
@@ -339,9 +383,6 @@ impl StateVolatile {
     pub fn new() -> Self {
         Self {
             prefs_dir: env::current_dir().unwrap(),
-            orca_avail: orca_avail(),
-            gromacs_avail: gromacs_avail(),
-            mdtraj_avail: mdtraj_avail(),
             ..Default::default()
         }
     }
@@ -775,6 +816,7 @@ pub struct UiVisibility {
     pub amino_acids: bool,
     pub dynamics: bool,
     pub orca: bool,
+    pub strucutre_prediction: bool,
     pub mol_char: bool,
     pub pharmacophore_list: bool,
     /// The left-side panel. When hidden, a narrow strip with a button to re-show it remains.
@@ -792,6 +834,7 @@ impl Default for UiVisibility {
             amino_acids: false,
             dynamics: false,
             orca: false,
+            strucutre_prediction: true,
             mol_char: true, // todo: For now.
             pharmacophore_list: false,
             sidebar: true,

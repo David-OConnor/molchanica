@@ -3,6 +3,9 @@
 //! ESMFold2 does not currently publish a dedicated CLI. Molchanica therefore writes a small Python
 //! runner into a temporary workspace and invokes the separately installed `esm`/`transformers`
 //! stack. Set `MOLCHANICA_PYTHON` to the Python executable belonging to that environment.
+//!
+//! We will focus on tools other than this for now, due to it requiring python. This is not
+//! currently an available pipeline.
 
 use std::{fs, io, process::Command};
 

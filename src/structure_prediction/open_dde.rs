@@ -3,6 +3,8 @@
 //! OpenDDE is a preview release, so its process boundary is kept isolated here. The module supports
 //! proteins, DNA, RNA, ligands (SMILES, `CCD_...`, or `FILE_...`), ions, and explicit covalent
 //! links using the documented AlphaFold-Server-style JSON schema.
+//!
+//! todo: Major update coming Friday which should fix the install problem.
 
 use std::{collections::HashSet, fs, io, process::Command};
 

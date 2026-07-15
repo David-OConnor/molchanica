@@ -141,18 +141,18 @@ pub fn md_setup(
                 md::start_md(state, scene, updates)
             }
 
-            if state.volatile.gromacs_avail || state.volatile.orca_avail {
+            if state.volatile.integrations_avail.gromacs || state.volatile.integrations_avail.orca {
                 ui.add_space(COL_SPACING / 2.);
                 ui.label("Backend:");
 
                 let mut backends = vec![MdBackend::Dynamics];
-                if state.volatile.gromacs_avail {
+                if state.volatile.integrations_avail.gromacs {
                     backends.push(MdBackend::Gromacs);
                 }
 
                 // todo: For now, we launch Orca MD from its own UI section, but we may
                 // todo wish to move it here.
-                // if state.volatile.orca_avail {
+                // if state.volatile.integrations_avail.orca {
                 //     backends.push(MdBackend::Orca);
                 // }
 

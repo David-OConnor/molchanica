@@ -93,10 +93,8 @@ fn main() {
         ..Default::default()
     };
 
-    println!(
-        "\nAuxillary programs available: ORCA: {}, GROMACS: {}, MdTraj: {}\n",
-        state.volatile.orca_avail, state.volatile.gromacs_avail, state.volatile.mdtraj_avail
-    );
+    println!(state.volatile.integrations_avail.descrip());
+
 
     #[cfg(feature = "cuda")]
     if let Some(k) = kernel_reflections {

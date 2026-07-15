@@ -4,6 +4,7 @@
 
 use std::{
     f64::consts::TAU,
+    path::Path,
     process::{Command, Stdio},
     sync::mpsc,
     thread,
@@ -1342,13 +1343,55 @@ pub fn gromacs_avail() -> bool {
     }
 }
 
-/// Checks if GROMACS is available on the system patghg.
+/// Checks if Gemmi is available. We prefer a copy colocated with our executable (see
+/// `file_io::gemmi_path`), falling back to the system path. `gemmi --help` exits 0 and prints a
+/// banner that references the "GEMMI library".
+pub fn gemmi_avail() -> bool {
+    let program = crate::file_io::gemmi_path().unwrap_or_else(|| Path::new("gemmi"));
+
+    match Command::new(program).arg("--help").output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            output.status.success() && stdout.contains("GEMMI library")
+        }
+        Err(_) => false,
+    }
+}
+
+/// Checks if GROMACS is available on the system path.
 pub fn mdtraj_avail() -> bool {
     match Command::new("mdconvert").arg("-h").output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
 
             output.status.success() && (stdout.contains("DCD, XTC"))
+        }
+        Err(_) => false,
+    }
+}
+
+/// Checks if Boltz-2 is available on the system path. Boltz is invoked as `boltz predict ...`;
+/// it has no `--version`, but `boltz --help` exits 0 and lists its `predict` subcommand.
+pub fn boltz2_avail() -> bool {
+    match Command::new("boltz").arg("--help").output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            output.status.success() && stdout.contains("predict")
+        }
+        Err(_) => false,
+    }
+}
+
+/// Checks if OpenDDE is available on the system path. OpenDDE is invoked as `opendde pred ...`;
+/// `opendde --help` exits 0 and lists its subcommands, including the `pred` command we use.
+pub fn open_dde_avail() -> bool {
+    match Command::new("opendde").arg("--help").output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            output.status.success() && stdout.contains("pred")
         }
         Err(_) => false,
     }

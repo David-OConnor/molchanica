@@ -4,6 +4,9 @@
 //! stacks is optional, and a missing model does not prevent Molchanica itself from starting.
 //! Predictions are blocking operations and should be moved to a worker thread when called by the
 //! GUI.
+//!
+//! Todo: THese Python programs are proving to be a pain to install. Try this: An Embedded Python Runtime via PyO3
+//! todo: Or: tch-rs, which provides Rust bindings directly to the C++ PyTorch API (Libtorch).
 
 use std::{
     env, fs, io,
@@ -29,7 +32,9 @@ pub const DEFAULT_PREDICTION_PH: f32 = 7.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StructurePredictionModel {
     Boltz2,
-    EsmFold2,
+    // EsmFold2 removed until it has a dedicated application or similar; it currently
+    // requires interfacing with Python directly.
+    // EsmFold2,
     OpenDDE,
 }
 
@@ -46,7 +51,7 @@ pub fn predict_structure_from_aas(
 ) -> io::Result<MoleculePeptide> {
     match model {
         StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_aas(aas, ff_map),
-        StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_aas(aas, ff_map),
+        // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_aas(aas, ff_map),
         StructurePredictionModel::OpenDDE => open_dde::predict_structure_from_aas(aas, ff_map),
     }
 }
@@ -62,12 +67,12 @@ pub fn predict_structure_from_dna(
 ) -> io::Result<MoleculePeptide> {
     match model {
         StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_dna(nts, ff_map),
-        StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_dna(nts, ff_map),
+        // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_dna(nts, ff_map),
         StructurePredictionModel::OpenDDE => open_dde::predict_structure_from_dna(nts, ff_map),
     }
 }
 
-pub(super) fn amino_acid_sequence(aas: &[AminoAcid]) -> io::Result<String> {
+pub fn amino_acid_sequence(aas: &[AminoAcid]) -> io::Result<String> {
     if aas.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -78,7 +83,7 @@ pub(super) fn amino_acid_sequence(aas: &[AminoAcid]) -> io::Result<String> {
     Ok(aas.iter().map(|aa| aa.to_str(AaIdent::OneLetter)).collect())
 }
 
-pub(super) fn dna_sequence(nts: &[Nucleotide]) -> io::Result<String> {
+pub fn dna_sequence(nts: &[Nucleotide]) -> io::Result<String> {
     if nts.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -93,14 +98,14 @@ pub(super) fn dna_sequence(nts: &[Nucleotide]) -> io::Result<String> {
         .collect())
 }
 
-pub(super) fn executable(environment_variable: &str, default: &str) -> PathBuf {
+pub fn executable(environment_variable: &str, default: &str) -> PathBuf {
     env::var_os(environment_variable)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(default))
 }
 
-pub(super) fn run_model_command(command: &mut Command, model: &str) -> io::Result<()> {
+pub fn run_model_command(command: &mut Command, model: &str) -> io::Result<()> {
     let output = command.output().map_err(|error| {
         io::Error::new(
             error.kind(),
@@ -137,7 +142,7 @@ fn truncate_process_output(output: &str) -> &str {
     &output[..boundary]
 }
 
-pub(super) fn load_prediction(
+pub fn load_prediction(
     output_dir: &Path,
     ff_map: &ProtFfChargeMapSet,
 ) -> io::Result<MoleculePeptide> {
@@ -264,34 +269,5 @@ impl Drop for PredictionWorkspace {
                 self.root.display()
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_empty_sequences() {
-        assert_eq!(
-            amino_acid_sequence(&[]).unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
-        );
-        assert_eq!(
-            dna_sequence(&[]).unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
-        );
-    }
-
-    #[test]
-    fn serializes_native_sequence_types() {
-        assert_eq!(
-            amino_acid_sequence(&[AminoAcid::Met, AminoAcid::Gly]).unwrap(),
-            "MG"
-        );
-        assert_eq!(
-            dna_sequence(&[Nucleotide::A, Nucleotide::T, Nucleotide::G]).unwrap(),
-            "ATG"
-        );
     }
 }

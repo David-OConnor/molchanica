@@ -1,5 +1,23 @@
-]
-wing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI. This
+# Molchanica
+
+[![Docs](https://docs.rs/dynamics/badge.svg)](https://www.athanorlab.com/docs)
+
+[Home page](https://www.athanorlab.com/molchanica)
+[Documentation](https://www.athanorlab.com/docs)
+
+[Molchanica](https://www.athanorlab.com/molchanica) is molecule editing, visualization, and dynamics tool with a focus
+on a smooth user experience. It combines functionality found
+in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/),
+and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over both time and space. Any
+molecule you open or build can move using molecular dynamics. We are actively adding work-flow specific functionality;
+for example, molecular docking, and tools for working with LNPs.
+
+Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on
+pharmacophores, machine-learning from empirical binding data and more. It automatically estimates ADME and toxicity
+parameters.
+
+We hope that Molchanica is intuitive enough that formal documentation isn't required; installing, running, opening, and
+viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI. This
 documentation is a supplement that experimental process: It describes each feature. It may highlight features you didn't
 know existed, clarify how to use a given feature, and show assumptions and implementations used.
 
