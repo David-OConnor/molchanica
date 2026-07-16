@@ -2,6 +2,8 @@
 //!
 //! [Github](https://github.com/aurekaresearch/OpenDDE)
 //! [Paper](https://arxiv.org/html/2607.03787v1)
+//! [Inference instructions](https://github.com/aurekaresearch/OpenDDE/blob/main/docs/inference_instructions.md)
+//! [Website](https://aurekaresearch.github.io/OpenDDE-Website/
 //!
 //! Install: `pip install opendde`. (TBD: How this will interact with your global python
 //! interpreter; probably not a good practice to do it this way)
@@ -55,7 +57,8 @@ const RNA_SEQUENCE_ALPHABET: &[u8] = b"AUGCNX";
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
-        PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction, run_model_command,
+        PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
+        run_model_command_with_control,
     },
 };
 
@@ -329,6 +332,15 @@ pub fn predict_structure(
     request: &OpenDdeRequest,
     ff_map: &ProtFfChargeMapSet,
 ) -> io::Result<MoleculePeptide> {
+    predict_structure_with_control(request, ff_map, &PredictionControl::default())
+}
+
+fn predict_structure_with_control(
+    request: &OpenDdeRequest,
+    ff_map: &ProtFfChargeMapSet,
+    control: &PredictionControl,
+) -> io::Result<MoleculePeptide> {
+    control.check_cancelled()?;
     let workspace = PredictionWorkspace::new("opendde")?;
     let input_path = workspace.path("input.json");
     let output_path = workspace.create_dir("output")?;
@@ -341,6 +353,9 @@ pub fn predict_structure(
 
     let mut command = Command::new("opendde");
     command
+        // OpenDDE is a Python CLI. This makes progress and logging visible through redirected
+        // pipes without waiting for Python's block buffer to fill.
+        .env("PYTHONUNBUFFERED", "1")
         .arg("pred")
         .arg("-i")
         .arg(&input_path)
@@ -361,7 +376,8 @@ pub fn predict_structure(
         .arg("--cycle")
         .arg("10");
 
-    run_model_command(&mut command, "OpenDDE")?;
+    run_model_command_with_control(&mut command, "OpenDDE", control)?;
+    control.check_cancelled()?;
 
     load_prediction(&output_path, ff_map)
 }
@@ -369,15 +385,25 @@ pub fn predict_structure(
 pub(super) fn predict_structure_from_aas(
     aas: &[AminoAcid],
     ff_map: &ProtFfChargeMapSet,
+    control: &PredictionControl,
 ) -> io::Result<MoleculePeptide> {
     let entity = OpenDdeEntity::protein("A", aas)?;
-    predict_structure(&OpenDdeRequest::new("molchanica", vec![entity]), ff_map)
+    predict_structure_with_control(
+        &OpenDdeRequest::new("molchanica", vec![entity]),
+        ff_map,
+        control,
+    )
 }
 
 pub(super) fn predict_structure_from_dna(
     nts: &[Nucleotide],
     ff_map: &ProtFfChargeMapSet,
+    control: &PredictionControl,
 ) -> io::Result<MoleculePeptide> {
     let entity = OpenDdeEntity::dna("D", nts)?;
-    predict_structure(&OpenDdeRequest::new("molchanica", vec![entity]), ff_map)
+    predict_structure_with_control(
+        &OpenDdeRequest::new("molchanica", vec![entity]),
+        ff_map,
+        control,
+    )
 }

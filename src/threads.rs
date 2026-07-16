@@ -11,6 +11,7 @@ use bio_apis::{
 };
 use bio_files::gromacs::GromacsOutput;
 use graphics::{EngineUpdates, Scene};
+use na_seq::AaIdent;
 
 use crate::{
     gromacs::on_gromacs_md_complete,
@@ -19,8 +20,9 @@ use crate::{
     screening::pharmacophore::PhScreeningScore,
     sfc_mesh::{MeshColors, apply_mesh_colors},
     state::State,
+    structure_prediction::StructurePredictionOutcome,
     therapeutic::TherapeuticProperties,
-    util::RedrawFlags,
+    util::{RedrawFlags, handle_err, handle_success},
 };
 
 /// Contains receivers for threads. We use these for longer-running processes, as to
@@ -51,6 +53,8 @@ pub struct ThreadReceivers {
     /// GROMACS MD run. Carries `(out, mol_start_indices, elapsed_ms)`.
     // pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<usize>, u128)>>,
     pub gromacs_md_avail: Option<Receiver<(GromacsOutput, u128)>>,
+    /// Structure prediction result. The worker streams model output directly while it runs.
+    pub structure_prediction: Option<Receiver<StructurePredictionOutcome>>,
 }
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
@@ -211,5 +215,55 @@ pub fn handle_thread_rx(
         // crate::gromacs::on_gromacs_md_complete(state, &out, mol_start_indices, elapsed_ms);
         on_gromacs_md_complete(state, &out, elapsed_ms);
         state.volatile.md_local.gromacs_output = Some(out);
+    }
+
+    let structure_prediction_result = state
+        .volatile
+        .thread_receivers
+        .structure_prediction
+        .as_ref()
+        .map(Receiver::try_recv);
+    match structure_prediction_result {
+        Some(Ok(outcome)) => {
+            state.volatile.thread_receivers.structure_prediction = None;
+            state.ui.structure_pred.finish_prediction();
+
+            match outcome {
+                StructurePredictionOutcome::Complete(molecule) => {
+                    state.volatile.aa_seq_text = molecule
+                        .aa_seq
+                        .iter()
+                        .map(|aa| aa.to_str(AaIdent::OneLetter))
+                        .collect();
+                    state.peptide = Some(molecule);
+                    state.reset_selections();
+                    state.volatile.flags.ss_mesh_created = false;
+                    state.volatile.flags.sas_mesh_created = false;
+                    state.volatile.flags.clear_density_drawing = true;
+                    state.volatile.flags.new_mol_loaded = true;
+                    redraw.peptide = true;
+                    handle_success(
+                        &mut state.ui,
+                        "Structure prediction complete; loaded predicted molecule".to_owned(),
+                    );
+                }
+                StructurePredictionOutcome::Cancelled => {
+                    handle_success(&mut state.ui, "Structure prediction cancelled".to_owned());
+                }
+                StructurePredictionOutcome::Failed(error) => handle_err(
+                    &mut state.ui,
+                    format!("Structure prediction failed: {error}"),
+                ),
+            }
+        }
+        Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+            state.volatile.thread_receivers.structure_prediction = None;
+            state.ui.structure_pred.finish_prediction();
+            handle_err(
+                &mut state.ui,
+                "Structure prediction worker stopped before returning a result".to_owned(),
+            );
+        }
+        Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => {}
     }
 }

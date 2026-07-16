@@ -168,7 +168,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.structure_pred {
         popup("structure_pred", ui).show(|ui| {
-            structure_pred::structure_prediction_window(state, ui, &mut redraw.peptide);
+            structure_pred::structure_prediction_window(state, ui);
         });
     }
 }

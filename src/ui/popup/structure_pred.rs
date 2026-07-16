@@ -1,17 +1,23 @@
 //! UI for predicting a peptide or nucleotide structure from its sequence.
 
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 
-use egui::{ComboBox, RichText, TextEdit, Ui};
-use na_seq::{AaIdent, AminoAcid, Nucleotide};
+use egui::{Button, ComboBox, Context, RichText, TextEdit, Ui};
+use na_seq::{AminoAcid, Nucleotide};
 
 use crate::{
     state::State,
     structure_prediction::{
-        StructurePredictionModel, predict_structure_from_aas, predict_structure_from_nts,
+        PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
+        predict_structure_from_aas_with_control, predict_structure_from_nts_with_control,
     },
     ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, ROW_SPACING, popup::close_btn},
-    util::{handle_err, handle_success},
+    util::handle_err,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -26,6 +32,9 @@ pub(crate) struct StructurePredUi {
     pub sequence: String,
     pub sequence_type: SequenceType,
     pub model: StructurePredictionModel,
+    started_at: Option<Instant>,
+    control: Option<PredictionControl>,
+    cancel_requested: bool,
 }
 
 impl Default for StructurePredUi {
@@ -35,16 +44,53 @@ impl Default for StructurePredUi {
             sequence_type: SequenceType::AminoAcid,
             // OpenDDE is the currently supported backend for this window.
             model: StructurePredictionModel::OpenDDE,
+            started_at: None,
+            control: None,
+            cancel_requested: false,
         }
     }
 }
 
-pub(in crate::ui) fn structure_prediction_window(
-    state: &mut State,
-    ui: &mut Ui,
-    redraw_peptide: &mut bool,
-) {
+impl StructurePredUi {
+    pub(crate) fn is_running(&self) -> bool {
+        self.started_at.is_some()
+    }
+
+    pub(crate) fn finish_prediction(&mut self) {
+        self.started_at = None;
+        self.control = None;
+        self.cancel_requested = false;
+    }
+
+    fn start_prediction(&mut self, control: PredictionControl) {
+        self.started_at = Some(Instant::now());
+        self.control = Some(control);
+        self.cancel_requested = false;
+    }
+
+    fn cancel_prediction(&mut self) {
+        if let Some(control) = &self.control {
+            control.cancel();
+            self.cancel_requested = true;
+        }
+    }
+}
+
+pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui) {
     ui.heading("Structure prediction");
+    if let Some(started_at) = state.ui.structure_pred.started_at {
+        let elapsed = started_at.elapsed();
+        ui.label(format!("Time running: {}", format_elapsed(elapsed)));
+        if state.ui.structure_pred.cancel_requested {
+            ui.label("Cancellation requested...");
+        }
+
+        // The worker requests an immediate repaint when it sends its result. This timer is only
+        // responsible for advancing the elapsed-time display while the process is otherwise quiet.
+        let seconds_to_next_update = 30 - elapsed.as_secs() % 30;
+        ui.ctx()
+            .request_repaint_after(Duration::from_secs(seconds_to_next_update));
+    }
     ui.add_space(ROW_SPACING);
 
     ui.horizontal(|ui| {
@@ -54,13 +100,13 @@ pub(in crate::ui) fn structure_prediction_window(
         ui.selectable_value(
             &mut state.ui.structure_pred.sequence_type,
             SequenceType::AminoAcid,
-            RichText::new("AA").color(sequence_type_color(amino_acid_selected)),
+            RichText::new("Amino acids (1 letter)").color(sequence_type_color(amino_acid_selected)),
         )
         .on_hover_text("Amino-acid sequence using single-letter identifiers");
         ui.selectable_value(
             &mut state.ui.structure_pred.sequence_type,
             SequenceType::Nucleotide,
-            RichText::new("NT").color(sequence_type_color(nucleotide_selected)),
+            RichText::new("Nucleotides").color(sequence_type_color(nucleotide_selected)),
         )
         .on_hover_text("DNA nucleotide sequence using A, T, G, and C");
     });
@@ -98,63 +144,104 @@ pub(in crate::ui) fn structure_prediction_window(
     ui.add_space(ROW_SPACING);
 
     ui.horizontal(|ui| {
-        if ui
+        if state.ui.structure_pred.is_running() {
+            if ui
+                .add_enabled(
+                    !state.ui.structure_pred.cancel_requested,
+                    Button::new(RichText::new("Cancel").color(COLOR_ACTION)),
+                )
+                .clicked()
+            {
+                state.ui.structure_pred.cancel_prediction();
+            }
+        } else if ui
             .button(RichText::new("Predict structure").color(COLOR_ACTION))
             .clicked()
         {
-            predict(state, redraw_peptide);
+            predict(state, ui.ctx());
         }
 
         close_btn(ui, &mut state.ui.popup.structure_pred);
     });
 }
 
-fn predict(state: &mut State, redraw_peptide: &mut bool) {
-    let prediction = match state.ui.structure_pred.sequence_type {
-        SequenceType::AminoAcid => {
-            parse_amino_acids(&state.ui.structure_pred.sequence).map(|aas| {
-                let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map else {
-                    return Err("No peptide force-field parameter map is loaded".to_owned());
-                };
-                predict_structure_from_aas(state.ui.structure_pred.model, &aas, ff_map)
-                    .map_err(|error| error.to_string())
-            })
-        }
-        SequenceType::Nucleotide => {
-            parse_nucleotides(&state.ui.structure_pred.sequence).map(|nts| {
-                let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map else {
-                    return Err("No peptide force-field parameter map is loaded".to_owned());
-                };
-                predict_structure_from_nts(state.ui.structure_pred.model, &nts, ff_map)
-                    .map_err(|error| error.to_string())
-            })
-        }
-    }
-    .and_then(|result| result);
+enum PredictionSequence {
+    AminoAcids(Vec<AminoAcid>),
+    Nucleotides(Vec<Nucleotide>),
+}
 
-    match prediction {
-        Ok(molecule) => {
-            state.volatile.aa_seq_text = molecule
-                .aa_seq
-                .iter()
-                .map(|aa| aa.to_str(AaIdent::OneLetter))
-                .collect();
-            state.peptide = Some(molecule);
-            state.reset_selections();
-            state.volatile.flags.ss_mesh_created = false;
-            state.volatile.flags.sas_mesh_created = false;
-            state.volatile.flags.clear_density_drawing = true;
-            state.volatile.flags.new_mol_loaded = true;
-            *redraw_peptide = true;
-            handle_success(
-                &mut state.ui,
-                "Structure prediction complete; loaded predicted molecule".to_owned(),
-            );
+fn predict(state: &mut State, context: &Context) {
+    let sequence = match state.ui.structure_pred.sequence_type {
+        SequenceType::AminoAcid => {
+            parse_amino_acids(&state.ui.structure_pred.sequence).map(PredictionSequence::AminoAcids)
         }
-        Err(error) => handle_err(
+        SequenceType::Nucleotide => parse_nucleotides(&state.ui.structure_pred.sequence)
+            .map(PredictionSequence::Nucleotides),
+    };
+    let sequence = match sequence {
+        Ok(sequence) => sequence,
+        Err(error) => {
+            handle_err(
+                &mut state.ui,
+                format!("Unable to start structure prediction: {error}"),
+            );
+            return;
+        }
+    };
+
+    let Some(ff_map) = state.ff_param_set.peptide_ff_q_map.clone() else {
+        handle_err(
             &mut state.ui,
-            format!("Structure prediction failed: {error}"),
-        ),
+            "Unable to start structure prediction: no peptide force-field parameter map is loaded"
+                .to_owned(),
+        );
+        return;
+    };
+
+    let model = state.ui.structure_pred.model;
+    let control = PredictionControl::default();
+    let worker_control = control.clone();
+    let (tx, rx) = mpsc::channel();
+    let context = context.clone();
+
+    state.volatile.thread_receivers.structure_prediction = Some(rx);
+    state.ui.structure_pred.start_prediction(control);
+
+    thread::spawn(move || {
+        let prediction = match sequence {
+            PredictionSequence::AminoAcids(aas) => {
+                predict_structure_from_aas_with_control(model, &aas, &ff_map, &worker_control)
+            }
+            PredictionSequence::Nucleotides(nts) => {
+                predict_structure_from_nts_with_control(model, &nts, &ff_map, &worker_control)
+            }
+        };
+
+        let outcome = if worker_control.is_cancel_requested() {
+            StructurePredictionOutcome::Cancelled
+        } else {
+            match prediction {
+                Ok(molecule) => StructurePredictionOutcome::Complete(molecule),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                    StructurePredictionOutcome::Cancelled
+                }
+                Err(error) => StructurePredictionOutcome::Failed(error.to_string()),
+            }
+        };
+        let _ = tx.send(outcome);
+        context.request_repaint();
+    });
+}
+
+fn format_elapsed(elapsed: Duration) -> String {
+    let total_seconds = elapsed.as_secs();
+    let hours = total_seconds / 3_600;
+    let minutes = total_seconds % 3_600 / 60;
+    let seconds = total_seconds % 60;
+    if hours == 0 {
+        format!("{minutes:02}:{seconds:02}")
+    } else {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
     }
 }
 
@@ -234,5 +321,12 @@ mod tests {
             parse_nucleotides("ATX").unwrap_err(),
             "Invalid nucleotide identifier 'X' at sequence position 3"
         );
+    }
+
+    #[test]
+    fn formats_elapsed_prediction_time() {
+        assert_eq!(format_elapsed(Duration::ZERO), "00:00");
+        assert_eq!(format_elapsed(Duration::from_secs(59)), "00:59");
+        assert_eq!(format_elapsed(Duration::from_secs(3_661)), "01:01:01");
     }
 }
