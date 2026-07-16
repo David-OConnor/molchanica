@@ -23,7 +23,7 @@ use crate::{
     render::MESH_POCKET_START,
     selection::Selection,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popups},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popup},
     util,
     util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
 };
@@ -847,7 +847,7 @@ pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui
         None
     };
 
-    popups::metadata_popup(&mut state.ui.popup, &common, idents.as_deref(), ui);
+    popup::metadata_popup(&mut state.ui.popup, &common, idents.as_deref(), ui);
 }
 
 pub(in crate::ui) fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {

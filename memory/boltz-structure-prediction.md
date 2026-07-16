@@ -10,7 +10,7 @@ standalone app without them installing Python/uv/Torch/Boltz. Feature-gated behi
 `python_for_structure_prediction`.
 
 - `boltz_runtime.rs` (std-only, no PyO3): on first use, provisions a fully isolated env under the
-  user data dir — obtains `uv` (PATH / `MOLCHANICA_UV` / downloads pinned release), `uv venv
+  user data dir — obtains `uv` (previously downloaded copy / PATH / downloads pinned release), `uv venv
   --python 3.12` (uv auto-fetches CPython; Boltz needs NumPy<2 ⇒ Py 3.11/3.12), `uv pip install
   boltz`. A `.provisioned` marker enables a cheap `runtime_ready()` startup check.
 - `pyo3_interface.rs` (PyO3 0.29, `Python::attach`, `py.run(&CStr,…)`): opt-in in-process runner.

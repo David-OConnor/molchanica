@@ -12,7 +12,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        highlighted_box, num_field, popups::close_btn,
+        highlighted_box, num_field, popup::close_btn,
     },
     util::{RedrawFlags, handle_err, handle_success},
 };

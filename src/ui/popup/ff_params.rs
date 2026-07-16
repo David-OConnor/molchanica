@@ -14,7 +14,7 @@ use crate::{
     button, label,
     state::State,
     ui::{
-        COL_SPACING, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popups::close_btn,
+        COL_SPACING, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn,
     },
 };
 

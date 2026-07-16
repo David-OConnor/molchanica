@@ -9,7 +9,7 @@ use crate::{
     molecules::MolIdent,
     prefs::OpenType,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popups},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup},
     util::{handle_err, handle_success},
 };
 
@@ -48,7 +48,7 @@ pub(in crate::ui) fn parquet_db(state: &mut State, ui: &mut Ui) {
 
         ui.add_space(COL_SPACING);
 
-        popups::close_btn(ui, &mut state.ui.popup.parquet_db);
+        popup::close_btn(ui, &mut state.ui.popup.parquet_db);
     });
 
     db_selector(state, ui);

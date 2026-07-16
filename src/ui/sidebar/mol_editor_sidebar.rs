@@ -1,8 +1,21 @@
 use egui::{Color32, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
-use molchanica::ui::popup::pharmacophore;
 
-pub fn pocket_list(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
+use crate::{
+    button,
+    drawing::{EntityClass, draw_pocket},
+    label,
+    selection::Selection,
+    state::State,
+    ui::{COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup::pharmacophore},
+};
+
+pub(in crate::ui) fn pocket_list(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+) {
     ui.label("Pockets");
     ui.separator();
 

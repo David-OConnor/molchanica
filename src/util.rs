@@ -1376,10 +1376,6 @@ pub fn mdtraj_avail() -> bool {
 pub fn boltz2_avail() -> bool {
     // With the managed-runtime feature, an already-provisioned isolated environment counts as
     // available. (This is a cheap filesystem check; it does not provision anything.)
-    if crate::structure_prediction::boltz_runtime_ready() {
-        return true;
-    }
-
     match Command::new("boltz").arg("--help").output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1390,14 +1386,13 @@ pub fn boltz2_avail() -> bool {
     }
 }
 
-/// Checks if OpenDDE is available on the system path. OpenDDE is invoked as `opendde pred ...`;
-/// `opendde --help` exits 0 and lists its subcommands, including the `pred` command we use.
+/// Checks if OpenDDE is available on the system path.
 pub fn open_dde_avail() -> bool {
-    match Command::new("opendde").arg("--help").output() {
+    match Command::new("opendde").arg("--version").output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
 
-            output.status.success() && stdout.contains("pred")
+            output.status.success() && stdout.contains("opendde, version ")
         }
         Err(_) => false,
     }

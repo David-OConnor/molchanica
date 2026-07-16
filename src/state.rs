@@ -45,7 +45,7 @@ use crate::{
     sonification::MoleculeSonification,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
-    ui::popup::ff_params::FfParamsUi,
+    ui::popup::{ff_params::FfParamsUi, structure_pred::StructurePredUi},
     util::{boltz2_avail, gemmi_avail, gromacs_avail, mdtraj_avail, open_dde_avail, orca_avail},
 };
 
@@ -281,7 +281,6 @@ impl State {
 
 /// Indicates if these third party tools are installed, and able to be run.
 /// Generally requires them to be available on the system Path.
-#[derive(Default)]
 pub struct IntegrationsAvail {
     /// ORCA is available on the system path.
     pub orca: bool,
@@ -301,17 +300,21 @@ impl Default for IntegrationsAvail {
     fn default() -> Self {
         // todo temp timing to make sure this isn't slow.
         let start = Instant::now();
+
+        // Checking for applications which don't exist is generally <20ms each.
+        // Checking for a program which is installed takes longer; have seen ~1s or
+        // longer for python-based structure prediction ones. Skipping those for now.
+
         let result = Self {
             orca: orca_avail(),
             gromacs: gromacs_avail(),
             gemmi: gemmi_avail(),
             mdtraj: mdtraj_avail(),
-            boltz2: boltz2_avail(),
-            open_dde: open_dde_avail(),
+            boltz2: false, // todo: Boltz's invocation is currently very slow.
+            // boltz2: boltz2_avail(),
+            // open_dde: open_dde_avail(),
+            open_dde: true, // todo: For now.
         };
-
-        // todo: Warning! Boltz2 and Open_DDE are python imports. These checks for them
-        // todo may be very slow, slowing down the whole application's startup!
 
         let elapsed = start.elapsed().as_millis();
         println!("Identified integrated programs in {elapsed}ms");
@@ -325,7 +328,7 @@ impl IntegrationsAvail {
         format!(
             "\nAuxillary programs available: ORCA: {}, GROMACS: {}, Gemmi: {}, MdTraj: {}, Boltz-2: {}, OpenDDE: {}\n",
             self.orca, self.gromacs, self.gemmi, self.mdtraj, self.boltz2, self.open_dde
-        );
+        )
     }
 }
 
@@ -487,6 +490,8 @@ pub struct StateUi {
     pub md: StateUiMd,
     /// Selection state for the force-field parameter viewer/editor popup.
     pub ff_params: FfParamsUi,
+    /// Input state for the structure-prediction popup.
+    pub structure_pred: StructurePredUi,
     pub ph_input: String,
     pub mesh_coloring: MeshColoring,
     /// Color ligands by molecule, to contrast.
@@ -586,6 +591,7 @@ pub struct PopupState {
     pub parquet_db_mol_del: Option<(usize, String)>,
     pub md_mol_set_editor: bool,
     pub ff_params: bool,
+    pub structure_pred: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]
@@ -816,7 +822,7 @@ pub struct UiVisibility {
     pub amino_acids: bool,
     pub dynamics: bool,
     pub orca: bool,
-    pub strucutre_prediction: bool,
+    // pub strucutre_prediction: bool,
     pub mol_char: bool,
     pub pharmacophore_list: bool,
     /// The left-side panel. When hidden, a narrow strip with a button to re-show it remains.
@@ -834,7 +840,7 @@ impl Default for UiVisibility {
             amino_acids: false,
             dynamics: false,
             orca: false,
-            strucutre_prediction: true,
+            // strucutre_prediction: true,
             mol_char: true, // todo: For now.
             pharmacophore_list: false,
             sidebar: true,

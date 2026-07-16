@@ -45,7 +45,7 @@ fn keyword_toggle(
 pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
     misc::section_box().show(ui, |ui| {
         ui.horizontal(|ui| {
-            if state.volatile.orca_avail {
+            if state.volatile.integrations_avail.orca {
                 label!(ui, "ORCA ready", Color32::LIGHT_GREEN)
                     .on_hover_text("ORCA is installed and available; ready to run");
             } else {
@@ -244,7 +244,7 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                 //
                 //     ui.add_space(COL_SPACING);
 
-                if state.volatile.orca_avail && ui
+                if state.volatile.integrations_avail.orca && ui
                         .button(RichText::new("Run").color(COLOR_ACTION))
                         .on_hover_text(
                             "Run ORCA using the settings here, on the active molecule.",

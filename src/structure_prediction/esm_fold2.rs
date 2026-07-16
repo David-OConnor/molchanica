@@ -2,7 +2,8 @@
 //!
 //! ESMFold2 does not currently publish a dedicated CLI. Molchanica therefore writes a small Python
 //! runner into a temporary workspace and invokes the separately installed `esm`/`transformers`
-//! stack. Set `MOLCHANICA_PYTHON` to the Python executable belonging to that environment.
+//! stack with the `python` (Windows) or `python3` (otherwise) found on `PATH`, so that stack must be
+//! installed in whichever environment is active.
 //!
 //! We will focus on tools other than this for now, due to it requiring python. This is not
 //! currently an available pipeline.
@@ -16,8 +17,7 @@ use serde_json::json;
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
-        PredictionWorkspace, amino_acid_sequence, dna_sequence, executable, load_prediction,
-        run_model_command,
+        PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction, run_model_command,
     },
 };
 
@@ -88,12 +88,12 @@ fn predict(kind: &str, sequence: &str, ff_map: &ProtFfChargeMapSet) -> io::Resul
     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     fs::write(&input_path, input)?;
 
-    let default_python = if cfg!(target_os = "windows") {
+    let python = if cfg!(target_os = "windows") {
         "python"
     } else {
         "python3"
     };
-    let mut command = Command::new(executable("MOLCHANICA_PYTHON", default_python));
+    let mut command = Command::new(python);
     command.arg(&runner_path).arg(&input_path).arg(&output_path);
     run_model_command(&mut command, "ESMFold2")?;
 

@@ -15,7 +15,7 @@ use panels::{
     orca::orca_input,
     view::{ui_section_vis, view_settings},
 };
-use popups::load_popups;
+use popup::load_popups;
 
 use crate::{
     button, cam,
@@ -50,8 +50,7 @@ pub mod misc;
 mod mol_editor;
 mod mol_type_tools;
 mod panels;
-mod popup;
-mod popups;
+pub mod popup;
 mod sidebar;
 pub mod util;
 
@@ -767,6 +766,17 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 gaff2, amino19, and lipid21."
             ).clicked() {
                 state.ui.popup.ff_params = !state.ui.popup.ff_params;
+            }
+
+            if button!(
+                ui,
+                "Predict structure",
+                COLOR_ACTION,
+                "Predict a structure from an amino-acid or nucleotide sequence."
+            )
+            .clicked()
+            {
+                state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
             }
 
             let metadata_loaded = false; // avoids borrow error.

@@ -26,8 +26,8 @@ use crate::{
     state::{OperatingMode, PlayingAudio, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, highlighted_box, mol_editor_sidebar, num_field,
-        panels::md_viewer, popup::pharmacophore,
+        COLOR_INACTIVE, ROW_SPACING, highlighted_box, num_field, panels::md_viewer,
+        popup::pharmacophore,
     },
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };

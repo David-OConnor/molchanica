@@ -8,7 +8,7 @@
 //! (see [`super::pyo3_interface`]).
 //!
 //! Without that feature, this falls back to a `boltz` executable the user has installed and put on
-//! `PATH` (overridable with `MOLCHANICA_BOLTZ`), invoked as `boltz predict ...`.
+//! `PATH`, invoked as `boltz predict ...`.
 //!
 //! Protein inputs use Boltz's public MSA server; DNA inputs do not require an MSA.
 
@@ -20,7 +20,7 @@ use dynamics::params::ProtFfChargeMapSet;
 use na_seq::{AminoAcid, Nucleotide};
 
 #[cfg(not(feature = "python_for_structure_prediction"))]
-use crate::structure_prediction::{executable, run_model_command};
+use crate::structure_prediction::run_model_command;
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
@@ -92,7 +92,7 @@ fn run_boltz(
     output_path: &std::path::Path,
     use_msa_server: bool,
 ) -> io::Result<()> {
-    let mut command = Command::new(executable("MOLCHANICA_BOLTZ", "boltz"));
+    let mut command = Command::new("boltz");
     command
         .arg("predict")
         .arg(input_path)

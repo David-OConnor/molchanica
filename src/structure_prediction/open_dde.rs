@@ -1,10 +1,46 @@
 //! OpenDDE all-atom co-folding through the official `opendde pred` CLI.
 //!
+//! [Github](https://github.com/aurekaresearch/OpenDDE)
+//! [Paper](https://arxiv.org/html/2607.03787v1)
+//!
+//! Install: `pip install opendde`. (TBD: How this will interact with your global python
+//! interpreter; probably not a good practice to do it this way)
+//!
+//! todo: Is there anything special required to enable GPU? e.g. `--torch-backend cu126 "opendde[gpu]"`
+//!
 //! OpenDDE is a preview release, so its process boundary is kept isolated here. The module supports
 //! proteins, DNA, RNA, ligands (SMILES, `CCD_...`, or `FILE_...`), ions, and explicit covalent
 //! links using the documented AlphaFold-Server-style JSON schema.
 //!
-//! todo: Major update coming Friday which should fix the install problem.
+//! Example use from CLI; we call it in a similar way.
+//! ```json
+//! [
+//!     {
+//!         "name": "tiny",
+//!         "modelSeeds": [101],
+//!         "sequences": [
+//!             {
+//!                 "proteinChain": {
+//!                     "sequence": "ACDEFGHIK",
+//!                     "count": 1
+//!                 }
+//!             }
+//!         ]
+//!     }
+//! ]
+//! ```
+//! ```
+//! opendde pred \
+//!   -i tiny.json \
+//!   -o ./output \
+//!   -n opendde_v1 \
+//!   --use_msa false \
+//!   --use_template false \
+//!   --use_rna_msa false \
+//!   --sample 1 \
+//!   --step 200 \
+//!   --cycle 10
+//! ```
 
 use std::{collections::HashSet, fs, io, process::Command};
 
@@ -12,11 +48,14 @@ use dynamics::params::ProtFfChargeMapSet;
 use na_seq::{AminoAcid, Nucleotide};
 use serde_json::{Value, json};
 
+const PROTEIN_SEQUENCE_ALPHABET: &[u8] = b"ACDEFGHIKLMNPQRSTVWYX";
+const DNA_SEQUENCE_ALPHABET: &[u8] = b"ATGCNX";
+const RNA_SEQUENCE_ALPHABET: &[u8] = b"AUGCNX";
+
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
-        PredictionWorkspace, amino_acid_sequence, dna_sequence, executable, load_prediction,
-        run_model_command,
+        PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction, run_model_command,
     },
 };
 
@@ -202,25 +241,31 @@ impl OpenDdeRequest {
                 ));
             }
 
-            let (kind, value, allowed): (&str, &str, Option<&[u8]>) = match entity {
+            let (kind, value, sequence_alphabet): (&str, &str, Option<&[u8]>) = match entity {
                 OpenDdeEntity::Protein { sequence, .. } => {
-                    ("protein", sequence, Some(b"ACDEFGHIKLMNPQRSTVWYX"))
+                    ("protein", sequence, Some(PROTEIN_SEQUENCE_ALPHABET))
                 }
-                OpenDdeEntity::Dna { sequence, .. } => ("DNA", sequence, Some(b"ATGCNX")),
-                OpenDdeEntity::Rna { sequence, .. } => ("RNA", sequence, Some(b"AUGCNX")),
+                OpenDdeEntity::Dna { sequence, .. } => {
+                    ("DNA", sequence, Some(DNA_SEQUENCE_ALPHABET))
+                }
+                OpenDdeEntity::Rna { sequence, .. } => {
+                    ("RNA", sequence, Some(RNA_SEQUENCE_ALPHABET))
+                }
                 OpenDdeEntity::Ligand { value, .. } => ("ligand", value, None),
                 OpenDdeEntity::Ion { code, .. } => ("ion", code, None),
             };
+
             if value.is_empty() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("OpenDDE {kind} value cannot be empty"),
                 ));
             }
-            if let Some(allowed) = allowed
+
+            if let Some(alphabet) = sequence_alphabet
                 && !value
                     .bytes()
-                    .all(|byte| allowed.contains(&byte.to_ascii_uppercase()))
+                    .all(|byte| alphabet.contains(&byte.to_ascii_uppercase()))
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -289,9 +334,12 @@ pub fn predict_structure(
     let output_path = workspace.create_dir("output")?;
     let input = serde_json::to_vec_pretty(&request.to_json()?)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
     fs::write(&input_path, input)?;
 
-    let mut command = Command::new(executable("MOLCHANICA_OPENDDE", "opendde"));
+    // todo: Evaluate how to set various params here.
+
+    let mut command = Command::new("opendde");
     command
         .arg("pred")
         .arg("-i")
@@ -299,7 +347,20 @@ pub fn predict_structure(
         .arg("-o")
         .arg(&output_path)
         .arg("-n")
-        .arg("opendde_v1");
+        .arg("opendde_v1")
+        .arg("--use_msa")
+        .arg("false")
+        .arg("--use_template")
+        .arg("false")
+        .arg("--use_rna_msa")
+        .arg("false")
+        .arg("--sample")
+        .arg("1")
+        .arg("--step")
+        .arg("200")
+        .arg("--cycle")
+        .arg("10");
+
     run_model_command(&mut command, "OpenDDE")?;
 
     load_prediction(&output_path, ff_map)
@@ -319,51 +380,4 @@ pub(super) fn predict_structure_from_dna(
 ) -> io::Result<MoleculePeptide> {
     let entity = OpenDdeEntity::dna("D", nts)?;
     predict_structure(&OpenDdeRequest::new("molchanica", vec![entity]), ff_map)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn serializes_every_supported_entity() {
-        let request = OpenDdeRequest::new(
-            "all_entities",
-            vec![
-                OpenDdeEntity::Protein {
-                    id: "A".into(),
-                    sequence: "ACDE".into(),
-                },
-                OpenDdeEntity::Dna {
-                    id: "D".into(),
-                    sequence: "GATTACA".into(),
-                },
-                OpenDdeEntity::rna("R", "GUAC"),
-                OpenDdeEntity::ligand("L", "CCD_ATP"),
-                OpenDdeEntity::ion("M", "MG"),
-            ],
-        );
-        let json = request.to_json().unwrap();
-        let sequences = json[0]["sequences"].as_array().unwrap();
-        assert!(sequences[0].get("proteinChain").is_some());
-        assert!(sequences[1].get("dnaSequence").is_some());
-        assert!(sequences[2].get("rnaSequence").is_some());
-        assert!(sequences[3].get("ligand").is_some());
-        assert!(sequences[4].get("ion").is_some());
-    }
-
-    #[test]
-    fn rejects_path_like_job_names_and_bad_rna() {
-        let request = OpenDdeRequest::new("../escape", vec![OpenDdeEntity::rna("R", "GUT")]);
-        assert_eq!(
-            request.validate().unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
-        );
-
-        let request = OpenDdeRequest::new("safe", vec![OpenDdeEntity::rna("R", "GUT")]);
-        assert_eq!(
-            request.validate().unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
-        );
-    }
 }

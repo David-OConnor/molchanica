@@ -66,9 +66,8 @@ pub enum StructurePredictionModel {
 /// Predict a structure from an amino-acid sequence and convert its mmCIF output into Molchanica's
 /// peptide representation.
 ///
-/// The selected model must be installed separately. Boltz and OpenDDE must be available as
-/// `boltz` and `opendde`, respectively. ESMFold2 is invoked through Python. These executable names
-/// can be overridden with `MOLCHANICA_BOLTZ`, `MOLCHANICA_OPENDDE`, and `MOLCHANICA_PYTHON`.
+/// The selected model must be installed separately and available on `PATH`. Boltz and OpenDDE are
+/// invoked as `boltz` and `opendde`, respectively. ESMFold2 is invoked through Python.
 pub fn predict_structure_from_aas(
     model: StructurePredictionModel,
     aas: &[AminoAcid],
@@ -97,6 +96,17 @@ pub fn predict_structure_from_dna(
     }
 }
 
+/// Predict a DNA structure from a nucleotide sequence.
+///
+/// This is the sequence-oriented counterpart to [`predict_structure_from_aas`].
+pub fn predict_structure_from_nts(
+    model: StructurePredictionModel,
+    nts: &[Nucleotide],
+    ff_map: &ProtFfChargeMapSet,
+) -> io::Result<MoleculePeptide> {
+    predict_structure_from_dna(model, nts, ff_map)
+}
+
 pub fn amino_acid_sequence(aas: &[AminoAcid]) -> io::Result<String> {
     if aas.is_empty() {
         return Err(io::Error::new(
@@ -123,29 +133,25 @@ pub fn dna_sequence(nts: &[Nucleotide]) -> io::Result<String> {
         .collect())
 }
 
-pub fn executable(environment_variable: &str, default: &str) -> PathBuf {
-    env::var_os(environment_variable)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(default))
-}
-
 pub fn run_model_command(command: &mut Command, model: &str) -> io::Result<()> {
     let output = command.output().map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!(
-                "unable to start {model}; install it separately or configure its Molchanica executable environment variable: {error}"
-            ),
+            format!("unable to start {model}; install it separately and put it on PATH: {error}"),
         )
     })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    println!("{model} input command: {command:?}");
+    println!("{model} stdout:\n{stdout}");
+    eprintln!("{model} stderr:\n{stderr}");
 
     if output.status.success() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
     Err(io::Error::other(format!(
         "{model} exited with {}\nstdout:\n{}\nstderr:\n{}",
         output.status,

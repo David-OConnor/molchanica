@@ -4,8 +4,8 @@
 //! application, without them ever installing Python, `uv`, `torch`, or Boltz themselves. On first
 //! use we build a fully isolated environment under the user's data directory:
 //!
-//! 1. Obtain `uv` (a single static binary). We use one already on `PATH`, one pointed to by
-//!    `MOLCHANICA_UV`, a previously downloaded copy, or we download the pinned release.
+//! 1. Obtain `uv` (a single static binary). We use a previously downloaded copy, one already on
+//!    `PATH`, or we download the pinned release.
 //! 2. `uv venv --python 3.12` — `uv` fetches a managed CPython 3.12 automatically (Boltz needs
 //!    NumPy < 2, which needs Python 3.11/3.12), so the host system's Python is irrelevant.
 //! 3. `uv pip install boltz` into that venv, pulling Torch and the rest of the stack.
@@ -21,7 +21,6 @@
 //!
 //! Relevant environment overrides:
 //! * `MOLCHANICA_BOLTZ_HOME`         — root directory for the managed runtime.
-//! * `MOLCHANICA_UV`                 — path to a `uv` executable to use instead of downloading one.
 //! * `MOLCHANICA_UV_VERSION`         — `uv` release to download when one must be fetched.
 //! * `MOLCHANICA_BOLTZ_PYTHON`       — Python version passed to `uv venv` (default `3.12`).
 //! * `MOLCHANICA_BOLTZ_INSTALL_ARGS` — extra args appended to `uv pip install` (e.g. a CUDA index).
@@ -243,34 +242,19 @@ fn venv_boltz(root: &Path) -> PathBuf {
 
 /// Locate a usable `uv`, downloading a pinned release into `root/bin` if necessary.
 fn ensure_uv(root: &Path) -> io::Result<PathBuf> {
-    // 1. Explicit override.
-    if let Some(path) = env_string("MOLCHANICA_UV") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "MOLCHANICA_UV points at {}, which does not exist",
-                path.display()
-            ),
-        ));
-    }
-
-    // 2. A previously downloaded copy.
+    // 1. A previously downloaded copy.
     let bin_dir = root.join("bin");
     let downloaded = bin_dir.join(uv_exe_name());
     if downloaded.is_file() {
         return Ok(downloaded);
     }
 
-    // 3. `uv` on PATH.
+    // 2. `uv` on PATH.
     if Command::new("uv").arg("--version").output().is_ok() {
         return Ok(PathBuf::from("uv"));
     }
 
-    // 4. Download the pinned release.
+    // 3. Download the pinned release.
     fs::create_dir_all(&bin_dir)?;
     download_uv(&bin_dir)
 }
@@ -284,8 +268,8 @@ fn download_uv(bin_dir: &Path) -> io::Result<PathBuf> {
 
     println!("[boltz-runtime] Downloading uv {version} from {url}");
     // NOTE(hardening): this downloads and executes a third-party binary. A future improvement is to
-    // verify it against the published SHA-256 before use; set MOLCHANICA_UV to a vetted copy to
-    // bypass the download entirely.
+    // verify it against the published SHA-256 before use; installing a vetted `uv` on PATH bypasses
+    // the download entirely.
     let archive = bin_dir.join(&asset);
     download_file(&url, &archive)?;
 
@@ -341,7 +325,7 @@ fn uv_release_asset() -> io::Result<String> {
         "aarch64-unknown-linux-gnu"
     } else {
         return Err(io::Error::other(
-            "no known uv release for this platform; install uv manually and set MOLCHANICA_UV",
+            "no known uv release for this platform; install uv manually and put it on PATH",
         ));
     };
 
