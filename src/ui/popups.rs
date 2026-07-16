@@ -31,8 +31,10 @@ use crate::{
     state::{MsaaSetting, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        ff_params, md_viewer, mol_data::metadata, mol_dbs, pharmacophore, rama_plot, recent_files,
-        recent_files::PER_PAGE,
+        panels::{md_viewer, mol_data::metadata},
+        popup::{
+            ff_params, mol_dbs, pharmacophore, rama_plot, recent_files, recent_files::PER_PAGE,
+        },
     },
     util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
 };

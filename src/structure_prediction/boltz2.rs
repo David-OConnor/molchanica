@@ -1,24 +1,30 @@
-//! Boltz-2 structure prediction through the official `boltz predict` CLI.
+//! Boltz-2 structure prediction.
 //!
-//! Boltz is intentionally not a Molchanica dependency. Install it independently (for example,
-//! `pip install -U "boltz[cuda]"`) and make `boltz` available on `PATH`, or point
+//! With the `python_for_structure_prediction` feature enabled, Boltz "just works": Molchanica
+//! provisions a fully isolated Python environment on first use (see [`super::boltz_runtime`]) and
+//! runs Boltz from it, so the user never installs Python, `uv`, Torch, or Boltz themselves. By
+//! default the managed environment's `boltz` launcher is run as a child process; an opt-in
+//! in-process path via the embedded PyO3 interpreter is available with `MOLCHANICA_BOLTZ_INPROCESS=1`
+//! (see [`super::pyo3_interface`]).
 //!
-//! BOltz (CAO 2026-07-15) requires Numpy < 2.0, which requires Python 3.11 or 3.12; use UV.
+//! Without that feature, this falls back to a `boltz` executable the user has installed and put on
+//! `PATH` (overridable with `MOLCHANICA_BOLTZ`), invoked as `boltz predict ...`.
 //!
-//! `MOLCHANICA_BOLTZ` at the executable. Protein inputs use Boltz's public MSA server; DNA inputs
-//! do not require an MSA.
-//!
+//! Protein inputs use Boltz's public MSA server; DNA inputs do not require an MSA.
 
-use std::{fs, io, process::Command};
+#[cfg(not(feature = "python_for_structure_prediction"))]
+use std::process::Command;
+use std::{fs, io};
 
 use dynamics::params::ProtFfChargeMapSet;
 use na_seq::{AminoAcid, Nucleotide};
 
+#[cfg(not(feature = "python_for_structure_prediction"))]
+use crate::structure_prediction::{executable, run_model_command};
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
-        PredictionWorkspace, amino_acid_sequence, dna_sequence, executable, load_prediction,
-        run_model_command,
+        PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
     },
 };
 
@@ -48,39 +54,56 @@ fn predict(
     let output_path = workspace.create_dir("output")?;
     fs::write(&input_path, input_yaml)?;
 
-    let mut command = Command::new(executable("MOLCHANICA_BOLTZ", "boltz"));
-    command
-        .arg("predict")
-        .arg(&input_path)
-        .arg("--out_dir")
-        .arg(&output_path);
-    if use_msa_server {
-        command.arg("--use_msa_server");
-    }
-    run_model_command(&mut command, "Boltz-2")?;
+    run_boltz(&input_path, &output_path, use_msa_server)?;
 
     load_prediction(&output_path, ff_map)
 }
 
-fn boltz_yaml(entity_type: &str, sequence: &str) -> String {
-    format!("version: 1\nsequences:\n  - {entity_type}:\n      id: A\n      sequence: {sequence}\n")
+/// Managed path: provision (if needed) and run the isolated Boltz environment.
+#[cfg(feature = "python_for_structure_prediction")]
+fn run_boltz(
+    input_path: &std::path::Path,
+    output_path: &std::path::Path,
+    use_msa_server: bool,
+) -> io::Result<()> {
+    use crate::structure_prediction::{boltz_runtime, pyo3_interface};
+
+    let runtime = boltz_runtime::ensure()?;
+
+    if boltz_runtime::in_process_requested() {
+        match pyo3_interface::predict(&runtime, input_path, output_path, use_msa_server) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                eprintln!(
+                    "Boltz in-process execution failed ({error}); falling back to the managed \
+                     subprocess."
+                );
+            }
+        }
+    }
+
+    runtime.predict(input_path, output_path, use_msa_server)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn creates_boltz_protein_yaml() {
-        let yaml = boltz_yaml("protein", "MKT");
-        assert!(yaml.contains("- protein:"));
-        assert!(yaml.contains("sequence: MKT"));
+/// Legacy path: a `boltz` executable the user installed and put on `PATH`.
+#[cfg(not(feature = "python_for_structure_prediction"))]
+fn run_boltz(
+    input_path: &std::path::Path,
+    output_path: &std::path::Path,
+    use_msa_server: bool,
+) -> io::Result<()> {
+    let mut command = Command::new(executable("MOLCHANICA_BOLTZ", "boltz"));
+    command
+        .arg("predict")
+        .arg(input_path)
+        .arg("--out_dir")
+        .arg(output_path);
+    if use_msa_server {
+        command.arg("--use_msa_server");
     }
+    run_model_command(&mut command, "Boltz-2")
+}
 
-    #[test]
-    fn creates_boltz_dna_yaml() {
-        let yaml = boltz_yaml("dna", "GATTACA");
-        assert!(yaml.contains("- dna:"));
-        assert!(yaml.contains("sequence: GATTACA"));
-    }
+fn boltz_yaml(entity_type: &str, sequence: &str) -> String {
+    format!("version: 1\nsequences:\n  - {entity_type}:\n      id: A\n      sequence: {sequence}\n")
 }

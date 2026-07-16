@@ -5,8 +5,9 @@ use std::{
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
+    time::Instant,
 };
-use std::time::Instant;
+
 use bincode::{Decode, Encode};
 use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
@@ -44,10 +45,9 @@ use crate::{
     sonification::MoleculeSonification,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
-    ui::ff_params::FfParamsUi,
-    util::{gromacs_avail, mdtraj_avail, orca_avail},
+    ui::popup::ff_params::FfParamsUi,
+    util::{boltz2_avail, gemmi_avail, gromacs_avail, mdtraj_avail, open_dde_avail, orca_avail},
 };
-use crate::util::{boltz2_avail, gemmi_avail, open_dde_avail};
 
 pub struct State {
     pub ui: StateUi,
@@ -361,7 +361,7 @@ pub struct StateVolatile {
     pub md_local: MdStateLocal,
     pub orbit_center: Option<(MolType, usize)>,
     pub integrations_avail: IntegrationsAvail,
-     // /// Per-protein. Computed as required; None before then.
+    // /// Per-protein. Computed as required; None before then.
     // hydropathy_data: Option<Vec<Vec<(usize, usize)>>>,
     // /// If present, there must be one per vertex. Rebuild this whenever we
     // /// rebuild this mesh.

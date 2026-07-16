@@ -1,12 +1,17 @@
-//! Structure prediction through separately installed third-party models.
+//! Structure prediction through third-party models.
 //!
-//! The predictors deliberately use process boundaries: installing any of these large Python
-//! stacks is optional, and a missing model does not prevent Molchanica itself from starting.
 //! Predictions are blocking operations and should be moved to a worker thread when called by the
 //! GUI.
 //!
-//! Todo: THese Python programs are proving to be a pain to install. Try this: An Embedded Python Runtime via PyO3
-//! todo: Or: tch-rs, which provides Rust bindings directly to the C++ PyTorch API (Libtorch).
+//! Boltz-2 is special-cased so it "just works" for end users of the standalone application: with the
+//! `python_for_structure_prediction` feature enabled, Molchanica provisions a fully isolated Python
+//! environment on first use (via `uv`; see the `boltz_runtime` module) and runs Boltz from it — the
+//! user never installs Python, `uv`, Torch, or Boltz themselves. Execution defaults to the managed
+//! environment's `boltz` launcher as a child process, with an opt-in in-process path through an
+//! embedded PyO3 interpreter (see the `pyo3_interface` module).
+//!
+//! The other predictors (OpenDDE, ESMFold2) still use plain process boundaries against separately
+//! installed tooling; a missing model does not prevent Molchanica from starting.
 
 use std::{
     env, fs, io,
@@ -23,8 +28,28 @@ use na_seq::{AaIdent, AminoAcid, Nucleotide};
 use crate::molecules::peptide::MoleculePeptide;
 
 mod boltz2;
+#[cfg(feature = "python_for_structure_prediction")]
+mod boltz_runtime;
 mod esm_fold2;
 pub mod open_dde;
+#[cfg(feature = "python_for_structure_prediction")]
+mod pyo3_interface;
+
+/// Whether the managed, self-provisioned Boltz environment is already installed and ready.
+///
+/// Cheap: it only checks the filesystem and never provisions or launches a heavy process, so it is
+/// safe to call during startup availability probing. Always `false` unless the
+/// `python_for_structure_prediction` feature is enabled.
+pub fn boltz_runtime_ready() -> bool {
+    #[cfg(feature = "python_for_structure_prediction")]
+    {
+        boltz_runtime::runtime_ready()
+    }
+    #[cfg(not(feature = "python_for_structure_prediction"))]
+    {
+        false
+    }
+}
 
 /// pH used when Molchanica adds hydrogens and force-field parameters to a prediction.
 pub const DEFAULT_PREDICTION_PH: f32 = 7.0;

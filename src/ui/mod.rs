@@ -7,9 +7,14 @@ use egui::{
     TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
-use md::md_setup;
-use mol_data::display_mol_data;
 use na_seq::Element;
+use panels::{
+    md::md_setup,
+    mol_data,
+    mol_data::{display_mol_data, display_mol_data_peptide},
+    orca::orca_input,
+    view::{ui_section_vis, view_settings},
+};
 use popups::load_popups;
 
 use crate::{
@@ -31,12 +36,9 @@ use crate::{
     threads::handle_thread_rx,
     ui::{
         misc::section_box,
-        mol_data::display_mol_data_peptide,
         mol_type_tools::mol_type_toolbars,
-        orca::orca_input,
         sidebar::sidebar,
         util::{color_egui_from_f32, handle_redraw, query, update_file_dialogs},
-        view::{ui_section_vis, view_settings},
     },
     util::{
         RedrawFlags, check_prefs_save, close_mol, handle_err, handle_scene_flags, handle_success,
@@ -44,24 +46,14 @@ use crate::{
     },
 };
 
-mod char_adme;
-pub mod ff_params;
-mod md;
-mod md_viewer;
 pub mod misc;
-mod mol_data;
-mod mol_dbs;
 mod mol_editor;
-mod mol_editor_sidebar;
 mod mol_type_tools;
-mod orca;
-mod pharmacophore;
+mod panels;
+mod popup;
 mod popups;
-mod rama_plot;
-mod recent_files;
 mod sidebar;
 pub mod util;
-mod view;
 
 pub(in crate::ui) const ROW_SPACING: f32 = 10.;
 pub(in crate::ui) const COL_SPACING: f32 = 30.;

@@ -16,8 +16,8 @@ use crate::{
     selection::Selection,
     state::{PopupState, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, mol_dbs::db_selector,
-        util::color_egui_from_f32,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
+        popup::mol_dbs::db_selector, util::color_egui_from_f32,
     },
     util::{RedrawFlags, handle_err, make_egui_color},
 };

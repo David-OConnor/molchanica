@@ -20,7 +20,7 @@ egui = "0.34.1"
 egui-file-dialog = "0.13.0" #  For file dialogs.
 egui_plot = "0.35.0"  # For Rama plots
 
-lin_alg = { version = "1.4.2", features = ["encode"] }
+lin_alg = { version = "1.4.3", features = ["encode"] }
 na_seq = "0.3.15"
 bio_apis = { version = "0.2.8", features = ["encode"] }
 bio_files = { version = "0.5.2", features = ["encode"] }
@@ -33,14 +33,14 @@ ewald = { version = "0.1.14" }
 
 # For loading and saving config
 bincode = "2.0.1"
-rayon = "1.10.0"  # Parallel execution on CPU using thread pools.
+rayon = "1.12.0"  # Parallel execution on CPU using thread pools.
 
 # For electron density reflections
 rustfft = "6.4.1"
 
-rand = "0.10.1"
-regex = "1.12.3"
-chrono = "0.4.43"
+rand = "0.10.2"
+regex = "1.13.0"
+chrono = "0.4.45"
 serde = { version = "1.0.228", features = ["derive"] }
 
 csv = { version = "1.4.0", optional = true }  # Tran only
@@ -49,7 +49,7 @@ csv = { version = "1.4.0", optional = true }  # Tran only
 # And using WGPU allows us to use this on PCs that have non-nvidia GPUs.
 burn = { version = "0.21.0", features = ["std", "train", "fusion", "ndarray", "autotune"], default-features = false }
 
-serde_json = "1.0.145"  # For [de]serializing ML model configs and scalers.
+serde_json = "1.0.150"  # For [de]serializing ML model configs and scalers.
 
 # We use Parquet for molecule databases, e.g. for screening, and a built-in convenience set.
 # Parquet is the on-disk format; Arrow is its in-memory format.
@@ -62,7 +62,7 @@ arrow = "59.1.0"
 # Observation, 2026-02-09: Dynamic Linking seems to be required for Ubuntu; dynamic loading will launch,
 # but it will be unable to find the GPU at runtime. edit: Nvm; not working there with loading either.
 #cudarc = { version = "0.19.2", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading"], optional = true }
-cudarc = { version = "0.19.2", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking", "cuda-13000"], optional = true }
+cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking", "cuda-13000"], optional = true }
 
 # Note: The non-cuda one seems to work on a non-nvidia Win with dynamic-linking.
 #[target.'cfg(target_os = "windows")'.dependencies]
@@ -72,6 +72,8 @@ cudarc = { version = "0.19.2", default-features = false, features = ["std", "dri
 include_dir = "0.7.4"
 
 rodio = "0.22.2"  # For sonification of bonds etc (Experimental)
+
+pyo3 = { version = "0.29.0", optional = true }  # For Python-based structure prediction like Boltz-2
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
@@ -87,7 +89,7 @@ dynamics = { path = "../dynamics" }
 [build-dependencies]
 cuda_setup = { version = "0.1.10", optional = true }
 # This is for embedding an application icon, on Windows.
-winresource = "0.1.30"
+winresource = "0.1.31"
 
 # We feature-gate the CUDA dependency, so this program can be run on computers that don't have a
 # suitable graphics chip.
@@ -99,6 +101,12 @@ cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft
 
 # We use GPU for training only.
 train = ["burn/wgpu", "burn/tui", "csv"]
+
+# Embeds a Python interpreter (PyO3) so Boltz-2 can run in-process, and enables the self-provisioning
+# managed Boltz environment. `auto-initialize` starts the embedded interpreter on first use.
+# Note: building with this feature requires a libpython to link against, and the resulting binary
+# depends on a matching libpython at runtime. See src/structure_prediction/pyo3_interface.rs.
+python_for_structure_prediction = ["pyo3", "pyo3/auto-initialize"]
 
 
 [profile.release]

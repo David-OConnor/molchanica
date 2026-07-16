@@ -833,7 +833,7 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
 }
 
 /// Display metadata stored for a given molecule.
-pub(super) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui: &mut Ui) {
+pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui: &mut Ui) {
     let Some(mol) = state.get_mol(mol_type, i) else {
         return;
     };

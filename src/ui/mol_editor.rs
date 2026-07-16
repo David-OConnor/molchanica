@@ -24,14 +24,11 @@ use crate::{
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{State, StateUi},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE,
-        md_viewer::energy_disp,
-        misc,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, misc,
         misc::{active_color, section_box},
-        mol_data::selected_data,
-        pharmacophore::pharmacophore_edit_tools,
+        panels::{md_viewer::energy_disp, mol_data::selected_data, view::mesh_coloring_selector},
+        popup::pharmacophore::pharmacophore_edit_tools,
         util::color_egui_from_f32,
-        view::mesh_coloring_selector,
     },
     util::{RedrawFlags, handle_err},
 };

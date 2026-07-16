@@ -1374,6 +1374,12 @@ pub fn mdtraj_avail() -> bool {
 /// Checks if Boltz-2 is available on the system path. Boltz is invoked as `boltz predict ...`;
 /// it has no `--version`, but `boltz --help` exits 0 and lists its `predict` subcommand.
 pub fn boltz2_avail() -> bool {
+    // With the managed-runtime feature, an already-provisioned isolated environment counts as
+    // available. (This is a cheap filesystem check; it does not provision anything.)
+    if crate::structure_prediction::boltz_runtime_ready() {
+        return true;
+    }
+
     match Command::new("boltz").arg("--help").output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);

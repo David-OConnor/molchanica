@@ -16,7 +16,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        flag_btn, md_viewer, misc, num_field,
+        flag_btn, misc, num_field, panels::md_viewer,
     },
     util::RedrawFlags,
 };

@@ -9,12 +9,7 @@ use crate::molecules::Residue;
 
 pub const POINT_RADIUS: f32 = 2.5;
 
-pub(in crate::ui) fn plot_rama(
-    residues: &[Residue],
-    protein_ident: &str,
-    ui: &mut Ui,
-    popup_open: &mut bool,
-) {
+pub fn plot_rama(residues: &[Residue], protein_ident: &str, ui: &mut Ui, popup_open: &mut bool) {
     ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
         if ui
             .button(RichText::new("Close").color(Color32::LIGHT_RED))
