@@ -47,6 +47,12 @@ Compile from source by [downloading and installing Rust](https://www.rust-lang.o
 in the project directory. See notes in the *compiling* section below about setting up Amber parameter files,
 and either installing the CUDA toolkit, or disabling CUDA.
 
+### Installing integrated third-party software.
+If you wish to use structure prediction, install OpenDDE using the included `install_opendde` script. Or install it
+on your own in a way where it is accessible on the system PATH environment variable. If you wish to open MTZ files
+(A type of structure prediction), install Gemmi. (Available automatically in the Linux install script). If you wish
+to use ORCA for quantum chemistry of the GROMACS MD backend, install those separately.
+
 ## Functionality
 
 - View the 3D structure of proteins and small molecules
@@ -56,7 +62,7 @@ and either installing the CUDA toolkit, or disabling CUDA.
 - Visualize electron density from crystallography and Cryo-Em data
 - Run [GROMACS](https://www.gromacs.org/) MD, and view trajectories using the same GUI as our native MD.
 - Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed).
-- Run [OpenDDE](https://github.com/aurekaresearch/OpenDDE) protein (and other mol) structure prediction
+- Run [OpenDDE](https://github.com/aurekaresearch/OpenDDE) structure prediction (Proteins, ligands, nucleic acids)
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
   and more.
 - Screen molecules based on binding affinity and desired properties
