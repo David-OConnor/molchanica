@@ -10,15 +10,11 @@ use std::{
 use egui::{Button, ComboBox, Context, RichText, TextEdit, Ui};
 use na_seq::{AminoAcid, Nucleotide};
 
-use crate::{
-    state::State,
-    structure_prediction::{
-        PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
-        predict_structure_from_aas_with_control, predict_structure_from_nts_with_control,
-    },
-    ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, ROW_SPACING, popup::close_btn},
-    util::handle_err,
-};
+use crate::{button, state::State, structure_prediction::{
+    PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
+    predict_structure_from_aas_with_control, predict_structure_from_nts_with_control,
+}, ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, ROW_SPACING, popup::close_btn}, util::handle_err};
+use crate::ui::COLOR_INACTIVE;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum SequenceType {
@@ -94,25 +90,31 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
     ui.add_space(ROW_SPACING);
 
     ui.horizontal(|ui| {
-        let amino_acid_selected = state.ui.structure_pred.sequence_type == SequenceType::AminoAcid;
-        let nucleotide_selected = state.ui.structure_pred.sequence_type == SequenceType::Nucleotide;
         ui.label("Sequence type:");
-        ui.selectable_value(
-            &mut state.ui.structure_pred.sequence_type,
-            SequenceType::AminoAcid,
-            RichText::new("Amino acids (1 letter)").color(sequence_type_color(amino_acid_selected)),
-        )
-        .on_hover_text("Amino-acid sequence using single-letter identifiers");
-        ui.selectable_value(
-            &mut state.ui.structure_pred.sequence_type,
-            SequenceType::Nucleotide,
-            RichText::new("Nucleotides").color(sequence_type_color(nucleotide_selected)),
-        )
-        .on_hover_text("DNA nucleotide sequence using A, T, G, and C");
+
+        let color = if state.ui.structure_pred.sequence_type == SequenceType::AminoAcid {
+            COLOR_ACTIVE
+        } else {
+            COLOR_INACTIVE
+        };
+        if button!(ui, "Amino acids (1 letter)", color, "Amino-acid sequence using single-letter identifiers")
+            .clicked() {
+            state.ui.structure_pred.sequence_type = SequenceType::AminoAcid;
+        }
+
+        let color = if state.ui.structure_pred.sequence_type == SequenceType::Nucleotide {
+            COLOR_ACTIVE
+        } else {
+            COLOR_INACTIVE
+        };
+        if button!(ui, "Nucleotides", color, "DNA nucleotide sequence using A, T, G, and C")
+            .clicked() {
+            state.ui.structure_pred.sequence_type = SequenceType::Nucleotide;
+        }
     });
 
-    ui.add(
-        TextEdit::multiline(&mut state.ui.structure_pred.sequence)
+                  ui.add(
+                      TextEdit::multiline(&mut state.ui.structure_pred.sequence)
             .desired_rows(8)
             .desired_width(420.)
             .hint_text(match state.ui.structure_pred.sequence_type {
@@ -275,14 +277,6 @@ fn parse_sequence<T, E>(
     }
 
     Ok(result)
-}
-
-fn sequence_type_color(selected: bool) -> egui::Color32 {
-    if selected {
-        COLOR_ACTIVE
-    } else {
-        COLOR_HIGHLIGHT
-    }
 }
 
 fn model_name(model: StructurePredictionModel) -> &'static str {

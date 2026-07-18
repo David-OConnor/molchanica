@@ -1,12 +1,15 @@
 //! A popup of a UI viewer and editor for molecule databases, e.g. as implemented
 //! in parquet.
 
+use std::slice;
+
 use egui::{Color32, Grid, ScrollArea, Ui};
+use graphics::{EngineUpdates, Scene};
 
 use crate::{
     button, label,
     mol_db::{MolMeta, ParquetMolDb},
-    molecules::MolIdent,
+    molecules::{MolIdent, MoleculeGeneric},
     prefs::OpenType,
     state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup},
@@ -17,7 +20,19 @@ use crate::{
 const SMILES_CHARS_MAX: usize = 10;
 const IDENTS_CHARS_MAX: usize = 32;
 
-pub(in crate::ui) fn parquet_db(state: &mut State, ui: &mut Ui) {
+/// What a button in the molecule table asked for, by SMILES key. The table borrows the DB, so these
+/// are acted on after it's drawn.
+enum RowAction {
+    Load(String),
+    Delete(String),
+}
+
+pub(in crate::ui) fn parquet_db(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+) {
     ui.horizontal(|ui| {
         label!(ui, "Molecule databases", Color32::WHITE);
 
@@ -150,10 +165,48 @@ pub(in crate::ui) fn parquet_db(state: &mut State, ui: &mut Ui) {
 
         del_confirmation(state, db_i, ui);
 
-        if let Some(smiles) = db_summary_table(&mut state.volatile.parquet_dbs[db_i], db_i, ui) {
-            state.ui.popup.parquet_db_mol_del = Some((db_i, smiles));
+        match db_summary_table(&mut state.volatile.parquet_dbs[db_i], db_i, ui) {
+            Some(RowAction::Delete(smiles)) => {
+                state.ui.popup.parquet_db_mol_del = Some((db_i, smiles))
+            }
+            Some(RowAction::Load(smiles)) => load_mol_from_db(state, db_i, &smiles, scene, updates),
+            None => (),
         }
     }
+}
+
+/// Open a molecule from the DB as a ligand. `mol_data` and the idents + metadata are separate
+/// columns, so both are read here; see the `mol_db` module docs.
+fn load_mol_from_db(
+    state: &mut State,
+    db_i: usize,
+    smiles: &str,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+) {
+    let mol = {
+        let db = &state.volatile.parquet_dbs[db_i];
+
+        match db.load_mol(smiles) {
+            Ok(mut mol) => {
+                // A DB written before idents were stored has none to fold in; the molecule itself
+                // is still fine.
+                if let Err(e) = db.apply_idents_meta(slice::from_mut(&mut mol)) {
+                    eprintln!("Error loading idents for {smiles}: {e}");
+                }
+                mol
+            }
+            Err(e) => {
+                handle_err(
+                    &mut state.ui,
+                    format!("Error loading {smiles} from the database: {e}"),
+                );
+                return;
+            }
+        }
+    };
+
+    state.load_mol_to_state(MoleculeGeneric::Small(mol), scene, updates, None);
 }
 
 /// Shown while a delete requested from the table below is pending: deleting a molecule rewrites the
@@ -283,16 +336,16 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
 /// A table of the molecules in a database. Shows the lightweight index columns, and each molecule's
 /// idents; `mol_data` and `metadata` are loaded on demand, and aren't in memory here.
 ///
-/// Returns the SMILES key of the molecule the user asked to delete, if any. The deletion itself is
-/// confirmed first; see `del_confirmation`.
-fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<String> {
+/// Returns the row button the user clicked, if any; see `RowAction`. A deletion is confirmed before
+/// it's applied; see `del_confirmation`.
+fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<RowAction> {
     let (index_meta, idents) = db.index_and_idents();
 
     if index_meta.is_empty() {
         return None;
     }
 
-    let mut del_req = None;
+    let mut action = None;
 
     ui.add_space(ROW_SPACING);
 
@@ -302,10 +355,11 @@ fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<S
 
     // Column headers (outside the scroll area so they stay fixed).
     Grid::new(format!("parquet_mol_headers_{db_i}"))
-        .num_columns(5)
+        .num_columns(6)
         .min_col_width(120.)
         .spacing([COL_SPACING, 4.])
         .show(ui, |ui| {
+            label!(ui, "Load", Color32::GRAY);
             label!(ui, "PubChem CID", Color32::GRAY);
             label!(ui, "SMILES", Color32::GRAY);
             label!(ui, "Heavy atoms", Color32::GRAY);
@@ -322,12 +376,23 @@ fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<S
         .max_height(800.)
         .show(ui, |ui| {
             Grid::new(format!("parquet_mol_grid_{db_i}"))
-                .num_columns(5)
+                .num_columns(6)
                 .striped(true)
                 .min_col_width(120.)
                 .spacing([COL_SPACING, 4.])
                 .show(ui, |ui| {
                     for (smiles, meta) in &entries {
+                        if button!(
+                            ui,
+                            "Load",
+                            COLOR_ACTION,
+                            "Open this molecule from the database as a ligand."
+                        )
+                        .clicked()
+                        {
+                            action = Some(RowAction::Load((*smiles).clone()));
+                        }
+
                         match meta.pubchem_cid {
                             Some(cid) => {
                                 label!(ui, cid.to_string(), Color32::LIGHT_BLUE)
@@ -359,7 +424,7 @@ fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<S
                         )
                         .clicked()
                         {
-                            del_req = Some((*smiles).clone());
+                            action = Some(RowAction::Delete((*smiles).clone()));
                         }
 
                         ui.end_row();
@@ -367,7 +432,7 @@ fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<S
                 });
         });
 
-    del_req
+    action
 }
 
 /// E.g. "PubChem CID: 702, SMILES: CCO".

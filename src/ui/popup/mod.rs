@@ -147,7 +147,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.parquet_db {
         popup("parquet_db", ui).show(|ui| {
-            mol_dbs::parquet_db(state, ui);
+            mol_dbs::parquet_db(state, scene, updates, ui);
         });
     }
 

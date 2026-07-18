@@ -3,14 +3,13 @@
 //! [Github](https://github.com/aurekaresearch/OpenDDE)
 //! [Paper](https://arxiv.org/html/2607.03787v1)
 //! [Inference instructions](https://github.com/aurekaresearch/OpenDDE/blob/main/docs/inference_instructions.md)
-//! [Website](https://aurekaresearch.github.io/OpenDDE-Website/
+//! [Website](https://aurekaresearch.github.io/OpenDDE-Website/)
 //!
-//! Install: `pip install opendde`. (TBD: How this will interact with your global python
-//! interpreter; probably not a good practice to do it this way)
+//! The four installers in `install_scripts` automatically select the CUDA 12.6 backend when a
+//! working NVIDIA GPU and compatible Windows or Linux driver are detected. They fall back to CPU
+//! if detection, installation, or runtime verification fails.
 //!
-//! todo: Is there anything special required to enable GPU? e.g. `--torch-backend cu126 "opendde[gpu]"`
-//!
-//! OpenDDE is a preview release, so its process boundary is kept isolated here. The module supports
+//! The module supports
 //! proteins, DNA, RNA, ligands (SMILES, `CCD_...`, or `FILE_...`), ions, and explicit covalent
 //! links using the documented AlphaFold-Server-style JSON schema.
 //!
@@ -44,7 +43,12 @@
 //!   --cycle 10
 //! ```
 
-use std::{collections::HashSet, fs, io, process::Command};
+use std::{
+    collections::HashSet,
+    env, fs, io,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use dynamics::params::ProtFfChargeMapSet;
 use na_seq::{AminoAcid, Nucleotide};
@@ -53,6 +57,8 @@ use serde_json::{Value, json};
 const PROTEIN_SEQUENCE_ALPHABET: &[u8] = b"ACDEFGHIKLMNPQRSTVWYX";
 const DNA_SEQUENCE_ALPHABET: &[u8] = b"ATGCNX";
 const RNA_SEQUENCE_ALPHABET: &[u8] = b"AUGCNX";
+const OPENDDE_EXECUTABLE_ENV: &str = "MOLCHANICA_OPENDDE_EXECUTABLE";
+const OPENDDE_VENV_DIR_ENV: &str = "OPENDDE_VENV_DIR";
 
 use crate::{
     molecules::peptide::MoleculePeptide,
@@ -351,7 +357,7 @@ fn predict_structure_with_control(
 
     // todo: Evaluate how to set various params here.
 
-    let mut command = Command::new("opendde");
+    let mut command = Command::new(find_executable()?);
     command
         // OpenDDE is a Python CLI. This makes progress and logging visible through redirected
         // pipes without waiting for Python's block buffer to fill.
@@ -380,6 +386,156 @@ fn predict_structure_with_control(
     control.check_cancelled()?;
 
     load_prediction(&output_path, ff_map)
+}
+
+/// Locate OpenDDE in a Molchanica-managed environment or on `PATH`.
+///
+/// Checking managed directories directly is important for desktop-launched applications, which may
+/// not inherit PATH additions made by a shell profile. The executable override is useful for custom
+/// or development installations.
+pub(crate) fn find_executable() -> io::Result<PathBuf> {
+    if let Some(configured) = env::var_os(OPENDDE_EXECUTABLE_ENV) {
+        let configured = PathBuf::from(configured);
+        if configured.is_file() {
+            return Ok(configured);
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "{OPENDDE_EXECUTABLE_ENV} points to {}, but that file does not exist",
+                configured.display()
+            ),
+        ));
+    }
+
+    // The dedicated venv installer is explicitly scoped to Molchanica, so prefer it when present.
+    if let Some(executable) = find_managed_venv_executable()? {
+        return Ok(executable);
+    }
+
+    // Prefer the isolated uv installation created by Molchanica's installer over a potentially
+    // conflicting `pip install` in a global Python environment.
+    for directory in known_uv_tool_bin_directories() {
+        if let Some(executable) = executable_in(&directory, "opendde") {
+            return Ok(executable);
+        }
+    }
+
+    if let Some(uv) = find_uv_executable()
+        && let Ok(output) = Command::new(uv).args(["tool", "dir", "--bin"]).output()
+        && output.status.success()
+        && let Ok(directory) = String::from_utf8(output.stdout)
+        && let Some(executable) = executable_in(Path::new(directory.trim()), "opendde")
+    {
+        return Ok(executable);
+    }
+
+    if let Some(executable) = find_on_path("opendde") {
+        return Ok(executable);
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "OpenDDE was not found. Run an install_opendde script from install_scripts, or set \
+         MOLCHANICA_OPENDDE_EXECUTABLE.",
+    ))
+}
+
+fn find_managed_venv_executable() -> io::Result<Option<PathBuf>> {
+    if let Some(configured) = env::var_os(OPENDDE_VENV_DIR_ENV) {
+        let root = PathBuf::from(configured);
+        return venv_executable(&root).map(Some).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "{OPENDDE_VENV_DIR_ENV} points to {}, but it contains no OpenDDE executable",
+                    root.display()
+                ),
+            )
+        });
+    }
+
+    Ok(default_managed_venv_root().and_then(|root| venv_executable(&root)))
+}
+
+fn default_managed_venv_root() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let data_home = env::var_os("LOCALAPPDATA").map(PathBuf::from);
+
+    #[cfg(target_os = "macos")]
+    let data_home = home_directory().map(|home| home.join("Library/Application Support"));
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let data_home = env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_directory().map(|home| home.join(".local/share")));
+
+    data_home.map(|root| root.join("molchanica/opendde-venv"))
+}
+
+fn venv_executable(root: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let bin = root.join("Scripts");
+    #[cfg(not(target_os = "windows"))]
+    let bin = root.join("bin");
+
+    executable_in(&bin, "opendde")
+}
+
+fn find_uv_executable() -> Option<PathBuf> {
+    find_on_path("uv").or_else(|| {
+        home_directory().and_then(|home| {
+            [home.join(".local/bin"), home.join(".cargo/bin")]
+                .into_iter()
+                .find_map(|directory| executable_in(&directory, "uv"))
+        })
+    })
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|path| {
+        env::split_paths(&path).find_map(|directory| executable_in(&directory, name))
+    })
+}
+
+fn known_uv_tool_bin_directories() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Some(path) = env::var_os("UV_TOOL_BIN_DIR") {
+        directories.push(PathBuf::from(path));
+    }
+    if let Some(path) = env::var_os("XDG_BIN_HOME") {
+        directories.push(PathBuf::from(path));
+    }
+    if let Some(path) = env::var_os("XDG_DATA_HOME") {
+        directories.push(PathBuf::from(path).join("../bin"));
+    }
+    if let Some(home) = home_directory() {
+        directories.push(home.join(".local/bin"));
+    }
+    directories
+}
+
+fn home_directory() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn executable_in(directory: &Path, name: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let names = [
+        format!("{name}.exe"),
+        format!("{name}.cmd"),
+        format!("{name}.bat"),
+        name.to_owned(),
+    ];
+    #[cfg(not(target_os = "windows"))]
+    let names = [name.to_owned()];
+
+    names
+        .into_iter()
+        .map(|name| directory.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 pub(super) fn predict_structure_from_aas(
