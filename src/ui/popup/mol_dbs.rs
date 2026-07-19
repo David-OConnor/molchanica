@@ -126,6 +126,12 @@ pub(in crate::ui) fn parquet_db(
 
             ui.add_space(COL_SPACING);
 
+            // Placed ahead of the per-ligand buttons below, which vary in number, so the search box
+            // doesn't move around as ligands are opened and closed.
+            search_input(&mut state.ui.popup, ui);
+
+            ui.add_space(COL_SPACING);
+
             for (i, name) in &ligs_to_add {
                 if button!(
                     ui,
@@ -382,31 +388,6 @@ fn db_summary_table(
 
     ui.add_space(ROW_SPACING);
 
-    ui.horizontal(|ui| {
-        label!(ui, "Search", Color32::GRAY);
-
-        if ui
-            .add(
-                TextEdit::singleline(&mut popup.parquet_db_search)
-                    .desired_width(240.)
-                    .hint_text("CID, title, or SMILES"),
-            )
-            .changed()
-        {
-            // The result set changes as they type, so the page they were on is meaningless.
-            popup.parquet_db_page = 0;
-        }
-
-        if !popup.parquet_db_search.is_empty()
-            && button!(ui, "Clear", COLOR_ACTION, "Clear the search text.").clicked()
-        {
-            popup.parquet_db_search.clear();
-            popup.parquet_db_page = 0;
-        }
-    });
-
-    ui.add_space(ROW_SPACING);
-
     // Sort by ident for stable display order.
     let mut entries: Vec<(&String, &MolMeta)> = index_meta.iter().collect();
     entries.sort_by_key(|(ident, _)| ident.as_str());
@@ -534,6 +515,31 @@ fn db_summary_table(
     });
 
     action
+}
+
+/// The search box for the molecule table; filters on CID, title, or SMILES as the user types.
+/// Drawn in the row of DB buttons, above the table it applies to.
+fn search_input(popup: &mut PopupState, ui: &mut Ui) {
+    label!(ui, "Search", Color32::GRAY);
+
+    if ui
+        .add(
+            TextEdit::singleline(&mut popup.parquet_db_search)
+                .desired_width(240.)
+                .hint_text("CID, title, or SMILES"),
+        )
+        .changed()
+    {
+        // The result set changes as they type, so the page they were on is meaningless.
+        popup.parquet_db_page = 0;
+    }
+
+    if !popup.parquet_db_search.is_empty()
+        && button!(ui, "Clear", COLOR_ACTION, "Clear the search text.").clicked()
+    {
+        popup.parquet_db_search.clear();
+        popup.parquet_db_page = 0;
+    }
 }
 
 /// Whether a row matches the search text, which the caller has already lowercased and trimmed.
