@@ -589,6 +589,10 @@ pub struct PopupState {
     /// A molecule the user has asked to delete from a molecule DB, pending confirmation:
     /// (index into `parquet_dbs`, SMILES key of the row).
     pub parquet_db_mol_del: Option<(usize, String)>,
+    /// Search text for the active molecule DB's table; matches on CID, title, or SMILES.
+    pub parquet_db_search: String,
+    /// Current page in the active molecule DB's table.
+    pub parquet_db_page: usize,
     pub md_mol_set_editor: bool,
     pub ff_params: bool,
     pub structure_pred: bool,

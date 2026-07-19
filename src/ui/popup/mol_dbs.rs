@@ -3,7 +3,7 @@
 
 use std::slice;
 
-use egui::{Color32, Grid, ScrollArea, Ui};
+use egui::{Color32, Grid, RichText, ScrollArea, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
@@ -11,13 +11,19 @@ use crate::{
     mol_db::{MolMeta, ParquetMolDb},
     molecules::MoleculeGeneric,
     prefs::OpenType,
-    state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup},
+    state::{PopupState, State},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        popup,
+    },
     util::{handle_err, handle_success},
 };
 
 /// Characters shown in a cell before it's truncated; the full text is available on hover.
 const SMILES_CHARS_MAX: usize = 10;
+
+/// Rows shown per page in the molecule table.
+const MOLS_PER_PAGE: usize = 40;
 
 /// What a button in the molecule table asked for, by SMILES key. The table borrows the DB, so these
 /// are acted on after it's drawn.
@@ -176,7 +182,14 @@ pub(in crate::ui) fn parquet_db(
 
         del_confirmation(state, db_i, ui);
 
-        match db_summary_table(&state.volatile.parquet_dbs[db_i], db_i, ui) {
+        let table_action = db_summary_table(
+            &state.volatile.parquet_dbs[db_i],
+            db_i,
+            &mut state.ui.popup,
+            ui,
+        );
+
+        match table_action {
             Some(RowAction::Delete(smiles)) => {
                 state.ui.popup.parquet_db_mol_del = Some((db_i, smiles))
             }
@@ -315,6 +328,10 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
             .clicked()
             {
                 state.volatile.parquet_db_active = Some(i);
+
+                // The search and page refer to the DB we were showing, not this one.
+                state.ui.popup.parquet_db_search.clear();
+                state.ui.popup.parquet_db_page = 0;
             }
 
             if button!(ui, "Close", Color32::LIGHT_RED, "Close this database").clicked() {
@@ -349,7 +366,12 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
 ///
 /// Returns the row button the user clicked, if any; see `RowAction`. A deletion is confirmed before
 /// it's applied; see `del_confirmation`.
-fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<RowAction> {
+fn db_summary_table(
+    db: &ParquetMolDb,
+    db_i: usize,
+    popup: &mut PopupState,
+    ui: &mut Ui,
+) -> Option<RowAction> {
     let index_meta = &db.index_meta;
 
     if index_meta.is_empty() {
@@ -360,9 +382,51 @@ fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<RowAc
 
     ui.add_space(ROW_SPACING);
 
+    ui.horizontal(|ui| {
+        label!(ui, "Search", Color32::GRAY);
+
+        if ui
+            .add(
+                TextEdit::singleline(&mut popup.parquet_db_search)
+                    .desired_width(240.)
+                    .hint_text("CID, title, or SMILES"),
+            )
+            .changed()
+        {
+            // The result set changes as they type, so the page they were on is meaningless.
+            popup.parquet_db_page = 0;
+        }
+
+        if !popup.parquet_db_search.is_empty()
+            && button!(ui, "Clear", COLOR_ACTION, "Clear the search text.").clicked()
+        {
+            popup.parquet_db_search.clear();
+            popup.parquet_db_page = 0;
+        }
+    });
+
+    ui.add_space(ROW_SPACING);
+
     // Sort by ident for stable display order.
     let mut entries: Vec<(&String, &MolMeta)> = index_meta.iter().collect();
     entries.sort_by_key(|(ident, _)| ident.as_str());
+
+    let search = popup.parquet_db_search.trim().to_lowercase();
+    if !search.is_empty() {
+        entries.retain(|(_, meta)| matches_search(meta, &search));
+    }
+
+    // The DB may have shrunk (a delete), or the search narrowed, since the page was set.
+    let pages = entries.len().div_ceil(MOLS_PER_PAGE).max(1);
+    if popup.parquet_db_page >= pages {
+        popup.parquet_db_page = pages - 1;
+    }
+    let page = popup.parquet_db_page;
+
+    if entries.is_empty() {
+        label!(ui, "No molecules match this search.", Color32::GRAY);
+        return None;
+    }
 
     // Column headers (outside the scroll area so they stay fixed).
     Grid::new(format!("parquet_mol_headers_{db_i}"))
@@ -392,7 +456,9 @@ fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<RowAc
                 .min_col_width(120.)
                 .spacing([COL_SPACING, 4.])
                 .show(ui, |ui| {
-                    for (smiles, meta) in &entries {
+                    for (smiles, meta) in
+                        entries.iter().skip(page * MOLS_PER_PAGE).take(MOLS_PER_PAGE)
+                    {
                         if button!(
                             ui,
                             "Load",
@@ -439,7 +505,54 @@ fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<RowAc
                 });
         });
 
+    ui.add_space(ROW_SPACING);
+
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(page > 0, |ui| {
+            if ui
+                .button(RichText::new("◀").color(COLOR_HIGHLIGHT))
+                .clicked()
+            {
+                popup.parquet_db_page -= 1;
+            }
+        });
+
+        ui.label(format!("Page {} / {pages}", page + 1));
+
+        ui.add_enabled_ui(page + 1 < pages, |ui| {
+            if ui
+                .button(RichText::new("▶").color(COLOR_HIGHLIGHT))
+                .clicked()
+            {
+                popup.parquet_db_page += 1;
+            }
+        });
+
+        ui.add_space(COL_SPACING);
+
+        label!(ui, format!("{} molecules", entries.len()), Color32::GRAY);
+    });
+
     action
+}
+
+/// Whether a row matches the search text, which the caller has already lowercased and trimmed.
+/// Matches a substring of the CID, PubChem title, or SMILES.
+fn matches_search(meta: &MolMeta, search: &str) -> bool {
+    if meta.smiles.to_lowercase().contains(search) {
+        return true;
+    }
+
+    if let Some(title) = &meta.pubchem_title
+        && title.to_lowercase().contains(search)
+    {
+        return true;
+    }
+
+    match meta.pubchem_cid {
+        Some(cid) => cid.to_string().contains(search),
+        None => false,
+    }
 }
 
 fn truncate(val: &str, len_max: usize) -> String {
