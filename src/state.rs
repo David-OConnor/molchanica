@@ -26,7 +26,7 @@ use crate::{
     file_io::FileDialogs,
     md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
-    mol_db::ParquetMolDb,
+    mol_db::{ParquetMolDb, load_common_mol_db},
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     molecules::{
@@ -85,6 +85,11 @@ pub struct State {
     /// todo: Pharmacophore state
     pub pharmacophore: PharmacophoreState,
     pub graphics_settings: GraphicsSettings,
+    /// A curated set of common small molecules, embedded in the binary and loaded at startup, so
+    /// they're available without an internet query. Read-only; unlike `StateVolatile::parquet_dbs`,
+    /// it can't be added to or deleted from. `None` if this build has no database embedded, or it
+    /// failed to load.
+    pub mol_db: Option<ParquetMolDb>,
 }
 
 impl Default for State {
@@ -134,6 +139,7 @@ impl Default for State {
                 // intersection_revealing_contour_lines: Some(1.),
                 ..Default::default()
             },
+            mol_db: load_common_mol_db(),
         }
     }
 }
@@ -293,7 +299,7 @@ pub struct IntegrationsAvail {
     /// Protein structure prediction
     pub boltz2: bool,
     /// Structure prediction for a range of molecule types, and more
-    pub open_dde: bool,
+    pub opendde: bool,
 }
 
 impl Default for IntegrationsAvail {
@@ -312,8 +318,8 @@ impl Default for IntegrationsAvail {
             mdtraj: mdtraj_avail(),
             boltz2: false, // todo: Boltz's invocation is currently very slow.
             // boltz2: boltz2_avail(),
-            // open_dde: open_dde_avail(),
-            open_dde: true, // todo: For now.
+            // opendde: opendde_avail(),
+            opendde: true, // todo: For now.
         };
 
         let elapsed = start.elapsed().as_millis();
@@ -327,7 +333,7 @@ impl IntegrationsAvail {
     pub fn descrip(&self) -> String {
         format!(
             "\nAuxillary programs available: ORCA: {}, GROMACS: {}, Gemmi: {}, MdTraj: {}, Boltz-2: {}, OpenDDE: {}\n",
-            self.orca, self.gromacs, self.gemmi, self.mdtraj, self.boltz2, self.open_dde
+            self.orca, self.gromacs, self.gemmi, self.mdtraj, self.boltz2, self.opendde
         )
     }
 }
@@ -376,8 +382,8 @@ pub struct StateVolatile {
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
     pub parquet_dbs: Vec<ParquetMolDb>,
-    /// Index to `parquet_dbs`.
-    pub parquet_db_active: Option<usize>,
+    /// The database the DB popup is showing, and that screening runs against.
+    pub parquet_db_active: Option<DbSel>,
     /// Playback handle for the molecule currently being sonified, if any.
     pub playing_audio: Option<PlayingAudio>,
 }
@@ -411,6 +417,16 @@ impl StateVolatile {
             audio.i_mol -= 1;
         }
     }
+}
+
+/// Which molecule database the UI is acting on. The one embedded in the binary lives in
+/// `State::mol_db`, and the rest, which the user opened, in `StateVolatile::parquet_dbs`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DbSel {
+    /// `State::mol_db`; read-only.
+    Common,
+    /// Index into `StateVolatile::parquet_dbs`.
+    Loaded(usize),
 }
 
 pub struct PlayingAudio {

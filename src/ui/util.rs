@@ -22,8 +22,8 @@ use crate::{
     render::{Color, set_flashlight, set_static_light},
     screening::load_mol_batch,
     smiles::is_smiles,
-    state::{OperatingMode, State},
-    ui::set_window_title,
+    state::{DbSel, OperatingMode, State},
+    ui::{COLOR_ACTION, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
 };
 
@@ -100,7 +100,8 @@ pub fn update_file_dialogs(
                 );
 
                 state.volatile.parquet_dbs.push(db);
-                state.volatile.parquet_db_active = Some(state.volatile.parquet_dbs.len() - 1);
+                state.volatile.parquet_db_active =
+                    Some(DbSel::Loaded(state.volatile.parquet_dbs.len() - 1));
             }
             Err(e) => handle_err(
                 &mut state.ui,
@@ -114,8 +115,9 @@ pub fn update_file_dialogs(
     }
 
     if let Some(path) = &state.volatile.dialogs.parquet_mols_dir.take_picked() {
-        if let Some(i) = &state.volatile.parquet_db_active {
-            let db = &mut state.volatile.parquet_dbs[*i];
+        // The built-in DB is read-only, so only a loaded one can be populated.
+        if let Some(DbSel::Loaded(i)) = state.volatile.parquet_db_active {
+            let db = &mut state.volatile.parquet_dbs[i];
             match db.populate(path) {
                 Ok(()) => {
                     println!("Populated Parquet DB: {} molecules", db.index_meta.len());
@@ -173,7 +175,8 @@ pub fn update_file_dialogs(
 /// Load a single molecule file (SDF or Mol2) from disk, and add it to the active Parquet database.
 /// The directory equivalent is `ParquetMolDb::populate`.
 fn add_mol_file_to_db(state: &mut State, path: &PathBuf) {
-    let Some(db_i) = state.volatile.parquet_db_active else {
+    // The built-in DB is read-only, so only a loaded one can be added to.
+    let Some(DbSel::Loaded(db_i)) = state.volatile.parquet_db_active else {
         handle_err(
             &mut state.ui,
             "Error: Missing the DB index to add a mol to".to_string(),
@@ -417,6 +420,88 @@ pub fn color_egui_from_f32(c: Color) -> Color32 {
     Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8)
 }
 
+/// The most matches from the built-in database we'll offer as buttons at once. The query bar is a
+/// single row, so a long list of them would push the remote-lookup buttons off screen.
+const COMMON_DB_RESULTS_MAX: usize = 4;
+
+/// Search the built-in molecule database (`State::mol_db`) for the query text, matching on CID,
+/// SMILES, or PubChem title, and draw a load button for each match. Does nothing if this build has
+/// no embedded database.
+fn query_common_db(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    inp: &str,
+) {
+    let Some(db) = &state.mol_db else {
+        return;
+    };
+
+    // Gathered up front: loading borrows `state` mutably, and the search borrows the DB inside it.
+    // (SMILES key, button label.)
+    let hits: Vec<(String, String)> = db
+        .search(inp, COMMON_DB_RESULTS_MAX)
+        .iter()
+        .map(|meta| {
+            let name = match &meta.pubchem_title {
+                Some(title) => title.clone(),
+                None => meta.smiles.clone(),
+            };
+            (meta.smiles.clone(), name)
+        })
+        .collect();
+
+    let mut to_load = None;
+
+    for (smiles, name) in &hits {
+        if button!(
+            ui,
+            name,
+            COLOR_ACTION,
+            "Open this molecule from the database built into the application."
+        )
+        .clicked()
+        {
+            to_load = Some(smiles.clone());
+        }
+    }
+
+    let Some(smiles) = to_load else {
+        return;
+    };
+
+    // Re-borrowed here rather than reused from above: `load_mol` needs the DB, and opening the
+    // molecule needs `state`.
+    let mol = {
+        let Some(db) = &state.mol_db else {
+            return;
+        };
+
+        match db.load_mol(&smiles) {
+            Ok(mut mol) => {
+                // `mol_data` and the idents/metadata are separate columns; see the `mol_db` module
+                // docs. Missing idents are not fatal — the molecule is still usable.
+                if let Err(e) = db.apply_idents_meta(slice::from_mut(&mut mol)) {
+                    eprintln!("Error loading idents for {smiles}: {e}");
+                }
+                mol
+            }
+            Err(e) => {
+                handle_err(
+                    &mut state.ui,
+                    format!("Error loading {smiles} from the built-in database: {e}"),
+                );
+                return;
+            }
+        }
+    };
+
+    open_lig_from_input(state, mol, scene, updates);
+    redraw.ligand = true;
+}
+
 /// Handles a general query, which could be a name, identifier etc. Attempts to query
 /// the correct database based on the  text.
 ///
@@ -435,6 +520,11 @@ pub(in crate::ui) fn query(
     // The original `inp` is passed to SMILES functions so that aromaticity case is
     // preserved (lowercase = aromatic atom in SMILES, uppercase = aliphatic).
     let inp_l = inp.to_ascii_lowercase();
+
+    // Molecules we ship with the application. Checked ahead of the remote databases below, since
+    // these load instantly and without an internet connection. Drawn as buttons rather than
+    // claiming Enter, so the remote lookups below keep working exactly as before.
+    query_common_db(state, scene, redraw, updates, ui, inp);
 
     if inp.len() == 4 || inp_l.starts_with("pdb_") {
         let button_clicked = ui.button("Load RCSB").clicked();

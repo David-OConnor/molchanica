@@ -35,6 +35,9 @@ Cargo.lock
 # Parquet mol DBs
 *.pqt
 *.parquet
+# ...except the common-molecule DB, which is embedded in the binary at build time, so the crate
+# doesn't compile without it. See COMMON_MOL_DB in src/mol_db/mod.rs.
+!src/common_mol_db.parquet
 
 # ML models
 *.pt

@@ -11,7 +11,7 @@ use crate::{
     mol_db::{MolMeta, ParquetMolDb},
     molecules::MoleculeGeneric,
     prefs::OpenType,
-    state::{PopupState, State},
+    state::{DbSel, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         popup,
@@ -74,54 +74,73 @@ pub(in crate::ui) fn parquet_db(
     db_selector(state, ui);
 
     // Display DB-specific data if there is an active one.
-    if let Some(db_i) = state.volatile.parquet_db_active {
-        if db_i >= state.volatile.parquet_dbs.len() {
+    if let Some(db_sel) = state.volatile.parquet_db_active {
+        // The DB the selection points at may be gone: a loaded one was closed, or this build has no
+        // embedded DB.
+        let db_valid = match db_sel {
+            DbSel::Common => state.mol_db.is_some(),
+            DbSel::Loaded(i) => i < state.volatile.parquet_dbs.len(),
+        };
+
+        if !db_valid {
             handle_err(
                 &mut state.ui,
                 String::from("Error: Invalid Parquet DB active index"),
             );
+            state.volatile.parquet_db_active = None;
             return;
         }
 
         ui.add_space(ROW_SPACING);
 
+        // The built-in DB is fixed at compile time; only the loaded ones can be added to.
+        let editable = matches!(db_sel, DbSel::Loaded(_));
+
         // Gathered up front: the button row below borrows `state` mutably. Only ligands not already
         // in the DB get a button. (Index into `state.ligands`, and display name.)
-        let db = &state.volatile.parquet_dbs[db_i];
-        let ligs_to_add: Vec<(usize, String)> = state
-            .ligands
-            .iter()
-            .enumerate()
-            .filter(|(_, lig)| !db.contains_mol(lig))
-            .map(|(i, lig)| (i, lig.common.name(Some(&lig.idents))))
-            .collect();
+        let ligs_to_add: Vec<(usize, String)> = match state.active_mol_db() {
+            Some(db) if editable => state
+                .ligands
+                .iter()
+                .enumerate()
+                .filter(|(_, lig)| !db.contains_mol(lig))
+                .map(|(i, lig)| (i, lig.common.name(Some(&lig.idents))))
+                .collect(),
+            _ => Vec::new(),
+        };
 
         // Index into `state.ligands` of the ligand whose button was clicked, if any.
         let mut add_lig = None;
 
         ui.horizontal_wrapped(|ui| {
-            if button!(
-                ui,
-                "Add mols from dir",
-                COLOR_ACTION,
-                "Add all molecules in a folder (Mol2 or SDF, recursively) to this database."
-            )
-            .clicked()
-            {
-                state.volatile.dialogs.parquet_mols_dir.pick_directory();
-                state.volatile.parquet_db_active = Some(db_i);
-            }
+            if editable {
+                if button!(
+                    ui,
+                    "Add mols from dir",
+                    COLOR_ACTION,
+                    "Add all molecules in a folder (Mol2 or SDF, recursively) to this database."
+                )
+                .clicked()
+                {
+                    state.volatile.dialogs.parquet_mols_dir.pick_directory();
+                }
 
-            if button!(
-                ui,
-                "Add mol",
-                COLOR_ACTION,
-                "Add a single molecule file (Mol2 or SDF) to this database."
-            )
-            .clicked()
-            {
-                state.volatile.dialogs.parquet_mol_file.pick_file();
-                state.volatile.parquet_db_active = Some(db_i);
+                if button!(
+                    ui,
+                    "Add mol",
+                    COLOR_ACTION,
+                    "Add a single molecule file (Mol2 or SDF) to this database."
+                )
+                .clicked()
+                {
+                    state.volatile.dialogs.parquet_mol_file.pick_file();
+                }
+            } else {
+                label!(
+                    ui,
+                    "This database ships with the application; it can't be modified.",
+                    Color32::GRAY
+                );
             }
 
             ui.add_space(COL_SPACING);
@@ -146,7 +165,9 @@ pub(in crate::ui) fn parquet_db(
             }
         });
 
-        if let Some((i, name)) = add_lig {
+        if let Some((i, name)) = add_lig
+            && let DbSel::Loaded(db_i) = db_sel
+        {
             let mol = state.ligands[i].clone();
 
             let db = &mut state.volatile.parquet_dbs[db_i];
@@ -186,20 +207,28 @@ pub(in crate::ui) fn parquet_db(
         //         }
         //     }
 
-        del_confirmation(state, db_i, ui);
+        del_confirmation(state, db_sel, ui);
 
-        let table_action = db_summary_table(
-            &state.volatile.parquet_dbs[db_i],
-            db_i,
-            &mut state.ui.popup,
-            ui,
-        );
+        // Selected by field here rather than through `State::active_mol_db`, which borrows all of
+        // `state`; the table also needs `state.ui.popup` mutably, and these fields are disjoint.
+        let db = match db_sel {
+            DbSel::Common => state.mol_db.as_ref(),
+            DbSel::Loaded(i) => state.volatile.parquet_dbs.get(i),
+        };
+
+        let Some(db) = db else {
+            return;
+        };
+
+        let table_action = db_summary_table(db, db_sel, editable, &mut state.ui.popup, ui);
 
         match table_action {
             Some(RowAction::Delete(smiles)) => {
-                state.ui.popup.parquet_db_mol_del = Some((db_i, smiles))
+                if let DbSel::Loaded(db_i) = db_sel {
+                    state.ui.popup.parquet_db_mol_del = Some((db_i, smiles));
+                }
             }
-            Some(RowAction::Load(smiles)) => load_mol_from_db(state, db_i, &smiles, scene, updates),
+            Some(RowAction::Load(smiles)) => load_mol_from_db(state, &smiles, scene, updates),
             None => (),
         }
     }
@@ -209,13 +238,14 @@ pub(in crate::ui) fn parquet_db(
 /// columns, so both are read here; see the `mol_db` module docs.
 fn load_mol_from_db(
     state: &mut State,
-    db_i: usize,
     smiles: &str,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) {
     let mol = {
-        let db = &state.volatile.parquet_dbs[db_i];
+        let Some(db) = state.active_mol_db() else {
+            return;
+        };
 
         match db.load_mol(smiles) {
             Ok(mut mol) => {
@@ -240,14 +270,15 @@ fn load_mol_from_db(
 }
 
 /// Shown while a delete requested from the table below is pending: deleting a molecule rewrites the
-/// DB file, so we confirm first. `db_i_active` is the DB the table is showing.
-fn del_confirmation(state: &mut State, db_i_active: usize, ui: &mut Ui) {
+/// DB file, so we confirm first. `active` is the DB the table is showing.
+fn del_confirmation(state: &mut State, active: DbSel, ui: &mut Ui) {
     let Some((db_i, smiles)) = state.ui.popup.parquet_db_mol_del.clone() else {
         return;
     };
 
-    // The request is stale: the user selected or closed a DB while it was pending.
-    if db_i != db_i_active || db_i >= state.volatile.parquet_dbs.len() {
+    // The request is stale: the user selected or closed a DB while it was pending. Deletes are only
+    // ever queued against a loaded DB; the built-in one is read-only.
+    if active != DbSel::Loaded(db_i) || db_i >= state.volatile.parquet_dbs.len() {
         state.ui.popup.parquet_db_mol_del = None;
         return;
     }
@@ -297,27 +328,52 @@ fn del_confirmation(state: &mut State, db_i_active: usize, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
 }
 
-/// Lists the open databases, and lets one be selected as active, or closed.
+/// Lists the databases available, and lets one be selected as active, or closed. The built-in
+/// database is listed alongside the ones the user has opened; it can be selected and viewed, but
+/// not closed or modified.
 pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
     ui.separator();
     label!(ui, "Databases loaded", Color32::GRAY);
 
+    // Only present if this build has one embedded; see `State::mol_db`.
+    if let Some(db) = &state.mol_db {
+        let name = db.name();
+        let mol_count = db.index_meta.len();
+        let active = state.volatile.parquet_db_active == Some(DbSel::Common);
+
+        ui.horizontal(|ui| {
+            label!(ui, format!("{name} : {mol_count} mols"), Color32::WHITE);
+
+            let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
+
+            ui.add_space(COL_SPACING);
+
+            if button!(
+                ui,
+                "Select",
+                color,
+                "Select this as the active database. This one ships with the application, and is \
+                 read-only."
+            )
+            .clicked()
+            {
+                select_db(state, DbSel::Common);
+            }
+        });
+    }
+
+    // Applied after the loop: it borrows `parquet_dbs`, and selecting touches all of `state`.
+    let mut select = None;
+
     let mut close_db = None;
     for (i, db) in state.volatile.parquet_dbs.iter().enumerate() {
-        let Some(file_name) = db.path.file_name() else {
-            eprintln!("Error loading file path");
-            continue;
-        };
-
-        let file_name = file_name.to_string_lossy();
-
-        let active = state.volatile.parquet_db_active == Some(i);
+        let active = state.volatile.parquet_db_active == Some(DbSel::Loaded(i));
 
         ui.horizontal(|ui| {
             label!(
                 ui,
-                format!("{file_name} : {} mols", db.index_meta.len()),
+                format!("{} : {} mols", db.name(), db.index_meta.len()),
                 Color32::WHITE
             );
 
@@ -333,38 +389,52 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
             )
             .clicked()
             {
-                state.volatile.parquet_db_active = Some(i);
-
-                // The search and page refer to the DB we were showing, not this one.
-                state.ui.popup.parquet_db_search.clear();
-                state.ui.popup.parquet_db_page = 0;
+                select = Some(DbSel::Loaded(i));
             }
 
             if button!(ui, "Close", Color32::LIGHT_RED, "Close this database").clicked() {
                 close_db = Some(i);
 
                 // Make sure this doesn't cause a jump in the selected DB.
-                if let Some(i_active) = state.volatile.parquet_db_active {
-                    if i_active == i {
+                match state.volatile.parquet_db_active {
+                    Some(DbSel::Loaded(i_active)) if i_active == i => {
                         state.volatile.parquet_db_active = None;
-                    } else if i_active > i {
-                        state.volatile.parquet_db_active = Some(i_active - 1);
                     }
+                    Some(DbSel::Loaded(i_active)) if i_active > i => {
+                        state.volatile.parquet_db_active = Some(DbSel::Loaded(i_active - 1));
+                    }
+                    _ => (),
                 }
 
-                for history in &mut state.to_save.open_history {
-                    if OpenType::ParquetDb == history.type_ && history.path == db.path {
-                        history.last_session = false;
+                // The embedded DB has no path, and was never in the open history.
+                if let Some(path) = db.path() {
+                    for history in &mut state.to_save.open_history {
+                        if OpenType::ParquetDb == history.type_ && history.path == path {
+                            history.last_session = false;
+                        }
                     }
                 }
             }
         });
     }
 
+    if let Some(sel) = select {
+        select_db(state, sel);
+    }
+
     if let Some(i) = close_db {
         state.volatile.parquet_dbs.remove(i);
         state.update_save_prefs(); // to save teh history change.
     }
+}
+
+/// Make `sel` the active database, resetting the table state that referred to the previous one.
+fn select_db(state: &mut State, sel: DbSel) {
+    state.volatile.parquet_db_active = Some(sel);
+
+    // The search and page refer to the DB we were showing, not this one.
+    state.ui.popup.parquet_db_search.clear();
+    state.ui.popup.parquet_db_page = 0;
 }
 
 /// A table of the molecules in a database. Shows the lightweight index columns only; `mol_data`,
@@ -374,7 +444,8 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
 /// it's applied; see `del_confirmation`.
 fn db_summary_table(
     db: &ParquetMolDb,
-    db_i: usize,
+    db_sel: DbSel,
+    editable: bool,
     popup: &mut PopupState,
     ui: &mut Ui,
 ) -> Option<RowAction> {
@@ -383,6 +454,12 @@ fn db_summary_table(
     if index_meta.is_empty() {
         return None;
     }
+
+    // Distinguishes this table's egui ids from the other DBs'.
+    let id = match db_sel {
+        DbSel::Common => "common".to_owned(),
+        DbSel::Loaded(i) => i.to_string(),
+    };
 
     let mut action = None;
 
@@ -394,7 +471,7 @@ fn db_summary_table(
 
     let search = popup.parquet_db_search.trim().to_lowercase();
     if !search.is_empty() {
-        entries.retain(|(_, meta)| matches_search(meta, &search));
+        entries.retain(|(_, meta)| meta.matches_search(&search));
     }
 
     // The DB may have shrunk (a delete), or the search narrowed, since the page was set.
@@ -409,9 +486,12 @@ fn db_summary_table(
         return None;
     }
 
+    // A read-only DB has no delete column.
+    let cols = if editable { 6 } else { 5 };
+
     // Column headers (outside the scroll area so they stay fixed).
-    Grid::new(format!("parquet_mol_headers_{db_i}"))
-        .num_columns(6)
+    Grid::new(format!("parquet_mol_headers_{id}"))
+        .num_columns(cols)
         .min_col_width(120.)
         .spacing([COL_SPACING, 4.])
         .show(ui, |ui| {
@@ -420,19 +500,21 @@ fn db_summary_table(
             label!(ui, "Title", Color32::GRAY);
             label!(ui, "SMILES", Color32::GRAY);
             label!(ui, "Heavy atoms", Color32::GRAY);
-            label!(ui, "Delete", Color32::GRAY);
+            if editable {
+                label!(ui, "Delete", Color32::GRAY);
+            }
             ui.end_row();
         });
 
     ui.separator();
 
     ScrollArea::vertical()
-        .id_salt(format!("parquet_mol_list_{db_i}"))
+        .id_salt(format!("parquet_mol_list_{id}"))
         .min_scrolled_height(400.)
         .max_height(800.)
         .show(ui, |ui| {
-            Grid::new(format!("parquet_mol_grid_{db_i}"))
-                .num_columns(6)
+            Grid::new(format!("parquet_mol_grid_{id}"))
+                .num_columns(cols)
                 .striped(true)
                 .min_col_width(120.)
                 .spacing([COL_SPACING, 4.])
@@ -470,13 +552,15 @@ fn db_summary_table(
 
                         label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
 
-                        if button!(
-                            ui,
-                            "X",
-                            Color32::LIGHT_RED,
-                            "Delete this molecule from the database. Asks for confirmation first."
-                        )
-                        .clicked()
+                        if editable
+                            && button!(
+                                ui,
+                                "X",
+                                Color32::LIGHT_RED,
+                                "Delete this molecule from the database. Asks for confirmation \
+                                 first."
+                            )
+                            .clicked()
                         {
                             action = Some(RowAction::Delete((*smiles).clone()));
                         }
@@ -539,25 +623,6 @@ fn search_input(popup: &mut PopupState, ui: &mut Ui) {
     {
         popup.parquet_db_search.clear();
         popup.parquet_db_page = 0;
-    }
-}
-
-/// Whether a row matches the search text, which the caller has already lowercased and trimmed.
-/// Matches a substring of the CID, PubChem title, or SMILES.
-fn matches_search(meta: &MolMeta, search: &str) -> bool {
-    if meta.smiles.to_lowercase().contains(search) {
-        return true;
-    }
-
-    if let Some(title) = &meta.pubchem_title
-        && title.to_lowercase().contains(search)
-    {
-        return true;
-    }
-
-    match meta.pubchem_cid {
-        Some(cid) => cid.to_string().contains(search),
-        None => false,
     }
 }
 

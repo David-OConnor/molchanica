@@ -30,6 +30,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use bio_apis::pubchem::{self, StructureSearchNamespace};
+use bytes::Bytes;
 use na_seq::Element;
 use parquet::{
     arrow::{
@@ -39,7 +40,7 @@ use parquet::{
     },
     basic::Compression,
     errors::ParquetError,
-    file::properties::WriterProperties,
+    file::{properties::WriterProperties, reader::ChunkReader},
 };
 
 use crate::{
@@ -49,7 +50,7 @@ use crate::{
     molecules::{MolIdent, small::MoleculeSmall},
     prefs::OpenType,
     screening::{collect_mol_files, load_mol_batch},
-    state::State,
+    state::{DbSel, State},
     util::{handle_err, handle_success},
 };
 
@@ -69,7 +70,10 @@ const BATCH_SIZE_WRITE: usize = 2_048;
 
 // We include a collection of common small molecules with the application, so they can
 // be loaded without internet queries. This increases application size.
-// pub const COMMON_MOL_DB: &[u8] = include_bytes!("../common_mol_db.parquet");
+pub const COMMON_MOL_DB: &[u8] = include_bytes!("../common_mol_db.parquet");
+
+/// Name shown in the UI for the database embedded in the binary; it has no filename.
+pub const COMMON_MOL_DB_NAME: &str = "Common molecules (built in)";
 
 fn parquet_err_to_io(e: ParquetError) -> io::Error {
     io::Error::other(e)
@@ -209,6 +213,28 @@ pub struct MolMeta {
     pub heavy_atom_count: u16,
 }
 
+impl MolMeta {
+    /// Whether this molecule matches a search: a substring of its SMILES, PubChem title, or CID.
+    /// `search` must already be trimmed and lowercased; the caller usually does that once for a
+    /// whole scan.
+    pub fn matches_search(&self, search: &str) -> bool {
+        if self.smiles.to_lowercase().contains(search) {
+            return true;
+        }
+
+        if let Some(title) = &self.pubchem_title
+            && title.to_lowercase().contains(search)
+        {
+            return true;
+        }
+
+        match self.pubchem_cid {
+            Some(cid) => cid.to_string().contains(search),
+            None => false,
+        }
+    }
+}
+
 /// A molecule's identifiers and metadata, as stored in the DB. Loaded on demand, and separately
 /// from `mol_data`: screening workflows don't need these.
 #[derive(Debug, Clone, Default)]
@@ -218,10 +244,54 @@ pub struct MolIdentsMeta {
     pub metadata: HashMap<String, String>,
 }
 
+/// Where a database's parquet data lives. Databases on disk can be added to and deleted from; the
+/// one embedded in the binary is fixed at compile time, so it's read-only.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DbSource {
+    File(PathBuf),
+    /// Shipped with the application; see [`COMMON_MOL_DB`].
+    Embedded(&'static [u8]),
+}
+
+impl DbSource {
+    /// The file this DB was loaded from, or `None` for the embedded one.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::File(p) => Some(p),
+            Self::Embedded(_) => None,
+        }
+    }
+
+    /// A name to show in the UI.
+    pub fn name(&self) -> String {
+        match self {
+            Self::File(p) => p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.to_string_lossy().into_owned()),
+            Self::Embedded(_) => COMMON_MOL_DB_NAME.to_owned(),
+        }
+    }
+
+    /// Whether this DB can be modified. The embedded one can't.
+    pub fn writable(&self) -> bool {
+        matches!(self, Self::File(_))
+    }
+
+    /// Whether there is anything to read: a file that hasn't been created yet has no rows, and
+    /// neither does an embedded DB that wasn't built into this binary.
+    fn readable(&self) -> bool {
+        match self {
+            Self::File(p) => p.exists(),
+            Self::Embedded(b) => !b.is_empty(),
+        }
+    }
+}
+
 /// Struct representing the whole DB; used to open, update it, load data from disk in general.
 pub struct ParquetMolDb {
-    /// Path of the parquet file.
-    pub path: PathBuf,
+    /// The parquet file on disk, or the bytes embedded in the binary.
+    pub source: DbSource,
     /// Lightweight metadata index loaded eagerly on open: smiles: MolMeta.
     /// Does NOT include the heavy `mol_data`, `idents`, or `metadata` columns; those are read from
     /// disk on demand.
@@ -239,17 +309,52 @@ impl ParquetMolDb {
     /// heavy_atom_count) into `index_meta`. The heavy `mol_data`, `idents`, and `metadata` columns
     /// are NOT loaded here; they're read from disk on demand. See the module docs.
     pub fn new(path: &Path) -> io::Result<Self> {
+        Self::open_source(DbSource::File(path.to_owned()))
+    }
+
+    /// Open the read-only database embedded in the binary. Pass [`COMMON_MOL_DB`].
+    pub fn from_embedded(bytes: &'static [u8]) -> io::Result<Self> {
+        Self::open_source(DbSource::Embedded(bytes))
+    }
+
+    /// Open a DB from either kind of source. `DbSource` is `Send`, so this is how a background
+    /// thread (e.g. screening) reopens a DB the UI is holding.
+    pub fn open_source(source: DbSource) -> io::Result<Self> {
         let mut res = Self {
-            path: path.to_owned(),
+            source,
             index_meta: HashMap::new(),
             idents_cache: None,
         };
 
-        if res.path.exists() {
+        if res.source.readable() {
             res.rebuild_index()?;
         }
 
         Ok(res)
+    }
+
+    /// The file this DB was loaded from, or `None` for the embedded one.
+    pub fn path(&self) -> Option<&Path> {
+        self.source.path()
+    }
+
+    /// A name to show in the UI.
+    pub fn name(&self) -> String {
+        self.source.name()
+    }
+
+    /// Errors if this DB can't be modified, i.e. it's the one embedded in the binary. Called by
+    /// every operation that rewrites the file.
+    fn check_writable(&self) -> io::Result<()> {
+        if self.source.writable() {
+            return Ok(());
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "The built-in molecule database is read-only. Create or load a database to add \
+             molecules to it.",
+        ))
     }
 
     /// Keep this in sync with `StoredMol`
@@ -273,6 +378,8 @@ impl ParquetMolDb {
     /// Parquet files are immutable, so to add molecules we read the existing rows, merge, and
     /// rewrite. Molecules already in the DB (matched on SMILES) are replaced by the incoming ones.
     pub fn populate(&mut self, mol_path: &Path) -> io::Result<()> {
+        self.check_writable()?;
+
         let files = collect_mol_files(mol_path)?;
 
         let mut rows = self.read_all_rows()?;
@@ -316,6 +423,8 @@ impl ParquetMolDb {
     /// is read, merged, and rewritten, and molecules already in the DB (matched on SMILES) are
     /// replaced by the incoming ones.
     pub fn add_mols(&mut self, mols: &[MoleculeSmall]) -> io::Result<()> {
+        self.check_writable()?;
+
         let mut rows = self.read_all_rows()?;
         let mut row_i = row_index(&rows);
 
@@ -332,6 +441,8 @@ impl ParquetMolDb {
     /// Remove a molecule from the DB, by SMILES key. As with adding, parquet files are immutable,
     /// so the file is read, the row dropped, and the file rewritten.
     pub fn remove_mol(&mut self, smiles: &str) -> io::Result<()> {
+        self.check_writable()?;
+
         let mut rows = self.read_all_rows()?;
 
         let len_orig = rows.len();
@@ -360,7 +471,7 @@ impl ParquetMolDb {
     ) -> (&HashMap<String, MolMeta>, &HashMap<String, Vec<MolIdent>>) {
         if self.idents_cache.is_none() {
             let loaded = self.load_idents_meta_all().unwrap_or_else(|e| {
-                eprintln!("Error loading idents from {:?}: {e}", self.path);
+                eprintln!("Error loading idents from {}: {e}", self.name());
                 HashMap::new()
             });
 
@@ -375,8 +486,49 @@ impl ParquetMolDb {
         (&self.index_meta, self.idents_cache.as_ref().unwrap())
     }
 
+    /// Molecules whose SMILES, PubChem title, or CID contain `search`, best-first: exact matches
+    /// on CID or title come before substring hits, and shorter SMILES before longer. Uses the
+    /// in-memory index only, so this is cheap enough to run per-frame from the UI.
+    ///
+    /// Returns at most `limit` results.
+    pub fn search(&self, search: &str, limit: usize) -> Vec<&MolMeta> {
+        let search = search.trim().to_lowercase();
+        if search.is_empty() {
+            return Vec::new();
+        }
+
+        let mut matches: Vec<&MolMeta> = self
+            .index_meta
+            .values()
+            .filter(|m| m.matches_search(&search))
+            .collect();
+
+        let rank = |m: &MolMeta| {
+            let exact = m.pubchem_cid.is_some_and(|cid| cid.to_string() == search)
+                || m.pubchem_title
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase() == search);
+
+            // Exact matches first, then by SMILES length.
+            (!exact, m.smiles.len())
+        };
+
+        // Sorted alphabetically at the end so the list is stable across frames; `index_meta` is a
+        // HashMap, and its iteration order is not.
+        matches.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.smiles.cmp(&b.smiles)));
+
+        matches.truncate(limit);
+        matches
+    }
+
     fn write_all_rows(&self, rows: &[StoredMol]) -> io::Result<()> {
-        let file = File::create(&self.path)?;
+        self.check_writable()?;
+
+        let Some(path) = self.path() else {
+            unreachable!("`check_writable` already rejected a source without a path")
+        };
+
+        let file = File::create(path)?;
         let schema = Self::schema();
 
         let props = WriterProperties::builder()
@@ -443,14 +595,14 @@ impl ParquetMolDb {
 
         // A DB written before the title column existed is still readable; titles come back `None`,
         // and the column is gained when the file is next rewritten.
-        let has_title = has_cols(&self.path, &[COL_PUBCHEM_TITLE])?;
+        let has_title = has_cols(&self.source, &[COL_PUBCHEM_TITLE])?;
 
         let mut cols = vec![COL_SMILES, COL_PUBCHEM_CID, COL_HEAVY_ATOM_COUNT];
         if has_title {
             cols.push(COL_PUBCHEM_TITLE);
         }
 
-        let mut reader = open_reader(&self.path, &cols)?;
+        let mut reader = open_reader(&self.source, &cols)?;
 
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
             let smiles_col = str_col(&batch, COL_SMILES)?;
@@ -496,14 +648,14 @@ impl ParquetMolDb {
     /// Read every column of every row into memory. Parquet files are immutable, so this is the
     /// first step of any modification: read, change, rewrite. (See `populate`, `update_idents_meta`)
     fn read_all_rows(&self) -> io::Result<Vec<StoredMol>> {
-        if !self.path.exists() {
+        if !self.source.readable() {
             return Ok(Vec::new());
         }
 
         // A DB written before we stored idents + metadata (or the title column) is still readable;
         // those rows simply come back empty, and gain the columns when the file is rewritten.
-        let has_idents_meta = has_idents_meta_cols(&self.path)?;
-        let has_title = has_cols(&self.path, &[COL_PUBCHEM_TITLE])?;
+        let has_idents_meta = has_idents_meta_cols(&self.source)?;
+        let has_title = has_cols(&self.source, &[COL_PUBCHEM_TITLE])?;
 
         let mut cols = vec![
             COL_SMILES,
@@ -519,7 +671,7 @@ impl ParquetMolDb {
             cols.push(COL_METADATA);
         }
 
-        let mut reader = open_reader(&self.path, &cols)?;
+        let mut reader = open_reader(&self.source, &cols)?;
 
         let mut rows = Vec::with_capacity(self.index_meta.len());
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
@@ -596,7 +748,7 @@ impl ParquetMolDb {
     pub fn load_mols(&self, smiles_keys: &[&str]) -> io::Result<Vec<MoleculeSmall>> {
         let targets: HashSet<&str> = smiles_keys.iter().copied().collect();
 
-        let mut reader = open_reader(&self.path, &[COL_SMILES, COL_MOL_DATA])?;
+        let mut reader = open_reader(&self.source, &[COL_SMILES, COL_MOL_DATA])?;
 
         let mut result = Vec::with_capacity(targets.len());
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
@@ -615,7 +767,7 @@ impl ParquetMolDb {
 
     /// Read all `mol_data` from disk and deserialize into molecules.
     pub fn load_all(&self) -> io::Result<Vec<MoleculeSmall>> {
-        let mut reader = open_reader(&self.path, &[COL_MOL_DATA])?;
+        let mut reader = open_reader(&self.source, &[COL_MOL_DATA])?;
 
         let mut result = Vec::with_capacity(self.index_meta.len());
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
@@ -664,7 +816,7 @@ impl ParquetMolDb {
         &self,
         targets: Option<&HashSet<&str>>,
     ) -> io::Result<HashMap<String, MolIdentsMeta>> {
-        if !has_idents_meta_cols(&self.path)? {
+        if !has_idents_meta_cols(&self.source)? {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "This database was created before idents and metadata were stored. Re-add its \
@@ -672,7 +824,7 @@ impl ParquetMolDb {
             ));
         }
 
-        let mut reader = open_reader(&self.path, &[COL_SMILES, COL_IDENTS, COL_METADATA])?;
+        let mut reader = open_reader(&self.source, &[COL_SMILES, COL_IDENTS, COL_METADATA])?;
 
         let mut result = HashMap::with_capacity(match targets {
             Some(t) => t.len(),
@@ -750,6 +902,8 @@ impl ParquetMolDb {
         &mut self,
         updates: &HashMap<String, MolIdentsMeta>,
     ) -> io::Result<()> {
+        self.check_writable()?;
+
         let mut rows = self.read_all_rows()?;
 
         for row in &mut rows {
@@ -794,12 +948,23 @@ fn merge_row(rows: &mut Vec<StoredMol>, row_i: &mut HashMap<String, usize>, row:
     }
 }
 
-/// Open the parquet file, reading only the columns named in `cols`. Columns not listed are not
-/// read from disk. Note that the resulting batches keep the file's column order, not `cols`'; look
+/// Open the parquet data, reading only the columns named in `cols`. Columns not listed are not
+/// read. Note that the resulting batches keep the file's column order, not `cols`'; look
 /// columns up by name. (See `str_col` etc)
-fn open_reader(path: &Path, cols: &[&str]) -> io::Result<ParquetRecordBatchReader> {
-    let file = File::open(path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(parquet_err_to_io)?;
+fn open_reader(source: &DbSource, cols: &[&str]) -> io::Result<ParquetRecordBatchReader> {
+    match source {
+        DbSource::File(path) => reader_from_chunks(File::open(path)?, cols),
+        DbSource::Embedded(bytes) => reader_from_chunks(Bytes::from_static(bytes), cols),
+    }
+}
+
+/// The half of `open_reader` that doesn't care where the bytes came from. `ChunkReader` is what
+/// parquet reads through; both `File` and `Bytes` implement it.
+fn reader_from_chunks<R: ChunkReader + 'static>(
+    chunks: R,
+    cols: &[&str],
+) -> io::Result<ParquetRecordBatchReader> {
+    let builder = ParquetRecordBatchReaderBuilder::try_new(chunks).map_err(parquet_err_to_io)?;
 
     let schema = builder.schema().clone();
 
@@ -817,20 +982,31 @@ fn open_reader(path: &Path, cols: &[&str]) -> io::Result<ParquetRecordBatchReade
         .map_err(parquet_err_to_io)
 }
 
-/// Whether this file has all the named columns. Files written before a column was added to the
+/// Whether this DB has all the named columns. Files written before a column was added to the
 /// schema don't have it.
-fn has_cols(path: &Path, cols: &[&str]) -> io::Result<bool> {
-    let file = File::open(path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(parquet_err_to_io)?;
-    let schema = builder.schema();
+fn has_cols(source: &DbSource, cols: &[&str]) -> io::Result<bool> {
+    let schema = match source {
+        DbSource::File(path) => {
+            ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)
+                .map_err(parquet_err_to_io)?
+                .schema()
+                .clone()
+        }
+        DbSource::Embedded(bytes) => {
+            ParquetRecordBatchReaderBuilder::try_new(Bytes::from_static(bytes))
+                .map_err(parquet_err_to_io)?
+                .schema()
+                .clone()
+        }
+    };
 
     Ok(cols.iter().all(|c| schema.index_of(c).is_ok()))
 }
 
-/// Whether this file has the `idents` and `metadata` columns. Files written before we stored them
+/// Whether this DB has the `idents` and `metadata` columns. Files written before we stored them
 /// don't.
-fn has_idents_meta_cols(path: &Path) -> io::Result<bool> {
-    has_cols(path, &[COL_IDENTS, COL_METADATA])
+fn has_idents_meta_cols(source: &DbSource) -> io::Result<bool> {
+    has_cols(source, &[COL_IDENTS, COL_METADATA])
 }
 
 fn col<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> io::Result<&'a T> {
@@ -882,12 +1058,44 @@ impl State {
 
                 self.volatile.parquet_dbs.push(db);
                 if self.volatile.parquet_dbs.len() == 1 {
-                    self.volatile.parquet_db_active = Some(0);
+                    self.volatile.parquet_db_active = Some(DbSel::Loaded(0));
                 }
 
                 self.update_history(path, OpenType::ParquetDb, None);
             }
             Err(e) => handle_err(&mut self.ui, format!("Error loading Parquet database: {e}")),
+        }
+    }
+
+    /// The DB the UI is currently showing, if any.
+    pub fn active_mol_db(&self) -> Option<&ParquetMolDb> {
+        match self.volatile.parquet_db_active? {
+            DbSel::Common => self.mol_db.as_ref(),
+            DbSel::Loaded(i) => self.volatile.parquet_dbs.get(i),
+        }
+    }
+}
+
+/// Load the read-only database embedded in the binary. Returns `None` if it wasn't built into this
+/// binary, or is unreadable; it's a convenience, and its absence shouldn't stop the app from
+/// starting.
+pub fn load_common_mol_db() -> Option<ParquetMolDb> {
+    if COMMON_MOL_DB.is_empty() {
+        eprintln!("No common molecule database embedded in this build.");
+        return None;
+    }
+
+    match ParquetMolDb::from_embedded(COMMON_MOL_DB) {
+        Ok(db) => {
+            println!(
+                "Loaded the built-in molecule database: {} molecules",
+                db.index_meta.len()
+            );
+            Some(db)
+        }
+        Err(e) => {
+            eprintln!("Error loading the built-in molecule database: {e}");
+            None
         }
     }
 }

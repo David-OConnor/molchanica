@@ -7,7 +7,6 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io,
-    path::Path,
     sync::{mpsc, mpsc::Receiver},
     thread,
 };
@@ -20,7 +19,7 @@ use rayon::prelude::*;
 
 use crate::{
     copy_le,
-    mol_db::ParquetMolDb,
+    mol_db::{DbSource, ParquetMolDb},
     molecules::{pocket::Pocket, small::MoleculeSmall},
     parse_le,
     properties::mol_characterization::{MolCharacterization, RingType},
@@ -781,24 +780,26 @@ impl Pharmacophore {
     /// Poll the returned [`Receiver`] each frame (see `threads::handle_thread_rx`).
     pub fn screen_ligs(
         &self,
-        db_path: &Path,
+        db_source: &DbSource,
         thresh: f32,
         ph_screening_in_progress: &mut bool,
     ) -> Receiver<Vec<PhScreeningScore>> {
         println!("Pharmacophore screening started");
 
         let pharmacophore = self.clone();
-        let db_path = db_path.to_path_buf();
+        // Reopened on the screening thread rather than sharing the DB: the caller's copy stays
+        // usable, and `DbSource` is cheap to clone whether it's a path or embedded bytes.
+        let db_source = db_source.clone();
 
         *ph_screening_in_progress = true;
 
         let (tx, rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let db = match ParquetMolDb::new(&db_path) {
+            let db = match ParquetMolDb::open_source(db_source.clone()) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("Error opening parquet DB at {db_path:?}: {e}");
+                    eprintln!("Error opening parquet DB {}: {e}", db_source.name());
                     return;
                 }
             };

@@ -506,7 +506,10 @@ pub(in crate::ui) fn pharmacophore_screen(
         return;
     };
 
-    let Some(db_i) = state.volatile.parquet_db_active else {
+    let Some((db_mol_count, db_name, db_source)) = state
+        .active_mol_db()
+        .map(|db| (db.index_meta.len(), db.name(), db.source.clone()))
+    else {
         label!(
             ui,
             "No database selected. Use 'Load or create databases' above.",
@@ -514,14 +517,6 @@ pub(in crate::ui) fn pharmacophore_screen(
         );
         return;
     };
-
-    let db_mol_count = state.volatile.parquet_dbs[db_i].index_meta.len();
-    let db_name = state.volatile.parquet_dbs[db_i]
-        .path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_owned();
 
     label!(
         ui,
@@ -571,23 +566,28 @@ pub(in crate::ui) fn pharmacophore_screen(
         });
 
     if let Some(smiles) = smiles_to_load {
-        match state.volatile.parquet_dbs[db_i].load_mol(&smiles) {
-            Ok(mut mol) => {
+        // Loaded before `load_mol_to_state`, which needs `state` mutably while the DB borrows it.
+        let loaded = state.active_mol_db().map(|db| {
+            db.load_mol(&smiles).map(|mut mol| {
                 // Screening only reads `mol_data`; now that we're opening this molecule for
                 // viewing, load its idents and metadata too. Non-fatal: the molecule is still
                 // usable without them.
-                if let Err(e) =
-                    state.volatile.parquet_dbs[db_i].apply_idents_meta(slice::from_mut(&mut mol))
-                {
+                if let Err(e) = db.apply_idents_meta(slice::from_mut(&mut mol)) {
                     eprintln!("Error loading idents and metadata for '{smiles}': {e}");
                 }
+                mol
+            })
+        });
 
+        match loaded {
+            Some(Ok(mol)) => {
                 state.load_mol_to_state(MoleculeGeneric::Small(mol), scene, updates, None);
             }
-            Err(e) => handle_err(
+            Some(Err(e)) => handle_err(
                 &mut state.ui,
                 format!("Failed to load molecule '{smiles}' from database: {e}"),
             ),
+            None => (),
         }
     }
 
@@ -609,9 +609,8 @@ pub(in crate::ui) fn pharmacophore_screen(
     )
     .clicked()
     {
-        let db_path = state.volatile.parquet_dbs[db_i].path.clone();
         let rx = state.ligands[ph_i].pharmacophore.screen_ligs(
-            &db_path,
+            &db_source,
             PHARMACOPHORE_SCREENING_THRESH_DEFAULT,
             &mut state.pharmacophore.screening_in_progress,
         );

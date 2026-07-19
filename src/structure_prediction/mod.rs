@@ -37,7 +37,7 @@ mod boltz2;
 #[cfg(feature = "python_for_structure_prediction")]
 mod boltz_runtime;
 mod esm_fold2;
-pub mod open_dde;
+pub mod opendde;
 #[cfg(feature = "python_for_structure_prediction")]
 mod pyo3_interface;
 
@@ -127,7 +127,7 @@ pub(crate) fn predict_structure_from_aas_with_control(
         StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_aas(aas, ff_map),
         // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_aas(aas, ff_map),
         StructurePredictionModel::OpenDDE => {
-            open_dde::predict_structure_from_aas(aas, ff_map, control)
+            opendde::predict_structure_from_aas(aas, ff_map, control)
         }
     }
 }
@@ -155,7 +155,7 @@ fn predict_structure_from_dna_with_control(
         StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_dna(nts, ff_map),
         // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_dna(nts, ff_map),
         StructurePredictionModel::OpenDDE => {
-            open_dde::predict_structure_from_dna(nts, ff_map, control)
+            opendde::predict_structure_from_dna(nts, ff_map, control)
         }
     }
 }

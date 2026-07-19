@@ -307,8 +307,7 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label("Alignment screening uses the active Parquet database.");
 
-        if let Some(db_i) = state.volatile.parquet_db_active {
-            let mol_count = state.volatile.parquet_dbs[db_i].index_meta.len();
+        if let Some(mol_count) = state.active_mol_db().map(|db| db.index_meta.len()) {
             ui.add_space(COL_SPACING);
             ui.label(format!("({mol_count} molecules)"));
             ui.add_space(COL_SPACING);
@@ -317,7 +316,10 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
                 .button(RichText::new("Run screening").color(COLOR_ACTION))
                 .clicked()
             {
-                match state.volatile.parquet_dbs[db_i].load_all() {
+                // Checked immediately above; the button can't be drawn without an active DB.
+                let loaded = state.active_mol_db().map(|db| db.load_all());
+
+                match loaded.unwrap_or_else(|| Ok(Vec::new())) {
                     Ok(mut mols) => {
                         for mol in &mut mols {
                             mol.update_characterization();
