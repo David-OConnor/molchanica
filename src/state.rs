@@ -46,7 +46,7 @@ use crate::{
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
     ui::popup::{ff_params::FfParamsUi, structure_pred::StructurePredUi},
-    util::{boltz2_avail, gemmi_avail, gromacs_avail, mdtraj_avail, open_dde_avail, orca_avail},
+    util::{gemmi_avail, gromacs_avail, mdtraj_avail, orca_avail},
 };
 
 pub struct State {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, io, io::Write};
+use std::{collections::HashMap, fs::File, io, io::Write, path::PathBuf, slice};
 
 use bio_apis::pubchem::find_cids_from_search;
 use egui::{Color32, Ui};
@@ -20,6 +20,7 @@ use crate::{
     mol_editor,
     molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
+    screening::load_mol_batch,
     smiles::is_smiles,
     state::{OperatingMode, State},
     ui::set_window_title,
@@ -41,6 +42,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.parquet_db_load.update(ctx);
     state.volatile.dialogs.parquet_db_save.update(ctx);
     state.volatile.dialogs.parquet_mols_dir.update(ctx);
+    state.volatile.dialogs.parquet_mol_file.update(ctx);
     state.volatile.dialogs.save_md.update(ctx);
     state.volatile.dialogs.save_gro.update(ctx);
 
@@ -130,6 +132,10 @@ pub fn update_file_dialogs(
         }
     }
 
+    if let Some(path) = &state.volatile.dialogs.parquet_mol_file.take_picked() {
+        add_mol_file_to_db(state, path);
+    }
+
     if let Some(path) = &state.volatile.dialogs.save_md.take_picked() {
         match gromacs::save_input_files(state, path) {
             Ok(_) => {
@@ -162,6 +168,79 @@ pub fn update_file_dialogs(
     }
 
     Ok(())
+}
+
+/// Load a single molecule file (SDF or Mol2) from disk, and add it to the active Parquet database.
+/// The directory equivalent is `ParquetMolDb::populate`.
+fn add_mol_file_to_db(state: &mut State, path: &PathBuf) {
+    let Some(db_i) = state.volatile.parquet_db_active else {
+        handle_err(
+            &mut state.ui,
+            "Error: Missing the DB index to add a mol to".to_string(),
+        );
+        return;
+    };
+
+    if db_i >= state.volatile.parquet_dbs.len() {
+        handle_err(
+            &mut state.ui,
+            "Error: Invalid Parquet DB active index".to_string(),
+        );
+        return;
+    }
+
+    // `load_mol_batch` only handles these two, and panics otherwise; the dialog filter doesn't
+    // prevent a name being typed in directly.
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if !matches!(ext.as_str(), "sdf" | "mol2") {
+        handle_err(
+            &mut state.ui,
+            format!("Unable to add {ext:?} files to a database; use SDF or Mol2"),
+        );
+        return;
+    }
+
+    // An SDF file may hold more than one molecule.
+    let mols = match load_mol_batch(slice::from_ref(path)) {
+        Ok((mols, _consumed)) => mols,
+        Err(e) => {
+            handle_err(&mut state.ui, format!("Error loading the molecule: {e}"));
+            return;
+        }
+    };
+
+    if mols.is_empty() {
+        handle_err(
+            &mut state.ui,
+            format!(
+                "No molecule loaded from {:?}",
+                path.file_name().unwrap_or_default()
+            ),
+        );
+        return;
+    }
+
+    let mol_added_count = mols.len();
+
+    let db = &mut state.volatile.parquet_dbs[db_i];
+    let result = db.add_mols(&mols);
+    let mol_count = db.index_meta.len();
+
+    match result {
+        Ok(()) => handle_success(
+            &mut state.ui,
+            format!("Added {mol_added_count} molecule(s) to the database ({mol_count} molecules)"),
+        ),
+        Err(e) => handle_err(
+            &mut state.ui,
+            format!("Error adding molecules to the database: {e}"),
+        ),
+    }
 }
 
 pub fn handle_redraw(

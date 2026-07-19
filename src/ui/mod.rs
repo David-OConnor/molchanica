@@ -769,6 +769,16 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             }
 
             if button!(
+                    ui, "Mol DBs",
+                    COLOR_ACTION,
+                    "Open a window where you can create, read, and update Parquest databases of molecules.\
+                    This is for screening large numbers of molecules."
+
+                ).clicked() {
+                state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
+            }
+
+            if button!(
                 ui,
                 "Predict structure",
                 COLOR_ACTION,
@@ -992,18 +1002,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                     .on_hover_text("Perform a fast small molecule alignment screening from all \
                     files in a selected folder").clicked() {
                     state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
-                }
-
-
-                // todo: Temp loc for create parquet db
-                if button!(
-                    ui, "Mol DBs",
-                    COLOR_ACTION,
-                    "Open a window where you can create, read, and update Parquest databases of molecules.\
-                    This is for screening large numbers of molecules."
-
-                ).clicked() {
-                    state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
                 }
             });
         });

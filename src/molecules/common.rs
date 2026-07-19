@@ -323,16 +323,15 @@ impl MoleculeCommon {
         result
     }
 
-    /// Uses both the identifier and filename, if different.
-    /// Can also use a pubchem title if available. , for example, allows viewing the common name of the
-    /// molecule, where the ident may be a CID etc.
-    ///
-    /// We use MolIdent only for small molecules
+    /// Uses the `ident` field and filename (if different) from this struct. Uses the PubChem
+    /// title as well, if available for small molecules. This text description may prove more
+    /// useful for reading than just a CID. The filename may alternatively provide this
+    /// text description.
     pub fn name(&self, idents: Option<&Vec<MolIdent>>) -> String {
         let mut result = self.ident.to_string();
 
         if let Some(idents_) = idents {
-            // Alternatively, the IupacName ident will also work. here.
+            // Alternatively, `MolIdent::IupacName` ident will also work.
             for ident in idents_ {
                 if let MolIdent::PubchemTitle(t) = ident {
                     result.push_str(&format!(" | {t}"));

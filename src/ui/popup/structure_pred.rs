@@ -10,11 +10,16 @@ use std::{
 use egui::{Button, ComboBox, Context, RichText, TextEdit, Ui};
 use na_seq::{AminoAcid, Nucleotide};
 
-use crate::{button, state::State, structure_prediction::{
-    PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
-    predict_structure_from_aas_with_control, predict_structure_from_nts_with_control,
-}, ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, ROW_SPACING, popup::close_btn}, util::handle_err};
-use crate::ui::COLOR_INACTIVE;
+use crate::{
+    button,
+    state::State,
+    structure_prediction::{
+        PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
+        predict_structure_from_aas_with_control, predict_structure_from_nts_with_control,
+    },
+    ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
+    util::handle_err,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum SequenceType {
@@ -97,8 +102,14 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
         } else {
             COLOR_INACTIVE
         };
-        if button!(ui, "Amino acids (1 letter)", color, "Amino-acid sequence using single-letter identifiers")
-            .clicked() {
+        if button!(
+            ui,
+            "Amino acids (1 letter)",
+            color,
+            "Amino-acid sequence using single-letter identifiers"
+        )
+        .clicked()
+        {
             state.ui.structure_pred.sequence_type = SequenceType::AminoAcid;
         }
 
@@ -107,14 +118,20 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
         } else {
             COLOR_INACTIVE
         };
-        if button!(ui, "Nucleotides", color, "DNA nucleotide sequence using A, T, G, and C")
-            .clicked() {
+        if button!(
+            ui,
+            "Nucleotides",
+            color,
+            "DNA nucleotide sequence using A, T, G, and C"
+        )
+        .clicked()
+        {
             state.ui.structure_pred.sequence_type = SequenceType::Nucleotide;
         }
     });
 
-                  ui.add(
-                      TextEdit::multiline(&mut state.ui.structure_pred.sequence)
+    ui.add(
+        TextEdit::multiline(&mut state.ui.structure_pred.sequence)
             .desired_rows(8)
             .desired_width(420.)
             .hint_text(match state.ui.structure_pred.sequence_type {

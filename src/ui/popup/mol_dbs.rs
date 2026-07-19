@@ -9,7 +9,7 @@ use graphics::{EngineUpdates, Scene};
 use crate::{
     button, label,
     mol_db::{MolMeta, ParquetMolDb},
-    molecules::{MolIdent, MoleculeGeneric},
+    molecules::MoleculeGeneric,
     prefs::OpenType,
     state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup},
@@ -18,7 +18,6 @@ use crate::{
 
 /// Characters shown in a cell before it's truncated; the full text is available on hover.
 const SMILES_CHARS_MAX: usize = 10;
-const IDENTS_CHARS_MAX: usize = 32;
 
 /// What a button in the molecule table asked for, by SMILES key. The table borrows the DB, so these
 /// are acted on after it's drawn.
@@ -107,6 +106,18 @@ pub(in crate::ui) fn parquet_db(
                 state.volatile.parquet_db_active = Some(db_i);
             }
 
+            if button!(
+                ui,
+                "Add mol",
+                COLOR_ACTION,
+                "Add a single molecule file (Mol2 or SDF) to this database."
+            )
+            .clicked()
+            {
+                state.volatile.dialogs.parquet_mol_file.pick_file();
+                state.volatile.parquet_db_active = Some(db_i);
+            }
+
             ui.add_space(COL_SPACING);
 
             for (i, name) in &ligs_to_add {
@@ -165,7 +176,7 @@ pub(in crate::ui) fn parquet_db(
 
         del_confirmation(state, db_i, ui);
 
-        match db_summary_table(&mut state.volatile.parquet_dbs[db_i], db_i, ui) {
+        match db_summary_table(&state.volatile.parquet_dbs[db_i], db_i, ui) {
             Some(RowAction::Delete(smiles)) => {
                 state.ui.popup.parquet_db_mol_del = Some((db_i, smiles))
             }
@@ -333,13 +344,13 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     }
 }
 
-/// A table of the molecules in a database. Shows the lightweight index columns, and each molecule's
-/// idents; `mol_data` and `metadata` are loaded on demand, and aren't in memory here.
+/// A table of the molecules in a database. Shows the lightweight index columns only; `mol_data`,
+/// `idents` and `metadata` are loaded on demand, and aren't in memory here.
 ///
 /// Returns the row button the user clicked, if any; see `RowAction`. A deletion is confirmed before
 /// it's applied; see `del_confirmation`.
-fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<RowAction> {
-    let (index_meta, idents) = db.index_and_idents();
+fn db_summary_table(db: &ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<RowAction> {
+    let index_meta = &db.index_meta;
 
     if index_meta.is_empty() {
         return None;
@@ -360,10 +371,10 @@ fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<R
         .spacing([COL_SPACING, 4.])
         .show(ui, |ui| {
             label!(ui, "Load", Color32::GRAY);
-            label!(ui, "PubChem CID", Color32::GRAY);
+            label!(ui, "CID", Color32::GRAY);
+            label!(ui, "Title", Color32::GRAY);
             label!(ui, "SMILES", Color32::GRAY);
             label!(ui, "Heavy atoms", Color32::GRAY);
-            label!(ui, "Identifiers", Color32::GRAY);
             label!(ui, "Delete", Color32::GRAY);
             ui.end_row();
         });
@@ -400,21 +411,17 @@ fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<R
                             None => label!(ui, "—", Color32::DARK_GRAY),
                         };
 
+                        match &meta.pubchem_title {
+                            Some(title) => {
+                                label!(ui, title, Color32::LIGHT_BLUE)
+                            }
+                            None => label!(ui, "—", Color32::DARK_GRAY),
+                        };
+
                         label!(ui, truncate(&meta.smiles, SMILES_CHARS_MAX), Color32::GRAY)
                             .on_hover_text(&meta.smiles);
 
                         label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
-
-                        match idents.get(*smiles) {
-                            Some(ids) if !ids.is_empty() => {
-                                let text = idents_text(ids);
-                                label!(ui, truncate(&text, IDENTS_CHARS_MAX), Color32::GRAY)
-                                    .on_hover_text(text);
-                            }
-                            _ => {
-                                label!(ui, "—", Color32::DARK_GRAY);
-                            }
-                        }
 
                         if button!(
                             ui,
@@ -433,15 +440,6 @@ fn db_summary_table(db: &mut ParquetMolDb, db_i: usize, ui: &mut Ui) -> Option<R
         });
 
     action
-}
-
-/// E.g. "PubChem CID: 702, SMILES: CCO".
-fn idents_text(idents: &[MolIdent]) -> String {
-    idents
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 fn truncate(val: &str, len_max: usize) -> String {

@@ -1387,7 +1387,7 @@ pub fn boltz2_avail() -> bool {
 }
 
 /// Checks if OpenDDE is available in a managed environment or on the system path.
-pub fn open_dde_avail() -> bool {
+pub fn opendde_avail() -> bool {
     let Ok(executable) = crate::structure_prediction::open_dde::find_executable() else {
         return false;
     };

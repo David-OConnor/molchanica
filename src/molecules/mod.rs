@@ -213,6 +213,8 @@ impl<'a> MolGenericRef<'a> {
         }
     }
 
+    /// A wrapper around `mol.common.name` for molecule types with multiple identifiers available;
+    /// if one identifier is available, use that.;
     /// Cow to avoid a double borrow to get m.idents and m.common at the same time.
     pub fn name(&self) -> Cow<'_, str> {
         use MolGenericRef::*;

@@ -1060,6 +1060,8 @@ pub struct FileDialogs {
     pub parquet_db_load: FileDialog,
     pub parquet_db_save: FileDialog,
     pub parquet_mols_dir: FileDialog,
+    /// Adding a single molecule file (SDF or Mol2) to a Parquet database.
+    pub parquet_mol_file: FileDialog,
     /// E.g. GROMACS files ready to be run in a sim. (.top, .mdp, .gro); choose a folder to save these in.
     pub save_md: FileDialog,
     /// Save an MD mol set as a GRO file.
@@ -1125,6 +1127,17 @@ impl Default for FileDialogs {
         let screening = FileDialog::with_config(cfg_screening.clone());
         let parquet_mols_dir = FileDialog::with_config(cfg_screening);
 
+        let mol_file_descrip = "Molecule (SDF, Mol2)".to_owned();
+
+        let cfg_parquet_mol_file = FileDialogConfig {
+            title: Some("Select a molecule file".to_string()),
+            ..Default::default()
+        }
+        .add_file_filter_extensions(&mol_file_descrip, vec!["sdf", "mol2"]);
+
+        let parquet_mol_file =
+            FileDialog::with_config(cfg_parquet_mol_file).default_file_filter(&mol_file_descrip);
+
         let cfg_parquet_db = FileDialogConfig::default()
             .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
             .add_save_extension(&parquet_descrip, "parquet");
@@ -1151,6 +1164,7 @@ impl Default for FileDialogs {
             parquet_db_save,
             parquet_db_load,
             parquet_mols_dir,
+            parquet_mol_file,
             save_md,
             save_gro,
             save_gro_mol_set_i: None,

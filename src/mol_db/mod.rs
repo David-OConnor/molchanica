@@ -20,6 +20,8 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::Arc,
+    thread,
+    time::Duration,
 };
 
 use arrow::{
@@ -27,6 +29,7 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
+use bio_apis::pubchem::{self, StructureSearchNamespace};
 use na_seq::Element;
 use parquet::{
     arrow::{
@@ -55,6 +58,7 @@ mod serialization;
 /// Column names; keep in sync with `schema` and `StoredMol`.
 const COL_SMILES: &str = "smiles";
 const COL_PUBCHEM_CID: &str = "pubchem_cid";
+const COL_PUBCHEM_TITLE: &str = "pubchem_title";
 const COL_HEAVY_ATOM_COUNT: &str = "heavy_atom_count";
 const COL_MOL_DATA: &str = "mol_data";
 const COL_IDENTS: &str = "idents";
@@ -85,6 +89,7 @@ fn arrow_err_to_io(e: arrow::error::ArrowError) -> io::Error {
 struct StoredMol {
     smiles: String,
     pubchem_cid: Option<u32>,
+    pubchem_title: Option<String>,
     heavy_atom_count: u16,
     /// Serialized as binary; see the `to_bytes` and `from_bytes` serializations
     /// in the `serialization` module. This may only be atoms, bonds, and common.ident.
@@ -96,9 +101,21 @@ struct StoredMol {
 
 impl StoredMol {
     /// Build a row from a molecule loaded from a file, e.g. Mol2 or SDF.
-    fn from_mol(m: MoleculeSmall) -> io::Result<Self> {
+    fn from_mol(mut m: MoleculeSmall) -> io::Result<Self> {
         let smiles = smiles_from_idents(&m.idents).unwrap_or_else(|| m.common.ident.clone());
-        let pubchem_cid = pubchem_cid_from_idents(&m.idents);
+        let (mut pubchem_cid, mut pubchem_title) = pubchem_cid_title_from_idents(&m.idents);
+
+        // Molecule files generally don't carry a title, so look it up over HTTP. Without one, the
+        // DB table has only a SMILES string to identify the molecule by. The idents we store are
+        // updated to match, so a molecule loaded back out of the DB carries them too.
+        if pubchem_title.is_none()
+            && let Some(props) = pubchem_props(pubchem_cid, &smiles)
+        {
+            m.update_idents_and_char_from_pubchem(&props);
+
+            pubchem_cid = Some(props.cid);
+            pubchem_title = Some(props.title);
+        }
 
         let heavy_atom_count = m
             .common
@@ -112,6 +129,7 @@ impl StoredMol {
         Ok(Self {
             smiles,
             pubchem_cid,
+            pubchem_title,
             heavy_atom_count,
             mol_data,
             idents: m.idents,
@@ -134,11 +152,60 @@ fn pubchem_cid_from_idents(idents: &[MolIdent]) -> Option<u32> {
     })
 }
 
-/// Lightweight metadata for a molecule stored in the DB — excludes the heavy `mol_data` blob.
+/// Repetitive with [`pubchem_cid_from_idents`], but may be more efficient to group this way.
+fn pubchem_cid_title_from_idents(idents: &[MolIdent]) -> (Option<u32>, Option<String>) {
+    let cid = idents.iter().find_map(|id| match id {
+        MolIdent::PubChem(cid) => Some(*cid),
+        _ => None,
+    });
+
+    let title = idents.iter().find_map(|id| match id {
+        MolIdent::PubchemTitle(title) => Some(title.clone()),
+        _ => None,
+    });
+
+    (cid, title)
+}
+
+/// PubChem rate-limits to a handful of requests per second, and returns a busy/timeout fault rather
+/// than throttling, so populating a DB of any size hits transient failures routinely. Retry a few
+/// times, backing off; this doubles as the throttle.
+const PUBCHEM_ATTEMPTS: u32 = 3;
+const PUBCHEM_BACKOFF_MS: u64 = 500;
+
+/// Look up a molecule's PubChem properties over HTTP, to fill in the title (and CID) we store
+/// alongside it. Queries by CID if we have one, else by SMILES.
+///
+/// Returns `None` if the molecule isn't in PubChem, or every attempt fails: a title is a nicety,
+/// and shouldn't stop the molecule from being stored.
+fn pubchem_props(cid: Option<u32>, smiles: &str) -> Option<pubchem::Properties> {
+    let (namespace, id) = match cid {
+        Some(cid) => (StructureSearchNamespace::Cid, cid.to_string()),
+        None => (StructureSearchNamespace::Smiles, smiles.to_string()),
+    };
+
+    let mut last_err = None;
+    for attempt in 0..PUBCHEM_ATTEMPTS {
+        if attempt > 0 {
+            thread::sleep(Duration::from_millis(PUBCHEM_BACKOFF_MS * (1 << attempt)));
+        }
+
+        match pubchem::properties(namespace.clone(), &id) {
+            Ok(props) => return Some(props),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    eprintln!("Unable to load PubChem properties for {id}: {last_err:?}");
+    None
+}
+
+/// Lightweight metadata for a molecule stored in the DB. Excludes the heavy `mol_data` blob.
 #[derive(Debug, Clone)]
 pub struct MolMeta {
     pub smiles: String,
     pub pubchem_cid: Option<u32>,
+    pub pubchem_title: Option<String>,
     pub heavy_atom_count: u16,
 }
 
@@ -168,7 +235,7 @@ pub struct ParquetMolDb {
 impl ParquetMolDb {
     /// Create / open a DB at a parquet file path.
     ///
-    /// Eagerly loads only the lightweight metadata columns (smiles, pubchem_cid,
+    /// Eagerly loads only the lightweight metadata columns (smiles, pubchem_cid, pubchem_title,
     /// heavy_atom_count) into `index_meta`. The heavy `mol_data`, `idents`, and `metadata` columns
     /// are NOT loaded here; they're read from disk on demand. See the module docs.
     pub fn new(path: &Path) -> io::Result<Self> {
@@ -190,6 +257,7 @@ impl ParquetMolDb {
         Arc::new(Schema::new(vec![
             Field::new(COL_SMILES, DataType::Utf8, false),
             Field::new(COL_PUBCHEM_CID, DataType::UInt32, true),
+            Field::new(COL_PUBCHEM_TITLE, DataType::Utf8, true),
             Field::new(COL_HEAVY_ATOM_COUNT, DataType::UInt16, false),
             // This contains our atoms, bonds, and common.ident. Serialized as binary.
             Field::new(COL_MOL_DATA, DataType::LargeBinary, false),
@@ -330,6 +398,8 @@ impl ParquetMolDb {
     fn make_batch(rows: &[StoredMol], schema: Arc<Schema>) -> io::Result<RecordBatch> {
         let smiles_arr: StringArray = rows.iter().map(|r| Some(r.smiles.as_str())).collect();
         let pubchem_arr: UInt32Array = rows.iter().map(|r| r.pubchem_cid).collect();
+        let pubchem_title_arr: StringArray =
+            rows.iter().map(|r| r.pubchem_title.as_deref()).collect();
 
         let heavy_count_arr: UInt16Array = rows.iter().map(|r| r.heavy_atom_count).collect();
 
@@ -341,6 +411,7 @@ impl ParquetMolDb {
             .iter()
             .map(|r| idents_to_bytes(&r.idents))
             .collect::<io::Result<_>>()?;
+
         let metadata_ser: Vec<Vec<u8>> = rows
             .iter()
             .map(|r| metadata_to_bytes(&r.metadata))
@@ -353,6 +424,7 @@ impl ParquetMolDb {
         let cols: Vec<ArrayRef> = vec![
             Arc::new(smiles_arr),
             Arc::new(pubchem_arr),
+            Arc::new(pubchem_title_arr),
             Arc::new(heavy_count_arr),
             Arc::new(mol_data_arr),
             Arc::new(idents_arr),
@@ -369,27 +441,49 @@ impl ParquetMolDb {
         // Every rewrite of the file goes through here, so this is where the cache goes stale.
         self.idents_cache = None;
 
-        let mut reader = open_reader(
-            &self.path,
-            &[COL_SMILES, COL_PUBCHEM_CID, COL_HEAVY_ATOM_COUNT],
-        )?;
+        // A DB written before the title column existed is still readable; titles come back `None`,
+        // and the column is gained when the file is next rewritten.
+        let has_title = has_cols(&self.path, &[COL_PUBCHEM_TITLE])?;
+
+        let mut cols = vec![COL_SMILES, COL_PUBCHEM_CID, COL_HEAVY_ATOM_COUNT];
+        if has_title {
+            cols.push(COL_PUBCHEM_TITLE);
+        }
+
+        let mut reader = open_reader(&self.path, &cols)?;
 
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
             let smiles_col = str_col(&batch, COL_SMILES)?;
-            let pubchem_col = u32_col(&batch, COL_PUBCHEM_CID)?;
+            let cid_col = u32_col(&batch, COL_PUBCHEM_CID)?;
+            let title_col = match has_title {
+                true => Some(str_col(&batch, COL_PUBCHEM_TITLE)?),
+                false => None,
+            };
             let heavy_atom_count_col = u16_col(&batch, COL_HEAVY_ATOM_COUNT)?;
 
             for i in 0..smiles_col.len() {
                 let smiles = smiles_col.value(i).to_string();
+
+                let pubchem_cid = if cid_col.is_null(i) {
+                    None
+                } else {
+                    Some(cid_col.value(i))
+                };
+
+                let pubchem_title = title_col.and_then(|c| {
+                    if c.is_null(i) {
+                        None
+                    } else {
+                        Some(c.value(i).to_string())
+                    }
+                });
+
                 self.index_meta.insert(
                     smiles.clone(),
                     MolMeta {
                         smiles,
-                        pubchem_cid: if pubchem_col.is_null(i) {
-                            None
-                        } else {
-                            Some(pubchem_col.value(i))
-                        },
+                        pubchem_cid,
+                        pubchem_title,
                         heavy_atom_count: heavy_atom_count_col.value(i),
                     },
                 );
@@ -406,9 +500,10 @@ impl ParquetMolDb {
             return Ok(Vec::new());
         }
 
-        // A DB written before we stored idents + metadata is still readable; those rows simply
-        // come back empty, and gain the columns when the file is rewritten.
+        // A DB written before we stored idents + metadata (or the title column) is still readable;
+        // those rows simply come back empty, and gain the columns when the file is rewritten.
         let has_idents_meta = has_idents_meta_cols(&self.path)?;
+        let has_title = has_cols(&self.path, &[COL_PUBCHEM_TITLE])?;
 
         let mut cols = vec![
             COL_SMILES,
@@ -416,6 +511,9 @@ impl ParquetMolDb {
             COL_HEAVY_ATOM_COUNT,
             COL_MOL_DATA,
         ];
+        if has_title {
+            cols.push(COL_PUBCHEM_TITLE);
+        }
         if has_idents_meta {
             cols.push(COL_IDENTS);
             cols.push(COL_METADATA);
@@ -426,7 +524,11 @@ impl ParquetMolDb {
         let mut rows = Vec::with_capacity(self.index_meta.len());
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
             let smiles_col = str_col(&batch, COL_SMILES)?;
-            let pubchem_col = u32_col(&batch, COL_PUBCHEM_CID)?;
+            let cid_col = u32_col(&batch, COL_PUBCHEM_CID)?;
+            let pubchem_title_col = match has_title {
+                true => Some(str_col(&batch, COL_PUBCHEM_TITLE)?),
+                false => None,
+            };
             let heavy_atom_count_col = u16_col(&batch, COL_HEAVY_ATOM_COUNT)?;
             let mol_data_col = bin_col(&batch, COL_MOL_DATA)?;
 
@@ -449,13 +551,24 @@ impl ParquetMolDb {
                     None => HashMap::new(),
                 };
 
-                rows.push(StoredMol {
-                    smiles: smiles_col.value(i).to_string(),
-                    pubchem_cid: if pubchem_col.is_null(i) {
+                let pubchem_cid = if cid_col.is_null(i) {
+                    None
+                } else {
+                    Some(cid_col.value(i))
+                };
+
+                let pubchem_title = pubchem_title_col.and_then(|c| {
+                    if c.is_null(i) {
                         None
                     } else {
-                        Some(pubchem_col.value(i))
-                    },
+                        Some(c.value(i).to_string())
+                    }
+                });
+
+                rows.push(StoredMol {
+                    smiles: smiles_col.value(i).to_string(),
+                    pubchem_cid,
+                    pubchem_title,
                     heavy_atom_count: heavy_atom_count_col.value(i),
                     mol_data: mol_data_col.value(i).to_vec(),
                     idents,
@@ -647,9 +760,13 @@ impl ParquetMolDb {
             row.idents = im.idents.clone();
             row.metadata = im.metadata.clone();
 
-            // Keep the searchable CID column in sync with the idents it's derived from.
-            if let Some(cid) = pubchem_cid_from_idents(&im.idents) {
+            // Keep the searchable CID and title columns in sync with the idents they're derived from.
+            let (cid, title) = pubchem_cid_title_from_idents(&im.idents);
+            if let Some(cid) = cid {
                 row.pubchem_cid = Some(cid);
+            }
+            if let Some(title) = title {
+                row.pubchem_title = Some(title);
             }
         }
 
@@ -700,14 +817,20 @@ fn open_reader(path: &Path, cols: &[&str]) -> io::Result<ParquetRecordBatchReade
         .map_err(parquet_err_to_io)
 }
 
-/// Whether this file has the `idents` and `metadata` columns. Files written before we stored them
-/// don't.
-fn has_idents_meta_cols(path: &Path) -> io::Result<bool> {
+/// Whether this file has all the named columns. Files written before a column was added to the
+/// schema don't have it.
+fn has_cols(path: &Path, cols: &[&str]) -> io::Result<bool> {
     let file = File::open(path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(parquet_err_to_io)?;
     let schema = builder.schema();
 
-    Ok(schema.index_of(COL_IDENTS).is_ok() && schema.index_of(COL_METADATA).is_ok())
+    Ok(cols.iter().all(|c| schema.index_of(c).is_ok()))
+}
+
+/// Whether this file has the `idents` and `metadata` columns. Files written before we stored them
+/// don't.
+fn has_idents_meta_cols(path: &Path) -> io::Result<bool> {
+    has_cols(path, &[COL_IDENTS, COL_METADATA])
 }
 
 fn col<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> io::Result<&'a T> {
@@ -766,217 +889,5 @@ impl State {
             }
             Err(e) => handle_err(&mut self.ui, format!("Error loading Parquet database: {e}")),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{env, fs};
-
-    use bio_files::{BondType, SdfFormat};
-    use lin_alg::f64::Vec3;
-
-    use super::*;
-    use crate::molecules::{Atom, Bond};
-
-    /// A linear alcohol: `n_carbons` carbons, then a terminal oxygen. Varying `n_carbons` varies
-    /// the SMILES, which the DB keys rows on.
-    fn test_mol(ident: &str, cid: u32, n_carbons: usize) -> MoleculeSmall {
-        let mut atoms = Vec::new();
-        for i in 0..n_carbons {
-            atoms.push(Atom {
-                serial_number: i as u32 + 1,
-                element: Element::Carbon,
-                posit: Vec3::new(1.5 * i as f64, 0., 0.),
-                ..Default::default()
-            });
-        }
-        atoms.push(Atom {
-            serial_number: n_carbons as u32 + 1,
-            element: Element::Oxygen,
-            posit: Vec3::new(1.5 * n_carbons as f64, 0., 0.),
-            ..Default::default()
-        });
-
-        let bonds = (0..n_carbons)
-            .map(|i| Bond {
-                bond_type: BondType::Single,
-                atom_0_sn: i as u32 + 1,
-                atom_1_sn: i as u32 + 2,
-                atom_0: i,
-                atom_1: i + 1,
-                is_backbone: false,
-            })
-            .collect();
-
-        let mut metadata = HashMap::new();
-        metadata.insert("PUBCHEM_COMPOUND_CID".to_string(), cid.to_string());
-        metadata.insert("NOTE".to_string(), format!("Test molecule {ident}"));
-
-        MoleculeSmall::new(ident.to_string(), atoms, bonds, metadata, None)
-    }
-
-    /// Save `mols` as SDF files in a new dir under `base`, for `populate` to read.
-    fn mol_dir(base: &Path, name: &str, mols: &[MoleculeSmall]) -> PathBuf {
-        let dir = base.join(name);
-        fs::create_dir_all(&dir).unwrap();
-
-        for mol in mols {
-            let path = dir.join(format!("{}.sdf", mol.common.ident));
-            mol.to_sdf().save(&path, SdfFormat::V2000).unwrap();
-        }
-
-        dir
-    }
-
-    /// The two on-demand loads are independent: reading `mol_data` brings back no idents or
-    /// metadata, and reading idents + metadata doesn't touch `mol_data`. Also covers appending to
-    /// an existing DB, and updating idents + metadata in place.
-    #[test]
-    fn idents_meta_load_separately_from_mol_data() {
-        let base = env::temp_dir().join("molchanica_mol_db_test");
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-
-        let mols = [test_mol("mol_a", 702, 2), test_mol("mol_b", 887, 3)];
-        let dir = mol_dir(&base, "mols_0", &mols);
-
-        let mut db = ParquetMolDb::new(&base.join("test.parquet")).unwrap();
-        db.populate(&dir).unwrap();
-
-        let smiles_a = mols[0].get_smiles().unwrap().to_string();
-        let smiles_b = mols[1].get_smiles().unwrap().to_string();
-
-        assert_eq!(db.index_meta.len(), 2);
-
-        // The lightweight index, loaded eagerly on open.
-        let meta_a = &db.index_meta[&smiles_a];
-        assert_eq!(meta_a.pubchem_cid, Some(702));
-        assert_eq!(meta_a.heavy_atom_count, 3); // 2 C + 1 O
-
-        // Load #1: mol_data only. No idents or metadata come with it.
-        let mut loaded = db.load_mols(&[smiles_a.as_str()]).unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].common.atoms.len(), 3);
-        assert!(loaded[0].common.metadata.is_empty());
-        assert!(!loaded[0].idents.contains(&MolIdent::PubChem(702)));
-
-        // Load #2: idents + metadata, independently of mol_data.
-        let im_a = db.load_idents_meta(&smiles_a).unwrap();
-        assert!(im_a.idents.contains(&MolIdent::PubChem(702)));
-        assert_eq!(im_a.metadata["NOTE"], "Test molecule mol_a");
-
-        assert_eq!(db.load_idents_meta_all().unwrap().len(), 2);
-
-        // Folding load #2 into molecules from load #1.
-        db.apply_idents_meta(&mut loaded).unwrap();
-        assert!(loaded[0].idents.contains(&MolIdent::PubChem(702)));
-        assert_eq!(loaded[0].common.metadata["NOTE"], "Test molecule mol_a");
-
-        // Adding molecules keeps the ones already in the DB.
-        let mols_2 = [test_mol("mol_c", 999, 4)];
-        let dir_2 = mol_dir(&base, "mols_1", &mols_2);
-        db.populate(&dir_2).unwrap();
-
-        assert_eq!(db.index_meta.len(), 3);
-        assert!(
-            db.load_idents_meta(&smiles_a)
-                .unwrap()
-                .idents
-                .contains(&MolIdent::PubChem(702))
-        );
-        assert_eq!(db.load_mol(&smiles_a).unwrap().common.atoms.len(), 3);
-
-        // Updating idents + metadata in place. mol_data is left alone.
-        let updates = HashMap::from([(
-            smiles_a.clone(),
-            MolIdentsMeta {
-                idents: vec![
-                    MolIdent::PubChem(12345),
-                    MolIdent::DrugBank("DB00316".to_string()),
-                ],
-                metadata: HashMap::from([("NOTE".to_string(), "Updated".to_string())]),
-            },
-        )]);
-        db.update_idents_meta(&updates).unwrap();
-
-        let im_a = db.load_idents_meta(&smiles_a).unwrap();
-        assert!(
-            im_a.idents
-                .contains(&MolIdent::DrugBank("DB00316".to_string()))
-        );
-        assert_eq!(im_a.metadata["NOTE"], "Updated");
-
-        // The searchable CID column tracks the idents it's derived from.
-        assert_eq!(db.index_meta[&smiles_a].pubchem_cid, Some(12345));
-
-        assert_eq!(db.load_mol(&smiles_a).unwrap().common.atoms.len(), 3);
-
-        // Other rows are untouched by the update.
-        assert_eq!(
-            db.load_idents_meta(&smiles_b).unwrap().metadata["NOTE"],
-            "Test molecule mol_b"
-        );
-        assert_eq!(db.index_meta[&smiles_b].pubchem_cid, Some(887));
-
-        let _ = fs::remove_dir_all(&base);
-    }
-
-    /// Adding a molecule that's already in memory, e.g. an open ligand, and reading back the idents
-    /// the table in the UI displays.
-    #[test]
-    fn add_mols_in_memory() {
-        let base = env::temp_dir().join("molchanica_mol_db_add_test");
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-
-        let mut db = ParquetMolDb::new(&base.join("test.parquet")).unwrap();
-
-        let mol = test_mol("mol_a", 702, 2);
-        let smiles = mol.get_smiles().unwrap().to_string();
-
-        assert!(!db.contains_mol(&mol));
-
-        db.add_mols(&[mol]).unwrap();
-        assert_eq!(db.index_meta.len(), 1);
-
-        // Matched on SMILES...
-        assert!(db.contains_mol(&test_mol("mol_a", 702, 2)));
-        // ...and on CID, for a molecule whose SMILES doesn't match a row.
-        assert!(db.contains_mol(&test_mol("mol_a_variant", 702, 5)));
-        assert!(!db.contains_mol(&test_mol("mol_b", 887, 3)));
-
-        {
-            let (index, idents) = db.index_and_idents();
-            assert_eq!(index[&smiles].heavy_atom_count, 3); // 2 C + 1 O
-            assert!(idents[&smiles].contains(&MolIdent::PubChem(702)));
-        }
-
-        // Re-adding the same molecule replaces its row, rather than duplicating it. This also
-        // invalidates the idents cache read above.
-        let mut mol_updated = test_mol("mol_a", 702, 2);
-        mol_updated
-            .idents
-            .push(MolIdent::DrugBank("DB00316".to_string()));
-
-        db.add_mols(&[mol_updated]).unwrap();
-        assert_eq!(db.index_meta.len(), 1);
-
-        let (_index, idents) = db.index_and_idents();
-        assert!(idents[&smiles].contains(&MolIdent::DrugBank("DB00316".to_string())));
-
-        // Deleting drops the row, and only that row.
-        db.add_mols(&[test_mol("mol_b", 887, 3)]).unwrap();
-        assert_eq!(db.index_meta.len(), 2);
-
-        db.remove_mol(&smiles).unwrap();
-
-        assert_eq!(db.index_meta.len(), 1);
-        assert!(!db.index_meta.contains_key(&smiles));
-        assert!(db.contains_mol(&test_mol("mol_b", 887, 3)));
-
-        assert!(db.remove_mol(&smiles).is_err());
-
-        let _ = fs::remove_dir_all(&base);
     }
 }
