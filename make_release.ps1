@@ -6,7 +6,7 @@ $exe    = Join-Path $outDir "molchanica.exe"
 $gemmi  = "C:\Program Files\gemmi"
 $readme = "README.md"
 $cufft = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin\x64\cufft64_12.dll"
-$opendde = "install_scripts/install_opendde_venv.ps1"
+$opendde = "install_scripts/install_opendde.ps1"
 
 cargo build --release
 $zip1 = "molchanica_${version}_win.zip"

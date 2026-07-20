@@ -544,11 +544,11 @@ pub(super) fn predict_structure_from_aas(
     control: &PredictionControl,
 ) -> io::Result<MoleculePeptide> {
     let entity = OpenDdeEntity::protein("A", aas)?;
-    predict_structure_with_control(
-        &OpenDdeRequest::new("molchanica", vec![entity]),
-        ff_map,
-        control,
-    )
+
+    let aa_str: String = amino_acid_sequence(aas)?.chars().take(5).collect();
+    let name = format!("opendde_pred_{aa_str}");
+
+    predict_structure_with_control(&OpenDdeRequest::new(name, vec![entity]), ff_map, control)
 }
 
 pub(super) fn predict_structure_from_dna(
@@ -557,8 +557,12 @@ pub(super) fn predict_structure_from_dna(
     control: &PredictionControl,
 ) -> io::Result<MoleculePeptide> {
     let entity = OpenDdeEntity::dna("D", nts)?;
+
+    let nt_str: String = dna_sequence(nts)?.chars().take(5).collect();
+    let name = format!("opendde_pred_{nt_str}");
+
     predict_structure_with_control(
-        &OpenDdeRequest::new("molchanica", vec![entity]),
+        &OpenDdeRequest::new(name, vec![entity]),
         ff_map,
         control,
     )

@@ -1,32 +1,15 @@
 [CmdletBinding()]
 param(
-    [string]$PythonVersion = $(if ($env:OPENDDE_PYTHON_VERSION) { $env:OPENDDE_PYTHON_VERSION } else { "3.11" }),
+    [string]$PythonExecutable = $env:OPENDDE_PYTHON,
+    [string]$VenvDirectory = $env:OPENDDE_VENV_DIR,
     [string]$TorchBackend = $(if ($env:OPENDDE_TORCH_BACKEND) { $env:OPENDDE_TORCH_BACKEND } else { "auto" })
 )
 
-# Install OpenDDE as an isolated uv tool for Molchanica. CUDA 12.6 is selected automatically when
-# a working NVIDIA GPU and sufficiently new Windows driver are present; otherwise this uses CPU.
+# Install OpenDDE in a dedicated standard-library Python virtual environment for Molchanica.
+# CUDA 12.6 is selected automatically when a working NVIDIA GPU and sufficiently new Windows
+# driver are present; otherwise this uses CPU. No activation or PATH changes are required.
 
 $ErrorActionPreference = "Stop"
-
-function Find-Uv {
-    $command = Get-Command uv -ErrorAction SilentlyContinue
-    if ($null -ne $command) {
-        return $command.Source
-    }
-
-    $candidates = @(
-        (Join-Path $HOME ".local\bin\uv.exe"),
-        (Join-Path $HOME ".cargo\bin\uv.exe")
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            return $candidate
-        }
-    }
-
-    return $null
-}
 
 function Invoke-CheckedNative {
     param(
@@ -64,36 +47,78 @@ function Find-NvidiaSmi {
 function Install-OpenDdeBackend {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Uv,
-        [Parameter(Mandatory = $true)]
         [string]$Python,
         [Parameter(Mandatory = $true)]
         [string]$Backend
     )
 
     $package = if ($Backend -eq "cu126") { "opendde[gpu]" } else { "opendde" }
-    Write-Host "Installing $package with Python $Python and the $Backend PyTorch backend..."
-    & $Uv `
-        "tool" "install" `
-        "--force" `
-        "--python" $Python `
-        "--torch-backend" $Backend `
-        $package | Out-Host
+    $torchIndex = if ($Backend -eq "cu126") {
+        "https://download.pytorch.org/whl/cu126"
+    } else {
+        "https://download.pytorch.org/whl/cpu"
+    }
+
+    Write-Host "Installing $package with the $Backend PyTorch backend..."
+    # Match OpenDDE's currently pinned PyTorch packages while choosing their CPU/CUDA wheel index.
+    & $Python "-m" "pip" "install" `
+        "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" `
+        "--index-url" $torchIndex | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        return $false
+    }
+
+    & $Python "-m" "pip" "install" $package | Out-Host
     return $LASTEXITCODE -eq 0
 }
 
-$uv = Find-Uv
-if (-not $uv) {
-    Write-Host "uv was not found; installing it with the official Astral installer..."
-    $installer = Invoke-RestMethod -Uri "https://astral.sh/uv/install.ps1"
-    Invoke-Expression $installer
+function Test-CompatiblePython {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Executable,
+        [string[]]$PrefixArguments = @()
+    )
 
-    $uv = Find-Uv
-    if (-not $uv) {
-        throw "uv was installed, but its executable could not be located."
+    try {
+        & $Executable @PrefixArguments "-c" "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" `
+            *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
     }
 }
 
+function Find-CompatiblePython {
+    if ($PythonExecutable) {
+        if (Test-CompatiblePython $PythonExecutable) {
+            return [PSCustomObject]@{
+                Executable = $PythonExecutable
+                PrefixArguments = @()
+            }
+        }
+        throw "PythonExecutable must run Python 3.11 or newer."
+    }
+
+    $candidates = @(
+        @{ Name = "py"; PrefixArguments = @("-3") },
+        @{ Name = "python"; PrefixArguments = @() },
+        @{ Name = "python3"; PrefixArguments = @() }
+    )
+    foreach ($candidate in $candidates) {
+        $command = Get-Command $candidate.Name -ErrorAction SilentlyContinue
+        if ($null -ne $command -and
+            (Test-CompatiblePython $command.Source $candidate.PrefixArguments)) {
+            return [PSCustomObject]@{
+                Executable = $command.Source
+                PrefixArguments = $candidate.PrefixArguments
+            }
+        }
+    }
+
+    throw "Python 3.11 or newer is required to install OpenDDE."
+}
+
+$python = Find-CompatiblePython
 if ($TorchBackend -notin @("auto", "cpu", "cu126")) {
     throw "TorchBackend must be 'auto', 'cpu', or 'cu126'."
 }
@@ -126,55 +151,55 @@ if ($TorchBackend -ne "cpu") {
     }
 }
 
-$installed = Install-OpenDdeBackend $uv $PythonVersion $selectedBackend
-if ($installed -and $selectedBackend -eq "cu126") {
-    $toolRootOutput = & $uv "tool" "dir"
-    $toolRoot = ($toolRootOutput | Out-String).Trim()
-    $toolPython = Join-Path $toolRoot "opendde\Scripts\python.exe"
-    if (-not (Test-Path -LiteralPath $toolPython -PathType Leaf)) {
-        $installed = $false
-    } else {
-        & $toolPython "-c" `
-            "import torch; assert torch.cuda.is_available() and torch.version.cuda and torch.version.cuda.startswith('12.6'); torch.zeros(1, device='cuda')"
-        $installed = $LASTEXITCODE -eq 0
+if (-not $VenvDirectory) {
+    if (-not $env:LOCALAPPDATA) {
+        throw "LOCALAPPDATA is not set; provide VenvDirectory explicitly."
     }
+    $VenvDirectory = Join-Path $env:LOCALAPPDATA "molchanica\opendde-venv"
+}
+
+$versionArguments = @($python.PrefixArguments) + @("--version")
+$pythonVersion = (& $python.Executable @versionArguments 2>&1 | Out-String).Trim()
+Write-Host "Using $pythonVersion"
+Write-Host "Creating an isolated OpenDDE environment at $VenvDirectory..."
+$venvArguments = @($python.PrefixArguments) + @("-m", "venv", "--clear", $VenvDirectory)
+Invoke-CheckedNative $python.Executable @venvArguments
+
+$venvPython = Join-Path $VenvDirectory "Scripts\python.exe"
+$openDde = Join-Path $VenvDirectory "Scripts\opendde.exe"
+if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+    throw "The virtual-environment Python was not created at $venvPython."
+}
+
+Invoke-CheckedNative $venvPython "-m" "pip" "install" "--upgrade" "pip"
+
+$installed = Install-OpenDdeBackend $venvPython $selectedBackend
+if ($installed -and $selectedBackend -eq "cu126") {
+    & $venvPython "-c" `
+        "import torch; assert torch.cuda.is_available() and torch.version.cuda and torch.version.cuda.startswith('12.6'); torch.zeros(1, device='cuda')"
+    $installed = $LASTEXITCODE -eq 0
 }
 
 if (-not $installed -and $selectedBackend -eq "cu126") {
-    Write-Warning "CUDA installation or runtime verification failed; falling back to CPU."
+    Write-Warning "CUDA installation or runtime verification failed; rebuilding for CPU."
     $selectedBackend = "cpu"
-    $installed = Install-OpenDdeBackend $uv $PythonVersion "cpu"
+    Invoke-CheckedNative $python.Executable @venvArguments
+    Invoke-CheckedNative $venvPython "-m" "pip" "install" "--upgrade" "pip"
+    $installed = Install-OpenDdeBackend $venvPython "cpu"
 }
 if (-not $installed) {
     throw "Unable to install the OpenDDE $selectedBackend backend."
 }
 $TorchBackend = $selectedBackend
 
-$toolBinOutput = & $uv "tool" "dir" "--bin"
-if ($LASTEXITCODE -ne 0) {
-    throw "Unable to determine the uv tool executable directory."
-}
-$toolBin = ($toolBinOutput | Out-String).Trim()
-$openDde = Join-Path $toolBin "opendde.exe"
 if (-not (Test-Path -LiteralPath $openDde -PathType Leaf)) {
-    $openDde = Join-Path $toolBin "opendde"
+    throw "pip completed, but the OpenDDE executable was not created at $openDde."
 }
-if (-not (Test-Path -LiteralPath $openDde -PathType Leaf)) {
-    throw "uv completed, but the OpenDDE executable was not created in $toolBin."
-}
-
-# Update future shells and make the launcher available to the remainder of this script. Molchanica
-# also discovers uv's tool bin directly, so desktop launches do not rely solely on shell profiles.
-& $uv "tool" "update-shell"
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "uv could not update the shell PATH; Molchanica can still locate OpenDDE."
-}
-$env:Path = "$toolBin;$env:Path"
 
 Write-Host "`nVerifying the OpenDDE installation..."
 Invoke-CheckedNative $openDde "--version"
 Invoke-CheckedNative $openDde "doctor"
 
-Write-Host "`nOpenDDE is installed in an isolated uv environment."
+Write-Host "`nOpenDDE is installed in a dedicated Python virtual environment."
 Write-Host "Executable: $openDde"
-Write-Host "Restart Molchanica if it is currently running."
+Write-Host "No activation is required. Restart Molchanica if it is currently running."

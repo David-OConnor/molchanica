@@ -647,7 +647,6 @@ pub(in crate::ui) fn query(
                 Ok(mol) => {
                     open_lig_from_input(state, mol, scene, updates);
                     redraw.ligand = true;
-                    // reset_cam = true;
 
                     handle_success(
                         &mut state.ui,

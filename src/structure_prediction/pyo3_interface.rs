@@ -1,3 +1,5 @@
+// todo: Inop, and may not be a good approach. Consider removing.
+
 //! Optional in-process Boltz execution through an embedded Python interpreter (PyO3).
 //!
 //! This runs Boltz inside Molchanica's own process using the interpreter PyO3 links against

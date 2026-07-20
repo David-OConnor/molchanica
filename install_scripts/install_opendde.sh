@@ -1,15 +1,16 @@
 #!/usr/bin/env sh
 
-# Install OpenDDE as an isolated uv tool for Molchanica. CUDA 12.6 is selected automatically when
-# a working NVIDIA GPU and compatible Linux driver are present; otherwise this uses CPU.
+# Install OpenDDE in a dedicated standard-library Python virtual environment for Molchanica.
+# CUDA 12.6 is selected automatically when a working NVIDIA GPU and compatible Linux driver are
+# present; otherwise this uses CPU. Molchanica discovers this environment without activation.
 #
 # Optional overrides:
-#   OPENDDE_PYTHON_VERSION=3.11
+#   OPENDDE_PYTHON=/path/to/python
+#   OPENDDE_VENV_DIR=/path/to/opendde-venv
 #   OPENDDE_TORCH_BACKEND=auto|cpu|cu126
 
 set -eu
 
-PYTHON_VERSION="${OPENDDE_PYTHON_VERSION:-3.11}"
 REQUESTED_BACKEND="${OPENDDE_TORCH_BACKEND:-auto}"
 
 version_at_least() {
@@ -54,95 +55,112 @@ case "$REQUESTED_BACKEND" in
         ;;
 esac
 
-find_uv() {
-    if command -v uv >/dev/null 2>&1; then
-        command -v uv
+python_is_compatible() {
+    "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+        >/dev/null 2>&1
+}
+
+find_python() {
+    if [ -n "${OPENDDE_PYTHON:-}" ]; then
+        if [ ! -x "$OPENDDE_PYTHON" ] || ! python_is_compatible "$OPENDDE_PYTHON"; then
+            printf 'Error: OPENDDE_PYTHON must be an executable running Python 3.11 or newer.\n' >&2
+            return 1
+        fi
+        printf '%s\n' "$OPENDDE_PYTHON"
         return 0
     fi
 
-    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
-        if [ -x "$candidate" ]; then
-            printf '%s\n' "$candidate"
-            return 0
+    for name in python3.13 python3.12 python3.11 python3 python; do
+        if command -v "$name" >/dev/null 2>&1; then
+            candidate="$(command -v "$name")"
+            if python_is_compatible "$candidate"; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
         fi
     done
 
     return 1
 }
 
-UV="$(find_uv || true)"
-if [ -z "$UV" ]; then
-    printf 'uv was not found; installing it with the official Astral installer...\n'
-    if command -v curl >/dev/null 2>&1; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO- https://astral.sh/uv/install.sh | sh
-    else
-        printf 'Error: installing uv requires curl or wget.\n' >&2
-        exit 1
-    fi
-
-    UV="$(find_uv || true)"
-    if [ -z "$UV" ]; then
-        printf 'Error: uv was installed, but its executable could not be located.\n' >&2
-        exit 1
-    fi
+PYTHON="$(find_python || true)"
+if [ -z "$PYTHON" ]; then
+    printf 'Error: Python 3.11 or newer is required to install OpenDDE.\n' >&2
+    exit 1
 fi
+
+if [ -n "${OPENDDE_VENV_DIR:-}" ]; then
+    VENV_DIR="$OPENDDE_VENV_DIR"
+elif [ "$(uname -s)" = "Darwin" ]; then
+    VENV_DIR="$HOME/Library/Application Support/molchanica/opendde-venv"
+else
+    DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+    VENV_DIR="$DATA_HOME/molchanica/opendde-venv"
+fi
+
+printf 'Using %s\n' "$("$PYTHON" --version 2>&1)"
+printf 'Creating an isolated OpenDDE environment at %s...\n' "$VENV_DIR"
+"$PYTHON" -m venv --clear "$VENV_DIR"
+
+VENV_PYTHON="$VENV_DIR/bin/python"
+OPENDDE="$VENV_DIR/bin/opendde"
+if [ ! -x "$VENV_PYTHON" ]; then
+    printf 'Error: the virtual-environment Python was not created at %s.\n' "$VENV_PYTHON" >&2
+    exit 1
+fi
+
+"$VENV_PYTHON" -m pip install --upgrade pip
 
 install_backend() {
     backend="$1"
     if [ "$backend" = "cu126" ]; then
         package="opendde[gpu]"
+        torch_index="https://download.pytorch.org/whl/cu126"
     else
         package="opendde"
+        torch_index="https://download.pytorch.org/whl/cpu"
     fi
 
-    printf 'Installing %s with Python %s and the %s PyTorch backend...\n' \
-        "$package" "$PYTHON_VERSION" "$backend"
-    "$UV" tool install \
-        --force \
-        --python "$PYTHON_VERSION" \
-        --torch-backend "$backend" \
-        "$package"
+    printf 'Installing %s with the %s PyTorch backend...\n' "$package" "$backend"
+    # Match OpenDDE's currently pinned PyTorch packages while choosing their CPU/CUDA wheel index.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        "$VENV_PYTHON" -m pip install \
+            "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" || return 1
+    else
+        "$VENV_PYTHON" -m pip install \
+            "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" \
+            --index-url "$torch_index" || return 1
+    fi
+    "$VENV_PYTHON" -m pip install "$package" || return 1
 }
 
 if [ "$TORCH_BACKEND" = "cu126" ]; then
     GPU_INSTALL_OK=false
-    if install_backend "cu126"; then
-        TOOL_ROOT="$("$UV" tool dir)"
-        TOOL_PYTHON="$TOOL_ROOT/opendde/bin/python"
-        if [ -x "$TOOL_PYTHON" ] && "$TOOL_PYTHON" -c \
-            'import torch; assert torch.cuda.is_available() and torch.version.cuda and torch.version.cuda.startswith("12.6"); torch.zeros(1, device="cuda")'; then
-            GPU_INSTALL_OK=true
-        fi
+    if install_backend "cu126" && "$VENV_PYTHON" -c \
+        'import torch; assert torch.cuda.is_available() and torch.version.cuda and torch.version.cuda.startswith("12.6"); torch.zeros(1, device="cuda")'; then
+        GPU_INSTALL_OK=true
     fi
 
     if [ "$GPU_INSTALL_OK" != "true" ]; then
-        printf 'CUDA installation or runtime verification failed; falling back to CPU.\n' >&2
+        printf 'CUDA installation or runtime verification failed; rebuilding for CPU.\n' >&2
         TORCH_BACKEND="cpu"
+        "$PYTHON" -m venv --clear "$VENV_DIR"
+        "$VENV_PYTHON" -m pip install --upgrade pip
         install_backend "cpu"
     fi
 else
     install_backend "cpu"
 fi
 
-TOOL_BIN="$("$UV" tool dir --bin)"
-OPENDDE="$TOOL_BIN/opendde"
 if [ ! -x "$OPENDDE" ]; then
-    printf 'Error: uv completed, but %s was not created.\n' "$OPENDDE" >&2
+    printf 'Error: pip completed, but %s was not created.\n' "$OPENDDE" >&2
     exit 1
-fi
-
-# This makes the CLI convenient in future shells. Molchanica also discovers uv's tool bin directly,
-# so a shell-profile update failure does not prevent structure prediction from working.
-if ! "$UV" tool update-shell; then
-    printf 'Warning: uv could not update the shell PATH; Molchanica can still locate OpenDDE.\n' >&2
 fi
 
 printf '\nVerifying the OpenDDE installation...\n'
 "$OPENDDE" --version
 "$OPENDDE" doctor
 
-printf '\nOpenDDE is installed in an isolated uv environment.\n'
+printf '\nOpenDDE is installed in a dedicated Python virtual environment.\n'
 printf 'Executable: %s\n' "$OPENDDE"
-printf 'Restart Molchanica if it is currently running.\n'
+printf 'No activation is required. Restart Molchanica if it is currently running.\n'

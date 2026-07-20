@@ -44,11 +44,11 @@ fi
 
 # todo: QC if this is a good idea, e.g. messing with global python packaging.
 # todo: Find a better way?
-#read -p "Install OpenDDE from pip, to support structure prediction? [y/n] " ans
-#if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
-#  pip install opendde
-#  printf "\OpenDDE installed into your python environment.\n"
-#fi
+read -p "Install OpenDDE to a Python virtual environment, to support structure prediction? Warning: Multi-Gb. [y/n] " ans
+if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
+  ./install_opendde.sh
+  printf "\OpenDDE installed into your python environment.\n"
+fi
 
 printf "\nMoved the ${NAME_UPPER} executable and icon to ${APP_DIR}."
 printf "\n\nYou can launch ${NAME_UPPER} through the GUI (e.g., search \"${NAME_UPPER}\") and/or add it to favorites.\n"

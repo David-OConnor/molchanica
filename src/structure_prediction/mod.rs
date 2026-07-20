@@ -33,13 +33,13 @@ use na_seq::{AaIdent, AminoAcid, Nucleotide};
 
 use crate::molecules::peptide::MoleculePeptide;
 
-mod boltz2;
-#[cfg(feature = "python_for_structure_prediction")]
-mod boltz_runtime;
+// mod boltz2;
+// #[cfg(feature = "python_for_structure_prediction")]
+// mod boltz_runtime;
 mod esm_fold2;
 pub mod opendde;
-#[cfg(feature = "python_for_structure_prediction")]
-mod pyo3_interface;
+// #[cfg(feature = "python_for_structure_prediction")]
+// mod pyo3_interface;
 
 /// Whether the managed, self-provisioned Boltz environment is already installed and ready.
 ///
@@ -62,7 +62,7 @@ pub const DEFAULT_PREDICTION_PH: f32 = 7.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StructurePredictionModel {
-    Boltz2,
+    // Boltz2,
     // EsmFold2 removed until it has a dedicated application or similar; it currently
     // requires interfacing with Python directly.
     // EsmFold2,
@@ -124,7 +124,7 @@ pub(crate) fn predict_structure_from_aas_with_control(
 ) -> io::Result<MoleculePeptide> {
     control.check_cancelled()?;
     match model {
-        StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_aas(aas, ff_map),
+        // StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_aas(aas, ff_map),
         // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_aas(aas, ff_map),
         StructurePredictionModel::OpenDDE => {
             opendde::predict_structure_from_aas(aas, ff_map, control)
@@ -152,7 +152,7 @@ fn predict_structure_from_dna_with_control(
 ) -> io::Result<MoleculePeptide> {
     control.check_cancelled()?;
     match model {
-        StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_dna(nts, ff_map),
+        // StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_dna(nts, ff_map),
         // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_dna(nts, ff_map),
         StructurePredictionModel::OpenDDE => {
             opendde::predict_structure_from_dna(nts, ff_map, control)

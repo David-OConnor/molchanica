@@ -105,11 +105,11 @@ cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft
 # We use GPU for training only.
 train = ["burn/wgpu", "burn/tui", "csv"]
 
-# Embeds a Python interpreter (PyO3) so Boltz-2 can run in-process, and enables the self-provisioning
-# managed Boltz environment. `auto-initialize` starts the embedded interpreter on first use.
-# Note: building with this feature requires a libpython to link against, and the resulting binary
-# depends on a matching libpython at runtime. See src/structure_prediction/pyo3_interface.rs.
-python_for_structure_prediction = ["pyo3", "pyo3/auto-initialize"]
+### Embeds a Python interpreter (PyO3) so Boltz-2 can run in-process, and enables the self-provisioning
+### managed Boltz environment. `auto-initialize` starts the embedded interpreter on first use.
+### Note: building with this feature requires a libpython to link against, and the resulting binary
+### depends on a matching libpython at runtime. See src/structure_prediction/pyo3_interface.rs.
+#python_for_structure_prediction = ["pyo3", "pyo3/auto-initialize"]
 
 
 [profile.release]

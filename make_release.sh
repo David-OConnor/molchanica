@@ -8,7 +8,7 @@ readme="README.md"
 setup="install_scripts/setup_linux_desktop.sh"
 icon="resources/icon.png"
 cufft="/usr/local/cuda/lib64/libcufft.so.12"
-opendde="install_scripts/install_opendde_venv.sh"
+opendde="install_scripts/install_opendde.sh"
 
 export PATH=/usr/local/cuda/bin:$PATH
 

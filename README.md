@@ -32,9 +32,11 @@ left to navigate these documentation pages.
 
 Notes:
 
-- On Linux distros that use Gnome (e.g. Ubuntu), run `setup_linux_desktop.sh`, included in the zip, to create a Desktop
+- On Linux distros that use Gnome (e.g. Ubuntu), run
+  `setup_linux_desktop.sh`, included in the zip, to create a Desktop
   GUI entry. (Do not run this with `sudo`.)
-- On Windows, the first time you run the program, you may get the message *"Microsoft Defender prevented an unrecognized
+- On Windows, the first time you run the program, you may get the message *"Microsoft Defender
+  prevented an unrecognized
   app from starting"*.
   To bypass this, click *More info*, then *Run Anyway*.
 
@@ -44,12 +46,16 @@ Notes:
 
 Compile from source by [downloading and installing Rust](https://www.rust-lang.org/tools/install), then running
 `cargo build --release` from a CLI
-in the project directory. See notes in the *compiling* section below about setting up Amber parameter files,
+in the project directory. See notes in the
+*compiling* section below about setting up Amber parameter files,
 and either installing the CUDA toolkit, or disabling CUDA.
 
 ### Installing integrated third-party software.
-If you wish to use structure prediction, install OpenDDE using the included `install_opendde` script. Or install it
-on your own in a way where it is accessible on the system PATH environment variable. If you wish to open MTZ files
+
+If you wish to use structure prediction, install OpenDDE using the included
+`install_opendde` script. Or install it
+on your own in a way where it is accessible on the system PATH environment variable. Python >= 3.11 is required for OpenDDE.
+If you wish to open MTZ files
 (A type of structure prediction), install Gemmi. (Available automatically in the Linux install script). If you wish
 to use ORCA for quantum chemistry of the GROMACS MD backend, install those separately.
 
@@ -79,7 +85,8 @@ to use ORCA for quantum chemistry of the GROMACS MD backend, install those separ
 
 Launch the program. Either open a molecule using the "Open" or "Open Lig" buttons, drag the file into the program
 window,
-enter a protein identifier in the *Query databases* field, or click *I'm feeling lucky*, to load a recently-uploaded
+enter a protein identifier in the *Query databases* field, or click *I'm feeling
+lucky*, to load a recently-uploaded
 protein
 from the [RCSB PDB](https://www.rcsb.org/).
 
@@ -158,7 +165,8 @@ There are two camera control schemes, selectable using buttons in the *camera* s
 
 ### Free camera
 
-The *free camera* mode is intended to be used with a keyboard and mouse together. They operate on the perspective of
+The *free
+camera* mode is intended to be used with a keyboard and mouse together. They operate on the perspective of
 the viewer, vice the molecule. You can move and rotate and move the camera
 in 6 degrees of freedom, allowing you to easily view the molecule from any perspective.
 
@@ -167,7 +175,8 @@ in 6 degrees of freedom, allowing you to easily view the molecule from any persp
 Similar to traditional molecular viewing software. The camera arcs (or orbits) around the molecule, when holding the
 left
 mouse button and dragging. Other controls, like scroll wheel and middle mouse, operate similar to the free camera.
-If *orbit sel* is set in the GUI, the orbit center will be the selected atom or residue, vice the molecule center.
+If *orbit
+sel* is set in the GUI, the orbit center will be the selected atom or residue, vice the molecule center.
 
 ![Surface example](screenshots/surface_a.png)
 
@@ -183,7 +192,8 @@ See below for a reference.
 - Hold the **middle mouse button while dragging** to move the camera left, right, up, and down.
 - **Scroll** to move the camera forward and backwards.
 - **Scroll while holding left mouse button** to roll.
-- **Right click** to select the atom or residue under the cursor. This also selects the molecule to manipulate.
+- **Right click
+  ** to select the atom or residue under the cursor. This also selects the molecule to manipulate.
 
 #### Camera hotkeys
 
@@ -221,7 +231,8 @@ See below for a reference.
 
 - **Ctrl + scroll**: Change the fog distance. (hide distant atoms)
 
-- **Delete**: In the primary mode, close the active molecule. In the molecule editor, this deletes the selected atom or
+- **Delete
+  **: In the primary mode, close the active molecule. In the molecule editor, this deletes the selected atom or
   bond.
 
 - **Enter**: Move the camera to the selected atom, bond, or residue.
@@ -235,8 +246,10 @@ Note: The molecule editor has a different set of hot keys; see its tooltips for 
 ## Reflections and electron density
 
 Supports volumetric and isosurface views for electron density data, e.g. from Cryo-EM and X-Ray crystallography data.
-It can download this data from RCSB PDB, or load files directly. To open *2fo-fc* and *MTZ* files, we use the
-[Gemmi](https://gemmi.readthedocs.io/en/latest/install.html) program. For this to work, the `gemmi` folder
+It can download this data from RCSB PDB, or load files directly. To open *2fo-fc* and
+*MTZ* files, we use the
+[Gemmi](https://gemmi.readthedocs.io/en/latest/install.html) program. For this to work, the
+`gemmi` folder
 we include must remain co-located with the program's executable, or be on the system path. For convenience, we package
 it with the Windows release, and the linux install script optionally installs it with `apt`.
 
@@ -293,11 +306,15 @@ Molchanica supports a very limited subset of PyMol's CLI interface. Supported co
 
 ### Selection modes
 
-Using a dropdown in the UI, you can change selection mode between *Atom*, (covalent) *Bond*, and *Residue*. These are
+Using a dropdown in the UI, you can change selection mode between *Atom*, (covalent) *Bond*, and
+*Residue*. These are
 mostly self-explanatory.
-When selecting a component using *right click*, or toggling using the UI buttons or arrow keys, this changes
-what is selected, and the nature of information displayed. For example, in *Bond* mode, you can see bond length,
-elements of the atoms connected, and the expected oscillation frequency of the bond. In *Atom* mode, you can see
+When selecting a component using *right
+click*, or toggling using the UI buttons or arrow keys, this changes
+what is selected, and the nature of information displayed. For example, in
+*Bond* mode, you can see bond length,
+elements of the atoms connected, and the expected oscillation frequency of the bond. In
+*Atom* mode, you can see
 dihedral angles, the atom name as part of its residue, the atom's force field name, and its partial charge.
 
 ### MD playback
@@ -314,7 +331,8 @@ can create lipids arranged freely, as membrances, or as lipid nanoparticles (LNP
 
 ### The preferences file
 
-You may notice that this program places a *molchanica_prefs.mca* file in the same folder as the executable. This
+You may notice that this program places a
+*molchanica_prefs.mca* file in the same folder as the executable. This
 is a small binary file containing application state. It's what lets it remember the last file opened, current
 view settings etc. It will grow with the number of molecules you've opened, as it stores per-molecule
 settings. Deleting it is harmless, other than resetting these conveniences.
@@ -323,7 +341,8 @@ settings. Deleting it is harmless, other than resetting these conveniences.
 
 ### Compiling
 
-This application is written in rust, so it compiles normally using `cargo build --release`, which produces a
+This application is written in rust, so it compiles normally using
+`cargo build --release`, which produces a
 standalone executable.
 
 If you're not running on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the
@@ -334,7 +353,8 @@ If you're not running on a machine with an Nvidia GPU or without the CUDA toolki
 If compiling with GPU support, your compiling PC must have
 the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed. You must set the environment var
 `LD_LIBARARY_PATH` (Linux) or `Path` (Windows) to your CUDA bin directory, e.g.
-`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`. You may also need the build tools containing `cl.exe` or
+`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`. You may also need the build tools containing
+`cl.exe` or
 similar in the path, e.g.:
 `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64`
 
