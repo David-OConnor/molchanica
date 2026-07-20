@@ -38,7 +38,9 @@ use crate::{
         misc::section_box,
         mol_type_tools::mol_type_toolbars,
         sidebar::sidebar,
-        util::{color_egui_from_f32, handle_redraw, query, update_file_dialogs},
+        util::{
+            QUERY_ENTER_LEN_MIN, color_egui_from_f32, handle_redraw, query, update_file_dialogs,
+        },
     },
     util::{
         RedrawFlags, check_prefs_save, close_mol, handle_err, handle_scene_flags, handle_success,
@@ -945,7 +947,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 let inp = state.ui.db_input.trim().to_owned();
 
                 let mut enter_pressed = false;
-                if state.ui.db_input.len() >= 3 {
+                if state.ui.db_input.len() >= QUERY_ENTER_LEN_MIN {
                     enter_pressed =
                         edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                 }

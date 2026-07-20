@@ -70,7 +70,7 @@ const BATCH_SIZE_WRITE: usize = 2_048;
 
 // We include a collection of common small molecules with the application, so they can
 // be loaded without internet queries. This increases application size.
-pub const COMMON_MOL_DB: &[u8] = include_bytes!("../common_mol_db.parquet");
+pub const COMMON_MOL_DB: &[u8] = include_bytes!("../../common_mol_db.parquet");
 
 /// Name shown in the UI for the database embedded in the binary; it has no filename.
 pub const COMMON_MOL_DB_NAME: &str = "Common molecules (built in)";
@@ -986,12 +986,10 @@ fn reader_from_chunks<R: ChunkReader + 'static>(
 /// schema don't have it.
 fn has_cols(source: &DbSource, cols: &[&str]) -> io::Result<bool> {
     let schema = match source {
-        DbSource::File(path) => {
-            ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)
-                .map_err(parquet_err_to_io)?
-                .schema()
-                .clone()
-        }
+        DbSource::File(path) => ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)
+            .map_err(parquet_err_to_io)?
+            .schema()
+            .clone(),
         DbSource::Embedded(bytes) => {
             ParquetRecordBatchReaderBuilder::try_new(Bytes::from_static(bytes))
                 .map_err(parquet_err_to_io)?

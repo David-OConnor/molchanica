@@ -451,7 +451,11 @@ fn db_summary_table(
 ) -> Option<RowAction> {
     let index_meta = &db.index_meta;
 
+    // Said explicitly rather than drawing nothing: an empty built-in DB means the parquet file
+    // embedded at build time had no rows, which is otherwise indistinguishable from a UI bug.
     if index_meta.is_empty() {
+        ui.add_space(ROW_SPACING);
+        label!(ui, "This database contains no molecules.", Color32::GRAY);
         return None;
     }
 

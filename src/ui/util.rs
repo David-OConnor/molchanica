@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fs::File, io, io::Write, path::PathBuf, slice};
 
 use bio_apis::pubchem::find_cids_from_search;
-use egui::{Color32, Ui};
+use egui::{Color32, Response, RichText, Ui};
 use graphics::{EngineUpdates, FWD_VEC, Scene};
 
 use crate::{
@@ -16,14 +16,14 @@ use crate::{
     },
     gromacs,
     md::viewer,
-    mol_db::ParquetMolDb,
+    mol_db::{COMMON_MOL_DB_NAME, ParquetMolDb},
     mol_editor,
     molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     render::{Color, set_flashlight, set_static_light},
     screening::load_mol_batch,
     smiles::is_smiles,
     state::{DbSel, OperatingMode, State},
-    ui::{COLOR_ACTION, set_window_title},
+    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
 };
 
@@ -424,9 +424,29 @@ pub fn color_egui_from_f32(c: Color) -> Color32 {
 /// single row, so a long list of them would push the remote-lookup buttons off screen.
 const COMMON_DB_RESULTS_MAX: usize = 4;
 
+/// Shortest query the Enter key acts on; below this it's ignored, so a one- or two-character input
+/// isn't fired off at a database. The caller applies this when deciding whether Enter was pressed;
+/// `query` applies it again to decide which button to highlight as the Enter target.
+pub(in crate::ui) const QUERY_ENTER_LEN_MIN: usize = 3;
+
+/// What the built-in database made of a query; see `query_common_db`.
+enum CommonDbOutcome {
+    /// A molecule was loaded from it. The caller must not also run a remote lookup.
+    Loaded,
+    /// Matches were shown but none chosen yet. Enter belongs to the top one, so the remote lookups
+    /// below are reachable only by clicking their buttons.
+    Matched,
+    /// Nothing matched; the remote lookups own this query, including its Enter key.
+    NoMatch,
+}
+
 /// Search the built-in molecule database (`State::mol_db`) for the query text, matching on CID,
-/// SMILES, or PubChem title, and draw a load button for each match. Does nothing if this build has
-/// no embedded database.
+/// SMILES, or PubChem title, and draw a load button for each match. The top match is highlighted:
+/// it's what Enter will load.
+///
+/// Enter loads the best match, which is why this runs ahead of the remote lookups in `query`: a
+/// molecule we already have is always preferable to a network round trip. `ParquetMolDb::search`
+/// ranks exact CID and title matches first.
 fn query_common_db(
     state: &mut State,
     scene: &mut Scene,
@@ -434,13 +454,16 @@ fn query_common_db(
     updates: &mut EngineUpdates,
     ui: &mut Ui,
     inp: &str,
-) {
+    enter_pressed: bool,
+    // Whether Enter acts on this query at all; only affects which button is highlighted.
+    enter_live: bool,
+) -> CommonDbOutcome {
     let Some(db) = &state.mol_db else {
-        return;
+        return CommonDbOutcome::NoMatch;
     };
 
     // Gathered up front: loading borrows `state` mutably, and the search borrows the DB inside it.
-    // (SMILES key, button label.)
+    // (SMILES key, display name.)
     let hits: Vec<(String, String)> = db
         .search(inp, COMMON_DB_RESULTS_MAX)
         .iter()
@@ -453,30 +476,47 @@ fn query_common_db(
         })
         .collect();
 
+    if hits.is_empty() {
+        return CommonDbOutcome::NoMatch;
+    }
+
     let mut to_load = None;
 
-    for (smiles, name) in &hits {
+    for (i, (smiles, name)) in hits.iter().enumerate() {
+        // The head is the best match, and so the one Enter loads; highlight it to show that.
+        let color = if i == 0 && enter_live {
+            COLOR_HIGHLIGHT
+        } else {
+            COLOR_ACTION
+        };
+
         if button!(
             ui,
             name,
-            COLOR_ACTION,
-            "Open this molecule from the database built into the application."
+            color,
+            "Open this molecule from the database built into the application. No internet \
+             connection is used."
         )
         .clicked()
         {
-            to_load = Some(smiles.clone());
+            to_load = Some((smiles.clone(), name.clone()));
         }
     }
 
-    let Some(smiles) = to_load else {
-        return;
+    // Ranked best-first, so the head is the best match.
+    if to_load.is_none() && enter_pressed {
+        to_load = Some(hits[0].clone());
+    }
+
+    let Some((smiles, name)) = to_load else {
+        return CommonDbOutcome::Matched;
     };
 
     // Re-borrowed here rather than reused from above: `load_mol` needs the DB, and opening the
     // molecule needs `state`.
     let mol = {
         let Some(db) = &state.mol_db else {
-            return;
+            return CommonDbOutcome::Matched;
         };
 
         match db.load_mol(&smiles) {
@@ -493,13 +533,31 @@ fn query_common_db(
                     &mut state.ui,
                     format!("Error loading {smiles} from the built-in database: {e}"),
                 );
-                return;
+                return CommonDbOutcome::Matched;
             }
         }
     };
 
     open_lig_from_input(state, mol, scene, updates);
     redraw.ligand = true;
+
+    handle_success(
+        &mut state.ui,
+        format!("Loaded {name} ({smiles}) from {COMMON_MOL_DB_NAME}; no network query"),
+    );
+
+    CommonDbOutcome::Loaded
+}
+
+/// Draws one of the query bar's remote-lookup buttons, highlighting it if Enter would activate it.
+/// Only one button in the bar is ever the Enter target.
+fn query_btn(ui: &mut Ui, text: &str, is_enter_target: bool) -> Response {
+    let text = RichText::new(text);
+
+    ui.button(match is_enter_target {
+        true => text.color(COLOR_HIGHLIGHT),
+        false => text,
+    })
 }
 
 /// Handles a general query, which could be a name, identifier etc. Attempts to query
@@ -522,12 +580,34 @@ pub(in crate::ui) fn query(
     let inp_l = inp.to_ascii_lowercase();
 
     // Molecules we ship with the application. Checked ahead of the remote databases below, since
-    // these load instantly and without an internet connection. Drawn as buttons rather than
-    // claiming Enter, so the remote lookups below keep working exactly as before.
-    query_common_db(state, scene, redraw, updates, ui, inp);
+    // these load instantly and without an internet connection, and Enter picks the best local match
+    // over any of them. Matches are still drawn as buttons, so a remote lookup stays one click away.
+    // Whether Enter does anything at all for this query; a shorter one it ignores. Nothing is
+    // highlighted as the Enter target when it isn't one.
+    let enter_live = inp.len() >= QUERY_ENTER_LEN_MIN;
+
+    let common = query_common_db(
+        state,
+        scene,
+        redraw,
+        updates,
+        ui,
+        inp,
+        enter_pressed,
+        enter_live,
+    );
+
+    // Whether one of the remote buttons below is what Enter activates: it is, unless the built-in
+    // DB matched and claimed the key. Used to highlight that button.
+    let enter_tgt = match common {
+        CommonDbOutcome::Loaded => return,
+        CommonDbOutcome::Matched => false,
+        CommonDbOutcome::NoMatch => enter_live,
+    };
 
     if inp.len() == 4 || inp_l.starts_with("pdb_") {
-        let button_clicked = ui.button("Load RCSB").clicked();
+        // Enter only acts on a bare 4-character ident here, so a `pdb_`-prefixed one isn't a target.
+        let button_clicked = query_btn(ui, "Load RCSB", enter_tgt && inp.len() == 4).clicked();
         if (button_clicked || enter_pressed) && inp.len() == 4 {
             let ident = inp_l.clone();
 
@@ -548,7 +628,7 @@ pub(in crate::ui) fn query(
     }
 
     if inp.len() == 3 {
-        let button_clicked = ui.button("Load Geostd").clicked();
+        let button_clicked = query_btn(ui, "Load Geostd", enter_tgt).clicked();
 
         if button_clicked || enter_pressed {
             state.load_geostd_mol_data(&inp_l, true, true, updates, scene);
@@ -560,7 +640,7 @@ pub(in crate::ui) fn query(
     }
 
     if inp.len() > 4 && inp_l.starts_with("db") {
-        let button_clicked = ui.button("Load DrugBank").clicked();
+        let button_clicked = query_btn(ui, "Load DrugBank", enter_tgt).clicked();
 
         if button_clicked || enter_pressed {
             match load_sdf_drugbank(&inp_l) {
@@ -568,6 +648,11 @@ pub(in crate::ui) fn query(
                     open_lig_from_input(state, mol, scene, updates);
                     redraw.ligand = true;
                     // reset_cam = true;
+
+                    handle_success(
+                        &mut state.ui,
+                        format!("Loaded {inp_l} from DrugBank (over the internet)"),
+                    );
                 }
                 Err(e) => {
                     let msg = format!("Error loading SDF file: {e:?}");
@@ -581,12 +666,17 @@ pub(in crate::ui) fn query(
 
     // PubChem CID.
     if let Ok(cid) = state.ui.db_input.parse::<u32>() {
-        if ui.button("Load PubChem").clicked() || enter_pressed {
+        if query_btn(ui, "Load PubChem", enter_tgt).clicked() || enter_pressed {
             match load_sdf_pubchem(cid) {
                 Ok(mol) => {
                     open_lig_from_input(state, mol, scene, updates);
                     redraw.ligand = true;
                     // reset_cam = true;
+
+                    handle_success(
+                        &mut state.ui,
+                        format!("Loaded CID {cid} from PubChem (over the internet)"),
+                    );
                 }
                 Err(e) => {
                     let msg = format!("Error loading SDF file: {e:?}");
@@ -600,7 +690,7 @@ pub(in crate::ui) fn query(
 
     // I believe this is cheap enough to run here (continuously)
     if is_smiles(inp) {
-        let button_clicked = ui.button("Load from SMILES").clicked();
+        let button_clicked = query_btn(ui, "Load from SMILES", enter_tgt).clicked();
         // Attempt ot infer if this is SMILES.
         if enter_pressed || button_clicked {
             match MoleculeCommon::from_smiles(inp) {
@@ -617,6 +707,11 @@ pub(in crate::ui) fn query(
 
                     open_lig_from_input(state, mol, scene, updates);
                     redraw.ligand = true;
+
+                    handle_success(
+                        &mut state.ui,
+                        String::from("Built this molecule from the SMILES entered; no database"),
+                    );
                 }
                 Err(e) => {
                     let msg = format!("Error loading a molecule from SMILES: {e:?}");
@@ -629,7 +724,7 @@ pub(in crate::ui) fn query(
 
     // PubChem name search.
     if inp.len() >= 5 && !inp_l.starts_with("pdb_") && !inp_l.starts_with("db") {
-        let button_clicked = ui.button("Search PubChem").clicked();
+        let button_clicked = query_btn(ui, "Search PubChem", enter_tgt).clicked();
         if button_clicked || enter_pressed {
             let cids = find_cids_from_search(inp, false);
 
@@ -651,7 +746,8 @@ pub(in crate::ui) fn query(
                                 handle_success(
                                     &mut state.ui,
                                     format!(
-                                        "Found the following Pubchem CIDs: {cids_str}. Loaded {}",
+                                        "Found the following Pubchem CIDs: {cids_str}. Loaded {} \
+                                         from PubChem (over the internet)",
                                         c[0]
                                     ),
                                 );
