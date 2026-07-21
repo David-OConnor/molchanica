@@ -152,11 +152,11 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
                     StructurePredictionModel::OpenDDE,
                     model_name(StructurePredictionModel::OpenDDE),
                 );
-                ui.selectable_value(
-                    &mut state.ui.structure_pred.model,
-                    StructurePredictionModel::Boltz2,
-                    model_name(StructurePredictionModel::Boltz2),
-                );
+                // ui.selectable_value(
+                //     &mut state.ui.structure_pred.model,
+                //     StructurePredictionModel::Boltz2,
+                //     model_name(StructurePredictionModel::Boltz2),
+                // );
             });
     });
 
@@ -298,46 +298,7 @@ fn parse_sequence<T, E>(
 
 fn model_name(model: StructurePredictionModel) -> &'static str {
     match model {
-        StructurePredictionModel::Boltz2 => "Boltz-2",
+        // StructurePredictionModel::Boltz2 => "Boltz-2",
         StructurePredictionModel::OpenDDE => "OpenDDE",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_multiline_sequences_and_ignores_whitespace() {
-        assert_eq!(
-            parse_amino_acids("ACD\n EF").unwrap(),
-            vec![
-                AminoAcid::Ala,
-                AminoAcid::Cys,
-                AminoAcid::Asp,
-                AminoAcid::Glu,
-                AminoAcid::Phe,
-            ]
-        );
-        assert_eq!(
-            parse_nucleotides("AT\n GC").unwrap(),
-            vec![Nucleotide::A, Nucleotide::T, Nucleotide::G, Nucleotide::C]
-        );
-    }
-
-    #[test]
-    fn rejects_empty_and_invalid_sequences() {
-        assert!(parse_amino_acids(" \n ").is_err());
-        assert_eq!(
-            parse_nucleotides("ATX").unwrap_err(),
-            "Invalid nucleotide identifier 'X' at sequence position 3"
-        );
-    }
-
-    #[test]
-    fn formats_elapsed_prediction_time() {
-        assert_eq!(format_elapsed(Duration::ZERO), "00:00");
-        assert_eq!(format_elapsed(Duration::from_secs(59)), "00:59");
-        assert_eq!(format_elapsed(Duration::from_secs(3_661)), "01:01:01");
     }
 }

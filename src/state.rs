@@ -52,9 +52,8 @@ use crate::{
 pub struct State {
     pub ui: StateUi,
     pub volatile: StateVolatile,
-    pub cif_pdb_raw: Option<String>,
-    // todo: Allow multiple?
-    pub peptide: Option<MoleculePeptide>,
+    pub cif_pdb_raw: HashMap<String, String>,
+    pub peptide: Vec<MoleculePeptide>,
     pub ligands: Vec<MoleculeSmall>,
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
     pub lipids: Vec<MoleculeLipid>,
@@ -74,7 +73,6 @@ pub struct State {
     /// This is None if Computation Device is CPU.
     #[cfg(feature = "cuda")]
     pub kernel_reflections: Option<CudaFunction>,
-    // pub mol_dynamics: Option<MdState>,
     // todo: Combine these params in a single struct.
     pub ff_param_set: FfParamSet,
     pub mol_specific_params: HashMap<String, ForceFieldParams>,
@@ -89,6 +87,10 @@ pub struct State {
     /// they're available without an internet query. Read-only; unlike `StateVolatile::parquet_dbs`,
     /// it can't be added to or deleted from. `None` if this build has no database embedded, or it
     /// failed to load.
+    ///
+    /// We use [HMDB (Human Metabolome Database)](hmdb.ca/downloads) for this; it's provided as a single
+    /// SDF. This isn't source controlled. To build it, download this as a single SDF file. Create a DB in
+    /// the GUI. Add this molecule to the DB. Name/rename the file `common_mol_db.parquet`.
     pub mol_db: Option<ParquetMolDb>,
 }
 
@@ -198,7 +200,7 @@ impl State {
 
     pub fn get_mol(&self, mol_type: MolType, i: usize) -> Option<MolGenericRef<'_>> {
         match mol_type {
-            MolType::Peptide => self.peptide.as_ref().map(MolGenericRef::Peptide),
+            MolType::Peptide => self.get_peptide(i).map(MolGenericRef::Peptide),
             MolType::Ligand => self.get_small(i).map(MolGenericRef::Small),
             MolType::NucleicAcid => self.get_nucleic_acid(i).map(MolGenericRef::NucleicAcid),
             MolType::Lipid => self.get_lipid(i).map(MolGenericRef::Lipid),
@@ -209,7 +211,7 @@ impl State {
 
     pub fn get_mol_mut(&mut self, mol_type: MolType, i: usize) -> Option<MolGenericRefMut<'_>> {
         match mol_type {
-            MolType::Peptide => None,
+            MolType::Peptide => self.get_peptide_mut(i).map(MolGenericRefMut::Peptide),
             MolType::Ligand => self.get_small_mut(i).map(MolGenericRefMut::Small),
             MolType::NucleicAcid => self
                 .get_nucleic_acid_mut(i)
@@ -220,6 +222,37 @@ impl State {
         }
     }
 
+    pub fn get_peptide(&self, i: usize) -> Option<&MoleculePeptide> {
+        self.peptide.get(i)
+    }
+
+    pub fn get_peptide_mut(&mut self, i: usize) -> Option<&mut MoleculePeptide> {
+        self.peptide.get_mut(i)
+    }
+
+    /// Returns the active peptide index. When another molecule type is active, peptide-wide tools
+    /// continue to target the most recently active peptide, preserving the old single-peptide flow.
+    pub fn peptide_for_tools_i(&self) -> Option<usize> {
+        if let Some((MolType::Peptide, i)) = self.volatile.active_mol
+            && i < self.peptide.len()
+        {
+            return Some(i);
+        }
+        self.volatile
+            .active_peptide
+            .filter(|i| *i < self.peptide.len())
+            .or_else(|| (!self.peptide.is_empty()).then_some(0))
+    }
+
+    pub fn peptide_for_tools(&self) -> Option<&MoleculePeptide> {
+        self.peptide_for_tools_i().and_then(|i| self.get_peptide(i))
+    }
+
+    /// Mutable counterpart to [`Self::peptide_for_tools`].
+    pub fn peptide_for_tools_mut(&mut self) -> Option<&mut MoleculePeptide> {
+        let i = self.peptide_for_tools_i()?;
+        self.get_peptide_mut(i)
+    }
     pub fn get_small(&self, i: usize) -> Option<&MoleculeSmall> {
         if i < self.ligands.len() {
             Some(&self.ligands[i])
@@ -357,6 +390,8 @@ pub struct StateVolatile {
     pub aa_seq_text: String,
     pub flags: SceneFlags,
     pub active_mol: Option<(MolType, usize)>,
+    /// Most recently active peptide, retained while another molecule type is active.
+    pub active_peptide: Option<usize>,
     pub mol_manip: MolManip,
     /// For restoring after temprarily disabling mouse look.
     pub control_scheme_prev: ControlScheme,

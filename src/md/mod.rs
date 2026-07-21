@@ -184,6 +184,9 @@ pub fn filter_peptide_atoms(
             let pass = if let Some(thresh) = near_lig_thresh {
                 let mut closest_dist = f64::MAX;
                 for lig in mols_non_pep {
+                    if lig.0 == FfMolType::Peptide {
+                        continue;
+                    }
                     for p in &lig.1.atom_posits {
                         let dist = (*p - pep.atom_posits[i]).magnitude();
                         if dist < closest_dist {
@@ -197,8 +200,7 @@ pub fn filter_peptide_atoms(
             };
 
             if pass {
-                // The initial 0 is for the peptide mol number; we may support multiple
-                // peptides in the future.
+                // The caller remaps this local peptide index when combining multiple peptides.
                 set.insert((0, i));
                 Some(a.to_generic())
             } else {
@@ -1039,10 +1041,10 @@ pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamErro
 pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, usize)> {
     let mut res = Vec::new();
 
-    if let Some(p) = &state.peptide
-        && let Some(copies) = p.common.selected_for_md
-    {
-        res.push((FfMolType::Peptide, &p.common, copies.max(1)));
+    for p in &state.peptide {
+        if let Some(copies) = p.common.selected_for_md {
+            res.push((FfMolType::Peptide, &p.common, copies.max(1)));
+        }
     }
 
     for m in &state.ligands {
@@ -1081,6 +1083,7 @@ pub(crate) fn setup_mols_dyn(
     let mut res = Vec::new();
 
     let mut pep_atom_set = HashSet::new();
+    let mut peptide_i = 0;
     for (ff_mol_type, mol, copies) in mols {
         if mol.selected_for_md.is_none() {
             continue;
@@ -1099,7 +1102,8 @@ pub(crate) fn setup_mols_dyn(
                 atoms.len(),
                 pep_set.len()
             );
-            pep_atom_set = pep_set;
+            pep_atom_set.extend(pep_set.into_iter().map(|(_, atom_i)| (peptide_i, atom_i)));
+            peptide_i += 1;
 
             let bonds = create_bonds(&atoms);
 
@@ -1197,10 +1201,11 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
         return;
     }
 
-    let center = match &state.peptide {
-        Some(m) => m.center,
-        None => Vec3::new(0., 0., 0.),
-    };
+    let center = state
+        .peptide_for_tools_i()
+        .and_then(|i| state.peptide.get(i))
+        .map(|mol| mol.center)
+        .unwrap_or_else(Vec3::new_zero);
     // todo: Set a loading indicator, and trigger the build next GUI frame.
     move_cam_to_active_mol(state, scene, center, updates);
 

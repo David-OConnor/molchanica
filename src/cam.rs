@@ -149,9 +149,10 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
         // (every 20th carbon) so large proteins don't stall the update. This produces good-enough results,
         // and is faster. We handle peptides as a special case, as they're likely to be much larger than
         // small molecules. todo: Consider this for lipids and NAs etc A/R.
-        if let Some(pep) = &state.peptide
-            && pep.common.visible
-        {
+        for pep in &state.peptide {
+            if !pep.common.visible {
+                continue;
+            }
             let mut pep_nearest = f32::INFINITY;
             let mut pep_farthest = f32::NEG_INFINITY;
 
@@ -356,7 +357,10 @@ pub fn reset_camera(
         size = 60.;
     }
 
-    let mut center = if let Some(mol) = &state.peptide {
+    let mut center = if let Some(mol) = state
+        .peptide_for_tools_i()
+        .and_then(|i| state.peptide.get(i))
+    {
         // We cache center and size, due to the potential large number of molecules.
         let center = mol.center.into();
         size = mol.size;
@@ -442,7 +446,8 @@ pub fn reset_camera(
 /// is an active molecule, move the camera to that.
 pub fn move_cam_to_sel(
     state_ui: &mut StateUi,
-    mol_: &Option<MoleculePeptide>,
+    peptides: &[MoleculePeptide],
+    peptide_i: Option<usize>,
     ligs: &[MoleculeSmall],
     nucleic_acids: &[MoleculeNucleicAcid],
     lipids: &[MoleculeLipid],
@@ -454,7 +459,10 @@ pub fn move_cam_to_sel(
 
     match &state_ui.selection {
         Selection::AtomPeptide(_i_atom) => {
-            let Some(mol) = mol_ else {
+            let Some(mol) = peptide_i
+                .and_then(|i| peptides.get(i))
+                .or_else(|| peptides.first())
+            else {
                 return;
             };
             let atom_sel = mol.get_sel_atom(&state_ui.selection);

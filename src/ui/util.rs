@@ -265,7 +265,10 @@ pub fn handle_redraw(
     if redraw.peptide {
         draw_peptide(state, scene, updates);
 
-        if let Some(mol) = &state.peptide {
+        if let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
+        {
             set_window_title(&mol.common.ident, scene);
         }
 
@@ -340,11 +343,20 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene, updates: &mut Engin
         }
     }
 
-    if state.peptide.is_some() {
+    if !state.peptide.is_empty() {
         set_static_light(
             scene,
-            state.peptide.as_ref().unwrap().center.into(),
-            state.peptide.as_ref().unwrap().size,
+            state
+                .peptide_for_tools_i()
+                .and_then(|i| state.peptide.get(i))
+                .unwrap()
+                .center
+                .into(),
+            state
+                .peptide_for_tools_i()
+                .and_then(|i| state.peptide.get(i))
+                .unwrap()
+                .size,
         );
     } else if !state.ligands.is_empty() {
         let lig = &state.ligands[0];

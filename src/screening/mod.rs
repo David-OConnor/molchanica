@@ -158,16 +158,20 @@ pub fn load_mol_batch(files: &[PathBuf]) -> io::Result<(Vec<MoleculeSmall>, usiz
             None => continue,
         };
 
+        // An SDF file may hold any number of molecules, delimited by `$$$$`.
         // Use a closure so that `?` inside converts errors uniformly to io::Error.
-        let mol_result: io::Result<MoleculeSmall> = (|| {
+        let mols_result: io::Result<Vec<MoleculeSmall>> = (|| {
             Ok(match ext.as_str() {
-                "sdf" => Sdf::load(path)?.try_into()?,
-                "mol2" => Mol2::load(path)?.try_into()?,
+                "sdf" => Sdf::load_multi(path)?
+                    .into_iter()
+                    .map(MoleculeSmall::try_from)
+                    .collect::<io::Result<Vec<_>>>()?,
+                "mol2" => vec![Mol2::load(path)?.try_into()?],
                 _ => unreachable!(),
             })
         })();
 
-        let mut mol = match mol_result {
+        let mols = match mols_result {
             Ok(m) => m,
             Err(e) => {
                 eprintln!(
@@ -178,16 +182,18 @@ pub fn load_mol_batch(files: &[PathBuf]) -> io::Result<(Vec<MoleculeSmall>, usiz
             }
         };
 
-        mol.common.update_path(path);
-        mol.update_characterization();
-        atoms_loaded += mol.common.atoms.len() as u32;
-        result.push(mol);
+        for mut mol in mols {
+            mol.common.update_path(path);
+            mol.update_characterization();
+            atoms_loaded += mol.common.atoms.len() as u32;
+            result.push(mol);
 
-        if result.len().is_multiple_of(LOAD_STATUS_RATIO) {
-            println!(
-                "Loading progress: {} mols, {atoms_loaded} atoms",
-                result.len()
-            );
+            if result.len().is_multiple_of(LOAD_STATUS_RATIO) {
+                println!(
+                    "Loading progress: {} mols, {atoms_loaded} atoms",
+                    result.len()
+                );
+            }
         }
     }
 

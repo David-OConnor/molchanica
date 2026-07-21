@@ -133,7 +133,7 @@ pub fn find_sel_from_cursor_ray(
     items_na_along_ray: &[(usize, usize)],
     items_lipid_along_ray: &[(usize, usize)],
     items_pocket_along_ray: &[(usize, usize)],
-    atoms_pep: &[Atom],
+    atoms_pep: &[Vec<Atom>],
     // ress: &[Residue],
     atoms_lig: &[Vec<Atom>],
     atoms_na: &[Vec<Atom>],
@@ -141,23 +141,23 @@ pub fn find_sel_from_cursor_ray(
     atoms_pocket: &[Vec<Atom>],
     ray: &(Vec3F32, Vec3F32),
     ui: &StateUi,
-    chains: &[Chain],
+    chains: &[Vec<Chain>],
     // These aren't required if not in bond mode.
-    bonds_pep: &[Bond],
+    bonds_pep: &[Vec<Bond>],
     bonds_lig: &[Vec<Bond>],
     bonds_na: &[Vec<Bond>],
     bonds_lipid: &[Vec<Bond>],
     bonds_pocket: &[Vec<Bond>],
     bond_mode: bool,
     shift_held: bool,
-) -> (Selection, f32) {
+) -> (Selection, f32, Option<(MolType, usize)>) {
     if items_pep_along_ray.is_empty()
         && items_lig_along_ray.is_empty()
         && items_na_along_ray.is_empty()
         && items_lipid_along_ray.is_empty()
         && items_pocket_along_ray.is_empty()
     {
-        return (Selection::None, f32::INFINITY);
+        return (Selection::None, f32::INFINITY, None);
     }
 
     const INIT_DIST: f32 = f32::INFINITY;
@@ -173,9 +173,26 @@ pub fn find_sel_from_cursor_ray(
     let mut near_dist = INIT_DIST;
 
     for (i_mol, i_atom) in items_pep_along_ray {
+        let (Some(atoms_this), Some(bonds_this), Some(chains_this)) = (
+            atoms_pep.get(*i_mol),
+            bonds_pep.get(*i_mol),
+            chains.get(*i_mol),
+        ) else {
+            continue;
+        };
+        let chain_atom_i = if bond_mode {
+            let Some(bond) = bonds_this.get(*i_atom) else {
+                continue;
+            };
+            bond.atom_0
+        } else {
+            *i_atom
+        };
         let chain_hidden = {
-            let chains_this_atom: Vec<&Chain> =
-                chains.iter().filter(|c| c.atoms.contains(i_atom)).collect();
+            let chains_this_atom: Vec<&Chain> = chains_this
+                .iter()
+                .filter(|c| c.atoms.contains(&chain_atom_i))
+                .collect();
 
             let mut hidden = false;
             for chain in &chains_this_atom {
@@ -193,16 +210,16 @@ pub fn find_sel_from_cursor_ray(
 
         // In bond mode `i_atom` is a bond index; in atom mode it's an atom index.
         let atom = if bond_mode {
-            if *i_atom >= bonds_pep.len() {
+            if *i_atom >= bonds_this.len() {
                 continue;
             }
-            &atoms_pep[bonds_pep[*i_atom].atom_0]
+            &atoms_this[bonds_this[*i_atom].atom_0]
         } else {
-            if *i_atom >= atoms_pep.len() {
-                eprintln!("Error: atom i {i_atom} out of bounds: {}", atoms_pep.len());
+            if *i_atom >= atoms_this.len() {
+                eprintln!("Error: atom i {i_atom} out of bounds: {}", atoms_this.len());
                 continue;
             }
-            &atoms_pep[*i_atom]
+            &atoms_this[*i_atom]
         };
 
         if (ui.visibility.hide_sidechains || matches!(ui.mol_view_peptide, MoleculeView::Backbone))
@@ -240,9 +257,9 @@ pub fn find_sel_from_cursor_ray(
         }
 
         let posit: Vec3F32 = if bond_mode {
-            let bond = &bonds_pep[*i_atom];
-            let atom_0 = &atoms_pep[bond.atom_0];
-            let atom_1 = &atoms_pep[bond.atom_1];
+            let bond = &bonds_this[*i_atom];
+            let atom_0 = &atoms_this[bond.atom_0];
+            let atom_1 = &atoms_this[bond.atom_1];
 
             if ui.visibility.hide_hydrogen
                 && (atom_0.element == Hydrogen || atom_1.element == Hydrogen)
@@ -252,7 +269,7 @@ pub fn find_sel_from_cursor_ray(
 
             ((atom_0.posit + atom_1.posit) / 2.).into()
         } else {
-            let atom = &atoms_pep[*i_atom];
+            let atom = &atoms_this[*i_atom];
 
             if ui.visibility.hide_hydrogen && atom.element == Hydrogen {
                 continue;
@@ -339,7 +356,7 @@ pub fn find_sel_from_cursor_ray(
     // This is equivalent to our empty check above, but catches the case of the atom count being
     // empty due to hidden chains.
     if near_dist == INIT_DIST {
-        return (Selection::None, f32::INFINITY);
+        return (Selection::None, f32::INFINITY, None);
     }
 
     let indices = nearest.indices();
@@ -475,7 +492,7 @@ pub fn find_sel_from_cursor_ray(
         }
     };
 
-    (sel, near_dist)
+    (sel, near_dist, Some((nearest.mol_type, nearest.mol_i)))
 }
 
 /// Helper
@@ -532,33 +549,6 @@ fn points_along_ray_atom(
                 Some(atom.element),
             );
         }
-    }
-
-    result
-}
-
-/// Special version, as peptides are currently only one molecule.
-fn points_along_ray_atom_peptide(
-    ray: (Vec3F32, Vec3F32),
-    atoms: &[Atom],
-    dist_thresh: f32,
-    // Each tuple is (mol i, atom i in that mol)
-) -> Vec<(usize, usize)> {
-    let mut result = Vec::new();
-
-    let ray_dir = (ray.1 - ray.0).to_normalized();
-
-    for (i, atom) in atoms.iter().enumerate() {
-        points_along_ray_inner(
-            &mut result,
-            &ray,
-            ray_dir,
-            dist_thresh,
-            0,
-            i,
-            atom.posit.into(),
-            Some(atom.element),
-        );
     }
 
     result
@@ -626,87 +616,6 @@ fn nearest_in_group(
     }
 }
 
-#[allow(clippy::type_complexity)]
-/// Used for cursor selection. Returns (atom indices prot, atom indices lig)
-pub fn _points_along_ray_bond_(
-    ray: (Vec3F32, Vec3F32),
-    bonds_peptide: &[Bond],
-    bonds_lig: &[Vec<Bond>],
-    bonds_na: &[Vec<Bond>],
-    bonds_lipid: &[Vec<Bond>],
-    bonds_pocket: &[Vec<Bond>],
-    // We need atoms to get positions
-    atoms_peptide: &[Atom],
-    atoms_lig: &[Vec<Atom>],
-    atoms_na: &[Vec<Atom>],
-    atoms_lipid: &[Vec<Atom>],
-    atoms_pocket: &[Vec<Atom>],
-    dist_thresh: f32,
-    // Each tuple is (mol i, bondi in that mol)
-) -> (
-    Vec<(usize, usize)>,
-    Vec<(usize, usize)>,
-    Vec<(usize, usize)>,
-    Vec<(usize, usize)>,
-    Vec<(usize, usize)>,
-) {
-    let mut result_prot = Vec::new();
-    let mut result_lig = Vec::new();
-    let mut result_na = Vec::new();
-    let mut result_lipid = Vec::new();
-    let mut result_pocket = Vec::new();
-
-    let ray_dir = (ray.1 - ray.0).to_normalized();
-
-    for (i, bond) in bonds_peptide.iter().enumerate() {
-        let posit = (atoms_peptide[bond.atom_0].posit + atoms_peptide[bond.atom_1].posit) / 2.;
-        points_along_ray_inner(
-            &mut result_prot,
-            &ray,
-            ray_dir,
-            dist_thresh,
-            0,
-            i,
-            posit.into(),
-            None,
-        );
-    }
-
-    for (result, atoms_list, bonds_list) in [
-        (&mut result_lig, &atoms_lig, &bonds_lig),
-        (&mut result_na, &atoms_na, &bonds_na),
-        (&mut result_lipid, &atoms_lipid, &bonds_lipid),
-        (&mut result_pocket, &atoms_pocket, &bonds_pocket),
-    ] {
-        for (i_mol, bonds) in bonds_list.iter().enumerate() {
-            for (i, bond) in bonds.iter().enumerate() {
-                let a0 = atoms_list[i_mol][bond.atom_0].posit;
-                let a1 = atoms_list[i_mol][bond.atom_1].posit;
-                let posit = (a0 + a1) / 2.0;
-
-                points_along_ray_inner(
-                    result,
-                    &ray,
-                    ray_dir,
-                    dist_thresh,
-                    i_mol,
-                    i,
-                    posit.into(),
-                    None,
-                );
-            }
-        }
-    }
-
-    (
-        result_prot,
-        result_lig,
-        result_na,
-        result_lipid,
-        result_pocket,
-    )
-}
-
 /// Used for cursor selection. Returns (atom indices prot, atom indices lig)
 pub fn points_along_ray_bond(
     ray: (Vec3F32, Vec3F32),
@@ -736,35 +645,6 @@ pub fn points_along_ray_bond(
                 None,
             );
         }
-    }
-
-    result
-}
-
-/// See note for atom version; slightly diff peptide structure.
-pub fn points_along_ray_bond_peptide(
-    ray: (Vec3F32, Vec3F32),
-    bonds: &[Bond],
-    // We need atoms to get positions
-    atoms: &[Atom],
-    dist_thresh: f32,
-) -> Vec<(usize, usize)> {
-    let mut result = Vec::new();
-
-    let ray_dir = (ray.1 - ray.0).to_normalized();
-
-    for (i, bond) in bonds.iter().enumerate() {
-        let posit = (atoms[bond.atom_0].posit + atoms[bond.atom_1].posit) / 2.;
-        points_along_ray_inner(
-            &mut result,
-            &ray,
-            ray_dir,
-            dist_thresh,
-            0,
-            i,
-            posit.into(),
-            None,
-        );
     }
 
     result
@@ -833,11 +713,17 @@ pub(crate) fn handle_selection_attempt(
         pocket_atoms.push(get_atoms(&mol.common));
     }
 
-    let pep_atoms = match &state.peptide {
-        // Some(p) => (&p.common.atoms, &p.residues),
-        Some(mol) => &get_atoms(&mol.common),
-        None => &Vec::new(),
-    };
+    let pep_atoms: Vec<_> = state
+        .peptide
+        .iter()
+        .map(|mol| get_atoms(&mol.common))
+        .collect();
+    let pep_chains: Vec<_> = state.peptide.iter().map(|mol| mol.chains.clone()).collect();
+    let pep_bonds: Vec<_> = state
+        .peptide
+        .iter()
+        .map(|mol| mol.common.bonds.clone())
+        .collect();
 
     // If we don't scale the selection distance appropriately, an atom etc
     // behind the desired one, but closer to the ray, may be selected; likely
@@ -846,9 +732,9 @@ pub(crate) fn handle_selection_attempt(
         selection_dist_thresh(state.ui.mol_view_peptide, state.ui.view_sel_level);
     let dist_thresh_mol = selection_dist_thresh(state.ui.mol_view, state.ui.view_sel_level);
 
-    let (sel_atoms, dist_atoms) = {
+    let (sel_atoms, dist_atoms, atom_mol) = {
         let atoms_along_ray_pep =
-            points_along_ray_atom_peptide(selected_ray, pep_atoms, dist_thresh_peptide);
+            points_along_ray_atom(selected_ray, &pep_atoms, dist_thresh_peptide);
 
         let atoms_along_ray_lig = points_along_ray_atom(selected_ray, &lig_atoms, dist_thresh_mol);
         let atoms_along_ray_na = points_along_ray_atom(selected_ray, &na_atoms, dist_thresh_mol);
@@ -863,7 +749,7 @@ pub(crate) fn handle_selection_attempt(
             &atoms_along_ray_na,
             &atoms_along_ray_lipid,
             &atoms_along_ray_pocket,
-            pep_atoms,
+            &pep_atoms,
             // pep_res,
             &lig_atoms,
             &na_atoms,
@@ -871,8 +757,8 @@ pub(crate) fn handle_selection_attempt(
             &pocket_atoms,
             &selected_ray,
             &state.ui,
-            &Vec::new(),
-            &[],
+            &pep_chains,
+            &pep_bonds,
             &[],
             &[],
             &[],
@@ -882,13 +768,7 @@ pub(crate) fn handle_selection_attempt(
         )
     };
 
-    let (sel_bonds, dist_bonds) = {
-        let mut pep_bonds = Vec::new();
-        // todo: I don' tlike these clones.
-        if let Some(mol) = &state.peptide {
-            pep_bonds = mol.common.bonds.clone();
-        }
-
+    let (sel_bonds, dist_bonds, bond_mol) = {
         let mut lig_bonds = Vec::new();
         // todo: I don' tlike these clones.
         for mol in &state.ligands {
@@ -910,7 +790,7 @@ pub(crate) fn handle_selection_attempt(
         }
 
         let atoms_along_ray_pep =
-            points_along_ray_bond_peptide(selected_ray, &pep_bonds, pep_atoms, dist_thresh_peptide);
+            points_along_ray_bond(selected_ray, &pep_bonds, &pep_atoms, dist_thresh_peptide);
         let atoms_along_ray_lig =
             points_along_ray_bond(selected_ray, &lig_bonds, &lig_atoms, dist_thresh_mol);
         let atoms_along_ray_lipid =
@@ -926,7 +806,7 @@ pub(crate) fn handle_selection_attempt(
             &atoms_along_ray_na,
             &atoms_along_ray_lipid,
             &atoms_along_ray_pocket,
-            pep_atoms,
+            &pep_atoms,
             // pep_res,
             &lig_atoms,
             &na_atoms,
@@ -934,49 +814,39 @@ pub(crate) fn handle_selection_attempt(
             &pocket_atoms,
             &selected_ray,
             &state.ui,
-            &Vec::new(),
+            &pep_chains,
             &pep_bonds,
             &lig_bonds,
             &na_bonds,
-            &pocket_bonds,
+            &lipid_bonds,
             &pocket_bonds,
             true,
             state.volatile.inputs_commanded.run,
         )
     };
 
-    // Change the active molecule to the one of the selected atom or bond.
-    // Check both atom and bond results; the bond path may win for bond/residue clicks.
-    let active_mol_sel = if dist_atoms < dist_bonds {
-        &sel_atoms
+    // Change the active molecule to the one that owns the winning atom or bond.
+    let winner_mol = if dist_atoms < dist_bonds {
+        atom_mol
     } else {
-        &sel_bonds
+        bond_mol
     };
-    match active_mol_sel {
-        Selection::AtomPeptide(_)
-        | Selection::AtomsPeptide(_)
-        | Selection::BondPeptide(_)
-        | Selection::Residue(_)
-        | Selection::Residues(_) => {
-            let mol_i = 0;
-            state.volatile.active_mol = Some((MolType::Peptide, mol_i));
+    if let Some(mol) = winner_mol {
+        if let (MolType::Peptide, peptide_i) = mol {
+            if state.volatile.active_peptide != Some(peptide_i) {
+                state.volatile.flags.ss_mesh_created = false;
+                state.volatile.flags.sas_mesh_created = false;
+            }
+            state.volatile.active_peptide = Some(peptide_i);
+            if let Some(peptide) = state.peptide.get(peptide_i) {
+                state.volatile.aa_seq_text = peptide
+                    .aa_seq
+                    .iter()
+                    .map(|aa| aa.to_str(na_seq::AaIdent::OneLetter))
+                    .collect();
+            }
         }
-        Selection::AtomLig((mol_i, _))
-        | Selection::AtomsLig((mol_i, _))
-        | Selection::BondLig((mol_i, _))
-        | Selection::BondsLig((mol_i, _)) => {
-            state.volatile.active_mol = Some((MolType::Ligand, *mol_i));
-        }
-        Selection::AtomNucleicAcid((mol_i, _)) | Selection::BondNucleicAcid((mol_i, _)) => {
-            state.volatile.active_mol = Some((MolType::NucleicAcid, *mol_i));
-        }
-        Selection::AtomLipid((mol_i, _)) | Selection::BondLipid((mol_i, _)) => {
-            state.volatile.active_mol = Some((MolType::Lipid, *mol_i));
-        }
-        Selection::AtomPocket((mol_i, _)) | Selection::BondPocket((mol_i, _)) => {
-            state.volatile.active_mol = Some((MolType::Pocket, *mol_i));
-        }
-        _ => (),
+        state.volatile.active_mol = Some(mol);
     }
 
     let selection = if dist_atoms < dist_bonds {
@@ -991,7 +861,14 @@ pub(crate) fn handle_selection_attempt(
         let shift_held = state.volatile.inputs_commanded.run;
         match &selection {
             Selection::AtomPeptide(atom_i) => {
-                match pep_atoms.get(*atom_i).and_then(|a| a.residue) {
+                let peptide_i = winner_mol
+                    .filter(|(t, _)| *t == MolType::Peptide)
+                    .map(|(_, i)| i);
+                match peptide_i
+                    .and_then(|i| pep_atoms.get(i))
+                    .and_then(|atoms| atoms.get(*atom_i))
+                    .and_then(|a| a.residue)
+                {
                     None => Selection::None,
                     Some(new_res_i) => {
                         if shift_held {
@@ -1003,11 +880,11 @@ pub(crate) fn handle_selection_attempt(
                 }
             }
             Selection::BondPeptide(bond_i) => {
-                let new_res_i = state
-                    .peptide
-                    .as_ref()
-                    .and_then(|p| p.common.bonds.get(*bond_i))
-                    .and_then(|b| pep_atoms.get(b.atom_0))
+                let new_res_i = winner_mol
+                    .filter(|(t, _)| *t == MolType::Peptide)
+                    .and_then(|(_, i)| state.peptide.get(i).map(|p| (i, p)))
+                    .and_then(|(i, p)| p.common.bonds.get(*bond_i).map(|b| (i, b)))
+                    .and_then(|(i, b)| pep_atoms.get(i).and_then(|atoms| atoms.get(b.atom_0)))
                     .and_then(|a| a.residue);
                 match new_res_i {
                     None => Selection::None,
@@ -1078,7 +955,7 @@ pub fn handle_selection_attempt_mol_editor(
         })
         .collect();
 
-    let (sel_atoms, dist_atoms) = {
+    let (sel_atoms, dist_atoms, _atom_mol) = {
         let atoms_along_ray_lig =
             points_along_ray_atom(selected_ray, std::slice::from_ref(&atoms), dist_thresh);
 
@@ -1107,7 +984,7 @@ pub fn handle_selection_attempt_mol_editor(
         )
     };
 
-    let (sel_bonds, dist_bonds) = {
+    let (sel_bonds, dist_bonds, _bond_mol) = {
         let bonds = mol.common.bonds.clone(); // todo: This clone...
 
         let bonds_along_ray_lig = points_along_ray_bond(
@@ -1340,7 +1217,10 @@ fn cycle_helper(sel_current: &Selection, item_i: usize, items_len: usize, dir: i
 fn cycle_atom_bond(state: &State, mol: &MoleculeCommon, dir: isize) -> Selection {
     match state.ui.selection {
         Selection::AtomPeptide(atom_i) => {
-            let Some(mol) = &state.peptide else {
+            let Some(mol) = state
+                .peptide_for_tools_i()
+                .and_then(|i| state.peptide.get(i))
+            else {
                 return Selection::None;
             };
 
@@ -1397,7 +1277,12 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
                 return;
             }
 
-            let Some(mol) = &state.peptide else { return };
+            let Some(mol) = state
+                .peptide_for_tools_i()
+                .and_then(|i| state.peptide.get(i))
+            else {
+                return;
+            };
 
             match &state.ui.selection {
                 Selection::Residue(res_i) => {
@@ -1473,7 +1358,9 @@ pub fn select_from_search(state: &mut State) -> bool {
     // select all residues with this AA.
     let query_len = query.len();
     if (query_len == 1 || query_len == 3)
-        && let Some(pep) = &state.peptide
+        && let Some(pep) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
         && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
         && let Ok(aa) = AminoAcid::from_str(query)
     {
@@ -1493,7 +1380,9 @@ pub fn select_from_search(state: &mut State) -> bool {
     // Match against a hetero residue name. We have outside of the view/select level branches,
     // so you don't have to be in residue mode as a result.
     if query_len >= 3
-        && let Some(pep) = &state.peptide
+        && let Some(pep) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
         && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
     {
         for (i, res) in pep.residues.iter().enumerate() {
@@ -1531,7 +1420,10 @@ pub fn select_from_search(state: &mut State) -> bool {
                 }
             }
 
-            let Some(pep) = &state.peptide else {
+            let Some(pep) = state
+                .peptide_for_tools_i()
+                .and_then(|i| state.peptide.get(i))
+            else {
                 return false;
             };
 

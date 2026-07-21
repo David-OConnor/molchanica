@@ -192,7 +192,12 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
         // ui.horizontal_wrapped(|ui| {
         match selection {
             Selection::AtomPeptide(sel_i) => {
-                let Some(mol) = &state.peptide else { return };
+                let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
+                else {
+                    return;
+                };
                 if *sel_i >= mol.common.atoms.len() {
                     return;
                 }
@@ -201,7 +206,10 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 disp_atom_data(atom, &mol.residues, None, ui, true, true);
             }
             Selection::AtomsPeptide(atom_is) => {
-                let Some(mol) = &state.peptide else {
+                let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
+                else {
                     return;
                 };
 
@@ -288,7 +296,10 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 disp_atom_data(atom, &[], Some(posit), ui, true, true);
             }
             Selection::Residue(sel_i) => {
-                if let Some(mol) = &state.peptide {
+                if let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
+                {
                     if *sel_i >= mol.residues.len() {
                         return;
                     }
@@ -320,7 +331,10 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 label!(ui, format!("{} residues", sel_is.len()), Color32::WHITE);
             }
             Selection::BondPeptide(bond_i) => {
-                let Some(mol) = &state.peptide else {
+                let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
+                else {
                     return;
                 };
                 let Some(bond) = mol.common.get_bond(*bond_i) else {
@@ -419,9 +433,10 @@ pub(in crate::ui) fn display_mol_data_peptide(
     let mut move_lig_to_res = None;
     let mut move_lig_to_sel = None;
     let mut move_cam = false;
+    let peptide_i = state.peptide_for_tools_i();
 
     ui.horizontal(|ui| {
-        if let Some(pep) = &state.peptide {
+        if let Some(pep) = peptide_i.and_then(|i| state.peptide.get(i)) {
             mol_descrip(&MolGenericRef::Peptide(pep), ui);
 
             // if ui.button(RichText::new("Close").color(Color32::LIGHT_RED)).clicked() {
@@ -451,7 +466,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 if let Some((mol_type, _)) = state.ui.popup.metadata && mol_type == MolType::Peptide {
                     state.ui.popup.metadata = None;
                 } else {
-                    state.ui.popup.metadata = Some((MolType::Peptide, 0))
+                    state.ui.popup.metadata = Some((MolType::Peptide, peptide_i.unwrap_or(0)))
                 }
             }
 
@@ -527,7 +542,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                         )
                 .clicked()
             {
-                let peptide = state.peptide.as_ref().unwrap();
+                let peptide = peptide_i.and_then(|i| state.peptide.get(i)).unwrap();
                 let atom_sel = peptide.get_sel_atom(&state.ui.selection);
 
                 if let Some(a) = atom_sel {
@@ -542,7 +557,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
 
     if let Some(res) = res_to_make {
         make_lig_from_res(state, &res, scene, updates);
-        // if let Some(pep) = &state.peptide {
+        // if let Some(pep) = peptide_i.and_then(|i| state.peptide.get(i)) {
         //     move_cam_to_active_mol(state, scene, pep.center, engine_updates);
         // }
     }
@@ -550,12 +565,13 @@ pub(in crate::ui) fn display_mol_data_peptide(
     if let Some(res) = move_lig_to_res {
         if let Some((_, i)) = state.volatile.active_mol
             && i < state.ligands.len()
+            && let Some(peptide_i) = state.peptide_for_tools_i()
         {
-            let mol = &mut state.ligands[i]; // can't use `get`; borrow error.
-            if let Some(pep) = &state.peptide {
-                move_mol_to_res(&mut MolGenericRefMut::Small(mol), pep, &res);
-                move_cam_to_active_mol(state, scene, pep.center, updates);
-            }
+            let pep = &state.peptide[peptide_i];
+            let center = pep.center;
+            let mol = &mut state.ligands[i];
+            move_mol_to_res(&mut MolGenericRefMut::Small(mol), pep, &res);
+            move_cam_to_active_mol(state, scene, center, updates);
         }
 
         *redraw_lig = true;
@@ -565,10 +581,10 @@ pub(in crate::ui) fn display_mol_data_peptide(
         let mut mol = state.active_mol_mut().unwrap();
         mol.common_mut().move_to(sel_atom.posit);
 
-        let center = match &state.peptide {
-            Some(p) => p.center,
-            None => Vec3::new_zero(),
-        };
+        let center = peptide_i
+            .and_then(|i| state.peptide.get(i))
+            .map(|mol| mol.center)
+            .unwrap_or_else(Vec3::new_zero);
         move_cam_to_active_mol(state, scene, center, updates);
 
         move_cam = true;
@@ -577,17 +593,17 @@ pub(in crate::ui) fn display_mol_data_peptide(
     }
 
     if move_cam {
-        let center = match &state.peptide {
-            Some(m) => m.center,
-            None => Vec3::new_zero(),
-        };
+        let center = peptide_i
+            .and_then(|i| state.peptide.get(i))
+            .map(|mol| mol.center)
+            .unwrap_or_else(Vec3::new_zero);
 
         move_cam_to_active_mol(state, scene, center, updates);
     }
 
     let mut pocket_to_add = None;
 
-    if let Some(mol) = &state.peptide {
+    if let Some(mol) = peptide_i.and_then(|i| state.peptide.get(i)) {
         // todo: Temp location
         if let Selection::AtomPeptide(sel_i) = state.ui.selection && button!(
                 ui,

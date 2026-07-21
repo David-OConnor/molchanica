@@ -180,7 +180,9 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
     if state.ui.orbit_selected_atom && state.volatile.operating_mode != OperatingMode::MolEditor {
         match &state.ui.selection {
             Selection::AtomPeptide(i) => {
-                if let Some(mol) = &state.peptide
+                if let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
                     && let Some(a) = mol.common.atoms.get(*i)
                 {
                     return a.posit.into();
@@ -239,7 +241,10 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 };
             }
             Selection::Residue(i) => {
-                if let Some(mol) = &state.peptide {
+                if let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
+                {
                     match mol.residues.get(*i) {
                         Some(res) => {
                             match mol.common.atoms.get(match res.atoms.first() {
@@ -255,7 +260,9 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 }
             }
             Selection::Residues(idxs) => {
-                if let Some(mol) = &state.peptide
+                if let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
                     && !idxs.is_empty()
                 {
                     // DRY with single Residue branch.
@@ -274,7 +281,10 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 }
             }
             Selection::AtomsPeptide(is) => {
-                if let Some(mol) = &state.peptide {
+                if let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
+                {
                     let mut ctr = ZERO;
                     for i in is {
                         if let Some(a) = mol.common.atoms.get(*i) {
@@ -286,7 +296,9 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 }
             }
             Selection::BondPeptide(i_atom) => {
-                if let Some(mol) = &state.peptide
+                if let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
                     && let Some(bond) = mol.common.bonds.get(*i_atom)
                 {
                     return ((mol.common.atom_posits[bond.atom_0]
@@ -351,7 +363,10 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
             }
             Selection::ComponentEditor(_) => {}
             Selection::None => {
-                if let Some(mol) = &state.peptide {
+                if let Some(mol) = state
+                    .peptide_for_tools_i()
+                    .and_then(|i| state.peptide.get(i))
+                {
                     return mol.center.into();
                 }
             }
@@ -366,7 +381,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
             Some(m) => {
                 // Use the cached one for peptide; cheaper.
                 if *mol_type == MolType::Peptide {
-                    state.peptide.as_ref().unwrap().center.into()
+                    state.peptide[*i].center.into()
                 } else {
                     m.common().centroid().into()
                 }
@@ -441,13 +456,39 @@ pub fn clear_cli_out(ui: &mut StateUi) {
     ui.cmd_line_out_is_err = false;
 }
 
-pub fn close_peptide(state: &mut State, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
-    let path = match &state.peptide {
-        Some(mol) => mol.common.path.clone(),
-        None => None,
-    };
+pub fn close_peptide(
+    i: usize,
+    state: &mut State,
+    scene: &mut Scene,
+    engine_updates: &mut EngineUpdates,
+) {
+    if i >= state.peptide.len() {
+        eprintln!("Error: Out-of-bounds peptide index when closing");
+        return;
+    }
 
-    state.peptide = None;
+    let path = state.peptide[i].common.path.clone();
+    state.peptide.remove(i);
+    state
+        .volatile
+        .thread_receivers
+        .mol_pending_data_avail
+        .retain(|(peptide_i, _)| *peptide_i != i);
+    for (peptide_i, _) in &mut state.volatile.thread_receivers.mol_pending_data_avail {
+        if *peptide_i > i {
+            *peptide_i -= 1;
+        }
+    }
+    state
+        .volatile
+        .thread_receivers
+        .sifts_mapping_avail
+        .retain(|(peptide_i, _)| *peptide_i != i);
+    for (peptide_i, _) in &mut state.volatile.thread_receivers.sifts_mapping_avail {
+        if *peptide_i > i {
+            *peptide_i -= 1;
+        }
+    }
     state.volatile.md_local.mol_dynamics = None;
 
     scene.entities.retain(|ent| {
@@ -460,8 +501,6 @@ pub fn close_peptide(state: &mut State, scene: &mut Scene, engine_updates: &mut 
     });
     clear_mol_entity_indices(state, None);
 
-    state.volatile.aa_seq_text = String::new();
-
     if let Some(path) = path {
         for history in &mut state.to_save.open_history {
             if matches!(history.type_, OpenType::Peptide | OpenType::Map) && history.path == path {
@@ -470,21 +509,43 @@ pub fn close_peptide(state: &mut State, scene: &mut Scene, engine_updates: &mut 
         }
     }
 
+    let active_peptide = state.peptide.len().checked_sub(1);
+    state.volatile.active_mol = active_peptide.map(|i| (MolType::Peptide, i));
+    state.volatile.active_peptide = active_peptide;
+    state.volatile.flags.ss_mesh_created = false;
+    state.volatile.flags.sas_mesh_created = false;
+    state.volatile.aa_seq_text = state
+        .peptide
+        .last()
+        .map(|mol| {
+            mol.aa_seq
+                .iter()
+                .map(|aa| aa.to_str(na_seq::AaIdent::OneLetter))
+                .collect()
+        })
+        .unwrap_or_default();
+
     state.update_save_prefs();
-
     engine_updates.entities = EntityUpdate::All;
-    // engine_updates.entities.push_class(EntityClass::Peptide as u32);
 
-    if let Some((orbit_mol_type, orbit_i)) = &state.volatile.orbit_center
-        && (*orbit_mol_type, *orbit_i) == (MolType::Peptide, 0)
+    let orbit_was_closed =
+        matches!(state.volatile.orbit_center, Some((MolType::Peptide, orbit_i)) if orbit_i == i);
+    if let Some((MolType::Peptide, orbit_i)) = &mut state.volatile.orbit_center
+        && *orbit_i > i
     {
+        *orbit_i -= 1;
+    }
+    if orbit_was_closed {
         reset_orbit_center(state, scene);
     }
 
-    // Prevents out of bounds.
     if matches!(
         state.ui.selection,
-        Selection::AtomPeptide(_) | Selection::AtomsPeptide(_) | Selection::BondPeptide(_)
+        Selection::AtomPeptide(_)
+            | Selection::AtomsPeptide(_)
+            | Selection::BondPeptide(_)
+            | Selection::Residue(_)
+            | Selection::Residues(_)
     ) {
         state.ui.selection = Selection::None;
     }
@@ -523,7 +584,7 @@ pub fn close_mol(
 
     match mol_type {
         MolType::Peptide => {
-            close_peptide(state, scene, updates);
+            close_peptide(i, state, scene, updates);
         }
         MolType::Ligand => {
             state.ligands.remove(i);
@@ -586,8 +647,8 @@ pub fn close_mol(
 pub fn reset_orbit_center(state: &mut State, scene: &mut Scene) {
     // Reset the arc center, if in that camera mode, and molecule was the active one.
 
-    if state.peptide.is_some() {
-        state.volatile.orbit_center = Some((MolType::Peptide, 0));
+    if !state.peptide.is_empty() {
+        state.volatile.orbit_center = Some((MolType::Peptide, state.peptide.len() - 1));
     } else if !state.ligands.is_empty() {
         state.volatile.orbit_center = Some((MolType::Ligand, state.ligands.len() - 1));
     } else if !state.nucleic_acids.is_empty() {
@@ -614,7 +675,9 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
     if state.volatile.flags.new_density_loaded {
         state.volatile.flags.new_density_loaded = false;
 
-        if let Some(mol) = &state.peptide
+        if let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
             && !state.ui.visibility.hide_density_point_cloud
             && let Some(density) = &mol.elec_density
         {
@@ -650,7 +713,10 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         state.volatile.flags.update_ss_mesh = false;
         state.volatile.flags.ss_mesh_created = true;
 
-        if let Some(mol) = &state.peptide {
+        if let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
+        {
             scene.meshes[MESH_SECONDARY_STRUCTURE] = build_ribbon_mesh(
                 &mol.secondary_structure,
                 &mol.common.atoms,
@@ -667,7 +733,10 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
     if state.volatile.flags.update_sas_mesh {
         state.volatile.flags.update_sas_mesh = false;
 
-        if let Some(mol) = &state.peptide {
+        if let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
+        {
             let atoms: Vec<(Vec3F32, _)> = mol
                 .common
                 .atoms
@@ -727,7 +796,9 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
     }
 
     if state.volatile.flags.update_sas_coloring
-        && let Some(mol) = &state.peptide
+        && let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
     {
         state.volatile.flags.update_sas_coloring = false;
 
@@ -910,14 +981,8 @@ pub fn aromatic_ring_centroid(
 /// We use this to invalidate indices when removing entities. Only run this when entities are removed.
 pub fn clear_mol_entity_indices(state: &mut State, exempt: Option<MolType>) {
     // println!("Clearing indices");
-    if let Some(pep) = &mut state.peptide {
-        let mut skip = false;
-        if let Some(e) = exempt
-            && e == MolType::Ligand
-        {
-            skip = true;
-        }
-        if !skip {
+    if exempt != Some(MolType::Peptide) {
+        for pep in &mut state.peptide {
             pep.common.entity_i_range = None;
         }
     }
@@ -954,7 +1019,10 @@ pub fn make_lig_from_res(
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
 ) {
-    let Some(mol) = &state.peptide else {
+    let Some(mol) = state
+        .peptide_for_tools_i()
+        .and_then(|i| state.peptide.get(i))
+    else {
         handle_err(
             &mut state.ui,
             "Error: No peptide loaded; can't create a ligand from its res.".to_owned(),

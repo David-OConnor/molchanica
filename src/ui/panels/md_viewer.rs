@@ -515,26 +515,30 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     // Collect any pending add to apply after reads (avoids borrow conflict).
     let mut to_add: Option<ViewerMolecule> = None;
 
-    // Protein
-    if let Some(pep) = &state.peptide {
-        let atom_count = pep.common.atoms.len();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Protein:").color(Color32::CYAN));
-            if button!(
-                ui,
-                format!("{} ({} atoms)", pep.common.ident, atom_count),
-                COLOR_ACTION,
-                "Add this protein to the mol set"
-            )
-            .clicked()
-            {
-                to_add = Some(ViewerMolecule {
-                    mol_type: MolType::Peptide,
-                    mol: pep.common.clone(),
-                    range: (next_range_start, next_range_start + atom_count),
-                });
-            }
-        });
+    // Proteins
+    if !state.peptide.is_empty() {
+        ui.label(RichText::new("Proteins:").color(Color32::CYAN));
+        for pep in &state.peptide {
+            let atom_count = pep.common.atoms.len();
+            let common = pep.common.clone();
+            ui.horizontal(|ui| {
+                if button!(
+                    ui,
+                    format!("{} ({} atoms)", common.ident, atom_count),
+                    COLOR_ACTION,
+                    "Add this protein to the mol set"
+                )
+                .clicked()
+                    && to_add.is_none()
+                {
+                    to_add = Some(ViewerMolecule {
+                        mol_type: MolType::Peptide,
+                        mol: common,
+                        range: (next_range_start, next_range_start + atom_count),
+                    });
+                }
+            });
+        }
     }
 
     // Ligands / small mols

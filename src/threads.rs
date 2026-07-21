@@ -31,12 +31,13 @@ use crate::{
 #[derive(Default)]
 pub struct ThreadReceivers {
     /// Receives thread data upon an HTTP result completion.
-    pub mol_pending_data_avail: Option<
+    pub mol_pending_data_avail: Vec<(
+        usize,
         Receiver<(
             Result<PdbDataResults, ReqError>,
             Result<FilesAvailable, ReqError>,
         )>,
-    >,
+    )>,
     /// Receives thread data upon an HTTP result completion.
     pub pubchem_properties_avail:
         Option<Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>>,
@@ -44,7 +45,7 @@ pub struct ThreadReceivers {
     pub therapeutic_properties_avail: Option<Receiver<(usize, TherapeuticProperties)>>,
     /// The first param is the index.
     pub amber_geostd_data_avail: Option<Receiver<(usize, Result<GeostdData, ReqError>)>>,
-    pub sifts_mapping_avail: Option<Receiver<Result<Vec<SiftsUniprotMapping>, ReqError>>>,
+    pub sifts_mapping_avail: Vec<(usize, Receiver<Result<Vec<SiftsUniprotMapping>, ReqError>>)>,
     pub peptide_mesh_coloring: Option<Receiver<Option<MeshColors>>>,
     /// Pharmacophore. Returned in batches, e.g. of a large directory.
     // /// This threads runs the whole outer loops, screening all molecules
@@ -104,14 +105,20 @@ pub fn handle_thread_rx(
         state.volatile.thread_receivers.pubchem_properties_avail = None;
     }
 
-    if state
-        .volatile
-        .thread_receivers
-        .mol_pending_data_avail
-        .is_some()
-        && let Some(mol) = &mut state.peptide
-        && mol.poll_mol_pending_data(&mut state.volatile.thread_receivers.mol_pending_data_avail)
-    {
+    let pending_rcsb = std::mem::take(&mut state.volatile.thread_receivers.mol_pending_data_avail);
+    let mut pending_rcsb_remaining = Vec::with_capacity(pending_rcsb.len());
+    let mut prefs_dirty = false;
+    for (peptide_i, rx) in pending_rcsb {
+        let mut rx = Some(rx);
+        if let Some(mol) = state.peptide.get_mut(peptide_i) {
+            prefs_dirty |= mol.poll_mol_pending_data(&mut rx);
+        }
+        if let Some(rx) = rx {
+            pending_rcsb_remaining.push((peptide_i, rx));
+        }
+    }
+    state.volatile.thread_receivers.mol_pending_data_avail = pending_rcsb_remaining;
+    if prefs_dirty {
         state.update_save_prefs();
     }
 
@@ -146,36 +153,32 @@ pub fn handle_thread_rx(
         state.volatile.thread_receivers.amber_geostd_data_avail = None;
     }
 
-    if let Some(rx) = &mut state.volatile.thread_receivers.sifts_mapping_avail
-        && let Ok(result) = rx.try_recv()
-    {
-        if let Some(pep) = &mut state.peptide {
-            match result {
-                Ok(mappings) => {
-                    // todo temp
-                    // println!("\nSIFTS mappings: {}", mappings.len());
-                    //
-                    // for m2 in &mappings {
-                    //     for m in &m2.mappings {
-                    //         println!("- {m:?}");
-                    //     }
-                    //     println!("\n");
-                    // }
-                    //
-                    // println!("\n---");
-
-                    println!("{} SIFTS UniProt mappings loaded", mappings.len());
-
-                    pep.sifts_mapping = Some(mappings);
-
-                    state.volatile.flags.update_sas_coloring = true;
-                    redraw.set(MolType::Peptide);
+    let pending_sifts = std::mem::take(&mut state.volatile.thread_receivers.sifts_mapping_avail);
+    let mut pending_sifts_remaining = Vec::with_capacity(pending_sifts.len());
+    for (peptide_i, rx) in pending_sifts {
+        match rx.try_recv() {
+            Ok(result) => {
+                if let Some(pep) = state.peptide.get_mut(peptide_i) {
+                    match result {
+                        Ok(mappings) => {
+                            println!("{} SIFTS UniProt mappings loaded", mappings.len());
+                            pep.sifts_mapping = Some(mappings);
+                            state.volatile.flags.update_sas_coloring = true;
+                            redraw.set(MolType::Peptide);
+                        }
+                        Err(e) => eprintln!("Failed to load SIFTS mappings: {e:?}"),
+                    }
                 }
-                Err(e) => eprintln!("Failed to load SIFTS mappings: {e:?}"),
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                pending_sifts_remaining.push((peptide_i, rx));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                eprintln!("SIFTS worker thread died before sending a result");
             }
         }
-        state.volatile.thread_receivers.sifts_mapping_avail = None;
     }
+    state.volatile.thread_receivers.sifts_mapping_avail = pending_sifts_remaining;
 
     // Poll for completed mesh coloring from thread.
     if let Some(rx) = &mut state.volatile.thread_receivers.peptide_mesh_coloring
@@ -235,7 +238,11 @@ pub fn handle_thread_rx(
                         .iter()
                         .map(|aa| aa.to_str(AaIdent::OneLetter))
                         .collect();
-                    state.peptide = Some(molecule);
+                    let peptide_i = state.peptide.len();
+                    state.peptide.push(molecule);
+                    state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
+                    state.volatile.active_peptide = Some(peptide_i);
+                    state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
                     state.reset_selections();
                     state.volatile.flags.ss_mesh_created = false;
                     state.volatile.flags.sas_mesh_created = false;

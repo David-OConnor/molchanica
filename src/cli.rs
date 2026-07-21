@@ -220,7 +220,10 @@ pub fn handle_cmd(
 
         // todo uhoh: When you remove atoms, their indices in the vec get screwed up! You may need to use
         // todo a unique id!
-        if let Some(mol) = &mut state.peptide {
+        if let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get_mut(i))
+        {
             match item.as_ref() {
                 "solvents" => {
                     // todo: Remove residues as well?
@@ -271,7 +274,10 @@ pub fn handle_cmd(
     }
 
     if let Some(caps) = re_turn.captures(&input) {
-        let Some(mol) = &state.peptide else {
+        let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
+        else {
             return Ok(String::from("Can't turn without a molecule"));
         };
 
@@ -313,7 +319,10 @@ pub fn handle_cmd(
     }
 
     if let Some(_caps) = re_orient.captures(&input) {
-        if let Some(mol) = &state.peptide {
+        if let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
+        {
             let atom_sel = mol.get_sel_atom(&state.ui.selection);
 
             if let Some(atom) = atom_sel {
@@ -351,7 +360,9 @@ pub fn handle_cmd(
 
     // Selections
     if let Some(caps) = re_sel_resn.captures(&input)
-        && let Some(mol) = &state.peptide
+        && let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
     {
         let aa = AminoAcid::from_str(&caps[1])?;
 
@@ -371,7 +382,9 @@ pub fn handle_cmd(
     }
 
     if let Some(caps) = re_sel_resi.captures(&input)
-        && let Some(mol) = &state.peptide
+        && let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
     {
         let i: u32 = caps[1]
             .parse()
@@ -388,7 +401,9 @@ pub fn handle_cmd(
     }
 
     if let Some(caps) = re_sel_elem.captures(&input)
-        && let Some(mol) = &state.peptide
+        && let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
     {
         let el = Element::from_letter(&caps[1])?;
 

@@ -452,7 +452,10 @@ impl DensityRect {
 
 /// Populate the electron-density mesh (isosurface). This assumes the density_rect is already set up.
 pub fn make_density_mesh(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    let Some(mol) = &state.peptide else {
+    let Some(mol) = state
+        .peptide_for_tools_i()
+        .and_then(|i| state.peptide.get(i))
+    else {
         return;
     };
     let Some(rect) = &mol.density_rect else {

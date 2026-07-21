@@ -3,6 +3,7 @@ use dynamics::{FfMolType, merge_params};
 use egui::{Color32, RichText, TextEdit, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
+use na_seq::AaIdent;
 
 use crate::{
     button,
@@ -274,8 +275,8 @@ fn sonification_input(
         MolType::Peptide => {
             let mol = state
                 .peptide
-                .as_ref()
-                .ok_or_else(|| "No peptide is loaded.".to_string())?;
+                .get(i_mol)
+                .ok_or_else(|| "Peptide index is out of bounds.".to_string())?;
             let params = state
                 .ff_param_set
                 .peptide
@@ -367,21 +368,21 @@ fn mol_picker(
     let mut recenter_orbit = false;
     let mut close = None; // Avoids borrow error.
 
-    // Avoids a double borrow.
-    let pep_center = match &state.peptide {
-        Some(mol) => mol.center,
-        None => Vec3::new_zero(),
-    };
+    // Avoids a double borrow. Non-peptide camera rows use the current peptide as context.
+    let pep_center = state
+        .peptide_for_tools()
+        .map(|mol| mol.center)
+        .unwrap_or_else(Vec3::new_zero);
 
     let mut reset_fog = false;
     let mut audio_action = None;
 
-    if let Some(mol) = &mut state.peptide {
+    for (i_mol, mol) in state.peptide.iter_mut().enumerate() {
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
             &mut state.pharmacophore,
-            0,
+            i_mol,
             &mut mol.common,
             None,
             &None,
@@ -532,6 +533,20 @@ fn mol_picker(
 
     // todo: AAs here too?
 
+    // Peptide-relative UI state follows whichever peptide was selected in the picker.
+    if recenter_orbit
+        && let Some((MolType::Peptide, peptide_i)) = state.volatile.active_mol
+        && let Some(peptide) = state.peptide.get(peptide_i)
+    {
+        state.volatile.active_peptide = Some(peptide_i);
+        state.volatile.aa_seq_text = peptide
+            .aa_seq
+            .iter()
+            .map(|aa| aa.to_str(AaIdent::OneLetter))
+            .collect();
+        state.volatile.flags.ss_mesh_created = false;
+        state.volatile.flags.sas_mesh_created = false;
+    }
     if let Some(AudioAction::Toggle(mol_type, i_mol)) = audio_action {
         toggle_audio(state, mol_type, i_mol);
     }
@@ -552,7 +567,7 @@ fn mol_picker(
 }
 
 fn open_tools(state: &mut State, ui: &mut Ui) {
-    let color_open_tools = if state.peptide.is_none() && state.ligands.is_empty() {
+    let color_open_tools = if state.peptide.is_empty() && state.ligands.is_empty() {
         COLOR_ACTION
     } else {
         COLOR_INACTIVE
@@ -723,7 +738,7 @@ pub(in crate::ui) fn sidebar(
                 }
                 ui.add_space(COL_SPACING);
 
-                let color_open_tools = if state.peptide.is_none() && state.ligands.is_empty() {
+                let color_open_tools = if state.peptide.is_empty() && state.ligands.is_empty() {
                     COLOR_ACTION
                 } else {
                     COLOR_INACTIVE

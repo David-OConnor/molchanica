@@ -333,6 +333,7 @@ pub fn build_molecule_inputs(
     let mut placed_mols = Vec::new();
 
     let mut pep_atom_set = HashSet::new();
+    let mut peptide_i = 0;
     let box_dims = match sim_box_init {
         SimBoxInit::Fixed((lo, hi)) => Some((hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)),
         SimBoxInit::Pad(_) => None,
@@ -361,7 +362,11 @@ pub fn build_molecule_inputs(
                     bonded_only: false,
                     mol_specific_params: None,
                 },
-                "PEP".to_string(),
+                if peptide_i == 0 {
+                    "PEP".to_string()
+                } else {
+                    format!("PEP{}", peptide_i + 1)
+                },
                 pep_set,
             )
         } else {
@@ -412,7 +417,8 @@ pub fn build_molecule_inputs(
         }
 
         if *ff_mol_type == FfMolType::Peptide {
-            pep_atom_set = pep_set;
+            pep_atom_set.extend(pep_set.into_iter().map(|(_, atom_i)| (peptide_i, atom_i)));
+            peptide_i += 1;
         }
 
         // If the peptide is static, set all its positions fixed by noting them in

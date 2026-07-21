@@ -1280,6 +1280,7 @@ pub fn filter_pep_atoms_by_dist<'a>(
     pep: &MoleculePeptide,
     ui: &StateUi,
     active_mol: Option<MolGenericRef<'a>>,
+    mol_active: bool,
 ) -> Vec<usize> {
     let mut result = Vec::new();
 
@@ -1357,6 +1358,7 @@ pub fn filter_pep_atoms_by_dist<'a>(
         let posit = mol.atom_posits[i_atom];
 
         if ui.show_near_sel_only
+            && mol_active
             && let Selection::AtomPeptide(i_sel) = &ui.selection
         {
             // todo: This will fail after moves and dynamics. You must pick the selected atom
@@ -1405,52 +1407,50 @@ pub fn filter_pep_atoms_by_dist<'a>(
 /// Refreshes entities with the model passed.
 /// Sensitive to various view configuration parameters.
 pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    // todo: You may wish to integrate Cartoon into this workflow.
-    let initial_ent_count = scene.entities.len();
-
-    let mol_i = 0; // todo for now.
-
-    let mol_active = if let Some((active_mol_type, active_i)) = state.volatile.active_mol {
-        MolType::Peptide == active_mol_type && mol_i == active_i
-    } else {
-        false
-    };
-
     scene.entities.retain(|ent| {
         ent.class != EntityClass::Protein as u32
             && ent.class != EntityClass::SaSurface as u32
             && ent.class != EntityClass::SaSurfaceDots as u32
             && ent.class != EntityClass::SecondaryStructure as u32
     });
+    for peptide in &mut state.peptide {
+        peptide.common.entity_i_range = None;
+    }
 
     // Edit small molecules only; not proteins.
     if state.volatile.operating_mode == OperatingMode::MolEditor {
         return;
     }
 
-    // let mol: &MoleculePeptide = if state.volatile.md_local.draw_md_mols
-    //     && !state.volatile.md_local.viewer.peptides.is_empty()
-    // {
-    //     &state.volatile.md_local.viewer.peptides[0]
-    // } else {
-    //     let Some(m) = state.peptide.as_ref() else {
-    //         return;
-    //     };
-    //     m
-    // };
+    for mol_i in 0..state.peptide.len() {
+        draw_peptide_one(state, scene, mol_i);
+    }
 
-    let mol = {
-        let Some(m) = state.peptide.as_ref() else {
-            return;
-        };
-        m
-    }; // todo tmep
+    if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
+        *center = orbit_center(state);
+    }
 
+    updates.entities = EntityUpdate::All;
+    // Removing and re-appending protein entities can shift every later entity range even when the
+    // total entity count stays unchanged.
+    clear_mol_entity_indices(state, Some(MolType::Peptide));
+}
+fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
+    let mol_active = if let Some((active_mol_type, active_i)) = state.volatile.active_mol {
+        MolType::Peptide == active_mol_type && mol_i == active_i
+    } else {
+        false
+    };
+
+    let Some(mol) = state.peptide.get(mol_i) else {
+        return;
+    };
     if !mol.common.visible {
         return;
     }
 
-    let filtered_out_by_dist = filter_pep_atoms_by_dist(mol, &state.ui, state.active_mol());
+    let filtered_out_by_dist =
+        filter_pep_atoms_by_dist(mol, &state.ui, state.active_mol(), mol_active);
 
     let start_i = scene.entities.len();
     let mut entities = Vec::new();
@@ -1463,9 +1463,20 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         .count();
 
     let ui = &state.ui;
-    let mol_view = ui.mol_view_peptide;
+    let owns_shared_mesh = state.peptide_for_tools_i() == Some(mol_i);
+    // Ribbon and solvent-surface meshes currently have one shared GPU slot. Keep every other
+    // open peptide visible with its ordinary atom/bond representation.
+    let mol_view = if !owns_shared_mesh
+        && matches!(
+            ui.mol_view_peptide,
+            MoleculeView::Ribbon | MoleculeView::Dots | MoleculeView::Surface
+        ) {
+        MoleculeView::BallAndStick
+    } else {
+        ui.mol_view_peptide
+    };
 
-    if mol_view == MoleculeView::Ribbon {
+    if owns_shared_mesh && mol_view == MoleculeView::Ribbon {
         // Flush any deferred chain-visibility change into a full rebuild.
         if state.volatile.flags.ss_mesh_dirty {
             state.volatile.flags.update_ss_mesh = true;
@@ -1480,7 +1491,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     }
 
     // Note that this renders over a sticks model.
-    if !state.ui.visibility.hide_protein && mol_view == MoleculeView::Dots {
+    if owns_shared_mesh && !state.ui.visibility.hide_protein && mol_view == MoleculeView::Dots {
         draw_dots(
             &mut state.volatile.flags.update_sas_mesh,
             state.volatile.flags.sas_mesh_created,
@@ -1489,7 +1500,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     }
 
     // todo: Consider if you handle this here, or in a sep fn.
-    if !state.ui.visibility.hide_protein && mol_view == MoleculeView::Surface {
+    if owns_shared_mesh && !state.ui.visibility.hide_protein && mol_view == MoleculeView::Surface {
         draw_sa_surface(
             &mut state.volatile.flags.update_sas_mesh,
             state.volatile.flags.sas_mesh_created,
@@ -1499,7 +1510,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
 
     let chains_invis: Vec<&Chain> = mol.chains.iter().filter(|c| !c.visible).collect();
 
-    let sel = if ui.selection.is_bond() {
+    let sel = if !mol_active || ui.selection.is_bond() {
         &Selection::None
     } else {
         &ui.selection
@@ -1886,7 +1897,8 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
             );
         }
 
-        if let Selection::BondPeptide(bond_i) = ui.selection
+        if mol_active
+            && let Selection::BondPeptide(bond_i) = ui.selection
             && bond_i == i_bond
         {
             color_0 = COLOR_SELECTED;
@@ -2031,24 +2043,11 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         }
     }
 
-    if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
-        *center = orbit_center(state);
-    }
-
     scene.entities.extend(entities);
 
     let end_i = scene.entities.len();
-    if let Some(mol) = state.peptide.as_mut() {
+    if let Some(mol) = state.peptide.get_mut(mol_i) {
         mol.common.entity_i_range = Some((start_i, end_i));
-    } else {
-        eprintln!("Uhoh!")
-    }
-
-    updates.entities = EntityUpdate::All;
-    // updates.entities.push_class(EntityClass::Peptide as u32);
-
-    if scene.entities.len() != initial_ent_count {
-        clear_mol_entity_indices(state, None);
     }
 }
 

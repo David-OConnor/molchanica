@@ -20,7 +20,18 @@ use crate::{
 };
 
 /// Characters shown in a cell before it's truncated; the full text is available on hover.
-const SMILES_CHARS_MAX: usize = 10;
+const TITLE_CHARS_MAX: usize = 30;
+const SMILES_CHARS_MAX: usize = 30;
+
+// Fixed per-column widths for the molecule table. The narrow columns (Load, CID, Heavy atoms,
+// Delete) are kept tight so the width they'd otherwise waste goes to Title and SMILES. The header
+// and body are drawn as separate grids, so both must use these same widths to stay aligned.
+const W_LOAD: f32 = 50.;
+const W_CID: f32 = 90.;
+const W_TITLE: f32 = 156.;
+const W_SMILES: f32 = 210.;
+const W_HEAVY: f32 = 84.;
+const W_DELETE: f32 = 46.;
 
 /// Rows shown per page in the molecule table.
 const MOLS_PER_PAGE: usize = 40;
@@ -129,7 +140,7 @@ pub(in crate::ui) fn parquet_db(
                     ui,
                     "Add mol",
                     COLOR_ACTION,
-                    "Add a single molecule file (Mol2 or SDF) to this database."
+                    "Add a single molecule file (Mol2 or SDF) or multi-mol SDF file to this database."
                 )
                 .clicked()
                 {
@@ -342,10 +353,31 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
         let mol_count = db.index_meta.len();
         let active = state.volatile.parquet_db_active == Some(DbSel::Common);
 
+        // // Show just the tail of the path, capped at 20 chars (e.g. "...dir/file.parquet").
+        // // Computed here (not in the closure) so the closure doesn't capture `db`, leaving
+        // // `state` free to be borrowed mutably by `select_db` below.
+        // let path_name = db
+        //     .path()
+        //     .map(|p| {
+        //         let full = p.to_string_lossy();
+        //         let chars: Vec<char> = full.chars().collect();
+        //         if chars.len() <= 20 {
+        //             full.into_owned()
+        //         } else {
+        //             let tail: String = chars[chars.len() - 17..].iter().collect();
+        //             format!("...{tail}")
+        //         }
+        //     })
+        //     .unwrap_or_default();
+
         ui.horizontal(|ui| {
             label!(ui, format!("{name} : {mol_count} mols"), Color32::WHITE);
 
             let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
+
+            ui.add_space(COL_SPACING);
+
+            // label!(ui, path_name, Color32::GRAY);
 
             ui.add_space(COL_SPACING);
 
@@ -496,16 +528,28 @@ fn db_summary_table(
     // Column headers (outside the scroll area so they stay fixed).
     Grid::new(format!("parquet_mol_headers_{id}"))
         .num_columns(cols)
-        .min_col_width(120.)
+        .min_col_width(0.)
         .spacing([COL_SPACING, 4.])
         .show(ui, |ui| {
-            label!(ui, "Load", Color32::GRAY);
-            label!(ui, "CID", Color32::GRAY);
-            label!(ui, "Title", Color32::GRAY);
-            label!(ui, "SMILES", Color32::GRAY);
-            label!(ui, "Heavy atoms", Color32::GRAY);
+            cell(ui, W_LOAD, |ui| {
+                label!(ui, "Load", Color32::GRAY);
+            });
+            cell(ui, W_CID, |ui| {
+                label!(ui, "CID", Color32::GRAY);
+            });
+            cell(ui, W_TITLE, |ui| {
+                label!(ui, "Title", Color32::GRAY);
+            });
+            cell(ui, W_SMILES, |ui| {
+                label!(ui, "SMILES", Color32::GRAY);
+            });
+            cell(ui, W_HEAVY, |ui| {
+                label!(ui, "Heavy atoms", Color32::GRAY);
+            });
             if editable {
-                label!(ui, "Delete", Color32::GRAY);
+                cell(ui, W_DELETE, |ui| {
+                    label!(ui, "Delete", Color32::GRAY);
+                });
             }
             ui.end_row();
         });
@@ -520,51 +564,64 @@ fn db_summary_table(
             Grid::new(format!("parquet_mol_grid_{id}"))
                 .num_columns(cols)
                 .striped(true)
-                .min_col_width(120.)
+                .min_col_width(0.)
                 .spacing([COL_SPACING, 4.])
                 .show(ui, |ui| {
-                    for (smiles, meta) in
-                        entries.iter().skip(page * MOLS_PER_PAGE).take(MOLS_PER_PAGE)
+                    for (smiles, meta) in entries
+                        .iter()
+                        .skip(page * MOLS_PER_PAGE)
+                        .take(MOLS_PER_PAGE)
                     {
-                        if button!(
-                            ui,
-                            "Load",
-                            COLOR_ACTION,
-                            "Open this molecule from the database as a ligand."
-                        )
-                        .clicked()
-                        {
+                        if cell(ui, W_LOAD, |ui| {
+                            button!(
+                                ui,
+                                "Load",
+                                COLOR_ACTION,
+                                "Open this molecule from the database as a ligand."
+                            )
+                            .clicked()
+                        }) {
                             action = Some(RowAction::Load((*smiles).clone()));
                         }
 
-                        match meta.pubchem_cid {
+                        cell(ui, W_CID, |ui| match meta.pubchem_cid {
                             Some(cid) => {
-                                label!(ui, cid.to_string(), Color32::LIGHT_BLUE)
+                                label!(ui, cid.to_string(), Color32::LIGHT_BLUE);
                             }
-                            None => label!(ui, "—", Color32::DARK_GRAY),
-                        };
+                            None => {
+                                label!(ui, "—", Color32::DARK_GRAY);
+                            }
+                        });
 
-                        match &meta.pubchem_title {
+                        cell(ui, W_TITLE, |ui| match &meta.pubchem_title {
                             Some(title) => {
-                                label!(ui, title, Color32::LIGHT_BLUE)
+                                label!(ui, truncate(title, TITLE_CHARS_MAX), Color32::LIGHT_BLUE);
                             }
-                            None => label!(ui, "—", Color32::DARK_GRAY),
-                        };
+                            None => {
+                                label!(ui, "—", Color32::DARK_GRAY);
+                            }
+                        });
 
-                        label!(ui, truncate(&meta.smiles, SMILES_CHARS_MAX), Color32::GRAY)
-                            .on_hover_text(&meta.smiles);
+                        cell(ui, W_SMILES, |ui| {
+                            label!(ui, truncate(&meta.smiles, SMILES_CHARS_MAX), Color32::GRAY)
+                                .on_hover_text(&meta.smiles);
+                        });
 
-                        label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
+                        cell(ui, W_HEAVY, |ui| {
+                            label!(ui, meta.heavy_atom_count.to_string(), Color32::GRAY);
+                        });
 
                         if editable
-                            && button!(
-                                ui,
-                                "X",
-                                Color32::LIGHT_RED,
-                                "Delete this molecule from the database. Asks for confirmation \
-                                 first."
-                            )
-                            .clicked()
+                            && cell(ui, W_DELETE, |ui| {
+                                button!(
+                                    ui,
+                                    "X",
+                                    Color32::LIGHT_RED,
+                                    "Delete this molecule from the database. Asks for confirmation \
+                                     first."
+                                )
+                                .clicked()
+                            })
                         {
                             action = Some(RowAction::Delete((*smiles).clone()));
                         }
@@ -628,6 +685,19 @@ fn search_input(popup: &mut PopupState, ui: &mut Ui) {
         popup.parquet_db_search.clear();
         popup.parquet_db_page = 0;
     }
+}
+
+/// Lay out one table cell at a fixed width. This is what keeps the narrow columns narrow: egui's
+/// `Grid` otherwise sizes every column to `min_col_width`, so the short Load/CID/Heavy/Delete
+/// cells would claim as much room as Title and SMILES. Allocating an exact width per cell also
+/// keeps the separate header and body grids aligned.
+fn cell<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        egui::Layout::left_to_right(egui::Align::Center),
+        add,
+    )
+    .inner
 }
 
 fn truncate(val: &str, len_max: usize) -> String {

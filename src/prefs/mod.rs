@@ -27,7 +27,7 @@ use crate::{
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     md::MdBackend,
-    molecules::{MolIdent, MolType},
+    molecules::{MolIdent, MolType, peptide::MoleculePeptide},
     selection::{Selection, ViewSelLevel},
     sfc_mesh::MeshColoring,
     state::{
@@ -308,17 +308,10 @@ pub struct PerMolToSave {
 }
 
 impl PerMolToSave {
-    pub fn from_state(state: &State) -> Self {
-        let mut chain_vis = Vec::new();
-        let mut rcsb_data = None;
-        let mut rcsb_files_avail = None;
-
-        if let Some(mol) = &state.peptide {
-            chain_vis = mol.chains.iter().map(|c| c.visible).collect();
-
-            rcsb_data = mol.rcsb_data.clone();
-            rcsb_files_avail = mol.rcsb_files_avail.clone();
-        }
+    pub fn from_state(state: &State, mol: &MoleculePeptide) -> Self {
+        let chain_vis = mol.chains.iter().map(|c| c.visible).collect();
+        let rcsb_data = mol.rcsb_data.clone();
+        let rcsb_files_avail = mol.rcsb_files_avail.clone();
 
         let docking_site = Default::default();
 
@@ -536,6 +529,16 @@ impl State {
             }
         }
 
+        for mol in &self.peptide {
+            for oh in &mut self.to_save.open_history {
+                if let Some(p) = &mol.common.path
+                    && &oh.path == p
+                {
+                    oh.position = Some(mol.common.centroid());
+                }
+            }
+        }
+
         for mol in &self.pockets {
             for oh in &mut self.to_save.open_history {
                 if let Some(p) = &mol.common.path
@@ -546,9 +549,8 @@ impl State {
             }
         }
 
-        if let Some(mol) = &self.peptide {
-            let data = PerMolToSave::from_state(self);
-
+        for mol in &self.peptide {
+            let data = PerMolToSave::from_state(self, mol);
             self.to_save.per_mol.insert(mol.common.ident.clone(), data);
         }
 
@@ -579,10 +581,10 @@ impl State {
         println!("Updating state from prefs data");
         self.reset_selections();
 
-        if let Some(mol) = &mut self.peptide
-            && self.to_save.per_mol.contains_key(&mol.common.ident)
-        {
-            let data = &self.to_save.per_mol[&mol.common.ident];
+        for mol in &mut self.peptide {
+            let Some(data) = self.to_save.per_mol.get(&mol.common.ident).cloned() else {
+                continue;
+            };
 
             self.ui.chain_to_pick_res = data.chain_to_pick_res;
             self.ui.show_docking_tools = data.show_docking_tools;
@@ -596,8 +598,8 @@ impl State {
                 }
             }
 
-            mol.rcsb_data = data.rcsb_data.clone();
-            mol.rcsb_files_avail = data.rcsb_files_avail.clone();
+            mol.rcsb_data = data.rcsb_data;
+            mol.rcsb_files_avail = data.rcsb_files_avail;
         }
 
         self.ui.selection = self.to_save.ui_prefs.selection.clone();

@@ -261,14 +261,13 @@ fn redraw_inplace_helper(
 
     let mol = match mol_type {
         MolType::Peptide => {
-            wrappers::update_single_peptide_inplace(state, scene);
-
-            if state.peptide.is_none() {
+            if mol_i >= state.peptide.len() {
                 eprintln!("{err}");
                 return;
             }
 
-            &mut state.peptide.as_mut().unwrap().common
+            wrappers::update_single_peptide_inplace(mol_i, state, scene);
+            &mut state.peptide[mol_i].common
         }
         MolType::Ligand => {
             wrappers::update_single_ligand_inplace(mol_i, state, scene);
@@ -376,7 +375,7 @@ fn handle_mouse_button(
 
 fn cycle_primary_view(state: &mut State, redraw: &mut RedrawFlags, forward: bool) {
     let peptide_only_scene = state.volatile.active_mol.is_none()
-        && state.peptide.is_some()
+        && !state.peptide.is_empty()
         && state.ligands.is_empty()
         && state.nucleic_acids.is_empty()
         && state.lipids.is_empty();
@@ -489,6 +488,10 @@ fn handle_physical_key(
                     move_cam_to_sel(
                         &mut state.ui,
                         &state.peptide,
+                        state
+                            .volatile
+                            .active_mol
+                            .and_then(|(t, i)| (t == MolType::Peptide).then_some(i)),
                         &state.ligands,
                         &state.nucleic_acids,
                         &state.lipids,

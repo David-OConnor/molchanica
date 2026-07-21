@@ -67,7 +67,11 @@ pub(in crate::file_io) fn load_peptide(
 
     let centroid = mol.center;
     let ident = mol.common.ident.clone();
-    state.peptide = Some(mol);
+    let peptide_i = state.peptide.len();
+    state.peptide.push(mol);
+    state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
+    state.volatile.active_peptide = Some(peptide_i);
+    state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
 
     draw_peptide(state, scene, updates);
 
@@ -218,7 +222,7 @@ impl State {
                     Some(path.to_owned()),
                     self.to_save.ph,
                 )?;
-                self.cif_pdb_raw = Some(data_str);
+                self.cif_pdb_raw.insert(mol.common.ident.clone(), data_str);
 
                 Ok(MoleculeGeneric::Peptide(mol))
             }
@@ -244,7 +248,8 @@ impl State {
     }
 
     pub fn load_density(&mut self, dens_map: DensityMap) {
-        if let Some(mol) = &mut self.peptide {
+        let peptide_i = self.peptide_for_tools_i();
+        if let Some(mol) = peptide_i.and_then(|i| self.peptide.get_mut(i)) {
             // Sample atoms, so we know where to draw the (periodic) density data.
             // We are filtering for backbone atoms of one type for now, for performance reasons. This is
             // a sample. Good enough?
@@ -477,10 +482,17 @@ impl State {
                 //     self.to_save.last_opened = Some(path.to_owned());
                 //     self.update_save_prefs()
                 // }
-                // We don't allow editing the protein files yet, so save the raw CIF.
-                if let Some(data) = &mut self.cif_pdb_raw {
-                    fs::write(path, data)?;
-                }
+                // We don't allow editing the protein files yet, so save the active peptide's raw CIF.
+                let Some(mol) = self.peptide_for_tools_i().and_then(|i| self.peptide.get(i)) else {
+                    return Err(io::Error::new(ErrorKind::InvalidData, "No peptide to save"));
+                };
+                let Some(data) = self.cif_pdb_raw.get(&mol.common.ident) else {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "The active peptide has no source CIF data to save",
+                    ));
+                };
+                fs::write(path, data)?;
                 OpenType::Peptide
             }
             "sdf" => match self.active_mol() {
@@ -530,32 +542,26 @@ impl State {
             },
             // todo: Consider if you want to store the original map bytes, as you do with
             // todo mmCIF files, instead of saving what you parsed.
-            "map" | "mtz" => match &self.peptide {
-                // todo: Support 2fo-fc as well?
-                Some(mol) => match &mol.density_map {
-                    Some(dm) => {
-                        match extension {
-                            "map" => dm.save(path)?,
-                            "mtz" => dm.save_sf_or_mtz(path, gemmi_path())?,
-                            _ => unreachable!(),
-                        }
-
-                        OpenType::Map
-                    }
-                    None => {
-                        return Err(io::Error::new(
-                            ErrorKind::InvalidData,
-                            "No density map loaded for this molecule; can't save it.",
-                        ));
-                    }
-                },
-                None => {
+            "map" | "mtz" => {
+                let Some(mol) = self.peptide_for_tools_i().and_then(|i| self.peptide.get(i)) else {
                     return Err(io::Error::new(
                         ErrorKind::InvalidData,
                         "No molecule open; can't save a density Map.",
                     ));
+                };
+                let Some(dm) = &mol.density_map else {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "No density map loaded for this molecule; can't save it.",
+                    ));
+                };
+                match extension {
+                    "map" => dm.save(path)?,
+                    "mtz" => dm.save_sf_or_mtz(path, gemmi_path())?,
+                    _ => unreachable!(),
                 }
-            },
+                OpenType::Map
+            }
             "dcd" | "xtc" | "trr" => {
                 if let Some(md) = &self.volatile.md_local.mol_dynamics {
                     //
@@ -641,7 +647,9 @@ impl State {
                     {
                         handle_err(&mut self.ui, e.to_string());
                     } else if let Some(p) = &history.position {
-                        self.peptide.as_mut().unwrap().common.move_to(*p);
+                        let peptide = self.peptide.last_mut().unwrap();
+                        peptide.common.move_to(*p);
+                        peptide.center = *p;
                     }
                 }
                 OpenType::Ligand => {
@@ -760,7 +768,7 @@ impl State {
 
         // The pre-push index.
         let mol_i = match mol_type {
-            MolType::Peptide => 0,
+            MolType::Peptide => self.peptide.len(),
             MolType::Ligand => self.ligands.len(),
             MolType::NucleicAcid => self.nucleic_acids.len(),
             MolType::Lipid => self.lipids.len(),
@@ -905,6 +913,9 @@ impl State {
         updates.entities.push_class(entity_class);
 
         self.volatile.active_mol = Some((mol_type, mol_i));
+        if mol_type == MolType::Peptide {
+            self.volatile.active_peptide = Some(mol_i);
+        }
         self.volatile.orbit_center = Some((mol_type, mol_i));
 
         if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
@@ -914,27 +925,28 @@ impl State {
         cam::set_fog(self, &mut scene.camera);
 
         if mol_type == MolType::Peptide {
-            // Mark all other peptides as not last session.
-            // We do this as we currently only support one peptide at a time.
-            for history in &mut self.to_save.open_history {
-                if matches!(history.type_, OpenType::Peptide | OpenType::Map) {
-                    history.last_session = false;
-                }
-            }
-
-            // todo: As long as we can only have one peptide, should we just call `close_peptide` from here?
-
-            // Prevents out of bounds.
+            // Prevents an old peptide-relative selection from being applied to the new active peptide.
             if matches!(
                 self.ui.selection,
-                Selection::AtomPeptide(_) | Selection::AtomsPeptide(_) | Selection::BondPeptide(_)
+                Selection::AtomPeptide(_)
+                    | Selection::AtomsPeptide(_)
+                    | Selection::BondPeptide(_)
+                    | Selection::Residue(_)
+                    | Selection::Residues(_)
             ) {
                 self.ui.selection = Selection::None;
             }
 
-            if let Some(mol) = &mut self.peptide {
+            let mut pending_data = None;
+            if let Some(mol) = self.peptide.get_mut(mol_i) {
                 // Only after updating from prefs (to prevent unnecessary loading) do we update data avail.
-                mol.updates_rcsb_data(&mut self.volatile.thread_receivers.mol_pending_data_avail);
+                mol.updates_rcsb_data(&mut pending_data);
+            }
+            if let Some(rx) = pending_data {
+                self.volatile
+                    .thread_receivers
+                    .mol_pending_data_avail
+                    .push((mol_i, rx));
             }
         }
 

@@ -68,7 +68,7 @@ pub fn view_settings(
                 redraw.lipid = true;
             }
 
-            if state.peptide.is_some() {
+            if !state.peptide.is_empty() {
                 ui.add_space(COL_SPACING / 2.);
                 if molecule_view_selector(
                     ui,
@@ -115,7 +115,7 @@ pub fn view_settings(
 
             ui.label("Vis:");
 
-            if state.peptide.is_some() {
+            if !state.peptide.is_empty() {
                 toggle_btn_inv(
                     &mut state.ui.visibility.hide_protein,
                     "Peptide",
@@ -262,7 +262,7 @@ pub fn view_settings(
                 redraw,
             );
 
-            if state.peptide.is_some() {
+            if !state.peptide.is_empty() {
                 toggle_btn(
                     &mut state.ui.visibility.labels.chain,
                     "Lbl Ch",
@@ -290,7 +290,7 @@ pub fn view_settings(
 
             // vis_check(&mut state.ui.visibility.dim_peptide, "Dim peptide", ui, redraw);
 
-            if state.peptide.is_some() {
+            if !state.peptide.is_empty() {
                 ui.add_space(COL_SPACING / 2.);
                 // Not using `vis_check` for this because its semantics are inverted.
                 let color = misc::active_color(state.ui.visibility.dim_peptide);
@@ -304,7 +304,9 @@ pub fn view_settings(
                 }
             }
 
-            if let Some(mol) = &state.peptide
+            if let Some(mol) = state
+                .peptide_for_tools_i()
+                .and_then(|i| state.peptide.get(i))
                 && let Some(dens) = &mol.elec_density
             {
                 let mut redraw_dens = false;
@@ -383,7 +385,7 @@ fn vis_helper(vis: &mut bool, name: &str, tooltip: &str, ui: &mut Ui) {
 
 /// For toggling on and off UI sections.
 pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
-    if state.peptide.is_some() {
+    if !state.peptide.is_empty() {
         let tooltip = "Show or hide the amino acid sequence of the currently opened protein \
                     as single-letter identifiers. When in this mode, click the AA letter to select its residue.";
 

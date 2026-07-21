@@ -11,8 +11,8 @@ use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
 use chrono::Utc;
 use egui::{
-    Align, Color32, ComboBox, Grid, Layout, Popup, PopupAnchor, Pos2, RectAlign, RichText,
-    ScrollArea, Slider, TextEdit, Ui,
+    Align, Color32, ComboBox, Grid, Layout, Pos2, RichText, ScrollArea, Slider, TextEdit, Ui,
+    Window,
 };
 use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -66,52 +66,54 @@ pub(in crate::ui) fn load_popups(
     updates: &mut EngineUpdates,
 ) {
     if state.ui.popup.show_get_geostd {
-        popup("geostd", ui).show(|ui| {
+        popup("Load force-field parameters").show(ui.ctx(), |ui| {
             get_geostd(state, scene, updates, ui);
         });
     }
 
     if state.ui.popup.show_associated_structures {
-        popup("assoc_structs", ui).show(|ui| {
+        popup("Associated structures").show(ui.ctx(), |ui| {
             associated_structures(state, scene, updates, &mut redraw.peptide, reset_cam, ui);
         });
     }
 
     if state.ui.popup.alignment {
-        popup("alignment", ui).show(|ui| {
+        popup("Molecule alignment").show(ui.ctx(), |ui| {
             alignment(state, scene, &mut redraw.ligand, updates, ui);
         });
     };
 
     if state.ui.popup.alignment_screening {
-        popup("align_screening", ui).show(|ui| {
+        popup("Alignment screening").show(ui.ctx(), |ui| {
             alignment_screening(state, ui);
         });
     }
 
     if state.ui.popup.show_settings {
-        popup("settings", ui).show(|ui| {
+        popup("Settings").show(ui.ctx(), |ui| {
             settings(state, scene, ui, updates);
         });
     }
 
     if state.ui.popup.residue_selector {
         // todo: Show hide based on AaCategory? i.e. residue.amino_acid.category(). Hydrophilic, acidic etc.
-        popup("res_sel", ui).show(|ui| {
+        popup("Residue selector").show(ui.ctx(), |ui| {
             residue_selector(state, scene, ui, &mut redraw.peptide);
         });
     }
 
     if state.ui.popup.recent_files {
-        popup("recent_files", ui).show(|ui| {
+        popup("Recent molecules").show(ui.ctx(), |ui| {
             recent_files_popup(state, scene, ui, updates);
         });
     }
 
     if state.ui.popup.rama_plot
-        && let Some(mol) = &state.peptide
+        && let Some(mol) = state
+            .peptide_for_tools_i()
+            .and_then(|i| state.peptide.get(i))
     {
-        popup("rama", ui).show(|ui| {
+        popup("Ramachandran plot").show(ui.ctx(), |ui| {
             rama_plot::plot_rama(
                 &mol.residues,
                 &mol.common.ident,
@@ -122,37 +124,37 @@ pub(in crate::ui) fn load_popups(
     }
 
     if state.ui.popup.pharmacophore_boolean {
-        popup("pharmacophore_boolean", ui).show(|ui| {
+        popup("Pharmacophore (boolean)").show(ui.ctx(), |ui| {
             pharmacophore::pharmacophore_boolean_window(state, ui);
         });
     }
 
     if state.ui.popup.pharmacophore_screening {
-        popup("pharmacophore_screen", ui).show(|ui| {
+        popup("Pharmacophore screening").show(ui.ctx(), |ui| {
             pharmacophore::pharmacophore_screen(state, scene, ui, updates);
         });
     }
 
     if let Some((mol_type, i)) = state.ui.popup.metadata {
-        popup("metadata", ui).show(|ui| {
+        popup("Metadata").show(ui.ctx(), |ui| {
             metadata(mol_type, i, state, ui);
         });
     }
 
     if state.ui.popup.lig_pocket_creation {
-        popup("lig_pocket_creation", ui).show(|ui| {
+        popup("Ligands & pockets from residues").show(ui.ctx(), |ui| {
             lig_pocket_from_het_res(state, scene, ui, updates);
         });
     }
 
     if state.ui.popup.parquet_db {
-        popup("parquet_db", ui).show(|ui| {
+        popup("Molecule database").show(ui.ctx(), |ui| {
             mol_dbs::parquet_db(state, scene, updates, ui);
         });
     }
 
     if state.ui.popup.md_mol_set_editor {
-        popup("md_mol_set_editor", ui).show(|ui| {
+        popup("MD molecule set editor").show(ui.ctx(), |ui| {
             md_viewer::md_mol_set_editor(state, ui);
         });
     }
@@ -161,13 +163,15 @@ pub(in crate::ui) fn load_popups(
         let (dx, dy) = ff_params::POPUP_OFFSET;
         let pos = Pos2::new(POPUP_POS.x + dx, POPUP_POS.y + dy);
 
-        popup("ff_params", ui).at_position(pos).show(|ui| {
-            ff_params::ff_param_editor(state, ui);
-        });
+        popup("Force-field parameter editor")
+            .default_pos(pos)
+            .show(ui.ctx(), |ui| {
+                ff_params::ff_param_editor(state, ui);
+            });
     }
 
     if state.ui.popup.structure_pred {
-        popup("structure_pred", ui).show(|ui| {
+        popup("Structure prediction").show(ui.ctx(), |ui| {
             structure_pred::structure_prediction_window(state, ui);
         });
     }
@@ -929,7 +933,9 @@ fn residue_selector(state: &mut State, scene: &mut Scene, ui: &mut Ui, redraw: &
 
     let mut update_arc_center = false;
 
-    if let Some(mol) = &state.peptide
+    if let Some(mol) = state
+        .peptide_for_tools_i()
+        .and_then(|i| state.peptide.get(i))
         && let Some(chain_i) = state.ui.chain_to_pick_res
     {
         if chain_i >= mol.chains.len() {
@@ -996,18 +1002,18 @@ fn residue_selector(state: &mut State, scene: &mut Scene, ui: &mut Ui, redraw: &
     }
 }
 
-fn popup<'a>(name: &'a str, ui: &'a mut Ui) -> Popup<'a> {
-    let popup_id = ui.make_persistent_id(name);
-
-    Popup::new(
-        popup_id,
-        ui.ctx().clone(),
-        PopupAnchor::Position(POPUP_POS),
-        ui.layer_id(), // draw on top of the current layer
-    )
-    .align(RectAlign::BOTTOM_START)
-    .open(true)
-    .gap(4.0)
+/// Builds a window used to host a popup. Unlike a fixed `Popup`, an `egui::Window` behaves like
+/// a normal OS window: the user can drag it by its title bar and resize it from the edges. Egui
+/// tracks each window's position and size internally (keyed by `title`), so the geometry persists
+/// across frames without us storing it in `PopupState`. `title` doubles as the window's egui id,
+/// so it must be unique per popup.
+fn popup(title: &str) -> Window<'static> {
+    Window::new(title.to_owned())
+        .default_pos(POPUP_POS)
+        .movable(true)
+        .resizable(true)
+        .collapsible(true)
+        .constrain(true)
 }
 
 /// This handles creating ligands and pockets from hetero residues in protein data. This, at least
@@ -1022,7 +1028,10 @@ fn lig_pocket_from_het_res(
     ui: &mut Ui,
     updates: &mut EngineUpdates,
 ) {
-    let Some(mol) = &state.peptide else {
+    let Some(mol) = state
+        .peptide_for_tools_i()
+        .and_then(|i| state.peptide.get(i))
+    else {
         return;
     };
 

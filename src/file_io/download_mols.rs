@@ -77,12 +77,12 @@ pub fn load_atom_coords_rcsb(
                     }
                 };
 
-            let (_ident, centroid) = load_peptide(state, scene, mol, updates);
+            let (loaded_ident, centroid) = load_peptide(state, scene, mol, updates);
             if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
                 *center = centroid.into();
             }
 
-            state.cif_pdb_raw = Some(cif_text);
+            state.cif_pdb_raw.insert(loaded_ident, cif_text);
         }
         Err(e) => {
             handle_err(
@@ -100,8 +100,10 @@ pub fn load_atom_coords_rcsb(
 
     updates.entities.push_class(EntityClass::Protein as u32);
 
-    state.volatile.active_mol = Some((MolType::Peptide, 0));
-    state.volatile.orbit_center = Some((MolType::Peptide, 0));
+    let peptide_i = state.peptide.len() - 1;
+    state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
+    state.volatile.active_peptide = Some(peptide_i);
+    state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
 
     *redraw = true;
     *reset_cam = true;
@@ -110,11 +112,19 @@ pub fn load_atom_coords_rcsb(
 
     // todo: async
     // Only after updating from prefs (to prevent unecesasary loading) do we update data avail.
+    let mut pending_data = None;
     state
         .peptide
-        .as_mut()
+        .last_mut()
         .unwrap()
-        .updates_rcsb_data(&mut state.volatile.thread_receivers.mol_pending_data_avail);
+        .updates_rcsb_data(&mut pending_data);
+    if let Some(rx) = pending_data {
+        state
+            .volatile
+            .thread_receivers
+            .mol_pending_data_avail
+            .push((peptide_i, rx));
+    }
 }
 
 // todo: DIff between this and the non-2 variant?

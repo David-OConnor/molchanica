@@ -51,7 +51,7 @@ pub fn handle_mol_manip_in_plane(
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        if let Some(p) = &mut state.peptide {
+                        if let Some(p) = state.peptide.get_mut(mol_i) {
                             &mut p.common
                         } else {
                             eprintln!("Error: No peptide in state for mol manip");
@@ -170,7 +170,7 @@ pub fn handle_mol_manip_in_plane(
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        if let Some(p) = &mut state.peptide {
+                        if let Some(p) = state.peptide.get_mut(mol_i) {
                             &mut p.common
                         } else {
                             eprintln!("Error: No peptide in state for mol manip");
@@ -303,7 +303,7 @@ pub fn handle_mol_manip_in_out(
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        if let Some(p) = &mut state.peptide {
+                        if let Some(p) = state.peptide.get_mut(mol_i) {
                             &mut p.common
                         } else {
                             eprintln!("Error: No peptide in state for mol manip");
@@ -446,7 +446,7 @@ pub fn handle_mol_manip_in_out(
             // todo: C+P with slight changes from the mouse-move variant.
             let mol = match mol_type {
                 MolType::Peptide => {
-                    if let Some(p) = &mut state.peptide {
+                    if let Some(p) = state.peptide.get_mut(mol_i) {
                         &mut p.common
                     } else {
                         eprintln!("Error: No peptide in state for mol manip");
