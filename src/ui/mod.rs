@@ -767,52 +767,54 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
 
         ui.horizontal(|ui| {
-            let color_settings = if state.ui.popup.show_settings {
-                Color32::LIGHT_RED
-            } else {
-                Color32::GRAY
-            };
-            if ui
-                .button(RichText::new("⚙").color(color_settings))
-                .clicked()
-            {
-                state.ui.popup.show_settings = !state.ui.popup.show_settings;
-            }
+            section_box().show(ui, |ui| {
+                let color_settings = if state.ui.popup.show_settings {
+                    Color32::LIGHT_RED
+                } else {
+                    COLOR_HIGHLIGHT
+                };
+                if ui
+                    .button(RichText::new("⚙").color(color_settings))
+                    .clicked()
+                {
+                    state.ui.popup.show_settings = !state.ui.popup.show_settings;
+                }
 
-            if ui.button(RichText::new("Editor").color(COLOR_HIGHLIGHT)).clicked() {
-                enter_edit_mode(state, scene, &mut updates);
-            }
+                if ui.button(RichText::new("Editor").color(COLOR_HIGHLIGHT)).clicked() {
+                    enter_edit_mode(state, scene, &mut updates);
+                }
 
-            if button!(
-                ui,
-                "FF params",
-                COLOR_HIGHLIGHT,
-                "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
-                gaff2, amino19, and lipid21."
-            ).clicked() {
-                state.ui.popup.ff_params = !state.ui.popup.ff_params;
-            }
-
-            if button!(
-                    ui, "Mol DBs",
-                    COLOR_ACTION,
-                    "Open a window where you can create, read, and update Parquest databases of molecules.\
-                    This is for screening large numbers of molecules."
-
+                if button!(
+                    ui,
+                    "FF params",
+                    COLOR_HIGHLIGHT,
+                    "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
+                    gaff2, amino19, and lipid21."
                 ).clicked() {
-                state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
-            }
+                    state.ui.popup.ff_params = !state.ui.popup.ff_params;
+                }
 
-            if button!(
-                ui,
-                "Predict structure",
-                COLOR_ACTION,
-                "Predict a structure from an amino-acid or nucleotide sequence."
-            )
-            .clicked()
-            {
-                state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
-            }
+                if button!(
+                        ui, "Mol DBs",
+                        COLOR_HIGHLIGHT,
+                        "Open a window where you can create, read, and update Parquest databases of molecules.\
+                        This is for screening large numbers of molecules."
+
+                    ).clicked() {
+                    state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
+                }
+
+                if button!(
+                    ui,
+                    "Predict structure",
+                    COLOR_HIGHLIGHT,
+                    "Predict a structure from an amino-acid or nucleotide sequence."
+                )
+                    .clicked()
+                {
+                    state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
+                }
+            });
 
             let metadata_loaded = false; // avoids borrow error.
             display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);

@@ -23,7 +23,7 @@ egui_plot = "0.35.0"  # For Rama plots
 lin_alg = { version = "1.4.3", features = ["encode"] }
 na_seq = "0.3.15"
 bio_apis = { version = "0.2.8", features = ["encode"] }
-bio_files = { version = "0.5.2", features = ["encode"] }
+bio_files = { version = "0.5.3", features = ["encode"] }
 mcubes = "0.1.7"
 dynamics = { version = "0.2.0", features = ["encode"] }
 
@@ -64,12 +64,7 @@ bytes = "1.11.1"
 
 # Observation, 2026-02-09: Dynamic Linking seems to be required for Ubuntu; dynamic loading will launch,
 # but it will be unable to find the GPU at runtime. edit: Nvm; not working there with loading either.
-#cudarc = { version = "0.19.2", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading"], optional = true }
 cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking", "cuda-13000"], optional = true }
-
-# Note: The non-cuda one seems to work on a non-nvidia Win with dynamic-linking.
-#[target.'cfg(target_os = "windows")'.dependencies]
-#cudarc = { version = "0.18.1", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking"], optional = true }
 
 # Convenient for our large quantity of model files.
 include_dir = "0.7.4"

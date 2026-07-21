@@ -19,7 +19,7 @@ use std::{
     fs::File,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, mpsc::Sender},
     thread,
     time::Duration,
 };
@@ -105,14 +105,19 @@ struct StoredMol {
 
 impl StoredMol {
     /// Build a row from a molecule loaded from a file, e.g. Mol2 or SDF.
-    fn from_mol(mut m: MoleculeSmall) -> io::Result<Self> {
+    ///
+    /// When `look_up_pubchem` is set, and the molecule lacks a title, fill in the title (and CID)
+    /// over HTTP. Callers that must stay offline (e.g. bulk file/directory imports) pass `false`,
+    /// leaving the title and CID blank unless the source file's metadata already carried them.
+    fn from_mol(mut m: MoleculeSmall, look_up_pubchem: bool) -> io::Result<Self> {
         let smiles = smiles_from_idents(&m.idents).unwrap_or_else(|| m.common.ident.clone());
         let (mut pubchem_cid, mut pubchem_title) = pubchem_cid_title_from_idents(&m.idents);
 
         // Molecule files generally don't carry a title, so look it up over HTTP. Without one, the
         // DB table has only a SMILES string to identify the molecule by. The idents we store are
         // updated to match, so a molecule loaded back out of the DB carries them too.
-        if pubchem_title.is_none()
+        if look_up_pubchem
+            && pubchem_title.is_none()
             && let Some(props) = pubchem_props(pubchem_cid, &smiles)
         {
             m.update_idents_and_char_from_pubchem(&props);
@@ -176,6 +181,19 @@ fn pubchem_cid_title_from_idents(idents: &[MolIdent]) -> (Option<u32>, Option<St
 /// times, backing off; this doubles as the throttle.
 const PUBCHEM_ATTEMPTS: u32 = 3;
 const PUBCHEM_BACKOFF_MS: u64 = 500;
+
+/// How many CIDs to request titles for in a single PubChem call while enriching a DB. Batching
+/// keeps the request count (and so the load we put on PubChem) low; the cap keeps the request URL
+/// from growing long enough to be rejected.
+const PUBCHEM_CIDS_PER_REQUEST: usize = 100;
+/// Minimum spacing between PubChem requests while enriching a DB, to stay within their rate limit
+/// (a few requests per second) rather than hammering the service.
+const PUBCHEM_ENRICH_INTERVAL_MS: u64 = 250;
+/// How many rows to look up between writes of the DB file while enriching. Flushing periodically,
+/// rather than only once at the end, means a long run's progress survives the app being closed or
+/// crashing partway through. Each flush rewrites the whole parquet file, so this trades some extra
+/// I/O for that safety; PubChem's rate limit dwarfs the write cost regardless.
+const PUBCHEM_ENRICH_FLUSH_EVERY: usize = 1_000;
 
 /// Look up a molecule's PubChem properties over HTTP, to fill in the title (and CID) we store
 /// alongside it. Queries by CID if we have one, else by SMILES.
@@ -242,6 +260,34 @@ pub struct MolIdentsMeta {
     pub idents: Vec<MolIdent>,
     /// i.e. `common.metadata`
     pub metadata: HashMap<String, String>,
+}
+
+/// PubChem data looked up for a DB row while enriching, applied by SMILES key. Only fields that
+/// were missing on the row are filled in; see [`run_pubchem_enrich`] and
+/// [`ParquetMolDb::apply_pubchem_meta`].
+#[derive(Debug, Clone, Default)]
+pub struct PubchemMeta {
+    pub cid: Option<u32>,
+    pub title: Option<String>,
+}
+
+/// A DB row missing a PubChem title and/or CID, i.e. a target for enrichment. `cid` is `Some` when
+/// only the title is missing, which lets those rows be looked up in batches keyed by CID rather
+/// than one query per molecule.
+#[derive(Debug, Clone)]
+pub struct EnrichTarget {
+    pub smiles: String,
+    pub cid: Option<u32>,
+}
+
+/// Messages from the background PubChem-enrichment worker to the UI. See [`run_pubchem_enrich`].
+pub enum DbEnrichMsg {
+    /// Cumulative count of target rows looked up so far, for a progress display.
+    Progress(usize),
+    /// The rewritten DB (reopened, with a fresh index) and the number of rows updated.
+    Done { db: Box<ParquetMolDb>, updated: usize },
+    /// The rewrite failed; carries a message for the user.
+    Failed(String),
 }
 
 /// Where a database's parquet data lives. Databases on disk can be added to and deleted from; the
@@ -372,15 +418,14 @@ impl ParquetMolDb {
         ]))
     }
 
-    /// Read molecules from molecule files on disk, and loads them into a database. Loads
-    /// recursively from a given folder (Mol2 or SDF), then writes a fresh parquet file.
+    /// Read molecules from a set of molecule files (Mol2 or SDF) on disk, and load them into the
+    /// database, writing a fresh parquet file. Shared by `add_mols_from_dir` and
+    /// `add_mols_from_file`.
     ///
     /// Parquet files are immutable, so to add molecules we read the existing rows, merge, and
     /// rewrite. Molecules already in the DB (matched on SMILES) are replaced by the incoming ones.
-    pub fn populate(&mut self, mol_path: &Path) -> io::Result<()> {
+    fn add_mol_files(&mut self, files: &[PathBuf]) -> io::Result<()> {
         self.check_writable()?;
-
-        let files = collect_mol_files(mol_path)?;
 
         let mut rows = self.read_all_rows()?;
         let mut row_i = row_index(&rows);
@@ -391,7 +436,9 @@ impl ParquetMolDb {
             let (mols, consumed) = load_mol_batch(&files[offset..])?;
 
             for m in mols {
-                merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m)?);
+                // Bulk imports stay offline: leave the title/CID blank unless the source file's
+                // metadata already carried them.
+                merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m, false)?);
             }
             offset += consumed;
         }
@@ -400,6 +447,34 @@ impl ParquetMolDb {
         self.rebuild_index()?;
 
         Ok(())
+    }
+
+    /// Read molecules from molecule files on disk, and load them into the database. Loads
+    /// recursively from a given folder (Mol2 or SDF), then writes a fresh parquet file.
+    pub fn add_mols_from_dir(&mut self, mol_path: &Path) -> io::Result<()> {
+        let files = collect_mol_files(mol_path)?;
+        self.add_mol_files(&files)
+    }
+
+    /// Load a single molecule file (SDF or Mol2) from disk, and add it to the database. An SDF file
+    /// may hold more than one molecule. The directory equivalent is `add_mols_from_dir`.
+    pub fn add_mols_from_file(&mut self, path: &Path) -> io::Result<()> {
+        // `load_mol_batch` only handles these two, and panics otherwise; the dialog filter doesn't
+        // prevent a name being typed in directly.
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if !matches!(ext.as_str(), "sdf" | "mol2") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Unable to add {ext:?} files to a database; use SDF or Mol2"),
+            ));
+        }
+
+        self.add_mol_files(&[path.to_path_buf()])
     }
 
     /// Whether this molecule is already in the DB. Matches on the row key (SMILES), or on PubChem
@@ -429,7 +504,7 @@ impl ParquetMolDb {
         let mut row_i = row_index(&rows);
 
         for m in mols {
-            merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m.clone())?);
+            merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m.clone(), true)?);
         }
 
         self.write_all_rows(&rows)?;
@@ -927,6 +1002,200 @@ impl ParquetMolDb {
         self.write_all_rows(&rows)?;
         self.rebuild_index()
     }
+
+    /// Fill in missing `pubchem_cid` / `pubchem_title` (and the matching idents) for the rows named
+    /// in `updates`, keyed by SMILES, then rewrite the file. Only fields that were empty are
+    /// filled; existing values are left untouched. Returns the number of rows changed.
+    ///
+    /// As with adding and deleting, parquet files are immutable, so this reads the file, edits the
+    /// matching rows, and rewrites it. See [`run_pubchem_enrich`], which produces `updates`.
+    pub fn apply_pubchem_meta(
+        &mut self,
+        updates: &HashMap<String, PubchemMeta>,
+    ) -> io::Result<usize> {
+        self.check_writable()?;
+
+        let mut rows = self.read_all_rows()?;
+        let mut changed = 0;
+
+        for row in &mut rows {
+            let Some(meta) = updates.get(&row.smiles) else {
+                continue;
+            };
+
+            let mut row_changed = false;
+
+            if row.pubchem_cid.is_none()
+                && let Some(cid) = meta.cid
+            {
+                row.pubchem_cid = Some(cid);
+                if !row.idents.iter().any(|id| matches!(id, MolIdent::PubChem(_))) {
+                    row.idents.push(MolIdent::PubChem(cid));
+                }
+                row_changed = true;
+            }
+
+            if row.pubchem_title.is_none()
+                && let Some(title) = &meta.title
+            {
+                row.pubchem_title = Some(title.clone());
+                // Replace any stale title ident, rather than accumulating duplicates.
+                row.idents
+                    .retain(|id| !matches!(id, MolIdent::PubchemTitle(_)));
+                row.idents.push(MolIdent::PubchemTitle(title.clone()));
+                row_changed = true;
+            }
+
+            if row_changed {
+                changed += 1;
+            }
+        }
+
+        // Skip the (expensive) rewrite if nothing matched: e.g. every lookup came back empty.
+        if changed > 0 {
+            self.write_all_rows(&rows)?;
+            self.rebuild_index()?;
+        }
+
+        Ok(changed)
+    }
+}
+
+/// Look up missing PubChem titles/CIDs for `targets` (rows of `source`), writing them back to the
+/// DB in batches as they come in, then hand the finished DB back. Intended to run on a background
+/// thread; progress and the result are sent over `tx`. See [`DbEnrichMsg`] and
+/// [`ParquetMolDb::apply_pubchem_meta`].
+///
+/// Rows that already have a CID need only a title, and are fetched in batches keyed by CID. Rows
+/// without a CID are looked up by SMILES, one request each (PubChem's SMILES namespace doesn't take
+/// a list). Requests are spaced out to respect PubChem's rate limit.
+///
+/// Results are flushed to disk every [`PUBCHEM_ENRICH_FLUSH_EVERY`] rows rather than only at the
+/// end, so a long run against PubChem's slow API doesn't lose everything if the app is closed
+/// partway through.
+pub fn run_pubchem_enrich(source: DbSource, targets: Vec<EnrichTarget>, tx: Sender<DbEnrichMsg>) {
+    if let Err(e) = run_pubchem_enrich_inner(source, targets, &tx) {
+        let _ = tx.send(DbEnrichMsg::Failed(e));
+    }
+}
+
+/// The body of [`run_pubchem_enrich`], split out so the periodic flushes and the final write can
+/// use `?`; any error is turned into a [`DbEnrichMsg::Failed`] by the caller. On success this sends
+/// [`DbEnrichMsg::Done`] itself, since only it holds the finished DB.
+fn run_pubchem_enrich_inner(
+    source: DbSource,
+    targets: Vec<EnrichTarget>,
+    tx: &Sender<DbEnrichMsg>,
+) -> Result<(), String> {
+    // Opened up front (rather than only at the end) so results can be flushed to disk as they're
+    // looked up. Each flush rewrites through this same handle, keeping its index current.
+    let mut db =
+        ParquetMolDb::open_source(source).map_err(|e| format!("reopening the database: {e}"))?;
+
+    // Resolved rows not yet written. Flushed to disk (and cleared) every `PUBCHEM_ENRICH_FLUSH_EVERY`
+    // rows looked up; `apply_pubchem_meta` only fills empty fields, so rows already written on an
+    // earlier flush are untouched by later ones.
+    let mut pending: HashMap<String, PubchemMeta> = HashMap::new();
+    let mut updated = 0;
+    let mut processed = 0;
+    let mut processed_at_last_flush = 0;
+
+    // `(cid, smiles)` for rows needing only a title; `smiles` for rows needing a CID (and title).
+    let mut title_targets: Vec<(u32, String)> = Vec::new();
+    let mut smiles_targets: Vec<String> = Vec::new();
+    for t in targets {
+        match t.cid {
+            Some(cid) => title_targets.push((cid, t.smiles)),
+            None => smiles_targets.push(t.smiles),
+        }
+    }
+
+    // Batched CID -> title: many CIDs per request.
+    for chunk in title_targets.chunks(PUBCHEM_CIDS_PER_REQUEST) {
+        let cids: Vec<u32> = chunk.iter().map(|(cid, _)| *cid).collect();
+
+        match pubchem::titles_for_cids(&cids) {
+            Ok(titles) => {
+                for (cid, smiles) in chunk {
+                    if let Some(title) = titles.get(cid) {
+                        pending.insert(
+                            smiles.clone(),
+                            PubchemMeta {
+                                cid: None,
+                                title: Some(title.clone()),
+                            },
+                        );
+                    }
+                }
+            }
+            // One bad batch shouldn't sink the whole run; log it and carry on.
+            Err(e) => eprintln!("PubChem title lookup failed for {} CIDs: {e:?}", cids.len()),
+        }
+
+        processed += chunk.len();
+        let _ = tx.send(DbEnrichMsg::Progress(processed));
+
+        if processed - processed_at_last_flush >= PUBCHEM_ENRICH_FLUSH_EVERY {
+            updated += flush_enrich(&mut db, &mut pending)?;
+            processed_at_last_flush = processed;
+        }
+
+        thread::sleep(Duration::from_millis(PUBCHEM_ENRICH_INTERVAL_MS));
+    }
+
+    // Per-SMILES CID + title. `pubchem_props` already retries with backoff on transient failures.
+    for smiles in smiles_targets {
+        if let Some(props) = pubchem_props(None, &smiles) {
+            pending.insert(
+                smiles.clone(),
+                PubchemMeta {
+                    cid: Some(props.cid),
+                    title: Some(props.title),
+                },
+            );
+        }
+
+        processed += 1;
+        let _ = tx.send(DbEnrichMsg::Progress(processed));
+
+        if processed - processed_at_last_flush >= PUBCHEM_ENRICH_FLUSH_EVERY {
+            updated += flush_enrich(&mut db, &mut pending)?;
+            processed_at_last_flush = processed;
+        }
+
+        thread::sleep(Duration::from_millis(PUBCHEM_ENRICH_INTERVAL_MS));
+    }
+
+    // Whatever's left under the batch threshold.
+    updated += flush_enrich(&mut db, &mut pending)?;
+
+    // Hand back the DB we've been writing to, so the UI can swap in its fresh index without
+    // re-reading the file itself.
+    let _ = tx.send(DbEnrichMsg::Done {
+        db: Box::new(db),
+        updated,
+    });
+
+    Ok(())
+}
+
+/// Write any resolved-but-unwritten rows to the DB file, returning the number of rows changed and
+/// clearing them from `pending`. A no-op (no rewrite) when `pending` is empty. See
+/// [`run_pubchem_enrich`], which calls this periodically so progress survives a restart.
+fn flush_enrich(
+    db: &mut ParquetMolDb,
+    pending: &mut HashMap<String, PubchemMeta>,
+) -> Result<usize, String> {
+    if pending.is_empty() {
+        return Ok(0);
+    }
+
+    let changed = db
+        .apply_pubchem_meta(pending)
+        .map_err(|e| format!("writing the database: {e}"))?;
+    pending.clear();
+
+    Ok(changed)
 }
 
 /// SMILES: index into `rows`. Used to prevent duplicate rows for the same molecule when merging.

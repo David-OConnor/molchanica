@@ -1,17 +1,18 @@
 //! A popup of a UI viewer and editor for molecule databases, e.g. as implemented
 //! in parquet.
 
-use std::slice;
+use std::{path::Path, slice, sync::mpsc, thread};
 
 use egui::{Color32, Grid, RichText, ScrollArea, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
     button, label,
-    mol_db::{MolMeta, ParquetMolDb},
+    mol_db::{EnrichTarget, MolMeta, ParquetMolDb, run_pubchem_enrich},
     molecules::MoleculeGeneric,
     prefs::OpenType,
     state::{DbSel, PopupState, State},
+    threads::DbEnrichJob,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         popup,
@@ -35,6 +36,10 @@ const W_DELETE: f32 = 46.;
 
 /// Rows shown per page in the molecule table.
 const MOLS_PER_PAGE: usize = 40;
+
+/// Characters of a database's file path shown in the "Databases loaded" list before its start is
+/// elided; the full path is available on hover.
+const PATH_TAIL_CHARS_MAX: usize = 44;
 
 /// What a button in the molecule table asked for, by SMILES key. The table borrows the DB, so these
 /// are acted on after it's drawn.
@@ -107,10 +112,25 @@ pub(in crate::ui) fn parquet_db(
         // The built-in DB is fixed at compile time; only the loaded ones can be added to.
         let editable = matches!(db_sel, DbSel::Loaded(_));
 
+        // A PubChem-population job running for *this* DB shows progress in place of the edit
+        // controls and pauses editing: the worker rewrites the file when it finishes, so a
+        // concurrent add or delete would be clobbered. Carries `(done, total)` for the display.
+        let enrich_status = match &state.volatile.thread_receivers.db_pubchem_enrich {
+            Some(job) if job.db_sel == db_sel => Some((job.done, job.total)),
+            _ => None,
+        };
+        let can_edit = editable && enrich_status.is_none();
+
+        // Keep the worker's channel (polled in `handle_thread_rx`) drained promptly even if nothing
+        // else is driving repaints.
+        if enrich_status.is_some() {
+            ui.ctx().request_repaint();
+        }
+
         // Gathered up front: the button row below borrows `state` mutably. Only ligands not already
         // in the DB get a button. (Index into `state.ligands`, and display name.)
         let ligs_to_add: Vec<(usize, String)> = match state.active_mol_db() {
-            Some(db) if editable => state
+            Some(db) if can_edit => state
                 .ligands
                 .iter()
                 .enumerate()
@@ -122,9 +142,20 @@ pub(in crate::ui) fn parquet_db(
 
         // Index into `state.ligands` of the ligand whose button was clicked, if any.
         let mut add_lig = None;
+        // Set when the "Fill from PubChem" button is clicked; acted on after the row is drawn.
+        let mut start_enrich = false;
 
         ui.horizontal_wrapped(|ui| {
-            if editable {
+            if let Some((done, total)) = enrich_status {
+                label!(
+                    ui,
+                    format!(
+                        "Populating from PubChem… {done} / {total}. Editing is paused until this \
+                         finishes."
+                    ),
+                    COLOR_HIGHLIGHT
+                );
+            } else if editable {
                 if button!(
                     ui,
                     "Add mols from dir",
@@ -138,13 +169,26 @@ pub(in crate::ui) fn parquet_db(
 
                 if button!(
                     ui,
-                    "Add mol",
+                    "Add mol[s] from file",
                     COLOR_ACTION,
                     "Add a single molecule file (Mol2 or SDF) or multi-mol SDF file to this database."
                 )
                 .clicked()
                 {
                     state.volatile.dialogs.parquet_mol_file.pick_file();
+                }
+
+                if button!(
+                    ui,
+                    "Fill titles/CIDs from PubChem",
+                    COLOR_ACTION,
+                    "Look up any missing PubChem titles and CIDs for the molecules in this \
+                     database, and save them. Runs in the background, rate-limited; molecules that \
+                     already have both are skipped."
+                )
+                .clicked()
+                {
+                    start_enrich = true;
                 }
             } else {
                 label!(
@@ -197,6 +241,48 @@ pub(in crate::ui) fn parquet_db(
             }
         }
 
+        if start_enrich
+            && let DbSel::Loaded(db_i) = db_sel
+        {
+            let db = &state.volatile.parquet_dbs[db_i];
+
+            // Only rows actually missing something; molecules with both a title and CID are skipped.
+            let targets: Vec<EnrichTarget> = db
+                .index_meta
+                .values()
+                .filter(|m| m.pubchem_title.is_none() || m.pubchem_cid.is_none())
+                .map(|m| EnrichTarget {
+                    smiles: m.smiles.clone(),
+                    cid: m.pubchem_cid,
+                })
+                .collect();
+
+            if targets.is_empty() {
+                handle_success(
+                    &mut state.ui,
+                    "Every molecule already has a PubChem title and CID.".to_owned(),
+                );
+            } else {
+                let total = targets.len();
+                let source = db.source.clone();
+
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || run_pubchem_enrich(source, targets, tx));
+
+                state.volatile.thread_receivers.db_pubchem_enrich = Some(DbEnrichJob {
+                    db_sel,
+                    rx,
+                    done: 0,
+                    total,
+                });
+
+                handle_success(
+                    &mut state.ui,
+                    format!("Looking up PubChem data for {total} molecule(s)…"),
+                );
+            }
+        }
+
         //     if button!(
         //         ui,
         //         "Load all mols",
@@ -231,7 +317,7 @@ pub(in crate::ui) fn parquet_db(
             return;
         };
 
-        let table_action = db_summary_table(db, db_sel, editable, &mut state.ui.popup, ui);
+        let table_action = db_summary_table(db, db_sel, can_edit, &mut state.ui.popup, ui);
 
         match table_action {
             Some(RowAction::Delete(smiles)) => {
@@ -347,37 +433,21 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     ui.separator();
     label!(ui, "Databases loaded", Color32::GRAY);
 
-    // Only present if this build has one embedded; see `State::mol_db`.
+    // Only present if this build has one embedded; see `State::mol_db`. It has no file path (it's
+    // baked into the binary), so unlike the loaded DBs below there's no path tail to show.
     if let Some(db) = &state.mol_db {
         let name = db.name();
         let mol_count = db.index_meta.len();
         let active = state.volatile.parquet_db_active == Some(DbSel::Common);
 
-        // // Show just the tail of the path, capped at 20 chars (e.g. "...dir/file.parquet").
-        // // Computed here (not in the closure) so the closure doesn't capture `db`, leaving
-        // // `state` free to be borrowed mutably by `select_db` below.
-        // let path_name = db
-        //     .path()
-        //     .map(|p| {
-        //         let full = p.to_string_lossy();
-        //         let chars: Vec<char> = full.chars().collect();
-        //         if chars.len() <= 20 {
-        //             full.into_owned()
-        //         } else {
-        //             let tail: String = chars[chars.len() - 17..].iter().collect();
-        //             format!("...{tail}")
-        //         }
-        //     })
-        //     .unwrap_or_default();
-
         ui.horizontal(|ui| {
-            label!(ui, format!("{name} : {mol_count} mols"), Color32::WHITE);
+            label!(
+                ui,
+                format!("{} : {mol_count} mols", db_display_name(&name)),
+                Color32::WHITE
+            );
 
             let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
-
-            ui.add_space(COL_SPACING);
-
-            // label!(ui, path_name, Color32::GRAY);
 
             ui.add_space(COL_SPACING);
 
@@ -405,9 +475,21 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
         ui.horizontal(|ui| {
             label!(
                 ui,
-                format!("{} : {} mols", db.name(), db.index_meta.len()),
+                format!(
+                    "{} : {} mols",
+                    db_display_name(&db.name()),
+                    db.index_meta.len()
+                ),
                 Color32::WHITE
             );
+
+            // The tail of the path it was loaded from, to tell apart DBs whose filenames match but
+            // live in different folders. Full path on hover.
+            if let Some(path) = db.path() {
+                ui.add_space(COL_SPACING);
+                label!(ui, truncate_path_tail(path, PATH_TAIL_CHARS_MAX), Color32::GRAY)
+                    .on_hover_text(path.to_string_lossy());
+            }
 
             let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
 
@@ -501,23 +583,45 @@ fn db_summary_table(
 
     ui.add_space(ROW_SPACING);
 
-    // Sort by ident for stable display order.
-    let mut entries: Vec<(&String, &MolMeta)> = index_meta.iter().collect();
-    entries.sort_by_key(|(ident, _)| ident.as_str());
-
+    // Rebuild the sorted + search-filtered key list only when an input changes; collecting,
+    // sorting, and filtering the whole index every frame makes a large DB hang, since egui redraws
+    // the open popup continuously. The per-page rows below look their metadata up from `index_meta`
+    // by key, which is cheap. See `MolDbTableView`.
     let search = popup.parquet_db_search.trim().to_lowercase();
-    if !search.is_empty() {
-        entries.retain(|(_, meta)| meta.matches_search(&search));
+    let view = &mut popup.parquet_db_view;
+    if view.db_sel != Some(db_sel) || view.mol_count != index_meta.len() || view.search != search {
+        let mut entries: Vec<&MolMeta> = if search.is_empty() {
+            index_meta.values().collect()
+        } else {
+            index_meta
+                .values()
+                .filter(|meta| meta.matches_search(&search))
+                .collect()
+        };
+
+        // Sort by SMILES (the row key) for a stable display order; `index_meta` is a HashMap.
+        entries.sort_by(|a, b| a.smiles.cmp(&b.smiles));
+
+        view.keys = entries
+            .into_iter()
+            .map(|meta| meta.smiles.clone())
+            .collect();
+        view.db_sel = Some(db_sel);
+        view.mol_count = index_meta.len();
+        view.search = search;
     }
 
+    let keys = &popup.parquet_db_view.keys;
+    let n_matching = keys.len();
+
     // The DB may have shrunk (a delete), or the search narrowed, since the page was set.
-    let pages = entries.len().div_ceil(MOLS_PER_PAGE).max(1);
+    let pages = n_matching.div_ceil(MOLS_PER_PAGE).max(1);
     if popup.parquet_db_page >= pages {
         popup.parquet_db_page = pages - 1;
     }
     let page = popup.parquet_db_page;
 
-    if entries.is_empty() {
+    if keys.is_empty() {
         label!(ui, "No molecules match this search.", Color32::GRAY);
         return None;
     }
@@ -567,11 +671,13 @@ fn db_summary_table(
                 .min_col_width(0.)
                 .spacing([COL_SPACING, 4.])
                 .show(ui, |ui| {
-                    for (smiles, meta) in entries
-                        .iter()
-                        .skip(page * MOLS_PER_PAGE)
-                        .take(MOLS_PER_PAGE)
-                    {
+                    for smiles in keys.iter().skip(page * MOLS_PER_PAGE).take(MOLS_PER_PAGE) {
+                        // The key came from `index_meta`, so this lookup succeeds; skip
+                        // defensively rather than unwrap should the two ever drift.
+                        let Some(meta) = index_meta.get(smiles) else {
+                            continue;
+                        };
+
                         if cell(ui, W_LOAD, |ui| {
                             button!(
                                 ui,
@@ -581,7 +687,7 @@ fn db_summary_table(
                             )
                             .clicked()
                         }) {
-                            action = Some(RowAction::Load((*smiles).clone()));
+                            action = Some(RowAction::Load(smiles.clone()));
                         }
 
                         cell(ui, W_CID, |ui| match meta.pubchem_cid {
@@ -623,7 +729,7 @@ fn db_summary_table(
                                 .clicked()
                             })
                         {
-                            action = Some(RowAction::Delete((*smiles).clone()));
+                            action = Some(RowAction::Delete(smiles.clone()));
                         }
 
                         ui.end_row();
@@ -656,7 +762,7 @@ fn db_summary_table(
 
         ui.add_space(COL_SPACING);
 
-        label!(ui, format!("{} molecules", entries.len()), Color32::GRAY);
+        label!(ui, format!("{} molecules", n_matching), Color32::GRAY);
     });
 
     action
@@ -707,4 +813,30 @@ fn truncate(val: &str, len_max: usize) -> String {
     } else {
         val.to_owned()
     }
+}
+
+/// A database's name for the list, without the trailing `.parquet` extension. Names without it
+/// (e.g. the built-in DB's) are returned unchanged.
+fn db_display_name(name: &str) -> &str {
+    const EXT: &str = ".parquet";
+    if name.len() >= EXT.len() && name[name.len() - EXT.len()..].eq_ignore_ascii_case(EXT) {
+        &name[..name.len() - EXT.len()]
+    } else {
+        name
+    }
+}
+
+/// A file path shortened to its last `len_max` characters, with a leading "..." when elided (e.g.
+/// "...molchanica/my_db.parquet"). Keeps the informative tail (folder + filename) rather than the
+/// long absolute prefix.
+fn truncate_path_tail(path: &Path, len_max: usize) -> String {
+    let full = path.to_string_lossy();
+    let chars: Vec<char> = full.chars().collect();
+
+    if chars.len() <= len_max {
+        return full.into_owned();
+    }
+
+    let tail: String = chars[chars.len() - (len_max - 3)..].iter().collect();
+    format!("...{tail}")
 }

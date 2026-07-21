@@ -405,14 +405,6 @@ pub struct StateVolatile {
     pub md_local: MdStateLocal,
     pub orbit_center: Option<(MolType, usize)>,
     pub integrations_avail: IntegrationsAvail,
-    // /// Per-protein. Computed as required; None before then.
-    // hydropathy_data: Option<Vec<Vec<(usize, usize)>>>,
-    // /// If present, there must be one per vertex. Rebuild this whenever we
-    // /// rebuild this mesh.
-    // sa_surface_mesh_colors: Option<Vec<(u8, u8, u8)>>,
-    // /// Outer the protein index. Inner: A collection of points on the surface, sufficient to
-    // /// determine if a given atom is near the surface.
-    // protein_sfc_mesh_coarse: Vec<Vec<f32>>,
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
@@ -616,6 +608,24 @@ impl Default for Visibility {
     }
 }
 
+/// Cached, sorted, and search-filtered view of a molecule DB's table.
+///
+/// The DB's index can hold tens of thousands of molecules, and egui redraws the open popup every
+/// frame. Collecting, sorting, and filtering the whole index each frame makes the popup hang, so
+/// the result is cached here and rebuilt only when an input changes: the selected DB, its molecule
+/// count (an add or delete), or the search text.
+#[derive(Default, Debug)]
+pub struct MolDbTableView {
+    /// The DB this view was built for; `None` until the first build, forcing an initial rebuild.
+    pub db_sel: Option<DbSel>,
+    /// The DB's molecule count when built. A change means rows were added or removed.
+    pub mol_count: usize,
+    /// The trimmed, lowercased search text the keys were filtered by.
+    pub search: String,
+    /// SMILES keys of the matching rows, in display order. Owned, so this doesn't borrow the DB.
+    pub keys: Vec<String>,
+}
+
 /// Defines which UI popups are displayed.
 #[derive(Default, Debug)]
 pub struct PopupState {
@@ -644,6 +654,8 @@ pub struct PopupState {
     pub parquet_db_search: String,
     /// Current page in the active molecule DB's table.
     pub parquet_db_page: usize,
+    /// Cached sorted/filtered key list for the active molecule DB's table; see `MolDbTableView`.
+    pub parquet_db_view: MolDbTableView,
     pub md_mol_set_editor: bool,
     pub ff_params: bool,
     pub structure_pred: bool,
