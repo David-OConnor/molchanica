@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use egui::{Button, ComboBox, Context, RichText, TextEdit, Ui};
+use egui::{Button, Color32, ComboBox, Context, RichText, TextEdit, Ui};
 use na_seq::{AminoAcid, Nucleotide};
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     state::State,
     structure_prediction::{
         PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
-        predict_structure_from_aas_with_control, predict_structure_from_nts_with_control,
+        predict_structure_from_aas, predict_structure_from_nts,
     },
     ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
     util::handle_err,
@@ -36,6 +36,7 @@ pub(crate) struct StructurePredUi {
     started_at: Option<Instant>,
     control: Option<PredictionControl>,
     cancel_requested: bool,
+    completed_message: Option<String>,
 }
 
 impl Default for StructurePredUi {
@@ -48,6 +49,7 @@ impl Default for StructurePredUi {
             started_at: None,
             control: None,
             cancel_requested: false,
+            completed_message: None,
         }
     }
 }
@@ -67,6 +69,11 @@ impl StructurePredUi {
         self.started_at = Some(Instant::now());
         self.control = Some(control);
         self.cancel_requested = false;
+        self.completed_message = None;
+    }
+
+    pub(crate) fn mark_complete(&mut self, message: String) {
+        self.completed_message = Some(message);
     }
 
     fn cancel_prediction(&mut self) {
@@ -91,6 +98,8 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
         let seconds_to_next_update = 30 - elapsed.as_secs() % 30;
         ui.ctx()
             .request_repaint_after(Duration::from_secs(seconds_to_next_update));
+    } else if let Some(message) = &state.ui.structure_pred.completed_message {
+        ui.label(RichText::new(message).color(Color32::WHITE));
     }
     ui.add_space(ROW_SPACING);
 
@@ -229,10 +238,10 @@ fn predict(state: &mut State, context: &Context) {
     thread::spawn(move || {
         let prediction = match sequence {
             PredictionSequence::AminoAcids(aas) => {
-                predict_structure_from_aas_with_control(model, &aas, &ff_map, &worker_control)
+                predict_structure_from_aas(model, &aas, &ff_map, &worker_control)
             }
             PredictionSequence::Nucleotides(nts) => {
-                predict_structure_from_nts_with_control(model, &nts, &ff_map, &worker_control)
+                predict_structure_from_nts(model, &nts, &ff_map, &worker_control)
             }
         };
 

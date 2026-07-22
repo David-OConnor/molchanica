@@ -16,7 +16,7 @@ use crate::{
     },
     gromacs,
     md::viewer,
-    mol_db::{COMMON_MOL_DB_NAME, ParquetMolDb},
+    mol_db::{CHEBI_DB_NAME, ParquetMolDb},
     mol_editor,
     molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     prefs::OpenType,
@@ -144,7 +144,10 @@ pub fn update_file_dialogs(
             let db = &mut state.volatile.parquet_dbs[i];
             match db.add_mols_from_file(path) {
                 Ok(()) => {
-                    println!("Added mols from file. DB now has {} molecules", db.index_meta.len());
+                    println!(
+                        "Added mols from file. DB now has {} molecules",
+                        db.index_meta.len()
+                    );
                 }
                 Err(e) => {
                     eprintln!("Error adding mols from file: {e:?}")
@@ -398,13 +401,16 @@ enum CommonDbOutcome {
     NoMatch,
 }
 
-/// Search the built-in molecule database (`State::mol_db`) for the query text, matching on CID,
-/// SMILES, or PubChem title, and draw a load button for each match. The top match is highlighted:
-/// it's what Enter will load.
+/// Search the built-in ChEBI molecule database (`State::chebi_mol_db`) for the query text, matching
+/// on CID, SMILES, or PubChem title, and draw a load button for each match. The top match is
+/// highlighted: it's what Enter will load.
 ///
 /// Enter loads the best match, which is why this runs ahead of the remote lookups in `query`: a
 /// molecule we already have is always preferable to a network round trip. `ParquetMolDb::search`
 /// ranks exact CID and title matches first.
+// Temporarily unused: the caller's ChEBI integration is disabled because that DB is 2D-only. Kept
+// (with its ranking wired to the shared `search`) so it can be switched back on with a 3D source.
+#[allow(dead_code)]
 fn query_common_db(
     state: &mut State,
     scene: &mut Scene,
@@ -416,7 +422,7 @@ fn query_common_db(
     // Whether Enter acts on this query at all; only affects which button is highlighted.
     enter_live: bool,
 ) -> CommonDbOutcome {
-    let Some(db) = &state.mol_db else {
+    let Some(db) = &state.chebi_mol_db else {
         return CommonDbOutcome::NoMatch;
     };
 
@@ -473,7 +479,7 @@ fn query_common_db(
     // Re-borrowed here rather than reused from above: `load_mol` needs the DB, and opening the
     // molecule needs `state`.
     let mol = {
-        let Some(db) = &state.mol_db else {
+        let Some(db) = &state.chebi_mol_db else {
             return CommonDbOutcome::Matched;
         };
 
@@ -501,7 +507,7 @@ fn query_common_db(
 
     handle_success(
         &mut state.ui,
-        format!("Loaded {name} ({smiles}) from {COMMON_MOL_DB_NAME}; no network query"),
+        format!("Loaded {name} ({smiles}) from {CHEBI_DB_NAME}."),
     );
 
     CommonDbOutcome::Loaded
@@ -544,16 +550,20 @@ pub(in crate::ui) fn query(
     // highlighted as the Enter target when it isn't one.
     let enter_live = inp.len() >= QUERY_ENTER_LEN_MIN;
 
-    let common = query_common_db(
-        state,
-        scene,
-        redraw,
-        updates,
-        ui,
-        inp,
-        enter_pressed,
-        enter_live,
-    );
+    // DB integration disabled for now: the built-in ChEBI database is 2D-only, so molecules loaded
+    // from it lack the 3D coordinates the rest of the app expects. Re-enable once we have a 3D
+    // source. The query then falls straight through to the remote lookups below.
+    // let common = query_common_db(
+    //     state,
+    //     scene,
+    //     redraw,
+    //     updates,
+    //     ui,
+    //     inp,
+    //     enter_pressed,
+    //     enter_live,
+    // );
+    let common = CommonDbOutcome::NoMatch;
 
     // Whether one of the remote buttons below is what Enter activates: it is, unless the built-in
     // DB matched and claimed the key. Used to highlight that button.

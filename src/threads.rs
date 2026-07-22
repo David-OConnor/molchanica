@@ -15,7 +15,6 @@ use na_seq::AaIdent;
 
 use crate::{
     gromacs::on_gromacs_md_complete,
-    mol_db::DbEnrichMsg,
     molecules::{MolIdent, MolType},
     render::MESH_PEP_SOLVENT_SURFACE,
     screening::pharmacophore::PhScreeningScore,
@@ -25,16 +24,6 @@ use crate::{
     therapeutic::TherapeuticProperties,
     util::{RedrawFlags, handle_err, handle_success},
 };
-
-/// A running background job filling in missing PubChem titles/CIDs for a molecule DB: which DB it
-/// targets, the channel from the worker, and progress counters for the UI.
-pub struct DbEnrichJob {
-    pub db_sel: DbSel,
-    pub rx: Receiver<DbEnrichMsg>,
-    /// Target rows looked up so far, and the total, for a progress display.
-    pub done: usize,
-    pub total: usize,
-}
 
 /// Contains receivers for threads. We use these for longer-running processes, as to
 /// not block the UI. For example, computations, and HTTP calls.
@@ -67,8 +56,6 @@ pub struct ThreadReceivers {
     pub gromacs_md_avail: Option<Receiver<(GromacsOutput, u128)>>,
     /// Structure prediction result. The worker streams model output directly while it runs.
     pub structure_prediction: Option<Receiver<StructurePredictionOutcome>>,
-    /// A background job filling in missing PubChem titles/CIDs for a molecule DB.
-    pub db_pubchem_enrich: Option<DbEnrichJob>,
 }
 
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
@@ -245,12 +232,17 @@ pub fn handle_thread_rx(
             state.ui.structure_pred.finish_prediction();
 
             match outcome {
-                StructurePredictionOutcome::Complete(molecule) => {
+                StructurePredictionOutcome::Complete(mut molecule) => {
                     state.volatile.aa_seq_text = molecule
                         .aa_seq
                         .iter()
                         .map(|aa| aa.to_str(AaIdent::OneLetter))
                         .collect();
+                    // Register the model's raw mmCIF under the molecule's ident so it can be saved
+                    // back out as a file, mirroring how on-disk molecules populate `cif_pdb_raw`.
+                    if let Some(cif) = molecule.source_cif.take() {
+                        state.cif_pdb_raw.insert(molecule.common.ident.clone(), cif);
+                    }
                     let peptide_i = state.peptide.len();
                     state.peptide.push(molecule);
                     state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
@@ -262,10 +254,9 @@ pub fn handle_thread_rx(
                     state.volatile.flags.clear_density_drawing = true;
                     state.volatile.flags.new_mol_loaded = true;
                     redraw.peptide = true;
-                    handle_success(
-                        &mut state.ui,
-                        "Structure prediction complete; loaded predicted molecule".to_owned(),
-                    );
+                    let msg = "Structure prediction complete; loaded predicted molecule".to_owned();
+                    state.ui.structure_pred.mark_complete(msg.clone());
+                    handle_success(&mut state.ui, msg);
                 }
                 StructurePredictionOutcome::Cancelled => {
                     handle_success(&mut state.ui, "Structure prediction cancelled".to_owned());
@@ -276,7 +267,7 @@ pub fn handle_thread_rx(
                 ),
             }
         }
-        Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+        Some(Err(TryRecvError::Disconnected)) => {
             state.volatile.thread_receivers.structure_prediction = None;
             state.ui.structure_pred.finish_prediction();
             handle_err(
@@ -284,76 +275,6 @@ pub fn handle_thread_rx(
                 "Structure prediction worker stopped before returning a result".to_owned(),
             );
         }
-        Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => {}
-    }
-
-    poll_db_pubchem_enrich(state);
-}
-
-/// Drain the PubChem-enrichment worker's channel: advance the progress counters, and on completion
-/// swap the rewritten DB into place (invalidating the table's cached view) or report the failure.
-/// Taken out of the receiver up front so the completion branch can mutate `state` freely.
-fn poll_db_pubchem_enrich(state: &mut State) {
-    let Some(mut job) = state.volatile.thread_receivers.db_pubchem_enrich.take() else {
-        return;
-    };
-
-    // `None` while still running; otherwise the final outcome.
-    let mut result: Option<Result<(DbSel, Box<crate::mol_db::ParquetMolDb>, usize), String>> = None;
-
-    loop {
-        match job.rx.try_recv() {
-            Ok(DbEnrichMsg::Progress(done)) => job.done = done,
-            Ok(DbEnrichMsg::Done { db, updated }) => {
-                result = Some(Ok((job.db_sel, db, updated)));
-                break;
-            }
-            Ok(DbEnrichMsg::Failed(e)) => {
-                result = Some(Err(e));
-                break;
-            }
-            Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) => {
-                result = Some(Err("the worker stopped before finishing".to_owned()));
-                break;
-            }
-        }
-    }
-
-    match result {
-        // Still running; keep the job for the next frame.
-        None => state.volatile.thread_receivers.db_pubchem_enrich = Some(job),
-        Some(Ok((db_sel, db, updated))) => {
-            // Match by source, not just index: the user may have closed or reordered DBs while the
-            // job ran, so index `i` could now point at a different (or no) DB.
-            let target = match db_sel {
-                DbSel::Loaded(i) => state
-                    .volatile
-                    .parquet_dbs
-                    .get(i)
-                    .filter(|existing| existing.source == db.source)
-                    .map(|_| i),
-                DbSel::Common => None,
-            };
-
-            match target {
-                Some(i) => {
-                    state.volatile.parquet_dbs[i] = *db;
-                    // The table's cached key list referred to the pre-enrichment contents.
-                    state.ui.popup.parquet_db_view = Default::default();
-                    handle_success(
-                        &mut state.ui,
-                        format!("Filled in PubChem data: {updated} molecule(s) updated."),
-                    );
-                }
-                None => handle_err(
-                    &mut state.ui,
-                    "The database was closed before the PubChem lookup finished; discarding \
-                     results."
-                        .to_owned(),
-                ),
-            }
-        }
-        Some(Err(e)) => handle_err(&mut state.ui, format!("PubChem population failed: {e}")),
+        Some(Err(TryRecvError::Empty)) | None => {}
     }
 }

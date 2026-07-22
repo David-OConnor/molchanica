@@ -8,11 +8,10 @@ use graphics::{EngineUpdates, Scene};
 
 use crate::{
     button, label,
-    mol_db::{EnrichTarget, MolMeta, ParquetMolDb, run_pubchem_enrich},
+    mol_db::{MolMeta, ParquetMolDb},
     molecules::MoleculeGeneric,
     prefs::OpenType,
     state::{DbSel, PopupState, State},
-    threads::DbEnrichJob,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         popup,
@@ -94,7 +93,8 @@ pub(in crate::ui) fn parquet_db(
         // The DB the selection points at may be gone: a loaded one was closed, or this build has no
         // embedded DB.
         let db_valid = match db_sel {
-            DbSel::Common => state.mol_db.is_some(),
+            DbSel::Hmdb => state.hmdb_mol_db.is_some(),
+            DbSel::Chebi => state.chebi_mol_db.is_some(),
             DbSel::Loaded(i) => i < state.volatile.parquet_dbs.len(),
         };
 
@@ -111,21 +111,7 @@ pub(in crate::ui) fn parquet_db(
 
         // The built-in DB is fixed at compile time; only the loaded ones can be added to.
         let editable = matches!(db_sel, DbSel::Loaded(_));
-
-        // A PubChem-population job running for *this* DB shows progress in place of the edit
-        // controls and pauses editing: the worker rewrites the file when it finishes, so a
-        // concurrent add or delete would be clobbered. Carries `(done, total)` for the display.
-        let enrich_status = match &state.volatile.thread_receivers.db_pubchem_enrich {
-            Some(job) if job.db_sel == db_sel => Some((job.done, job.total)),
-            _ => None,
-        };
-        let can_edit = editable && enrich_status.is_none();
-
-        // Keep the worker's channel (polled in `handle_thread_rx`) drained promptly even if nothing
-        // else is driving repaints.
-        if enrich_status.is_some() {
-            ui.ctx().request_repaint();
-        }
+        let can_edit = editable;
 
         // Gathered up front: the button row below borrows `state` mutably. Only ligands not already
         // in the DB get a button. (Index into `state.ligands`, and display name.)
@@ -142,20 +128,9 @@ pub(in crate::ui) fn parquet_db(
 
         // Index into `state.ligands` of the ligand whose button was clicked, if any.
         let mut add_lig = None;
-        // Set when the "Fill from PubChem" button is clicked; acted on after the row is drawn.
-        let mut start_enrich = false;
 
         ui.horizontal_wrapped(|ui| {
-            if let Some((done, total)) = enrich_status {
-                label!(
-                    ui,
-                    format!(
-                        "Populating from PubChem… {done} / {total}. Editing is paused until this \
-                         finishes."
-                    ),
-                    COLOR_HIGHLIGHT
-                );
-            } else if editable {
+           if editable {
                 if button!(
                     ui,
                     "Add mols from dir",
@@ -176,19 +151,6 @@ pub(in crate::ui) fn parquet_db(
                 .clicked()
                 {
                     state.volatile.dialogs.parquet_mol_file.pick_file();
-                }
-
-                if button!(
-                    ui,
-                    "Fill titles/CIDs from PubChem",
-                    COLOR_ACTION,
-                    "Look up any missing PubChem titles and CIDs for the molecules in this \
-                     database, and save them. Runs in the background, rate-limited; molecules that \
-                     already have both are skipped."
-                )
-                .clicked()
-                {
-                    start_enrich = true;
                 }
             } else {
                 label!(
@@ -241,75 +203,13 @@ pub(in crate::ui) fn parquet_db(
             }
         }
 
-        if start_enrich
-            && let DbSel::Loaded(db_i) = db_sel
-        {
-            let db = &state.volatile.parquet_dbs[db_i];
-
-            // Only rows actually missing something; molecules with both a title and CID are skipped.
-            let targets: Vec<EnrichTarget> = db
-                .index_meta
-                .values()
-                .filter(|m| m.pubchem_title.is_none() || m.pubchem_cid.is_none())
-                .map(|m| EnrichTarget {
-                    smiles: m.smiles.clone(),
-                    cid: m.pubchem_cid,
-                })
-                .collect();
-
-            if targets.is_empty() {
-                handle_success(
-                    &mut state.ui,
-                    "Every molecule already has a PubChem title and CID.".to_owned(),
-                );
-            } else {
-                let total = targets.len();
-                let source = db.source.clone();
-
-                let (tx, rx) = mpsc::channel();
-                thread::spawn(move || run_pubchem_enrich(source, targets, tx));
-
-                state.volatile.thread_receivers.db_pubchem_enrich = Some(DbEnrichJob {
-                    db_sel,
-                    rx,
-                    done: 0,
-                    total,
-                });
-
-                handle_success(
-                    &mut state.ui,
-                    format!("Looking up PubChem data for {total} molecule(s)…"),
-                );
-            }
-        }
-
-        //     if button!(
-        //         ui,
-        //         "Load all mols",
-        //         COLOR_ACTION,
-        //         "Load all molecule data in this database into memory"
-        //     )
-        //     .clicked()
-        //     {
-        //         match db.load_all() {
-        //             Ok(mols) => {
-        //                 // todo temp
-        //                 for mol in &mols {
-        //                     println!("MOL loaded: {:?}", mol);
-        //                 }
-        //             }
-        //             Err(e) => {
-        //                 handle_err(&mut state.ui, format!("Error loading molecules: {e:?}"));
-        //             }
-        //         }
-        //     }
-
         del_confirmation(state, db_sel, ui);
 
         // Selected by field here rather than through `State::active_mol_db`, which borrows all of
         // `state`; the table also needs `state.ui.popup` mutably, and these fields are disjoint.
         let db = match db_sel {
-            DbSel::Common => state.mol_db.as_ref(),
+            DbSel::Hmdb => state.hmdb_mol_db.as_ref(),
+            DbSel::Chebi => state.chebi_mol_db.as_ref(),
             DbSel::Loaded(i) => state.volatile.parquet_dbs.get(i),
         };
 
@@ -433,12 +333,24 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     ui.separator();
     label!(ui, "Databases loaded", Color32::GRAY);
 
-    // Only present if this build has one embedded; see `State::mol_db`. It has no file path (it's
-    // baked into the binary), so unlike the loaded DBs below there's no path tail to show.
-    if let Some(db) = &state.mol_db {
+    // Applied after the loops below: they borrow `state` fields, and selecting touches all of
+    // `state`.
+    let mut select = None;
+
+    // The built-in DBs, each present only if this build has it embedded; see `State::hmdb_mol_db`
+    // and `State::chebi_mol_db`. They have no file path (they're baked into the binary), so unlike
+    // the loaded DBs below there's no path tail to show.
+    for (sel, db) in [
+        (DbSel::Hmdb, &state.hmdb_mol_db),
+        (DbSel::Chebi, &state.chebi_mol_db),
+    ] {
+        let Some(db) = db else {
+            continue;
+        };
+
         let name = db.name();
         let mol_count = db.index_meta.len();
-        let active = state.volatile.parquet_db_active == Some(DbSel::Common);
+        let active = state.volatile.parquet_db_active == Some(sel);
 
         ui.horizontal(|ui| {
             label!(
@@ -460,13 +372,10 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
             )
             .clicked()
             {
-                select_db(state, DbSel::Common);
+                select = Some(sel);
             }
         });
     }
-
-    // Applied after the loop: it borrows `parquet_dbs`, and selecting touches all of `state`.
-    let mut select = None;
 
     let mut close_db = None;
     for (i, db) in state.volatile.parquet_dbs.iter().enumerate() {
@@ -487,8 +396,12 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
             // live in different folders. Full path on hover.
             if let Some(path) = db.path() {
                 ui.add_space(COL_SPACING);
-                label!(ui, truncate_path_tail(path, PATH_TAIL_CHARS_MAX), Color32::GRAY)
-                    .on_hover_text(path.to_string_lossy());
+                label!(
+                    ui,
+                    truncate_path_tail(path, PATH_TAIL_CHARS_MAX),
+                    Color32::GRAY
+                )
+                .on_hover_text(path.to_string_lossy());
             }
 
             let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
@@ -575,7 +488,8 @@ fn db_summary_table(
 
     // Distinguishes this table's egui ids from the other DBs'.
     let id = match db_sel {
-        DbSel::Common => "common".to_owned(),
+        DbSel::Hmdb => "hmdb".to_owned(),
+        DbSel::Chebi => "chebi".to_owned(),
         DbSel::Loaded(i) => i.to_string(),
     };
 
@@ -590,17 +504,17 @@ fn db_summary_table(
     let search = popup.parquet_db_search.trim().to_lowercase();
     let view = &mut popup.parquet_db_view;
     if view.db_sel != Some(db_sel) || view.mol_count != index_meta.len() || view.search != search {
-        let mut entries: Vec<&MolMeta> = if search.is_empty() {
-            index_meta.values().collect()
+        let entries: Vec<&MolMeta> = if search.is_empty() {
+            // No search: show everything, sorted by SMILES (the row key) for a stable display
+            // order; `index_meta` is a HashMap.
+            let mut all: Vec<&MolMeta> = index_meta.values().collect();
+            all.sort_by(|a, b| a.smiles.cmp(&b.smiles));
+            all
         } else {
-            index_meta
-                .values()
-                .filter(|meta| meta.matches_search(&search))
-                .collect()
+            // Shared with the query bar, so both rank matches the same way (exact/prefix/substring,
+            // best-first). See `ParquetMolDb::search_ranked`.
+            db.search_ranked(&search)
         };
-
-        // Sort by SMILES (the row key) for a stable display order; `index_meta` is a HashMap.
-        entries.sort_by(|a, b| a.smiles.cmp(&b.smiles));
 
         view.keys = entries
             .into_iter()

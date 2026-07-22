@@ -628,6 +628,11 @@ impl State {
     }
 
     /// We run this at init. Loads all relevant files marked as "last opened".
+    ///
+    /// Unlike the individual open handlers, a failure here (e.g. a file that has since been
+    /// removed) does not raise its own error popup. Instead we drop the offending entry from the
+    /// open history and, once all entries have been processed, surface a single combined error
+    /// listing every file that failed to open.
     pub fn load_last_opened(&mut self, scene: &mut Scene) {
         let histories = self.to_save.open_history.clone();
 
@@ -635,65 +640,81 @@ impl State {
         // todo: When you place paths in mol.common etc, re-implement this.
         // todo: We must track which files are open.
 
+        // Paths of history entries that failed to open, to be pruned and reported together.
+        let mut failed = Vec::new();
+
         for history in &histories {
             if !history.last_session {
                 continue;
             }
 
-            match history.type_ {
-                OpenType::Peptide => {
-                    if let Err(e) =
-                        self.open_mol_from_file(&history.path, scene, &mut Default::default())
-                    {
-                        handle_err(&mut self.ui, e.to_string());
-                    } else if let Some(p) = &history.position {
-                        let peptide = self.peptide.last_mut().unwrap();
-                        peptide.common.move_to(*p);
-                        peptide.center = *p;
-                    }
-                }
+            // Each branch yields an `io::Result<()>`; we handle reporting/pruning centrally below.
+            let result: io::Result<()> = match history.type_ {
+                OpenType::Peptide => self
+                    .open_mol_from_file(&history.path, scene, &mut Default::default())
+                    .map(|()| {
+                        if let Some(p) = &history.position {
+                            let peptide = self.peptide.last_mut().unwrap();
+                            peptide.common.move_to(*p);
+                            peptide.center = *p;
+                        }
+                    }),
                 OpenType::Ligand => {
                     let len = self.ligands.len();
-                    self.last_opened_helper(history, scene, MolType::Ligand, len);
+                    self.last_opened_helper(history, scene, MolType::Ligand, len)
                 }
                 OpenType::Lipid => {
                     let len = self.lipids.len();
-                    self.last_opened_helper(history, scene, MolType::Lipid, len);
+                    self.last_opened_helper(history, scene, MolType::Lipid, len)
                 }
                 OpenType::NucleicAcid => {
                     let len = self.nucleic_acids.len();
-                    self.last_opened_helper(history, scene, MolType::NucleicAcid, len);
+                    self.last_opened_helper(history, scene, MolType::NucleicAcid, len)
                 }
                 OpenType::Pocket => {
                     let len = self.pockets.len();
-                    self.last_opened_helper(history, scene, MolType::Pocket, len);
+                    self.last_opened_helper(history, scene, MolType::Pocket, len)
                 }
-                OpenType::Map => {
-                    if let Err(e) = self.open_file(&history.path, scene, &mut Default::default()) {
-                        handle_err(&mut self.ui, e.to_string());
-                    }
-                }
-                OpenType::Frcmod => {
-                    if let Err(e) = self.open_force_field(&history.path) {
-                        handle_err(&mut self.ui, e.to_string());
-                    }
-                }
-                OpenType::Trajectory => {
-                    if let Err(e) = self.open_trajectory(&history.path) {
-                        handle_err(&mut self.ui, e.to_string());
-                    }
-                }
-                OpenType::MdParams => {} // We don't re-load these directly; stored in ToSave.
-                OpenType::ParquetDb => {
-                    self.load_parquet_db(&history.path);
-                }
-                OpenType::MdMols => {
-                    // todo: Update when you support more formats.
-                    if let Err(e) = self.volatile.md_local.viewer.load_gro(&history.path) {
-                        handle_err(&mut self.ui, e.to_string());
-                    }
-                } // GRO viewer mols;
+                OpenType::Map => self.open_file(&history.path, scene, &mut Default::default()),
+                OpenType::Frcmod => self.open_force_field(&history.path),
+                OpenType::Trajectory => self.open_trajectory(&history.path),
+                OpenType::MdParams => Ok(()), // We don't re-load these directly; stored in ToSave.
+                OpenType::ParquetDb => self.load_parquet_db_inner(&history.path),
+                // GRO viewer mols; todo: Update when you support more formats.
+                OpenType::MdMols => self.volatile.md_local.viewer.load_gro(&history.path),
+            };
+
+            if result.is_err() {
+                failed.push(history.path.clone());
             }
+        }
+
+        if !failed.is_empty() {
+            // Remove the failed entries from the open history so we don't try to reopen them again.
+            self.to_save
+                .open_history
+                .retain(|h| !failed.contains(&h.path));
+
+            let names: Vec<String> = failed
+                .iter()
+                .map(|p| {
+                    p.file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("<unknown>")
+                        .to_string()
+                })
+                .collect();
+
+            handle_err(
+                &mut self.ui,
+                format!(
+                    "Problem opening the following files from history: {}",
+                    names.join(", ")
+                ),
+            );
+
+            // Persist the pruned history.
+            self.update_save_prefs();
         }
     }
 
@@ -703,15 +724,17 @@ impl State {
         scene: &mut Scene,
         mol_type: MolType,
         len: usize,
-    ) {
-        if let Err(e) = self.open_mol_from_file(&history.path, scene, &mut Default::default()) {
-            handle_err(&mut self.ui, e.to_string());
-        } else if let Some(p) = &history.position {
+    ) -> io::Result<()> {
+        self.open_mol_from_file(&history.path, scene, &mut Default::default())?;
+
+        if let Some(p) = &history.position {
             match self.get_mol_mut(mol_type, len) {
                 Some(mut m) => m.common_mut().move_to(*p),
                 None => eprintln!("Error loading last opened; missing mol"),
             }
         }
+
+        Ok(())
     }
 
     /// Add a history event, or update its timestamp and restor the list.

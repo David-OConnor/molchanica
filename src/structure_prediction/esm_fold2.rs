@@ -14,6 +14,7 @@ use dynamics::params::ProtFfChargeMapSet;
 use na_seq::{AminoAcid, Nucleotide};
 use serde_json::json;
 
+use crate::structure_prediction::PredictionControl;
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
@@ -95,7 +96,7 @@ fn predict(kind: &str, sequence: &str, ff_map: &ProtFfChargeMapSet) -> io::Resul
     };
     let mut command = Command::new(python);
     command.arg(&runner_path).arg(&input_path).arg(&output_path);
-    run_model_command(&mut command, "ESMFold2")?;
+    run_model_command(&mut command, "ESMFold2", &PredictionControl::default())?;
 
     load_prediction(&output_dir, ff_map)
 }

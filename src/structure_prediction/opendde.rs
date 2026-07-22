@@ -64,7 +64,7 @@ use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
         PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
-        run_model_command_with_control,
+        run_model_command,
     },
 };
 
@@ -333,15 +333,7 @@ impl OpenDdeRequest {
     }
 }
 
-/// Run a general OpenDDE protein/nucleic-acid/ligand/ion co-folding request.
-pub fn predict_structure(
-    request: &OpenDdeRequest,
-    ff_map: &ProtFfChargeMapSet,
-) -> io::Result<MoleculePeptide> {
-    predict_structure_with_control(request, ff_map, &PredictionControl::default())
-}
-
-fn predict_structure_with_control(
+fn predict_structure(
     request: &OpenDdeRequest,
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -382,7 +374,7 @@ fn predict_structure_with_control(
         .arg("--cycle")
         .arg("10");
 
-    run_model_command_with_control(&mut command, "OpenDDE", control)?;
+    run_model_command(&mut command, "OpenDDE", control)?;
     control.check_cancelled()?;
 
     load_prediction(&output_path, ff_map)
@@ -548,7 +540,7 @@ pub(super) fn predict_structure_from_aas(
     let aa_str: String = amino_acid_sequence(aas)?.chars().take(5).collect();
     let name = format!("opendde_pred_{aa_str}");
 
-    predict_structure_with_control(&OpenDdeRequest::new(name, vec![entity]), ff_map, control)
+    predict_structure(&OpenDdeRequest::new(name, vec![entity]), ff_map, control)
 }
 
 pub(super) fn predict_structure_from_dna(
@@ -561,9 +553,5 @@ pub(super) fn predict_structure_from_dna(
     let nt_str: String = dna_sequence(nts)?.chars().take(5).collect();
     let name = format!("opendde_pred_{nt_str}");
 
-    predict_structure_with_control(
-        &OpenDdeRequest::new(name, vec![entity]),
-        ff_map,
-        control,
-    )
+    predict_structure(&OpenDdeRequest::new(name, vec![entity]), ff_map, control)
 }

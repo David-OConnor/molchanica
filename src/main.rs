@@ -87,7 +87,6 @@ fn main() {
 
     println!("Using computing device: {:?}/n", dev);
 
-    // todo: Consider a custom default impl. This is a substitute.
     let mut state = State {
         dev,
         ..Default::default()

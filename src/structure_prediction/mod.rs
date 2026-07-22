@@ -1,5 +1,9 @@
 //! Structure prediction through third-party models.
 //!
+//! We currently only support OpenDDE; the others did not integrate well. Root cause: Relying
+//! on a specific Python setup on the User's system. OpenDDE uses Python, but I was able to
+//! getr a working setup.
+//!
 //! Predictions are blocking operations and should be moved to a worker thread when called by the
 //! GUI.
 //!
@@ -36,26 +40,10 @@ use crate::molecules::peptide::MoleculePeptide;
 // mod boltz2;
 // #[cfg(feature = "python_for_structure_prediction")]
 // mod boltz_runtime;
-mod esm_fold2;
+// mod esm_fold2;
 pub mod opendde;
 // #[cfg(feature = "python_for_structure_prediction")]
 // mod pyo3_interface;
-
-/// Whether the managed, self-provisioned Boltz environment is already installed and ready.
-///
-/// Cheap: it only checks the filesystem and never provisions or launches a heavy process, so it is
-/// safe to call during startup availability probing. Always `false` unless the
-/// `python_for_structure_prediction` feature is enabled.
-pub fn boltz_runtime_ready() -> bool {
-    #[cfg(feature = "python_for_structure_prediction")]
-    {
-        boltz_runtime::runtime_ready()
-    }
-    #[cfg(not(feature = "python_for_structure_prediction"))]
-    {
-        false
-    }
-}
 
 /// pH used when Molchanica adds hydrogens and force-field parameters to a prediction.
 pub const DEFAULT_PREDICTION_PH: f32 = 7.0;
@@ -103,20 +91,7 @@ pub enum StructurePredictionOutcome {
     Failed(String),
 }
 
-/// Predict a structure from an amino-acid sequence and convert its mmCIF output into Molchanica's
-/// peptide representation.
-///
-/// The selected model must be installed separately and available on `PATH`. Boltz and OpenDDE are
-/// invoked as `boltz` and `opendde`, respectively. ESMFold2 is invoked through Python.
-pub fn predict_structure_from_aas(
-    model: StructurePredictionModel,
-    aas: &[AminoAcid],
-    ff_map: &ProtFfChargeMapSet,
-) -> io::Result<MoleculePeptide> {
-    predict_structure_from_aas_with_control(model, aas, ff_map, &PredictionControl::default())
-}
-
-pub(crate) fn predict_structure_from_aas_with_control(
+pub(crate) fn predict_structure_from_aas(
     model: StructurePredictionModel,
     aas: &[AminoAcid],
     ff_map: &ProtFfChargeMapSet,
@@ -132,19 +107,7 @@ pub(crate) fn predict_structure_from_aas_with_control(
     }
 }
 
-/// Predict a DNA structure and load the resulting all-atom mmCIF into `MoleculePeptide`.
-///
-/// `MoleculePeptide` is currently Molchanica's mmCIF-backed macromolecule container, so it is also
-/// used here for nucleic-acid predictions despite its historical name.
-pub fn predict_structure_from_dna(
-    model: StructurePredictionModel,
-    nts: &[Nucleotide],
-    ff_map: &ProtFfChargeMapSet,
-) -> io::Result<MoleculePeptide> {
-    predict_structure_from_dna_with_control(model, nts, ff_map, &PredictionControl::default())
-}
-
-fn predict_structure_from_dna_with_control(
+pub fn predict_structure_from_nts(
     model: StructurePredictionModel,
     nts: &[Nucleotide],
     ff_map: &ProtFfChargeMapSet,
@@ -158,26 +121,6 @@ fn predict_structure_from_dna_with_control(
             opendde::predict_structure_from_dna(nts, ff_map, control)
         }
     }
-}
-
-/// Predict a DNA structure from a nucleotide sequence.
-///
-/// This is the sequence-oriented counterpart to [`predict_structure_from_aas`].
-pub fn predict_structure_from_nts(
-    model: StructurePredictionModel,
-    nts: &[Nucleotide],
-    ff_map: &ProtFfChargeMapSet,
-) -> io::Result<MoleculePeptide> {
-    predict_structure_from_dna(model, nts, ff_map)
-}
-
-pub(crate) fn predict_structure_from_nts_with_control(
-    model: StructurePredictionModel,
-    nts: &[Nucleotide],
-    ff_map: &ProtFfChargeMapSet,
-    control: &PredictionControl,
-) -> io::Result<MoleculePeptide> {
-    predict_structure_from_dna_with_control(model, nts, ff_map, control)
 }
 
 pub fn amino_acid_sequence(aas: &[AminoAcid]) -> io::Result<String> {
@@ -206,13 +149,9 @@ pub fn dna_sequence(nts: &[Nucleotide]) -> io::Result<String> {
         .collect())
 }
 
-pub fn run_model_command(command: &mut Command, model: &str) -> io::Result<()> {
-    run_model_command_with_control(command, model, &PredictionControl::default())
-}
-
 /// Run a model process while forwarding its stdout and stderr as soon as either pipe produces
 /// bytes. Reading both pipes concurrently avoids the deadlock risk of waiting on one full pipe.
-pub fn run_model_command_with_control(
+pub fn run_model_command(
     command: &mut Command,
     model: &str,
     control: &PredictionControl,
@@ -242,6 +181,7 @@ pub fn run_model_command_with_control(
 
     let mut captured_stdout = Vec::new();
     let mut captured_stderr = Vec::new();
+
     let status = loop {
         while let Ok(chunk) = output_rx.try_recv() {
             forward_process_chunk(&chunk, &mut captured_stdout, &mut captured_stderr);
@@ -273,6 +213,7 @@ pub fn run_model_command_with_control(
 
     join_output_reader(stdout_reader, model, "stdout")?;
     join_output_reader(stderr_reader, model, "stderr")?;
+
     for chunk in output_rx.try_iter() {
         forward_process_chunk(&chunk, &mut captured_stdout, &mut captured_stderr);
     }
@@ -283,6 +224,7 @@ pub fn run_model_command_with_control(
 
     let stdout = String::from_utf8_lossy(&captured_stdout);
     let stderr = String::from_utf8_lossy(&captured_stderr);
+
     Err(io::Error::other(format!(
         "{model} exited with {}\nstdout:\n{}\nstderr:\n{}",
         status,
@@ -420,7 +362,11 @@ pub fn load_prediction(
         )
     })?;
 
-    MoleculePeptide::from_mmcif(cif, ff_map, None, DEFAULT_PREDICTION_PH)
+    let mut mol = MoleculePeptide::from_mmcif(cif, ff_map, None, DEFAULT_PREDICTION_PH)?;
+    // Retain the model's raw mmCIF so the prediction can be saved back out as a file. Unlike molecules
+    // opened from disk, a prediction has no on-disk source registered in `State::cif_pdb_raw`.
+    mol.source_cif = Some(cif_text);
+    Ok(mol)
 }
 
 fn find_prediction_cif(output_dir: &Path) -> io::Result<PathBuf> {

@@ -107,3 +107,19 @@ fn run_boltz(
 fn boltz_yaml(entity_type: &str, sequence: &str) -> String {
     format!("version: 1\nsequences:\n  - {entity_type}:\n      id: A\n      sequence: {sequence}\n")
 }
+
+/// Whether the managed, self-provisioned Boltz environment is already installed and ready.
+///
+/// Cheap: it only checks the filesystem and never provisions or launches a heavy process, so it is
+/// safe to call during startup availability probing. Always `false` unless the
+/// `python_for_structure_prediction` feature is enabled.
+pub fn boltz_runtime_ready() -> bool {
+    #[cfg(feature = "python_for_structure_prediction")]
+    {
+        boltz_runtime::runtime_ready()
+    }
+    #[cfg(not(feature = "python_for_structure_prediction"))]
+    {
+        false
+    }
+}

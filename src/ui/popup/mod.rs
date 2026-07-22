@@ -1,5 +1,5 @@
 pub mod ff_params;
-pub mod mol_dbs;
+pub mod mol_db;
 pub mod pharmacophore;
 pub(in crate::ui) mod rama_plot;
 pub mod recent_files;
@@ -148,8 +148,8 @@ pub(in crate::ui) fn load_popups(
     }
 
     if state.ui.popup.parquet_db {
-        popup("Molecule database").show(ui.ctx(), |ui| {
-            mol_dbs::parquet_db(state, scene, updates, ui);
+        popup("Molecule databases").show(ui.ctx(), |ui| {
+            mol_db::parquet_db(state, scene, updates, ui);
         });
     }
 

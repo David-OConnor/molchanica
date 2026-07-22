@@ -115,7 +115,7 @@ impl Atom {
 
 impl Bond {
     pub fn to_bytes(&self) -> [u8; 9] {
-        let mut res = [0u8; 9];
+        let mut res = [0; 9];
         res[0] = match self.bond_type {
             BondType::Single => 0,
             BondType::Double => 1,
@@ -176,12 +176,10 @@ impl MoleculeSmall {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut res = Vec::new();
 
-        // ident
         let ident = self.common.ident.as_bytes();
         res.push(ident.len() as u8);
         res.extend_from_slice(ident);
 
-        // atoms
         res.extend_from_slice(&(self.common.atoms.len() as u16).to_le_bytes());
         for atom in &self.common.atoms {
             let atom_bytes = atom.to_bytes();
@@ -189,7 +187,6 @@ impl MoleculeSmall {
             res.extend_from_slice(&atom_bytes);
         }
 
-        // bonds
         res.extend_from_slice(&(self.common.bonds.len() as u16).to_le_bytes());
         for bond in &self.common.bonds {
             res.extend_from_slice(&bond.to_bytes());
@@ -201,16 +198,15 @@ impl MoleculeSmall {
     pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
         let mut i = 0;
 
-        // ident
         let ident_len = bytes[i] as usize;
         i += 1;
         let ident = String::from_utf8(bytes[i..i + ident_len].to_vec())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         i += ident_len;
 
-        // atoms
         let atom_count = u16::from_le_bytes(bytes[i..i + 2].try_into().unwrap()) as usize;
         i += 2;
+
         let mut atoms = Vec::with_capacity(atom_count);
         for _ in 0..atom_count {
             let atom_len = u16::from_le_bytes(bytes[i..i + 2].try_into().unwrap()) as usize;
@@ -219,9 +215,9 @@ impl MoleculeSmall {
             i += atom_len;
         }
 
-        // bonds — resolve atom indices from serial numbers after parsing
         let bond_count = u16::from_le_bytes(bytes[i..i + 2].try_into().unwrap()) as usize;
         i += 2;
+
         let mut bonds = Vec::with_capacity(bond_count);
         for _ in 0..bond_count {
             let mut bond = Bond::from_bytes(bytes[i..i + 9].try_into().unwrap())?;

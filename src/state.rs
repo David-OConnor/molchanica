@@ -26,7 +26,7 @@ use crate::{
     file_io::FileDialogs,
     md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
-    mol_db::{ParquetMolDb, load_common_mol_db},
+    mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     molecules::{
@@ -90,8 +90,16 @@ pub struct State {
     ///
     /// We use [HMDB (Human Metabolome Database)](hmdb.ca/downloads) for this; it's provided as a single
     /// SDF. This isn't source controlled. To build it, download this as a single SDF file. Create a DB in
-    /// the GUI. Add this molecule to the DB. Name/rename the file `common_mol_db.parquet`.
-    pub mol_db: Option<ParquetMolDb>,
+    /// the GUI. Add this molecule to the DB. Name/rename the file `hmdb_mol_db.parquet`.
+    /// Note: We also run `python scripts/populate_hmdb_cids.py ~/Desktop` etc to populate CIDs
+    /// in the SDF prior to loading. Requires you to have the .sdf and the associated XML in the selected
+    ///directory.
+    pub hmdb_mol_db: Option<ParquetMolDb>,
+    /// [Chebi SDF files](https://ftp.ebi.ac.uk/pub/databases/chebi/SDF/)
+    /// Download `chebi_3_stars.sdf.gz`. (3 stars implies they are vetted, I believe). Don't
+    /// use the Lite version; we need the additional metadata fields e.g. PubChem CID that aren't
+    /// in it.
+    pub chebi_mol_db: Option<ParquetMolDb>,
 }
 
 impl Default for State {
@@ -141,7 +149,8 @@ impl Default for State {
                 // intersection_revealing_contour_lines: Some(1.),
                 ..Default::default()
             },
-            mol_db: load_common_mol_db(),
+            hmdb_mol_db: load_hmdb_mol_db(),
+            chebi_mol_db: load_chebi_mol_db(),
         }
     }
 }
@@ -446,12 +455,15 @@ impl StateVolatile {
     }
 }
 
-/// Which molecule database the UI is acting on. The one embedded in the binary lives in
-/// `State::mol_db`, and the rest, which the user opened, in `StateVolatile::parquet_dbs`.
+/// Which molecule database the UI is acting on. The ones embedded in the binary live in
+/// `State::hmdb_mol_db` and `State::chebi_mol_db`, and the rest, which the user opened, in
+/// `StateVolatile::parquet_dbs`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DbSel {
-    /// `State::mol_db`; read-only.
-    Common,
+    /// `State::hmdb_mol_db`; read-only.
+    Hmdb,
+    /// `State::chebi_mol_db`; read-only.
+    Chebi,
     /// Index into `StateVolatile::parquet_dbs`.
     Loaded(usize),
 }

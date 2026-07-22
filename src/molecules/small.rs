@@ -76,6 +76,30 @@ impl MoleculeSmall {
             idents.push(MolIdent::PubChem(cid));
         };
 
+        // How ChEBI identifies PubChem CID.
+        if let Some(id) = metadata.get("PubChem Compound Database Links")
+            && let Ok(cid) = id.parse::<u32>()
+        {
+            idents.push(MolIdent::PubChem(cid));
+        };
+
+        // Seen in ChEBI. Not on Pubchem SDFs.
+        if let Some(id) = metadata.get("SMILES") {
+            idents.push(MolIdent::Smiles(id.to_string()));
+        };
+        // Seen in ChEBI. Not on Pubchem SDFs.
+        if let Some(id) = metadata.get("INCHI") {
+            idents.push(MolIdent::InchI(id.to_string()));
+        };
+        // Seen in ChEBI. Not on Pubchem SDFs.
+        if let Some(id) = metadata.get("INCHIKEY") {
+            idents.push(MolIdent::InchIKey(id.to_string()));
+        };
+        // Seen in ChEBI. Not on Pubchem SDFs.
+        if let Some(id) = metadata.get("IUPAC_NAME") {
+            idents.push(MolIdent::IupacName(id.to_string()));
+        };
+
         if let Some(db_name) = metadata.get("DATABASE_NAME")
             && db_name.to_lowercase() == "drugbank"
         {
@@ -183,15 +207,6 @@ impl TryFrom<Sdf> for MoleculeSmall {
     type Error = io::Error;
     fn try_from(m: Sdf) -> Result<Self, Self::Error> {
         let atoms: Vec<_> = m.atoms.iter().map(|a| a.into()).collect();
-        // let mut residues = Vec::with_capacity(m.residues.len());
-        // for res in &m.residues {
-        //     residues.push(Residue::from_generic(res, &atoms, ResidueEnd::Hetero)?);
-        // }
-
-        // let mut chains = Vec::with_capacity(m.chains.len());
-        // for c in &m.chains {
-        //     chains.push(Chain::from_generic(c, &atoms, &residues)?);
-        // }
 
         let bonds: Vec<Bond> = m
             .bonds

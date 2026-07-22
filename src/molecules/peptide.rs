@@ -70,6 +70,10 @@ pub struct MoleculePeptide {
     pub atoms_filtered_to_disp: Option<Vec<usize>>,
     /// For color-coding based on SIFTS (From Uniprot/PDBe)
     pub sifts_mapping: Option<Vec<SiftsUniprotMapping>>,
+    /// Raw mmCIF text this peptide was built from, when it did not come from an on-disk file that is
+    /// already tracked in `State::cif_pdb_raw`. Structure predictions set this so their results can be
+    /// saved back out as mmCIF; molecules opened from a file leave it `None`.
+    pub source_cif: Option<String>,
 }
 
 impl MoleculePeptide {

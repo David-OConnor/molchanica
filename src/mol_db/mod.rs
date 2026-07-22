@@ -1,16 +1,14 @@
-//! Small-molecule screening libraries using Apache Parquet. Uses its Arrow component
+//! Small-molecule libraries/databses using Apache Parquet. For screening, and general use. Uses its Arrow component
 //! for an in-memory representation of the Parquet DB on disk.
 //!
 //! Note: feather/ipc may have better read speeds for molecule screening, as an alternative to Parquet.
-//! Note: We're currently using "SMILES" everywhere here that we list "ident", including to index
-//! rows.
 //!
 //! Heavy data is split across columns, so it can be read a-la-carte. There are two such
 //! on-demand loads, and they're independent of each other:
 //!   - `mol_data` (atoms + bonds): `load_mol`, `load_mols`, `load_all`.
 //!   - `idents` + `metadata`: `load_idents_meta`, `load_idents_meta_multi`, `load_idents_meta_all`.
 //!
-//! Screening only needs the first. Use `apply_idents_meta` to fold the second into molecules
+//! Use `apply_idents_meta` to fold the second into molecules
 //! already loaded from the first. `index_and_idents` loads the idents of every row (caching them),
 //! for UI display alongside the eagerly-loaded index.
 
@@ -19,9 +17,7 @@ use std::{
     fs::File,
     io,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc::Sender},
-    thread,
-    time::Duration,
+    sync::Arc,
 };
 
 use arrow::{
@@ -29,7 +25,6 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
-use bio_apis::pubchem::{self, StructureSearchNamespace};
 use bytes::Bytes;
 use na_seq::Element;
 use parquet::{
@@ -65,15 +60,19 @@ const COL_MOL_DATA: &str = "mol_data";
 const COL_IDENTS: &str = "idents";
 const COL_METADATA: &str = "metadata";
 
+// Rows can't be updated individually (A limitation of Parquet); when performing a large update, e.g.
+// loading CID or PubChem name,
 const BATCH_SIZE_READ: usize = 8_192;
 const BATCH_SIZE_WRITE: usize = 2_048;
 
 // We include a collection of common small molecules with the application, so they can
 // be loaded without internet queries. This increases application size.
-pub const COMMON_MOL_DB: &[u8] = include_bytes!("../../common_mol_db.parquet");
+pub const HMDB_MOL_DB: &[u8] = include_bytes!("../../hmdb.parquet");
+pub const CHEBI_MOL_DB: &[u8] = include_bytes!("../../ChEBI.parquet");
 
 /// Name shown in the UI for the database embedded in the binary; it has no filename.
-pub const COMMON_MOL_DB_NAME: &str = "Common molecules (built in)";
+pub const HMDB_DB_NAME: &str = "HMDB (built in)";
+pub const CHEBI_DB_NAME: &str = "ChEBI (built in)";
 
 fn parquet_err_to_io(e: ParquetError) -> io::Error {
     io::Error::other(e)
@@ -83,7 +82,7 @@ fn arrow_err_to_io(e: arrow::error::ArrowError) -> io::Error {
     io::Error::other(e)
 }
 
-/// One row in the Parquet file.
+/// One row in the Parquet file. Each field is a column; these can be loaded individually.
 ///
 /// Keep "search columns" separate from mol_data so you can scan/filter without
 /// deserializing every molecule. I believe we can load data column by column, so
@@ -91,12 +90,14 @@ fn arrow_err_to_io(e: arrow::error::ArrowError) -> io::Error {
 /// loading all data.
 #[derive(Debug, Clone)]
 struct StoredMol {
+    // todo: More identifiers?
     smiles: String,
     pubchem_cid: Option<u32>,
     pubchem_title: Option<String>,
     heavy_atom_count: u16,
     /// Serialized as binary; see the `to_bytes` and `from_bytes` serializations
-    /// in the `serialization` module. This may only be atoms, bonds, and common.ident.
+    /// in the `serialization` module. This may only be atoms, bonds, and common.ident. Heavy compared
+    /// to other fields; be selective about loading.
     mol_data: Vec<u8>,
     idents: Vec<MolIdent>,
     /// i.e. common.metadata
@@ -109,22 +110,24 @@ impl StoredMol {
     /// When `look_up_pubchem` is set, and the molecule lacks a title, fill in the title (and CID)
     /// over HTTP. Callers that must stay offline (e.g. bulk file/directory imports) pass `false`,
     /// leaving the title and CID blank unless the source file's metadata already carried them.
-    fn from_mol(mut m: MoleculeSmall, look_up_pubchem: bool) -> io::Result<Self> {
+    // fn from_mol(mut m: MoleculeSmall, look_up_pubchem: bool) -> io::Result<Self> {
+    fn from_mol(mut m: MoleculeSmall) -> io::Result<Self> {
         let smiles = smiles_from_idents(&m.idents).unwrap_or_else(|| m.common.ident.clone());
-        let (mut pubchem_cid, mut pubchem_title) = pubchem_cid_title_from_idents(&m.idents);
+        let (mut pubchem_cid, mut pubchem_title) =
+            pubchem_cid_title_from_idents(&m.idents, &m.common.metadata);
 
-        // Molecule files generally don't carry a title, so look it up over HTTP. Without one, the
-        // DB table has only a SMILES string to identify the molecule by. The idents we store are
-        // updated to match, so a molecule loaded back out of the DB carries them too.
-        if look_up_pubchem
-            && pubchem_title.is_none()
-            && let Some(props) = pubchem_props(pubchem_cid, &smiles)
-        {
-            m.update_idents_and_char_from_pubchem(&props);
-
-            pubchem_cid = Some(props.cid);
-            pubchem_title = Some(props.title);
-        }
+        // // Molecule files generally don't carry a title, so look it up over HTTP. Without one, the
+        // // DB table has only a SMILES string to identify the molecule by. The idents we store are
+        // // updated to match, so a molecule loaded back out of the DB carries them too.
+        // if look_up_pubchem
+        //     && pubchem_title.is_none()
+        //     && let Some(props) = pubchem_props(pubchem_cid, &smiles)
+        // {
+        //     m.update_idents_and_char_from_pubchem(&props);
+        //
+        //     pubchem_cid = Some(props.cid);
+        //     pubchem_title = Some(props.title);
+        // }
 
         let heavy_atom_count = m
             .common
@@ -162,65 +165,55 @@ fn pubchem_cid_from_idents(idents: &[MolIdent]) -> Option<u32> {
 }
 
 /// Repetitive with [`pubchem_cid_from_idents`], but may be more efficient to group this way.
-fn pubchem_cid_title_from_idents(idents: &[MolIdent]) -> (Option<u32>, Option<String>) {
+fn pubchem_cid_title_from_idents(
+    idents: &[MolIdent],
+    metadata: &HashMap<String, String>,
+) -> (Option<u32>, Option<String>) {
     let cid = idents.iter().find_map(|id| match id {
         MolIdent::PubChem(cid) => Some(*cid),
         _ => None,
     });
 
-    let title = idents.iter().find_map(|id| match id {
-        MolIdent::PubchemTitle(title) => Some(title.clone()),
-        _ => None,
-    });
+    let title = idents
+        .iter()
+        .find_map(|id| match id {
+            MolIdent::PubchemTitle(title) => Some(title.clone()),
+            _ => None,
+        })
+        // Use this fallback because a generic name is available in HMDB metadata.
+        .or_else(|| metadata.get("GENERIC_NAME").cloned())
+        // Fallback used by ChEBI data.
+        .or_else(|| metadata.get("ChEBI NAME").cloned());
 
     (cid, title)
 }
 
-/// PubChem rate-limits to a handful of requests per second, and returns a busy/timeout fault rather
-/// than throttling, so populating a DB of any size hits transient failures routinely. Retry a few
-/// times, backing off; this doubles as the throttle.
-const PUBCHEM_ATTEMPTS: u32 = 3;
-const PUBCHEM_BACKOFF_MS: u64 = 500;
-
-/// How many CIDs to request titles for in a single PubChem call while enriching a DB. Batching
-/// keeps the request count (and so the load we put on PubChem) low; the cap keeps the request URL
-/// from growing long enough to be rejected.
-const PUBCHEM_CIDS_PER_REQUEST: usize = 100;
-/// Minimum spacing between PubChem requests while enriching a DB, to stay within their rate limit
-/// (a few requests per second) rather than hammering the service.
-const PUBCHEM_ENRICH_INTERVAL_MS: u64 = 250;
-/// How many rows to look up between writes of the DB file while enriching. Flushing periodically,
-/// rather than only once at the end, means a long run's progress survives the app being closed or
-/// crashing partway through. Each flush rewrites the whole parquet file, so this trades some extra
-/// I/O for that safety; PubChem's rate limit dwarfs the write cost regardless.
-const PUBCHEM_ENRICH_FLUSH_EVERY: usize = 1_000;
-
-/// Look up a molecule's PubChem properties over HTTP, to fill in the title (and CID) we store
-/// alongside it. Queries by CID if we have one, else by SMILES.
-///
-/// Returns `None` if the molecule isn't in PubChem, or every attempt fails: a title is a nicety,
-/// and shouldn't stop the molecule from being stored.
-fn pubchem_props(cid: Option<u32>, smiles: &str) -> Option<pubchem::Properties> {
-    let (namespace, id) = match cid {
-        Some(cid) => (StructureSearchNamespace::Cid, cid.to_string()),
-        None => (StructureSearchNamespace::Smiles, smiles.to_string()),
-    };
-
-    let mut last_err = None;
-    for attempt in 0..PUBCHEM_ATTEMPTS {
-        if attempt > 0 {
-            thread::sleep(Duration::from_millis(PUBCHEM_BACKOFF_MS * (1 << attempt)));
-        }
-
-        match pubchem::properties(namespace.clone(), &id) {
-            Ok(props) => return Some(props),
-            Err(e) => last_err = Some(e),
-        }
-    }
-
-    eprintln!("Unable to load PubChem properties for {id}: {last_err:?}");
-    None
-}
+// /// Look up a molecule's PubChem properties over HTTP, to fill in the title (and CID) we store
+// /// alongside it. Queries by CID if we have one, else by SMILES.
+// ///
+// /// Returns `None` if the molecule isn't in PubChem, or every attempt fails: a title is a nicety,
+// /// and shouldn't stop the molecule from being stored.
+// fn pubchem_props(cid: Option<u32>, smiles: &str) -> Option<pubchem::Properties> {
+//     let (namespace, id) = match cid {
+//         Some(cid) => (StructureSearchNamespace::Cid, cid.to_string()),
+//         None => (StructureSearchNamespace::Smiles, smiles.to_string()),
+//     };
+//
+//     let mut last_err = None;
+//     for attempt in 0..PUBCHEM_ATTEMPTS {
+//         if attempt > 0 {
+//             thread::sleep(Duration::from_millis(PUBCHEM_BACKOFF_MS * (1 << attempt)));
+//         }
+//
+//         match pubchem::properties(namespace.clone(), &id) {
+//             Ok(props) => return Some(props),
+//             Err(e) => last_err = Some(e),
+//         }
+//     }
+//
+//     eprintln!("Unable to load PubChem properties for {id}: {last_err:?}");
+//     None
+// }
 
 /// Lightweight metadata for a molecule stored in the DB. Excludes the heavy `mol_data` blob.
 #[derive(Debug, Clone)]
@@ -251,6 +244,40 @@ impl MolMeta {
             None => false,
         }
     }
+
+    /// A relevance key for ordering search results best-first (a lower key sorts earlier). `search`
+    /// must already be trimmed and lowercased. Shared by the query bar and the DB table so both
+    /// rank the same way; see [`ParquetMolDb::search_ranked`].
+    ///
+    /// The primary key is a tier: an exact match on the CID or title beats a prefix match, which
+    /// beats a plain substring hit. This is what floats "702" (CID 702) or "ethanol" (the molecule
+    /// named exactly that) to the top instead of burying them among longer names that merely
+    /// contain the text. Within a tier, a shorter title is the closer match, then a shorter SMILES.
+    pub fn search_rank(&self, search: &str) -> (u8, usize, usize) {
+        let title_lower = self.pubchem_title.as_deref().map(str::to_lowercase);
+        let cid_str = self.pubchem_cid.map(|cid| cid.to_string());
+        let smiles_lower = self.smiles.to_lowercase();
+
+        let exact = title_lower.as_deref() == Some(search) || cid_str.as_deref() == Some(search);
+
+        let prefix = title_lower
+            .as_deref()
+            .is_some_and(|t| t.starts_with(search))
+            || cid_str.as_deref().is_some_and(|c| c.starts_with(search))
+            || smiles_lower.starts_with(search);
+
+        let tier = if exact {
+            0
+        } else if prefix {
+            1
+        } else {
+            2
+        };
+
+        // Rows without a title sort last within a tier, behind any titled match.
+        let title_len = title_lower.as_ref().map_or(usize::MAX, |t| t.len());
+        (tier, title_len, self.smiles.len())
+    }
 }
 
 /// A molecule's identifiers and metadata, as stored in the DB. Loaded on demand, and separately
@@ -262,49 +289,25 @@ pub struct MolIdentsMeta {
     pub metadata: HashMap<String, String>,
 }
 
-/// PubChem data looked up for a DB row while enriching, applied by SMILES key. Only fields that
-/// were missing on the row are filled in; see [`run_pubchem_enrich`] and
-/// [`ParquetMolDb::apply_pubchem_meta`].
-#[derive(Debug, Clone, Default)]
-pub struct PubchemMeta {
-    pub cid: Option<u32>,
-    pub title: Option<String>,
-}
-
-/// A DB row missing a PubChem title and/or CID, i.e. a target for enrichment. `cid` is `Some` when
-/// only the title is missing, which lets those rows be looked up in batches keyed by CID rather
-/// than one query per molecule.
-#[derive(Debug, Clone)]
-pub struct EnrichTarget {
-    pub smiles: String,
-    pub cid: Option<u32>,
-}
-
-/// Messages from the background PubChem-enrichment worker to the UI. See [`run_pubchem_enrich`].
-pub enum DbEnrichMsg {
-    /// Cumulative count of target rows looked up so far, for a progress display.
-    Progress(usize),
-    /// The rewritten DB (reopened, with a fresh index) and the number of rows updated.
-    Done { db: Box<ParquetMolDb>, updated: usize },
-    /// The rewrite failed; carries a message for the user.
-    Failed(String),
-}
-
 /// Where a database's parquet data lives. Databases on disk can be added to and deleted from; the
-/// one embedded in the binary is fixed at compile time, so it's read-only.
+/// ones embedded in the binary are fixed at compile time, so they're read-only.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DbSource {
     File(PathBuf),
-    /// Shipped with the application; see [`COMMON_MOL_DB`].
-    Embedded(&'static [u8]),
+    /// Shipped with the application; see [`HMDB_MOL_DB`] and [`CHEBI_MOL_DB`]. Carries a display
+    /// name, since more than one DB is embedded and they otherwise have no filename to tell apart.
+    Embedded {
+        bytes: &'static [u8],
+        name: &'static str,
+    },
 }
 
 impl DbSource {
-    /// The file this DB was loaded from, or `None` for the embedded one.
+    /// The file this DB was loaded from, or `None` for an embedded one.
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::File(p) => Some(p),
-            Self::Embedded(_) => None,
+            Self::Embedded { .. } => None,
         }
     }
 
@@ -315,11 +318,11 @@ impl DbSource {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| p.to_string_lossy().into_owned()),
-            Self::Embedded(_) => COMMON_MOL_DB_NAME.to_owned(),
+            Self::Embedded { name, .. } => (*name).to_owned(),
         }
     }
 
-    /// Whether this DB can be modified. The embedded one can't.
+    /// Whether this DB can be modified. The embedded ones can't.
     pub fn writable(&self) -> bool {
         matches!(self, Self::File(_))
     }
@@ -329,7 +332,7 @@ impl DbSource {
     fn readable(&self) -> bool {
         match self {
             Self::File(p) => p.exists(),
-            Self::Embedded(b) => !b.is_empty(),
+            Self::Embedded { bytes, .. } => !bytes.is_empty(),
         }
     }
 }
@@ -358,9 +361,10 @@ impl ParquetMolDb {
         Self::open_source(DbSource::File(path.to_owned()))
     }
 
-    /// Open the read-only database embedded in the binary. Pass [`COMMON_MOL_DB`].
-    pub fn from_embedded(bytes: &'static [u8]) -> io::Result<Self> {
-        Self::open_source(DbSource::Embedded(bytes))
+    /// Open a read-only database embedded in the binary. Pass [`HMDB_MOL_DB`] or [`CHEBI_MOL_DB`]
+    /// with the matching display name.
+    pub fn from_embedded(bytes: &'static [u8], name: &'static str) -> io::Result<Self> {
+        Self::open_source(DbSource::Embedded { bytes, name })
     }
 
     /// Open a DB from either kind of source. `DbSource` is `Send`, so this is how a background
@@ -438,7 +442,8 @@ impl ParquetMolDb {
             for m in mols {
                 // Bulk imports stay offline: leave the title/CID blank unless the source file's
                 // metadata already carried them.
-                merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m, false)?);
+                // merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m, false)?);
+                merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m)?);
             }
             offset += consumed;
         }
@@ -504,7 +509,8 @@ impl ParquetMolDb {
         let mut row_i = row_index(&rows);
 
         for m in mols {
-            merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m.clone(), true)?);
+            // merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m.clone(), true)?);
+            merge_row(&mut rows, &mut row_i, StoredMol::from_mol(m.clone())?);
         }
 
         self.write_all_rows(&rows)?;
@@ -561,37 +567,38 @@ impl ParquetMolDb {
         (&self.index_meta, self.idents_cache.as_ref().unwrap())
     }
 
-    /// Molecules whose SMILES, PubChem title, or CID contain `search`, best-first: exact matches
-    /// on CID or title come before substring hits, and shorter SMILES before longer. Uses the
-    /// in-memory index only, so this is cheap enough to run per-frame from the UI.
+    /// Every molecule whose SMILES, PubChem title, or CID contains `search`, best-first: see
+    /// [`MolMeta::search_rank`] for the ordering (exact match, then prefix, then substring; ties by
+    /// title then SMILES length). Uses the in-memory index only.
     ///
-    /// Returns at most `limit` results.
-    pub fn search(&self, search: &str, limit: usize) -> Vec<&MolMeta> {
+    /// This is the shared ranking behind both the query bar and the DB table's search box; the
+    /// former truncates it via [`search`](Self::search), the latter paginates the whole list.
+    pub fn search_ranked(&self, search: &str) -> Vec<&MolMeta> {
         let search = search.trim().to_lowercase();
         if search.is_empty() {
             return Vec::new();
         }
 
-        let mut matches: Vec<&MolMeta> = self
+        // Rank each match once (rather than in the comparator) to avoid recomputing the key —
+        // which lowercases strings — for every comparison.
+        let mut ranked: Vec<((u8, usize, usize), &MolMeta)> = self
             .index_meta
             .values()
             .filter(|m| m.matches_search(&search))
+            .map(|m| (m.search_rank(&search), m))
             .collect();
 
-        let rank = |m: &MolMeta| {
-            let exact = m.pubchem_cid.is_some_and(|cid| cid.to_string() == search)
-                || m.pubchem_title
-                    .as_ref()
-                    .is_some_and(|t| t.to_lowercase() == search);
+        // The SMILES tiebreak gives a stable order across frames; `index_meta` is a HashMap, whose
+        // iteration order is not.
+        ranked.sort_by(|(ra, a), (rb, b)| ra.cmp(rb).then_with(|| a.smiles.cmp(&b.smiles)));
 
-            // Exact matches first, then by SMILES length.
-            (!exact, m.smiles.len())
-        };
+        ranked.into_iter().map(|(_, m)| m).collect()
+    }
 
-        // Sorted alphabetically at the end so the list is stable across frames; `index_meta` is a
-        // HashMap, and its iteration order is not.
-        matches.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.smiles.cmp(&b.smiles)));
-
+    /// The best `limit` matches for `search`, best-first; see [`search_ranked`](Self::search_ranked).
+    /// Used by the query bar, where only the top few are shown.
+    pub fn search(&self, search: &str, limit: usize) -> Vec<&MolMeta> {
+        let mut matches = self.search_ranked(search);
         matches.truncate(limit);
         matches
     }
@@ -990,7 +997,7 @@ impl ParquetMolDb {
             row.metadata = im.metadata.clone();
 
             // Keep the searchable CID and title columns in sync with the idents they're derived from.
-            let (cid, title) = pubchem_cid_title_from_idents(&im.idents);
+            let (cid, title) = pubchem_cid_title_from_idents(&im.idents, &im.metadata);
             if let Some(cid) = cid {
                 row.pubchem_cid = Some(cid);
             }
@@ -1002,200 +1009,6 @@ impl ParquetMolDb {
         self.write_all_rows(&rows)?;
         self.rebuild_index()
     }
-
-    /// Fill in missing `pubchem_cid` / `pubchem_title` (and the matching idents) for the rows named
-    /// in `updates`, keyed by SMILES, then rewrite the file. Only fields that were empty are
-    /// filled; existing values are left untouched. Returns the number of rows changed.
-    ///
-    /// As with adding and deleting, parquet files are immutable, so this reads the file, edits the
-    /// matching rows, and rewrites it. See [`run_pubchem_enrich`], which produces `updates`.
-    pub fn apply_pubchem_meta(
-        &mut self,
-        updates: &HashMap<String, PubchemMeta>,
-    ) -> io::Result<usize> {
-        self.check_writable()?;
-
-        let mut rows = self.read_all_rows()?;
-        let mut changed = 0;
-
-        for row in &mut rows {
-            let Some(meta) = updates.get(&row.smiles) else {
-                continue;
-            };
-
-            let mut row_changed = false;
-
-            if row.pubchem_cid.is_none()
-                && let Some(cid) = meta.cid
-            {
-                row.pubchem_cid = Some(cid);
-                if !row.idents.iter().any(|id| matches!(id, MolIdent::PubChem(_))) {
-                    row.idents.push(MolIdent::PubChem(cid));
-                }
-                row_changed = true;
-            }
-
-            if row.pubchem_title.is_none()
-                && let Some(title) = &meta.title
-            {
-                row.pubchem_title = Some(title.clone());
-                // Replace any stale title ident, rather than accumulating duplicates.
-                row.idents
-                    .retain(|id| !matches!(id, MolIdent::PubchemTitle(_)));
-                row.idents.push(MolIdent::PubchemTitle(title.clone()));
-                row_changed = true;
-            }
-
-            if row_changed {
-                changed += 1;
-            }
-        }
-
-        // Skip the (expensive) rewrite if nothing matched: e.g. every lookup came back empty.
-        if changed > 0 {
-            self.write_all_rows(&rows)?;
-            self.rebuild_index()?;
-        }
-
-        Ok(changed)
-    }
-}
-
-/// Look up missing PubChem titles/CIDs for `targets` (rows of `source`), writing them back to the
-/// DB in batches as they come in, then hand the finished DB back. Intended to run on a background
-/// thread; progress and the result are sent over `tx`. See [`DbEnrichMsg`] and
-/// [`ParquetMolDb::apply_pubchem_meta`].
-///
-/// Rows that already have a CID need only a title, and are fetched in batches keyed by CID. Rows
-/// without a CID are looked up by SMILES, one request each (PubChem's SMILES namespace doesn't take
-/// a list). Requests are spaced out to respect PubChem's rate limit.
-///
-/// Results are flushed to disk every [`PUBCHEM_ENRICH_FLUSH_EVERY`] rows rather than only at the
-/// end, so a long run against PubChem's slow API doesn't lose everything if the app is closed
-/// partway through.
-pub fn run_pubchem_enrich(source: DbSource, targets: Vec<EnrichTarget>, tx: Sender<DbEnrichMsg>) {
-    if let Err(e) = run_pubchem_enrich_inner(source, targets, &tx) {
-        let _ = tx.send(DbEnrichMsg::Failed(e));
-    }
-}
-
-/// The body of [`run_pubchem_enrich`], split out so the periodic flushes and the final write can
-/// use `?`; any error is turned into a [`DbEnrichMsg::Failed`] by the caller. On success this sends
-/// [`DbEnrichMsg::Done`] itself, since only it holds the finished DB.
-fn run_pubchem_enrich_inner(
-    source: DbSource,
-    targets: Vec<EnrichTarget>,
-    tx: &Sender<DbEnrichMsg>,
-) -> Result<(), String> {
-    // Opened up front (rather than only at the end) so results can be flushed to disk as they're
-    // looked up. Each flush rewrites through this same handle, keeping its index current.
-    let mut db =
-        ParquetMolDb::open_source(source).map_err(|e| format!("reopening the database: {e}"))?;
-
-    // Resolved rows not yet written. Flushed to disk (and cleared) every `PUBCHEM_ENRICH_FLUSH_EVERY`
-    // rows looked up; `apply_pubchem_meta` only fills empty fields, so rows already written on an
-    // earlier flush are untouched by later ones.
-    let mut pending: HashMap<String, PubchemMeta> = HashMap::new();
-    let mut updated = 0;
-    let mut processed = 0;
-    let mut processed_at_last_flush = 0;
-
-    // `(cid, smiles)` for rows needing only a title; `smiles` for rows needing a CID (and title).
-    let mut title_targets: Vec<(u32, String)> = Vec::new();
-    let mut smiles_targets: Vec<String> = Vec::new();
-    for t in targets {
-        match t.cid {
-            Some(cid) => title_targets.push((cid, t.smiles)),
-            None => smiles_targets.push(t.smiles),
-        }
-    }
-
-    // Batched CID -> title: many CIDs per request.
-    for chunk in title_targets.chunks(PUBCHEM_CIDS_PER_REQUEST) {
-        let cids: Vec<u32> = chunk.iter().map(|(cid, _)| *cid).collect();
-
-        match pubchem::titles_for_cids(&cids) {
-            Ok(titles) => {
-                for (cid, smiles) in chunk {
-                    if let Some(title) = titles.get(cid) {
-                        pending.insert(
-                            smiles.clone(),
-                            PubchemMeta {
-                                cid: None,
-                                title: Some(title.clone()),
-                            },
-                        );
-                    }
-                }
-            }
-            // One bad batch shouldn't sink the whole run; log it and carry on.
-            Err(e) => eprintln!("PubChem title lookup failed for {} CIDs: {e:?}", cids.len()),
-        }
-
-        processed += chunk.len();
-        let _ = tx.send(DbEnrichMsg::Progress(processed));
-
-        if processed - processed_at_last_flush >= PUBCHEM_ENRICH_FLUSH_EVERY {
-            updated += flush_enrich(&mut db, &mut pending)?;
-            processed_at_last_flush = processed;
-        }
-
-        thread::sleep(Duration::from_millis(PUBCHEM_ENRICH_INTERVAL_MS));
-    }
-
-    // Per-SMILES CID + title. `pubchem_props` already retries with backoff on transient failures.
-    for smiles in smiles_targets {
-        if let Some(props) = pubchem_props(None, &smiles) {
-            pending.insert(
-                smiles.clone(),
-                PubchemMeta {
-                    cid: Some(props.cid),
-                    title: Some(props.title),
-                },
-            );
-        }
-
-        processed += 1;
-        let _ = tx.send(DbEnrichMsg::Progress(processed));
-
-        if processed - processed_at_last_flush >= PUBCHEM_ENRICH_FLUSH_EVERY {
-            updated += flush_enrich(&mut db, &mut pending)?;
-            processed_at_last_flush = processed;
-        }
-
-        thread::sleep(Duration::from_millis(PUBCHEM_ENRICH_INTERVAL_MS));
-    }
-
-    // Whatever's left under the batch threshold.
-    updated += flush_enrich(&mut db, &mut pending)?;
-
-    // Hand back the DB we've been writing to, so the UI can swap in its fresh index without
-    // re-reading the file itself.
-    let _ = tx.send(DbEnrichMsg::Done {
-        db: Box::new(db),
-        updated,
-    });
-
-    Ok(())
-}
-
-/// Write any resolved-but-unwritten rows to the DB file, returning the number of rows changed and
-/// clearing them from `pending`. A no-op (no rewrite) when `pending` is empty. See
-/// [`run_pubchem_enrich`], which calls this periodically so progress survives a restart.
-fn flush_enrich(
-    db: &mut ParquetMolDb,
-    pending: &mut HashMap<String, PubchemMeta>,
-) -> Result<usize, String> {
-    if pending.is_empty() {
-        return Ok(0);
-    }
-
-    let changed = db
-        .apply_pubchem_meta(pending)
-        .map_err(|e| format!("writing the database: {e}"))?;
-    pending.clear();
-
-    Ok(changed)
 }
 
 /// SMILES: index into `rows`. Used to prevent duplicate rows for the same molecule when merging.
@@ -1223,7 +1036,7 @@ fn merge_row(rows: &mut Vec<StoredMol>, row_i: &mut HashMap<String, usize>, row:
 fn open_reader(source: &DbSource, cols: &[&str]) -> io::Result<ParquetRecordBatchReader> {
     match source {
         DbSource::File(path) => reader_from_chunks(File::open(path)?, cols),
-        DbSource::Embedded(bytes) => reader_from_chunks(Bytes::from_static(bytes), cols),
+        DbSource::Embedded { bytes, .. } => reader_from_chunks(Bytes::from_static(bytes), cols),
     }
 }
 
@@ -1259,7 +1072,7 @@ fn has_cols(source: &DbSource, cols: &[&str]) -> io::Result<bool> {
             .map_err(parquet_err_to_io)?
             .schema()
             .clone(),
-        DbSource::Embedded(bytes) => {
+        DbSource::Embedded { bytes, .. } => {
             ParquetRecordBatchReaderBuilder::try_new(Bytes::from_static(bytes))
                 .map_err(parquet_err_to_io)?
                 .schema()
@@ -1313,56 +1126,75 @@ fn bin_col<'a>(batch: &'a RecordBatch, name: &str) -> io::Result<&'a LargeBinary
 
 impl State {
     pub fn load_parquet_db(&mut self, path: &Path) {
-        match ParquetMolDb::new(path) {
-            Ok(db) => {
-                handle_success(
-                    &mut self.ui,
-                    format!(
-                        "Loaded Parquet database from {path:?} ({} molecules)",
-                        db.index_meta.len()
-                    ),
-                );
-
-                self.volatile.parquet_dbs.push(db);
-                if self.volatile.parquet_dbs.len() == 1 {
-                    self.volatile.parquet_db_active = Some(DbSel::Loaded(0));
-                }
-
-                self.update_history(path, OpenType::ParquetDb, None);
-            }
-            Err(e) => handle_err(&mut self.ui, format!("Error loading Parquet database: {e}")),
+        if let Err(e) = self.load_parquet_db_inner(path) {
+            handle_err(&mut self.ui, format!("Error loading Parquet database: {e}"));
         }
+    }
+
+    /// The core of [`Self::load_parquet_db`], returning a `Result` so callers such as the
+    /// `load_last_opened` pipeline can handle errors themselves (e.g. pruning the open history)
+    /// instead of displaying them directly.
+    pub(crate) fn load_parquet_db_inner(&mut self, path: &Path) -> io::Result<()> {
+        let db = ParquetMolDb::new(path)?;
+
+        handle_success(
+            &mut self.ui,
+            format!(
+                "Loaded Parquet database from {path:?} ({} molecules)",
+                db.index_meta.len()
+            ),
+        );
+
+        self.volatile.parquet_dbs.push(db);
+        if self.volatile.parquet_dbs.len() == 1 {
+            self.volatile.parquet_db_active = Some(DbSel::Loaded(0));
+        }
+
+        self.update_history(path, OpenType::ParquetDb, None);
+
+        Ok(())
     }
 
     /// The DB the UI is currently showing, if any.
     pub fn active_mol_db(&self) -> Option<&ParquetMolDb> {
         match self.volatile.parquet_db_active? {
-            DbSel::Common => self.mol_db.as_ref(),
+            DbSel::Hmdb => self.hmdb_mol_db.as_ref(),
+            DbSel::Chebi => self.chebi_mol_db.as_ref(),
             DbSel::Loaded(i) => self.volatile.parquet_dbs.get(i),
         }
     }
 }
 
-/// Load the read-only database embedded in the binary. Returns `None` if it wasn't built into this
+/// Load a read-only database embedded in the binary. Returns `None` if it wasn't built into this
 /// binary, or is unreadable; it's a convenience, and its absence shouldn't stop the app from
 /// starting.
-pub fn load_common_mol_db() -> Option<ParquetMolDb> {
-    if COMMON_MOL_DB.is_empty() {
-        eprintln!("No common molecule database embedded in this build.");
+pub fn load_embedded_mol_db(bytes: &'static [u8], name: &'static str) -> Option<ParquetMolDb> {
+    if bytes.is_empty() {
+        eprintln!("No {name} molecule database embedded in this build.");
         return None;
     }
 
-    match ParquetMolDb::from_embedded(COMMON_MOL_DB) {
+    match ParquetMolDb::from_embedded(bytes, name) {
         Ok(db) => {
             println!(
-                "Loaded the built-in molecule database: {} molecules",
+                "Loaded the built-in {name} molecule database: {} molecules",
                 db.index_meta.len()
             );
             Some(db)
         }
         Err(e) => {
-            eprintln!("Error loading the built-in molecule database: {e}");
+            eprintln!("Error loading the built-in {name} molecule database: {e}");
             None
         }
     }
+}
+
+/// Load the built-in HMDB database; see [`load_embedded_mol_db`].
+pub fn load_hmdb_mol_db() -> Option<ParquetMolDb> {
+    load_embedded_mol_db(HMDB_MOL_DB, HMDB_DB_NAME)
+}
+
+/// Load the built-in ChEBI database; see [`load_embedded_mol_db`].
+pub fn load_chebi_mol_db() -> Option<ParquetMolDb> {
+    load_embedded_mol_db(CHEBI_MOL_DB, CHEBI_DB_NAME)
 }
