@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version=0_3_4
+version=0_3_5
 outdir=target/release
 exe="$outdir/molchanica"
 readme="README.md"
@@ -10,6 +10,7 @@ icon="resources/icon.png"
 cufft="/usr/local/cuda/lib64/libcufft.so.12"
 opendde="install_scripts/install_opendde.sh"
 
+# Prevents NVCC from having to be on the path.
 export PATH=/usr/local/cuda/bin:$PATH
 
 chmod +x "$setup"
