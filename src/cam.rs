@@ -149,7 +149,7 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
         // (every 20th carbon) so large proteins don't stall the update. This produces good-enough results,
         // and is faster. We handle peptides as a special case, as they're likely to be much larger than
         // small molecules. todo: Consider this for lipids and NAs etc A/R.
-        for pep in &state.peptide {
+        for pep in &state.peptides {
             if !pep.common.visible {
                 continue;
             }
@@ -359,7 +359,7 @@ pub fn reset_camera(
 
     let mut center = if let Some(mol) = state
         .peptide_for_tools_i()
-        .and_then(|i| state.peptide.get(i))
+        .and_then(|i| state.peptides.get(i))
     {
         // We cache center and size, due to the potential large number of molecules.
         let center = mol.center.into();

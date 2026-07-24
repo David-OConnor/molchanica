@@ -55,7 +55,7 @@ pub fn md_setup(
             ui.add_space(COL_SPACING / 2.0);
 
             let peptide_selected = state
-                .peptide
+                .peptides
                 .iter()
                 .any(|mol| mol.common.selected_for_md.is_some());
             let num_ligs = state

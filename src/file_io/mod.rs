@@ -67,8 +67,8 @@ pub(in crate::file_io) fn load_peptide(
 
     let centroid = mol.center;
     let ident = mol.common.ident.clone();
-    let peptide_i = state.peptide.len();
-    state.peptide.push(mol);
+    let peptide_i = state.peptides.len();
+    state.peptides.push(mol);
     state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
     state.volatile.active_peptide = Some(peptide_i);
     state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
@@ -249,7 +249,7 @@ impl State {
 
     pub fn load_density(&mut self, dens_map: DensityMap) {
         let peptide_i = self.peptide_for_tools_i();
-        if let Some(mol) = peptide_i.and_then(|i| self.peptide.get_mut(i)) {
+        if let Some(mol) = peptide_i.and_then(|i| self.peptides.get_mut(i)) {
             // Sample atoms, so we know where to draw the (periodic) density data.
             // We are filtering for backbone atoms of one type for now, for performance reasons. This is
             // a sample. Good enough?
@@ -483,7 +483,10 @@ impl State {
                 //     self.update_save_prefs()
                 // }
                 // We don't allow editing the protein files yet, so save the active peptide's raw CIF.
-                let Some(mol) = self.peptide_for_tools_i().and_then(|i| self.peptide.get(i)) else {
+                let Some(mol) = self
+                    .peptide_for_tools_i()
+                    .and_then(|i| self.peptides.get(i))
+                else {
                     return Err(io::Error::new(ErrorKind::InvalidData, "No peptide to save"));
                 };
                 let Some(data) = self.cif_pdb_raw.get(&mol.common.ident) else {
@@ -543,7 +546,10 @@ impl State {
             // todo: Consider if you want to store the original map bytes, as you do with
             // todo mmCIF files, instead of saving what you parsed.
             "map" | "mtz" => {
-                let Some(mol) = self.peptide_for_tools_i().and_then(|i| self.peptide.get(i)) else {
+                let Some(mol) = self
+                    .peptide_for_tools_i()
+                    .and_then(|i| self.peptides.get(i))
+                else {
                     return Err(io::Error::new(
                         ErrorKind::InvalidData,
                         "No molecule open; can't save a density Map.",
@@ -654,7 +660,7 @@ impl State {
                     .open_mol_from_file(&history.path, scene, &mut Default::default())
                     .map(|()| {
                         if let Some(p) = &history.position {
-                            let peptide = self.peptide.last_mut().unwrap();
+                            let peptide = self.peptides.last_mut().unwrap();
                             peptide.common.move_to(*p);
                             peptide.center = *p;
                         }
@@ -791,7 +797,7 @@ impl State {
 
         // The pre-push index.
         let mol_i = match mol_type {
-            MolType::Peptide => self.peptide.len(),
+            MolType::Peptide => self.peptides.len(),
             MolType::Ligand => self.ligands.len(),
             MolType::NucleicAcid => self.nucleic_acids.len(),
             MolType::Lipid => self.lipids.len(),
@@ -961,7 +967,7 @@ impl State {
             }
 
             let mut pending_data = None;
-            if let Some(mol) = self.peptide.get_mut(mol_i) {
+            if let Some(mol) = self.peptides.get_mut(mol_i) {
                 // Only after updating from prefs (to prevent unnecessary loading) do we update data avail.
                 mol.updates_rcsb_data(&mut pending_data);
             }

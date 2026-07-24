@@ -100,7 +100,7 @@ pub fn load_atom_coords_rcsb(
 
     updates.entities.push_class(EntityClass::Protein as u32);
 
-    let peptide_i = state.peptide.len() - 1;
+    let peptide_i = state.peptides.len() - 1;
     state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
     state.volatile.active_peptide = Some(peptide_i);
     state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
@@ -114,7 +114,7 @@ pub fn load_atom_coords_rcsb(
     // Only after updating from prefs (to prevent unecesasary loading) do we update data avail.
     let mut pending_data = None;
     state
-        .peptide
+        .peptides
         .last_mut()
         .unwrap()
         .updates_rcsb_data(&mut pending_data);

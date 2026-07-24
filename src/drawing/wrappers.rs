@@ -539,7 +539,7 @@ pub fn _update_all_pockets_inplace(state: &State, scene: &mut Scene) {
 }
 
 pub fn update_single_peptide_inplace(i: usize, state: &State, scene: &mut Scene) {
-    let Some(mol) = state.peptide.get(i) else {
+    let Some(mol) = state.peptides.get(i) else {
         eprintln!("Unable to update peptide entities in place; invalid peptide index");
         return;
     };

@@ -516,9 +516,9 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     let mut to_add: Option<ViewerMolecule> = None;
 
     // Proteins
-    if !state.peptide.is_empty() {
+    if !state.peptides.is_empty() {
         ui.label(RichText::new("Proteins:").color(Color32::CYAN));
-        for pep in &state.peptide {
+        for pep in &state.peptides {
             let atom_count = pep.common.atoms.len();
             let common = pep.common.clone();
             ui.horizontal(|ui| {

@@ -91,7 +91,13 @@ pub fn event_dev_handler(
             }
 
             if state_.ui.left_click_down {
-                mol_manip::handle_mol_manip_in_plane(state_, scene, delta, &mut redraw_in_place);
+                mol_manip::handle_mol_manip_in_plane(
+                    state_,
+                    scene,
+                    delta,
+                    &mut redraw_in_place,
+                    &mut updates,
+                );
                 state_.volatile.inputs_commanded.panning = true;
 
                 set_flashlight(scene);
@@ -261,13 +267,13 @@ fn redraw_inplace_helper(
 
     let mol = match mol_type {
         MolType::Peptide => {
-            if mol_i >= state.peptide.len() {
+            if mol_i >= state.peptides.len() {
                 eprintln!("{err}");
                 return;
             }
 
             wrappers::update_single_peptide_inplace(mol_i, state, scene);
-            &mut state.peptide[mol_i].common
+            &mut state.peptides[mol_i].common
         }
         MolType::Ligand => {
             wrappers::update_single_ligand_inplace(mol_i, state, scene);
@@ -339,6 +345,7 @@ fn handle_mouse_button(
             state.ui.left_click_down = match btn_state {
                 ElementState::Pressed => true,
                 ElementState::Released => {
+                    mol_manip::finish_peptide_mesh_manipulation(state, redraw);
                     // Part of our move logic.
                     state.volatile.mol_manip.pivot = None;
                     false
@@ -375,7 +382,7 @@ fn handle_mouse_button(
 
 fn cycle_primary_view(state: &mut State, redraw: &mut RedrawFlags, forward: bool) {
     let peptide_only_scene = state.volatile.active_mol.is_none()
-        && !state.peptide.is_empty()
+        && !state.peptides.is_empty()
         && state.ligands.is_empty()
         && state.nucleic_acids.is_empty()
         && state.lipids.is_empty();
@@ -487,7 +494,7 @@ fn handle_physical_key(
                 KeyCode::Enter => {
                     move_cam_to_sel(
                         &mut state.ui,
-                        &state.peptide,
+                        &state.peptides,
                         state
                             .volatile
                             .active_mol
@@ -788,7 +795,7 @@ fn handle_scroll(
     set_flashlight(scene);
     updates.lighting = true;
 
-    mol_manip::handle_mol_manip_in_out(state, scene, delta, redraw_in_place);
+    mol_manip::handle_mol_manip_in_out(state, scene, delta, redraw_in_place, updates);
 
     false
 }

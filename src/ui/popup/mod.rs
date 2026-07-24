@@ -111,7 +111,7 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.rama_plot
         && let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
     {
         popup("Ramachandran plot").show(ui.ctx(), |ui| {
             rama_plot::plot_rama(
@@ -935,7 +935,7 @@ fn residue_selector(state: &mut State, scene: &mut Scene, ui: &mut Ui, redraw: &
 
     if let Some(mol) = state
         .peptide_for_tools_i()
-        .and_then(|i| state.peptide.get(i))
+        .and_then(|i| state.peptides.get(i))
         && let Some(chain_i) = state.ui.chain_to_pick_res
     {
         if chain_i >= mol.chains.len() {
@@ -1030,7 +1030,7 @@ fn lig_pocket_from_het_res(
 ) {
     let Some(mol) = state
         .peptide_for_tools_i()
-        .and_then(|i| state.peptide.get(i))
+        .and_then(|i| state.peptides.get(i))
     else {
         return;
     };

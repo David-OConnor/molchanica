@@ -1041,7 +1041,7 @@ pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamErro
 pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, usize)> {
     let mut res = Vec::new();
 
-    for p in &state.peptide {
+    for p in &state.peptides {
         if let Some(copies) = p.common.selected_for_md {
             res.push((FfMolType::Peptide, &p.common, copies.max(1)));
         }
@@ -1203,7 +1203,7 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
     let center = state
         .peptide_for_tools_i()
-        .and_then(|i| state.peptide.get(i))
+        .and_then(|i| state.peptides.get(i))
         .map(|mol| mol.center)
         .unwrap_or_else(Vec3::new_zero);
     // todo: Set a loading indicator, and trigger the build next GUI frame.

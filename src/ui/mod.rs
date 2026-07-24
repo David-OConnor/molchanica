@@ -138,7 +138,7 @@ fn chain_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
     // todo: For now, DRY with res selec
     let Some(mol) = state
         .peptide_for_tools_i()
-        .and_then(|i| state.peptide.get_mut(i))
+        .and_then(|i| state.peptides.get_mut(i))
     else {
         return;
     };
@@ -412,7 +412,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
         // todo: This section needs some updates, but isn't critical.
         if let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
         {
             match state.ui.view_sel_level {
                 ViewSelLevel::Residue => {
@@ -465,7 +465,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                 state.ui.atom_color_by_charge = !state.ui.atom_color_by_charge;
                 state.ui.view_sel_level = ViewSelLevel::Atom;
 
-                if !state.peptide.is_empty() {
+                if !state.peptides.is_empty() {
                     state.volatile.flags.update_sas_coloring = true;
                 }
 
@@ -506,7 +506,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                         .iter()
                         .any(|(i, _)| *i == peptide_i)
                 });
-                if let Some(pep) = peptide_i.and_then(|i| state.peptide.get_mut(i)) {
+                if let Some(pep) = peptide_i.and_then(|i| state.peptides.get_mut(i)) {
                     if pep.sifts_mapping.is_none() && !sifts_pending {
                         let ident = &pep.common.ident;
 
@@ -674,7 +674,7 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                 // pH is global, so keep every open peptide in sync.
                 let mut hydrogen_err = None;
                 if let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
-                    for mol in &mut state.peptide {
+                    for mol in &mut state.peptides {
                         if let Err(e) = mol.reassign_hydrogens(state.to_save.ph, ff_map) {
                             hydrogen_err = Some(format!("Error reassigning hydrogens: {e:?}"));
                             break;
@@ -821,7 +821,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
             let mut dm_loaded = None; // avoids a double-borrow error.
 
-            if let Some(mol) = state.peptide_for_tools_i().and_then(|i| state.peptide.get_mut(i)) {
+            if let Some(mol) = state.peptide_for_tools_i().and_then(|i| state.peptides.get_mut(i)) {
 
                 // todo: Move these A/R. LIkely in a sub menu.
                 if let Some(files_avail) = &mol.rcsb_files_avail {
@@ -950,7 +950,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
             ui.add_space(COL_SPACING);
 
-            let color_open_tools = if state.peptide.is_empty()
+            let color_open_tools = if state.peptides.is_empty()
                 && state.ligands.is_empty() {
                 COLOR_ACTION
             } else {
@@ -981,7 +981,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                       &inp, enter_pressed);
             }
 
-            if state.peptide.is_empty() && state.active_mol().is_none() {
+            if state.peptides.is_empty() && state.active_mol().is_none() {
                 ui.add_space(COL_SPACING / 2.);
                 if ui
                     .button(RichText::new("I'm feeling lucky 🍀").color(color_open_tools))
@@ -1081,7 +1081,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
         ui.add_space(ROW_SPACING / 2.);
 
-        if state.ui.ui_vis.aa_seq && !state.peptide.is_empty() {
+        if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
             add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw.peptide);
         }
 
@@ -1295,7 +1295,7 @@ pub(crate) fn cam_controls(
                     .on_hover_text("(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.")
                     .clicked()
                 {
-                    move_cam_to_sel(&mut state.ui, &state.peptide, state.volatile.active_mol.and_then(|(t, i)| (t == MolType::Peptide).then_some(i)), &state.ligands, &state.nucleic_acids,
+                    move_cam_to_sel(&mut state.ui, &state.peptides, state.volatile.active_mol.and_then(|(t, i)| (t == MolType::Peptide).then_some(i)), &state.ligands, &state.nucleic_acids,
                                     &state.lipids, &state.pockets, &mut scene.camera, engine_updates);
                 }
 

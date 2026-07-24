@@ -53,7 +53,7 @@ pub struct State {
     pub ui: StateUi,
     pub volatile: StateVolatile,
     pub cif_pdb_raw: HashMap<String, String>,
-    pub peptide: Vec<MoleculePeptide>,
+    pub peptides: Vec<MoleculePeptide>,
     pub ligands: Vec<MoleculeSmall>,
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
     pub lipids: Vec<MoleculeLipid>,
@@ -118,7 +118,7 @@ impl Default for State {
             ui,
             volatile: StateVolatile::new(),
             cif_pdb_raw: Default::default(),
-            peptide: Default::default(),
+            peptides: Default::default(),
             ligands: Default::default(),
             nucleic_acids: Default::default(),
             lipids: Default::default(),
@@ -232,25 +232,25 @@ impl State {
     }
 
     pub fn get_peptide(&self, i: usize) -> Option<&MoleculePeptide> {
-        self.peptide.get(i)
+        self.peptides.get(i)
     }
 
     pub fn get_peptide_mut(&mut self, i: usize) -> Option<&mut MoleculePeptide> {
-        self.peptide.get_mut(i)
+        self.peptides.get_mut(i)
     }
 
     /// Returns the active peptide index. When another molecule type is active, peptide-wide tools
     /// continue to target the most recently active peptide, preserving the old single-peptide flow.
     pub fn peptide_for_tools_i(&self) -> Option<usize> {
         if let Some((MolType::Peptide, i)) = self.volatile.active_mol
-            && i < self.peptide.len()
+            && i < self.peptides.len()
         {
             return Some(i);
         }
         self.volatile
             .active_peptide
-            .filter(|i| *i < self.peptide.len())
-            .or_else(|| (!self.peptide.is_empty()).then_some(0))
+            .filter(|i| *i < self.peptides.len())
+            .or_else(|| (!self.peptides.is_empty()).then_some(0))
     }
 
     pub fn peptide_for_tools(&self) -> Option<&MoleculePeptide> {

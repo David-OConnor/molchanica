@@ -454,7 +454,7 @@ impl DensityRect {
 pub fn make_density_mesh(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     let Some(mol) = state
         .peptide_for_tools_i()
-        .and_then(|i| state.peptide.get(i))
+        .and_then(|i| state.peptides.get(i))
     else {
         return;
     };

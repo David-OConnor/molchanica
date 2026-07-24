@@ -529,7 +529,7 @@ impl State {
             }
         }
 
-        for mol in &self.peptide {
+        for mol in &self.peptides {
             for oh in &mut self.to_save.open_history {
                 if let Some(p) = &mol.common.path
                     && &oh.path == p
@@ -549,7 +549,7 @@ impl State {
             }
         }
 
-        for mol in &self.peptide {
+        for mol in &self.peptides {
             let data = PerMolToSave::from_state(self, mol);
             self.to_save.per_mol.insert(mol.common.ident.clone(), data);
         }
@@ -581,7 +581,7 @@ impl State {
         println!("Updating state from prefs data");
         self.reset_selections();
 
-        for mol in &mut self.peptide {
+        for mol in &mut self.peptides {
             let Some(data) = self.to_save.per_mol.get(&mol.common.ident).cloned() else {
                 continue;
             };

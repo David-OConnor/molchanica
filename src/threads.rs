@@ -110,7 +110,7 @@ pub fn handle_thread_rx(
     let mut prefs_dirty = false;
     for (peptide_i, rx) in pending_rcsb {
         let mut rx = Some(rx);
-        if let Some(mol) = state.peptide.get_mut(peptide_i) {
+        if let Some(mol) = state.peptides.get_mut(peptide_i) {
             prefs_dirty |= mol.poll_mol_pending_data(&mut rx);
         }
         if let Some(rx) = rx {
@@ -158,7 +158,7 @@ pub fn handle_thread_rx(
     for (peptide_i, rx) in pending_sifts {
         match rx.try_recv() {
             Ok(result) => {
-                if let Some(pep) = state.peptide.get_mut(peptide_i) {
+                if let Some(pep) = state.peptides.get_mut(peptide_i) {
                     match result {
                         Ok(mappings) => {
                             println!("{} SIFTS UniProt mappings loaded", mappings.len());
@@ -243,8 +243,8 @@ pub fn handle_thread_rx(
                     if let Some(cif) = molecule.source_cif.take() {
                         state.cif_pdb_raw.insert(molecule.common.ident.clone(), cif);
                     }
-                    let peptide_i = state.peptide.len();
-                    state.peptide.push(molecule);
+                    let peptide_i = state.peptides.len();
+                    state.peptides.push(molecule);
                     state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
                     state.volatile.active_peptide = Some(peptide_i);
                     state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));

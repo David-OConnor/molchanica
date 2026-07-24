@@ -217,6 +217,12 @@ impl MoleculeCommon {
         }
     }
 
+    pub fn shift(&mut self, delta: Vec3) {
+        for posit in &mut self.atom_posits {
+            *posit += delta;
+        }
+    }
+
     pub fn rotate(&mut self, rot: Quaternion, pivot_: Option<usize>) {
         let pivot = match pivot_ {
             Some(i) => self.atom_posits[i],

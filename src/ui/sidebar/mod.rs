@@ -5,6 +5,7 @@ use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
+use crate::molecules::MolGenericRefMut;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -274,7 +275,7 @@ fn sonification_input(
     match mol_type {
         MolType::Peptide => {
             let mol = state
-                .peptide
+                .peptides
                 .get(i_mol)
                 .ok_or_else(|| "Peptide index is out of bounds.".to_string())?;
             let params = state
@@ -377,7 +378,7 @@ fn mol_picker(
     let mut reset_fog = false;
     let mut audio_action = None;
 
-    for (i_mol, mol) in state.peptide.iter_mut().enumerate() {
+    for (i_mol, mol) in state.peptides.iter_mut().enumerate() {
         mol_picker_one(
             &mut state.volatile.active_mol,
             &mut state.volatile.orbit_center,
@@ -536,7 +537,7 @@ fn mol_picker(
     // Peptide-relative UI state follows whichever peptide was selected in the picker.
     if recenter_orbit
         && let Some((MolType::Peptide, peptide_i)) = state.volatile.active_mol
-        && let Some(peptide) = state.peptide.get(peptide_i)
+        && let Some(peptide) = state.peptides.get(peptide_i)
     {
         state.volatile.active_peptide = Some(peptide_i);
         state.volatile.aa_seq_text = peptide
@@ -567,7 +568,7 @@ fn mol_picker(
 }
 
 fn open_tools(state: &mut State, ui: &mut Ui) {
-    let color_open_tools = if state.peptide.is_empty() && state.ligands.is_empty() {
+    let color_open_tools = if state.peptides.is_empty() && state.ligands.is_empty() {
         COLOR_ACTION
     } else {
         COLOR_INACTIVE
@@ -651,6 +652,7 @@ fn manip_toolbar(
         }
 
         let mut pocket_mesh_stale = false;
+        let mut add_copy = false;
         if let Some(mol) = &mut state.active_mol_mut() {
             if ui
                 .button(RichText::new("Move to cam").color(COLOR_HIGHLIGHT))
@@ -662,6 +664,16 @@ fn manip_toolbar(
                     pocket_mesh_stale = true;
                 }
                 redraw.set(active_mol_type);
+            }
+
+            if button!(
+                ui,
+                "Add copy",
+                COLOR_HIGHLIGHT,
+                "Load an additional copy of this molecule"
+            ).clicked() {
+                // Defer the push until the `mol` borrow of `state` is released below.
+                add_copy = true;
             }
 
             if button!(
@@ -692,6 +704,54 @@ fn manip_toolbar(
             ).clicked() {
                 state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
             }
+        }
+
+        if add_copy {
+            match state.active_mol_mut() {
+                Some(MolGenericRefMut::Peptide(m)) => {
+                    let shift_amt = 40.;
+                    let mut copy = m.clone();
+                    copy.common.shift(Vec3::new(shift_amt, 0., 0.));
+
+                    redraw.set(MolType::Peptide);
+                    state.peptides.push(copy);
+                }
+                Some(MolGenericRefMut::Small(m)) => {
+                    let shift_amt = 10.;
+                    let mut copy = m.clone();
+                    copy.common.shift(Vec3::new(shift_amt, 0., 0.));
+
+                    redraw.set(MolType::Ligand);
+                    state.ligands.push(copy);
+                }
+                Some(MolGenericRefMut::NucleicAcid(m)) => {
+                    let shift_amt = 20.;
+                    let mut copy = m.clone();
+                    copy.common.shift(Vec3::new(shift_amt, 0., 0.));
+
+                    redraw.set(MolType::NucleicAcid);
+                    state.nucleic_acids.push(copy);
+                }
+                Some(MolGenericRefMut::Lipid(m)) => {
+                    let shift_amt = 20.;
+                    let mut copy = m.clone();
+                    copy.common.shift(Vec3::new(shift_amt, 0., 0.));
+
+                    state.lipids.push(copy);
+                    redraw.set(MolType::Lipid);
+                }
+                Some(MolGenericRefMut::Pocket(m)) => {
+                    let shift_amt = 40.;
+                    let mut copy = m.clone();
+                    copy.common.shift(Vec3::new(shift_amt, 0., 0.));
+                    state.pockets.push(copy);
+
+                    redraw.set(MolType::Pocket);
+                }
+                None => {}
+            }
+
+            engine_updates.meshes = true;
         }
 
         // Pocket meshes are stored in world space, so a position change requires
@@ -738,7 +798,7 @@ pub(in crate::ui) fn sidebar(
                 }
                 ui.add_space(COL_SPACING);
 
-                let color_open_tools = if state.peptide.is_empty() && state.ligands.is_empty() {
+                let color_open_tools = if state.peptides.is_empty() && state.ligands.is_empty() {
                     COLOR_ACTION
                 } else {
                     COLOR_INACTIVE

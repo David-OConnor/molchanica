@@ -24,7 +24,7 @@ use crate::{
         },
         viridis_lut::VIRIDIS,
     },
-    mol_manip::ManipMode,
+    mol_manip::{ManipMode, PeptideMeshTransform},
     molecules::{
         Atom, AtomRole, Chain, HydrogenBondTwoMols, MolGenericRef, MolType,
         peptide::MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
@@ -1126,7 +1126,12 @@ pub fn draw_density_surface(
 }
 
 /// The dots view of solvent-accessible-surface
-fn draw_dots(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
+fn draw_dots(
+    update_mesh: &mut bool,
+    mesh_created: bool,
+    transform: PeptideMeshTransform,
+    scene: &mut Scene,
+) {
     // If the mesh is the default cube, build it. (On demand.)
     if !mesh_created {
         *update_mesh = true;
@@ -1139,9 +1144,10 @@ fn draw_dots(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
     }
 
     for vertex in &scene.meshes[MESH_PEP_SOLVENT_SURFACE].vertices {
+        let position = Vec3::from_slice(&vertex.position).unwrap();
         let mut entity = Entity::new(
             MESH_SURFACE_DOT,
-            Vec3::from_slice(&vertex.position).unwrap(),
+            transform.transform_point(position),
             Quaternion::new_identity(),
             SIZE_SFC_DOT,
             COLOR_SFC_DOT,
@@ -1154,7 +1160,12 @@ fn draw_dots(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
 
 /// The mesh view of solvent-accessible-surface
 // fn draw_sa_surface(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene, color_by_vertex: Option<Vec<(u8, u8, u8)>>) {
-fn draw_sa_surface(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
+fn draw_sa_surface(
+    update_mesh: &mut bool,
+    mesh_created: bool,
+    transform: PeptideMeshTransform,
+    scene: &mut Scene,
+) {
     // If the mesh is the default cube, build it. (On demand.)
     if !mesh_created {
         *update_mesh = true;
@@ -1163,8 +1174,8 @@ fn draw_sa_surface(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene
 
     let mut ent = Entity::new(
         MESH_PEP_SOLVENT_SURFACE,
-        Vec3::new_zero(),
-        Quaternion::new_identity(),
+        transform.translation,
+        transform.rotation,
         1.,
         COLOR_SA_SURFACE,
         ATOM_SHININESS,
@@ -1253,7 +1264,12 @@ fn ribbon_text_overlay_entities(
 }
 
 /// Secondary structure, e.g. cartoon view for proteins.
-pub fn draw_secondary_structure(update_mesh: &mut bool, mesh_created: bool, scene: &mut Scene) {
+pub fn draw_secondary_structure(
+    update_mesh: &mut bool,
+    mesh_created: bool,
+    transform: PeptideMeshTransform,
+    scene: &mut Scene,
+) {
     // If the mesh is the default cube, build it. (On demand.)
     if !mesh_created {
         *update_mesh = true;
@@ -1261,8 +1277,8 @@ pub fn draw_secondary_structure(update_mesh: &mut bool, mesh_created: bool, scen
 
     let mut ent = Entity::new(
         MESH_SECONDARY_STRUCTURE,
-        Vec3::new_zero(),
-        Quaternion::new_identity(),
+        transform.translation,
+        transform.rotation,
         1.,
         COLOR_SECONDARY_STRUCTURE,
         ATOM_SHININESS,
@@ -1413,7 +1429,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
             && ent.class != EntityClass::SaSurfaceDots as u32
             && ent.class != EntityClass::SecondaryStructure as u32
     });
-    for peptide in &mut state.peptide {
+    for peptide in &mut state.peptides {
         peptide.common.entity_i_range = None;
     }
 
@@ -1422,7 +1438,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         return;
     }
 
-    for mol_i in 0..state.peptide.len() {
+    for mol_i in 0..state.peptides.len() {
         draw_peptide_one(state, scene, mol_i);
     }
 
@@ -1442,7 +1458,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         false
     };
 
-    let Some(mol) = state.peptide.get(mol_i) else {
+    let Some(mol) = state.peptides.get(mol_i) else {
         return;
     };
     if !mol.common.visible {
@@ -1482,28 +1498,46 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             state.volatile.flags.update_ss_mesh = true;
             state.volatile.flags.ss_mesh_dirty = false;
         }
+        let transform = if state.volatile.flags.ss_mesh_created {
+            state.volatile.mol_manip.ribbon_mesh_transform
+        } else {
+            PeptideMeshTransform::default()
+        };
         draw_secondary_structure(
             &mut state.volatile.flags.update_ss_mesh,
             state.volatile.flags.ss_mesh_created,
+            transform,
             scene,
         );
         entities.extend(ribbon_text_overlay_entities(mol, mol_active, ui));
     }
 
     // Note that this renders over a sticks model.
-    if owns_shared_mesh && !state.ui.visibility.hide_protein && mol_view == MoleculeView::Dots {
+    if owns_shared_mesh
+        && !state.ui.visibility.hide_protein
+        && mol_view == MoleculeView::Dots
+        && !state.volatile.mol_manip.peptide_mesh_manip_pending
+    {
+        let transform = state.volatile.mol_manip.surface_mesh_transform;
         draw_dots(
             &mut state.volatile.flags.update_sas_mesh,
             state.volatile.flags.sas_mesh_created,
+            transform,
             scene,
         );
     }
 
     // todo: Consider if you handle this here, or in a sep fn.
     if owns_shared_mesh && !state.ui.visibility.hide_protein && mol_view == MoleculeView::Surface {
+        let transform = if state.volatile.flags.sas_mesh_created {
+            state.volatile.mol_manip.surface_mesh_transform
+        } else {
+            PeptideMeshTransform::default()
+        };
         draw_sa_surface(
             &mut state.volatile.flags.update_sas_mesh,
             state.volatile.flags.sas_mesh_created,
+            transform,
             scene,
         );
     }
@@ -2046,7 +2080,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
     scene.entities.extend(entities);
 
     let end_i = scene.entities.len();
-    if let Some(mol) = state.peptide.get_mut(mol_i) {
+    if let Some(mol) = state.peptides.get_mut(mol_i) {
         mol.common.entity_i_range = Some((start_i, end_i));
     }
 }

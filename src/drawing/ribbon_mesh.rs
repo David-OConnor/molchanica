@@ -27,6 +27,7 @@ use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::{BackboneSS, ResidueType, SecondaryStructure};
 use graphics::{Mesh, Vertex};
 use lin_alg::f32::Vec3 as Vec3F32;
+use lin_alg::f64::Vec3 as Vec3F64;
 
 use crate::{
     drawing::{
@@ -602,11 +603,11 @@ fn build_segment_mesh(
 
 // ── Data extraction ───────────────────────────────────────────────────────────
 
-fn extract_frames(seg: &BackboneSS, atoms: &[Atom]) -> Vec<ResidueFrame> {
+fn extract_frames(seg: &BackboneSS, atoms: &[Atom], atom_posits: &[Vec3F64]) -> Vec<ResidueFrame> {
     let mut ca_map: HashMap<usize, Vec3F32> = HashMap::new();
     let mut o_map: HashMap<usize, Vec3F32> = HashMap::new();
 
-    for atom in atoms {
+    for (atom_i, atom) in atoms.iter().enumerate() {
         if atom.serial_number < seg.start_sn || atom.serial_number > seg.end_sn {
             continue;
         }
@@ -616,10 +617,10 @@ fn extract_frames(seg: &BackboneSS, atoms: &[Atom]) -> Vec<ResidueFrame> {
         };
         match atom.role {
             Some(AtomRole::C_Alpha) => {
-                ca_map.insert(res_idx, vec3(atom));
+                ca_map.insert(res_idx, atom_posit(atom_i, atom, atom_posits));
             }
             Some(AtomRole::O_Backbone) => {
-                o_map.insert(res_idx, vec3(atom));
+                o_map.insert(res_idx, atom_posit(atom_i, atom, atom_posits));
             }
             _ => {}
         }
@@ -641,14 +642,12 @@ fn extract_frames(seg: &BackboneSS, atoms: &[Atom]) -> Vec<ResidueFrame> {
         .collect()
 }
 
-/// Convert an atom's f64 position to a f32 Vec3.
+/// Read the molecule's current position for an atom, falling back to the atom's local position
+/// only if the dynamic position array is unexpectedly incomplete.
 #[inline]
-fn vec3(atom: &Atom) -> Vec3F32 {
-    Vec3F32::new(
-        atom.posit.x as f32,
-        atom.posit.y as f32,
-        atom.posit.z as f32,
-    )
+fn atom_posit(atom_i: usize, atom: &Atom, atom_posits: &[Vec3F64]) -> Vec3F32 {
+    let posit = atom_posits.get(atom_i).unwrap_or(&atom.posit);
+    Vec3F32::new(posit.x as f32, posit.y as f32, posit.z as f32)
 }
 
 // ── Coil-region helpers ───────────────────────────────────────────────────────
@@ -704,6 +703,7 @@ fn extend_run(
 pub fn build_ribbon_mesh(
     backbone: &[BackboneSS],
     atoms: &[Atom],
+    atom_posits: &[Vec3F64],
     residues: &[Residue],
     chains: &[Chain],
     res_coloring: ResColoring,
@@ -732,11 +732,13 @@ pub fn build_ribbon_mesh(
 
     // ── 1. Collect all Cα positions ───────────────────────────────────────────
     let mut all_ca: HashMap<usize, Vec3F32> = HashMap::new();
-    for atom in atoms {
+    for (atom_i, atom) in atoms.iter().enumerate() {
         if atom.role == Some(AtomRole::C_Alpha)
             && let Some(r) = atom.residue
         {
-            all_ca.entry(r).or_insert_with(|| vec3(atom));
+            all_ca
+                .entry(r)
+                .or_insert_with(|| atom_posit(atom_i, atom, atom_posits));
         }
     }
 
@@ -744,7 +746,7 @@ pub fn build_ribbon_mesh(
     let mut covered: HashSet<usize> = HashSet::new();
 
     for seg in backbone {
-        let frames = extract_frames(seg, atoms);
+        let frames = extract_frames(seg, atoms, atom_posits);
         if frames.len() < 2 {
             continue;
         }
@@ -839,5 +841,22 @@ pub fn build_ribbon_mesh(
         vertices,
         indices,
         material: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ribbon_geometry_prefers_current_dynamic_atom_position() {
+        let atom = Atom {
+            posit: Vec3F64::new(1.0, 2.0, 3.0),
+            ..Default::default()
+        };
+        let current = [Vec3F64::new(4.0, 5.0, 6.0)];
+
+        assert_eq!(atom_posit(0, &atom, &current), Vec3F32::new(4.0, 5.0, 6.0));
+        assert_eq!(atom_posit(0, &atom, &[]), Vec3F32::new(1.0, 2.0, 3.0));
     }
 }

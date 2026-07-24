@@ -714,13 +714,17 @@ pub(crate) fn handle_selection_attempt(
     }
 
     let pep_atoms: Vec<_> = state
-        .peptide
+        .peptides
         .iter()
         .map(|mol| get_atoms(&mol.common))
         .collect();
-    let pep_chains: Vec<_> = state.peptide.iter().map(|mol| mol.chains.clone()).collect();
+    let pep_chains: Vec<_> = state
+        .peptides
+        .iter()
+        .map(|mol| mol.chains.clone())
+        .collect();
     let pep_bonds: Vec<_> = state
-        .peptide
+        .peptides
         .iter()
         .map(|mol| mol.common.bonds.clone())
         .collect();
@@ -838,7 +842,7 @@ pub(crate) fn handle_selection_attempt(
                 state.volatile.flags.sas_mesh_created = false;
             }
             state.volatile.active_peptide = Some(peptide_i);
-            if let Some(peptide) = state.peptide.get(peptide_i) {
+            if let Some(peptide) = state.peptides.get(peptide_i) {
                 state.volatile.aa_seq_text = peptide
                     .aa_seq
                     .iter()
@@ -882,7 +886,7 @@ pub(crate) fn handle_selection_attempt(
             Selection::BondPeptide(bond_i) => {
                 let new_res_i = winner_mol
                     .filter(|(t, _)| *t == MolType::Peptide)
-                    .and_then(|(_, i)| state.peptide.get(i).map(|p| (i, p)))
+                    .and_then(|(_, i)| state.peptides.get(i).map(|p| (i, p)))
                     .and_then(|(i, p)| p.common.bonds.get(*bond_i).map(|b| (i, b)))
                     .and_then(|(i, b)| pep_atoms.get(i).and_then(|atoms| atoms.get(b.atom_0)))
                     .and_then(|a| a.residue);
@@ -1219,7 +1223,7 @@ fn cycle_atom_bond(state: &State, mol: &MoleculeCommon, dir: isize) -> Selection
         Selection::AtomPeptide(atom_i) => {
             let Some(mol) = state
                 .peptide_for_tools_i()
-                .and_then(|i| state.peptide.get(i))
+                .and_then(|i| state.peptides.get(i))
             else {
                 return Selection::None;
             };
@@ -1279,7 +1283,7 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
 
             let Some(mol) = state
                 .peptide_for_tools_i()
-                .and_then(|i| state.peptide.get(i))
+                .and_then(|i| state.peptides.get(i))
             else {
                 return;
             };
@@ -1360,7 +1364,7 @@ pub fn select_from_search(state: &mut State) -> bool {
     if (query_len == 1 || query_len == 3)
         && let Some(pep) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
         && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
         && let Ok(aa) = AminoAcid::from_str(query)
     {
@@ -1382,7 +1386,7 @@ pub fn select_from_search(state: &mut State) -> bool {
     if query_len >= 3
         && let Some(pep) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
         && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
     {
         for (i, res) in pep.residues.iter().enumerate() {
@@ -1422,7 +1426,7 @@ pub fn select_from_search(state: &mut State) -> bool {
 
             let Some(pep) = state
                 .peptide_for_tools_i()
-                .and_then(|i| state.peptide.get(i))
+                .and_then(|i| state.peptides.get(i))
             else {
                 return false;
             };

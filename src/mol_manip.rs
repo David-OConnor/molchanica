@@ -3,7 +3,7 @@
 //! can move individual atoms, and rotate parts of molecules around bonds.
 
 use graphics::{
-    Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC,
+    Camera, ControlScheme, EngineUpdates, FWD_VEC, Mesh, RIGHT_VEC, Scene, UP_VEC,
     event::MouseScrollDelta,
 };
 use lin_alg::{
@@ -13,6 +13,7 @@ use lin_alg::{
 use na_seq::Element;
 
 use crate::{
+    drawing::{EntityClass, MoleculeView},
     inputs::{SENS_MOL_ROT_MOUSE, SENS_MOL_ROT_SCROLL},
     molecules::{MolType, common::MoleculeCommon},
     selection::Selection,
@@ -20,15 +21,172 @@ use crate::{
     util::RedrawFlags,
 };
 
+#[derive(Clone, Copy)]
+enum PeptideMeshDelta {
+    Translate(Vec3),
+    Rotate { rotation: Quaternion, pivot: Vec3 },
+}
+
+/// Accumulated world-space transform from a cached peptide mesh to the current atom positions.
+///
+/// Ribbon and surface meshes are expensive, but peptide manipulation is rigid. Keeping this
+/// transform on their render entities avoids rebuilding and re-uploading every vertex for each
+/// mouse event.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PeptideMeshTransform {
+    pub(crate) rotation: Quaternion,
+    pub(crate) translation: Vec3,
+}
+
+impl Default for PeptideMeshTransform {
+    fn default() -> Self {
+        Self {
+            rotation: Quaternion::new_identity(),
+            translation: Vec3::new_zero(),
+        }
+    }
+}
+
+impl PeptideMeshTransform {
+    fn apply_delta(&mut self, delta: PeptideMeshDelta) {
+        match delta {
+            PeptideMeshDelta::Translate(translation) => {
+                self.translation += translation;
+            }
+            PeptideMeshDelta::Rotate { rotation, pivot } => {
+                self.rotation = (rotation * self.rotation).to_normalized();
+                self.translation = rotation.rotate_vec(self.translation - pivot) + pivot;
+            }
+        }
+    }
+
+    pub(crate) fn transform_point(self, point: Vec3) -> Vec3 {
+        self.rotation.rotate_vec(point) + self.translation
+    }
+}
+
+/// Transform a mesh copy for CPU-side operations such as surface coloring. Manipulation itself
+/// uses the much cheaper entity transform and does not mutate or upload the cached mesh.
+pub(crate) fn transform_peptide_mesh(mesh: &mut Mesh, transform: PeptideMeshTransform) -> bool {
+    if mesh.vertices.is_empty() {
+        return false;
+    }
+
+    for vertex in &mut mesh.vertices {
+        let position = Vec3::new(vertex.position[0], vertex.position[1], vertex.position[2]);
+        vertex.position = transform.transform_point(position).to_arr();
+        vertex.normal = transform.rotation.rotate_vec(vertex.normal);
+        vertex.tangent = transform.rotation.rotate_vec(vertex.tangent);
+        vertex.bitangent = transform.rotation.rotate_vec(vertex.bitangent);
+    }
+
+    true
+}
+
+fn record_cached_peptide_mesh_transform(
+    state: &mut State,
+    ss_mesh_created: bool,
+    sas_mesh_created: bool,
+    delta: PeptideMeshDelta,
+) {
+    let manip = &mut state.volatile.mol_manip;
+    manip.peptide_mesh_manip_pending = true;
+
+    if ss_mesh_created {
+        manip.ribbon_mesh_transform.apply_delta(delta);
+    }
+    if sas_mesh_created {
+        manip.surface_mesh_transform.apply_delta(delta);
+    }
+}
+
+/// Update only the small instance record for the currently visible cached mesh. This avoids
+/// `EngineUpdates::meshes`, which recreates the combined GPU vertex/index buffers.
+fn update_visible_cached_peptide_mesh_entity(
+    state: &State,
+    scene: &mut Scene,
+    ss_mesh_created: bool,
+    sas_mesh_created: bool,
+    updates: &mut EngineUpdates,
+) {
+    let (created, class, transform) = match state.ui.mol_view_peptide {
+        MoleculeView::Ribbon => (
+            ss_mesh_created,
+            EntityClass::SecondaryStructure,
+            state.volatile.mol_manip.ribbon_mesh_transform,
+        ),
+        MoleculeView::Surface => (
+            sas_mesh_created,
+            EntityClass::SaSurface,
+            state.volatile.mol_manip.surface_mesh_transform,
+        ),
+        _ => return,
+    };
+
+    if !created {
+        return;
+    }
+
+    let mut changed = false;
+    for entity in &mut scene.entities {
+        if entity.class == class as u32 {
+            entity.position = transform.translation;
+            entity.orientation = transform.rotation;
+            entity.pivot = None;
+            changed = true;
+        }
+    }
+
+    if changed {
+        updates.entities.push_class(class as u32);
+    }
+}
+
+fn handle_cached_peptide_mesh_delta(
+    state: &mut State,
+    scene: &mut Scene,
+    ss_mesh_created: bool,
+    sas_mesh_created: bool,
+    delta: PeptideMeshDelta,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    let hide_dots = !state.volatile.mol_manip.peptide_mesh_manip_pending
+        && state.ui.mol_view_peptide == MoleculeView::Dots;
+
+    record_cached_peptide_mesh_transform(state, ss_mesh_created, sas_mesh_created, delta);
+    update_visible_cached_peptide_mesh_entity(
+        state,
+        scene,
+        ss_mesh_created,
+        sas_mesh_created,
+        updates,
+    );
+
+    if hide_dots {
+        redraw.peptide = true;
+    }
+}
+
+/// Complete a drag/tool interaction. Mesh transforms remain on the cheap instance path; a peptide
+/// redraw is needed primarily to regenerate deferred Surface Dots at their final positions.
+pub fn finish_peptide_mesh_manipulation(state: &mut State, redraw: &mut RedrawFlags) {
+    if state.volatile.mol_manip.peptide_mesh_manip_pending {
+        state.volatile.mol_manip.peptide_mesh_manip_pending = false;
+        redraw.peptide = true;
+    }
+}
+
 /// Blender-style mouse dragging of the molecule. For movement, creates a plane of the camera view,
 /// at the molecule's depth. The mouse cursor projects to this plane, moving the molecule
 /// along it. (Movement). Handles rotation in a straightforward manner. This is for motion relative
 /// to the 2D screen, e.g. from mouse movement.
 pub fn handle_mol_manip_in_plane(
     state: &mut State,
-    scene: &Scene,
+    scene: &mut Scene,
     delta: (f64, f64),
     redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
 ) {
     if state.volatile.mol_manip.mode == ManipMode::None {
         return;
@@ -43,6 +201,14 @@ pub fn handle_mol_manip_in_plane(
     };
 
     let op_mode = state.volatile.operating_mode;
+    let peptide_meshes_are_target = op_mode == OperatingMode::Primary
+        && matches!(
+            state.volatile.mol_manip.mode,
+            ManipMode::Move((MolType::Peptide, i)) | ManipMode::Rotate((MolType::Peptide, i))
+                if state.peptide_for_tools_i() == Some(i)
+        );
+    let ss_mesh_created = peptide_meshes_are_target && state.volatile.flags.ss_mesh_created;
+    let sas_mesh_created = peptide_meshes_are_target && state.volatile.flags.sas_mesh_created;
 
     let mut rebuild_pocket = None; // Avoids double borrow.
 
@@ -51,7 +217,7 @@ pub fn handle_mol_manip_in_plane(
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        if let Some(p) = state.peptide.get_mut(mol_i) {
+                        if let Some(p) = state.peptides.get_mut(mol_i) {
                             &mut p.common
                         } else {
                             eprintln!("Error: No peptide in state for mol manip");
@@ -146,6 +312,17 @@ pub fn handle_mol_manip_in_plane(
                     OperatingMode::ProteinEditor => (),
                 }
 
+                if peptide_meshes_are_target {
+                    handle_cached_peptide_mesh_delta(
+                        state,
+                        scene,
+                        ss_mesh_created,
+                        sas_mesh_created,
+                        PeptideMeshDelta::Translate(delta_),
+                        redraw,
+                        updates,
+                    );
+                }
                 state.volatile.mol_manip.offset = offset;
 
                 let ratio = 8;
@@ -170,7 +347,7 @@ pub fn handle_mol_manip_in_plane(
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        if let Some(p) = state.peptide.get_mut(mol_i) {
+                        if let Some(p) = state.peptides.get_mut(mol_i) {
                             &mut p.common
                         } else {
                             eprintln!("Error: No peptide in state for mol manip");
@@ -214,8 +391,23 @@ pub fn handle_mol_manip_in_plane(
                         Quaternion::from_axis_angle(up, -delta.0 as f32 * SENS_MOL_ROT_MOUSE);
 
                     let rot = rot_y * rot_x; // Note: Can swap the order for a slightly different effect.
+                    let pivot = mol.centroid().into();
 
                     mol.rotate(rot.into(), None);
+                    if peptide_meshes_are_target {
+                        handle_cached_peptide_mesh_delta(
+                            state,
+                            scene,
+                            ss_mesh_created,
+                            sas_mesh_created,
+                            PeptideMeshDelta::Rotate {
+                                rotation: rot,
+                                pivot,
+                            },
+                            redraw,
+                            updates,
+                        );
+                    }
 
                     // // Pockets: We rotate a single mesh, instead of a collection of point-based items.
                     // // Update it.
@@ -292,9 +484,18 @@ pub fn handle_mol_manip_in_out(
     scene: &mut Scene,
     delta: MouseScrollDelta,
     redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
 ) {
     let mut rebuild_pocket = None; // Avoids double borrow.
     let op_mode = state.volatile.operating_mode;
+    let peptide_meshes_are_target = op_mode == OperatingMode::Primary
+        && matches!(
+            state.volatile.mol_manip.mode,
+            ManipMode::Move((MolType::Peptide, i)) | ManipMode::Rotate((MolType::Peptide, i))
+                if state.peptide_for_tools_i() == Some(i)
+        );
+    let ss_mesh_created = peptide_meshes_are_target && state.volatile.flags.ss_mesh_created;
+    let sas_mesh_created = peptide_meshes_are_target && state.volatile.flags.sas_mesh_created;
 
     // Move the molecule forward and backwards relative to the camera on scroll.
     match state.volatile.mol_manip.mode {
@@ -303,7 +504,7 @@ pub fn handle_mol_manip_in_out(
             let mol = match op_mode {
                 OperatingMode::Primary => match mol_type {
                     MolType::Peptide => {
-                        if let Some(p) = state.peptide.get_mut(mol_i) {
+                        if let Some(p) = state.peptides.get_mut(mol_i) {
                             &mut p.common
                         } else {
                             eprintln!("Error: No peptide in state for mol manip");
@@ -408,6 +609,18 @@ pub fn handle_mol_manip_in_out(
                     OperatingMode::ProteinEditor => (),
                 }
 
+                if peptide_meshes_are_target {
+                    handle_cached_peptide_mesh_delta(
+                        state,
+                        scene,
+                        ss_mesh_created,
+                        sas_mesh_created,
+                        PeptideMeshDelta::Translate(dv),
+                        redraw,
+                        updates,
+                    );
+                }
+
                 let new_pivot = pivot + dv;
                 state.volatile.mol_manip.pivot = Some(new_pivot);
                 state.volatile.mol_manip.depth_bias += scroll * step;
@@ -446,7 +659,7 @@ pub fn handle_mol_manip_in_out(
             // todo: C+P with slight changes from the mouse-move variant.
             let mol = match mol_type {
                 MolType::Peptide => {
-                    if let Some(p) = state.peptide.get_mut(mol_i) {
+                    if let Some(p) = state.peptides.get_mut(mol_i) {
                         &mut p.common
                     } else {
                         eprintln!("Error: No peptide in state for mol manip");
@@ -480,7 +693,23 @@ pub fn handle_mol_manip_in_out(
             let fwd = scene.camera.orientation.rotate_vec(FWD_VEC).to_normalized();
 
             let rot = Quaternion::from_axis_angle(fwd, scroll * SENS_MOL_ROT_SCROLL);
+            let pivot = mol.centroid().into();
             mol.rotate(rot.into(), None);
+
+            if peptide_meshes_are_target {
+                handle_cached_peptide_mesh_delta(
+                    state,
+                    scene,
+                    ss_mesh_created,
+                    sas_mesh_created,
+                    PeptideMeshDelta::Rotate {
+                        rotation: rot,
+                        pivot,
+                    },
+                    redraw,
+                    updates,
+                );
+            }
 
             // Pockets: We rotate a single mesh, instead of a collection of point-based items.
             // Update it.
@@ -522,6 +751,10 @@ pub fn set_manip(
     mode: ManipMode,
     updates: &mut EngineUpdates,
 ) {
+    // Finish any previous peptide drag before toggling or switching manipulation tools. This is
+    // especially important for regenerating a deferred Dots representation.
+    finish_peptide_mesh_manipulation(state, redraw);
+
     let vol = &mut state.volatile;
     if mode == ManipMode::None {
         vol.mol_manip.mode = ManipMode::None;
@@ -721,6 +954,13 @@ pub struct MolManip {
     pub view_dir: Option<Vec3>,
     pub offset: Vec3,
     pub depth_bias: f32,
+    /// Persistent transforms from the cached world-space mesh vertices to current peptide
+    /// coordinates. They reset only when their corresponding mesh is regenerated.
+    pub(crate) ribbon_mesh_transform: PeptideMeshTransform,
+    pub(crate) surface_mesh_transform: PeptideMeshTransform,
+    /// Dots expand a surface mesh into many entities, so defer rebuilding them until the current
+    /// drag/tool interaction completes.
+    pub(crate) peptide_mesh_manip_pending: bool,
 }
 
 /// Set pivot, view_dir, and offset based on mol positions and other data.
@@ -765,5 +1005,94 @@ impl MolManip {
             self.view_dir = Some(n);
             self.offset = Vec3::new_zero();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::FRAC_PI_2;
+
+    use graphics::Vertex;
+
+    use super::*;
+
+    const EPSILON: f32 = 1.0e-5;
+
+    fn assert_scalar_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= EPSILON,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    fn assert_vec_close(actual: Vec3, expected: Vec3) {
+        assert_scalar_close(actual.x, expected.x);
+        assert_scalar_close(actual.y, expected.y);
+        assert_scalar_close(actual.z, expected.z);
+    }
+
+    fn assert_position_close(actual: [f32; 3], expected: [f32; 3]) {
+        for i in 0..3 {
+            assert_scalar_close(actual[i], expected[i]);
+        }
+    }
+
+    #[test]
+    fn peptide_mesh_translation_moves_vertices_without_changing_normals() {
+        let normal = Vec3::new(0.0, 1.0, 0.0);
+        let mut mesh = Mesh {
+            vertices: vec![Vertex::new([1.0, 2.0, 3.0], normal)],
+            indices: Vec::new(),
+            material: 0,
+        };
+
+        let mut transform = PeptideMeshTransform::default();
+        transform.apply_delta(PeptideMeshDelta::Translate(Vec3::new(4.0, -2.0, 1.0)));
+
+        assert!(transform_peptide_mesh(&mut mesh, transform));
+
+        assert_position_close(mesh.vertices[0].position, [5.0, 0.0, 4.0]);
+        assert_vec_close(mesh.vertices[0].normal, normal);
+    }
+
+    #[test]
+    fn peptide_mesh_rotation_uses_molecule_pivot_and_rotates_vertex_basis() {
+        let mut vertex = Vertex::new([2.0, 1.0, 0.0], Vec3::new(1.0, 0.0, 0.0));
+        vertex.tangent = Vec3::new(0.0, 1.0, 0.0);
+        vertex.bitangent = Vec3::new(0.0, 0.0, 1.0);
+        let mut mesh = Mesh {
+            vertices: vec![vertex],
+            indices: Vec::new(),
+            material: 0,
+        };
+
+        let mut transform = PeptideMeshTransform::default();
+        transform.apply_delta(PeptideMeshDelta::Rotate {
+            rotation: Quaternion::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), FRAC_PI_2),
+            pivot: Vec3::new(1.0, 1.0, 0.0),
+        });
+
+        assert!(transform_peptide_mesh(&mut mesh, transform));
+
+        let vertex = &mesh.vertices[0];
+        assert_position_close(vertex.position, [1.0, 2.0, 0.0]);
+        assert_vec_close(vertex.normal, Vec3::new(0.0, 1.0, 0.0));
+        assert_vec_close(vertex.tangent, Vec3::new(-1.0, 0.0, 0.0));
+        assert_vec_close(vertex.bitangent, Vec3::new(0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn peptide_mesh_transform_composes_deltas_in_world_order() {
+        let mut transform = PeptideMeshTransform::default();
+        transform.apply_delta(PeptideMeshDelta::Translate(Vec3::new(1.0, 0.0, 0.0)));
+        transform.apply_delta(PeptideMeshDelta::Rotate {
+            rotation: Quaternion::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), FRAC_PI_2),
+            pivot: Vec3::new_zero(),
+        });
+
+        assert_vec_close(
+            transform.transform_point(Vec3::new(1.0, 0.0, 0.0)),
+            Vec3::new(0.0, 2.0, 0.0),
+        );
     }
 }

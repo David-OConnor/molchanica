@@ -194,7 +194,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
             Selection::AtomPeptide(sel_i) => {
                 let Some(mol) = state
                     .peptide_for_tools_i()
-                    .and_then(|i| state.peptide.get(i))
+                    .and_then(|i| state.peptides.get(i))
                 else {
                     return;
                 };
@@ -208,7 +208,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
             Selection::AtomsPeptide(atom_is) => {
                 let Some(mol) = state
                     .peptide_for_tools_i()
-                    .and_then(|i| state.peptide.get(i))
+                    .and_then(|i| state.peptides.get(i))
                 else {
                     return;
                 };
@@ -298,7 +298,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
             Selection::Residue(sel_i) => {
                 if let Some(mol) = state
                     .peptide_for_tools_i()
-                    .and_then(|i| state.peptide.get(i))
+                    .and_then(|i| state.peptides.get(i))
                 {
                     if *sel_i >= mol.residues.len() {
                         return;
@@ -333,7 +333,7 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
             Selection::BondPeptide(bond_i) => {
                 let Some(mol) = state
                     .peptide_for_tools_i()
-                    .and_then(|i| state.peptide.get(i))
+                    .and_then(|i| state.peptides.get(i))
                 else {
                     return;
                 };
@@ -436,7 +436,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
     let peptide_i = state.peptide_for_tools_i();
 
     ui.horizontal(|ui| {
-        if let Some(pep) = peptide_i.and_then(|i| state.peptide.get(i)) {
+        if let Some(pep) = peptide_i.and_then(|i| state.peptides.get(i)) {
             mol_descrip(&MolGenericRef::Peptide(pep), ui);
 
             // if ui.button(RichText::new("Close").color(Color32::LIGHT_RED)).clicked() {
@@ -542,7 +542,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
                         )
                 .clicked()
             {
-                let peptide = peptide_i.and_then(|i| state.peptide.get(i)).unwrap();
+                let peptide = peptide_i.and_then(|i| state.peptides.get(i)).unwrap();
                 let atom_sel = peptide.get_sel_atom(&state.ui.selection);
 
                 if let Some(a) = atom_sel {
@@ -567,7 +567,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
             && i < state.ligands.len()
             && let Some(peptide_i) = state.peptide_for_tools_i()
         {
-            let pep = &state.peptide[peptide_i];
+            let pep = &state.peptides[peptide_i];
             let center = pep.center;
             let mol = &mut state.ligands[i];
             move_mol_to_res(&mut MolGenericRefMut::Small(mol), pep, &res);
@@ -582,7 +582,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
         mol.common_mut().move_to(sel_atom.posit);
 
         let center = peptide_i
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
             .map(|mol| mol.center)
             .unwrap_or_else(Vec3::new_zero);
         move_cam_to_active_mol(state, scene, center, updates);
@@ -594,7 +594,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
 
     if move_cam {
         let center = peptide_i
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
             .map(|mol| mol.center)
             .unwrap_or_else(Vec3::new_zero);
 
@@ -603,7 +603,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
 
     let mut pocket_to_add = None;
 
-    if let Some(mol) = peptide_i.and_then(|i| state.peptide.get(i)) {
+    if let Some(mol) = peptide_i.and_then(|i| state.peptides.get(i)) {
         // todo: Temp location
         if let Selection::AtomPeptide(sel_i) = state.ui.selection && button!(
                 ui,

@@ -216,7 +216,7 @@ pub fn handle_redraw(
 
         if let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
         {
             set_window_title(&mol.common.ident, scene);
         }
@@ -292,18 +292,18 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene, updates: &mut Engin
         }
     }
 
-    if !state.peptide.is_empty() {
+    if !state.peptides.is_empty() {
         set_static_light(
             scene,
             state
                 .peptide_for_tools_i()
-                .and_then(|i| state.peptide.get(i))
+                .and_then(|i| state.peptides.get(i))
                 .unwrap()
                 .center
                 .into(),
             state
                 .peptide_for_tools_i()
-                .and_then(|i| state.peptide.get(i))
+                .and_then(|i| state.peptides.get(i))
                 .unwrap()
                 .size,
         );

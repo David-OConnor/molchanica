@@ -87,7 +87,7 @@ pub fn dock(
     let Some(peptide_i) = state.peptide_for_tools_i() else {
         return Err(ParamError::new("No peptide; can't dock."));
     };
-    let pep = &mut state.peptide[peptide_i];
+    let pep = &mut state.peptides[peptide_i];
     let mol = &mut state.ligands[mol_i];
     // Move the ligand away from the docking site prior to vectoring it towards it.
 

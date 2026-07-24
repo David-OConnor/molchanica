@@ -222,7 +222,7 @@ pub fn handle_cmd(
         // todo a unique id!
         if let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get_mut(i))
+            .and_then(|i| state.peptides.get_mut(i))
         {
             match item.as_ref() {
                 "solvents" => {
@@ -276,7 +276,7 @@ pub fn handle_cmd(
     if let Some(caps) = re_turn.captures(&input) {
         let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
         else {
             return Ok(String::from("Can't turn without a molecule"));
         };
@@ -321,7 +321,7 @@ pub fn handle_cmd(
     if let Some(_caps) = re_orient.captures(&input) {
         if let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
         {
             let atom_sel = mol.get_sel_atom(&state.ui.selection);
 
@@ -362,7 +362,7 @@ pub fn handle_cmd(
     if let Some(caps) = re_sel_resn.captures(&input)
         && let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
     {
         let aa = AminoAcid::from_str(&caps[1])?;
 
@@ -384,7 +384,7 @@ pub fn handle_cmd(
     if let Some(caps) = re_sel_resi.captures(&input)
         && let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
     {
         let i: u32 = caps[1]
             .parse()
@@ -403,7 +403,7 @@ pub fn handle_cmd(
     if let Some(caps) = re_sel_elem.captures(&input)
         && let Some(mol) = state
             .peptide_for_tools_i()
-            .and_then(|i| state.peptide.get(i))
+            .and_then(|i| state.peptides.get(i))
     {
         let el = Element::from_letter(&caps[1])?;
 
