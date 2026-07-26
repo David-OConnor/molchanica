@@ -96,18 +96,26 @@ pub enum OpenDdeEntity {
 }
 
 impl OpenDdeEntity {
-    pub fn protein(id: impl Into<String>, aas: &[AminoAcid]) -> io::Result<Self> {
-        Ok(Self::Protein {
+    pub fn protein_sequence(id: impl Into<String>, sequence: impl Into<String>) -> Self {
+        Self::Protein {
             id: id.into(),
-            sequence: amino_acid_sequence(aas)?,
-        })
+            sequence: sequence.into(),
+        }
+    }
+
+    pub fn protein(id: impl Into<String>, aas: &[AminoAcid]) -> io::Result<Self> {
+        Ok(Self::protein_sequence(id, amino_acid_sequence(aas)?))
+    }
+
+    pub fn dna_sequence(id: impl Into<String>, sequence: impl Into<String>) -> Self {
+        Self::Dna {
+            id: id.into(),
+            sequence: sequence.into(),
+        }
     }
 
     pub fn dna(id: impl Into<String>, nts: &[Nucleotide]) -> io::Result<Self> {
-        Ok(Self::Dna {
-            id: id.into(),
-            sequence: dna_sequence(nts)?,
-        })
+        Ok(Self::dna_sequence(id, dna_sequence(nts)?))
     }
 
     pub fn rna(id: impl Into<String>, sequence: impl Into<String>) -> Self {
@@ -215,7 +223,7 @@ impl OpenDdeRequest {
         }
     }
 
-    fn validate(&self) -> io::Result<()> {
+    pub fn validate(&self) -> io::Result<()> {
         if self.name.is_empty()
             || !self
                 .name
@@ -333,7 +341,7 @@ impl OpenDdeRequest {
     }
 }
 
-fn predict_structure(
+pub(super) fn predict_structure(
     request: &OpenDdeRequest,
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -554,4 +562,97 @@ pub(super) fn predict_structure_from_dna(
     let name = format!("opendde_pred_{nt_str}");
 
     predict_structure(&OpenDdeRequest::new(name, vec![entity]), ff_map, control)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_a_mixed_complex_using_the_open_dde_schema() {
+        let mut request = OpenDdeRequest::new(
+            "mixed_complex",
+            vec![
+                OpenDdeEntity::protein_sequence("A", "ACDEX"),
+                OpenDdeEntity::dna_sequence("D", "ATGCNX"),
+                OpenDdeEntity::rna("R", "AUGCNX"),
+                OpenDdeEntity::ligand("L", "CCD_ATP"),
+                OpenDdeEntity::ion("M", "MG"),
+            ],
+        );
+        request.covalent_bonds.push(OpenDdeCovalentBond {
+            entity1: 1,
+            copy1: 1,
+            position1: 2,
+            atom1: "SG".to_owned(),
+            entity2: 4,
+            copy2: 1,
+            position2: 1,
+            atom2: "C1".to_owned(),
+        });
+
+        assert_eq!(
+            request.to_json().expect("request should serialize"),
+            json!([{
+                "name": "mixed_complex",
+                "modelSeeds": [101],
+                "sequences": [
+                    {"proteinChain": {"sequence": "ACDEX", "count": 1, "id": ["A"]}},
+                    {"dnaSequence": {"sequence": "ATGCNX", "count": 1, "id": ["D"]}},
+                    {"rnaSequence": {"sequence": "AUGCNX", "count": 1, "id": ["R"]}},
+                    {"ligand": {"ligand": "CCD_ATP", "count": 1, "id": ["L"]}},
+                    {"ion": {"ion": "MG", "count": 1, "id": ["M"]}},
+                ],
+                "covalent_bonds": [{
+                    "entity1": "1",
+                    "copy1": 1,
+                    "position1": "2",
+                    "atom1": "SG",
+                    "entity2": "4",
+                    "copy2": 1,
+                    "position2": "1",
+                    "atom2": "C1",
+                }],
+            }])
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_mixed_complex_inputs() {
+        let invalid_entities = [
+            OpenDdeEntity::protein_sequence("A", "ACDB"),
+            OpenDdeEntity::dna_sequence("D", "AUGC"),
+            OpenDdeEntity::rna("R", "ATGC"),
+            OpenDdeEntity::ion("M", "CCD_MG"),
+        ];
+        for entity in invalid_entities {
+            let request = OpenDdeRequest::new("invalid", vec![entity]);
+            assert!(request.validate().is_err());
+        }
+
+        let duplicate_ids = OpenDdeRequest::new(
+            "duplicates",
+            vec![
+                OpenDdeEntity::protein_sequence("A", "ACDE"),
+                OpenDdeEntity::ligand("A", "CCO"),
+            ],
+        );
+        assert!(duplicate_ids.validate().is_err());
+
+        let mut bad_bond = OpenDdeRequest::new(
+            "bad_bond",
+            vec![OpenDdeEntity::protein_sequence("A", "ACDE")],
+        );
+        bad_bond.covalent_bonds.push(OpenDdeCovalentBond {
+            entity1: 1,
+            copy1: 1,
+            position1: 1,
+            atom1: "SG".to_owned(),
+            entity2: 2,
+            copy2: 1,
+            position2: 1,
+            atom2: "C1".to_owned(),
+        });
+        assert!(bad_bond.validate().is_err());
+    }
 }

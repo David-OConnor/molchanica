@@ -1,37 +1,134 @@
-//! UI for predicting a peptide or nucleotide structure from its sequence.
+//! UI for OpenDDE all-atom structure prediction and co-folding.
 
 use std::{
-    str::FromStr,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
-use egui::{Button, Color32, ComboBox, Context, RichText, TextEdit, Ui};
-use na_seq::{AminoAcid, Nucleotide};
+use egui::{
+    Button, CollapsingHeader, Color32, ComboBox, Context, DragValue, RichText, ScrollArea,
+    TextEdit, Ui,
+};
 
 use crate::{
-    button,
     state::State,
     structure_prediction::{
         PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
-        predict_structure_from_aas, predict_structure_from_nts,
+        opendde::{OpenDdeCovalentBond, OpenDdeEntity, OpenDdeRequest},
+        predict_structure_from_request,
     },
-    ui::{COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
+    ui::{COLOR_ACTION, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
     util::handle_err,
 };
 
+const OPENDDE_URL: &str = "https://github.com/aurekaresearch/OpenDDE";
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum SequenceType {
+pub(crate) enum PredictionEntityType {
     #[default]
-    AminoAcid,
-    Nucleotide,
+    Protein,
+    Dna,
+    Rna,
+    Ligand,
+    Ion,
+}
+
+impl PredictionEntityType {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Protein => "Protein",
+            Self::Dna => "DNA",
+            Self::Rna => "RNA",
+            Self::Ligand => "Small molecule / ligand",
+            Self::Ion => "Ion",
+        }
+    }
+
+    fn input_hint(self) -> &'static str {
+        match self {
+            Self::Protein => "One-letter protein sequence",
+            Self::Dna => "DNA sequence",
+            Self::Rna => "RNA sequence",
+            Self::Ligand => "SMILES, CCD_ATP, or FILE_/absolute/path.sdf",
+            Self::Ion => "Unprefixed CCD code, e.g. MG or ZN",
+        }
+    }
+
+    fn input_help(self) -> &'static str {
+        match self {
+            Self::Protein => "20 standard amino-acid letters plus X; whitespace is ignored.",
+            Self::Dna => "Supported letters: A, T, G, C, N, and X.",
+            Self::Rna => "Supported letters: A, U, G, C, N, and X.",
+            Self::Ligand => {
+                "Accepts SMILES, CCD_ codes, multiple CCD codes joined by underscores, or FILE_ references."
+            }
+            Self::Ion => "Use the CCD component name without the CCD_ prefix.",
+        }
+    }
+
+    fn is_sequence(self) -> bool {
+        matches!(self, Self::Protein | Self::Dna | Self::Rna)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PredictionComponentInput {
+    entity_type: PredictionEntityType,
+    id: String,
+    value: String,
+}
+
+impl PredictionComponentInput {
+    fn new(entity_type: PredictionEntityType, id: impl Into<String>) -> Self {
+        Self {
+            entity_type,
+            id: id.into(),
+            value: String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CovalentBondInput {
+    entity1: usize,
+    position1: usize,
+    atom1: String,
+    entity2: usize,
+    position2: usize,
+    atom2: String,
+}
+
+impl CovalentBondInput {
+    fn new(entity_count: usize) -> Self {
+        Self {
+            entity1: 1,
+            position1: 1,
+            atom1: String::new(),
+            entity2: entity_count.min(2).max(1),
+            position2: 1,
+            atom2: String::new(),
+        }
+    }
+
+    fn to_open_dde(&self) -> OpenDdeCovalentBond {
+        OpenDdeCovalentBond {
+            entity1: self.entity1,
+            copy1: 1,
+            position1: self.position1,
+            atom1: self.atom1.trim().to_owned(),
+            entity2: self.entity2,
+            copy2: 1,
+            position2: self.position2,
+            atom2: self.atom2.trim().to_owned(),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct StructurePredUi {
-    pub sequence: String,
-    pub sequence_type: SequenceType,
+    components: Vec<PredictionComponentInput>,
+    covalent_bonds: Vec<CovalentBondInput>,
     pub model: StructurePredictionModel,
     started_at: Option<Instant>,
     control: Option<PredictionControl>,
@@ -42,8 +139,11 @@ pub(crate) struct StructurePredUi {
 impl Default for StructurePredUi {
     fn default() -> Self {
         Self {
-            sequence: String::new(),
-            sequence_type: SequenceType::AminoAcid,
+            components: vec![PredictionComponentInput::new(
+                PredictionEntityType::Protein,
+                "A",
+            )],
+            covalent_bonds: Vec::new(),
             // OpenDDE is the currently supported backend for this window.
             model: StructurePredictionModel::OpenDDE,
             started_at: None,
@@ -85,7 +185,12 @@ impl StructurePredUi {
 }
 
 pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui) {
-    ui.heading("Structure prediction");
+    ui.heading("Structure prediction and co-folding");
+    ui.horizontal(|ui| {
+        ui.label("All-atom prediction powered by");
+        ui.hyperlink_to("OpenDDE", OPENDDE_URL);
+    });
+
     if let Some(started_at) = state.ui.structure_pred.started_at {
         let elapsed = started_at.elapsed();
         ui.label(format!("Time running: {}", format_elapsed(elapsed)));
@@ -103,74 +208,32 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
     }
     ui.add_space(ROW_SPACING);
 
-    ui.horizontal(|ui| {
-        ui.label("Sequence type:");
+    let running = state.ui.structure_pred.is_running();
+    ui.add_enabled_ui(!running, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Model:");
+            ComboBox::from_id_salt("structure_prediction_model")
+                .selected_text(model_name(state.ui.structure_pred.model))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut state.ui.structure_pred.model,
+                        StructurePredictionModel::OpenDDE,
+                        model_name(StructurePredictionModel::OpenDDE),
+                    );
+                });
+        });
 
-        let color = if state.ui.structure_pred.sequence_type == SequenceType::AminoAcid {
-            COLOR_ACTIVE
-        } else {
-            COLOR_INACTIVE
-        };
-        if button!(
-            ui,
-            "Amino acids (1 letter)",
-            color,
-            "Amino-acid sequence using single-letter identifiers"
-        )
-        .clicked()
-        {
-            state.ui.structure_pred.sequence_type = SequenceType::AminoAcid;
-        }
-
-        let color = if state.ui.structure_pred.sequence_type == SequenceType::Nucleotide {
-            COLOR_ACTIVE
-        } else {
-            COLOR_INACTIVE
-        };
-        if button!(
-            ui,
-            "Nucleotides",
-            color,
-            "DNA nucleotide sequence using A, T, G, and C"
-        )
-        .clicked()
-        {
-            state.ui.structure_pred.sequence_type = SequenceType::Nucleotide;
-        }
-    });
-
-    ui.add(
-        TextEdit::multiline(&mut state.ui.structure_pred.sequence)
-            .desired_rows(8)
-            .desired_width(420.)
-            .hint_text(match state.ui.structure_pred.sequence_type {
-                SequenceType::AminoAcid => "Enter a single-letter amino-acid sequence",
-                SequenceType::Nucleotide => "Enter a DNA sequence (A, T, G, C)",
-            }),
-    );
-
-    ui.add_space(ROW_SPACING);
-
-    ui.horizontal(|ui| {
-        ui.label("Model:");
-        ComboBox::from_id_salt("structure_prediction_model")
-            .selected_text(model_name(state.ui.structure_pred.model))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut state.ui.structure_pred.model,
-                    StructurePredictionModel::OpenDDE,
-                    model_name(StructurePredictionModel::OpenDDE),
-                );
-                // ui.selectable_value(
-                //     &mut state.ui.structure_pred.model,
-                //     StructurePredictionModel::Boltz2,
-                //     model_name(StructurePredictionModel::Boltz2),
-                // );
-            });
+        ui.label(
+            "Each component below is one chain or molecule. Add multiple components to predict a complex.",
+        );
+        ui.add_space(ROW_SPACING);
+        ScrollArea::vertical()
+            .max_height(560.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| prediction_inputs(&mut state.ui.structure_pred, ui));
     });
 
     ui.add_space(ROW_SPACING);
-
     ui.horizontal(|ui| {
         if state.ui.structure_pred.is_running() {
             if ui
@@ -193,21 +256,242 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
     });
 }
 
-enum PredictionSequence {
-    AminoAcids(Vec<AminoAcid>),
-    Nucleotides(Vec<Nucleotide>),
+fn prediction_inputs(prediction_ui: &mut StructurePredUi, ui: &mut Ui) {
+    let component_count = prediction_ui.components.len();
+    let mut component_to_remove = None;
+
+    for (index, component) in prediction_ui.components.iter_mut().enumerate() {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("Component {}", index + 1)).strong());
+                ComboBox::from_id_salt(("structure_prediction_entity_type", index))
+                    .selected_text(component.entity_type.name())
+                    .show_ui(ui, |ui| {
+                        for entity_type in [
+                            PredictionEntityType::Protein,
+                            PredictionEntityType::Dna,
+                            PredictionEntityType::Rna,
+                            PredictionEntityType::Ligand,
+                            PredictionEntityType::Ion,
+                        ] {
+                            ui.selectable_value(
+                                &mut component.entity_type,
+                                entity_type,
+                                entity_type.name(),
+                            );
+                        }
+                    });
+
+                ui.label("Chain ID:");
+                ui.add(
+                    TextEdit::singleline(&mut component.id)
+                        .desired_width(50.0)
+                        .hint_text("A"),
+                );
+
+                if component_count > 1
+                    && ui
+                        .button(RichText::new("Remove").color(Color32::LIGHT_RED))
+                        .clicked()
+                {
+                    component_to_remove = Some(index);
+                }
+            });
+
+            let editor = if component.entity_type.is_sequence() {
+                TextEdit::multiline(&mut component.value)
+                    .desired_rows(3)
+                    .desired_width(520.0)
+                    .hint_text(component.entity_type.input_hint())
+            } else {
+                TextEdit::singleline(&mut component.value)
+                    .desired_width(520.0)
+                    .hint_text(component.entity_type.input_hint())
+            };
+            ui.add(editor);
+            ui.label(RichText::new(component.entity_type.input_help()).color(COLOR_INACTIVE));
+        });
+        ui.add_space(ROW_SPACING);
+    }
+
+    if let Some(index) = component_to_remove {
+        remove_component_and_reindex(prediction_ui, index);
+    }
+
+    let mut component_to_add = None;
+    ui.horizontal(|ui| {
+        ui.label("Add:");
+        for (label, entity_type) in [
+            ("Protein", PredictionEntityType::Protein),
+            ("DNA", PredictionEntityType::Dna),
+            ("RNA", PredictionEntityType::Rna),
+            ("Ligand", PredictionEntityType::Ligand),
+            ("Ion", PredictionEntityType::Ion),
+        ] {
+            if ui.button(format!("+ {label}")).clicked() {
+                component_to_add = Some(entity_type);
+            }
+        }
+    });
+
+    if let Some(entity_type) = component_to_add {
+        let id = next_chain_id(&prediction_ui.components);
+        prediction_ui
+            .components
+            .push(PredictionComponentInput::new(entity_type, id));
+    }
+
+    ui.add_space(ROW_SPACING);
+    covalent_bond_inputs(prediction_ui, ui);
+}
+
+fn remove_component_and_reindex(prediction_ui: &mut StructurePredUi, index: usize) {
+    prediction_ui.components.remove(index);
+    let removed_entity = index + 1;
+    prediction_ui
+        .covalent_bonds
+        .retain(|bond| bond.entity1 != removed_entity && bond.entity2 != removed_entity);
+    for bond in &mut prediction_ui.covalent_bonds {
+        if bond.entity1 > removed_entity {
+            bond.entity1 -= 1;
+        }
+        if bond.entity2 > removed_entity {
+            bond.entity2 -= 1;
+        }
+    }
+}
+
+fn covalent_bond_inputs(prediction_ui: &mut StructurePredUi, ui: &mut Ui) {
+    CollapsingHeader::new("Covalent bonds (optional)")
+        .default_open(!prediction_ui.covalent_bonds.is_empty())
+        .show(ui, |ui| {
+            ui.label(
+                "Entity and position references are 1-based. Copy number is 1 for each component.",
+            );
+
+            let entity_count = prediction_ui.components.len().max(1);
+            let mut bond_to_remove = None;
+            for (index, bond) in prediction_ui.covalent_bonds.iter_mut().enumerate() {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("Bond {}", index + 1)).strong());
+                        if ui
+                            .button(RichText::new("Remove").color(Color32::LIGHT_RED))
+                            .clicked()
+                        {
+                            bond_to_remove = Some(index);
+                        }
+                    });
+                    bond_endpoint_input(
+                        ui,
+                        "From",
+                        &mut bond.entity1,
+                        &mut bond.position1,
+                        &mut bond.atom1,
+                        entity_count,
+                    );
+                    bond_endpoint_input(
+                        ui,
+                        "To",
+                        &mut bond.entity2,
+                        &mut bond.position2,
+                        &mut bond.atom2,
+                        entity_count,
+                    );
+                });
+            }
+
+            if let Some(index) = bond_to_remove {
+                prediction_ui.covalent_bonds.remove(index);
+            }
+            if ui.button("+ Covalent bond").clicked() {
+                prediction_ui
+                    .covalent_bonds
+                    .push(CovalentBondInput::new(entity_count));
+            }
+        });
+}
+
+fn bond_endpoint_input(
+    ui: &mut Ui,
+    label: &str,
+    entity: &mut usize,
+    position: &mut usize,
+    atom: &mut String,
+    entity_count: usize,
+) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.label("entity");
+        ui.add(DragValue::new(entity).range(1..=entity_count));
+        ui.label("position");
+        ui.add(DragValue::new(position).range(1..=usize::MAX));
+        ui.label("atom");
+        ui.add(
+            TextEdit::singleline(atom)
+                .desired_width(65.0)
+                .hint_text("SG"),
+        );
+    });
+}
+
+fn next_chain_id(components: &[PredictionComponentInput]) -> String {
+    for index in 0.. {
+        let candidate = if index < 26 {
+            char::from(b'A' + index as u8).to_string()
+        } else {
+            format!("C{}", index - 25)
+        };
+        if components
+            .iter()
+            .all(|component| component.id.trim() != candidate)
+        {
+            return candidate;
+        }
+    }
+    unreachable!("the chain-ID generator has an unbounded alphanumeric namespace")
+}
+
+fn build_request(prediction_ui: &StructurePredUi) -> Result<OpenDdeRequest, String> {
+    let entities = prediction_ui
+        .components
+        .iter()
+        .map(|component| {
+            let id = component.id.trim().to_owned();
+            let sequence = || compact_sequence(&component.value);
+            match component.entity_type {
+                PredictionEntityType::Protein => OpenDdeEntity::protein_sequence(id, sequence()),
+                PredictionEntityType::Dna => OpenDdeEntity::dna_sequence(id, sequence()),
+                PredictionEntityType::Rna => OpenDdeEntity::rna(id, sequence()),
+                PredictionEntityType::Ligand => OpenDdeEntity::ligand(id, component.value.trim()),
+                PredictionEntityType::Ion => {
+                    OpenDdeEntity::ion(id, component.value.trim().to_ascii_uppercase())
+                }
+            }
+        })
+        .collect();
+
+    let mut request = OpenDdeRequest::new("molchanica_opendde_prediction", entities);
+    request.covalent_bonds = prediction_ui
+        .covalent_bonds
+        .iter()
+        .map(CovalentBondInput::to_open_dde)
+        .collect();
+    request.validate().map_err(|error| error.to_string())?;
+    Ok(request)
+}
+
+fn compact_sequence(sequence: &str) -> String {
+    sequence
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_uppercase)
+        .collect()
 }
 
 fn predict(state: &mut State, context: &Context) {
-    let sequence = match state.ui.structure_pred.sequence_type {
-        SequenceType::AminoAcid => {
-            parse_amino_acids(&state.ui.structure_pred.sequence).map(PredictionSequence::AminoAcids)
-        }
-        SequenceType::Nucleotide => parse_nucleotides(&state.ui.structure_pred.sequence)
-            .map(PredictionSequence::Nucleotides),
-    };
-    let sequence = match sequence {
-        Ok(sequence) => sequence,
+    let request = match build_request(&state.ui.structure_pred) {
+        Ok(request) => request,
         Err(error) => {
             handle_err(
                 &mut state.ui,
@@ -236,14 +520,7 @@ fn predict(state: &mut State, context: &Context) {
     state.ui.structure_pred.start_prediction(control);
 
     thread::spawn(move || {
-        let prediction = match sequence {
-            PredictionSequence::AminoAcids(aas) => {
-                predict_structure_from_aas(model, &aas, &ff_map, &worker_control)
-            }
-            PredictionSequence::Nucleotides(nts) => {
-                predict_structure_from_nts(model, &nts, &ff_map, &worker_control)
-            }
-        };
+        let prediction = predict_structure_from_request(model, &request, &ff_map, &worker_control);
 
         let outcome = if worker_control.is_cancel_requested() {
             StructurePredictionOutcome::Cancelled
@@ -273,41 +550,98 @@ fn format_elapsed(elapsed: Duration) -> String {
     }
 }
 
-fn parse_amino_acids(sequence: &str) -> Result<Vec<AminoAcid>, String> {
-    parse_sequence(sequence, "amino-acid", |letter| {
-        AminoAcid::from_str(&letter.to_string())
-    })
-}
-
-fn parse_nucleotides(sequence: &str) -> Result<Vec<Nucleotide>, String> {
-    parse_sequence(sequence, "nucleotide", |letter| {
-        Nucleotide::from_str(&letter.to_string())
-    })
-}
-
-fn parse_sequence<T, E>(
-    sequence: &str,
-    residue_name: &str,
-    mut parse: impl FnMut(char) -> Result<T, E>,
-) -> Result<Vec<T>, String> {
-    let mut result = Vec::new();
-    for letter in sequence.chars().filter(|letter| !letter.is_whitespace()) {
-        let position = result.len() + 1;
-        result.push(parse(letter).map_err(|_| {
-            format!("Invalid {residue_name} identifier '{letter}' at sequence position {position}")
-        })?);
-    }
-
-    if result.is_empty() {
-        return Err(format!("The {residue_name} sequence is empty"));
-    }
-
-    Ok(result)
-}
-
 fn model_name(model: StructurePredictionModel) -> &'static str {
     match model {
-        // StructurePredictionModel::Boltz2 => "Boltz-2",
         StructurePredictionModel::OpenDDE => "OpenDDE",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_a_mixed_complex_request() {
+        let mut prediction_ui = StructurePredUi {
+            components: vec![
+                PredictionComponentInput {
+                    entity_type: PredictionEntityType::Protein,
+                    id: "A".to_owned(),
+                    value: "acD\nEF".to_owned(),
+                },
+                PredictionComponentInput {
+                    entity_type: PredictionEntityType::Rna,
+                    id: "R".to_owned(),
+                    value: "gu ac".to_owned(),
+                },
+                PredictionComponentInput {
+                    entity_type: PredictionEntityType::Ligand,
+                    id: "L".to_owned(),
+                    value: "CCD_ATP".to_owned(),
+                },
+                PredictionComponentInput {
+                    entity_type: PredictionEntityType::Ion,
+                    id: "M".to_owned(),
+                    value: "mg".to_owned(),
+                },
+            ],
+            ..Default::default()
+        };
+        prediction_ui.covalent_bonds.push(CovalentBondInput {
+            entity1: 1,
+            position1: 2,
+            atom1: "SG".to_owned(),
+            entity2: 3,
+            position2: 1,
+            atom2: "C1".to_owned(),
+        });
+
+        let request = build_request(&prediction_ui).expect("mixed complex should be valid");
+
+        assert_eq!(
+            request.entities,
+            vec![
+                OpenDdeEntity::protein_sequence("A", "ACDEF"),
+                OpenDdeEntity::rna("R", "GUAC"),
+                OpenDdeEntity::ligand("L", "CCD_ATP"),
+                OpenDdeEntity::ion("M", "MG"),
+            ]
+        );
+        assert_eq!(request.covalent_bonds.len(), 1);
+    }
+
+    #[test]
+    fn removing_a_component_reindexes_or_removes_bonds() {
+        let mut prediction_ui = StructurePredUi {
+            components: vec![
+                PredictionComponentInput::new(PredictionEntityType::Protein, "A"),
+                PredictionComponentInput::new(PredictionEntityType::Ligand, "L"),
+                PredictionComponentInput::new(PredictionEntityType::Ion, "M"),
+            ],
+            covalent_bonds: vec![
+                CovalentBondInput {
+                    entity1: 1,
+                    position1: 1,
+                    atom1: "CA".to_owned(),
+                    entity2: 3,
+                    position2: 1,
+                    atom2: "MG".to_owned(),
+                },
+                CovalentBondInput {
+                    entity1: 1,
+                    position1: 1,
+                    atom1: "SG".to_owned(),
+                    entity2: 2,
+                    position2: 1,
+                    atom2: "C1".to_owned(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        remove_component_and_reindex(&mut prediction_ui, 1);
+
+        assert_eq!(prediction_ui.covalent_bonds.len(), 1);
+        assert_eq!(prediction_ui.covalent_bonds[0].entity2, 2);
     }
 }

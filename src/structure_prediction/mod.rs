@@ -91,6 +91,22 @@ pub enum StructurePredictionOutcome {
     Failed(String),
 }
 
+/// Predict an arbitrary OpenDDE-compatible biomolecular assembly.
+///
+/// Unlike the sequence convenience functions below, this accepts a complete request containing
+/// any mix of proteins, DNA, RNA, ligands, ions, and optional covalent bonds.
+pub fn predict_structure_from_request(
+    model: StructurePredictionModel,
+    request: &opendde::OpenDdeRequest,
+    ff_map: &ProtFfChargeMapSet,
+    control: &PredictionControl,
+) -> io::Result<MoleculePeptide> {
+    control.check_cancelled()?;
+    match model {
+        StructurePredictionModel::OpenDDE => opendde::predict_structure(request, ff_map, control),
+    }
+}
+
 pub(crate) fn predict_structure_from_aas(
     model: StructurePredictionModel,
     aas: &[AminoAcid],
