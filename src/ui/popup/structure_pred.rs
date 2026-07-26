@@ -15,7 +15,7 @@ use crate::{
     state::State,
     structure_prediction::{
         PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
-        opendde::{OpenDdeCovalentBond, OpenDdeEntity, OpenDdeRequest},
+        opendde::{self, OpenDdeCovalentBond, OpenDdeEntity, OpenDdeRequest, OpenDdeRuntimeInfo},
         predict_structure_from_request,
     },
     ui::{COLOR_ACTION, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
@@ -23,6 +23,17 @@ use crate::{
 };
 
 const OPENDDE_URL: &str = "https://github.com/aurekaresearch/OpenDDE";
+
+type OpenDdeProbeResult = Result<OpenDdeRuntimeInfo, String>;
+
+#[derive(Debug, Default)]
+enum OpenDdeRuntimeStatus {
+    #[default]
+    Unchecked,
+    Checking,
+    Ready(OpenDdeRuntimeInfo),
+    Failed(String),
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum PredictionEntityType {
@@ -132,6 +143,8 @@ pub(crate) struct StructurePredUi {
     pub model: StructurePredictionModel,
     started_at: Option<Instant>,
     control: Option<PredictionControl>,
+    open_dde_runtime_status: OpenDdeRuntimeStatus,
+    open_dde_runtime_rx: Option<mpsc::Receiver<OpenDdeProbeResult>>,
     cancel_requested: bool,
     completed_message: Option<String>,
 }
@@ -148,6 +161,8 @@ impl Default for StructurePredUi {
             model: StructurePredictionModel::OpenDDE,
             started_at: None,
             control: None,
+            open_dde_runtime_status: OpenDdeRuntimeStatus::Unchecked,
+            open_dde_runtime_rx: None,
             cancel_requested: false,
             completed_message: None,
         }
@@ -157,6 +172,59 @@ impl Default for StructurePredUi {
 impl StructurePredUi {
     pub(crate) fn is_running(&self) -> bool {
         self.started_at.is_some()
+    }
+
+    fn ensure_open_dde_runtime_probe(&mut self, context: &Context) {
+        if matches!(
+            self.open_dde_runtime_status,
+            OpenDdeRuntimeStatus::Unchecked
+        ) {
+            self.start_open_dde_runtime_probe(context);
+        }
+        self.poll_open_dde_runtime_probe();
+    }
+
+    fn refresh_open_dde_runtime_probe(&mut self, context: &Context) {
+        if self.open_dde_runtime_rx.is_none() {
+            self.start_open_dde_runtime_probe(context);
+        }
+    }
+
+    fn start_open_dde_runtime_probe(&mut self, context: &Context) {
+        let (tx, rx) = mpsc::channel();
+        let context = context.clone();
+        self.open_dde_runtime_status = OpenDdeRuntimeStatus::Checking;
+        self.open_dde_runtime_rx = Some(rx);
+
+        thread::spawn(move || {
+            let result = opendde::probe_runtime().map_err(|error| error.to_string());
+            let _ = tx.send(result);
+            context.request_repaint();
+        });
+    }
+
+    fn poll_open_dde_runtime_probe(&mut self) {
+        let result = self
+            .open_dde_runtime_rx
+            .as_ref()
+            .map(mpsc::Receiver::try_recv);
+        match result {
+            Some(Ok(Ok(info))) => {
+                self.open_dde_runtime_rx = None;
+                self.open_dde_runtime_status = OpenDdeRuntimeStatus::Ready(info);
+            }
+            Some(Ok(Err(error))) => {
+                self.open_dde_runtime_rx = None;
+                self.open_dde_runtime_status = OpenDdeRuntimeStatus::Failed(error);
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.open_dde_runtime_rx = None;
+                self.open_dde_runtime_status = OpenDdeRuntimeStatus::Failed(
+                    "OpenDDE diagnostics stopped before returning a result".to_owned(),
+                );
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) | None => {}
+        }
     }
 
     pub(crate) fn finish_prediction(&mut self) {
@@ -191,9 +259,19 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
         ui.hyperlink_to("OpenDDE", OPENDDE_URL);
     });
 
-    if let Some(started_at) = state.ui.structure_pred.started_at {
-        let elapsed = started_at.elapsed();
-        ui.label(format!("Time running: {}", format_elapsed(elapsed)));
+    state
+        .ui
+        .structure_pred
+        .ensure_open_dde_runtime_probe(ui.ctx());
+
+    let elapsed = state
+        .ui
+        .structure_pred
+        .started_at
+        .map(|started_at| started_at.elapsed());
+    open_dde_runtime_status_ui(&mut state.ui.structure_pred, elapsed, ui);
+
+    if let Some(elapsed) = elapsed {
         if state.ui.structure_pred.cancel_requested {
             ui.label("Cancellation requested...");
         }
@@ -254,6 +332,70 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
 
         close_btn(ui, &mut state.ui.popup.structure_pred);
     });
+}
+
+fn open_dde_runtime_status_ui(
+    prediction_ui: &mut StructurePredUi,
+    elapsed: Option<Duration>,
+    ui: &mut Ui,
+) {
+    let running = elapsed.is_some();
+    let mut refresh_requested = false;
+    ui.horizontal(|ui| {
+        if let Some(elapsed) = elapsed {
+            ui.label(format!("Time running: {}", format_elapsed(elapsed)));
+            ui.separator();
+        }
+
+        match &prediction_ui.open_dde_runtime_status {
+            OpenDdeRuntimeStatus::Unchecked | OpenDdeRuntimeStatus::Checking => {
+                ui.label(RichText::new("Checking OpenDDE compute...").color(COLOR_INACTIVE));
+            }
+            OpenDdeRuntimeStatus::Ready(info) => {
+                let label = if running {
+                    format!("Running on {}", info.short_label())
+                } else {
+                    format!("Compute: {}", info.short_label())
+                };
+                ui.label(RichText::new(label).color(Color32::LIGHT_GREEN))
+                    .on_hover_text(info.diagnostics_text());
+            }
+            OpenDdeRuntimeStatus::Failed(error) => {
+                ui.label(
+                    RichText::new("OpenDDE compute details unavailable").color(Color32::LIGHT_RED),
+                )
+                .on_hover_text(error);
+            }
+        }
+
+        if !running
+            && !matches!(
+                prediction_ui.open_dde_runtime_status,
+                OpenDdeRuntimeStatus::Checking
+            )
+            && ui.small_button("Refresh").clicked()
+        {
+            refresh_requested = true;
+        }
+    });
+
+    match &prediction_ui.open_dde_runtime_status {
+        OpenDdeRuntimeStatus::Ready(info) => {
+            let details = info.detail_label();
+            if !details.is_empty() {
+                ui.label(RichText::new(details).color(COLOR_INACTIVE))
+                    .on_hover_text(info.diagnostics_text());
+            }
+        }
+        OpenDdeRuntimeStatus::Failed(error) => {
+            ui.label(RichText::new(error).color(COLOR_INACTIVE));
+        }
+        OpenDdeRuntimeStatus::Unchecked | OpenDdeRuntimeStatus::Checking => {}
+    }
+
+    if refresh_requested {
+        prediction_ui.refresh_open_dde_runtime_probe(ui.ctx());
+    }
 }
 
 fn prediction_inputs(prediction_ui: &mut StructurePredUi, ui: &mut Ui) {

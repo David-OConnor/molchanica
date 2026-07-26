@@ -44,7 +44,7 @@
 //! ```
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
     process::Command,
@@ -67,6 +67,232 @@ use crate::{
         run_model_command,
     },
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenDdeComputeBackend {
+    Cpu,
+    Cuda,
+    Other,
+}
+
+/// Compute environment selected by OpenDDE's `--device auto` mode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenDdeRuntimeInfo {
+    pub backend: OpenDdeComputeBackend,
+    pub selected_device: String,
+    pub device_name: Option<String>,
+    pub cuda_available: Option<bool>,
+    pub cuda_version: Option<String>,
+    pub nvidia_driver: Option<String>,
+    pub pytorch_version: Option<String>,
+    pub triangle_kernel: Option<String>,
+    pub python_version: Option<String>,
+    pub platform: Option<String>,
+}
+
+impl OpenDdeRuntimeInfo {
+    pub fn short_label(&self) -> String {
+        let backend = match self.backend {
+            OpenDdeComputeBackend::Cpu => "CPU",
+            OpenDdeComputeBackend::Cuda => "GPU/CUDA",
+            OpenDdeComputeBackend::Other => self.selected_device.as_str(),
+        };
+        match self.device_name.as_deref() {
+            Some(name) if !name.is_empty() => format!("{backend} ({name})"),
+            _ => backend.to_owned(),
+        }
+    }
+
+    pub fn detail_label(&self) -> String {
+        let mut details = Vec::new();
+        if let Some(version) = &self.cuda_version {
+            details.push(format!("CUDA {version}"));
+        }
+        if let Some(driver) = &self.nvidia_driver {
+            details.push(format!("NVIDIA driver {driver}"));
+        }
+        if let Some(version) = &self.pytorch_version {
+            details.push(format!("PyTorch {version}"));
+        }
+        if let Some(kernel) = &self.triangle_kernel {
+            details.push(triangle_kernel_label(kernel));
+        }
+        if self.backend == OpenDdeComputeBackend::Cpu
+            && let Some(platform) = &self.platform
+        {
+            details.push(platform.clone());
+        }
+        details.join(" · ")
+    }
+
+    pub fn diagnostics_text(&self) -> String {
+        let mut details = vec![format!("Inference device: {}", self.selected_device)];
+        if let Some(name) = &self.device_name {
+            details.push(format!("Device: {name}"));
+        }
+        if let Some(available) = self.cuda_available {
+            details.push(format!("CUDA available: {available}"));
+        }
+        if let Some(version) = &self.cuda_version {
+            details.push(format!("CUDA version: {version}"));
+        }
+        if let Some(driver) = &self.nvidia_driver {
+            details.push(format!("NVIDIA driver: {driver}"));
+        }
+        if let Some(version) = &self.pytorch_version {
+            details.push(format!("PyTorch: {version}"));
+        }
+        if let Some(kernel) = &self.triangle_kernel {
+            details.push(format!("Triangle kernel: {kernel}"));
+        }
+        if let Some(version) = &self.python_version {
+            details.push(format!("Python: {version}"));
+        }
+        if let Some(platform) = &self.platform {
+            details.push(format!("Platform: {platform}"));
+        }
+        details.join("\n")
+    }
+}
+
+fn triangle_kernel_label(kernel: &str) -> String {
+    match kernel.to_ascii_lowercase().as_str() {
+        "torch" => "PyTorch triangle kernels".to_owned(),
+        "cueq" | "cuequivariance" => "cuEquivariance triangle kernels".to_owned(),
+        _ => format!("{kernel} triangle kernels"),
+    }
+}
+
+/// Ask OpenDDE which compute device and kernels its automatic inference mode will select.
+///
+/// `opendde doctor` imports PyTorch and may take a few seconds, so callers should run this away
+/// from the UI thread.
+pub fn probe_runtime() -> io::Result<OpenDdeRuntimeInfo> {
+    let executable = find_executable()?;
+    let output = Command::new(&executable)
+        .env("PYTHONUNBUFFERED", "1")
+        .arg("doctor")
+        .output()
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "unable to run OpenDDE diagnostics using {}: {error}",
+                    executable.display()
+                ),
+            )
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(io::Error::other(format!(
+            "OpenDDE doctor exited with {}: {}",
+            output.status,
+            truncate_diagnostic(detail)
+        )));
+    }
+
+    parse_doctor_report(&stdout)
+}
+
+fn parse_doctor_report(report: &str) -> io::Result<OpenDdeRuntimeInfo> {
+    let values: HashMap<&str, &str> = report
+        .lines()
+        .filter_map(|line| {
+            let item = line.trim().strip_prefix("- ")?;
+            let (key, value) = item.split_once(':')?;
+            Some((key.trim(), value.trim()))
+        })
+        .collect();
+    let value = |key: &str| values.get(key).copied();
+
+    let cuda_available =
+        value("torch.cuda.is_available").map(|available| available.eq_ignore_ascii_case("true"));
+    let selected_device = value("Selected inference device for auto mode")
+        .map(str::to_owned)
+        .or_else(|| match cuda_available {
+            Some(true) => Some("cuda:0".to_owned()),
+            Some(false) => Some("cpu".to_owned()),
+            None => None,
+        })
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "OpenDDE doctor did not report its selected inference device",
+            )
+        })?;
+
+    let selected_device_lower = selected_device.to_ascii_lowercase();
+    let backend = if selected_device_lower.starts_with("cuda") {
+        OpenDdeComputeBackend::Cuda
+    } else if selected_device_lower.starts_with("cpu") {
+        OpenDdeComputeBackend::Cpu
+    } else {
+        OpenDdeComputeBackend::Other
+    };
+
+    let device_index = selected_device_lower
+        .strip_prefix("cuda:")
+        .and_then(|index| index.parse::<usize>().ok())
+        .unwrap_or(0);
+    let device_key = format!("CUDA device {device_index}");
+    let nvidia_smi = value("nvidia-smi").filter(|value| useful_diagnostic_value(value));
+    let (smi_device, nvidia_driver) = nvidia_smi
+        .and_then(|value| value.rsplit_once(','))
+        .map(|(device, driver)| (Some(device.trim()), Some(driver.trim())))
+        .unwrap_or((None, None));
+    let device_name = value(&device_key)
+        .filter(|value| useful_diagnostic_value(value))
+        .or(smi_device)
+        .map(str::to_owned);
+
+    Ok(OpenDdeRuntimeInfo {
+        backend,
+        selected_device,
+        device_name,
+        cuda_available,
+        cuda_version: value("torch CUDA version")
+            .filter(|value| useful_diagnostic_value(value))
+            .map(str::to_owned),
+        nvidia_driver: nvidia_driver.map(str::to_owned),
+        pytorch_version: value("PyTorch")
+            .filter(|value| useful_diagnostic_value(value))
+            .map(str::to_owned),
+        triangle_kernel: value("Selected triangle kernel for auto mode")
+            .filter(|value| useful_diagnostic_value(value))
+            .map(str::to_owned),
+        python_version: value("Python")
+            .filter(|value| useful_diagnostic_value(value))
+            .map(str::to_owned),
+        platform: value("Platform")
+            .filter(|value| useful_diagnostic_value(value))
+            .map(str::to_owned),
+    })
+}
+
+fn useful_diagnostic_value(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "none" | "missing" | "not found" | "unavailable" | "unknown"
+    )
+}
+
+fn truncate_diagnostic(value: &str) -> String {
+    const MAX_CHARS: usize = 2_048;
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{truncated}…")
+    } else {
+        truncated
+    }
+}
 
 /// One entity in an OpenDDE co-folding request.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -375,6 +601,8 @@ pub(super) fn predict_structure(
         .arg("false")
         .arg("--use_rna_msa")
         .arg("false")
+        .arg("--device")
+        .arg("auto")
         .arg("--sample")
         .arg("1")
         .arg("--step")
@@ -567,6 +795,63 @@ pub(super) fn predict_structure_from_dna(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_gpu_runtime_details_from_open_dde_doctor() {
+        let report = r#"OpenDDE environment
+- Python: 3.13.5
+- Platform: Windows-11-10.0.26200-SP0
+- PyTorch: 2.7.1+cu126
+- torch.cuda.is_available: True
+- torch CUDA version: 12.6
+- CUDA device count: 1
+- CUDA device 0: NVIDIA GeForce RTX 4080
+- CUDA probe error: none
+- nvidia-smi: NVIDIA GeForce RTX 4080, 595.97
+- Selected inference device for auto mode: cuda:0
+- Selected triangle kernel for auto mode: torch
+"#;
+
+        let info = parse_doctor_report(report).expect("GPU report should parse");
+
+        assert_eq!(info.backend, OpenDdeComputeBackend::Cuda);
+        assert_eq!(info.selected_device, "cuda:0");
+        assert_eq!(info.device_name.as_deref(), Some("NVIDIA GeForce RTX 4080"));
+        assert_eq!(info.cuda_version.as_deref(), Some("12.6"));
+        assert_eq!(info.nvidia_driver.as_deref(), Some("595.97"));
+        assert_eq!(info.short_label(), "GPU/CUDA (NVIDIA GeForce RTX 4080)");
+        assert_eq!(
+            info.detail_label(),
+            "CUDA 12.6 · NVIDIA driver 595.97 · PyTorch 2.7.1+cu126 · PyTorch triangle kernels"
+        );
+    }
+
+    #[test]
+    fn parses_cpu_runtime_details_from_open_dde_doctor() {
+        let report = r#"OpenDDE environment
+- Python: 3.12.9
+- Platform: Linux-6.8.0-x86_64-with-glibc2.39
+- PyTorch: 2.7.1+cpu
+- torch.cuda.is_available: False
+- torch CUDA version: none
+- CUDA device count: 0
+- nvidia-smi: unavailable
+- Selected inference device for auto mode: cpu
+- Selected triangle kernel for auto mode: torch
+"#;
+
+        let info = parse_doctor_report(report).expect("CPU report should parse");
+
+        assert_eq!(info.backend, OpenDdeComputeBackend::Cpu);
+        assert_eq!(info.selected_device, "cpu");
+        assert_eq!(info.device_name, None);
+        assert_eq!(info.cuda_version, None);
+        assert_eq!(info.short_label(), "CPU");
+        assert_eq!(
+            info.detail_label(),
+            "PyTorch 2.7.1+cpu · PyTorch triangle kernels · Linux-6.8.0-x86_64-with-glibc2.39"
+        );
+    }
 
     #[test]
     fn serializes_a_mixed_complex_using_the_open_dde_schema() {
