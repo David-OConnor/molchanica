@@ -7,7 +7,7 @@ use std::{
 };
 
 use egui::{
-    Button, CollapsingHeader, Color32, ComboBox, Context, DragValue, RichText, ScrollArea,
+    Button, CollapsingHeader, Color32, ComboBox, Context, DragValue, Resize, RichText, ScrollArea,
     TextEdit, Ui,
 };
 
@@ -440,17 +440,28 @@ fn prediction_inputs(prediction_ui: &mut StructurePredUi, ui: &mut Ui) {
                 }
             });
 
-            let editor = if component.entity_type.is_sequence() {
-                TextEdit::multiline(&mut component.value)
-                    .desired_rows(3)
-                    .desired_width(520.0)
-                    .hint_text(component.entity_type.input_hint())
+            if component.entity_type.is_sequence() {
+                Resize::default()
+                    .id_salt(("structure_prediction_sequence_input", index))
+                    .default_size([520.0, 56.0])
+                    .min_size([160.0, 36.0])
+                    .with_stroke(false)
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            ui.available_size(),
+                            TextEdit::multiline(&mut component.value)
+                                .desired_rows(1)
+                                .desired_width(f32::INFINITY)
+                                .hint_text(component.entity_type.input_hint()),
+                        );
+                    });
             } else {
-                TextEdit::singleline(&mut component.value)
-                    .desired_width(520.0)
-                    .hint_text(component.entity_type.input_hint())
-            };
-            ui.add(editor);
+                ui.add(
+                    TextEdit::singleline(&mut component.value)
+                        .desired_width(520.0)
+                        .hint_text(component.entity_type.input_hint()),
+                );
+            }
             ui.label(RichText::new(component.entity_type.input_help()).color(COLOR_INACTIVE));
         });
         ui.add_space(ROW_SPACING);

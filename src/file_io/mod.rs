@@ -30,8 +30,9 @@ use crate::{
     },
     md::trajectory::Trajectory,
     molecules::{
-        MolGeneric, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY,
-        common::MoleculeCommon, peptide::MoleculePeptide, small::MoleculeSmall,
+        MolGeneric, MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
+        POCKET_METADATA_KEY, common::MoleculeCommon, peptide::MoleculePeptide,
+        small::MoleculeSmall,
     },
     prefs::{OpenHistory, OpenType},
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
@@ -42,6 +43,7 @@ use crate::{
 };
 
 pub mod download_mols;
+pub(crate) mod managed_mols;
 
 // When opening molecules deconflict; don't allow a mol to be closer than this to another.
 const MOL_MIN_DIST_OPEN: f64 = 12.;
@@ -79,6 +81,33 @@ pub(in crate::file_io) fn load_peptide(
 }
 
 impl State {
+    /// Load any files that belong to an application-managed molecule bundle.
+    ///
+    /// Most managed molecules have only their main source file. GeoStd molecules may also carry
+    /// molecule-specific force-field parameters, which must be present before the Mol2 is parsed.
+    fn load_managed_mol_companions(
+        &mut self,
+        path: &Path,
+    ) -> io::Result<Option<managed_mols::ManagedMolManifest>> {
+        let Some(manifest) = managed_mols::read_manifest(&self.volatile.prefs_dir, path)? else {
+            return Ok(None);
+        };
+
+        if let Some(filename) = &manifest.frcmod_file {
+            let entry_dir = path.parent().ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "Managed molecule path has no parent",
+                )
+            })?;
+            let params = ForceFieldParams::load_frcmod(&entry_dir.join(filename))?;
+            self.mol_specific_params
+                .insert(manifest.query.to_uppercase(), params);
+        }
+
+        Ok(Some(manifest))
+    }
+
     /// A single endpoint to open a number of file types. Delegates to functions that handle
     /// specific classes of file to open.
     pub fn open_file(
@@ -144,6 +173,8 @@ impl State {
         scene: &mut Scene,
         engine_updates: &mut EngineUpdates,
     ) -> io::Result<()> {
+        let managed_manifest = self.load_managed_mol_companions(path)?;
+
         let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
         let extension = binding;
 
@@ -234,6 +265,21 @@ impl State {
 
         match molecule {
             Ok(mut mol_gen) => {
+                if let Some(manifest) = &managed_manifest
+                    && manifest.provider == "geostd"
+                    && let MoleculeGeneric::Small(mol) = &mut mol_gen
+                {
+                    let geostd_ident = MolIdent::PdbeAmber(manifest.query.clone());
+                    if !mol.idents.contains(&geostd_ident) {
+                        mol.idents.push(geostd_ident);
+                    }
+                    if let Some(cid) = manifest.pubchem_cid
+                        && !mol.idents.contains(&MolIdent::PubChem(cid))
+                    {
+                        mol.idents.push(MolIdent::PubChem(cid));
+                    }
+                }
+
                 mol_gen
                     .common_mut()
                     .metadata
@@ -598,9 +644,46 @@ impl State {
             }
         };
 
+        // Saving an application-managed molecule promotes the user-selected file to its source.
+        // Remove the managed history entry and update the live molecule's path so a subsequent
+        // close marks the correct entry inactive and a restart cannot open both copies.
+        let previous_managed_path = match open_type {
+            OpenType::Peptide => self
+                .peptide_for_tools()
+                .and_then(|mol| mol.common.path.clone()),
+            OpenType::Ligand | OpenType::Pocket => {
+                self.active_mol().and_then(|mol| mol.common().path.clone())
+            }
+            _ => None,
+        }
+        .filter(|old_path| {
+            old_path != path && managed_mols::is_managed_path(&self.volatile.prefs_dir, old_path)
+        });
+
+        if let Some(old_path) = &previous_managed_path {
+            self.to_save
+                .open_history
+                .retain(|history| history.path != *old_path);
+
+            match open_type {
+                OpenType::Peptide => {
+                    if let Some(mol) = self.peptide_for_tools_mut() {
+                        mol.common.update_path(path);
+                    }
+                }
+                OpenType::Ligand | OpenType::Pocket => {
+                    if let Some(mut mol) = self.active_mol_mut() {
+                        mol.common_mut().update_path(path);
+                    }
+                }
+                _ => (),
+            }
+        }
+
         // For molecule file types (Mol2, SDF, XYZ, PDBQT, some CIF variants etc.), record the
         // molecule's identifier in the open history.
         let ident = match open_type {
+            OpenType::Peptide => self.peptide_for_tools().map(|mol| mol.common.ident.clone()),
             OpenType::Ligand | OpenType::Pocket => {
                 self.active_mol().map(|m| m.common().ident.clone())
             }
@@ -640,6 +723,15 @@ impl State {
     /// open history and, once all entries have been processed, surface a single combined error
     /// listing every file that failed to open.
     pub fn load_last_opened(&mut self, scene: &mut Scene) {
+        let referenced: Vec<_> = self
+            .to_save
+            .open_history
+            .iter()
+            .map(|history| history.path.clone())
+            .collect();
+        if let Err(error) = managed_mols::cleanup_orphans(&self.volatile.prefs_dir, &referenced) {
+            eprintln!("Unable to clean managed molecule cache: {error}");
+        }
         let histories = self.to_save.open_history.clone();
 
         // This prevents loading duplicates
@@ -700,6 +792,12 @@ impl State {
             self.to_save
                 .open_history
                 .retain(|h| !failed.contains(&h.path));
+
+            for path in &failed {
+                if let Err(error) = managed_mols::remove_entry(&self.volatile.prefs_dir, path) {
+                    eprintln!("Unable to remove invalid managed molecule cache entry: {error}");
+                }
+            }
 
             let names: Vec<String> = failed
                 .iter()
@@ -785,11 +883,15 @@ impl State {
     /// between different molecule types.
     pub fn load_mol_to_state(
         &mut self,
-        mol: MoleculeGeneric,
+        mut mol: MoleculeGeneric,
         scene: &mut Scene,
         updates: &mut EngineUpdates,
         path: Option<&Path>,
     ) {
+        if let Some(path) = path {
+            mol.common_mut().update_path(path);
+        }
+
         let mol_type = mol.mol_type();
 
         let entity_class = mol_type.entity_type() as u32;

@@ -49,6 +49,10 @@ Cargo.lock
 
 # Our prefs format.
 *.dae
+
+# E.g. molecules pulled from queries, but not explicitly saved to disk
+/managed_molecules
+
 ## New below; old above
 *.cfa
 *.mca

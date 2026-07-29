@@ -1,4 +1,11 @@
-use std::{collections::HashMap, fs::File, io, io::Write, slice};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io,
+    io::Write,
+    path::{Path, PathBuf},
+    slice,
+};
 
 use bio_apis::pubchem::find_cids_from_search;
 use egui::{Color32, Response, RichText, Ui};
@@ -12,6 +19,7 @@ use crate::{
     },
     file_io::{
         download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
+        managed_mols::{self, ManagedMolProvider},
         save_mol_set_as_gro,
     },
     gromacs,
@@ -267,12 +275,44 @@ pub fn handle_redraw(
 pub fn open_lig_from_input(
     state: &mut State,
     mol: MoleculeSmall,
+    path: Option<&Path>,
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
 ) {
-    state.load_mol_to_state(MoleculeGeneric::Small(mol), scene, engine_updates, None);
+    state.load_mol_to_state(MoleculeGeneric::Small(mol), scene, engine_updates, path);
 
     state.ui.db_input = String::new();
+}
+
+fn report_cache_result(state: &mut State, result: io::Result<PathBuf>) -> Option<PathBuf> {
+    match result {
+        Ok(path) => Some(path),
+        Err(error) => {
+            handle_err(
+                &mut state.ui,
+                format!("Could not save a restorable copy of this molecule: {error}"),
+            );
+            None
+        }
+    }
+}
+
+fn cache_sdf_source(
+    state: &mut State,
+    provider: ManagedMolProvider,
+    key: &str,
+    query: &str,
+    source_text: &str,
+) -> Option<PathBuf> {
+    let result = managed_mols::store_text(
+        &state.volatile.prefs_dir,
+        provider,
+        key,
+        query,
+        "sdf",
+        source_text,
+    );
+    report_cache_result(state, result)
 }
 
 /// Contains functionality we wish to run at program load, but can't do until the scene is loaded.
@@ -502,7 +542,17 @@ fn query_common_db(
         }
     };
 
-    open_lig_from_input(state, mol, scene, updates);
+    let cache_result = managed_mols::store_sdf(
+        &state.volatile.prefs_dir,
+        ManagedMolProvider::BuiltIn,
+        &managed_mols::text_key(&smiles),
+        &smiles,
+        &mol.to_sdf(),
+    );
+    let Some(cache_path) = report_cache_result(state, cache_result) else {
+        return CommonDbOutcome::Matched;
+    };
+    open_lig_from_input(state, mol, Some(&cache_path), scene, updates);
     redraw.ligand = true;
 
     handle_success(
@@ -612,8 +662,17 @@ pub(in crate::ui) fn query(
 
         if button_clicked || enter_pressed {
             match load_sdf_drugbank(&inp_l) {
-                Ok(mol) => {
-                    open_lig_from_input(state, mol, scene, updates);
+                Ok(downloaded) => {
+                    let Some(cache_path) = cache_sdf_source(
+                        state,
+                        ManagedMolProvider::Drugbank,
+                        &inp_l,
+                        &inp_l,
+                        &downloaded.source_text,
+                    ) else {
+                        return;
+                    };
+                    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
                     redraw.ligand = true;
 
                     handle_success(
@@ -635,8 +694,18 @@ pub(in crate::ui) fn query(
     if let Ok(cid) = state.ui.db_input.parse::<u32>() {
         if query_btn(ui, "Load PubChem", enter_tgt).clicked() || enter_pressed {
             match load_sdf_pubchem(cid) {
-                Ok(mol) => {
-                    open_lig_from_input(state, mol, scene, updates);
+                Ok(downloaded) => {
+                    let cid_key = cid.to_string();
+                    let Some(cache_path) = cache_sdf_source(
+                        state,
+                        ManagedMolProvider::Pubchem,
+                        &cid_key,
+                        &cid_key,
+                        &downloaded.source_text,
+                    ) else {
+                        return;
+                    };
+                    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
                     redraw.ligand = true;
                     // reset_cam = true;
 
@@ -672,7 +741,17 @@ pub(in crate::ui) fn query(
                         None,
                     );
 
-                    open_lig_from_input(state, mol, scene, updates);
+                    let cache_result = managed_mols::store_sdf(
+                        &state.volatile.prefs_dir,
+                        ManagedMolProvider::Smiles,
+                        &managed_mols::text_key(inp),
+                        inp,
+                        &mol.to_sdf(),
+                    );
+                    let Some(cache_path) = report_cache_result(state, cache_result) else {
+                        return;
+                    };
+                    open_lig_from_input(state, mol, Some(&cache_path), scene, updates);
                     redraw.ligand = true;
 
                     handle_success(
@@ -702,8 +781,24 @@ pub(in crate::ui) fn query(
                     } else {
                         // todo: DRY with the other pubchem branch above.
                         match load_sdf_pubchem(c[0]) {
-                            Ok(mol) => {
-                                open_lig_from_input(state, mol, scene, updates);
+                            Ok(downloaded) => {
+                                let cid_key = c[0].to_string();
+                                let Some(cache_path) = cache_sdf_source(
+                                    state,
+                                    ManagedMolProvider::Pubchem,
+                                    &cid_key,
+                                    inp,
+                                    &downloaded.source_text,
+                                ) else {
+                                    return;
+                                };
+                                open_lig_from_input(
+                                    state,
+                                    downloaded.mol,
+                                    Some(&cache_path),
+                                    scene,
+                                    updates,
+                                );
                                 redraw.ligand = true;
                                 // reset_cam = true;
 

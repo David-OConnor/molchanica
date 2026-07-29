@@ -2,17 +2,25 @@
 
 use std::time::Instant;
 
-use bio_apis::{ReqError, amber_geostd, pubchem::StructureSearchNamespace, rcsb};
+use bio_apis::{
+    ReqError, amber_geostd, drugbank,
+    pubchem::{self, StructureSearchNamespace},
+    rcsb,
+};
 use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 
 use crate::{
     drawing::EntityClass,
-    file_io::load_peptide,
+    file_io::{
+        load_peptide,
+        managed_mols::{self, ManagedMolProvider},
+    },
     molecules::{
         MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, peptide::MoleculePeptide,
         small::MoleculeSmall,
     },
+    prefs::OpenType,
     render::set_flashlight,
     state::State,
     util::handle_err,
@@ -30,20 +38,26 @@ pub fn load_cif_rcsb(ident: &str) -> Result<(MmCif, String), ReqError> {
     Ok((mmcif?, cif_text))
 }
 
-/// Download an SDF file from DrugBank, and parse as a molecule.
-pub fn load_sdf_drugbank(ident: &str) -> Result<MoleculeSmall, ReqError> {
-    match Sdf::load_drugbank(ident) {
-        Ok(m) => Ok(m.try_into().map_err(ReqError::from)?),
-        Err(_) => Err(ReqError::Http),
-    }
+#[derive(Debug)]
+pub struct DownloadedSmallMol {
+    pub mol: MoleculeSmall,
+    pub source_text: String,
 }
 
-/// Download an SDF file from PubChem, and parse as a molecule.
-pub fn load_sdf_pubchem(cid: u32) -> Result<MoleculeSmall, ReqError> {
-    match Sdf::load_pubchem(StructureSearchNamespace::Cid, &cid.to_string()) {
-        Ok(m) => Ok(m.try_into().map_err(ReqError::from)?),
-        Err(_) => Err(ReqError::Http),
-    }
+/// Download an SDF file from DrugBank, retaining its source text for session persistence.
+pub fn load_sdf_drugbank(ident: &str) -> Result<DownloadedSmallMol, ReqError> {
+    let source_text = drugbank::load_sdf(ident)?;
+    let sdf = Sdf::new(&source_text).map_err(ReqError::from)?;
+    let mol = sdf.try_into().map_err(ReqError::from)?;
+    Ok(DownloadedSmallMol { mol, source_text })
+}
+
+/// Download an SDF file from PubChem, retaining its source text for session persistence.
+pub fn load_sdf_pubchem(cid: u32) -> Result<DownloadedSmallMol, ReqError> {
+    let source_text = pubchem::load_sdf(StructureSearchNamespace::Cid, &cid.to_string())?;
+    let sdf = Sdf::new(&source_text).map_err(ReqError::from)?;
+    let mol = sdf.try_into().map_err(ReqError::from)?;
+    Ok(DownloadedSmallMol { mol, source_text })
 }
 
 pub fn load_atom_coords_rcsb(
@@ -59,6 +73,24 @@ pub fn load_atom_coords_rcsb(
 
     match load_cif_rcsb(ident) {
         Ok((cif, cif_text)) => {
+            let cache_path = match managed_mols::store_text(
+                &state.volatile.prefs_dir,
+                ManagedMolProvider::Rcsb,
+                ident,
+                ident,
+                "cif",
+                &cif_text,
+            ) {
+                Ok(path) => path,
+                Err(error) => {
+                    handle_err(
+                        &mut state.ui,
+                        format!("Downloaded {ident} but could not cache it: {error}"),
+                    );
+                    return;
+                }
+            };
+
             let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map else {
                 handle_err(
                     &mut state.ui,
@@ -68,16 +100,21 @@ pub fn load_atom_coords_rcsb(
                 return;
             };
 
-            let mol: MoleculePeptide =
-                match MoleculePeptide::from_mmcif(cif, ff_map, None, state.to_save.ph) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        eprintln!("Problem parsing mmCif data into molecule: {e:?}");
-                        return;
-                    }
-                };
+            let mol: MoleculePeptide = match MoleculePeptide::from_mmcif(
+                cif,
+                ff_map,
+                Some(cache_path.clone()),
+                state.to_save.ph,
+            ) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Problem parsing mmCif data into molecule: {e:?}");
+                    return;
+                }
+            };
 
             let (loaded_ident, centroid) = load_peptide(state, scene, mol, updates);
+            state.update_history(&cache_path, OpenType::Peptide, Some(loaded_ident.clone()));
             if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
                 *center = centroid.into();
             }
@@ -97,6 +134,7 @@ pub fn load_atom_coords_rcsb(
     println!("Protein loading from RCSB complete in {elapsed:.1}ms");
 
     state.update_from_prefs();
+    state.update_save_prefs();
 
     updates.entities.push_class(EntityClass::Protein as u32);
 
@@ -138,9 +176,31 @@ pub fn load_geostd2(
 ) {
     match amber_geostd::load_mol_files(ident) {
         Ok(data) => {
+            let cache_path = if load_mol2 {
+                match managed_mols::store_geostd(
+                    &state.volatile.prefs_dir,
+                    ident,
+                    &data.mol2,
+                    data.pubchem_cid,
+                    data.frcmod.as_deref().filter(|_| load_frcmod),
+                    data.lib.as_deref(),
+                ) {
+                    Ok(path) => Some(path),
+                    Err(error) => {
+                        handle_err(
+                            &mut state.ui,
+                            format!("Downloaded GeoStd {ident} but could not cache it: {error}"),
+                        );
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+
             // Load FRCmod first, then the Ligand constructor will populate that it loaded.
-            if load_frcmod && let Some(frcmod) = data.frcmod {
-                match ForceFieldParams::from_frcmod(&frcmod) {
+            if load_frcmod && let Some(frcmod) = data.frcmod.as_deref() {
+                match ForceFieldParams::from_frcmod(frcmod) {
                     Ok(v) => {
                         state.mol_specific_params.insert(ident.to_uppercase(), v);
                     }
@@ -155,7 +215,7 @@ pub fn load_geostd2(
                 }
             }
 
-            if let Some(_lib) = data.lib {
+            if data.lib.is_some() {
                 println!("todo: Lib data available from geostd; download?");
             }
 
@@ -172,7 +232,7 @@ pub fn load_geostd2(
                             MoleculeGeneric::Small(mol),
                             scene,
                             engine_updates,
-                            None,
+                            cache_path.as_deref(),
                         );
                     }
                     Err(e) => handle_err(

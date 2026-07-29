@@ -1,3 +1,4 @@
+use crate::file_io::managed_mols;
 use crate::molecules::MolType;
 use crate::prefs::OpenType;
 use crate::state::State;
@@ -44,6 +45,7 @@ fn type_descrip_plural(type_: OpenType) -> &'static str {
 fn clear_removed(state: &mut State) {
     // Counts per category, in the order first encountered.
     let mut removed: Vec<(OpenType, usize)> = Vec::new();
+    let prefs_dir = state.volatile.prefs_dir.clone();
 
     state.to_save.open_history.retain(|history| {
         // Only prune when we can confirm the file is gone; e.g. a permissions error, or a
@@ -51,8 +53,14 @@ fn clear_removed(state: &mut State) {
         if !matches!(fs::exists(&history.path), Ok(false)) {
             return true;
         }
+        if let Err(error) = managed_mols::remove_entry(&prefs_dir, &history.path) {
+            eprintln!("Unable to remove invalid managed molecule cache entry: {error}");
+        }
 
-        match removed.iter_mut().find(|(type_, _)| *type_ == history.type_) {
+        match removed
+            .iter_mut()
+            .find(|(type_, _)| *type_ == history.type_)
+        {
             Some((_, count)) => *count += 1,
             None => removed.push((history.type_, 1)),
         }
@@ -211,6 +219,10 @@ pub(in crate::ui::popup) fn recent_files_popup(
             // The file is missing or otherwise unopenable; drop it from history so it doesn't
             // linger in this list, and persist the pruned history.
             state.to_save.open_history.retain(|h| h.path != path);
+            if let Err(error) = managed_mols::remove_entry(&state.volatile.prefs_dir, &path) {
+                eprintln!("Unable to remove invalid managed molecule cache entry: {error}");
+            }
+
             state.update_save_prefs();
 
             handle_err(
