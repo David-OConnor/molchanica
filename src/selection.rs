@@ -836,11 +836,11 @@ pub(crate) fn handle_selection_attempt(
         bond_mol
     };
     if let Some(mol) = winner_mol {
-        if let (MolType::Peptide, peptide_i) = mol {
-            if state.volatile.active_peptide != Some(peptide_i) {
-                state.volatile.flags.ss_mesh_created = false;
-                state.volatile.flags.sas_mesh_created = false;
-            }
+        if let (MolType::Peptide, peptide_i) = mol
+            && state.volatile.active_peptide != Some(peptide_i)
+        {
+            state.volatile.flags.ss_mesh_created = false;
+            state.volatile.flags.sas_mesh_created = false;
             state.volatile.active_peptide = Some(peptide_i);
             if let Some(peptide) = state.peptides.get(peptide_i) {
                 state.volatile.aa_seq_text = peptide
@@ -848,6 +848,7 @@ pub(crate) fn handle_selection_attempt(
                     .iter()
                     .map(|aa| aa.to_str(na_seq::AaIdent::OneLetter))
                     .collect();
+                state.volatile.aa_seq_display_cache.dirty = true;
             }
         }
         state.volatile.active_mol = Some(mol);

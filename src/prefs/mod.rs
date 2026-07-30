@@ -38,10 +38,8 @@ use crate::{
 
 pub const DEFAULT_PREFS_FILE: &str = "molchanica_prefs.mca";
 
-// todo: Eventually, implement a system that automatically checks for changes, and don't
-// todo save to disk if there are no changes.
-// For now, we check for differences between to_save and to_save prev, and write to disk
-// if they're not equal.
+// Dirty preferences are written at this interval. UI interactions and asynchronous
+// state updates set ToSave::save_flag instead of cloning and comparing the full state.
 pub const PREFS_SAVE_INTERVAL: u64 = 20; // seconds
 
 #[macro_export]
@@ -504,10 +502,12 @@ impl PerMolToSave {
 impl State {
     /// We run this after loading a molecule.
     pub fn update_save_prefs_no_mol(&mut self) {
+        self.to_save.save_flag = false;
         if let Err(e) = self
             .to_save
             .save(&self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE))
         {
+            self.to_save.save_flag = true;
             eprintln!("Error saving state: {e:?}");
         }
     }
@@ -565,13 +565,13 @@ impl State {
         self.to_save.ui_prefs.visibility = self.ui.visibility.clone();
         self.to_save.ui_prefs.ui_visibility = self.ui.ui_vis.clone();
         self.to_save.mesh_coloring = self.ui.mesh_coloring;
-
-        self.to_save_prev = self.to_save.clone();
+        self.to_save.save_flag = false;
 
         if let Err(e) = self
             .to_save
             .save(&self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE))
         {
+            self.to_save.save_flag = true;
             eprintln!("Error saving state: {e:?}");
         }
     }
@@ -623,7 +623,10 @@ impl State {
 
     pub fn load_prefs(&mut self) {
         match ToSave::load(&self.volatile.prefs_dir.join(DEFAULT_PREFS_FILE)) {
-            Ok(p) => self.to_save = p,
+            Ok(mut p) => {
+                p.save_flag = false;
+                self.to_save = p;
+            }
             Err(e) => {
                 eprintln!("Unable to load save file; possibly the first time running: {e:?}.")
             }

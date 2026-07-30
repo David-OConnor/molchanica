@@ -577,7 +577,7 @@ fn query_btn(ui: &mut Ui, text: &str, is_enter_target: bool) -> Response {
 /// Handles a general query, which could be a name, identifier etc. Attempts to query
 /// the correct database based on the  text.
 ///
-/// We assume input is lowercase and trimmed.
+/// inp is trimmed and case-preserving; inp_l is its ASCII-lowercase form.
 pub(in crate::ui) fn query(
     state: &mut State,
     scene: &mut Scene,
@@ -586,13 +586,9 @@ pub(in crate::ui) fn query(
     updates: &mut EngineUpdates,
     ui: &mut Ui,
     inp: &str,
+    inp_l: &str,
     enter_pressed: bool,
 ) {
-    // Lowercase copy used for identifier-prefix checks (PDB, DrugBank, etc.).
-    // The original `inp` is passed to SMILES functions so that aromaticity case is
-    // preserved (lowercase = aromatic atom in SMILES, uppercase = aliphatic).
-    let inp_l = inp.to_ascii_lowercase();
-
     // Molecules we ship with the application. Checked ahead of the remote databases below, since
     // these load instantly and without an internet connection, and Enter picks the best local match
     // over any of them. Matches are still drawn as buttons, so a remote lookup stays one click away.
@@ -627,16 +623,7 @@ pub(in crate::ui) fn query(
         // Enter only acts on a bare 4-character ident here, so a `pdb_`-prefixed one isn't a target.
         let button_clicked = query_btn(ui, "Load RCSB", enter_tgt && inp.len() == 4).clicked();
         if (button_clicked || enter_pressed) && inp.len() == 4 {
-            let ident = inp_l.clone();
-
-            load_atom_coords_rcsb(
-                &ident,
-                state,
-                scene,
-                updates,
-                &mut redraw.peptide,
-                reset_cam,
-            );
+            load_atom_coords_rcsb(inp_l, state, scene, updates, &mut redraw.peptide, reset_cam);
 
             state.ui.db_input = String::new();
             return;
@@ -649,7 +636,7 @@ pub(in crate::ui) fn query(
         let button_clicked = query_btn(ui, "Load Geostd", enter_tgt).clicked();
 
         if button_clicked || enter_pressed {
-            state.load_geostd_mol_data(&inp_l, true, true, updates, scene);
+            state.load_geostd_mol_data(inp_l, true, true, updates, scene);
 
             state.ui.db_input = String::new();
         }
@@ -661,13 +648,13 @@ pub(in crate::ui) fn query(
         let button_clicked = query_btn(ui, "Load DrugBank", enter_tgt).clicked();
 
         if button_clicked || enter_pressed {
-            match load_sdf_drugbank(&inp_l) {
+            match load_sdf_drugbank(inp_l) {
                 Ok(downloaded) => {
                     let Some(cache_path) = cache_sdf_source(
                         state,
                         ManagedMolProvider::Drugbank,
-                        &inp_l,
-                        &inp_l,
+                        inp_l,
+                        inp_l,
                         &downloaded.source_text,
                     ) else {
                         return;
@@ -691,7 +678,7 @@ pub(in crate::ui) fn query(
     }
 
     // PubChem CID.
-    if let Ok(cid) = state.ui.db_input.parse::<u32>() {
+    if let Ok(cid) = inp.parse::<u32>() {
         if query_btn(ui, "Load PubChem", enter_tgt).clicked() || enter_pressed {
             match load_sdf_pubchem(cid) {
                 Ok(downloaded) => {

@@ -119,26 +119,36 @@ pub fn mol_center_size(atoms: &[Atom]) -> (Vec3, f32) {
     (sum / (atoms.len() as f64), max_dim as f32)
 }
 
-pub fn check_prefs_save(state: &mut State) {
-    static mut LAST_PREF_SAVE_CHECK: Option<Instant> = None;
+/// Saves dirty preferences when their timer expires. A delay is returned only while a save is
+/// pending, so an otherwise idle application does not wake just to discover that nothing changed.
+pub fn check_prefs_save(state: &mut State) -> Option<Duration> {
+    if !state.to_save.save_flag {
+        state.volatile.last_prefs_save_check = None;
+        return None;
+    }
+
+    let interval = Duration::from_secs(PREFS_SAVE_INTERVAL);
     let now = Instant::now();
+    let Some(last_check) = state.volatile.last_prefs_save_check else {
+        state.volatile.last_prefs_save_check = Some(now);
+        return Some(interval);
+    };
 
-    unsafe {
-        if let Some(last_save) = LAST_PREF_SAVE_CHECK {
-            if (now - last_save).as_secs() > PREFS_SAVE_INTERVAL {
-                LAST_PREF_SAVE_CHECK = Some(now);
+    let elapsed = now.saturating_duration_since(last_check);
+    if elapsed < interval {
+        return Some(interval - elapsed);
+    }
 
-                if state.to_save != state.to_save_prev {
-                    state.update_save_prefs()
-                }
-            }
-        } else {
-            // Initialize LAST_PREF_SAVE the first time it's accessed
-            LAST_PREF_SAVE_CHECK = Some(now);
-        }
+    state.volatile.last_prefs_save_check = Some(now);
+    state.update_save_prefs();
+    if state.to_save.save_flag {
+        // The save failed; retry on the next interval.
+        Some(interval)
+    } else {
+        state.volatile.last_prefs_save_check = None;
+        None
     }
 }
-
 // todo: Update this A/R.
 
 // todo: Also calculate the dihedral angle using 3 bonds. (4 atoms).
@@ -524,6 +534,7 @@ pub fn close_peptide(
                 .collect()
         })
         .unwrap_or_default();
+    state.volatile.aa_seq_display_cache.dirty = true;
 
     state.update_save_prefs();
     engine_updates.entities = EntityUpdate::All;
@@ -1493,4 +1504,13 @@ pub fn bond_freq(k_b: f32, mass_0: f32, mass_1: f32) -> f64 {
 
     let freq_hz = (spring_n_per_m / reduced_mass_kg).sqrt() / TAU;
     freq_hz * HZ_TO_PS_INV
+}
+
+pub fn truncate_str(val: &str, len_max: usize) -> String {
+    if val.chars().count() > len_max {
+        let v: String = val.chars().take(len_max).collect();
+        format!("{v}…")
+    } else {
+        val.to_owned()
+    }
 }

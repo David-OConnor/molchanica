@@ -14,6 +14,7 @@ use lin_alg::{
 };
 use na_seq::Element;
 
+use crate::util::truncate_str;
 use crate::{
     drawing::{
         atoms_bonds::{
@@ -64,7 +65,8 @@ const COLOR_SFC_DOT: Color = (0.7, 0.7, 0.7);
 
 const LABEL_SIZE_ATOM: f32 = 16.;
 const LABEL_SIZE_CHAIN: f32 = 30.;
-const LABEL_SIZE_MOL: f32 = 40.;
+const LABEL_SIZE_MOL: f32 = 18.;
+const LABEL_SIZE_MOL_LARGE: f32 = 40.;
 const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (255, 60, 160, 255);
 const LABEL_COLOR_CHAIN: (u8, u8, u8, u8) = (200, 100, 160, 255);
 // const LABEL_COLOR_ATOM_SEL: (u8, u8, u8, u8) = (255, 20, 20, 255);
@@ -202,10 +204,17 @@ fn text_overlay(
         LABEL_COLOR_MOL
     };
 
+    let text_full = mol_ident.to_string();
+    let (text, font_size) = if atom_count > 150 {
+        (text_full, LABEL_SIZE_MOL_LARGE)
+    } else {
+        (truncate_str(&text_full, 20), LABEL_SIZE_MOL)
+    };
+
     if ui.visibility.labels.mol && i_atom == 0 {
         entity.overlay_text = Some(TextOverlay {
-            text: mol_ident.to_string(),
-            size: LABEL_SIZE_MOL,
+            text,
+            size: font_size,
             color,
             font_family: FontFamily::Proportional,
         });
@@ -1220,7 +1229,7 @@ fn ribbon_text_overlay_entities(
 
             ent.overlay_text = Some(TextOverlay {
                 text: mol.common.ident.clone(),
-                size: LABEL_SIZE_MOL,
+                size: LABEL_SIZE_MOL_LARGE,
                 color,
                 font_family: FontFamily::Proportional,
             });

@@ -6,6 +6,7 @@ use std::{path::Path, slice, sync::mpsc, thread};
 use egui::{Color32, Grid, RichText, ScrollArea, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 
+use crate::util::truncate_str;
 use crate::{
     button, label,
     mol_db::{MolMeta, ParquetMolDb},
@@ -615,7 +616,11 @@ fn db_summary_table(
 
                         cell(ui, W_TITLE, |ui| match &meta.pubchem_title {
                             Some(title) => {
-                                label!(ui, truncate(title, TITLE_CHARS_MAX), Color32::LIGHT_BLUE);
+                                label!(
+                                    ui,
+                                    truncate_str(title, TITLE_CHARS_MAX),
+                                    Color32::LIGHT_BLUE
+                                );
                             }
                             None => {
                                 label!(ui, "—", Color32::DARK_GRAY);
@@ -623,8 +628,12 @@ fn db_summary_table(
                         });
 
                         cell(ui, W_SMILES, |ui| {
-                            label!(ui, truncate(&meta.smiles, SMILES_CHARS_MAX), Color32::GRAY)
-                                .on_hover_text(&meta.smiles);
+                            label!(
+                                ui,
+                                truncate_str(&meta.smiles, SMILES_CHARS_MAX),
+                                Color32::GRAY
+                            )
+                            .on_hover_text(&meta.smiles);
                         });
 
                         cell(ui, W_HEAVY, |ui| {
@@ -718,15 +727,6 @@ fn cell<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
         add,
     )
     .inner
-}
-
-fn truncate(val: &str, len_max: usize) -> String {
-    if val.chars().count() > len_max {
-        let v: String = val.chars().take(len_max).collect();
-        format!("{v}...")
-    } else {
-        val.to_owned()
-    }
 }
 
 /// A database's name for the list, without the trailing `.parquet` extension. Names without it

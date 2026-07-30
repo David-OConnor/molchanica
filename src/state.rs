@@ -5,6 +5,7 @@ use std::{
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
+    sync::Arc,
     time::Instant,
 };
 
@@ -17,6 +18,7 @@ use dynamics::{
     ComputationDevice, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig, PRESSURE_DEFAULT, SimBoxInit,
     TAU_PRESSURE_DEFAULT, TAU_TEMP_DEFAULT, params::FfParamSet,
 };
+use egui::{FontId, Galley};
 use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 
@@ -65,10 +67,6 @@ pub struct State {
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
     pub to_save: ToSave,
-    /// We store the previous ToSave, to know when we need to write to disk.
-    /// Note: This is simpler, but not as efficient as explicitly setting a flag
-    /// whenever we change state.
-    pub to_save_prev: ToSave,
     pub dev: ComputationDevice,
     /// This is None if Computation Device is CPU.
     #[cfg(feature = "cuda")]
@@ -127,7 +125,6 @@ impl Default for State {
             trajectories: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),
-            to_save_prev: Default::default(),
             dev: Default::default(),
             #[cfg(feature = "cuda")]
             kernel_reflections: None,
@@ -397,6 +394,8 @@ pub struct StateVolatile {
     pub cli_input_selected: usize,
     /// Pre-computed from the molecule
     pub aa_seq_text: String,
+    pub aa_seq_display_cache: AaSeqDisplayCache,
+    pub last_prefs_save_check: Option<Instant>,
     pub flags: SceneFlags,
     pub active_mol: Option<(MolType, usize)>,
     /// Most recently active peptide, retained while another molecule type is active.
@@ -500,6 +499,9 @@ pub struct StateUi {
     /// Mouse cursor
     pub cursor_pos: Option<(f32, f32)>,
     pub db_input: String,
+    pub db_input_trimmed: String,
+    pub db_input_lowercase: String,
+    pub smiles_display_cache: SmilesDisplayCache,
     pub cam_snapshot_name: String,
     pub atom_res_search: String,
     /// To selection.
@@ -553,6 +555,39 @@ pub struct StateUi {
     pub color_by_mol: bool,
     // todo: Dedicated pharmacophore sub-state A/R.
     pub pharmacaphore_type: PharmacophoreFeatType,
+}
+
+/// Cached egui layout for the amino-acid sequence. The sequence itself remains in
+/// `StateVolatile::aa_seq_text`; producers mark this cache dirty when replacing it.
+pub struct AaSeqDisplayCache {
+    pub dirty: bool,
+    pub selected: Option<usize>,
+    pub font_id: Option<FontId>,
+    pub wrap_width: f32,
+    pub pixels_per_point: f32,
+    pub galley: Option<Arc<Galley>>,
+}
+
+impl Default for AaSeqDisplayCache {
+    fn default() -> Self {
+        Self {
+            dirty: true,
+            selected: None,
+            font_id: None,
+            wrap_width: 0.0,
+            pixels_per_point: 0.0,
+            galley: None,
+        }
+    }
+}
+
+/// Cached egui layout for the active molecule's SMILES string.
+#[derive(Default)]
+pub struct SmilesDisplayCache {
+    pub source: String,
+    pub font_id: Option<FontId>,
+    pub pixels_per_point: f32,
+    pub galley: Option<Arc<Galley>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]

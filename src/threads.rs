@@ -19,7 +19,7 @@ use crate::{
     render::MESH_PEP_SOLVENT_SURFACE,
     screening::pharmacophore::PhScreeningScore,
     sfc_mesh::{MeshColors, apply_mesh_colors},
-    state::{DbSel, State},
+    state::State,
     structure_prediction::StructurePredictionOutcome,
     therapeutic::TherapeuticProperties,
     util::{RedrawFlags, handle_err, handle_success},
@@ -58,6 +58,21 @@ pub struct ThreadReceivers {
     pub structure_prediction: Option<Receiver<StructurePredictionOutcome>>,
 }
 
+impl ThreadReceivers {
+    /// True while any background worker still needs periodic non-blocking polling.
+    pub fn has_pending(&self) -> bool {
+        !self.mol_pending_data_avail.is_empty()
+            || self.pubchem_properties_avail.is_some()
+            || self.therapeutic_properties_avail.is_some()
+            || self.amber_geostd_data_avail.is_some()
+            || !self.sifts_mapping_avail.is_empty()
+            || self.peptide_mesh_coloring.is_some()
+            || self.ph_screening.is_some()
+            || self.gromacs_md_avail.is_some()
+            || self.structure_prediction.is_some()
+    }
+}
+
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
 pub fn handle_thread_rx(
     state: &mut State,
@@ -93,6 +108,7 @@ pub fn handle_thread_rx(
                     .to_save
                     .pubchem_properties_map
                     .insert(ident.clone(), props.clone());
+                state.to_save.save_flag = true;
             }
             Err(e) => {
                 // Note: This is currently broken.
@@ -105,23 +121,32 @@ pub fn handle_thread_rx(
         state.volatile.thread_receivers.pubchem_properties_avail = None;
     }
 
-    let pending_rcsb = std::mem::take(&mut state.volatile.thread_receivers.mol_pending_data_avail);
-    let mut pending_rcsb_remaining = Vec::with_capacity(pending_rcsb.len());
     let mut prefs_dirty = false;
-    for (peptide_i, rx) in pending_rcsb {
-        let mut rx = Some(rx);
-        if let Some(mol) = state.peptides.get_mut(peptide_i) {
-            prefs_dirty |= mol.poll_mol_pending_data(&mut rx);
-        }
-        if let Some(rx) = rx {
-            pending_rcsb_remaining.push((peptide_i, rx));
-        }
-    }
-    state.volatile.thread_receivers.mol_pending_data_avail = pending_rcsb_remaining;
-    if prefs_dirty {
-        state.update_save_prefs();
-    }
+    let mut pending_i = 0;
+    while pending_i < state.volatile.thread_receivers.mol_pending_data_avail.len() {
+        let outcome = {
+            let (peptide_i, rx) =
+                &state.volatile.thread_receivers.mol_pending_data_avail[pending_i];
+            state
+                .peptides
+                .get_mut(*peptide_i)
+                .map_or(Some(false), |mol| mol.poll_mol_pending_data(rx))
+        };
 
+        if let Some(updated) = outcome {
+            prefs_dirty |= updated;
+            state
+                .volatile
+                .thread_receivers
+                .mol_pending_data_avail
+                .swap_remove(pending_i);
+        } else {
+            pending_i += 1;
+        }
+    }
+    if prefs_dirty {
+        state.to_save.save_flag = true;
+    }
     if let Some(rx) = &mut state.volatile.thread_receivers.therapeutic_properties_avail
         && let Ok((i_mol, tp)) = rx.try_recv()
         && i_mol < state.ligands.len()
@@ -153,11 +178,18 @@ pub fn handle_thread_rx(
         state.volatile.thread_receivers.amber_geostd_data_avail = None;
     }
 
-    let pending_sifts = std::mem::take(&mut state.volatile.thread_receivers.sifts_mapping_avail);
-    let mut pending_sifts_remaining = Vec::with_capacity(pending_sifts.len());
-    for (peptide_i, rx) in pending_sifts {
-        match rx.try_recv() {
+    let mut pending_i = 0;
+    while pending_i < state.volatile.thread_receivers.sifts_mapping_avail.len() {
+        let result = state.volatile.thread_receivers.sifts_mapping_avail[pending_i]
+            .1
+            .try_recv();
+        match result {
             Ok(result) => {
+                let (peptide_i, _) = state
+                    .volatile
+                    .thread_receivers
+                    .sifts_mapping_avail
+                    .swap_remove(pending_i);
                 if let Some(pep) = state.peptides.get_mut(peptide_i) {
                     match result {
                         Ok(mappings) => {
@@ -170,16 +202,17 @@ pub fn handle_thread_rx(
                     }
                 }
             }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                pending_sifts_remaining.push((peptide_i, rx));
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            Err(TryRecvError::Empty) => pending_i += 1,
+            Err(TryRecvError::Disconnected) => {
                 eprintln!("SIFTS worker thread died before sending a result");
+                state
+                    .volatile
+                    .thread_receivers
+                    .sifts_mapping_avail
+                    .swap_remove(pending_i);
             }
         }
     }
-    state.volatile.thread_receivers.sifts_mapping_avail = pending_sifts_remaining;
-
     // Poll for completed mesh coloring from thread.
     if let Some(rx) = &mut state.volatile.thread_receivers.peptide_mesh_coloring
         && let Ok(colors) = rx.try_recv()
@@ -238,6 +271,7 @@ pub fn handle_thread_rx(
                         .iter()
                         .map(|aa| aa.to_str(AaIdent::OneLetter))
                         .collect();
+                    state.volatile.aa_seq_display_cache.dirty = true;
                     // Register the model's raw mmCIF under the molecule's ident so it can be saved
                     // back out as a file, mirroring how on-disk molecules populate `cif_pdb_raw`.
                     if let Some(cif) = molecule.source_cif.take() {

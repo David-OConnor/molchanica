@@ -60,6 +60,7 @@ const RNA_SEQUENCE_ALPHABET: &[u8] = b"AUGCNX";
 const OPENDDE_EXECUTABLE_ENV: &str = "MOLCHANICA_OPENDDE_EXECUTABLE";
 const OPENDDE_VENV_DIR_ENV: &str = "OPENDDE_VENV_DIR";
 
+use crate::util::truncate_str;
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
@@ -194,7 +195,7 @@ pub fn probe_runtime() -> io::Result<OpenDdeRuntimeInfo> {
         return Err(io::Error::other(format!(
             "OpenDDE doctor exited with {}: {}",
             output.status,
-            truncate_diagnostic(detail)
+            truncate_str(detail, 2_048)
         )));
     }
 
@@ -281,17 +282,6 @@ fn useful_diagnostic_value(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "" | "none" | "missing" | "not found" | "unavailable" | "unknown"
     )
-}
-
-fn truncate_diagnostic(value: &str) -> String {
-    const MAX_CHARS: usize = 2_048;
-    let mut chars = value.chars();
-    let truncated: String = chars.by_ref().take(MAX_CHARS).collect();
-    if chars.next().is_some() {
-        format!("{truncated}…")
-    } else {
-        truncated
-    }
 }
 
 /// One entity in an OpenDDE co-folding request.

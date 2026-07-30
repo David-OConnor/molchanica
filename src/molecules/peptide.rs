@@ -196,55 +196,44 @@ impl MoleculePeptide {
 
     #[allow(clippy::type_complexity)]
     /// Call this periodically from the UI/event loop; it’s non-blocking.
-    /// Returns if it updated, e.g. so we can update prefs.
+    /// `None` means the worker is still pending. `Some` means it completed, and
+    /// the contained flag reports whether molecule data was updated.
     pub fn poll_mol_pending_data(
         &mut self,
-        pending_data_avail: &mut Option<
-            Receiver<(
-                Result<PdbDataResults, ReqError>,
-                Result<FilesAvailable, ReqError>,
-            )>,
-        >,
-    ) -> bool {
-        if let Some(rx) = pending_data_avail {
-            match rx.try_recv() {
-                Ok((Ok(pdb_data), Ok(files_avail))) => {
-                    self.rcsb_data = Some(pdb_data);
-                    self.rcsb_files_avail = Some(files_avail);
+        pending_data_avail: &Receiver<(
+            Result<PdbDataResults, ReqError>,
+            Result<FilesAvailable, ReqError>,
+        )>,
+    ) -> Option<bool> {
+        match pending_data_avail.try_recv() {
+            Ok((Ok(pdb_data), Ok(files_avail))) => {
+                self.rcsb_data = Some(pdb_data);
+                self.rcsb_files_avail = Some(files_avail);
+                Some(true)
+            }
 
-                    // todo: Save state here, but need to get a proper signal with &mut State available.
+            // PdbDataResults failed, but FilesAvailable might not have been sent:
+            Ok((Err(e), _)) => {
+                eprintln!("Failed to fetch PDB data for {}: {e:?}", self.common.ident);
+                Some(false)
+            }
 
-                    *pending_data_avail = None;
-                    return true;
-                }
+            // FilesAvailable failed (even if PdbDataResults succeeded):
+            Ok((_, Err(e))) => {
+                eprintln!("Failed to fetch file‐list for {}: {e:?}", self.common.ident);
+                Some(false)
+            }
 
-                // PdbDataResults failed, but FilesAvailable might not have been sent:
-                Ok((Err(e), _)) => {
-                    eprintln!("Failed to fetch PDB data for {}: {e:?}", self.common.ident);
-                    *pending_data_avail = None;
-                }
+            // The worker hasn’t sent anything yet.
+            Err(mpsc::TryRecvError::Empty) => None,
 
-                // FilesAvailable failed (even if PdbDataResults succeeded):
-                Ok((_, Err(e))) => {
-                    eprintln!("Failed to fetch file‐list for {}: {e:?}", self.common.ident);
-                    *pending_data_avail = None;
-                }
-
-                // the worker hasn’t sent anything yet:
-                Err(mpsc::TryRecvError::Empty) => {
-                    // still pending; do nothing this frame
-                }
-
-                // the sender hung up before sending:
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    eprintln!("Worker thread died before sending result");
-                    *pending_data_avail = None;
-                }
+            // The sender hung up before sending.
+            Err(mpsc::TryRecvError::Disconnected) => {
+                eprintln!("Worker thread died before sending result");
+                Some(false)
             }
         }
-        false
     }
-
     /// Get the amino acid sequence from the currently opened molecule, if applicable.
     fn get_seq(&self) -> Vec<AminoAcid> {
         // todo: If not a polypeptide, should we return an error, or empty vec?

@@ -545,6 +545,7 @@ fn mol_picker(
             .iter()
             .map(|aa| aa.to_str(AaIdent::OneLetter))
             .collect();
+        state.volatile.aa_seq_display_cache.dirty = true;
         state.volatile.flags.ss_mesh_created = false;
         state.volatile.flags.sas_mesh_created = false;
     }

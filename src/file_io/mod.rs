@@ -62,6 +62,7 @@ pub(in crate::file_io) fn load_peptide(
             .aa_seq_text
             .push_str(&aa.to_str(AaIdent::OneLetter));
     }
+    state.volatile.aa_seq_display_cache.dirty = true;
 
     state.volatile.flags.ss_mesh_created = false;
     state.volatile.flags.sas_mesh_created = false;

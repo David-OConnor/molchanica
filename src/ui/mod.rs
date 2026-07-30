@@ -1,10 +1,14 @@
-use std::{io::Cursor, time::Instant};
+use std::{
+    io::Cursor,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bio_apis::{pdbe, rcsb};
 use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
-    Color32, ComboBox, CornerRadius, Frame, Key, Margin, Panel, RichText, Slider, Stroke, TextEdit,
-    TextFormat, TextStyle, Ui, text::LayoutJob,
+    Color32, ComboBox, CornerRadius, Event, Frame, Key, Margin, Panel, RichText, Sense, Slider,
+    Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use na_seq::Element;
@@ -32,7 +36,9 @@ use crate::{
     prefs::ControlSchemeType,
     render::set_flashlight,
     selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},
-    state::{CamSnapshot, OperatingMode, ResColoring, State},
+    state::{
+        AaSeqDisplayCache, CamSnapshot, OperatingMode, ResColoring, SmilesDisplayCache, State,
+    },
     threads::handle_thread_rx,
     ui::{
         misc::section_box,
@@ -89,23 +95,58 @@ fn set_window_title(title: &str, scene: &mut Scene) {
     // ui.ctx().send_viewport_cmd(ViewportCommand::Title(title.to_string()));
 }
 
+#[derive(Clone)]
+struct NumFieldBuffer<T> {
+    text: String,
+    last_value: T,
+    initialized: bool,
+}
+
+impl<T: Default> Default for NumFieldBuffer<T> {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            last_value: T::default(),
+            initialized: false,
+        }
+    }
+}
+
 pub fn num_field<T>(val: &mut T, label: &str, width: u16, ui: &mut Ui)
 where
-    T: std::fmt::Display + std::str::FromStr,
+    T: std::fmt::Display + std::str::FromStr + Default + Copy + PartialEq + Send + Sync + 'static,
 {
     ui.label(label);
-    let mut val_str = val.to_string();
+    let id = ui.next_auto_id();
+    ui.skip_ahead_auto_ids(1);
+    let had_focus = ui.memory(|memory| memory.has_focus(id));
+    let mut buffer = ui
+        .ctx()
+        .data_mut(|data| data.remove_temp::<NumFieldBuffer<T>>(id))
+        .unwrap_or_default();
 
-    if ui
-        .add_sized(
-            [width as f32, Ui::available_height(ui)],
-            TextEdit::singleline(&mut val_str),
-        )
-        .changed()
-        && let Ok(v) = val_str.parse::<T>()
-    {
-        *val = v;
+    if !buffer.initialized || (!had_focus && buffer.last_value != *val) {
+        buffer.text = val.to_string();
+        buffer.initialized = true;
     }
+
+    let response = ui.add_sized(
+        [width as f32, Ui::available_height(ui)],
+        TextEdit::singleline(&mut buffer.text).id(id),
+    );
+    if response.changed()
+        && let Ok(value) = buffer.text.parse::<T>()
+    {
+        *val = value;
+    }
+    if response.lost_focus() && buffer.text.parse::<T>().is_err() {
+        buffer.text = val.to_string();
+    }
+
+    buffer.last_value = *val;
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(id, buffer);
+    });
 }
 
 /// Handles keyboard and mouse input not associated with a widget.
@@ -126,11 +167,9 @@ pub fn handle_input(
     });
 }
 
-fn get_snap_name(snap: Option<usize>, snaps: &[CamSnapshot]) -> String {
-    match snap {
-        Some(i) => snaps[i].name.clone(),
-        None => "None".to_owned(),
-    }
+fn get_snap_name(snap: Option<usize>, snaps: &[CamSnapshot]) -> &str {
+    snap.and_then(|i| snaps.get(i))
+        .map_or("None", |snapshot| snapshot.name.as_str())
 }
 
 /// Toggles chain visibility
@@ -343,37 +382,104 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
 }
 
 /// The display for the amino acid sequence of an opened protein.
-fn add_aa_seq(selection: &mut Selection, seq_text: &str, ui: &mut Ui, redraw: &mut bool) {
-    let len = seq_text.len(); // One char per res.
+///
+/// The colored sequence is one cached galley instead of one widget and color calculation per
+/// residue on every frame. It is rebuilt only when its inputs actually change.
+fn add_aa_seq(
+    selection: &mut Selection,
+    seq_text: &str,
+    cache: &mut AaSeqDisplayCache,
+    ui: &mut Ui,
+    redraw: &mut bool,
+) {
+    let selected = match selection {
+        Selection::Residue(index) => Some(*index),
+        _ => None,
+    };
+    let font_id = TextStyle::Body.resolve(ui.style());
+    let wrap_width = ui.available_width().max(1.0);
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let rebuild = cache.dirty
+        || cache.selected != selected
+        || cache.font_id.as_ref() != Some(&font_id)
+        || cache.wrap_width.to_bits() != wrap_width.to_bits()
+        || cache.pixels_per_point.to_bits() != pixels_per_point.to_bits()
+        || cache.galley.is_none();
 
-    // This grey ensures that the whole viridis display range is clear, e.g. the purple
-    // parse isn't blocked by our dark background.
-    Frame::new()
-        // .fill(Color32::from_rgb(200, 200, 200))
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (i, aa) in seq_text.chars().enumerate() {
-                    let color = color_viridis(i, 0, len);
-                    // todo: Find a cheaper way.
-                    let mut color = Color32::from_rgb(
-                        (color.0 * 255.) as u8,
-                        (color.1 * 255.) as u8,
-                        (color.2 * 255.) as u8,
-                    );
+    if rebuild {
+        let len = seq_text.len(); // One ASCII character per residue.
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = wrap_width;
+        job.wrap.break_anywhere = true;
 
-                    if let Selection::Residue(sel) = selection
-                        && i == *sel
-                    {
-                        color = Color32::from_rgb(255, 0, 0); // cheaper, but more maintenance than calling the const.
-                    }
+        for (index, amino_acid) in seq_text.chars().enumerate() {
+            let color = color_viridis(index, 0, len);
+            let color = if selected == Some(index) {
+                Color32::RED
+            } else {
+                Color32::from_rgb(
+                    (color.0 * 255.0) as u8,
+                    (color.1 * 255.0) as u8,
+                    (color.2 * 255.0) as u8,
+                )
+            };
+            let mut encoded = [0; 4];
+            job.append(
+                amino_acid.encode_utf8(&mut encoded),
+                0.0,
+                TextFormat {
+                    font_id: font_id.clone(),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
 
-                    if ui.label(RichText::new(aa).color(color)).clicked() {
-                        *selection = Selection::Residue(i);
-                        *redraw = true;
-                    }
-                }
-            });
-        });
+        cache.galley = Some(ui.fonts_mut(|fonts| fonts.layout_job(job)));
+        cache.dirty = false;
+        cache.selected = selected;
+        cache.font_id = Some(font_id);
+        cache.wrap_width = wrap_width;
+        cache.pixels_per_point = pixels_per_point;
+    }
+
+    Frame::new().show(ui, |ui| {
+        let Some(galley) = cache.galley.as_ref() else {
+            return;
+        };
+        let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::click());
+        ui.painter()
+            .galley(rect.min, Arc::clone(galley), Color32::WHITE);
+
+        if response.clicked()
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let residue = galley.cursor_from_pos(pointer - rect.min).index;
+            if residue < seq_text.len() {
+                *selection = Selection::Residue(residue);
+                *redraw = true;
+                ui.request_repaint();
+            }
+        }
+    });
+}
+
+fn view_sel_level_text(level: ViewSelLevel) -> &'static str {
+    match level {
+        ViewSelLevel::Atom => "Atom",
+        ViewSelLevel::Bond => "Bond",
+        ViewSelLevel::Residue => "Residue",
+    }
+}
+
+fn res_coloring_text(coloring: ResColoring) -> &'static str {
+    match coloring {
+        ResColoring::AminoAcid => "AA",
+        ResColoring::Position => "Posit",
+        ResColoring::Hydrophobicity => "Hydro",
+        ResColoring::SiftsUniprot => "SIFTS",
+        ResColoring::Chain => "Chain",
+    }
 }
 
 pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, include_res: bool) {
@@ -381,19 +487,27 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
     ui.label("View/Sel:").on_hover_text(help_text);
     let prev_view = state.ui.view_sel_level;
 
-    let mut views = vec![ViewSelLevel::Atom, ViewSelLevel::Bond];
-
-    if include_res {
-        views.push(ViewSelLevel::Residue);
-    }
+    let views: &[ViewSelLevel] = if include_res {
+        &[
+            ViewSelLevel::Atom,
+            ViewSelLevel::Bond,
+            ViewSelLevel::Residue,
+        ]
+    } else {
+        &[ViewSelLevel::Atom, ViewSelLevel::Bond]
+    };
 
     // Ideally hover text here too, but I'm not sure how.
     ComboBox::from_id_salt(1)
         .width(80.)
-        .selected_text(state.ui.view_sel_level.to_string())
+        .selected_text(view_sel_level_text(state.ui.view_sel_level))
         .show_ui(ui, |ui| {
-            for view in &views {
-                ui.selectable_value(&mut state.ui.view_sel_level, *view, view.to_string());
+            for &view in views {
+                ui.selectable_value(
+                    &mut state.ui.view_sel_level,
+                    view,
+                    view_sel_level_text(view),
+                );
             }
         })
         .response
@@ -481,7 +595,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
             let prev = state.ui.res_coloring;
             ComboBox::from_id_salt(11)
                 .width(40.)
-                .selected_text(state.ui.res_coloring.to_string())
+                .selected_text(res_coloring_text(state.ui.res_coloring))
                 .show_ui(ui, |ui| {
                     for v in [
                         ResColoring::AminoAcid,
@@ -490,7 +604,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                         ResColoring::SiftsUniprot,
                         ResColoring::Chain,
                     ] {
-                        ui.selectable_value(&mut state.ui.res_coloring, v, v.to_string());
+                        ui.selectable_value(&mut state.ui.res_coloring, v, res_coloring_text(v));
                     }
                 });
 
@@ -717,13 +831,35 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
     });
 }
 
+/// Conservatively marks preferences dirty for input capable of changing a widget or saved view.
+/// Pointer motion alone is excluded so merely hovering the application never triggers disk I/O.
+fn input_may_change_prefs(ui: &Ui) -> bool {
+    ui.input(|input| {
+        input.events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Cut
+                    | Event::Paste(_)
+                    | Event::Text(_)
+                    | Event::Key { .. }
+                    | Event::PointerButton { .. }
+                    | Event::MouseWheel { .. }
+                    | Event::Zoom(_)
+                    | Event::Rotate(_)
+                    | Event::Ime(_)
+                    | Event::Touch { .. }
+            )
+        })
+    })
+}
+
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUpdates {
     let mut updates = EngineUpdates::default();
-
-    // Checks each frame; takes action based on time since last save.
-    check_prefs_save(state);
+    if input_may_change_prefs(ui) {
+        state.to_save.save_flag = true;
+    }
 
     // todo: Trying to set popup color; Not working
     // let mut style = (*ctx.style()).clone();
@@ -961,26 +1097,46 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             ui.label(RichText::new("Query:").color(color_open_tools))
                 .on_hover_text(query_help);
 
+            let mut input_trimmed = std::mem::take(&mut state.ui.db_input_trimmed);
+            let mut input_lowercase = std::mem::take(&mut state.ui.db_input_lowercase);
             let edit_resp = ui
                 .add(TextEdit::singleline(&mut state.ui.db_input).desired_width(100.))
                 .on_hover_text(query_help);
 
+            if edit_resp.changed() {
+                input_trimmed.clear();
+                input_trimmed.push_str(state.ui.db_input.trim());
+                input_lowercase.clear();
+                input_lowercase.push_str(&input_trimmed);
+                input_lowercase.make_ascii_lowercase();
+            }
 
             if !state.ui.db_input.is_empty() {
                 // Preserve original case — SMILES uses lowercase for aromatic atoms and
                 // uppercase for aliphatic atoms; lowercasing destroys that distinction.
-                let inp = state.ui.db_input.trim().to_owned();
+                let enter_pressed = input_trimmed.len() >= QUERY_ENTER_LEN_MIN
+                    && edit_resp.lost_focus()
+                    && ui.input(|i| i.key_pressed(Key::Enter));
 
-                let mut enter_pressed = false;
-                if state.ui.db_input.len() >= QUERY_ENTER_LEN_MIN {
-                    enter_pressed =
-                        edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                }
-
-                query(state, scene, &mut redraw, &mut reset_cam, &mut updates, ui,
-                      &inp, enter_pressed);
+                query(
+                    state,
+                    scene,
+                    &mut redraw,
+                    &mut reset_cam,
+                    &mut updates,
+                    ui,
+                    &input_trimmed,
+                    &input_lowercase,
+                    enter_pressed,
+                );
             }
 
+            if state.ui.db_input.is_empty() {
+                input_trimmed.clear();
+                input_lowercase.clear();
+            }
+            state.ui.db_input_trimmed = input_trimmed;
+            state.ui.db_input_lowercase = input_lowercase;
             if state.peptides.is_empty() && state.active_mol().is_none() {
                 ui.add_space(COL_SPACING / 2.);
                 if ui
@@ -1082,18 +1238,26 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.add_space(ROW_SPACING / 2.);
 
         if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
-            add_aa_seq(&mut state.ui.selection, &state.volatile.aa_seq_text, ui, &mut redraw.peptide);
+            add_aa_seq(
+                &mut state.ui.selection,
+                &state.volatile.aa_seq_text,
+                &mut state.volatile.aa_seq_display_cache,
+                ui,
+                &mut redraw.peptide,
+            );
         }
 
-        if state.ui.ui_vis.smiles && let Some(mol) = &state.active_mol() &&
-            let MolGenericRef::Small(m) = mol {
-            for ident in &m.idents {
-                if let MolIdent::Smiles(smiles) = ident {
-                    draw_smiles(smiles, ui);
-                    break;
-                }
-            }
+        let mut smiles_cache = std::mem::take(&mut state.ui.smiles_display_cache);
+        if state.ui.ui_vis.smiles
+            && let Some(MolGenericRef::Small(molecule)) = state.active_mol()
+            && let Some(smiles) = molecule.idents.iter().find_map(|ident| match ident {
+                MolIdent::Smiles(smiles) => Some(smiles.as_str()),
+                _ => None,
+            })
+        {
+            draw_smiles(smiles, &mut smiles_cache, ui);
         }
+        state.ui.smiles_display_cache = smiles_cache;
 
         draw_cli(
             state,
@@ -1142,6 +1306,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     handle_scene_flags(state, scene, &mut updates);
     handle_thread_rx(state, scene, &mut redraw, &mut updates);
+    if state.volatile.thread_receivers.has_pending() {
+        ui.request_repaint_after(Duration::from_millis(50));
+    }
 
     handle_redraw(state, scene, &mut redraw, reset_cam, &mut updates);
 
@@ -1150,9 +1317,11 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     state.ui.dt_render = start.elapsed().as_secs_f32();
 
-    // Without this, no computation will happen while minimized.
-    // todo: Not working.
-    if state.volatile.md_local.running {
+    if let Some(prefs_check_delay) = check_prefs_save(state) {
+        ui.request_repaint_after(prefs_check_delay);
+    }
+
+    if state.volatile.md_local.running || state.mol_editor.md.running {
         ui.request_repaint();
     }
 
@@ -1170,62 +1339,61 @@ pub fn flag_btn(val: &mut bool, label: &str, hover_text: &str, ui: &mut Ui) {
     }
 }
 
-fn draw_smiles(v: &str, ui: &mut Ui) {
+fn draw_smiles(v: &str, cache: &mut SmilesDisplayCache, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label("SMILES: ");
 
         let font_id = TextStyle::Body.resolve(ui.style());
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let rebuild = cache.source != v
+            || cache.font_id.as_ref() != Some(&font_id)
+            || cache.pixels_per_point.to_bits() != pixels_per_point.to_bits()
+            || cache.galley.is_none();
 
-        let mut job = LayoutJob::default();
-        for ch in v.chars() {
-            let mut color = match Element::from_letter(&ch.to_string()) {
-                Ok(e) => {
-                    // Lighter color; N is showing too dark.
-                    if e == Element::Nitrogen {
-                        Color32::from_rgb(110, 110, 255)
-                    } else {
-                        color_egui_from_f32(e.color())
+        if rebuild {
+            let mut job = LayoutJob::default();
+            for ch in v.chars() {
+                let mut encoded = [0; 4];
+                let ch_text = ch.encode_utf8(&mut encoded);
+                let mut color = match Element::from_letter(ch_text) {
+                    Ok(element) => {
+                        // Lighter color; N is otherwise too dark.
+                        if element == Element::Nitrogen {
+                            Color32::from_rgb(110, 110, 255)
+                        } else {
+                            color_egui_from_f32(element.color())
+                        }
                     }
+                    _ => Color32::GRAY,
+                };
+
+                if ch.is_ascii_digit() {
+                    color = Color32::from_rgb(255, 180, 50);
+                } else if ch == '@' {
+                    color = Color32::from_rgb(150, 170, 255);
                 }
-                _ => Color32::GRAY,
-            };
 
-            if ch.is_ascii_digit() {
-                color = Color32::from_rgb(255, 180, 50);
+                job.append(
+                    ch_text,
+                    0.0,
+                    TextFormat {
+                        font_id: font_id.clone(),
+                        color,
+                        ..Default::default()
+                    },
+                );
             }
 
-            if ch == '@' {
-                color = Color32::from_rgb(150, 170, 255);
-            }
-
-            job.append(
-                &ch.to_string(),
-                0.0,
-                TextFormat {
-                    font_id: font_id.clone(),
-                    color,
-                    ..Default::default()
-                },
-            );
+            cache.source.clear();
+            cache.source.push_str(v);
+            cache.font_id = Some(font_id);
+            cache.pixels_per_point = pixels_per_point;
+            cache.galley = Some(ui.fonts_mut(|fonts| fonts.layout_job(job)));
         }
 
-        ui.label(job);
-
-        // for char in v.chars() {
-        //     let color = match Element::from_letter(&char.to_string()) {
-        //         Ok(e) => {
-        //             let (r, g, b) = e.color();
-        //             Color32::from_rgb(
-        //                 (r * 255.) as u8,
-        //                 (g * 255.) as u8,
-        //                 (b * 255.) as u8,
-        //             )
-        //         },
-        //         _ => Color32::GRAY
-        //     };
-        //
-        //     ui.label(RichText::new(char).color(color));
-        // }
+        if let Some(galley) = &cache.galley {
+            ui.label(Arc::clone(galley));
+        }
     });
 }
 
