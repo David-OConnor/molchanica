@@ -6,7 +6,6 @@ use std::{path::Path, slice, sync::mpsc, thread};
 use egui::{Color32, Grid, RichText, ScrollArea, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 
-use crate::util::truncate_str;
 use crate::{
     button, label,
     mol_db::{MolMeta, ParquetMolDb},
@@ -17,7 +16,7 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         popup,
     },
-    util::{handle_err, handle_success},
+    util::{handle_err, handle_success, truncate_str},
 };
 
 /// Characters shown in a cell before it's truncated; the full text is available on hover.

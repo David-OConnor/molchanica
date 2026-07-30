@@ -5,7 +5,6 @@ use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
 use na_seq::AaIdent;
 
-use crate::molecules::MolGenericRefMut;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -17,7 +16,8 @@ use crate::{
     },
     mol_manip::{ManipMode, set_manip},
     molecules::{
-        MolGenericRef, MolIdent, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType,
+        MolGenericRef, MolGenericRefMut, MolIdent, MolType, common::MoleculeCommon,
+        nucleic_acid::NucleicAcidType,
     },
     properties::{
         crystal, logp, mol_characterization::MolCharacterization, sol_shrinking_box, water_sol,

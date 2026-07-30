@@ -14,7 +14,6 @@ use lin_alg::{
 };
 use na_seq::Element;
 
-use crate::util::truncate_str;
 use crate::{
     drawing::{
         atoms_bonds::{
@@ -39,7 +38,10 @@ use crate::{
     selection::{Selection, ViewSelLevel},
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{OperatingMode, ResColoring, State, StateUi, Visibility},
-    util::{aromatic_ring_centroid, clear_mol_entity_indices, find_neighbor_posit, orbit_center},
+    util::{
+        aromatic_ring_centroid, clear_mol_entity_indices, find_neighbor_posit, orbit_center,
+        truncate_str,
+    },
 };
 
 pub mod atoms_bonds;

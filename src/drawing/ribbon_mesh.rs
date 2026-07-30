@@ -26,8 +26,7 @@ use std::{
 use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::{BackboneSS, ResidueType, SecondaryStructure};
 use graphics::{Mesh, Vertex};
-use lin_alg::f32::Vec3 as Vec3F32;
-use lin_alg::f64::Vec3 as Vec3F64;
+use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3 as Vec3F64};
 
 use crate::{
     drawing::{

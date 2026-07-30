@@ -1,14 +1,20 @@
-use crate::file_io::managed_mols;
-use crate::molecules::MolType;
-use crate::prefs::OpenType;
-use crate::state::State;
-use crate::ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, popup};
-use crate::util::{handle_err, handle_success};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use chrono::Utc;
 use egui::{Align, Color32, Grid, Layout, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
-use std::fs;
-use std::path::{Path, PathBuf};
+
+use crate::{
+    file_io::managed_mols,
+    molecules::MolType,
+    prefs::OpenType,
+    state::State,
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, popup},
+    util::{handle_err, handle_success},
+};
 
 /// Number of recent-file rows shown per page in the recent-files popup.
 pub const PER_PAGE: usize = 15;

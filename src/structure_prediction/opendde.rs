@@ -60,13 +60,13 @@ const RNA_SEQUENCE_ALPHABET: &[u8] = b"AUGCNX";
 const OPENDDE_EXECUTABLE_ENV: &str = "MOLCHANICA_OPENDDE_EXECUTABLE";
 const OPENDDE_VENV_DIR_ENV: &str = "OPENDDE_VENV_DIR";
 
-use crate::util::truncate_str;
 use crate::{
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
         PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
         run_model_command,
     },
+    util::truncate_str,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
