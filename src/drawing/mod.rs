@@ -949,13 +949,13 @@ pub fn draw_mol(
                 Selection::BondLig((_mol_i, bond_i))
                 | Selection::BondNucleicAcid((_mol_i, bond_i))
                 | Selection::BondLipid((_mol_i, bond_i)) => {
-                    if *bond_i == i_bond {
+                    if *bond_i == i_bond && *_mol_i == mol_i {
                         color_0 = COLOR_SELECTED;
                         color_1 = COLOR_SELECTED;
                     }
                 }
                 Selection::BondsLig((_mol_i, bonds_i)) => {
-                    if bonds_i.contains(&i_bond) {
+                    if bonds_i.contains(&i_bond) && *_mol_i == mol_i {
                         color_0 = COLOR_SELECTED;
                         color_1 = COLOR_SELECTED;
                     }

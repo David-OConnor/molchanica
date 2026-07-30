@@ -172,28 +172,28 @@ pub fn atom_color(
                 result = COLOR_SELECTED;
             }
         }
-        Selection::AtomLig((i_mol, i_atom)) => {
-            if mol_type == MolType::Ligand && *i_atom == item_i && *i_mol == mol_i {
+        Selection::AtomLig((i_mol_sel, i_atom)) => {
+            if mol_type == MolType::Ligand && *i_atom == item_i && *i_mol_sel == mol_i {
                 result = COLOR_SELECTED;
             }
         }
-        Selection::AtomsLig((i_mol, is_atom)) => {
-            if mol_type == MolType::Ligand && is_atom.contains(&item_i) && *i_mol == mol_i {
+        Selection::AtomsLig((i_mol_sel, is_atom)) => {
+            if mol_type == MolType::Ligand && is_atom.contains(&item_i) && *i_mol_sel == mol_i {
                 result = COLOR_SELECTED;
             }
         }
-        Selection::AtomNucleicAcid((lig_i, sel_i)) => {
-            if mol_type == MolType::NucleicAcid && *sel_i == item_i && *lig_i == mol_i {
+        Selection::AtomNucleicAcid((i_mol_sel, sel_i)) => {
+            if mol_type == MolType::NucleicAcid && *sel_i == item_i && *i_mol_sel == mol_i {
                 result = COLOR_SELECTED;
             }
         }
-        Selection::AtomLipid((lig_i, sel_i)) => {
-            if mol_type == MolType::Lipid && *sel_i == item_i && *lig_i == mol_i {
+        Selection::AtomLipid((i_mol_sel, sel_i)) => {
+            if mol_type == MolType::Lipid && *sel_i == item_i && *i_mol_sel == mol_i {
                 result = COLOR_SELECTED;
             }
         }
-        Selection::BondLig((lig_i, sel_i)) => {
-            if mol_type == MolType::Ligand && *sel_i == item_i && *lig_i == mol_i {
+        Selection::BondLig((i_mol_sel, sel_i)) => {
+            if mol_type == MolType::Ligand && *sel_i == item_i && *i_mol_sel == mol_i {
                 result = COLOR_SELECTED;
             }
         }

@@ -13,7 +13,7 @@ required-features = ["train"]
 
 
 [dependencies]
-graphics = { version = "0.6.1", features = ["app_utils"] }
+graphics = { version = "0.6.2", features = ["app_utils"] }
 egui = "0.34.1"
 
 #egui_tiles = "0.12.0" # For layouts etc. Experimenting
@@ -27,7 +27,7 @@ bio_files = { version = "0.5.3", features = ["encode"] }
 mcubes = "0.1.7"
 dynamics = { version = "0.2.0", features = ["encode"] }
 
-# todo: A/R. For reflectionss. Remove if you split out the 3D FFT code.
+# todo: A/R. For reflections. Remove if you split out the 3D FFT code.
 ewald = { version = "0.1.14" }
 #ewald = { path = "../ewald" }
 
