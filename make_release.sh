@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version=0_3_5
+version=0_3_6
 outdir=target/release
 exe="$outdir/molchanica"
 readme="README.md"

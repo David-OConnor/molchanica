@@ -563,6 +563,60 @@ fn query_common_db(
     CommonDbOutcome::Loaded
 }
 
+/// Which of the query bar's remote lookups the Enter key acts on. Several lookups can match one
+/// query — a 4-digit number is both a PubChem CID and an RCSB ident — but only one of them owns
+/// Enter, and it's the only one drawn highlighted.
+#[derive(Clone, Copy, PartialEq)]
+enum EnterTarget {
+    /// Enter does nothing: the query is too short, matches no lookup, or the built-in DB claimed it.
+    None,
+    PubchemCid,
+    Rcsb,
+    Geostd,
+    DrugBank,
+    Smiles,
+    PubchemSearch,
+}
+
+/// Decide which lookup Enter activates, mirroring the order the buttons are drawn in below. This is
+/// resolved once, ahead of drawing, so the highlighted button and the one Enter actually loads can't
+/// disagree.
+fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
+    // A numeric query is a PubChem CID, and takes Enter even when it also looks like an RCSB ident
+    // (4 digits) or a Geostd one (3 digits): those idents are alphanumeric in practice, so an
+    // all-digit query is far more likely meant as a CID. Their buttons are still drawn, one click away.
+    if inp.parse::<u32>().is_ok() {
+        return EnterTarget::PubchemCid;
+    }
+
+    // A `pdb_`-prefixed ident draws the RCSB button but isn't an Enter target; only a bare
+    // 4-character one is. Either way the query belongs to RCSB, so nothing below can claim it.
+    if inp.len() == 4 {
+        return EnterTarget::Rcsb;
+    }
+    if inp_l.starts_with("pdb_") {
+        return EnterTarget::None;
+    }
+
+    if inp.len() == 3 {
+        return EnterTarget::Geostd;
+    }
+
+    if inp.len() > 4 && inp_l.starts_with("db") {
+        return EnterTarget::DrugBank;
+    }
+
+    if is_smiles(inp) {
+        return EnterTarget::Smiles;
+    }
+
+    if inp.len() >= 5 {
+        return EnterTarget::PubchemSearch;
+    }
+
+    EnterTarget::None
+}
+
 /// Draws one of the query bar's remote-lookup buttons, highlighting it if Enter would activate it.
 /// Only one button in the bar is ever the Enter target.
 fn query_btn(ui: &mut Ui, text: &str, is_enter_target: bool) -> Response {
@@ -611,18 +665,55 @@ pub(in crate::ui) fn query(
     // );
     let common = CommonDbOutcome::NoMatch;
 
-    // Whether one of the remote buttons below is what Enter activates: it is, unless the built-in
-    // DB matched and claimed the key. Used to highlight that button.
+    // Which remote lookup below Enter activates — `None` unless Enter is live for this query and the
+    // built-in DB didn't already claim the key. Drives both the highlight and the Enter handling in
+    // each branch, so exactly one lookup responds to the key.
     let enter_tgt = match common {
         CommonDbOutcome::Loaded => return,
-        CommonDbOutcome::Matched => false,
-        CommonDbOutcome::NoMatch => enter_live,
+        CommonDbOutcome::Matched => EnterTarget::None,
+        CommonDbOutcome::NoMatch => match enter_live {
+            true => enter_target(inp, inp_l),
+            false => EnterTarget::None,
+        },
     };
+
+    // PubChem CID. Don't return early here; continue to allow for other
+    if let Ok(cid) = inp.parse::<u32>() {
+        let is_tgt = enter_tgt == EnterTarget::PubchemCid;
+        if query_btn(ui, "Load PubChem", is_tgt).clicked() || (enter_pressed && is_tgt) {
+            match load_sdf_pubchem(cid) {
+                Ok(downloaded) => {
+                    let cid_key = cid.to_string();
+                    let Some(cache_path) = cache_sdf_source(
+                        state,
+                        ManagedMolProvider::Pubchem,
+                        &cid_key,
+                        &cid_key,
+                        &downloaded.source_text,
+                    ) else {
+                        return;
+                    };
+                    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
+                    redraw.ligand = true;
+
+                    handle_success(
+                        &mut state.ui,
+                        format!("Loaded CID {cid} from PubChem (over the internet)"),
+                    );
+                }
+                Err(e) => {
+                    let msg = format!("Error loading SDF file: {e:?}");
+                    handle_err(&mut state.ui, msg);
+                }
+            }
+        }
+    }
 
     if inp.len() == 4 || inp_l.starts_with("pdb_") {
         // Enter only acts on a bare 4-character ident here, so a `pdb_`-prefixed one isn't a target.
-        let button_clicked = query_btn(ui, "Load RCSB", enter_tgt && inp.len() == 4).clicked();
-        if (button_clicked || enter_pressed) && inp.len() == 4 {
+        let is_tgt = enter_tgt == EnterTarget::Rcsb;
+        let button_clicked = query_btn(ui, "Load RCSB", is_tgt).clicked();
+        if (button_clicked || (enter_pressed && is_tgt)) && inp.len() == 4 {
             load_atom_coords_rcsb(inp_l, state, scene, updates, &mut redraw.peptide, reset_cam);
 
             state.ui.db_input = String::new();
@@ -633,9 +724,10 @@ pub(in crate::ui) fn query(
     }
 
     if inp.len() == 3 {
-        let button_clicked = query_btn(ui, "Load Geostd", enter_tgt).clicked();
+        let is_tgt = enter_tgt == EnterTarget::Geostd;
+        let button_clicked = query_btn(ui, "Load Geostd", is_tgt).clicked();
 
-        if button_clicked || enter_pressed {
+        if button_clicked || (enter_pressed && is_tgt) {
             state.load_geostd_mol_data(inp_l, true, true, updates, scene);
 
             state.ui.db_input = String::new();
@@ -645,9 +737,10 @@ pub(in crate::ui) fn query(
     }
 
     if inp.len() > 4 && inp_l.starts_with("db") {
-        let button_clicked = query_btn(ui, "Load DrugBank", enter_tgt).clicked();
+        let is_tgt = enter_tgt == EnterTarget::DrugBank;
+        let button_clicked = query_btn(ui, "Load DrugBank", is_tgt).clicked();
 
-        if button_clicked || enter_pressed {
+        if button_clicked || (enter_pressed && is_tgt) {
             match load_sdf_drugbank(inp_l) {
                 Ok(downloaded) => {
                     let Some(cache_path) = cache_sdf_source(
@@ -677,45 +770,12 @@ pub(in crate::ui) fn query(
         return;
     }
 
-    // PubChem CID.
-    if let Ok(cid) = inp.parse::<u32>() {
-        if query_btn(ui, "Load PubChem", enter_tgt).clicked() || enter_pressed {
-            match load_sdf_pubchem(cid) {
-                Ok(downloaded) => {
-                    let cid_key = cid.to_string();
-                    let Some(cache_path) = cache_sdf_source(
-                        state,
-                        ManagedMolProvider::Pubchem,
-                        &cid_key,
-                        &cid_key,
-                        &downloaded.source_text,
-                    ) else {
-                        return;
-                    };
-                    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
-                    redraw.ligand = true;
-                    // reset_cam = true;
-
-                    handle_success(
-                        &mut state.ui,
-                        format!("Loaded CID {cid} from PubChem (over the internet)"),
-                    );
-                }
-                Err(e) => {
-                    let msg = format!("Error loading SDF file: {e:?}");
-                    handle_err(&mut state.ui, msg);
-                }
-            }
-        }
-
-        return;
-    }
-
     // I believe this is cheap enough to run here (continuously)
     if is_smiles(inp) {
-        let button_clicked = query_btn(ui, "Load from SMILES", enter_tgt).clicked();
+        let is_tgt = enter_tgt == EnterTarget::Smiles;
+        let button_clicked = query_btn(ui, "Load from SMILES", is_tgt).clicked();
         // Attempt ot infer if this is SMILES.
-        if enter_pressed || button_clicked {
+        if (enter_pressed && is_tgt) || button_clicked {
             match MoleculeCommon::from_smiles(inp) {
                 Ok(m) => {
                     let smiles_start: String = inp.chars().take(5).collect();
@@ -757,8 +817,9 @@ pub(in crate::ui) fn query(
 
     // PubChem name search.
     if inp.len() >= 5 && !inp_l.starts_with("pdb_") && !inp_l.starts_with("db") {
-        let button_clicked = query_btn(ui, "Search PubChem", enter_tgt).clicked();
-        if button_clicked || enter_pressed {
+        let is_tgt = enter_tgt == EnterTarget::PubchemSearch;
+        let button_clicked = query_btn(ui, "Search PubChem", is_tgt).clicked();
+        if button_clicked || (enter_pressed && is_tgt) {
             let cids = find_cids_from_search(inp, false);
 
             match cids {
