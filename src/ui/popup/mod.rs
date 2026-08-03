@@ -1,5 +1,7 @@
+pub mod external_tools;
 pub mod ff_params;
 pub mod mol_db;
+pub mod protein_design;
 pub mod pharmacophore;
 pub(in crate::ui) mod rama_plot;
 pub mod recent_files;
@@ -167,6 +169,18 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.structure_pred {
         popup("Structure prediction").show(ui.ctx(), |ui| {
             structure_pred::structure_prediction_window(state, ui);
+        });
+    }
+
+    if state.ui.popup.external_tools {
+        popup("Third-party tools").show(ui.ctx(), |ui| {
+            external_tools::external_tools_window(state, ui);
+        });
+    }
+
+    if state.ui.popup.protein_design {
+        popup("Protein design").show(ui.ctx(), |ui| {
+            protein_design::protein_design_window(state, ui);
         });
     }
 }

@@ -12,6 +12,7 @@
 //!
 //! [Qauntum descriptors](https://pubs.rsc.org/en/content/articlelanding/2026/dd/d5dd00411j)
 
+pub mod ddg;
 pub mod infer;
 
 mod solubility;

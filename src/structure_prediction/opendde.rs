@@ -45,8 +45,8 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    env, fs, io,
-    path::{Path, PathBuf},
+    fs, io,
+    path::PathBuf,
     process::Command,
 };
 
@@ -57,10 +57,9 @@ use serde_json::{Value, json};
 const PROTEIN_SEQUENCE_ALPHABET: &[u8] = b"ACDEFGHIKLMNPQRSTVWYX";
 const DNA_SEQUENCE_ALPHABET: &[u8] = b"ATGCNX";
 const RNA_SEQUENCE_ALPHABET: &[u8] = b"AUGCNX";
-const OPENDDE_EXECUTABLE_ENV: &str = "MOLCHANICA_OPENDDE_EXECUTABLE";
-const OPENDDE_VENV_DIR_ENV: &str = "OPENDDE_VENV_DIR";
 
 use crate::{
+    external_tools::{self, Tool},
     molecules::peptide::MoleculePeptide,
     structure_prediction::{
         PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
@@ -608,152 +607,12 @@ pub(super) fn predict_structure(
 
 /// Locate OpenDDE in a Molchanica-managed environment or on `PATH`.
 ///
-/// Checking managed directories directly is important for desktop-launched applications, which may
-/// not inherit PATH additions made by a shell profile. The executable override is useful for custom
-/// or development installations.
+/// This is now the registry's generic resolution — override variable, then the managed virtual
+/// environment, then a `uv tool` location, then `PATH` — which every tool shares. It is kept as a
+/// named function here because `MOLCHANICA_OPENDDE_EXECUTABLE` and `OPENDDE_VENV_DIR` are
+/// documented, and the registry entry preserves both.
 pub(crate) fn find_executable() -> io::Result<PathBuf> {
-    if let Some(configured) = env::var_os(OPENDDE_EXECUTABLE_ENV) {
-        let configured = PathBuf::from(configured);
-        if configured.is_file() {
-            return Ok(configured);
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "{OPENDDE_EXECUTABLE_ENV} points to {}, but that file does not exist",
-                configured.display()
-            ),
-        ));
-    }
-
-    // The dedicated venv installer is explicitly scoped to Molchanica, so prefer it when present.
-    if let Some(executable) = find_managed_venv_executable()? {
-        return Ok(executable);
-    }
-
-    // Prefer the isolated uv installation created by Molchanica's installer over a potentially
-    // conflicting `pip install` in a global Python environment.
-    for directory in known_uv_tool_bin_directories() {
-        if let Some(executable) = executable_in(&directory, "opendde") {
-            return Ok(executable);
-        }
-    }
-
-    if let Some(uv) = find_uv_executable()
-        && let Ok(output) = Command::new(uv).args(["tool", "dir", "--bin"]).output()
-        && output.status.success()
-        && let Ok(directory) = String::from_utf8(output.stdout)
-        && let Some(executable) = executable_in(Path::new(directory.trim()), "opendde")
-    {
-        return Ok(executable);
-    }
-
-    if let Some(executable) = find_on_path("opendde") {
-        return Ok(executable);
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "OpenDDE was not found. Run an install_opendde script from install_scripts, or set \
-         MOLCHANICA_OPENDDE_EXECUTABLE.",
-    ))
-}
-
-fn find_managed_venv_executable() -> io::Result<Option<PathBuf>> {
-    if let Some(configured) = env::var_os(OPENDDE_VENV_DIR_ENV) {
-        let root = PathBuf::from(configured);
-        return venv_executable(&root).map(Some).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "{OPENDDE_VENV_DIR_ENV} points to {}, but it contains no OpenDDE executable",
-                    root.display()
-                ),
-            )
-        });
-    }
-
-    Ok(default_managed_venv_root().and_then(|root| venv_executable(&root)))
-}
-
-fn default_managed_venv_root() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let data_home = env::var_os("LOCALAPPDATA").map(PathBuf::from);
-
-    #[cfg(target_os = "macos")]
-    let data_home = home_directory().map(|home| home.join("Library/Application Support"));
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let data_home = env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| home_directory().map(|home| home.join(".local/share")));
-
-    data_home.map(|root| root.join("molchanica/opendde-venv"))
-}
-
-fn venv_executable(root: &Path) -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let bin = root.join("Scripts");
-    #[cfg(not(target_os = "windows"))]
-    let bin = root.join("bin");
-
-    executable_in(&bin, "opendde")
-}
-
-fn find_uv_executable() -> Option<PathBuf> {
-    find_on_path("uv").or_else(|| {
-        home_directory().and_then(|home| {
-            [home.join(".local/bin"), home.join(".cargo/bin")]
-                .into_iter()
-                .find_map(|directory| executable_in(&directory, "uv"))
-        })
-    })
-}
-
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    env::var_os("PATH").and_then(|path| {
-        env::split_paths(&path).find_map(|directory| executable_in(&directory, name))
-    })
-}
-
-fn known_uv_tool_bin_directories() -> Vec<PathBuf> {
-    let mut directories = Vec::new();
-    if let Some(path) = env::var_os("UV_TOOL_BIN_DIR") {
-        directories.push(PathBuf::from(path));
-    }
-    if let Some(path) = env::var_os("XDG_BIN_HOME") {
-        directories.push(PathBuf::from(path));
-    }
-    if let Some(path) = env::var_os("XDG_DATA_HOME") {
-        directories.push(PathBuf::from(path).join("../bin"));
-    }
-    if let Some(home) = home_directory() {
-        directories.push(home.join(".local/bin"));
-    }
-    directories
-}
-
-fn home_directory() -> Option<PathBuf> {
-    env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
-
-fn executable_in(directory: &Path, name: &str) -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let names = [
-        format!("{name}.exe"),
-        format!("{name}.cmd"),
-        format!("{name}.bat"),
-        name.to_owned(),
-    ];
-    #[cfg(not(target_os = "windows"))]
-    let names = [name.to_owned()];
-
-    names
-        .into_iter()
-        .map(|name| directory.join(name))
-        .find(|candidate| candidate.is_file())
+    external_tools::find_executable(Tool::OpenDde)
 }
 
 pub(super) fn predict_structure_from_aas(

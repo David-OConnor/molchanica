@@ -25,6 +25,7 @@ $EXE = "$NAME.exe"
 $GEMMI_DIR = "gemmi"
 $CUFFT_LIB = "cufft64_12.dll"
 $OPENDDE_SCRIPT = "install_opendde.ps1"
+$TOOL_SCRIPT = "install_tool.ps1"
 $DESCRIPTION = "Molecule and protein viewer"
 
 function Copy-Payload {
@@ -177,6 +178,22 @@ if ($installOpenDdeNow) {
         Write-Host "`nOpenDDE installed into a dedicated Python virtual environment."
     } else {
         Write-Warning "$OPENDDE_SCRIPT was not found in $SourceDirectory; skipping the OpenDDE install."
+    }
+}
+
+# The antibody tools are offered separately because they are a different proposition: tens of
+# megabytes rather than gigabytes, and useful the moment a structure is open.
+if (-not $SkipOpenDde) {
+    $toolScript = Join-Path $SourceDirectory $TOOL_SCRIPT
+    if (Test-Path -LiteralPath $toolScript -PathType Leaf) {
+        $ans = Read-Host "Install the antibody tools (IgBLAST and ANARCII)? These are comparatively small. [y/n]"
+        if ($ans -match "^[Yy]") {
+            & $toolScript igblast anarcii
+        }
+        Write-Host ""
+        Write-Host "Other optional tools (boltz2, ligandmpnn, proteinmpnn) can be installed at any time with"
+        Write-Host "$TOOL_SCRIPT. Run it with --list to see them all, or 'all' for everything."
+        Write-Host "Molchanica's `"Tools`" panel shows which are installed and working."
     }
 }
 

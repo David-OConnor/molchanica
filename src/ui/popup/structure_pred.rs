@@ -293,11 +293,13 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
             ComboBox::from_id_salt("structure_prediction_model")
                 .selected_text(model_name(state.ui.structure_pred.model))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut state.ui.structure_pred.model,
-                        StructurePredictionModel::OpenDDE,
-                        model_name(StructurePredictionModel::OpenDDE),
-                    );
+                    for model in StructurePredictionModel::ALL {
+                        ui.selectable_value(
+                            &mut state.ui.structure_pred.model,
+                            model,
+                            model_name(model),
+                        );
+                    }
                 });
         });
 
@@ -704,9 +706,7 @@ fn format_elapsed(elapsed: Duration) -> String {
 }
 
 fn model_name(model: StructurePredictionModel) -> &'static str {
-    match model {
-        StructurePredictionModel::OpenDDE => "OpenDDE",
-    }
+    model.label()
 }
 
 #[cfg(test)]

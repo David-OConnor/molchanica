@@ -14,6 +14,8 @@ pub mod cam;
 pub mod cli;
 pub mod docking;
 pub mod drawing;
+pub mod drug_design;
+pub mod external_tools;
 pub mod file_io;
 pub mod gromacs;
 pub mod inputs;

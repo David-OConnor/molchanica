@@ -950,6 +950,31 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 {
                     state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
                 }
+
+                if button!(
+                    ui,
+                    "Design",
+                    COLOR_HIGHLIGHT,
+                    "Design sequences for the active protein's backbone, scan every point mutation \
+                    for stability, and annotate antibody chains."
+                )
+                    .clicked()
+                {
+                    state.ui.popup.protein_design = !state.ui.popup.protein_design;
+                }
+
+                if button!(
+                    ui,
+                    "Tools",
+                    COLOR_HIGHLIGHT,
+                    "Show which optional third-party tools (OpenDDE, Boltz-2, LigandMPNN, IgBLAST, \
+                    GROMACS, ORCA, ...) are installed and working, and how to install the ones that \
+                    are not."
+                )
+                    .clicked()
+                {
+                    state.ui.popup.external_tools = !state.ui.popup.external_tools;
+                }
             });
 
             let metadata_loaded = false; // avoids borrow error.

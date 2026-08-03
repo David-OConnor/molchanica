@@ -34,6 +34,7 @@ pub mod antibody;
 mod cam;
 mod crystal;
 mod drug_design;
+mod external_tools;
 mod gromacs;
 mod lod_generalization;
 mod md;
@@ -65,7 +66,66 @@ use state::State;
 
 use crate::{render::render, util::handle_err};
 
+/// Handle the maintenance flags that run instead of launching the GUI.
+///
+/// Kept to a hand-rolled match rather than an argument parser: there is one flag, and the normal
+/// invocation takes no arguments at all.
+fn handle_cli_flags() -> Option<i32> {
+    let flag = std::env::args().nth(1)?;
+    match flag.as_str() {
+        // Checks the native ProteinMPNN port in src/therapeutic/ddg against the reference forward
+        // pass scripts/convert_mpnn_weights.py recorded from upstream. See that module's docs.
+        "--verify-mpnn" => {
+            let path = match therapeutic::ddg::weights_path() {
+                Some(path) => path,
+                None => {
+                    eprintln!("No location is known for the ProteinMPNN weights.");
+                    return Some(1);
+                }
+            };
+            println!("Verifying the native ProteinMPNN implementation against {}", path.display());
+            match therapeutic::ddg::verify(&path) {
+                Ok(difference) => {
+                    println!("Largest disagreement with upstream: {difference:.3e}");
+                    // A port that matches should agree to within f32 accumulation noise over six
+                    // message-passing layers. Anything above this means a layer differs from the
+                    // one it mirrors, and the ΔΔG numbers should not be trusted.
+                    if difference < 1e-3 {
+                        println!("The native implementation matches upstream ProteinMPNN.");
+                        Some(0)
+                    } else {
+                        eprintln!(
+                            "This exceeds the 1e-3 tolerance: the native implementation does NOT \
+                             match upstream. Do not rely on its ΔΔG output."
+                        );
+                        Some(1)
+                    }
+                }
+                Err(error) => {
+                    eprintln!("Verification could not run: {error}");
+                    Some(1)
+                }
+            }
+        }
+        "--help" | "-h" => {
+            println!(
+                "Molchanica — molecule editing, visualization, and dynamics.\n\n\
+                 Run with no arguments to launch the GUI.\n\n\
+                 Flags:\n  \
+                 --verify-mpnn   Check the native ProteinMPNN ΔΔG implementation against the \
+                 reference pass recorded by scripts/convert_mpnn_weights.py."
+            );
+            Some(0)
+        }
+        _ => None,
+    }
+}
+
 fn main() {
+    if let Some(code) = handle_cli_flags() {
+        std::process::exit(code);
+    }
+
     #[cfg(not(feature = "cuda"))]
     let dev = dynamics::ComputationDevice::Cpu;
 

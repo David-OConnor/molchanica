@@ -1,21 +1,22 @@
 //! Structure prediction through third-party models.
 //!
-//! We currently only support OpenDDE; the others did not integrate well. Root cause: Relying
-//! on a specific Python setup on the User's system. OpenDDE uses Python, but I was able to
-//! getr a working setup.
+//! We support OpenDDE and Boltz-2. Both are driven the same way: a dedicated Python virtual
+//! environment built by `install_scripts/install_tool`, discovered through the
+//! [`crate::external_tools`] registry, and run as a child process. Neither is ever resolved through
+//! a bare `PATH` lookup, and neither runs under whatever interpreter happens to be first on it.
+//!
+//! That constraint is the lesson from the earlier attempts. ESMFold2 and the first Boltz-2
+//! integration both relied on a specific Python setup existing on the user's system, and both had
+//! to be disabled because that assumption does not hold on a desktop application. OpenDDE was the
+//! first to work because it came with an installer that built its own environment; Boltz-2 now
+//! uses the same mechanism, generalized.
+//!
+//! Boltz-2 additionally predicts binding affinity for a ligand in the complex it folds — see
+//! [`boltz2::BoltzOptions::affinity_binder`] — which the shared dispatch below does not expose,
+//! since it returns a structure alone. Call [`boltz2::predict`] for that.
 //!
 //! Predictions are blocking operations and should be moved to a worker thread when called by the
-//! GUI.
-//!
-//! Boltz-2 is special-cased so it "just works" for end users of the standalone application: with the
-//! `python_for_structure_prediction` feature enabled, Molchanica provisions a fully isolated Python
-//! environment on first use (via `uv`; see the `boltz_runtime` module) and runs Boltz from it — the
-//! user never installs Python, `uv`, Torch, or Boltz themselves. Execution defaults to the managed
-//! environment's `boltz` launcher as a child process, with an opt-in in-process path through an
-//! embedded PyO3 interpreter (see the `pyo3_interface` module).
-//!
-//! The other predictors (OpenDDE, ESMFold2) still use plain process boundaries against separately
-//! installed tooling; a missing model does not prevent Molchanica from starting.
+//! GUI. A missing model does not prevent Molchanica from starting.
 
 use std::{
     env, fs, io,
@@ -37,24 +38,38 @@ use na_seq::{AaIdent, AminoAcid, Nucleotide};
 
 use crate::molecules::peptide::MoleculePeptide;
 
-// mod boltz2;
-// #[cfg(feature = "python_for_structure_prediction")]
-// mod boltz_runtime;
-// mod esm_fold2;
+pub mod boltz2;
+// mod esm_fold2;  // Requires OpenFold's CUDA kernels built from source; Linux-only in practice.
 pub mod opendde;
-// #[cfg(feature = "python_for_structure_prediction")]
-// mod pyo3_interface;
 
 /// pH used when Molchanica adds hydrogens and force-field parameters to a prediction.
 pub const DEFAULT_PREDICTION_PH: f32 = 7.0;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum StructurePredictionModel {
-    // Boltz2,
-    // EsmFold2 removed until it has a dedicated application or similar; it currently
-    // requires interfacing with Python directly.
-    // EsmFold2,
+    #[default]
     OpenDDE,
+    /// Also predicts binding affinity; see [`boltz2::predict`].
+    Boltz2,
+}
+
+impl StructurePredictionModel {
+    pub const ALL: [Self; 2] = [Self::OpenDDE, Self::Boltz2];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OpenDDE => "OpenDDE",
+            Self::Boltz2 => "Boltz-2",
+        }
+    }
+
+    /// The registry entry this model runs from, for availability checks.
+    pub fn tool(self) -> crate::external_tools::Tool {
+        match self {
+            Self::OpenDDE => crate::external_tools::Tool::OpenDde,
+            Self::Boltz2 => crate::external_tools::Tool::Boltz2,
+        }
+    }
 }
 
 /// A cloneable cancellation signal shared by the UI and a prediction worker.
@@ -104,6 +119,7 @@ pub fn predict_structure_from_request(
     control.check_cancelled()?;
     match model {
         StructurePredictionModel::OpenDDE => opendde::predict_structure(request, ff_map, control),
+        StructurePredictionModel::Boltz2 => boltz2::predict_structure(request, ff_map, control),
     }
 }
 
@@ -115,10 +131,11 @@ pub(crate) fn predict_structure_from_aas(
 ) -> io::Result<MoleculePeptide> {
     control.check_cancelled()?;
     match model {
-        // StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_aas(aas, ff_map),
-        // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_aas(aas, ff_map),
         StructurePredictionModel::OpenDDE => {
             opendde::predict_structure_from_aas(aas, ff_map, control)
+        }
+        StructurePredictionModel::Boltz2 => {
+            boltz2::predict_structure_from_aas(aas, ff_map, control)
         }
     }
 }
@@ -131,10 +148,11 @@ pub fn predict_structure_from_nts(
 ) -> io::Result<MoleculePeptide> {
     control.check_cancelled()?;
     match model {
-        // StructurePredictionModel::Boltz2 => boltz2::predict_structure_from_dna(nts, ff_map),
-        // StructurePredictionModel::EsmFold2 => esm_fold2::predict_structure_from_dna(nts, ff_map),
         StructurePredictionModel::OpenDDE => {
             opendde::predict_structure_from_dna(nts, ff_map, control)
+        }
+        StructurePredictionModel::Boltz2 => {
+            boltz2::predict_structure_from_dna(nts, ff_map, control)
         }
     }
 }

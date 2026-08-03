@@ -4,11 +4,9 @@
 
 use std::{
     f64::consts::TAU,
-    path::Path,
-    process::{Command, Stdio},
+    process::Command,
     sync::mpsc,
     thread,
-    thread::sleep,
     time::{Duration, Instant},
 };
 
@@ -34,6 +32,7 @@ use crate::{
         color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
         draw_peptide, ribbon_mesh::build_ribbon_mesh,
     },
+    external_tools::{self, CheckResult, Tool},
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
     molecules::{
         Atom, Bond, Chain, MolGenericRefMut, MolType, MoleculeGeneric, Residue, aa_color,
@@ -1381,68 +1380,31 @@ pub fn rotate_atoms_about_point(atoms: &mut [Atom], pivot: Vec3, rotator: Quater
 #[cfg(feature = "cuda")]
 pub const PTX: &str = include_str!("../molchanica.ptx");
 
-/// We've run into an infinite hang on Linux that had the Orca screen reader installed, when
-/// using a naive approach
+/// Whether ORCA is installed and answers as ORCA.
+///
+/// The banner check is not incidental: `orca` on Linux is commonly the GNOME screen reader, which
+/// never answers a `--help` and used to hang this probe indefinitely. The registry's probe applies
+/// a deadline and matches on the ORCA banner, which covers both hazards.
 pub fn orca_avail() -> bool {
-    let mut child = match Command::new("orca")
-        // Note--help isn't a valid command, but seems to work anyway for our purposes
-        .arg("--help")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-
-    let deadline = Instant::now() + Duration::from_millis(200);
-
-    while Instant::now() < deadline {
-        if let Ok(Some(_)) = child.try_wait() {
-            let Some(out) = child.wait_with_output().ok() else {
-                return false;
-            };
-
-            let text = String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr);
-
-            return text.contains("O   R   C   A");
-        }
-        sleep(Duration::from_millis(10));
-    }
-
-    let _ = child.kill();
-    let _ = child.wait();
-
-    false
+    tool_avail(Tool::Orca)
 }
 
-/// Checks if GROMACS is available on the system patghg.
+/// Checks if GROMACS is available.
 pub fn gromacs_avail() -> bool {
-    match Command::new("gmx").arg("-version").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            output.status.success() && (stdout.contains("GROMACS version"))
-        }
-        Err(_) => false,
-    }
+    tool_avail(Tool::Gromacs)
 }
 
-/// Checks if Gemmi is available. We prefer a copy colocated with our executable (see
-/// `file_io::gemmi_path`), falling back to the system path. `gemmi --help` exits 0 and prints a
-/// banner that references the "GEMMI library".
+/// Checks if Gemmi is available. A copy colocated with our executable is preferred, since we may
+/// ship one in the release archive; the registry entry marks it as such.
 pub fn gemmi_avail() -> bool {
-    let program = crate::file_io::gemmi_path().unwrap_or_else(|| Path::new("gemmi"));
+    tool_avail(Tool::Gemmi)
+}
 
-    match Command::new(program).arg("--help").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            output.status.success() && stdout.contains("GEMMI library")
-        }
-        Err(_) => false,
-    }
+/// Whether a registered tool is installed and working.
+///
+/// Runs a subprocess, so cache the answer rather than calling it every frame.
+pub fn tool_avail(tool: Tool) -> bool {
+    external_tools::check(tool).result == CheckResult::Pass
 }
 
 /// Checks if GROMACS is available on the system path.
@@ -1457,34 +1419,14 @@ pub fn mdtraj_avail() -> bool {
     }
 }
 
-/// Checks if Boltz-2 is available on the system path. Boltz is invoked as `boltz predict ...`;
-/// it has no `--version`, but `boltz --help` exits 0 and lists its `predict` subcommand.
+/// Checks if Boltz-2 is available in its managed environment or on the system path.
 pub fn boltz2_avail() -> bool {
-    // With the managed-runtime feature, an already-provisioned isolated environment counts as
-    // available. (This is a cheap filesystem check; it does not provision anything.)
-    match Command::new("boltz").arg("--help").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            output.status.success() && stdout.contains("predict")
-        }
-        Err(_) => false,
-    }
+    tool_avail(Tool::Boltz2)
 }
 
-/// Checks if OpenDDE is available in a managed environment or on the system path.
+/// Checks if OpenDDE is available in its managed environment or on the system path.
 pub fn opendde_avail() -> bool {
-    let Ok(executable) = crate::structure_prediction::opendde::find_executable() else {
-        return false;
-    };
-    match Command::new(executable).arg("--version").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            output.status.success() && stdout.contains("opendde, version ")
-        }
-        Err(_) => false,
-    }
+    tool_avail(Tool::OpenDde)
 }
 
 /// Returns the frequency of a covalent bond, in ps^-1, assuming classical MD params.

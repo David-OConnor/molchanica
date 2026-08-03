@@ -47,7 +47,11 @@ use crate::{
     sonification::MoleculeSonification,
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
-    ui::popup::{ff_params::FfParamsUi, structure_pred::StructurePredUi},
+    ui::popup::{
+        external_tools::ExternalToolsUi, ff_params::FfParamsUi,
+        protein_design::ProteinDesignUi, structure_pred::StructurePredUi,
+    },
+    external_tools::{self, Tool},
     util::{gemmi_avail, gromacs_avail, mdtraj_avail, orca_avail},
 };
 
@@ -343,22 +347,25 @@ pub struct IntegrationsAvail {
 
 impl Default for IntegrationsAvail {
     fn default() -> Self {
-        // todo temp timing to make sure this isn't slow.
         let start = Instant::now();
 
-        // Checking for applications which don't exist is generally <20ms each.
-        // Checking for a program which is installed takes longer; have seen ~1s or
-        // longer for python-based structure prediction ones. Skipping those for now.
-
+        // Two different checks, chosen by what each costs at startup.
+        //
+        // The native binaries get a real probe: they answer a version flag in milliseconds, and
+        // the probe is what distinguishes ORCA from the identically named GNOME screen reader.
+        //
+        // The Python-based tools get a filesystem lookup instead. Launching one means importing
+        // Torch first, which is seconds each — that is why boltz2 was hardcoded to false and
+        // opendde to true here. `is_installed` answers the question this struct actually needs
+        // ("is it there?") without paying for that. Whether an installed one *works* is the
+        // Tools panel's job, which probes properly and does it on a worker thread.
         let result = Self {
             orca: orca_avail(),
             gromacs: gromacs_avail(),
             gemmi: gemmi_avail(),
             mdtraj: mdtraj_avail(),
-            boltz2: false, // todo: Boltz's invocation is currently very slow.
-            // boltz2: boltz2_avail(),
-            // opendde: opendde_avail(),
-            opendde: true, // todo: For now.
+            boltz2: external_tools::is_installed(Tool::Boltz2),
+            opendde: external_tools::is_installed(Tool::OpenDde),
         };
 
         let elapsed = start.elapsed().as_millis();
@@ -549,6 +556,10 @@ pub struct StateUi {
     pub ff_params: FfParamsUi,
     /// Input state for the structure-prediction popup.
     pub structure_pred: StructurePredUi,
+    /// Cached results of the third-party tools status probe.
+    pub external_tools: ExternalToolsUi,
+    /// Input and results for the sequence-design, ΔΔG, and antibody tools.
+    pub protein_design: ProteinDesignUi,
     pub ph_input: String,
     pub mesh_coloring: MeshColoring,
     /// Color ligands by molecule, to contrast.
@@ -706,6 +717,10 @@ pub struct PopupState {
     pub md_mol_set_editor: bool,
     pub ff_params: bool,
     pub structure_pred: bool,
+    /// The third-party tools status panel.
+    pub external_tools: bool,
+    /// Sequence design, ΔΔG scanning, and antibody annotation.
+    pub protein_design: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]

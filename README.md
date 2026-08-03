@@ -50,14 +50,73 @@ in the project directory. See notes in the
 *compiling* section below about setting up Amber parameter files,
 and either installing the CUDA toolkit, or disabling CUDA.
 
-### Installing integrated third-party software.
+### Installing integrated third-party software
 
-If you wish to use structure prediction, install OpenDDE using the included
-`install_opendde` script. Or install it
-on your own in a way where it is accessible on the system PATH environment variable. Python >= 3.11 is required for OpenDDE.
-If you wish to open MTZ files
-(A type of structure prediction), install Gemmi. (Available automatically in the Linux install script). If you wish
-to use ORCA for quantum chemistry of the GROMACS MD backend, install those separately.
+Molchanica works with none of these installed; each one unlocks a feature. Open the **Tools**
+panel in the GUI at any time to see which are installed, which are working, and the exact command
+to install the rest.
+
+Everything Molchanica can install itself goes through one script, which builds each tool an
+isolated Python environment (or unpacks a binary distribution) under your user data directory.
+Nothing is installed system-wide and nothing touches your system Python.
+
+```
+install_scripts/install_tool.sh  <tool>...      # Linux, macOS
+install_scripts\install_tool.ps1 <tool>...      # Windows
+```
+
+Pass `--list` to see the tools, or `all` to install everything.
+
+| Tool | Unlocks | Size |
+|---|---|---|
+| `opendde` | Structure prediction and co-folding: proteins, DNA/RNA, ligands, ions, complexes | Multi-GB |
+| `boltz2` | Co-folding **and binding-affinity prediction** for a ligand in the complex | Multi-GB |
+| `ligandmpnn` | Inverse folding — design sequences for a backbone, in ligand and nucleic-acid context | ~1 GB |
+| `proteinmpnn` | Inverse folding, the antibody-tuned AbMPNN weights, and native ΔΔG scanning | ~1 GB |
+| `igblast` | Antibody V(D)J germline assignment and framework/CDR delineation | ~100 MB |
+| `anarcii` | Antibody/TCR numbering (IMGT, Kabat, Chothia, Martin, AHo) with insertion codes | ~1 GB |
+
+`install_opendde.sh` / `install_opendde.ps1` still work; they now call `install_tool` for you.
+
+A CUDA build of PyTorch is selected automatically when an NVIDIA GPU with a new enough driver is
+present, and the install falls back to CPU if that turns out not to work at run time. Override
+with `MOLCHANICA_TORCH_BACKEND=cpu` or `=cu126`.
+
+Two tools Molchanica cannot install for you, because they have their own licence gate or
+installer: **ORCA** (quantum chemistry, and MBIS partial charges for MD) and **GROMACS** (an
+alternative MD backend). Install those separately and put them on `PATH`. **Gemmi**, for MTZ and
+unprocessed electron-density files, is installed by the Linux setup script and shipped alongside
+the Windows release.
+
+Every tool can also be pointed at an existing installation with an environment variable —
+`MOLCHANICA_ORCA_EXECUTABLE`, `MOLCHANICA_IGBLAST_ROOT`, and so on. The Tools panel shows each
+tool's variable name.
+
+### Datasets
+
+Molchanica can read a locally downloaded [PDBbind](https://www.pdbbind-plus.org.cn/) release:
+measured binding affinities, plus each complex's protein, pocket, and ligand files. Unpack one
+into `<data dir>/molchanica/datasets/pdbbind`, or set `MOLCHANICA_PDBBIND_ROOT`. Nothing
+downloads it for you — PDBbind+ is distributed under registration, free for academic use, with
+commercial use requiring a subscription.
+
+### Protein design
+
+The **Design** button opens sequence design, stability scanning, and antibody annotation for the
+protein currently open:
+
+- **Design sequences** proposes sequences that would fold into the backbone on screen, using
+  LigandMPNN, ProteinMPNN, or the antibody-tuned AbMPNN weights. You can restrict it to particular
+  chains and hold chosen residues fixed — enough to redesign CDRs while keeping a framework, or to
+  resurface a protein while preserving a catalytic site.
+- **Stability scan** scores all twenty substitutions at every position in one pass, ranking the
+  most stabilizing mutations and the positions the structure tolerates least. This runs natively;
+  it needs the ProteinMPNN weights installed but no Python at run time.
+- **Antibody** identifies heavy and light chains, delineates CDRs, and flags developability
+  motifs. With ANARCII installed it upgrades from sequence-position approximations to a real
+  numbering assignment with insertion codes; with IgBLAST it adds germline V and J gene calls. The
+  panel always states which of the two you are looking at, so an approximation is never mistaken
+  for a numbering assignment.
 
 ## Functionality
 
@@ -69,6 +128,13 @@ to use ORCA for quantum chemistry of the GROMACS MD backend, install those separ
 - Run [GROMACS](https://www.gromacs.org/) MD, and view trajectories using the same GUI as our native MD.
 - Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed).
 - Run [OpenDDE](https://github.com/aurekaresearch/OpenDDE) structure prediction (Proteins, ligands, nucleic acids, ions, complexes)
+- Run [Boltz-2](https://github.com/jwohlwend/boltz) co-folding, including binding-affinity prediction for a ligand in the folded complex
+- Design sequences for a backbone with [LigandMPNN](https://github.com/dauparas/LigandMPNN) and
+  [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), conditioned on ligands and nucleic acids where present
+- Scan every point mutation at every position for stability (ΔΔG), in a single pass, natively — no Python needed at run time
+- Antibody workflows: real numbering with insertion codes ([ANARCII](https://github.com/oxpig/ANARCII)),
+  germline V(D)J assignment ([IgBLAST](https://ncbi.github.io/igblast/)), CDR selection, paratope contacts, and developability triage
+- Read a local [PDBbind](https://www.pdbbind-plus.org.cn/) release: look up a complex's measured binding affinity and open its protein, pocket, and ligand files
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
   and more.
 - Screen molecules based on binding affinity and desired properties
