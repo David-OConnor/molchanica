@@ -2,8 +2,8 @@
 param(
     [string]$SourceDirectory,
     [string]$InstallDirectory,
-    [switch]$InstallOpenDde,
-    [switch]$SkipOpenDde
+#     [switch]$InstallOpenDde,
+#     [switch]$SkipOpenDde
 )
 
 # This file installs the application for the current user, and creates a Start menu entry.
@@ -24,7 +24,6 @@ $NAME = "molchanica"
 $EXE = "$NAME.exe"
 $GEMMI_DIR = "gemmi"
 $CUFFT_LIB = "cufft64_12.dll"
-$OPENDDE_SCRIPT = "install_opendde.ps1"
 $TOOL_SCRIPT = "install_tool.ps1"
 $DESCRIPTION = "Molecule and protein viewer"
 
@@ -136,9 +135,9 @@ function Show-PreviousInstallNotice {
     }
 }
 
-if ($InstallOpenDde -and $SkipOpenDde) {
-    throw "InstallOpenDde and SkipOpenDde are mutually exclusive."
-}
+# if ($InstallOpenDde -and $SkipOpenDde) {
+#     throw "InstallOpenDde and SkipOpenDde are mutually exclusive."
+# }
 
 # We default this here rather than in the param block: Windows PowerShell 5.1 leaves $PSScriptRoot
 # empty while binding parameters when a script is run with -File, as setup_windows.bat does. It is
@@ -162,40 +161,39 @@ if (-not $InstallDirectory) {
 
 Copy-Payload -Source $SourceDirectory -Destination $InstallDirectory
 New-StartMenuEntry -Destination $InstallDirectory
-
-$installOpenDdeNow = $false
-if ($InstallOpenDde) {
-    $installOpenDdeNow = $true
-} elseif (-not $SkipOpenDde) {
-    $ans = Read-Host "Install OpenDDE to a Python virtual environment, to support structure prediction? Warning: Multi-Gb. [y/n]"
-    $installOpenDdeNow = $ans -match "^[Yy]"
-}
-
-if ($installOpenDdeNow) {
-    $openDdeScript = Join-Path $SourceDirectory $OPENDDE_SCRIPT
-    if (Test-Path -LiteralPath $openDdeScript -PathType Leaf) {
-        & $openDdeScript
-        Write-Host "`nOpenDDE installed into a dedicated Python virtual environment."
-    } else {
-        Write-Warning "$OPENDDE_SCRIPT was not found in $SourceDirectory; skipping the OpenDDE install."
-    }
-}
-
-# The antibody tools are offered separately because they are a different proposition: tens of
-# megabytes rather than gigabytes, and useful the moment a structure is open.
-if (-not $SkipOpenDde) {
-    $toolScript = Join-Path $SourceDirectory $TOOL_SCRIPT
-    if (Test-Path -LiteralPath $toolScript -PathType Leaf) {
-        $ans = Read-Host "Install the antibody tools (IgBLAST and ANARCII)? These are comparatively small. [y/n]"
-        if ($ans -match "^[Yy]") {
-            & $toolScript igblast anarcii
-        }
-        Write-Host ""
-        Write-Host "Other optional tools (boltz2, ligandmpnn, proteinmpnn) can be installed at any time with"
-        Write-Host "$TOOL_SCRIPT. Run it with --list to see them all, or 'all' for everything."
-        Write-Host "Molchanica's `"Tools`" panel shows which are installed and working."
-    }
-}
+# $toolScript = Join-Path $SourceDirectory $TOOL_SCRIPT
+#
+# $installOpenDdeNow = $false
+# if ($InstallOpenDde) {
+#     $installOpenDdeNow = $true
+# } elseif (-not $SkipOpenDde) {
+#     $ans = Read-Host "Install OpenDDE to a uv-managed Python environment, to support structure prediction? Warning: Multi-Gb. [y/n]"
+#     $installOpenDdeNow = $ans -match "^[Yy]"
+# }
+#
+# if ($installOpenDdeNow) {
+#     if (Test-Path -LiteralPath $toolScript -PathType Leaf) {
+#         & $toolScript opendde
+#         Write-Host "`nOpenDDE installed into a dedicated uv-managed Python environment."
+#     } else {
+#         Write-Warning "$TOOL_SCRIPT was not found in $SourceDirectory; skipping the OpenDDE install."
+#     }
+# }
+#
+# # The antibody tools are offered separately because they are a different proposition: tens of
+# # megabytes rather than gigabytes, and useful the moment a structure is open.
+# if (-not $SkipOpenDde) {
+#     if (Test-Path -LiteralPath $toolScript -PathType Leaf) {
+#         $ans = Read-Host "Install the antibody tools (IgBLAST and ANARCII)? These are comparatively small. [y/n]"
+#         if ($ans -match "^[Yy]") {
+#             & $toolScript igblast anarcii
+#         }
+#         Write-Host ""
+#         Write-Host "Other optional tools (boltz2, ligandmpnn, proteinmpnn) can be installed at any time with"
+#         Write-Host "$TOOL_SCRIPT. Run it with --list to see them all, or 'all' for everything."
+#         Write-Host "Molchanica's `"Tools`" panel shows which are installed and working."
+#     }
+# }
 
 Write-Host ""
 Write-Host "$NAME_UPPER is installed in $InstallDirectory."

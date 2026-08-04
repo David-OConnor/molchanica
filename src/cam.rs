@@ -368,7 +368,6 @@ pub fn reset_camera(
         center
     } else if let Some(mol) = state.active_mol() {
         mol.common().centroid().into()
-        // Leaving size at its default for now.
     } else {
         let mut n = 0;
         let mut centroid = Vec3::new_zero();

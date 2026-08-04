@@ -16,7 +16,8 @@
 //! same way OpenDDE does — a dedicated virtual environment built by `install_tool`, discovered by
 //! the [`crate::external_tools`] registry, never resolved through a bare `PATH` lookup.
 //!
-//! Boltz requires Python `>=3.10,<3.13`, which is why it cannot share OpenDDE's 3.13 environment;
+//! Boltz requires Python `>=3.10,<3.13`, so its uv environment uses Python 3.12 rather than
+//! sharing OpenDDE's 3.13 environment;
 //! the per-tool environment layout exists precisely for conflicts like this. Its wheel is
 //! `py3-none-any`, so Windows and Linux are both fine — only the optional `[cuda]` extra, which
 //! pulls Linux-only `cuequivariance` wheels, is not, and the installer omits it off Linux.

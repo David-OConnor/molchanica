@@ -1408,24 +1408,6 @@ pub fn filter_pep_atoms_by_dist<'a>(
                 continue;
             }
         }
-
-        // Per-atom path on this; we instead use the above res-based algo to improve speed.
-        // if ui.show_near_sfc_only {
-        //     let p_atom: Vec3 = posit.into();
-        //
-        //     // Check if near any surface point.
-        //     let mut passed = false;
-        //     for pt in &sfc_pts {
-        //         if (*pt - p_atom).magnitude_squared() < nearby_dist_thresh_sfc_sq {
-        //             passed = true;
-        //             break;
-        //         }
-        //     }
-        //     if !passed {
-        //         result.push(i_atom);
-        //         continue;
-        //     }
-        // }
     }
 
     result
@@ -1462,6 +1444,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     // total entity count stays unchanged.
     clear_mol_entity_indices(state, Some(MolType::Peptide));
 }
+
 fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
     let mol_active = if let Some((active_mol_type, active_i)) = state.volatile.active_mol {
         MolType::Peptide == active_mol_type && mol_i == active_i

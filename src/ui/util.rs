@@ -387,7 +387,6 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene, updates: &mut Engin
 
     reset_orbit_center(state, scene);
 
-    // FWD_VEC here means a "Front" look.
     reset_camera(state, scene, &mut EngineUpdates::default(), FWD_VEC);
 
     draw_peptide(state, scene, updates);

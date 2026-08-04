@@ -19,6 +19,17 @@ use crate::{
     util::{RedrawFlags, orbit_center},
 };
 
+// For hydrogens
+const SELECTION_DIST_THRESH_H: f32 = 0.5; // e.g. ball + stick, or stick.
+const SELECTION_DIST_THRESH_SMALL: f32 = 0.8; // e.g. ball + stick, or stick.
+const SELECTION_DIST_THRESH_BOND: f32 = 0.6; // e.g. ball + stick, or stick.
+// Setting this high rel to `THRESH_SMALL` will cause more accidental selections of nearby atoms that
+// the cursor is closer to the center of, but are behind the desired one.
+// Setting it too low will cause the selector to "miss", even though the cursor is on an atom visual.
+const SELECTION_DIST_THRESH_LARGE: f32 = 1.2; // e.g. VDW views like spheres.
+
+const SEL_NEAR_PAD: f32 = 4.;
+
 #[derive(Clone, PartialEq, Debug, Default, Encode, Decode)]
 pub enum Selection {
     #[default]
@@ -85,16 +96,6 @@ impl Selection {
     }
 }
 
-// For hydrogens
-const SELECTION_DIST_THRESH_H: f32 = 0.5; // e.g. ball + stick, or stick.
-const SELECTION_DIST_THRESH_SMALL: f32 = 0.8; // e.g. ball + stick, or stick.
-const SELECTION_DIST_THRESH_BOND: f32 = 0.6; // e.g. ball + stick, or stick.
-// Setting this high rel to `THRESH_SMALL` will cause more accidental selections of nearby atoms that
-// the cursor is closer to the center of, but are behind the desired one.
-// Setting it too low will cause the selector to "miss", even though the cursor is on an atom visual.
-const SELECTION_DIST_THRESH_LARGE: f32 = 1.2; // e.g. VDW views like spheres.
-
-const SEL_NEAR_PAD: f32 = 4.;
 fn selection_dist_thresh(view: MoleculeView, view_sel_level: ViewSelLevel) -> f32 {
     match view {
         MoleculeView::SpaceFill => SELECTION_DIST_THRESH_LARGE,
@@ -1041,20 +1042,16 @@ pub fn handle_selection_attempt_mol_editor(
 
     // Adjust the atom or bond being manipulated, or deselect manipulation if appropriate.
     let manip_mode_new = match state.volatile.mol_manip.mode {
-        ManipMode::Rotate((_mol_type, mol_i)) => {
-            match &state.ui.selection {
-                Selection::AtomLig(_) => ManipMode::None,
-                Selection::BondLig(_) => ManipMode::Rotate((MolType::Ligand, mol_i)), // todo: QC
-                _ => ManipMode::None,
-            }
-        }
-        ManipMode::Move((_mol_type, mol_i)) => {
-            match &state.ui.selection {
-                Selection::AtomLig(_) => ManipMode::Move((MolType::Ligand, mol_i)), // todo: QC
-                Selection::BondLig(_) => ManipMode::None,
-                _ => ManipMode::None,
-            }
-        }
+        ManipMode::Rotate((_mol_type, mol_i)) => match &state.ui.selection {
+            Selection::AtomLig(_) => ManipMode::None,
+            Selection::BondLig(_) => ManipMode::Rotate((MolType::Ligand, mol_i)),
+            _ => ManipMode::None,
+        },
+        ManipMode::Move((_mol_type, mol_i)) => match &state.ui.selection {
+            Selection::AtomLig(_) => ManipMode::Move((MolType::Ligand, mol_i)),
+            Selection::BondLig(_) => ManipMode::None,
+            _ => ManipMode::None,
+        },
         _ => ManipMode::None,
     };
 

@@ -39,7 +39,12 @@ use na_seq::{AaIdent, AminoAcid, Nucleotide};
 use crate::molecules::peptide::MoleculePeptide;
 
 pub mod boltz2;
-// mod esm_fold2;  // Requires OpenFold's CUDA kernels built from source; Linux-only in practice.
+// These legacy/experimental adapters stay disabled in production, but compiling them in tests
+// prevents their managed-Python setup from silently drifting or regressing to a system Python.
+#[cfg(test)]
+mod boltz_runtime;
+#[cfg(test)]
+mod esm_fold2; // Running it requires OpenFold's CUDA kernels; Linux-only in practice.
 pub mod opendde;
 
 /// pH used when Molchanica adds hydrogens and force-field parameters to a prediction.
@@ -191,13 +196,14 @@ pub fn run_model_command(
     control: &PredictionControl,
 ) -> io::Result<()> {
     control.check_cancelled()?;
+    crate::external_tools::scrub_python_environment(command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     println!("{model} input command: {command:?}");
 
     let mut child = command.spawn().map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!("unable to start {model}; install it separately and put it on PATH: {error}"),
+            format!("unable to start the managed {model} environment: {error}"),
         )
     })?;
 

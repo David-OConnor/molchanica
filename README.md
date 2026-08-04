@@ -56,9 +56,11 @@ Molchanica works with none of these installed; each one unlocks a feature. Open 
 panel in the GUI at any time to see which are installed, which are working, and the exact command
 to install the rest.
 
-Everything Molchanica can install itself goes through one script, which builds each tool an
-isolated Python environment (or unpacks a binary distribution) under your user data directory.
-Nothing is installed system-wide and nothing touches your system Python.
+Everything Molchanica can install itself goes through one script, which builds each Python-backed
+tool an isolated [uv](https://docs.astral.sh/uv/)-managed environment (or unpacks a native binary
+distribution) under your user data directory. Nothing is installed system-wide and nothing
+touches your system Python. On the first Python-backed tool install, the script installs uv with
+Astral's official standalone installer if uv is not already available.
 
 ```
 install_scripts/install_tool.sh  <tool>...      # Linux, macOS
@@ -67,20 +69,23 @@ install_scripts\install_tool.ps1 <tool>...      # Windows
 
 Pass `--list` to see the tools, or `all` to install everything.
 
-| Tool | Unlocks | Size |
-|---|---|---|
-| `opendde` | Structure prediction and co-folding: proteins, DNA/RNA, ligands, ions, complexes | Multi-GB |
-| `boltz2` | Co-folding **and binding-affinity prediction** for a ligand in the complex | Multi-GB |
-| `ligandmpnn` | Inverse folding — design sequences for a backbone, in ligand and nucleic-acid context | ~1 GB |
-| `proteinmpnn` | Inverse folding, the antibody-tuned AbMPNN weights, and native ΔΔG scanning | ~1 GB |
-| `igblast` | Antibody V(D)J germline assignment and framework/CDR delineation | ~100 MB |
-| `anarcii` | Antibody/TCR numbering (IMGT, Kabat, Chothia, Martin, AHo) with insertion codes | ~1 GB |
-
-`install_opendde.sh` / `install_opendde.ps1` still work; they now call `install_tool` for you.
+| Tool          | Unlocks                                                                               | Size     |
+|---------------|---------------------------------------------------------------------------------------|----------|
+| `opendde`     | Structure prediction and co-folding: proteins, DNA/RNA, ligands, ions, complexes      | Multi-GB |
+| `boltz2`      | Co-folding **and binding-affinity prediction** for a ligand in the complex            | Multi-GB |
+| `ligandmpnn`  | Inverse folding — design sequences for a backbone, in ligand and nucleic-acid context | ~1 GB    |
+| `proteinmpnn` | Inverse folding, the antibody-tuned AbMPNN weights, and native ΔΔG scanning           | ~1 GB    |
+| `igblast`     | Antibody V(D)J germline assignment and framework/CDR delineation                      | ~100 MB  |
+| `anarcii`     | Antibody/TCR numbering (IMGT, Kabat, Chothia, Martin, AHo) with insertion codes       | ~1 GB    |
 
 A CUDA build of PyTorch is selected automatically when an NVIDIA GPU with a new enough driver is
 present, and the install falls back to CPU if that turns out not to work at run time. Override
 with `MOLCHANICA_TORCH_BACKEND=cpu` or `=cu126`.
+
+Each tool requests an exact interpreter minor version from uv: Python 3.13 for OpenDDE and Python
+3.12 for Boltz-2, the MPNN tools, and ANARCII. `uv venv --managed-python` ensures these are
+uv-managed Python builds rather than matching interpreters found on the system. Set
+`MOLCHANICA_UV` only when the installer should use a particular uv executable.
 
 Two tools Molchanica cannot install for you, because they have their own licence gate or
 installer: **ORCA** (quantum chemistry, and MBIS partial charges for MD) and **GROMACS** (an

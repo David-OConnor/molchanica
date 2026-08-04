@@ -6,8 +6,9 @@
 //!
 //! 1. Obtain `uv` (a single static binary). We use a previously downloaded copy, one already on
 //!    `PATH`, or we download the pinned release.
-//! 2. `uv venv --python 3.12` — `uv` fetches a managed CPython 3.12 automatically (Boltz needs
-//!    NumPy < 2, which needs Python 3.11/3.12), so the host system's Python is irrelevant.
+//! 2. `uv venv --managed-python --python 3.12` — `uv` fetches a managed CPython 3.12
+//!    automatically (Boltz needs NumPy < 2, which needs Python 3.11/3.12), so the host system's
+//!    Python is irrelevant.
 //! 3. `uv pip install boltz` into that venv, pulling Torch and the rest of the stack.
 //!
 //! After provisioning, predictions run by launching the venv's `boltz` executable as a child
@@ -57,7 +58,9 @@ impl BoltzRuntime {
     /// Only needed by the opt-in in-process runner; it shells out to the managed interpreter once,
     /// so it is not called on the common subprocess path.
     pub fn site_packages(&self) -> io::Result<Vec<String>> {
-        let output = Command::new(&self.python)
+        let mut command = Command::new(&self.python);
+        crate::external_tools::scrub_python_environment(&mut command);
+        let output = command
             .arg("-c")
             .arg(
                 "import json, sysconfig; p = sysconfig.get_paths(); \
@@ -99,6 +102,7 @@ impl BoltzRuntime {
         use_msa_server: bool,
     ) -> io::Result<()> {
         let mut command = Command::new(&self.boltz);
+        crate::external_tools::scrub_python_environment(&mut command);
         command
             .arg("predict")
             .arg(input_path)
@@ -163,6 +167,8 @@ pub(super) fn ensure() -> io::Result<BoltzRuntime> {
     let mut venv_cmd = Command::new(&uv);
     venv_cmd
         .arg("venv")
+        // uv otherwise prefers a managed interpreter but may reuse a matching system Python.
+        .arg("--managed-python")
         .arg("--python")
         .arg(&python_version)
         .arg(&venv_dir);
@@ -170,6 +176,7 @@ pub(super) fn ensure() -> io::Result<BoltzRuntime> {
 
     // Install Boltz (and its Torch stack) into the venv.
     let mut install_cmd = Command::new(&uv);
+    crate::external_tools::scrub_python_environment(&mut install_cmd);
     install_cmd
         .arg("pip")
         .arg("install")

@@ -173,9 +173,11 @@ pub(in crate::ui) fn load_popups(
     }
 
     if state.ui.popup.external_tools {
-        popup("Third-party tools").show(ui.ctx(), |ui| {
-            external_tools::external_tools_window(state, ui);
-        });
+        popup("Third-party tools")
+            .default_width(620.0)
+            .show(ui.ctx(), |ui| {
+                external_tools::external_tools_window(state, ui);
+            });
     }
 
     if state.ui.popup.protein_design {

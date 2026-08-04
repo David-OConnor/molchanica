@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! <data root>/molchanica/
-//!     opendde-venv/            a Python virtual environment per Python-based tool, named
+//!     opendde-venv/            a uv-managed Python environment per Python-based tool, named
 //!     boltz2-venv/             <slug>-venv. These deliberately do not share an interpreter:
 //!     ligandmpnn-venv/         OpenDDE wants Python >= 3.11, Boltz-2 wants < 3.13, and
 //!     anarcii-venv/            ProteinMPNN wants numpy < 2, whose newest wheel is cp312.
@@ -30,9 +30,10 @@
 //!         ProteinMPNN/
 //! ```
 //!
-//! Resolution never relies on `PATH` alone: a desktop-launched application does not inherit
-//! `PATH` additions made by a shell profile, which is the single most common reason an installed
-//! tool appears missing. `PATH` is consulted last, so a system-wide install still works.
+//! Native tools may still be resolved through `PATH`. Python tools deliberately may not: they run
+//! only from the uv environment built for that tool, unless an explicit override names another
+//! executable. This prevents a desktop launch from silently selecting a system Python with an
+//! incompatible package set.
 
 use std::{
     env, fmt, fs, io,
@@ -41,6 +42,9 @@ use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 pub mod anarcii;
 pub mod igblast;
@@ -116,9 +120,9 @@ impl fmt::Display for Tool {
 pub enum ToolKind {
     /// A standalone native binary. Looked for in the tool's bundle directory, then on `PATH`.
     Executable,
-    /// A console script (`opendde`, `boltz`, ...) inside a Molchanica-managed virtual environment.
+    /// A console script (`opendde`, `boltz`, ...) inside a Molchanica-managed uv environment.
     VenvScript,
-    /// The interpreter of a Molchanica-managed virtual environment. Used where the tool's code is
+    /// The interpreter of a Molchanica-managed uv environment. Used where the tool's code is
     /// a checkout rather than a package with an entry point, and where driving the Python API
     /// directly is more robust than depending on a CLI's argument shape.
     VenvPython,
@@ -208,6 +212,245 @@ impl ToolSpec {
         } else {
             format!("./install_scripts/install_tool.sh {}", self.slug)
         }
+    }
+}
+
+/// Run Molchanica's installer for one managed optional tool.
+///
+/// This blocks until the installer exits and is therefore intended to be called from a worker
+/// thread. Installer output is captured so a failed command can be reported in the UI without
+/// opening a separate terminal window.
+pub fn install(tool: Tool) -> io::Result<()> {
+    let spec = tool.spec();
+    if !spec.molchanica_managed {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "{} cannot be installed automatically. {}",
+                spec.name, spec.install_hint
+            ),
+        ));
+    }
+
+    let script = installer_script_path()?;
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ]);
+        // Keep PowerShell from opening a console window beside the in-app progress indicator.
+        command.creation_flags(0x0800_0000);
+        command.arg(&script).arg(spec.slug);
+        command
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let mut command = {
+        let mut command = Command::new("sh");
+        command.arg(&script).arg(spec.slug);
+        command
+    };
+
+    let output = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("unable to start the {} installer: {error}", spec.name),
+            )
+        })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        &stdout
+    } else {
+        &stderr
+    };
+    let detail = tail_lines(detail, 8, 2_048);
+    let detail = if detail.is_empty() {
+        format!("installer exited with {}", output.status)
+    } else {
+        detail
+    };
+
+    Err(io::Error::other(detail))
+}
+
+/// Estimate the space occupied by this tool inside Molchanica's managed data directory.
+///
+/// `None` means there are no managed files for the tool. This deliberately excludes upstream
+/// caches outside Molchanica's data root, and never follows symlinks while measuring.
+pub fn managed_disk_usage(tool: Tool) -> io::Result<Option<u64>> {
+    let spec = tool.spec();
+    if !spec.molchanica_managed {
+        return Ok(None);
+    }
+
+    let data_root = data_root().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "unable to determine Molchanica's data directory",
+        )
+    })?;
+    let mut found = false;
+    let mut bytes = 0_u64;
+    for path in managed_install_roots(tool, &data_root) {
+        if path.exists() {
+            found = true;
+            bytes = bytes.saturating_add(path_disk_usage(&path)?);
+        }
+    }
+
+    Ok(found.then_some(bytes))
+}
+
+/// Remove the files Molchanica installed for one managed optional tool.
+///
+/// Override paths and system installations are intentionally never touched. Every deletion target
+/// is reconstructed beneath [`data_root`] rather than taken from an environment variable.
+pub fn uninstall(tool: Tool) -> io::Result<()> {
+    let spec = tool.spec();
+    if !spec.molchanica_managed {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "{} is managed outside Molchanica and cannot be uninstalled here",
+                spec.name
+            ),
+        ));
+    }
+
+    let data_root = data_root().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "unable to determine Molchanica's data directory",
+        )
+    })?;
+    let roots = managed_install_roots(tool, &data_root);
+    if roots
+        .iter()
+        .any(|path| path == &data_root || !path.starts_with(&data_root))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to remove an unsafe path for {}", spec.name),
+        ));
+    }
+
+    let existing: Vec<_> = roots.into_iter().filter(|path| path.exists()).collect();
+    if existing.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no Molchanica-managed files were found for {}", spec.name),
+        ));
+    }
+
+    for path in existing {
+        let metadata = fs::symlink_metadata(&path)?;
+        let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        result.map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("unable to remove {}: {error}", path.display()),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn managed_install_roots(tool: Tool, data_root: &Path) -> Vec<PathBuf> {
+    let spec = tool.spec();
+    let mut roots = Vec::new();
+    if matches!(spec.kind, ToolKind::VenvScript | ToolKind::VenvPython) {
+        roots.push(data_root.join(format!("{}-venv", spec.slug)));
+    }
+    if let Some(subdir) = spec.bundle_subdir {
+        roots.push(data_root.join("tools").join(subdir));
+    }
+    roots
+}
+
+fn path_disk_usage(path: &Path) -> io::Result<u64> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || metadata.is_file() {
+        return Ok(metadata.len());
+    }
+
+    let mut bytes = 0_u64;
+    for entry in fs::read_dir(path)? {
+        bytes = bytes.saturating_add(path_disk_usage(&entry?.path())?);
+    }
+    Ok(bytes)
+}
+
+fn installer_script_path() -> io::Result<PathBuf> {
+    let filename = if cfg!(target_os = "windows") {
+        "install_tool.ps1"
+    } else {
+        "install_tool.sh"
+    };
+
+    let mut candidates = Vec::new();
+    if let Ok(directory) = env::current_dir() {
+        candidates.push(directory.join("install_scripts").join(filename));
+        candidates.push(directory.join(filename));
+    }
+    if let Some(directory) = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    {
+        candidates.push(directory.join("install_scripts").join(filename));
+        // Release archives may flatten install_scripts/ beside the executable.
+        candidates.push(directory.join(filename));
+    }
+
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .cloned()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "could not find {filename}; expected it in install_scripts/ or beside Molchanica"
+                ),
+            )
+        })
+}
+
+fn tail_lines(text: &str, max_lines: usize, max_chars: usize) -> String {
+    let lines: Vec<_> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let first = lines.len().saturating_sub(max_lines);
+    let tail = lines[first..].join("\n");
+    if tail.chars().count() <= max_chars {
+        tail
+    } else {
+        let start = tail
+            .char_indices()
+            .nth(tail.chars().count() - max_chars)
+            .map_or(0, |(index, _)| index);
+        format!("…{}", &tail[start..])
     }
 }
 
@@ -427,10 +670,13 @@ static REGISTRY: &[ToolSpec] = &[
 
 /// Molchanica's per-user data directory, where managed tools are installed.
 ///
-/// Matches the locations the install scripts write to. These are the platform conventions:
-/// `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, and `$XDG_DATA_HOME`
-/// (defaulting to `~/.local/share`) elsewhere.
+/// Matches the locations the install scripts write to. `MOLCHANICA_DATA_DIR` overrides the
+/// platform conventions: `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS,
+/// and `$XDG_DATA_HOME` (defaulting to `~/.local/share`) elsewhere.
 pub fn data_root() -> Option<PathBuf> {
+    if let Some(configured) = env::var_os("MOLCHANICA_DATA_DIR") {
+        return Some(PathBuf::from(configured));
+    }
     #[cfg(target_os = "windows")]
     let base = env::var_os("LOCALAPPDATA").map(PathBuf::from);
 
@@ -453,10 +699,9 @@ pub fn home_directory() -> Option<PathBuf> {
 
 /// Resolve a tool to an absolute path, or explain what to do about it.
 ///
-/// The override environment variable always wins, then the Molchanica-managed location, then
-/// `PATH`. Preferring the managed location over `PATH` is deliberate: a user who ran our installer
-/// should get the environment we built for them rather than an unrelated `pip install` that
-/// happens to be earlier on `PATH`.
+/// The override environment variable always wins, then the Molchanica-managed location. Native
+/// executables may additionally fall back to `PATH`; Python tools never do. A user who ran our
+/// installer must get the uv-managed interpreter we built rather than an unrelated `pip install`.
 pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
     let spec = tool.spec();
 
@@ -482,12 +727,9 @@ pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
             {
                 return Ok(found);
             }
-            // A `uv tool install` is the other way these console scripts commonly arrive.
-            for directory in uv_tool_bin_directories() {
-                if let Some(found) = executable_in(&directory, spec.executable) {
-                    return Ok(found);
-                }
-            }
+            // Deliberately no PATH fallback. Even a console launcher ultimately selects a Python
+            // interpreter, and ~/.local/bin may contain either a uv tool or a `pip --user` script.
+            return Err(not_found(spec));
         }
         ToolKind::VenvPython => {
             if let Some(root) = spec.venv_root()
@@ -513,11 +755,10 @@ pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
                     }
                 }
             }
+            if let Some(found) = find_on_path(spec.executable) {
+                return Ok(found);
+            }
         }
-    }
-
-    if let Some(found) = find_on_path(spec.executable) {
-        return Ok(found);
     }
 
     Err(not_found(spec))
@@ -533,6 +774,40 @@ pub fn bundle_root(tool: Tool) -> io::Result<PathBuf> {
                 "{} is not installed. {}",
                 tool.spec().name,
                 tool.spec().install_command()
+            ),
+        )
+    })
+}
+
+/// Resolve the interpreter in a named Molchanica uv environment.
+///
+/// This is used by adapters that are not currently exposed in the tool registry (ESMFold2 is
+/// compiled out today) so that re-enabling one cannot reintroduce a bare `python` lookup.
+#[allow(dead_code)]
+pub(crate) fn uv_managed_python(slug: &str, override_env: &str) -> io::Result<PathBuf> {
+    if let Some(configured) = env::var_os(override_env) {
+        let configured = PathBuf::from(configured);
+        if configured.is_file() {
+            return Ok(configured);
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "{override_env} points to {}, but that file does not exist",
+                configured.display()
+            ),
+        ));
+    }
+
+    let root = data_root()
+        .ok_or_else(|| io::Error::other("unable to determine Molchanica's data directory"))?
+        .join(format!("{slug}-venv"));
+    executable_in(&venv_bin(&root), "python").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "the uv-managed Python environment for {slug} was not found at {}",
+                root.display()
             ),
         )
     })
@@ -561,20 +836,6 @@ fn colocated_executable(name: &str) -> Option<PathBuf> {
 fn find_on_path(name: &str) -> Option<PathBuf> {
     env::var_os("PATH")
         .and_then(|path| env::split_paths(&path).find_map(|dir| executable_in(&dir, name)))
-}
-
-fn uv_tool_bin_directories() -> Vec<PathBuf> {
-    let mut directories = Vec::new();
-    if let Some(path) = env::var_os("UV_TOOL_BIN_DIR") {
-        directories.push(PathBuf::from(path));
-    }
-    if let Some(path) = env::var_os("XDG_BIN_HOME") {
-        directories.push(PathBuf::from(path));
-    }
-    if let Some(home) = home_directory() {
-        directories.push(home.join(".local/bin"));
-    }
-    directories
 }
 
 /// A file named `name` in `directory` that we could plausibly execute.
@@ -762,7 +1023,9 @@ pub fn check_all() -> Vec<ToolStatus> {
 /// Neither a nonzero exit nor stderr output is treated as failure: many CLIs answer a flag they
 /// don't recognize with a usage message and a nonzero status, and we match on the text either way.
 fn probe(executable: &Path, args: &[&str], timeout: Duration) -> io::Result<String> {
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    scrub_python_environment(&mut command);
+    let mut child = command
         .args(args)
         // Without this, a Python entry point can buffer its whole answer and look like a hang.
         .env("PYTHONUNBUFFERED", "1")
@@ -878,6 +1141,7 @@ impl Drop for ToolWorkspace {
 /// Unlike `structure_prediction::run_model_command`, which streams output for long predictions,
 /// this is for the seconds-scale runs the adapters here make.
 pub fn run_to_completion(command: &mut Command, tool_name: &str) -> io::Result<String> {
+    scrub_python_environment(command);
     let output = command
         .stdin(Stdio::null())
         .env("PYTHONUNBUFFERED", "1")
@@ -902,6 +1166,21 @@ pub fn run_to_completion(command: &mut Command, tool_name: &str) -> io::Result<S
         output.status,
         crate::util::truncate_str(detail, 4_096)
     )))
+}
+
+/// Keep activated virtualenvs, Conda, and user Python settings from leaking into a managed tool.
+/// Explicit venv interpreters and console-script launchers do not need activation.
+pub(crate) fn scrub_python_environment(command: &mut Command) {
+    for variable in [
+        "VIRTUAL_ENV",
+        "UV_PROJECT_ENVIRONMENT",
+        "CONDA_PREFIX",
+        "PYTHONHOME",
+        "PYTHONPATH",
+    ] {
+        command.env_remove(variable);
+    }
+    command.env("PYTHONNOUSERSITE", "1");
 }
 
 #[cfg(test)]
@@ -948,5 +1227,44 @@ mod tests {
                 assert_eq!(tool.spec().install_command(), tool.spec().install_hint);
             }
         }
+    }
+
+    #[test]
+    fn installer_error_summary_keeps_the_last_lines() {
+        let text = (0..12)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let summary = tail_lines(&text, 3, 2_048);
+        assert_eq!(summary, "line 9\nline 10\nline 11");
+    }
+
+    #[test]
+    fn installer_error_summary_respects_the_character_limit() {
+        assert_eq!(tail_lines("abcdefghij", 8, 4), "…ghij");
+    }
+
+    #[test]
+    fn managed_install_roots_stay_below_the_data_root() {
+        let root = Path::new("managed-data");
+        for tool in Tool::managed() {
+            let paths = managed_install_roots(tool, root);
+            assert!(
+                !paths.is_empty(),
+                "{} has no managed install path",
+                tool.spec().name
+            );
+            assert!(
+                paths
+                    .iter()
+                    .all(|path| path.starts_with(root) && path != root)
+            );
+        }
+    }
+
+    #[test]
+    fn unmanaged_tools_cannot_be_uninstalled_automatically() {
+        let error = uninstall(Tool::Orca).expect_err("ORCA must stay vendor-managed");
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 }

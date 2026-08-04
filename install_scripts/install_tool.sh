@@ -8,7 +8,7 @@
 #   ./install_tool.sh --list
 #
 # There is one script rather than one per tool because every one of them needs the same handful of
-# things: a Python of a particular version, an isolated virtual environment, a Torch build matching
+# things: a uv-managed Python of a particular version, an isolated virtual environment, a Torch build matching
 # whatever GPU is present, a download or two, and a check that the result actually runs. Writing
 # that six times, twice (once per platform), is how installers drift apart. The per-tool part is
 # the `install_<slug>` function at the bottom; everything above it is shared.
@@ -21,7 +21,7 @@
 # Optional overrides:
 #   MOLCHANICA_DATA_DIR=/path         where everything is installed
 #   MOLCHANICA_TORCH_BACKEND=auto|cpu|cu126
-#   MOLCHANICA_PYTHON=/path/to/python forces the interpreter used to build environments
+#   MOLCHANICA_UV=/path/to/uv         uses an existing uv executable
 
 set -eu
 
@@ -59,65 +59,87 @@ note() { printf '  %s\n' "$1"; }
 fail() { printf 'Error: %s\n' "$1" >&2; exit 1; }
 
 # --------------------------------------------------------------------------------------------
-# Python
+# uv and Python
 # --------------------------------------------------------------------------------------------
 
-# Whether $1 is a Python whose version is at least $2.$3 and, when $4 is given, below $4.$5.
-python_version_ok() {
-    "$1" -c "
-import sys
-lo = ($2, $3)
-hi = ${4:-99}, ${5:-0}
-raise SystemExit(0 if lo <= sys.version_info[:2] < hi else 1)
-" >/dev/null 2>&1
-}
+UV_EXECUTABLE=""
 
-# Print the first interpreter satisfying the version window, preferring newer.
-#
-# Named interpreters are tried before bare `python3` because a distribution's default is often
-# older than what it also ships; several of these tools care which minor version they get.
-find_python() {
-    min_major="$1"; min_minor="$2"; max_major="${3:-99}"; max_minor="${4:-0}"
+uv_works() { "$1" --version >/dev/null 2>&1; }
 
-    if [ -n "${MOLCHANICA_PYTHON:-}" ]; then
-        if python_version_ok "$MOLCHANICA_PYTHON" "$min_major" "$min_minor" "$max_major" "$max_minor"; then
-            printf '%s\n' "$MOLCHANICA_PYTHON"
-            return 0
-        fi
-        fail "MOLCHANICA_PYTHON is not a Python between $min_major.$min_minor and $max_major.$max_minor."
+# Locate uv, or install it into Molchanica's data directory with Astral's official standalone
+# installer. Keeping this path explicit matters for desktop launches, which do not read shell
+# profile PATH changes. uv itself needs neither Python nor Rust to be present.
+ensure_uv() {
+    [ -n "$UV_EXECUTABLE" ] && return 0
+
+    if [ -n "${MOLCHANICA_UV:-}" ]; then
+        uv_works "$MOLCHANICA_UV" || fail "MOLCHANICA_UV does not name a working uv executable."
+        UV_EXECUTABLE="$MOLCHANICA_UV"
+        return 0
     fi
 
-    for name in python3.13 python3.12 python3.11 python3.10 python3 python; do
-        if command -v "$name" >/dev/null 2>&1; then
-            candidate="$(command -v "$name")"
-            if python_version_ok "$candidate" "$min_major" "$min_minor" "$max_major" "$max_minor"; then
-                printf '%s\n' "$candidate"
-                return 0
-            fi
-        fi
-    done
-    return 1
+    managed_uv="$DATA_ROOT/uv-bin/uv"
+    if [ -x "$managed_uv" ] && uv_works "$managed_uv"; then
+        UV_EXECUTABLE="$managed_uv"
+        return 0
+    fi
+
+    if command -v uv >/dev/null 2>&1 && uv_works "$(command -v uv)"; then
+        UV_EXECUTABLE="$(command -v uv)"
+        return 0
+    fi
+
+    # Astral's default installer location is not always on PATH in a non-login shell.
+    fallback_uv="$HOME/.local/bin/uv"
+    if [ -x "$fallback_uv" ] && uv_works "$fallback_uv"; then
+        UV_EXECUTABLE="$fallback_uv"
+        return 0
+    fi
+
+    section "Installing uv"
+    mkdir -p "$DATA_ROOT/uv-bin"
+    if command -v curl >/dev/null 2>&1; then
+        curl -LsSf https://astral.sh/uv/install.sh \
+            | env UV_UNMANAGED_INSTALL="$DATA_ROOT/uv-bin" sh
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- https://astral.sh/uv/install.sh \
+            | env UV_UNMANAGED_INSTALL="$DATA_ROOT/uv-bin" sh
+    else
+        fail "uv is required, and neither curl nor wget is available to install it."
+    fi
+
+    uv_works "$managed_uv" || fail "Astral's installer completed, but uv was not found at $managed_uv."
+    UV_EXECUTABLE="$managed_uv"
 }
 
-# Create a clean environment for a tool. Always `--clear`: reusing one risks carrying over a
-# package set built for a different interpreter or a different Torch backend.
+uv_pip_install() {
+    slug="$1"
+    shift
+    ensure_uv
+    run_uv pip install --python "$(venv_python "$slug")" "$@"
+}
+
+# Neither an activated environment nor user Python settings should influence an explicitly
+# targeted uv operation. `UV_NO_MANAGED_PYTHON` is removed so it cannot contradict the required
+# `--managed-python` flag below.
+run_uv() {
+    ensure_uv
+    env -u VIRTUAL_ENV -u UV_PROJECT_ENVIRONMENT -u CONDA_PREFIX \
+        -u PYTHONHOME -u PYTHONPATH -u UV_PYTHON -u UV_NO_MANAGED_PYTHON \
+        "$UV_EXECUTABLE" "$@"
+}
+
+# Create a clean environment for a tool using an exact, uv-managed Python minor version. The
+# `--managed-python` flag is important: without it, uv may reuse a matching system interpreter.
 make_venv() {
-    slug="$1"; min_major="$2"; min_minor="$3"; max_major="${4:-99}"; max_minor="${5:-0}"
-
-    python="$(find_python "$min_major" "$min_minor" "$max_major" "$max_minor" || true)"
-    if [ -z "$python" ]; then
-        window="$min_major.$min_minor or newer"
-        [ "$max_major" != "99" ] && window="$min_major.$min_minor up to (not including) $max_major.$max_minor"
-        fail "$slug needs Python $window, which was not found. Install it, or set MOLCHANICA_PYTHON."
-    fi
-
+    slug="$1"; python_version="$2"
+    ensure_uv
     target="$(venv_dir "$slug")"
-    note "Using $("$python" --version 2>&1)"
-    note "Creating $target"
+    note "Creating $target with uv-managed Python $python_version"
     mkdir -p "$(dirname "$target")"
-    "$python" -m venv --clear "$target"
+    run_uv venv --managed-python --python "$python_version" --clear "$target"
     [ -x "$(venv_python "$slug")" ] || fail "the virtual environment at $target has no interpreter."
-    "$(venv_python "$slug")" -m pip install --upgrade pip >/dev/null
+    note "Using $("$(venv_python "$slug")" --version 2>&1)"
 }
 
 # --------------------------------------------------------------------------------------------
@@ -204,9 +226,9 @@ install_torch() {
     slug="$1"; version="$2"; backend="$3"
     if [ "$(uname -s)" = "Darwin" ]; then
         # macOS wheels are only on PyPI; the CPU index has no darwin builds.
-        "$(venv_python "$slug")" -m pip install "torch==$version"
+        uv_pip_install "$slug" "torch==$version"
     else
-        "$(venv_python "$slug")" -m pip install "torch==$version" \
+        uv_pip_install "$slug" "torch==$version" \
             --index-url "$(torch_index_url "$backend")"
     fi
 }
@@ -263,11 +285,11 @@ clone_or_update() {
 # Per-tool installers
 # --------------------------------------------------------------------------------------------
 
-# OpenDDE: all-atom co-folding. Python >= 3.11.
+# OpenDDE: all-atom co-folding. OpenDDE 1.0.x supports Python 3.11 through 3.13.
 install_opendde() {
     section "OpenDDE"
     select_torch_backend
-    make_venv opendde 3 11
+    make_venv opendde 3.13
 
     install_backend_opendde() {
         backend="$1"
@@ -279,14 +301,14 @@ install_opendde() {
         fi
         # OpenDDE pins this trio; the index decides CPU or CUDA.
         if [ "$(uname -s)" = "Darwin" ]; then
-            "$(venv_python opendde)" -m pip install \
+            uv_pip_install opendde \
                 "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" || return 1
         else
-            "$(venv_python opendde)" -m pip install \
+            uv_pip_install opendde \
                 "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" \
                 --index-url "$(torch_index_url "$backend")" || return 1
         fi
-        "$(venv_python opendde)" -m pip install "$package" || return 1
+        uv_pip_install opendde "$package" || return 1
     }
 
     if [ "$TORCH_BACKEND" = "cu126" ]; then
@@ -297,7 +319,7 @@ install_opendde() {
         else
             note "CUDA installation or runtime verification failed; rebuilding for CPU."
             TORCH_BACKEND="cpu"
-            make_venv opendde 3 11
+            make_venv opendde 3.13
             install_backend_opendde cpu
         fi
     else
@@ -353,7 +375,7 @@ install_boltz2() {
     select_torch_backend
     # The upper bound is Boltz's own `requires-python`, and is why this cannot share OpenDDE's
     # environment.
-    make_venv boltz2 3 10 3 13
+    make_venv boltz2 3.12
 
     install_torch boltz2 2.7.1 "$TORCH_BACKEND"
 
@@ -361,12 +383,12 @@ install_boltz2() {
     # requested only where it can resolve. Plain `boltz` is a pure-Python wheel and works
     # everywhere, GPU included — the extra is a speed-up, not a requirement.
     if [ "$TORCH_BACKEND" = "cu126" ] && [ "$(uname -s)" = "Linux" ]; then
-        if ! "$(venv_python boltz2)" -m pip install "boltz[cuda]~=2.2.1"; then
+        if ! uv_pip_install boltz2 "boltz[cuda]~=2.2.1"; then
             note "The CUDA extra did not resolve; installing Boltz without it."
-            "$(venv_python boltz2)" -m pip install "boltz~=2.2.1"
+            uv_pip_install boltz2 "boltz~=2.2.1"
         fi
     else
-        "$(venv_python boltz2)" -m pip install "boltz~=2.2.1"
+        uv_pip_install boltz2 "boltz~=2.2.1"
     fi
 
     boltz="$(venv_script boltz2 boltz)"
@@ -386,9 +408,9 @@ install_boltz2() {
 install_mpnn_runtime() {
     slug="$1"
     select_torch_backend
-    make_venv "$slug" 3 10 3 13
+    make_venv "$slug" 3.12
     install_torch "$slug" 2.7.1 "$TORCH_BACKEND"
-    "$(venv_python "$slug")" -m pip install "numpy<2"
+    uv_pip_install "$slug" "numpy<2"
     if [ "$TORCH_BACKEND" = "cu126" ]; then
         torch_cuda_works "$slug" || note "Warning: Torch cannot reach the GPU; designs will run on CPU."
     fi
@@ -551,9 +573,9 @@ install_igblast_databases() {
 install_anarcii() {
     section "ANARCII"
     select_torch_backend
-    make_venv anarcii 3 11
+    make_venv anarcii 3.12
     install_torch anarcii 2.7.1 "$TORCH_BACKEND"
-    "$(venv_python anarcii)" -m pip install anarcii
+    uv_pip_install anarcii anarcii
 
     note "Verifying"
     "$(venv_python anarcii)" -c 'import anarcii; print("anarcii", anarcii.__version__)' \

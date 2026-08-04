@@ -16,7 +16,7 @@ param(
 # Optional overrides:
 #   $env:MOLCHANICA_DATA_DIR         where everything is installed
 #   $env:MOLCHANICA_TORCH_BACKEND    auto | cpu | cu126
-#   $env:MOLCHANICA_PYTHON           forces the interpreter used to build environments
+#   $env:MOLCHANICA_UV               uses an existing uv executable
 
 $ErrorActionPreference = "Stop"
 
@@ -86,74 +86,114 @@ function Test-Command {
 }
 
 # ---------------------------------------------------------------------------------------------
-# Python
+# uv and Python
 # ---------------------------------------------------------------------------------------------
 
-function Test-PythonVersion {
+$script:UvExecutable = $null
+
+# Locate uv, or install it into Molchanica's data directory with Astral's official standalone
+# installer. The explicit managed path works even when a desktop launch does not inherit PATH.
+function Get-Uv {
+    if ($script:UvExecutable) { return $script:UvExecutable }
+
+    if ($env:MOLCHANICA_UV) {
+        if (-not (Test-Command $env:MOLCHANICA_UV "--version")) {
+            throw "MOLCHANICA_UV does not name a working uv executable."
+        }
+        $script:UvExecutable = $env:MOLCHANICA_UV
+        return $script:UvExecutable
+    }
+
+    $managedUv = Join-Path $DataRoot "uv-bin\uv.exe"
+    if ((Test-Path -LiteralPath $managedUv -PathType Leaf) -and (Test-Command $managedUv "--version")) {
+        $script:UvExecutable = $managedUv
+        return $script:UvExecutable
+    }
+
+    $command = Get-Command uv -ErrorAction SilentlyContinue
+    if ($null -ne $command -and (Test-Command $command.Source "--version")) {
+        $script:UvExecutable = $command.Source
+        return $script:UvExecutable
+    }
+
+    # Astral's default installer location is not always on PATH in a non-login shell.
+    $fallbackUv = Join-Path $HOME ".local\bin\uv.exe"
+    if ((Test-Path -LiteralPath $fallbackUv -PathType Leaf) -and (Test-Command $fallbackUv "--version")) {
+        $script:UvExecutable = $fallbackUv
+        return $script:UvExecutable
+    }
+
+    Write-Section "Installing uv"
+    $uvDirectory = Join-Path $DataRoot "uv-bin"
+    New-Item -ItemType Directory -Force $uvDirectory | Out-Null
+    $previousInstall = [Environment]::GetEnvironmentVariable("UV_UNMANAGED_INSTALL", "Process")
+    try {
+        $env:UV_UNMANAGED_INSTALL = $uvDirectory
+        Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+    } finally {
+        if ($null -eq $previousInstall) {
+            Remove-Item Env:UV_UNMANAGED_INSTALL -ErrorAction SilentlyContinue
+        } else {
+            $env:UV_UNMANAGED_INSTALL = $previousInstall
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $managedUv -PathType Leaf) -or
+        -not (Test-Command $managedUv "--version")) {
+        throw "Astral's installer completed, but uv was not found at $managedUv."
+    }
+    $script:UvExecutable = $managedUv
+    return $script:UvExecutable
+}
+
+# Run uv without allowing an activated venv, Conda, or user Python-selection variables to redirect
+# it. In particular, UV_NO_MANAGED_PYTHON must not contradict New-ToolVenv's guarantee below.
+function Invoke-UvChecked {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    $names = @(
+        "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "CONDA_PREFIX", "PYTHONHOME", "PYTHONPATH",
+        "UV_PYTHON", "UV_NO_MANAGED_PYTHON"
+    )
+    $previous = @{}
+    foreach ($name in $names) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        [Environment]::SetEnvironmentVariable($name, $null, "Process")
+    }
+    try {
+        Invoke-Checked (Get-Uv) @Arguments
+    } finally {
+        foreach ($name in $names) {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name], "Process")
+        }
+    }
+}
+
+function Install-PythonPackages {
     param(
-        [Parameter(Mandatory = $true)][string]$Executable,
-        [string[]]$PrefixArguments = @(),
-        [int]$MinMajor = 3, [int]$MinMinor = 11,
-        [int]$MaxMajor = 99, [int]$MaxMinor = 0
+        [Parameter(Mandatory = $true)][string]$Slug,
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
     )
-    $probe = "import sys; raise SystemExit(0 if ($MinMajor,$MinMinor) <= sys.version_info[:2] < ($MaxMajor,$MaxMinor) else 1)"
-    return (Test-Command $Executable @($PrefixArguments + @("-c", $probe)))
+    $uvArguments = @("pip", "install", "--python", (Get-VenvPython $Slug)) + $Arguments
+    Invoke-UvChecked @uvArguments
 }
 
-# Find an interpreter in the requested version window.
-#
-# The `py` launcher is asked for specific minor versions first: on Windows it is the reliable way
-# to reach a version other than whichever one happens to be first on PATH, and several of these
-# tools need a particular one.
-function Find-Python {
-    param([int]$MinMajor = 3, [int]$MinMinor = 11, [int]$MaxMajor = 99, [int]$MaxMinor = 0)
-
-    if ($env:MOLCHANICA_PYTHON) {
-        if (Test-PythonVersion $env:MOLCHANICA_PYTHON @() $MinMajor $MinMinor $MaxMajor $MaxMinor) {
-            return [PSCustomObject]@{ Executable = $env:MOLCHANICA_PYTHON; PrefixArguments = @() }
-        }
-        throw "MOLCHANICA_PYTHON is not a Python between $MinMajor.$MinMinor and $MaxMajor.$MaxMinor."
-    }
-
-    $candidates = @(
-        @{ Name = "py"; PrefixArguments = @("-3.13") },
-        @{ Name = "py"; PrefixArguments = @("-3.12") },
-        @{ Name = "py"; PrefixArguments = @("-3.11") },
-        @{ Name = "py"; PrefixArguments = @("-3.10") },
-        @{ Name = "py"; PrefixArguments = @("-3") },
-        @{ Name = "python"; PrefixArguments = @() },
-        @{ Name = "python3"; PrefixArguments = @() }
-    )
-    foreach ($candidate in $candidates) {
-        $command = Get-Command $candidate.Name -ErrorAction SilentlyContinue
-        if ($null -ne $command -and
-            (Test-PythonVersion $command.Source $candidate.PrefixArguments $MinMajor $MinMinor $MaxMajor $MaxMinor)) {
-            return [PSCustomObject]@{ Executable = $command.Source; PrefixArguments = $candidate.PrefixArguments }
-        }
-    }
-    $window = if ($MaxMajor -eq 99) { "$MinMajor.$MinMinor or newer" } else { "$MinMajor.$MinMinor up to (not including) $MaxMajor.$MaxMinor" }
-    throw "Python $window is required and was not found. Install it, or set MOLCHANICA_PYTHON."
-}
-
-# Always `--clear`: reusing an environment risks carrying over packages built for a different
-# interpreter or a different Torch backend.
+# Create a clean environment for a tool using an exact, uv-managed Python minor version. The
+# `--managed-python` flag prevents uv from silently selecting a matching system interpreter.
 function New-ToolVenv {
-    param([string]$Slug, [int]$MinMajor = 3, [int]$MinMinor = 11, [int]$MaxMajor = 99, [int]$MaxMinor = 0)
+    param([string]$Slug, [string]$PythonVersion)
 
-    $python = Find-Python $MinMajor $MinMinor $MaxMajor $MaxMinor
     $target = Get-VenvDir $Slug
-    $version = (& $python.Executable @($python.PrefixArguments + @("--version")) 2>&1 | Out-String).Trim()
-    Write-Note "Using $version"
-    Write-Note "Creating $target"
+    Write-Note "Creating $target with uv-managed Python $PythonVersion"
 
     New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
-    Invoke-Checked $python.Executable @($python.PrefixArguments + @("-m", "venv", "--clear", $target))
+    Invoke-UvChecked "venv" "--managed-python" "--python" $PythonVersion "--clear" $target
 
     $venvPython = Get-VenvPython $Slug
     if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
         throw "The virtual environment at $target has no interpreter."
     }
-    Invoke-Checked $venvPython "-m" "pip" "install" "--upgrade" "pip"
+    $version = (& $venvPython "--version" 2>&1 | Out-String).Trim()
+    Write-Note "Using $version"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -227,7 +267,7 @@ function Get-TorchIndexUrl {
 # unpinned `pip install torch` takes whatever default wheel PyPI serves.
 function Install-Torch {
     param([string]$Slug, [string]$Version, [string]$Backend)
-    Invoke-Checked (Get-VenvPython $Slug) "-m" "pip" "install" "torch==$Version" `
+    Install-PythonPackages $Slug "torch==$Version" `
         "--index-url" (Get-TorchIndexUrl $Backend)
 }
 
@@ -287,19 +327,24 @@ function Sync-Checkout {
 function Install-Opendde {
     Write-Section "OpenDDE"
     $backend = Select-TorchBackend
-    New-ToolVenv "opendde" 3 11
+    New-ToolVenv "opendde" "3.13"
 
     $install = {
         param([string]$Backend)
         $package = if ($Backend -eq "cu126") { "opendde[gpu]" } else { "opendde" }
         Write-Note "Installing $package with the $Backend PyTorch backend"
         $python = Get-VenvPython "opendde"
-        # OpenDDE pins this trio; the index decides CPU or CUDA.
-        & $python "-m" "pip" "install" "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" `
-            "--index-url" (Get-TorchIndexUrl $Backend) | Out-Host
-        if ($LASTEXITCODE -ne 0) { return $false }
-        & $python "-m" "pip" "install" $package | Out-Host
-        return $LASTEXITCODE -eq 0
+        try {
+            # OpenDDE pins this trio; the index decides CPU or CUDA.
+            Invoke-UvChecked "pip" "install" "--python" $python "torch==2.7.1" `
+                "torchvision==0.22.1" "torchaudio==2.7.1" `
+                "--index-url" (Get-TorchIndexUrl $Backend)
+            Invoke-UvChecked "pip" "install" "--python" $python $package
+            return $true
+        } catch {
+            Write-Warning $_
+            return $false
+        }
     }
 
     $installed = & $install $backend
@@ -310,7 +355,7 @@ function Install-Opendde {
     if (-not $installed -and $backend -eq "cu126") {
         Write-Warning "CUDA installation or runtime verification failed; rebuilding for CPU."
         $backend = "cpu"
-        New-ToolVenv "opendde" 3 11
+        New-ToolVenv "opendde" "3.13"
         $installed = & $install "cpu"
     }
     if (-not $installed) { throw "Unable to install the OpenDDE $backend backend." }
@@ -373,13 +418,13 @@ function Install-Boltz2 {
     $backend = Select-TorchBackend
     # The upper bound is Boltz's own requires-python, and is why this cannot share OpenDDE's
     # environment.
-    New-ToolVenv "boltz2" 3 10 3 13
+    New-ToolVenv "boltz2" "3.12"
     Install-Torch "boltz2" "2.7.1" $backend
 
     # The [cuda] extra pulls cuequivariance wheels published for Linux only, so Windows always
     # takes the plain package. That is a speed-up forgone, not a capability: the pure-Python wheel
     # still uses the GPU through Torch.
-    Invoke-Checked (Get-VenvPython "boltz2") "-m" "pip" "install" "boltz~=2.2.1"
+    Install-PythonPackages "boltz2" "boltz~=2.2.1"
 
     $boltz = Get-VenvScript "boltz2" "boltz"
     if (-not (Test-Path -LiteralPath $boltz -PathType Leaf)) {
@@ -400,9 +445,9 @@ function Install-Boltz2 {
 function Install-MpnnRuntime {
     param([string]$Slug)
     $backend = Select-TorchBackend
-    New-ToolVenv $Slug 3 10 3 13
+    New-ToolVenv $Slug "3.12"
     Install-Torch $Slug "2.7.1" $backend
-    Invoke-Checked (Get-VenvPython $Slug) "-m" "pip" "install" "numpy<2"
+    Install-PythonPackages $Slug "numpy<2"
     if ($backend -eq "cu126" -and -not (Test-TorchCuda $Slug)) {
         Write-Warning "Torch cannot reach the GPU; designs will run on CPU."
     }
@@ -571,9 +616,9 @@ function Install-IgblastDatabases {
 function Install-Anarcii {
     Write-Section "ANARCII"
     $backend = Select-TorchBackend
-    New-ToolVenv "anarcii" 3 11
+    New-ToolVenv "anarcii" "3.12"
     Install-Torch "anarcii" "2.7.1" $backend
-    Invoke-Checked (Get-VenvPython "anarcii") "-m" "pip" "install" "anarcii"
+    Install-PythonPackages "anarcii" "anarcii"
 
     Write-Note "Verifying"
     Invoke-Checked (Get-VenvPython "anarcii") "-c" 'import anarcii; print("anarcii", anarcii.__version__)'

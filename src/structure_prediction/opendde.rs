@@ -605,12 +605,12 @@ pub(super) fn predict_structure(
     load_prediction(&output_path, ff_map)
 }
 
-/// Locate OpenDDE in a Molchanica-managed environment or on `PATH`.
+/// Locate OpenDDE in its Molchanica-managed uv environment.
 ///
-/// This is now the registry's generic resolution — override variable, then the managed virtual
-/// environment, then a `uv tool` location, then `PATH` — which every tool shares. It is kept as a
-/// named function here because `MOLCHANICA_OPENDDE_EXECUTABLE` and `OPENDDE_VENV_DIR` are
-/// documented, and the registry entry preserves both.
+/// This is now the registry's generic resolution — explicit override, then the managed uv
+/// environment, with no bare `PATH` fallback. It is kept as a named function here because
+/// `MOLCHANICA_OPENDDE_EXECUTABLE` and `OPENDDE_VENV_DIR` are documented, and the registry entry
+/// preserves both.
 pub(crate) fn find_executable() -> io::Result<PathBuf> {
     external_tools::find_executable(Tool::OpenDde)
 }
