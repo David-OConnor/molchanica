@@ -183,9 +183,7 @@ impl Entry {
     /// The ligand file to prefer. SDF first: it carries explicit bond orders, whereas the Mol2
     /// files in PDBbind carry Sybyl atom types that have to be mapped back.
     pub fn ligand(&self) -> Option<&Path> {
-        self.ligand_sdf
-            .as_deref()
-            .or(self.ligand_mol2.as_deref())
+        self.ligand_sdf.as_deref().or(self.ligand_mol2.as_deref())
     }
 
     /// The structure to load: the pocket where one exists, since the full protein is usually far
@@ -348,14 +346,16 @@ pub fn load_index(root: &Path) -> io::Result<HashMap<String, Affinity>> {
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with("INDEX") && name.contains("_data")
-                })
+                .is_some_and(|name| name.starts_with("INDEX") && name.contains("_data"))
         })
         .collect();
     // Refined before general, so the curated measurement is the one that lands.
     paths.sort_by_key(|path| {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
         (!name.contains("refined"), name)
     });
 

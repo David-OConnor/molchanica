@@ -107,7 +107,8 @@ impl Linear {
             .for_each(|(row_index, out_row)| {
                 let in_row = &input.data[row_index * in_features..(row_index + 1) * in_features];
                 for (out_index, value) in out_row.iter_mut().enumerate() {
-                    let weight_row = &self.weight[out_index * in_features..(out_index + 1) * in_features];
+                    let weight_row =
+                        &self.weight[out_index * in_features..(out_index + 1) * in_features];
                     let mut sum = match &self.bias {
                         Some(bias) => bias[out_index],
                         None => 0.0,
@@ -319,20 +320,17 @@ impl NeighborGraph {
         let k = k.min(length);
         let mut indices = vec![0usize; length * k];
 
-        indices
-            .par_chunks_mut(k)
-            .enumerate()
-            .for_each(|(i, row)| {
-                let mut distances: Vec<(f32, usize)> = (0..length)
-                    .map(|j| (distance(backbone.ca[i], backbone.ca[j]), j))
-                    .collect();
-                // Ties broken by index so the graph is deterministic, which upstream's `topk`
-                // also is; without it two runs on the same structure could differ.
-                distances.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-                for (slot, (_, j)) in row.iter_mut().zip(distances) {
-                    *slot = j;
-                }
-            });
+        indices.par_chunks_mut(k).enumerate().for_each(|(i, row)| {
+            let mut distances: Vec<(f32, usize)> = (0..length)
+                .map(|j| (distance(backbone.ca[i], backbone.ca[j]), j))
+                .collect();
+            // Ties broken by index so the graph is deterministic, which upstream's `topk`
+            // also is; without it two runs on the same structure could differ.
+            distances.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            for (slot, (_, j)) in row.iter_mut().zip(distances) {
+                *slot = j;
+            }
+        });
 
         Self { indices, k }
     }
@@ -471,13 +469,16 @@ fn concat(parts: &[&Matrix]) -> Matrix {
     let rows = parts[0].rows;
     let cols: usize = parts.iter().map(|part| part.cols).sum();
     let mut out = Matrix::zeros(rows, cols);
-    out.data.par_chunks_mut(cols).enumerate().for_each(|(row, slot)| {
-        let mut offset = 0;
-        for part in parts {
-            slot[offset..offset + part.cols].copy_from_slice(part.row(row));
-            offset += part.cols;
-        }
-    });
+    out.data
+        .par_chunks_mut(cols)
+        .enumerate()
+        .for_each(|(row, slot)| {
+            let mut offset = 0;
+            for part in parts {
+                slot[offset..offset + part.cols].copy_from_slice(part.row(row));
+                offset += part.cols;
+            }
+        });
     out
 }
 
@@ -547,11 +548,10 @@ pub fn forward(weights: &ProteinMpnnWeights, backbone: &Backbone) -> io::Result<
 
     // Features → edge embedding → LayerNorm → W_e.
     let raw = edge_features(backbone, &graph);
-    let positional = weights.positional_embedding.forward(&slice_columns(
-        &raw,
-        0,
-        POSITIONAL_EMBEDDING_INPUT,
-    ));
+    let positional =
+        weights
+            .positional_embedding
+            .forward(&slice_columns(&raw, 0, POSITIONAL_EMBEDDING_INPUT));
     let rbf_part = slice_columns(&raw, POSITIONAL_EMBEDDING_INPUT, raw.cols);
     let embedded = weights
         .edge_embedding
@@ -719,7 +719,12 @@ impl TensorFile {
             Ok(values.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
         };
         let integers = |name: &str| -> io::Result<Vec<i32>> {
-            Ok(self.take(name)?.1.iter().map(|value| *value as i32).collect())
+            Ok(self
+                .take(name)?
+                .1
+                .iter()
+                .map(|value| *value as i32)
+                .collect())
         };
 
         Ok(Backbone {
@@ -751,7 +756,10 @@ impl TensorFile {
         if shape.len() != 2 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("'{prefix}.weight' should be a matrix, but has rank {}", shape.len()),
+                format!(
+                    "'{prefix}.weight' should be a matrix, but has rank {}",
+                    shape.len()
+                ),
             ));
         }
         let bias = if expect_bias {
@@ -884,7 +892,11 @@ fn validate_shapes(weights: &ProteinMpnnWeights) -> io::Result<()> {
         POSITIONAL_EMBEDDING,
     )?;
     expect("the hidden width", weights.w_e.out_features, HIDDEN)?;
-    expect("the output alphabet size", weights.w_out.out_features, ALPHABET.len())?;
+    expect(
+        "the output alphabet size",
+        weights.w_out.out_features,
+        ALPHABET.len(),
+    )?;
     // The encoder concatenates [node, edge, neighbour node]; the decoder additionally leaves room
     // for the sequence embedding this pass does not use.
     expect(
@@ -904,7 +916,12 @@ fn validate_shapes(weights: &ProteinMpnnWeights) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    fn linear(out_features: usize, in_features: usize, weight: Vec<f32>, bias: Option<Vec<f32>>) -> Linear {
+    fn linear(
+        out_features: usize,
+        in_features: usize,
+        weight: Vec<f32>,
+        bias: Option<Vec<f32>>,
+    ) -> Linear {
         Linear {
             in_features,
             out_features,
@@ -1038,7 +1055,10 @@ mod tests {
         let features = edge_features(&backbone, &graph);
 
         assert_eq!(features.rows, 4 * 4);
-        assert_eq!(features.cols, POSITIONAL_EMBEDDING_INPUT + NUM_ATOM_PAIRS * NUM_RBF);
+        assert_eq!(
+            features.cols,
+            POSITIONAL_EMBEDDING_INPUT + NUM_ATOM_PAIRS * NUM_RBF
+        );
         // 66 + 400 = 466 raw, which the two embeddings reduce to 16 + 400 = 416.
         assert_eq!(features.cols, 466);
         assert_eq!(POSITIONAL_EMBEDDING + NUM_ATOM_PAIRS * NUM_RBF, 416);
@@ -1058,7 +1078,10 @@ mod tests {
         // tolerance here is looser — that is a property of single precision, and PyTorch's own
         // f32 log_softmax loses the same digits.
         let total: f32 = log_probs[3..].iter().map(|value| value.exp()).sum();
-        assert!((total - 1.0).abs() < 1e-3, "large-logit row summed to {total}");
+        assert!(
+            (total - 1.0).abs() < 1e-3,
+            "large-logit row summed to {total}"
+        );
         assert!((log_probs[3] - (1.0f32 / 3.0).ln()).abs() < 1e-3);
     }
 
@@ -1081,7 +1104,10 @@ mod tests {
 
         let joined = concat(&[&expanded, &gathered]);
         assert_eq!(joined.cols, 4);
-        assert_eq!(joined.row(3), [1.0, 1.0, nodes.row(neighbor)[0], nodes.row(neighbor)[1]]);
+        assert_eq!(
+            joined.row(3),
+            [1.0, 1.0, nodes.row(neighbor)[0], nodes.row(neighbor)[1]]
+        );
     }
 
     #[test]

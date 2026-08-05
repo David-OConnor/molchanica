@@ -1,8 +1,8 @@
 pub mod external_tools;
 pub mod ff_params;
 pub mod mol_db;
-pub mod protein_design;
 pub mod pharmacophore;
+pub mod protein_design;
 pub(in crate::ui) mod rama_plot;
 pub mod recent_files;
 pub(crate) mod structure_pred;

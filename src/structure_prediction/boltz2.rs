@@ -183,9 +183,7 @@ pub fn predict(
         if !is_ligand {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!(
-                    "affinity can only be predicted for a ligand chain; '{binder}' is not one"
-                ),
+                format!("affinity can only be predicted for a ligand chain; '{binder}' is not one"),
             ));
         }
     }
@@ -249,7 +247,10 @@ pub(super) fn predict_structure_from_aas(
     control: &PredictionControl,
 ) -> io::Result<MoleculePeptide> {
     let sequence = amino_acid_sequence(aas)?;
-    let name: String = format!("boltz_pred_{}", sequence.chars().take(5).collect::<String>());
+    let name: String = format!(
+        "boltz_pred_{}",
+        sequence.chars().take(5).collect::<String>()
+    );
     let request = OpenDdeRequest::new(name, vec![OpenDdeEntity::protein_sequence("A", sequence)]);
     predict_structure(&request, ff_map, control)
 }
@@ -260,7 +261,10 @@ pub(super) fn predict_structure_from_dna(
     control: &PredictionControl,
 ) -> io::Result<MoleculePeptide> {
     let sequence = dna_sequence(nts)?;
-    let name: String = format!("boltz_pred_{}", sequence.chars().take(5).collect::<String>());
+    let name: String = format!(
+        "boltz_pred_{}",
+        sequence.chars().take(5).collect::<String>()
+    );
     let request = OpenDdeRequest::new(name, vec![OpenDdeEntity::dna_sequence("D", sequence)]);
     predict_structure(&request, ff_map, control)
 }
@@ -325,7 +329,9 @@ fn build_yaml(request: &OpenDdeRequest, options: &BoltzOptions) -> io::Result<St
                     .ok_or_else(|| {
                         io::Error::new(
                             io::ErrorKind::InvalidInput,
-                            format!("covalent bond references entity {index}, which does not exist"),
+                            format!(
+                                "covalent bond references entity {index}, which does not exist"
+                            ),
                         )
                     })
             };
@@ -356,7 +362,10 @@ fn build_yaml(request: &OpenDdeRequest, options: &BoltzOptions) -> io::Result<St
 /// `FILE_` reference — and only the first two have Boltz equivalents.
 fn ligand_body(value: &str) -> io::Result<String> {
     let value = value.trim();
-    if let Some(code) = value.strip_prefix("CCD_").or_else(|| value.strip_prefix("ccd_")) {
+    if let Some(code) = value
+        .strip_prefix("CCD_")
+        .or_else(|| value.strip_prefix("ccd_"))
+    {
         return Ok(format!("      ccd: {}\n", code.to_ascii_uppercase()));
     }
     if value.to_ascii_uppercase().starts_with("FILE_") {
@@ -443,7 +452,9 @@ mod tests {
         let yaml = build_yaml(&request(), &BoltzOptions::default()).expect("should render");
 
         assert!(yaml.starts_with("version: 1\nsequences:\n"));
-        assert!(yaml.contains("  - protein:\n      id: A\n      sequence: ACDEFG\n      msa: empty\n"));
+        assert!(
+            yaml.contains("  - protein:\n      id: A\n      sequence: ACDEFG\n      msa: empty\n")
+        );
         // Nothing should have been sent anywhere, and no affinity block was requested.
         assert!(!yaml.contains("properties"));
     }

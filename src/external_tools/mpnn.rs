@@ -405,7 +405,11 @@ fn missing_weights(path: &Path, tool: Tool) -> io::Error {
 /// Both entry points write `<out_folder>/seqs/<input stem>.fa`.
 fn find_output_fasta(output_dir: &Path) -> io::Result<PathBuf> {
     let seqs = output_dir.join("seqs");
-    let directory = if seqs.is_dir() { seqs } else { output_dir.to_path_buf() };
+    let directory = if seqs.is_dir() {
+        seqs
+    } else {
+        output_dir.to_path_buf()
+    };
 
     fs::read_dir(&directory)?
         .flatten()

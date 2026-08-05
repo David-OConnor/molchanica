@@ -286,10 +286,7 @@ pub struct PositionMetadata {
 /// Scan every position of a peptide in one forward pass.
 ///
 /// Blocking and compute-heavy — seconds for a few hundred residues — so run it on a worker thread.
-pub fn scan(
-    mol: &MoleculePeptide,
-    weights: &ProteinMpnnWeights,
-) -> io::Result<DdgScan> {
+pub fn scan(mol: &MoleculePeptide, weights: &ProteinMpnnWeights) -> io::Result<DdgScan> {
     let (backbone, metadata) = backbone_from_peptide(mol);
     if backbone.is_empty() {
         return Err(io::Error::new(
@@ -521,9 +518,6 @@ mod tests {
         let mut row = [-3.0f32; 21];
         row[alphabet_index(AminoAcid::Ala).unwrap()] = -1.0;
         let scan = build_scan(&log_probs(vec![row]), &metadata(&[AminoAcid::Ala]));
-        assert_eq!(
-            scan.positions[0].mutation_label(AminoAcid::Gly),
-            "A10G"
-        );
+        assert_eq!(scan.positions[0].mutation_label(AminoAcid::Gly), "A10G");
     }
 }

@@ -190,7 +190,10 @@ impl NumberedChain {
     /// Whether this is a heavy or heavy-equivalent chain, which decides Kabat/Chothia boundaries.
     pub fn is_heavy(&self) -> bool {
         matches!(
-            self.chain_type.as_deref().map(str::to_ascii_uppercase).as_deref(),
+            self.chain_type
+                .as_deref()
+                .map(str::to_ascii_uppercase)
+                .as_deref(),
             Some("H" | "B" | "D")
         )
     }
@@ -354,7 +357,10 @@ pub fn number(sequences: &[String], options: &NumberingOptions) -> io::Result<Ve
     )?;
 
     let mut command = Command::new(&python);
-    command.arg(&bridge_path).arg(&request_path).arg(&response_path);
+    command
+        .arg(&bridge_path)
+        .arg(&request_path)
+        .arg(&response_path);
     run_to_completion(&mut command, "ANARCII")?;
 
     let response = fs::read_to_string(&response_path).map_err(|error| {
@@ -387,9 +393,10 @@ pub fn number_amino_acids(
         ));
     }
     let sequence: String = aas.iter().map(|aa| aa.to_str(AaIdent::OneLetter)).collect();
-    number(&[sequence], options)?.into_iter().next().ok_or_else(|| {
-        io::Error::other("ANARCII returned no result for the requested chain")
-    })
+    number(&[sequence], options)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| io::Error::other("ANARCII returned no result for the requested chain"))
 }
 
 fn parse_response(response: &str, scheme: NumberingScheme) -> io::Result<Vec<NumberedChain>> {
@@ -402,7 +409,10 @@ fn parse_response(response: &str, scheme: NumberingScheme) -> io::Result<Vec<Num
         )
     })?;
 
-    entries.iter().map(|entry| parse_chain(entry, scheme)).collect()
+    entries
+        .iter()
+        .map(|entry| parse_chain(entry, scheme))
+        .collect()
 }
 
 fn parse_chain(entry: &Value, requested: NumberingScheme) -> io::Result<NumberedChain> {
@@ -594,7 +604,8 @@ mod tests {
 
     #[test]
     fn reports_a_failed_numbering_rather_than_silently_succeeding() {
-        let response = r#"[{"chain_type": null, "error": "no variable domain found", "numbering": []}]"#;
+        let response =
+            r#"[{"chain_type": null, "error": "no variable domain found", "numbering": []}]"#;
         let chain = parse_response(response, NumberingScheme::Imgt)
             .expect("an error result should still parse")
             .remove(0);

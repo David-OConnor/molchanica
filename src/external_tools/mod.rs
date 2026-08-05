@@ -35,6 +35,8 @@
 //! executable. This prevents a desktop launch from silently selecting a system Python with an
 //! incompatible package set.
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     env, fmt, fs, io,
     path::{Path, PathBuf},
@@ -42,9 +44,6 @@ use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 pub mod anarcii;
 pub mod igblast;
@@ -70,12 +69,40 @@ const PROBE_TIMEOUT_NATIVE: Duration = Duration::from_secs(3);
 /// same [`ToolSpec::slug`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Tool {
+    AlphaFold3,
     OpenDde,
     Boltz2,
+    Chai1,
+    Protenix,
+    EsmFold2,
+    ImmuneBuilder,
+    HighFold,
+    BoltzGen,
+    BindCraft,
     IgBlast,
+    BioPhi,
+    AntiFold,
     ProteinMpnn,
     LigandMpnn,
+    ProteinMpnnDdg,
+    RfDiffusion,
+    RfAntibody,
+    Germinal,
+    Mber,
+    IgDesign,
+    ThermoMpnn,
+    Genie3,
+    DeepSp,
+    DeepImmuno,
+    TlImmuno2,
+    NetSolP,
+    DeepStabP,
+    AggreScan3d,
+    DlkCat,
+    CatPred,
     Anarcii,
+    Tap,
+    Placer,
     Gromacs,
     Orca,
     Gemmi,
@@ -84,13 +111,41 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 37] = [
+        Self::AlphaFold3,
         Self::OpenDde,
         Self::Boltz2,
+        Self::Chai1,
+        Self::Protenix,
+        Self::EsmFold2,
+        Self::ImmuneBuilder,
+        Self::HighFold,
+        Self::BoltzGen,
+        Self::BindCraft,
         Self::LigandMpnn,
         Self::ProteinMpnn,
+        Self::ProteinMpnnDdg,
+        Self::RfDiffusion,
+        Self::RfAntibody,
+        Self::Germinal,
+        Self::Mber,
+        Self::IgDesign,
+        Self::ThermoMpnn,
+        Self::Genie3,
+        Self::DeepSp,
+        Self::DeepImmuno,
+        Self::TlImmuno2,
+        Self::NetSolP,
+        Self::DeepStabP,
+        Self::AggreScan3d,
+        Self::DlkCat,
+        Self::CatPred,
         Self::IgBlast,
+        Self::BioPhi,
+        Self::AntiFold,
         Self::Anarcii,
+        Self::Tap,
+        Self::Placer,
         Self::Gromacs,
         Self::Orca,
         Self::Gemmi,
@@ -105,7 +160,9 @@ impl Tool {
 
     /// The tools Molchanica installs itself, in the order `install_tool <slug>` accepts.
     pub fn managed() -> impl Iterator<Item = Self> {
-        Self::ALL.into_iter().filter(|t| t.spec().molchanica_managed)
+        Self::ALL
+            .into_iter()
+            .filter(|t| t.spec().molchanica_managed)
     }
 }
 
@@ -126,6 +183,29 @@ pub enum ToolKind {
     /// a checkout rather than a package with an entry point, and where driving the Python API
     /// directly is more robust than depending on a CLI's argument shape.
     VenvPython,
+}
+
+/// Operating systems on which an upstream tool can run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformSupport {
+    All,
+    LinuxOnly,
+}
+
+impl PlatformSupport {
+    pub fn is_supported(self) -> bool {
+        match self {
+            Self::All => true,
+            Self::LinuxOnly => cfg!(target_os = "linux"),
+        }
+    }
+
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::LinuxOnly => Some("Linux only"),
+        }
+    }
 }
 
 /// A file that must exist before a tool can actually do anything — typically model weights, which
@@ -151,6 +231,8 @@ pub struct ToolSpec {
     pub url: &'static str,
     /// Licence terms of the whole stack a run needs, not just the upstream repository's label.
     pub license: &'static str,
+    /// Upstream platform support, independent of whether Molchanica can install the tool.
+    pub platform: PlatformSupport,
     pub kind: ToolKind,
     /// Base name of the console script or binary, without any platform suffix.
     pub executable: &'static str,
@@ -158,6 +240,9 @@ pub struct ToolSpec {
     pub exe_override_env: &'static str,
     /// Points at the tool's bundle or virtual-environment root, overriding the managed location.
     pub root_override_env: Option<&'static str>,
+    /// Independently overrides a checkout or binary bundle for Python tools that need both a
+    /// virtual environment and repository assets.
+    pub bundle_root_override_env: Option<&'static str>,
     /// Subdirectory of `<data root>/molchanica/tools` holding a binary distribution or checkout.
     /// Self-contained distributions are unpacked whole: IgBLAST resolves `internal_data/` relative
     /// to itself, so the binary sits below the bundle root rather than at it.
@@ -193,7 +278,7 @@ impl ToolSpec {
 
     /// `<data root>/molchanica/tools/<bundle_subdir>`, or the `root_override_env` value.
     pub fn bundle_root(&self) -> Option<PathBuf> {
-        if let Some(name) = self.root_override_env
+        if let Some(name) = self.bundle_root_override_env.or(self.root_override_env)
             && let Some(configured) = env::var_os(name)
         {
             return Some(PathBuf::from(configured));
@@ -207,11 +292,18 @@ impl ToolSpec {
         if !self.molchanica_managed {
             return self.install_hint.to_owned();
         }
+        if !self.platform.is_supported() {
+            return format!("{} is available on Linux only.", self.name);
+        }
         if cfg!(target_os = "windows") {
             format!(".\\install_scripts\\install_tool.ps1 {}", self.slug)
         } else {
             format!("./install_scripts/install_tool.sh {}", self.slug)
         }
+    }
+
+    pub fn can_install_here(&self) -> bool {
+        self.molchanica_managed && self.platform.is_supported()
     }
 }
 
@@ -222,6 +314,13 @@ impl ToolSpec {
 /// opening a separate terminal window.
 pub fn install(tool: Tool) -> io::Result<()> {
     let spec = tool.spec();
+    if !spec.platform.is_supported() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{} is available on Linux only", spec.name),
+        ));
+    }
+
     if !spec.molchanica_managed {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -455,7 +554,553 @@ fn tail_lines(text: &str, max_lines: usize, max_chars: usize) -> String {
 }
 
 /// The single description of every tool. See the module docs for how it is used.
+macro_rules! venv_script_tool {
+    (
+        $tool:ident, $name:literal, $slug:literal, $summary:literal, $url:literal,
+        $license:literal, $platform:expr, $executable:literal, $override:literal,
+        $managed:literal, $hint:literal
+    ) => {
+        ToolSpec {
+            tool: Tool::$tool,
+            name: $name,
+            slug: $slug,
+            summary: $summary,
+            url: $url,
+            license: $license,
+            platform: $platform,
+            kind: ToolKind::VenvScript,
+            executable: $executable,
+            exe_override_env: $override,
+            root_override_env: None,
+            bundle_root_override_env: None,
+            bundle_subdir: None,
+            colocated: false,
+            required_assets: &[],
+            molchanica_managed: $managed,
+            install_hint: $hint,
+            version_args: &["--help"],
+            version_marker: $executable,
+            slow_probe: true,
+        }
+    };
+}
+
+macro_rules! venv_python_tool {
+    (
+        $tool:ident, $name:literal, $slug:literal, $summary:literal, $url:literal,
+        $license:literal, $platform:expr, $override:literal, $venv_override:expr,
+        $bundle_override:expr, $bundle:literal, $assets:expr, $managed:literal, $hint:literal
+    ) => {
+        ToolSpec {
+            tool: Tool::$tool,
+            name: $name,
+            slug: $slug,
+            summary: $summary,
+            url: $url,
+            license: $license,
+            platform: $platform,
+            kind: ToolKind::VenvPython,
+            executable: "python",
+            exe_override_env: $override,
+            root_override_env: $venv_override,
+            bundle_root_override_env: $bundle_override,
+            bundle_subdir: Some($bundle),
+            colocated: false,
+            required_assets: $assets,
+            molchanica_managed: $managed,
+            install_hint: $hint,
+            version_args: &["--version"],
+            version_marker: "Python 3",
+            slow_probe: false,
+        }
+    };
+}
+
+macro_rules! required_asset {
+    ($path:literal, $description:literal) => {
+        RequiredAsset {
+            relative_path: $path,
+            description: $description,
+        }
+    };
+}
+
 static REGISTRY: &[ToolSpec] = &[
+    venv_python_tool!(
+        AlphaFold3,
+        "AlphaFold 3",
+        "alphafold3",
+        "Protein and protein-ligand structure prediction with AlphaFold 3.",
+        "https://github.com/google-deepmind/alphafold3",
+        "Apache 2.0 code; model parameters are non-commercial and must be obtained from Google.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_ALPHAFOLD3_PYTHON",
+        Some("MOLCHANICA_ALPHAFOLD3_VENV_DIR"),
+        Some("MOLCHANICA_ALPHAFOLD3_ROOT"),
+        "AlphaFold3",
+        &[required_asset!(
+            "run_alphafold.py",
+            "the operator-provided AlphaFold 3 checkout"
+        )],
+        false,
+        "Request the AlphaFold 3 parameters, install the licensed checkout, and set the override variables."
+    ),
+    venv_script_tool!(
+        Chai1,
+        "Chai-1",
+        "chai1",
+        "Protein and protein-ligand complex structure prediction.",
+        "https://github.com/chaidiscovery/chai-lab",
+        "Apache 2.0 code and weights. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "chai-lab",
+        "MOLCHANICA_CHAI1_EXECUTABLE",
+        true,
+        "Run install_tool with 'chai1'."
+    ),
+    venv_script_tool!(
+        Protenix,
+        "Protenix-v2",
+        "protenix",
+        "Protein and protein-ligand complex structure prediction.",
+        "https://github.com/bytedance/Protenix",
+        "Apache 2.0. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "protenix",
+        "MOLCHANICA_PROTENIX_EXECUTABLE",
+        true,
+        "Run install_tool with 'protenix'."
+    ),
+    venv_script_tool!(
+        EsmFold2,
+        "ESMFold 2",
+        "esmfold2",
+        "Fast single-sequence protein structure prediction.",
+        "https://github.com/facebookresearch/esm",
+        "MIT fair-esm and weights; Apache 2.0 OpenFold dependency.",
+        PlatformSupport::LinuxOnly,
+        "esm-fold",
+        "MOLCHANICA_ESMFOLD2_EXECUTABLE",
+        true,
+        "Run install_tool with 'esmfold2'."
+    ),
+    venv_script_tool!(
+        ImmuneBuilder,
+        "ImmuneBuilder",
+        "immunebuilder",
+        "Fast antibody, nanobody, and TCR structure prediction.",
+        "https://github.com/oxpig/ImmuneBuilder",
+        "BSD 3-Clause; OpenMM refinement is MIT/LGPL. Commercial use permitted.",
+        PlatformSupport::All,
+        "ABodyBuilder2",
+        "MOLCHANICA_IMMUNEBUILDER_EXECUTABLE",
+        true,
+        "Run install_tool with 'immunebuilder'."
+    ),
+    venv_python_tool!(
+        HighFold,
+        "HighFold",
+        "highfold",
+        "Cyclic-peptide and cyclic-peptide complex prediction.",
+        "https://github.com/hongliangduan/HighFold",
+        "MIT code over CC BY 4.0 AlphaFold 2 parameters.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_HIGHFOLD_PYTHON",
+        Some("MOLCHANICA_HIGHFOLD_VENV_DIR"),
+        Some("MOLCHANICA_HIGHFOLD_ROOT"),
+        "HighFold",
+        &[required_asset!("README.md", "the HighFold checkout")],
+        true,
+        "Run install_tool with 'highfold'."
+    ),
+    venv_script_tool!(
+        BoltzGen,
+        "BoltzGen",
+        "boltzgen",
+        "Protein, peptide, nanobody, and antibody binder design.",
+        "https://github.com/HannesStark/boltzgen",
+        "MIT code, weights, and training data. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "boltzgen",
+        "MOLCHANICA_BOLTZGEN_EXECUTABLE",
+        true,
+        "Run install_tool with 'boltzgen'."
+    ),
+    venv_python_tool!(
+        BindCraft,
+        "BindCraft",
+        "bindcraft",
+        "De novo protein and peptide binder design.",
+        "https://github.com/martinpacesa/BindCraft",
+        "MIT code; required PyRosetta is non-commercial unless separately licensed.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_BINDCRAFT_PYTHON",
+        Some("MOLCHANICA_BINDCRAFT_VENV_DIR"),
+        Some("MOLCHANICA_BINDCRAFT_ROOT"),
+        "BindCraft",
+        &[
+            required_asset!("bindcraft.py", "the BindCraft runner"),
+            required_asset!("params/params_model_5_ptm.npz", "AlphaFold 2 parameters")
+        ],
+        false,
+        "Install BindCraft with its upstream Conda installer, then set the Python and root overrides."
+    ),
+    venv_script_tool!(
+        BioPhi,
+        "BioPhi",
+        "biophi",
+        "Antibody humanization and humanness estimation.",
+        "https://github.com/Merck/BioPhi",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::All,
+        "biophi",
+        "MOLCHANICA_BIOPHI_EXECUTABLE",
+        true,
+        "Run install_tool with 'biophi'."
+    ),
+    venv_python_tool!(
+        AntiFold,
+        "AntiFold",
+        "antifold",
+        "Score and sample antibody sequences from a structure.",
+        "https://github.com/oxpig/AntiFold",
+        "BSD 3-Clause. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_ANTIFOLD_PYTHON",
+        Some("MOLCHANICA_ANTIFOLD_VENV_DIR"),
+        Some("MOLCHANICA_ANTIFOLD_ROOT"),
+        "AntiFold",
+        &[required_asset!("antifold/main.py", "the AntiFold runner")],
+        true,
+        "Run install_tool with 'antifold'."
+    ),
+    venv_script_tool!(
+        ProteinMpnnDdg,
+        "ProteinMPNN-ddG",
+        "proteinmpnn-ddg",
+        "Predict stability effects for every point mutation in a protein chain.",
+        "https://github.com/PeptoneLtd/proteinmpnn_ddg",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "proteinmpnn-ddg",
+        "MOLCHANICA_PROTEINMPNN_DDG_EXECUTABLE",
+        true,
+        "Run install_tool with 'proteinmpnn-ddg'."
+    ),
+    venv_python_tool!(
+        RfDiffusion,
+        "RFdiffusion",
+        "rfdiffusion",
+        "Protein backbone and target-conditioned binder design.",
+        "https://github.com/RosettaCommons/RFdiffusion",
+        "University of Washington BSD-style licence; commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_RFDIFFUSION_PYTHON",
+        Some("MOLCHANICA_RFDIFFUSION_VENV_DIR"),
+        Some("MOLCHANICA_RFDIFFUSION_ROOT"),
+        "RFdiffusion",
+        &[
+            required_asset!("scripts/run_inference.py", "the RFdiffusion runner"),
+            required_asset!("models/Base_ckpt.pt", "the base RFdiffusion weights")
+        ],
+        true,
+        "Run install_tool with 'rfdiffusion'."
+    ),
+    venv_python_tool!(
+        RfAntibody,
+        "RFantibody",
+        "rfantibody",
+        "Antibody and nanobody backbone design against a target.",
+        "https://github.com/RosettaCommons/RFantibody",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_RFANTIBODY_PYTHON",
+        Some("MOLCHANICA_RFANTIBODY_VENV_DIR"),
+        Some("MOLCHANICA_RFANTIBODY_ROOT"),
+        "RFantibody",
+        &[required_asset!("weights/RF2_ab.pt", "the RF2-Ab weights")],
+        true,
+        "Run install_tool with 'rfantibody'."
+    ),
+    venv_python_tool!(
+        Germinal,
+        "Germinal",
+        "germinal",
+        "De novo antibody design against a selected epitope.",
+        "https://github.com/SantiagoMille/germinal",
+        "MIT code; required PyRosetta and IgLM weights restrict commercial use.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_GERMINAL_PYTHON",
+        Some("MOLCHANICA_GERMINAL_VENV_DIR"),
+        Some("MOLCHANICA_GERMINAL_ROOT"),
+        "germinal",
+        &[required_asset!("run_germinal.py", "the Germinal runner")],
+        false,
+        "Install Germinal and PyRosetta with its upstream Conda installer, then set the overrides."
+    ),
+    venv_script_tool!(
+        Mber,
+        "mBER",
+        "mber",
+        "VHH binder design with AlphaFold-Multimer backpropagation.",
+        "https://github.com/manifoldbio/mber-open",
+        "MIT over Apache 2.0 ColabDesign and CC BY 4.0 AlphaFold 2 parameters.",
+        PlatformSupport::LinuxOnly,
+        "mber-vhh",
+        "MOLCHANICA_MBER_EXECUTABLE",
+        true,
+        "Run install_tool with 'mber'."
+    ),
+    venv_python_tool!(
+        IgDesign,
+        "IgDesign",
+        "igdesign",
+        "Antibody CDR design by inverse folding.",
+        "https://github.com/AbSciBio/igdesign",
+        "Research release; confirm upstream terms before commercial use.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_IGDESIGN_PYTHON",
+        Some("MOLCHANICA_IGDESIGN_VENV_DIR"),
+        Some("MOLCHANICA_IGDESIGN_ROOT"),
+        "igdesign",
+        &[required_asset!("predict.py", "the IgDesign runner")],
+        true,
+        "Run install_tool with 'igdesign'; checkpoints may require a manual download."
+    ),
+    venv_python_tool!(
+        ThermoMpnn,
+        "ThermoMPNN",
+        "thermompnn",
+        "Protein mutation stability prediction.",
+        "https://github.com/Kuhlman-Lab/ThermoMPNN",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::All,
+        "MOLCHANICA_THERMOMPNN_PYTHON",
+        Some("MOLCHANICA_THERMOMPNN_VENV_DIR"),
+        Some("MOLCHANICA_THERMOMPNN_ROOT"),
+        "ThermoMPNN",
+        &[required_asset!(
+            "analysis/custom_inference.py",
+            "the ThermoMPNN runner"
+        )],
+        true,
+        "Run install_tool with 'thermompnn'."
+    ),
+    venv_python_tool!(
+        Genie3,
+        "Genie 3",
+        "genie3",
+        "All-atom target-conditioned protein binder generation.",
+        "https://github.com/aqlaboratory/genie3",
+        "Apache 2.0. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_GENIE3_PYTHON",
+        Some("MOLCHANICA_GENIE3_VENV_DIR"),
+        Some("MOLCHANICA_GENIE3_ROOT"),
+        "genie3",
+        &[required_asset!(
+            "pretrained",
+            "the Genie 3 pretrained weights"
+        )],
+        false,
+        "Install Genie 3 with its upstream Conda setup, then set the Python and root overrides."
+    ),
+    venv_python_tool!(
+        DeepSp,
+        "DeepSP",
+        "deepsp",
+        "Sequence-only antibody developability descriptors.",
+        "https://github.com/Lailabcode/DeepSP",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::All,
+        "MOLCHANICA_DEEPSP_PYTHON",
+        Some("MOLCHANICA_DEEPSP_VENV_DIR"),
+        Some("MOLCHANICA_DEEPSP_ROOT"),
+        "DeepSP",
+        &[required_asset!(
+            "DeepSP_predictor.ipynb",
+            "the DeepSP model checkout"
+        )],
+        true,
+        "Run install_tool with 'deepsp'."
+    ),
+    venv_python_tool!(
+        DeepImmuno,
+        "DeepImmuno",
+        "deepimmuno",
+        "Peptide-MHC-I immunogenicity prediction.",
+        "https://github.com/frankligy/DeepImmuno",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::All,
+        "MOLCHANICA_DEEPIMMUNO_PYTHON",
+        Some("MOLCHANICA_DEEPIMMUNO_VENV_DIR"),
+        Some("MOLCHANICA_DEEPIMMUNO_ROOT"),
+        "DeepImmuno",
+        &[required_asset!(
+            "deepimmuno-cnn.py",
+            "the DeepImmuno runner"
+        )],
+        true,
+        "Run install_tool with 'deepimmuno'."
+    ),
+    venv_python_tool!(
+        TlImmuno2,
+        "TLimmuno2",
+        "tlimmuno2",
+        "Peptide-MHC-II immunogenicity prediction.",
+        "https://github.com/XSLiuLab/TLimmuno2",
+        "Academic release; confirm upstream terms before commercial use.",
+        PlatformSupport::All,
+        "MOLCHANICA_TLIMMUNO2_PYTHON",
+        Some("MOLCHANICA_TLIMMUNO2_VENV_DIR"),
+        Some("MOLCHANICA_TLIMMUNO2_ROOT"),
+        "TLimmuno2",
+        &[required_asset!(
+            "Python/TLimmuno2.py",
+            "the TLimmuno2 runner"
+        )],
+        true,
+        "Run install_tool with 'tlimmuno2'."
+    ),
+    venv_python_tool!(
+        NetSolP,
+        "NetSolP",
+        "netsolp",
+        "Protein solubility and expression-usability prediction.",
+        "https://github.com/tvinet/NetSolP-1.0",
+        "Academic use only; commercial use requires an agreement with DTU Health Tech.",
+        PlatformSupport::All,
+        "MOLCHANICA_NETSOLP_PYTHON",
+        Some("MOLCHANICA_NETSOLP_VENV_DIR"),
+        Some("MOLCHANICA_NETSOLP_ROOT"),
+        "NetSolP-1.0",
+        &[
+            required_asset!("PredictionServer/predict.py", "the NetSolP runner"),
+            required_asset!(
+                "PredictionServer/models",
+                "licensed NetSolP model checkpoints"
+            )
+        ],
+        true,
+        "Run install_tool with 'netsolp'; model checkpoints require licence acceptance."
+    ),
+    venv_python_tool!(
+        DeepStabP,
+        "DeepSTABp",
+        "deepstabp",
+        "Protein melting-temperature prediction.",
+        "https://github.com/CSBiology/deepStabP",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::All,
+        "MOLCHANICA_DEEPSTABP_PYTHON",
+        Some("MOLCHANICA_DEEPSTABP_VENV_DIR"),
+        Some("MOLCHANICA_DEEPSTABP_ROOT"),
+        "deepStabP",
+        &[required_asset!(
+            "src/Api/app",
+            "the DeepSTABp prediction service"
+        )],
+        true,
+        "Run install_tool with 'deepstabp'."
+    ),
+    ToolSpec {
+        tool: Tool::AggreScan3d,
+        name: "AggreScan3D",
+        slug: "aggrescan3d",
+        summary: "Map and score aggregation-prone regions on a protein structure.",
+        url: "https://bitbucket.org/lcbio/aggrescan3d",
+        license: "Free for academic use; commercial use requires a separate agreement.",
+        platform: PlatformSupport::LinuxOnly,
+        kind: ToolKind::VenvScript,
+        executable: "aggrescan",
+        exe_override_env: "MOLCHANICA_AGGRESCAN3D_EXECUTABLE",
+        root_override_env: Some("MOLCHANICA_AGGRESCAN3D_VENV_DIR"),
+        bundle_root_override_env: None,
+        bundle_subdir: None,
+        colocated: false,
+        required_assets: &[],
+        molchanica_managed: true,
+        install_hint: "Run install_tool with 'aggrescan3d'.",
+        version_args: &["--help"],
+        version_marker: "aggrescan",
+        slow_probe: true,
+    },
+    venv_python_tool!(
+        DlkCat,
+        "DLKcat",
+        "dlkcat",
+        "Enzyme turnover prediction from sequence and substrate.",
+        "https://github.com/SysBioChalmers/DLKcat",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::All,
+        "MOLCHANICA_DLKCAT_PYTHON",
+        Some("MOLCHANICA_DLKCAT_VENV_DIR"),
+        Some("MOLCHANICA_DLKCAT_ROOT"),
+        "DLKcat",
+        &[required_asset!(
+            "DeeplearningApproach/Code/example/prediction_for_input.py",
+            "the DLKcat prediction runner"
+        )],
+        true,
+        "Run install_tool with 'dlkcat'."
+    ),
+    venv_python_tool!(
+        CatPred,
+        "CatPred",
+        "catpred",
+        "Enzyme kcat, Km, and Ki prediction with uncertainty.",
+        "https://github.com/maranasgroup/CatPred",
+        "MIT. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_CATPRED_PYTHON",
+        Some("MOLCHANICA_CATPRED_VENV_DIR"),
+        Some("MOLCHANICA_CATPRED_ROOT"),
+        "CatPred",
+        &[
+            required_asset!("predict.py", "the CatPred runner"),
+            required_asset!("checkpoint_links/kcat", "the CatPred kcat checkpoints"),
+        ],
+        true,
+        "Run install_tool with 'catpred'; the checkpoint archive is about 10 GiB."
+    ),
+    venv_python_tool!(
+        Tap,
+        "TAP",
+        "tap",
+        "Therapeutic Antibody Profiler developability assessment.",
+        "https://opig.stats.ox.ac.uk/webapps/sabdab-sabpred/sabpred/tap/",
+        "Academic use only; obtain TAP directly from OPIG.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_TAP_PYTHON",
+        Some("MOLCHANICA_TAP_VENV_DIR"),
+        Some("MOLCHANICA_TAP_ROOT"),
+        "TAP",
+        &[required_asset!(
+            "README.md",
+            "the operator-provided TAP distribution"
+        )],
+        false,
+        "Request TAP from OPIG and set MOLCHANICA_TAP_PYTHON and MOLCHANICA_TAP_ROOT."
+    ),
+    venv_python_tool!(
+        Placer,
+        "PLACER",
+        "placer",
+        "Protein-ligand pose and side-chain conformation generation.",
+        "https://github.com/baker-laboratory/PLACER",
+        "BSD 3-Clause. Commercial use permitted.",
+        PlatformSupport::LinuxOnly,
+        "MOLCHANICA_PLACER_PYTHON",
+        Some("MOLCHANICA_PLACER_VENV_DIR"),
+        Some("MOLCHANICA_PLACER_ROOT"),
+        "PLACER",
+        &[
+            required_asset!("run_PLACER.py", "the PLACER runner"),
+            required_asset!("weights", "the PLACER model weights")
+        ],
+        true,
+        "Run install_tool with 'placer'."
+    ),
     ToolSpec {
         tool: Tool::OpenDde,
         name: "OpenDDE",
@@ -463,11 +1108,13 @@ static REGISTRY: &[ToolSpec] = &[
         summary: "All-atom co-folding: proteins, DNA/RNA, ligands, ions, and complexes.",
         url: "https://github.com/aurekaresearch/OpenDDE",
         license: "Apache 2.0. Commercial use permitted.",
+        platform: PlatformSupport::All,
         kind: ToolKind::VenvScript,
         executable: "opendde",
         exe_override_env: "MOLCHANICA_OPENDDE_EXECUTABLE",
         // Predates this registry and is documented, so it keeps its own name rather than becoming
         // MOLCHANICA_OPENDDE_ROOT; existing installs and shell profiles continue to work.
+        bundle_root_override_env: None,
         root_override_env: Some("OPENDDE_VENV_DIR"),
         bundle_subdir: None,
         colocated: false,
@@ -483,9 +1130,11 @@ static REGISTRY: &[ToolSpec] = &[
         name: "Boltz-2",
         slug: "boltz2",
         summary: "Co-folding with binding-affinity prediction.",
+        platform: PlatformSupport::All,
         url: "https://github.com/jwohlwend/boltz",
         license: "MIT. Commercial use permitted.",
         kind: ToolKind::VenvScript,
+        bundle_root_override_env: None,
         executable: "boltz",
         exe_override_env: "MOLCHANICA_BOLTZ_EXECUTABLE",
         root_override_env: Some("MOLCHANICA_BOLTZ_VENV_DIR"),
@@ -502,14 +1151,16 @@ static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::LigandMpnn,
         name: "LigandMPNN",
+        platform: PlatformSupport::All,
         slug: "ligandmpnn",
         summary: "Inverse folding: design sequences for a backbone, in ligand and nucleic-acid context.",
         url: "https://github.com/dauparas/LigandMPNN",
+        bundle_root_override_env: Some("MOLCHANICA_LIGANDMPNN_ROOT"),
         license: "MIT. Commercial use permitted.",
         kind: ToolKind::VenvPython,
         executable: "python",
         exe_override_env: "MOLCHANICA_LIGANDMPNN_PYTHON",
-        root_override_env: Some("MOLCHANICA_LIGANDMPNN_ROOT"),
+        root_override_env: Some("MOLCHANICA_LIGANDMPNN_VENV_DIR"),
         bundle_subdir: Some("LigandMPNN"),
         colocated: false,
         required_assets: &[
@@ -529,16 +1180,18 @@ static REGISTRY: &[ToolSpec] = &[
         slow_probe: false,
     },
     ToolSpec {
+        platform: PlatformSupport::All,
         tool: Tool::ProteinMpnn,
         name: "ProteinMPNN",
         slug: "proteinmpnn",
+        bundle_root_override_env: Some("MOLCHANICA_PROTEINMPNN_ROOT"),
         summary: "Inverse folding, plus the antibody-finetuned AbMPNN weights.",
         url: "https://github.com/dauparas/ProteinMPNN",
         license: "MIT code; AbMPNN weights CC BY 4.0. Commercial use permitted with attribution.",
         kind: ToolKind::VenvPython,
         executable: "python",
         exe_override_env: "MOLCHANICA_PROTEINMPNN_PYTHON",
-        root_override_env: Some("MOLCHANICA_PROTEINMPNN_ROOT"),
+        root_override_env: Some("MOLCHANICA_PROTEINMPNN_VENV_DIR"),
         bundle_subdir: Some("ProteinMPNN"),
         colocated: false,
         required_assets: &[
@@ -559,6 +1212,7 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::IgBlast,
+        bundle_root_override_env: None,
         name: "IgBLAST",
         slug: "igblast",
         summary: "Antibody V(D)J germline assignment and framework/CDR delineation.",
@@ -578,6 +1232,7 @@ static REGISTRY: &[ToolSpec] = &[
         install_hint: "Run install_tool with `igblast`.",
         // `igblastn -version` prints "igblastn: 1.22.0" plus the BLAST package line.
         version_args: &["-version"],
+        platform: PlatformSupport::All,
         version_marker: "igblast",
         slow_probe: false,
     },
@@ -596,9 +1251,11 @@ static REGISTRY: &[ToolSpec] = &[
         colocated: false,
         required_assets: &[],
         molchanica_managed: true,
+        platform: PlatformSupport::All,
         install_hint: "Run install_tool with `anarcii`.",
         version_args: &["--version"],
         version_marker: "Python 3",
+        bundle_root_override_env: None,
         slow_probe: false,
     },
     ToolSpec {
@@ -615,9 +1272,11 @@ static REGISTRY: &[ToolSpec] = &[
         bundle_subdir: None,
         colocated: false,
         required_assets: &[],
+        platform: PlatformSupport::All,
         molchanica_managed: false,
         install_hint: "Install GROMACS from https://www.gromacs.org/ and put `gmx` on PATH, \
                        or set MOLCHANICA_GROMACS_EXECUTABLE.",
+        bundle_root_override_env: None,
         version_args: &["-version"],
         version_marker: "GROMACS version",
         slow_probe: false,
@@ -636,9 +1295,11 @@ static REGISTRY: &[ToolSpec] = &[
         bundle_subdir: None,
         colocated: false,
         required_assets: &[],
+        platform: PlatformSupport::All,
         molchanica_managed: false,
         install_hint: "Register at https://www.faccts.de/orca/ and put `orca` on PATH, \
                        or set MOLCHANICA_ORCA_EXECUTABLE.",
+        bundle_root_override_env: None,
         // Not a valid ORCA flag, but it prints its banner anyway, which is what we match on. The
         // banner check matters: `orca` on Linux is often the GNOME screen reader.
         version_args: &["--help"],
@@ -651,10 +1312,12 @@ static REGISTRY: &[ToolSpec] = &[
         slug: "gemmi",
         summary: "Converts MTZ and unprocessed electron-density files.",
         url: "https://gemmi.readthedocs.io/",
+        platform: PlatformSupport::All,
         license: "MPL 2.0. Commercial use permitted.",
         kind: ToolKind::Executable,
         executable: "gemmi",
         exe_override_env: "MOLCHANICA_GEMMI_EXECUTABLE",
+        bundle_root_override_env: None,
         root_override_env: None,
         bundle_subdir: None,
         colocated: true,
@@ -767,16 +1430,19 @@ pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
 /// The directory a bundled tool's data files sit in, which several tools need passed to them
 /// explicitly (IgBLAST's `IGDATA`, the MPNN checkouts' model parameters).
 pub fn bundle_root(tool: Tool) -> io::Result<PathBuf> {
-    tool.spec().bundle_root().filter(|root| root.is_dir()).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "{} is not installed. {}",
-                tool.spec().name,
-                tool.spec().install_command()
-            ),
-        )
-    })
+    tool.spec()
+        .bundle_root()
+        .filter(|root| root.is_dir())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "{} is not installed. {}",
+                    tool.spec().name,
+                    tool.spec().install_command()
+                ),
+            )
+        })
 }
 
 /// Resolve the interpreter in a named Molchanica uv environment.
@@ -980,7 +1646,10 @@ pub fn check(tool: Tool) -> ToolStatus {
         }
     };
 
-    if !output.to_lowercase().contains(&spec.version_marker.to_lowercase()) {
+    if !output
+        .to_lowercase()
+        .contains(&spec.version_marker.to_lowercase())
+    {
         return ToolStatus {
             tool,
             result: CheckResult::Error,
@@ -1012,7 +1681,10 @@ pub fn check_all() -> Vec<ToolStatus> {
     statuses.sort_by_key(|status| {
         (
             status.result.rank(),
-            Tool::ALL.iter().position(|t| *t == status.tool).unwrap_or(usize::MAX),
+            Tool::ALL
+                .iter()
+                .position(|t| *t == status.tool)
+                .unwrap_or(usize::MAX),
         )
     });
     statuses
@@ -1147,7 +1819,10 @@ pub fn run_to_completion(command: &mut Command, tool_name: &str) -> io::Result<S
         .env("PYTHONUNBUFFERED", "1")
         .output()
         .map_err(|error| {
-            io::Error::new(error.kind(), format!("unable to start {tool_name}: {error}"))
+            io::Error::new(
+                error.kind(),
+                format!("unable to start {tool_name}: {error}"),
+            )
         })?;
 
     if output.status.success() {
@@ -1216,7 +1891,12 @@ mod tests {
     #[test]
     fn managed_tools_name_an_install_command() {
         for tool in Tool::managed() {
-            assert!(tool.spec().install_command().contains(tool.spec().slug));
+            let spec = tool.spec();
+            if spec.platform.is_supported() {
+                assert!(spec.install_command().contains(spec.slug));
+            } else {
+                assert!(spec.install_command().contains("Linux only"));
+            }
         }
     }
 
@@ -1227,6 +1907,24 @@ mod tests {
                 assert_eq!(tool.spec().install_command(), tool.spec().install_hint);
             }
         }
+    }
+
+    #[test]
+    fn unsupported_platforms_never_offer_installation() {
+        for tool in Tool::ALL {
+            let spec = tool.spec();
+            if !spec.platform.is_supported() {
+                assert_eq!(spec.platform.label(), Some("Linux only"));
+                assert!(!spec.can_install_here());
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn linux_only_install_returns_unsupported() {
+        let error = install(Tool::HighFold).expect_err("HighFold is Linux-only");
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 
     #[test]

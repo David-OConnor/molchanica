@@ -624,12 +624,91 @@ function Install-Anarcii {
     Invoke-Checked (Get-VenvPython "anarcii") "-c" 'import anarcii; print("anarcii", anarcii.__version__)'
     Write-Note "ANARCII installed."
 }
+function Install-Immunebuilder {
+    Write-Section "ImmuneBuilder"
+    New-ToolVenv "immunebuilder" "3.11"
+    Install-PythonPackages "immunebuilder" "ImmuneBuilder" "openmm" "pdbfixer" "anarci"
+    Invoke-Checked (Get-VenvScript "immunebuilder" "ABodyBuilder2") "--help"
+}
+
+function Install-Biophi {
+    Write-Section "BioPhi"
+    New-ToolVenv "biophi" "3.11"
+    Install-PythonPackages "biophi" "biophi @ git+https://github.com/Merck/BioPhi@main" "abnumber"
+    Invoke-Checked (Get-VenvScript "biophi" "biophi") "--help"
+}
+
+function Install-Thermompnn {
+    Write-Section "ThermoMPNN"
+    $backend = Select-TorchBackend
+    New-ToolVenv "thermompnn" "3.12"
+    Install-Torch "thermompnn" "2.7.1" $backend
+    Install-PythonPackages "thermompnn" "numpy<2" "pandas" "biopython" "tqdm" "omegaconf" "pytorch-lightning"
+    Sync-Checkout "https://github.com/Kuhlman-Lab/ThermoMPNN" (Join-Path $ToolsRoot "ThermoMPNN")
+}
+
+function Install-Deepsp {
+    Write-Section "DeepSP"
+    $backend = Select-TorchBackend
+    New-ToolVenv "deepsp" "3.11"
+    Install-Torch "deepsp" "2.7.1" $backend
+    Install-PythonPackages "deepsp" "tensorflow" "pandas" "numpy" "biopython" "anarcii"
+    Sync-Checkout "https://github.com/Lailabcode/DeepSP" (Join-Path $ToolsRoot "DeepSP")
+}
+
+function Install-Deepimmuno {
+    Write-Section "DeepImmuno"
+    New-ToolVenv "deepimmuno" "3.10"
+    Install-PythonPackages "deepimmuno" "tensorflow<2.16" "pandas" "numpy<2" "scikit-learn"
+    Sync-Checkout "https://github.com/frankligy/DeepImmuno" (Join-Path $ToolsRoot "DeepImmuno")
+}
+
+function Install-Tlimmuno2 {
+    Write-Section "TLimmuno2"
+    New-ToolVenv "tlimmuno2" "3.10"
+    Install-PythonPackages "tlimmuno2" "tensorflow<2.16" "pandas" "pyarrow" "numpy<2" "scikit-learn"
+    Sync-Checkout "https://github.com/XSLiuLab/TLimmuno2" (Join-Path $ToolsRoot "TLimmuno2")
+}
+
+function Install-Netsolp {
+    Write-Section "NetSolP"
+    $backend = Select-TorchBackend
+    New-ToolVenv "netsolp" "3.11"
+    Install-Torch "netsolp" "2.7.1" $backend
+    Install-PythonPackages "netsolp" "fair-esm~=2.0.0" "pandas" "numpy<2"
+    Sync-Checkout "https://github.com/tvinet/NetSolP-1.0" (Join-Path $ToolsRoot "NetSolP-1.0")
+    Write-Note "NetSolP model checkpoints require separate DTU licence acceptance."
+}
+
+function Install-Deepstabp {
+    Write-Section "DeepSTABp"
+    $backend = Select-TorchBackend
+    New-ToolVenv "deepstabp" "3.11"
+    Install-Torch "deepstabp" "2.7.1" $backend
+    Install-PythonPackages "deepstabp" "transformers<5" "sentencepiece" "protobuf" "biopython" "pandas" "pytorch-lightning"
+    Sync-Checkout "https://github.com/CSBiology/deepStabP" (Join-Path $ToolsRoot "deepStabP")
+}
+
+function Install-Dlkcat {
+    Write-Section "DLKcat"
+    $backend = Select-TorchBackend
+    New-ToolVenv "dlkcat" "3.10"
+    Install-Torch "dlkcat" "2.7.1" $backend
+    Install-PythonPackages "dlkcat" "numpy<2" "rdkit" "scikit-learn"
+    Sync-Checkout "https://github.com/SysBioChalmers/DLKcat" (Join-Path $ToolsRoot "DLKcat")
+}
+
+
 
 # ---------------------------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------------------------
 
-$AllTools = @("opendde", "boltz2", "ligandmpnn", "proteinmpnn", "igblast", "anarcii")
+$AllTools = @(
+    "opendde", "boltz2", "ligandmpnn", "proteinmpnn", "igblast", "anarcii",
+    "immunebuilder", "biophi", "thermompnn", "deepsp", "deepimmuno", "tlimmuno2",
+    "netsolp", "deepstabp", "dlkcat"
+)
 
 function Show-Usage {
     Write-Host @"
@@ -641,6 +720,15 @@ Tools:
   ligandmpnn    Inverse folding in ligand and nucleic-acid context.
   proteinmpnn   Inverse folding, the AbMPNN antibody weights, and native ddG scanning.
   igblast       Antibody V(D)J germline assignment and CDR delineation.
+  immunebuilder Fast antibody, nanobody, and TCR structure prediction.
+  biophi        Antibody humanization and humanness estimation.
+  thermompnn    Protein mutation stability prediction.
+  deepsp        Antibody developability descriptors.
+  deepimmuno    Peptide-MHC-I immunogenicity prediction.
+  tlimmuno2     Peptide-MHC-II immunogenicity prediction.
+  netsolp       Protein solubility prediction (licensed checkpoints are separate).
+  deepstabp     Protein melting-temperature prediction.
+  dlkcat        Enzyme turnover prediction.
   anarcii       Antibody/TCR numbering with insertion codes.
 
 Installed under $DataRoot

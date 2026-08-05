@@ -100,7 +100,9 @@ impl ExternalToolsUi {
     }
 
     fn poll(&mut self) {
-        let Some(receiver) = &self.pending else { return };
+        let Some(receiver) = &self.pending else {
+            return;
+        };
         match receiver.try_recv() {
             Ok((statuses, disk_usage)) => {
                 self.statuses = statuses;
@@ -117,7 +119,7 @@ impl ExternalToolsUi {
     /// Start one installer on a worker thread. Installers can download large model environments,
     /// so they must never block egui's render thread.
     fn start_install(&mut self, tool: Tool, context: &egui::Context) {
-        if self.is_busy() || !tool.spec().molchanica_managed {
+        if self.is_busy() || !tool.spec().can_install_here() {
             return;
         }
 
@@ -290,6 +292,11 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             .monospace(),
                     );
                     ui.label(RichText::new(spec.name).strong());
+                    if let Some(label) = spec.platform.label() {
+                        ui.label(
+                            RichText::new(label).color(Color32::LIGHT_BLUE).small(),
+                        );
+                    }
                     if ui
                         .small_button("?")
                         .on_hover_text(format!(
@@ -403,32 +410,42 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             );
                         }
                         CheckResult::CantFind => {
-                            let installing = tools.installing();
-                            ui.horizontal(|ui| {
-                                let response = ui
-                                    .add_enabled(
-                                        spec.molchanica_managed && !tools.is_busy(),
-                                        egui::Button::new("Install"),
+                            if !spec.platform.is_supported() {
+                                ui.label(
+                                    RichText::new(
+                                        "Linux only — installation is unavailable on this platform.",
                                     )
-                                    .on_hover_text(if spec.molchanica_managed {
-                                        spec.install_command()
-                                    } else {
-                                        spec.install_hint.to_owned()
-                                    });
-                                if response.clicked() {
-                                    tools.start_install(status.tool, &context);
-                                }
-                                if installing == Some(status.tool) {
-                                    ui.spinner();
-                                    ui.label(RichText::new("Installing…").color(COLOR_ACTION));
-                                } else if !spec.molchanica_managed {
-                                    ui.label(
-                                        RichText::new(spec.install_hint)
-                                            .color(COLOR_INACTIVE)
-                                            .small(),
-                                    );
-                                }
-                            });
+                                    .color(COLOR_INACTIVE)
+                                    .small(),
+                                );
+                            } else {
+                                let installing = tools.installing();
+                                ui.horizontal(|ui| {
+                                    let response = ui
+                                        .add_enabled(
+                                            spec.molchanica_managed && !tools.is_busy(),
+                                            egui::Button::new("Install"),
+                                        )
+                                        .on_hover_text(if spec.molchanica_managed {
+                                            spec.install_command()
+                                        } else {
+                                            spec.install_hint.to_owned()
+                                        });
+                                    if response.clicked() {
+                                        tools.start_install(status.tool, &context);
+                                    }
+                                    if installing == Some(status.tool) {
+                                        ui.spinner();
+                                        ui.label(RichText::new("Installing…").color(COLOR_ACTION));
+                                    } else if !spec.molchanica_managed {
+                                        ui.label(
+                                            RichText::new(spec.install_hint)
+                                                .color(COLOR_INACTIVE)
+                                                .small(),
+                                        );
+                                    }
+                                });
+                            }
                         }
                     }
 
@@ -482,6 +499,21 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             .color(COLOR_INACTIVE)
                             .small(),
                         );
+                        if let Some(name) = spec.root_override_env {
+                            ui.label(
+                                RichText::new(format!("Environment root override: {name}"))
+                                    .color(COLOR_INACTIVE)
+                                    .small(),
+                            );
+                        }
+                        if let Some(name) = spec.bundle_root_override_env {
+                            ui.label(
+                                RichText::new(format!("Tool/data root override: {name}"))
+                                    .color(COLOR_INACTIVE)
+                                    .small(),
+                            );
+                        }
+
                         ui.label(
                             RichText::new(format!("Licence: {}", spec.license))
                                 .color(COLOR_INACTIVE)

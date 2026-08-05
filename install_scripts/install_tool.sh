@@ -267,6 +267,20 @@ download() {
     mv "$destination.partial" "$destination"
 }
 
+download_python_script() {
+    url="$1"; destination="$2"; slug="$3"
+    source_file="$destination.source"
+    download "$url" "$source_file"
+    {
+        printf '#!%s\n' "$(venv_python "$slug")"
+        cat "$source_file"
+    } >"$destination.partial"
+    mv "$destination.partial" "$destination"
+    rm -f "$source_file"
+    chmod +x "$destination"
+}
+
+
 clone_or_update() {
     url="$1"; target="$2"
     command -v git >/dev/null 2>&1 || fail "git is required to install this tool."
@@ -582,12 +596,241 @@ install_anarcii() {
         || fail "anarcii was installed but cannot be imported."
     note "ANARCII installed."
 }
+install_immunebuilder() {
+    section "ImmuneBuilder"
+    make_venv immunebuilder 3.11
+    uv_pip_install immunebuilder ImmuneBuilder openmm pdbfixer anarci
+    "$(venv_script immunebuilder ABodyBuilder2)" --help >/dev/null
+}
+
+install_biophi() {
+    section "BioPhi"
+    make_venv biophi 3.11
+    uv_pip_install biophi "biophi @ git+https://github.com/Merck/BioPhi@main" abnumber
+    "$(venv_script biophi biophi)" --help >/dev/null
+}
+
+install_thermompnn() {
+    section "ThermoMPNN"
+    select_torch_backend
+    make_venv thermompnn 3.12
+    install_torch thermompnn 2.7.1 "$TORCH_BACKEND"
+    uv_pip_install thermompnn "numpy<2" pandas biopython tqdm omegaconf pytorch-lightning
+    clone_or_update https://github.com/Kuhlman-Lab/ThermoMPNN "$TOOLS_ROOT/ThermoMPNN"
+}
+
+install_deepsp() {
+    section "DeepSP"
+    select_torch_backend
+    make_venv deepsp 3.11
+    install_torch deepsp 2.7.1 "$TORCH_BACKEND"
+    uv_pip_install deepsp tensorflow pandas numpy biopython anarcii
+    clone_or_update https://github.com/Lailabcode/DeepSP "$TOOLS_ROOT/DeepSP"
+}
+
+install_deepimmuno() {
+    section "DeepImmuno"
+    make_venv deepimmuno 3.10
+    uv_pip_install deepimmuno "tensorflow<2.16" pandas "numpy<2" scikit-learn
+    clone_or_update https://github.com/frankligy/DeepImmuno "$TOOLS_ROOT/DeepImmuno"
+}
+
+install_tlimmuno2() {
+    section "TLimmuno2"
+    make_venv tlimmuno2 3.10
+    uv_pip_install tlimmuno2 "tensorflow<2.16" pandas pyarrow "numpy<2" scikit-learn
+    clone_or_update https://github.com/XSLiuLab/TLimmuno2 "$TOOLS_ROOT/TLimmuno2"
+}
+
+install_netsolp() {
+    section "NetSolP"
+    select_torch_backend
+    make_venv netsolp 3.11
+    install_torch netsolp 2.7.1 "$TORCH_BACKEND"
+    uv_pip_install netsolp "fair-esm~=2.0.0" pandas "numpy<2"
+    clone_or_update https://github.com/tvinet/NetSolP-1.0 "$TOOLS_ROOT/NetSolP-1.0"
+    note "NetSolP model checkpoints require separate DTU licence acceptance."
+}
+
+install_deepstabp() {
+    section "DeepSTABp"
+    select_torch_backend
+    make_venv deepstabp 3.11
+    install_torch deepstabp 2.7.1 "$TORCH_BACKEND"
+    uv_pip_install deepstabp "transformers<5" sentencepiece protobuf biopython pandas pytorch-lightning
+    clone_or_update https://github.com/CSBiology/deepStabP "$TOOLS_ROOT/deepStabP"
+}
+
+install_dlkcat() {
+    section "DLKcat"
+    select_torch_backend
+    make_venv dlkcat 3.10
+    install_torch dlkcat 2.7.1 "$TORCH_BACKEND"
+    uv_pip_install dlkcat "numpy<2" rdkit scikit-learn
+    clone_or_update https://github.com/SysBioChalmers/DLKcat "$TOOLS_ROOT/DLKcat"
+}
+
+
+install_chai1() {
+    section "Chai-1"
+    make_venv chai1 3.11
+    uv_pip_install chai1 "chai_lab==0.6.1"
+    "$(venv_script chai1 chai-lab)" --help >/dev/null
+}
+
+install_protenix() {
+    section "Protenix-v2"
+    make_venv protenix 3.11
+    uv_pip_install protenix protenix
+    "$(venv_script protenix protenix)" --help >/dev/null
+}
+
+install_esmfold2() {
+    section "ESMFold 2"
+    select_torch_backend
+    make_venv esmfold2 3.11
+    install_torch esmfold2 2.7.1 "$TORCH_BACKEND"
+    run_uv pip install --python "$(venv_python esmfold2)" --no-build-isolation         "fair-esm[esmfold]~=2.0.0"         "openfold @ git+https://github.com/aqlaboratory/openfold.git@4b41059694619831a7db195b7e0988fc4ff3a307"
+    download_python_script "https://raw.githubusercontent.com/facebookresearch/esm/v2.0.0/scripts/esmfold_inference.py" "$(venv_script esmfold2 esm-fold)" esmfold2
+}
+
+install_boltzgen() {
+    section "BoltzGen"
+    make_venv boltzgen 3.12
+    uv_pip_install boltzgen "boltzgen~=0.3.2"
+    "$(venv_script boltzgen boltzgen)" --help >/dev/null
+}
+
+install_proteinmpnn_ddg() {
+    section "ProteinMPNN-ddG"
+    make_venv proteinmpnn-ddg 3.10
+    uv_pip_install proteinmpnn-ddg         "ProteinMPNN-ddG[cuda12] @ git+https://github.com/PeptoneLtd/proteinmpnn_ddg.git@main"         "dm-haiku==0.0.13"
+    download_python_script "https://raw.githubusercontent.com/PeptoneLtd/proteinmpnn_ddg/main/predict.py" "$(venv_script proteinmpnn-ddg proteinmpnn-ddg)" proteinmpnn-ddg
+}
+
+
+install_rfdiffusion() {
+    section "RFdiffusion"
+    make_venv rfdiffusion 3.10
+    uv_pip_install rfdiffusion         "dgl @ https://data.dgl.ai/wheels/torch-2.3/cu118/dgl-2.4.0%2Bcu118-cp310-cp310-manylinux1_x86_64.whl"         "numpy<2" "e3nn==0.3.3" hydra-core icecream opt_einsum scipy pandas decorator         pyrsistent "dllogger @ git+https://github.com/NVIDIA/dllogger.git@master"         "se3-transformer @ git+https://github.com/RosettaCommons/RFdiffusion.git@main#subdirectory=env/SE3Transformer"         "rfdiffusion @ git+https://github.com/RosettaCommons/RFdiffusion.git@main"
+    target="$TOOLS_ROOT/RFdiffusion"
+    clone_or_update https://github.com/RosettaCommons/RFdiffusion "$target"
+    mkdir -p "$target/models"
+    download https://files.ipd.uw.edu/pub/RFdiffusion/6f5902ac237024bdd0c176cb93063dc4/Base_ckpt.pt "$target/models/Base_ckpt.pt"
+    download https://files.ipd.uw.edu/pub/RFdiffusion/e29311f6f1bf1af907f9ef9f44b8328b/Complex_base_ckpt.pt "$target/models/Complex_base_ckpt.pt"
+    download https://files.ipd.uw.edu/pub/RFdiffusion/60f09a193fb5e5ccdc4980417708dbab/Complex_Fold_base_ckpt.pt "$target/models/Complex_Fold_base_ckpt.pt"
+    download https://files.ipd.uw.edu/pub/RFdiffusion/74f51cfb8b440f50d70878e05361d8f0/InpaintSeq_ckpt.pt "$target/models/InpaintSeq_ckpt.pt"
+    download https://files.ipd.uw.edu/pub/RFdiffusion/76d00716416567174cdb7ca96e208296/InpaintSeq_Fold_ckpt.pt "$target/models/InpaintSeq_Fold_ckpt.pt"
+    download https://files.ipd.uw.edu/pub/RFdiffusion/5532d2e1f3a4738decd58b19d633b3c3/ActiveSite_ckpt.pt "$target/models/ActiveSite_ckpt.pt"
+    download https://files.ipd.uw.edu/pub/RFdiffusion/12fc204edeae5b57713c5ad7dcb97d39/Base_epoch8_ckpt.pt "$target/models/Base_epoch8_ckpt.pt"
+}
+
+install_rfantibody() {
+    section "RFantibody"
+    make_venv rfantibody 3.10
+    uv_pip_install rfantibody         "dgl @ https://data.dgl.ai/wheels/torch-2.3/cu118/dgl-2.4.0%2Bcu118-cp310-cp310-manylinux1_x86_64.whl"         "rfantibody @ git+https://github.com/RosettaCommons/RFantibody.git@main"
+    target="$TOOLS_ROOT/RFantibody"
+    clone_or_update https://github.com/RosettaCommons/RFantibody "$target"
+    mkdir -p "$target/weights"
+    download https://files.ipd.uw.edu/pub/RFantibody/RFdiffusion_Ab.pt "$target/weights/RFdiffusion_Ab.pt"
+    download https://files.ipd.uw.edu/pub/RFantibody/ProteinMPNN_v48_noise_0.2.pt "$target/weights/ProteinMPNN_v48_noise_0.2.pt"
+    download https://files.ipd.uw.edu/pub/RFantibody/RF2_ab.pt "$target/weights/RF2_ab.pt"
+    download "https://zenodo.org/records/17488258/files/RFab_noframework-nosidechains-5-10-23_trainingparamsadded.pt?download=1"         "$target/weights/RFab_noframework-nosidechains-5-10-23_trainingparamsadded.pt"
+}
+
+install_igdesign() {
+    section "IgDesign"
+    make_venv igdesign 3.10
+    uv_pip_install igdesign "igdesign @ git+https://github.com/AbSciBio/igdesign.git@main"
+    target="$TOOLS_ROOT/igdesign"
+    clone_or_update https://github.com/AbSciBio/igdesign "$target"
+    if [ -f "$target/download_ckpts.sh" ]; then
+        (cd "$target" && sh download_ckpts.sh)
+    else
+        note "IgDesign checkpoints must be downloaded manually into $target/ckpts."
+    fi
+}
+
+install_catpred() {
+    section "CatPred"
+    make_venv catpred 3.10
+    uv_pip_install catpred "catpred @ git+https://github.com/maranasgroup/CatPred.git@main"
+    clone_or_update https://github.com/maranasgroup/CatPred "$TOOLS_ROOT/CatPred"
+    note "CatPred checkpoints are a separate approximately 10 GiB download."
+}
+
+install_placer() {
+    section "PLACER"
+    make_venv placer 3.10
+    uv_pip_install placer         "dgl @ https://data.dgl.ai/wheels/torch-2.3/cu118/dgl-2.4.0%2Bcu118-cp310-cp310-manylinux1_x86_64.whl"         "torch==2.3.1" "opt_einsum==3.4.0" openbabel "networkx>=3.2" "numpy<2"         "pandas==2.2.3" "e3nn==0.5.4"
+    clone_or_update https://github.com/baker-laboratory/PLACER "$TOOLS_ROOT/PLACER"
+}
+
+
+require_conda() {
+    command -v conda >/dev/null 2>&1 ||
+        fail "conda is required for this legacy scientific stack; install Miniconda and retry."
+}
+
+install_highfold() {
+    section "HighFold"
+    require_conda
+    target="$TOOLS_ROOT/HighFold"
+    prefix="$(venv_dir highfold)"
+    clone_or_update https://github.com/hongliangduan/HighFold "$target"
+    conda env remove --prefix "$prefix" -y >/dev/null 2>&1 || true
+    conda create --prefix "$prefix" python=3.10 -y
+    conda install --prefix "$prefix" -y -c conda-forge -c bioconda openmm pdbfixer kalign2 hhsuite
+    conda run --prefix "$prefix" python -m pip install --upgrade "jax[cuda12]"
+    conda run --prefix "$prefix" python -m pip install "$target"
+}
+
+install_antifold() {
+    section "AntiFold"
+    require_conda
+    target="$TOOLS_ROOT/AntiFold"
+    prefix="$(venv_dir antifold)"
+    clone_or_update https://github.com/oxpig/AntiFold "$target"
+    conda env remove --prefix "$prefix" -y >/dev/null 2>&1 || true
+    conda create --prefix "$prefix" python=3.10 -y
+    conda install --prefix "$prefix" -c conda-forge "pytorch==2.2.0" -y
+    conda run --prefix "$prefix" python -m pip install "$target"
+}
+
+install_mber() {
+    section "mBER"
+    require_conda
+    target="$TOOLS_ROOT/mber-open"
+    prefix="$(venv_dir mber)"
+    clone_or_update https://github.com/manifoldbio/mber-open "$target"
+    conda env remove --prefix "$prefix" -y >/dev/null 2>&1 || true
+    conda env create --prefix "$prefix" -f "$target/environment.yml"
+    conda run --prefix "$prefix" python -m pip install -e "$target/protocols"
+    (cd "$target" && sh download_weights.sh)
+}
+
+install_aggrescan3d() {
+    section "AggreScan3D"
+    require_conda
+    prefix="$(venv_dir aggrescan3d)"
+    conda env remove --prefix "$prefix" -y >/dev/null 2>&1 || true
+    conda create --prefix "$prefix" python=2.7 -y
+    conda run --prefix "$prefix" python -m pip install         "git+https://bitbucket.org/lcbio/aggrescan3d.git@master"
+}
+
+
 
 # --------------------------------------------------------------------------------------------
 # Dispatch
 # --------------------------------------------------------------------------------------------
 
-ALL_TOOLS="opendde boltz2 ligandmpnn proteinmpnn igblast anarcii"
+PORTABLE_TOOLS="opendde boltz2 ligandmpnn proteinmpnn igblast anarcii immunebuilder biophi thermompnn deepsp deepimmuno tlimmuno2 netsolp deepstabp dlkcat"
+LINUX_ONLY_TOOLS="chai1 protenix esmfold2 boltzgen proteinmpnn-ddg rfdiffusion rfantibody igdesign catpred placer highfold antifold mber aggrescan3d"
+if [ "$(uname -s)" = "Linux" ]; then
+    ALL_TOOLS="$PORTABLE_TOOLS $LINUX_ONLY_TOOLS"
+else
+    ALL_TOOLS="$PORTABLE_TOOLS"
+fi
 
 usage() {
     cat <<EOF
@@ -600,6 +843,29 @@ Tools:
   proteinmpnn   Inverse folding, the AbMPNN antibody weights, and native ΔΔG scanning.
   igblast       Antibody V(D)J germline assignment and CDR delineation.
   anarcii       Antibody/TCR numbering with insertion codes.
+  immunebuilder Fast antibody, nanobody, and TCR structure prediction.
+  biophi        Antibody humanization and humanness estimation.
+  thermompnn    Protein mutation stability prediction.
+  deepsp        Antibody developability descriptors.
+  deepimmuno    Peptide-MHC-I immunogenicity prediction.
+  tlimmuno2     Peptide-MHC-II immunogenicity prediction.
+  netsolp       Protein solubility prediction (licensed checkpoints are separate).
+  deepstabp     Protein melting-temperature prediction.
+  dlkcat        Enzyme turnover prediction.
+  chai1         Chai-1 complex structure prediction (Linux only).
+  protenix       Protenix-v2 structure prediction (Linux only).
+  esmfold2       ESMFold 2 single-sequence folding (Linux only).
+  boltzgen       Protein and peptide binder design (Linux only).
+  proteinmpnn-ddg Mutation stability scans (Linux only).
+  rfdiffusion    Protein backbone design (Linux only).
+  rfantibody     Antibody and nanobody design (Linux only).
+  igdesign       Antibody CDR design (Linux only).
+  catpred        Enzyme property prediction (Linux only).
+  placer         Protein-ligand pose generation (Linux only).
+  highfold       Cyclic-peptide structure prediction via Conda (Linux only).
+  antifold       Antibody sequence design via Conda (Linux only).
+  mber           VHH binder design via Conda (Linux only).
+  aggrescan3d    Structural aggregation profiling via Conda (Linux only).
 
 Installed under $DATA_ROOT
 EOF
@@ -626,7 +892,8 @@ failed=""
 for requested in "$@"; do
     # Each tool is attempted independently: a broken upstream release for one should not cost the
     # user the others, which is the same reason bio_web's environment installer keeps going.
-    if ! "install_$requested"; then
+    function_name="install_$(printf '%s' "$requested" | tr '-' '_')"
+    if ! "$function_name"; then
         printf 'Installing %s failed.\n' "$requested" >&2
         failed="$failed $requested"
     fi

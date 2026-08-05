@@ -942,7 +942,9 @@ pub fn refine_with_anarcii(
         apply_numbering(&mut annotation.chains[index], &chain_numbering);
     }
 
-    annotation.notes.retain(|note| !note.contains("approximations"));
+    annotation
+        .notes
+        .retain(|note| !note.contains("approximations"));
     annotation.notes.push(format!(
         "CDR boundaries refined with ANARCII ({}).",
         scheme.label()
@@ -1075,7 +1077,11 @@ pub fn germline_assignments(
     annotation: &AntibodyAnnotation,
 ) -> io::Result<Vec<(String, igblast::IgBlastResult)>> {
     let mut results = Vec::new();
-    for chain in annotation.chains.iter().filter(|c| c.kind.is_antibody_like()) {
+    for chain in annotation
+        .chains
+        .iter()
+        .filter(|c| c.kind.is_antibody_like())
+    {
         let query = igblast::IgBlastQuery::protein(
             format!("chain_{}", chain.chain_id),
             chain.sequence.clone(),
@@ -1738,7 +1744,12 @@ mod tests {
 
         assert_eq!(chain.source, AnnotationSource::Approximate);
         assert_eq!(chain.cdrs.len(), approximate_cdrs.len());
-        assert!(chain.notes.iter().any(|note| note.contains("could not number")));
+        assert!(
+            chain
+                .notes
+                .iter()
+                .any(|note| note.contains("could not number"))
+        );
     }
 
     #[test]
@@ -1760,9 +1771,15 @@ mod tests {
     fn martin_is_reported_as_chothia_and_aho_falls_back_to_imgt() {
         use anarcii::NumberingScheme as N;
         assert_eq!(cdr_scheme_from_anarcii(N::Kabat), CdrNumberingScheme::Kabat);
-        assert_eq!(cdr_scheme_from_anarcii(N::Chothia), CdrNumberingScheme::Chothia);
+        assert_eq!(
+            cdr_scheme_from_anarcii(N::Chothia),
+            CdrNumberingScheme::Chothia
+        );
         // Martin is Chothia with the Abhinandan corrections; this module does not distinguish them.
-        assert_eq!(cdr_scheme_from_anarcii(N::Martin), CdrNumberingScheme::Chothia);
+        assert_eq!(
+            cdr_scheme_from_anarcii(N::Martin),
+            CdrNumberingScheme::Chothia
+        );
         assert_eq!(cdr_scheme_from_anarcii(N::Imgt), CdrNumberingScheme::Imgt);
         assert_eq!(cdr_scheme_from_anarcii(N::Aho), CdrNumberingScheme::Imgt);
     }

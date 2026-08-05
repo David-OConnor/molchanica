@@ -267,7 +267,9 @@ pub fn germline_root() -> Option<PathBuf> {
     if let Ok(configured) = std::env::var("MOLCHANICA_IGBLAST_GERMLINE_ROOT") {
         return Some(PathBuf::from(configured));
     }
-    bundle_root(Tool::IgBlast).ok().map(|root| root.join("germline_db"))
+    bundle_root(Tool::IgBlast)
+        .ok()
+        .map(|root| root.join("germline_db"))
 }
 
 /// Names of the BLAST databases installed under the germline root, relative to it.
@@ -304,7 +306,10 @@ fn collect_databases(root: &Path, directory: &Path, suffix: &str, names: &mut Ve
         // Databases large enough to be split carry a volume number, as in `human_gl_V.00.nhr`;
         // every volume maps back to the one database name BLAST is given.
         let stem = strip_volume_suffix(stem);
-        let Ok(relative) = path.with_file_name(stem).strip_prefix(root).map(Path::to_path_buf)
+        let Ok(relative) = path
+            .with_file_name(stem)
+            .strip_prefix(root)
+            .map(Path::to_path_buf)
         else {
             continue;
         };
@@ -426,7 +431,10 @@ fn binary_for(sequence_type: SequenceType) -> io::Result<PathBuf> {
         return Ok(igblastn);
     }
     let directory = igblastn.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, "IgBLAST executable has no directory")
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "IgBLAST executable has no directory",
+        )
     })?;
     executable_in(directory, "igblastp").ok_or_else(|| {
         io::Error::new(
@@ -462,7 +470,11 @@ pub fn run(query: &IgBlastQuery) -> io::Result<IgBlastResult> {
         .arg("-domain_system")
         .arg(query.domain_system.argument())
         .arg("-germline_db_V")
-        .arg(resolve_database(&query.germline_v, 'V', query.sequence_type)?)
+        .arg(resolve_database(
+            &query.germline_v,
+            'V',
+            query.sequence_type,
+        )?)
         .arg("-num_alignments_V")
         .arg(query.num_alignments.clamp(1, 100).to_string());
 
@@ -470,7 +482,11 @@ pub fn run(query: &IgBlastQuery) -> io::Result<IgBlastResult> {
         SequenceType::Nucleotide => {
             command
                 .arg("-germline_db_J")
-                .arg(resolve_database(&query.germline_j, 'J', query.sequence_type)?)
+                .arg(resolve_database(
+                    &query.germline_j,
+                    'J',
+                    query.sequence_type,
+                )?)
                 .arg("-num_alignments_J")
                 .arg(query.num_alignments.clamp(1, 100).to_string());
 
@@ -514,7 +530,13 @@ pub fn run(query: &IgBlastQuery) -> io::Result<IgBlastResult> {
 fn sanitize_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if cleaned.trim_matches('_').is_empty() {
         "query".to_owned()
@@ -770,7 +792,10 @@ read1\tIGH\tT\tIGHV3-23*01,IGHV3-23*04\tIGHD3-10*01\tIGHJ4*02\t98.5\tARDRGYSSGWY
         assert_eq!(strip_volume_suffix("human_gl_V.00"), "human_gl_V");
         assert_eq!(strip_volume_suffix("human_gl_V"), "human_gl_V");
         // A single digit is not a volume number, and `airr_c_human_ig.V` must survive intact.
-        assert_eq!(strip_volume_suffix("airr_c_human_ig.V"), "airr_c_human_ig.V");
+        assert_eq!(
+            strip_volume_suffix("airr_c_human_ig.V"),
+            "airr_c_human_ig.V"
+        );
     }
 
     #[test]

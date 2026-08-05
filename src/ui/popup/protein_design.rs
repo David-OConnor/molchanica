@@ -111,7 +111,9 @@ impl<T: Send + 'static> Job<T> {
     }
 
     fn poll(&mut self) {
-        let Some(receiver) = &self.receiver else { return };
+        let Some(receiver) = &self.receiver else {
+            return;
+        };
         match receiver.try_recv() {
             Ok(Ok(value)) => {
                 self.result = Some(value);
@@ -220,9 +222,7 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
         .and_then(|index| state.peptides.get(index))
         .cloned()
     else {
-        ui.label(
-            RichText::new("Open a protein to use these tools.").color(COLOR_INACTIVE),
-        );
+        ui.label(RichText::new("Open a protein to use these tools.").color(COLOR_INACTIVE));
         ui.add_space(ROW_SPACING);
         close_btn(ui, &mut state.ui.popup.protein_design);
         return;
@@ -236,8 +236,11 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         for tab in DesignTab::ALL {
             let selected = design_ui.tab == tab;
-            let text = RichText::new(tab.label())
-                .color(if selected { COLOR_HIGHLIGHT } else { COLOR_INACTIVE });
+            let text = RichText::new(tab.label()).color(if selected {
+                COLOR_HIGHLIGHT
+            } else {
+                COLOR_INACTIVE
+            });
             if ui.selectable_label(selected, text).clicked() {
                 design_ui.tab = tab;
             }
@@ -562,9 +565,9 @@ fn antibody_tab(
             let peptide = peptide.clone();
             let scheme = design_ui.scheme;
             let run_igblast = design_ui.run_igblast;
-            design_ui.antibody.start(context, move || {
-                Ok(annotate(&peptide, scheme, run_igblast))
-            });
+            design_ui
+                .antibody
+                .start(context, move || Ok(annotate(&peptide, scheme, run_igblast)));
         }
     });
 
@@ -577,7 +580,11 @@ fn antibody_tab(
             .max_height(360.)
             .id_salt("antibody_chains")
             .show(ui, |ui| {
-                for chain in annotation.chains.iter().filter(|c| c.kind.is_antibody_like()) {
+                for chain in annotation
+                    .chains
+                    .iter()
+                    .filter(|c| c.kind.is_antibody_like())
+                {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("Chain {}", chain.chain_id)).strong());
                         ui.label(RichText::new(chain.kind.to_string()).color(COLOR_HIGHLIGHT));

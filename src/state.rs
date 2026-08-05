@@ -25,6 +25,7 @@ use lin_alg::f32::{Quaternion, Vec3};
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
+    external_tools::{self, Tool},
     file_io::FileDialogs,
     md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
@@ -48,10 +49,9 @@ use crate::{
     therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
     ui::popup::{
-        external_tools::ExternalToolsUi, ff_params::FfParamsUi,
-        protein_design::ProteinDesignUi, structure_pred::StructurePredUi,
+        external_tools::ExternalToolsUi, ff_params::FfParamsUi, protein_design::ProteinDesignUi,
+        structure_pred::StructurePredUi,
     },
-    external_tools::{self, Tool},
     util::{gemmi_avail, gromacs_avail, mdtraj_avail, orca_avail},
 };
 

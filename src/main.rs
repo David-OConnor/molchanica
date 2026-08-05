@@ -83,7 +83,10 @@ fn handle_cli_flags() -> Option<i32> {
                     return Some(1);
                 }
             };
-            println!("Verifying the native ProteinMPNN implementation against {}", path.display());
+            println!(
+                "Verifying the native ProteinMPNN implementation against {}",
+                path.display()
+            );
             match therapeutic::ddg::verify(&path) {
                 Ok(difference) => {
                     println!("Largest disagreement with upstream: {difference:.3e}");

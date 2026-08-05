@@ -178,6 +178,24 @@ from the [RCSB PDB](https://www.rcsb.org/).
 - **Force field parameters**: dat, lib, frcmod, prmtop (Amber), and top (GROMACS)
 - **MD**: GRO, MDP, DCD, TRR, XTC
 
+## Third-party tool integrations
+
+Molchanica integrates with a number of third-party tools, acting on the molecules Molchanica has open,
+or creating them. See [the docs page for details, and a full list of tools](https://www.athanorlab.com/docs/third_party_tools.html). These can be accessed directly from the computer if you have them installed,
+or installed within the application's UI.
+
+## Example tools supported:
+
+- OpenDDE
+- GROMACS
+- ORCA
+- Boltz-2
+- MPNN (Protein, ligand etc)
+- igBLAST
+- ANARCII
+
+(todo: Expand:)
+
 ## A note on internet connectivity
 
 This application can run smoothly without internet connectivity. If you do have internet, it has some API integrations
