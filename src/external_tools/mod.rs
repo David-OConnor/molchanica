@@ -1,5 +1,8 @@
 //! Registry of the optional third-party tools Molchanica can drive.
 //!
+//! This should be kept somewhat in sync with `bio_web`, in tool selection (Although this will be
+//! close to a subset), and approach to installing and managing their [e.g. python] environments.
+//!
 //! Molchanica works without any of these installed; each one unlocks a feature. The problem this
 //! module solves is that every tool was previously discovered, probed, and reported on by
 //! hand-written code in a different place (`util::orca_avail`, `util::gemmi_avail`,
@@ -41,7 +44,8 @@ use std::{
     env, fmt, fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    thread::sleep,
+    sync::mpsc::{self, Receiver},
+    thread::{self, sleep},
     time::{Duration, Instant},
 };
 
@@ -1564,6 +1568,18 @@ pub struct ToolStatus {
     pub path: Option<PathBuf>,
 }
 
+/// One incremental result from probing the external-tool registry.
+///
+/// Status is sent before disk usage is calculated so the UI can update a row as soon as its
+/// subprocess finishes, even when walking the tool's managed installation takes longer.
+pub enum ToolCheckUpdate {
+    Status(ToolStatus),
+    ManagedDiskUsage {
+        tool: Tool,
+        result: io::Result<Option<u64>>,
+    },
+}
+
 impl ToolStatus {
     fn cant_find(tool: Tool, detail: String) -> Self {
         Self {
@@ -1671,23 +1687,39 @@ pub fn check(tool: Tool) -> ToolStatus {
     }
 }
 
-/// Probe every tool concurrently and sort so the actionable rows come last.
+/// Probe every tool concurrently, streaming each result as soon as it is available.
 ///
 /// Concurrent because a serial pass costs the sum of every Python interpreter's Torch import.
-pub fn check_all() -> Vec<ToolStatus> {
+/// The channel disconnects after every status and applicable managed-disk measurement has been
+/// sent, following the same non-blocking receiver pattern used by the rest of the UI workers.
+pub fn check_all() -> Receiver<ToolCheckUpdate> {
     use rayon::prelude::*;
 
-    let mut statuses: Vec<_> = Tool::ALL.par_iter().map(|tool| check(*tool)).collect();
-    statuses.sort_by_key(|status| {
-        (
-            status.result.rank(),
-            Tool::ALL
-                .iter()
-                .position(|t| *t == status.tool)
-                .unwrap_or(usize::MAX),
-        )
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        Tool::ALL.par_iter().for_each_with(tx, |tx, tool| {
+            let started = Instant::now();
+            let status = check(*tool);
+            println!(
+                "External tool check for {} took {:.3}ms",
+                tool.spec().name,
+                started.elapsed().as_millis()
+            );
+
+            let measure_disk_usage = status.result != CheckResult::CantFind;
+            if tx.send(ToolCheckUpdate::Status(status)).is_err() {
+                return;
+            }
+            if measure_disk_usage {
+                let result = managed_disk_usage(*tool);
+                let _ = tx.send(ToolCheckUpdate::ManagedDiskUsage {
+                    tool: *tool,
+                    result,
+                });
+            }
+        });
     });
-    statuses
+    rx
 }
 
 /// Run a short-lived probe, killing it if it overruns.

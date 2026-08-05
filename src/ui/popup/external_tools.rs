@@ -10,23 +10,22 @@
 //! thread and reports, per tool, whether it runs, where it was found, what version answered, and —
 //! when it is missing — an in-app installer for the tools Molchanica can manage itself.
 
-use std::{collections::HashMap, sync::mpsc, thread};
+use std::{collections::HashMap, sync::mpsc, thread, time::Duration};
 
-use egui::{Color32, RichText, ScrollArea, Ui};
+use egui::{Align, Color32, Layout, RichText, ScrollArea, Ui};
 
 use crate::{
-    external_tools::{self, CheckResult, Tool, ToolStatus},
+    external_tools::{self, CheckResult, Tool, ToolCheckUpdate, ToolStatus},
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
 };
 
 type DiskUsage = Result<Option<u64>, String>;
-type ProbeResult = (Vec<ToolStatus>, HashMap<Tool, DiskUsage>);
 
 /// Panel state: the last probe's results, and the receiver for one in flight.
 #[derive(Default)]
 pub struct ExternalToolsUi {
-    statuses: Vec<ToolStatus>,
-    pending: Option<mpsc::Receiver<ProbeResult>>,
+    statuses: HashMap<Tool, ToolStatus>,
+    pending: Option<mpsc::Receiver<ToolCheckUpdate>>,
     install_pending: Option<(Tool, mpsc::Receiver<Result<(), String>>)>,
     install_results: HashMap<Tool, InstallResult>,
     disk_usage: HashMap<Tool, DiskUsage>,
@@ -71,48 +70,38 @@ impl ExternalToolsUi {
     /// Off the UI thread because a probe launches a subprocess per tool, and the Python-based ones
     /// import Torch before answering — seconds each, on a cold cache. Blocking the UI for that
     /// would be worse than the problem this panel solves.
-    fn start_probe(&mut self, context: &egui::Context) {
+    fn start_probe(&mut self) {
         if self.is_busy() {
             return;
         }
-        let (tx, rx) = mpsc::channel();
-        self.pending = Some(rx);
+        self.statuses.clear();
+        self.disk_usage.clear();
+        self.pending = Some(external_tools::check_all());
         self.probed_once = true;
         self.confirm_uninstall = None;
-
-        let context = context.clone();
-        thread::spawn(move || {
-            let statuses = external_tools::check_all();
-            let disk_usage = statuses
-                .iter()
-                .filter(|status| status.result != CheckResult::CantFind)
-                .map(|status| {
-                    (
-                        status.tool,
-                        external_tools::managed_disk_usage(status.tool)
-                            .map_err(|error| error.to_string()),
-                    )
-                })
-                .collect();
-            let _ = tx.send((statuses, disk_usage));
-            context.request_repaint();
-        });
     }
 
     fn poll(&mut self) {
         let Some(receiver) = &self.pending else {
             return;
         };
-        match receiver.try_recv() {
-            Ok((statuses, disk_usage)) => {
-                self.statuses = statuses;
-                self.disk_usage = disk_usage;
-                self.pending = None;
+        let disconnected = loop {
+            match receiver.try_recv() {
+                Ok(ToolCheckUpdate::Status(status)) => {
+                    self.statuses.insert(status.tool, status);
+                }
+                Ok(ToolCheckUpdate::ManagedDiskUsage { tool, result }) => {
+                    self.disk_usage
+                        .insert(tool, result.map_err(|error| error.to_string()));
+                }
+                Err(mpsc::TryRecvError::Empty) => break false,
+                // The worker either finished normally or died. In either case, drop the receiver
+                // so the panel can be retried rather than showing "checking" forever.
+                Err(mpsc::TryRecvError::Disconnected) => break true,
             }
-            Err(mpsc::TryRecvError::Empty) => {}
-            // The worker died without sending; drop the receiver so the panel can be retried
-            // rather than showing "checking" forever.
-            Err(mpsc::TryRecvError::Disconnected) => self.pending = None,
+        };
+        if disconnected {
+            self.pending = None;
         }
     }
 
@@ -201,7 +190,7 @@ impl ExternalToolsUi {
     /// How many tools are ready, for a one-line summary elsewhere in the UI.
     pub fn ready_count(&self) -> usize {
         self.statuses
-            .iter()
+            .values()
             .filter(|status| status.result == CheckResult::Pass)
             .count()
     }
@@ -238,11 +227,14 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let install_finished = tools.poll_install();
     let uninstall_finished = tools.poll_uninstall();
     if install_finished || uninstall_finished {
-        tools.start_probe(&context);
+        tools.start_probe();
     }
 
     if !tools.probed_once {
-        tools.start_probe(&context);
+        tools.start_probe();
+    }
+    if tools.is_probing() {
+        context.request_repaint_after(Duration::from_millis(50));
     }
 
     ui.horizontal(|ui| {
@@ -261,8 +253,11 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
             )
             .clicked()
         {
-            tools.start_probe(&context);
+            tools.start_probe();
         }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            close_btn(ui, &mut state.ui.popup.external_tools);
+        });
     });
 
     ui.label(
@@ -271,19 +266,37 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     );
     ui.add_space(ROW_SPACING);
 
-    if tools.statuses.is_empty() && tools.is_probing() {
-        ui.spinner();
-        ui.add_space(ROW_SPACING);
-        close_btn(ui, &mut state.ui.popup.external_tools);
-        return;
-    }
-
     ScrollArea::vertical()
         .auto_shrink([false, true])
         .show(ui, |ui| {
             let statuses = tools.statuses.clone();
-            for status in &statuses {
-                let spec = status.tool.spec();
+            let mut ordered_tools = Tool::ALL;
+            ordered_tools.sort_by_key(|tool| {
+                statuses
+                    .get(tool)
+                    .map_or(u8::MAX, |status| status.result.rank())
+            });
+            for tool in ordered_tools {
+                let spec = tool.spec();
+                let Some(status) = statuses.get(&tool) else {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("[Checking…]")
+                                .color(COLOR_ACTION)
+                                .monospace(),
+                        );
+                        ui.label(RichText::new(spec.name).strong());
+                        if let Some(label) = spec.platform.label() {
+                            ui.label(RichText::new(label).color(Color32::LIGHT_BLUE).small());
+                        }
+                        ui.spinner();
+                    });
+                    ui.indent(spec.slug, |ui| {
+                        ui.label(RichText::new(spec.summary).color(COLOR_INACTIVE));
+                    });
+                    ui.add_space(6.0);
+                    continue;
+                };
 
                 ui.horizontal(|ui| {
                     ui.label(
@@ -534,6 +547,4 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
         )
         .color(COLOR_INACTIVE),
     );
-    ui.add_space(ROW_SPACING);
-    close_btn(ui, &mut state.ui.popup.external_tools);
 }

@@ -175,6 +175,7 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.external_tools {
         popup("Third-party tools")
             .default_width(620.0)
+            .max_height(1000.0)
             .show(ui.ctx(), |ui| {
                 external_tools::external_tools_window(state, ui);
             });
