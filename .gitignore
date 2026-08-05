@@ -2,6 +2,7 @@
 *.iws
 .idea/workspace.xml
 
+# Rust
 /target
 Cargo.lock
 
