@@ -164,6 +164,7 @@ pub(super) fn ensure() -> io::Result<BoltzRuntime> {
     // Create the venv with a Python version Boltz supports; uv fetches it if the host lacks it.
     let python_version =
         env_string("MOLCHANICA_BOLTZ_PYTHON").unwrap_or_else(|| DEFAULT_PYTHON_VERSION.to_string());
+
     let mut venv_cmd = Command::new(&uv);
     venv_cmd
         .arg("venv")
@@ -172,6 +173,7 @@ pub(super) fn ensure() -> io::Result<BoltzRuntime> {
         .arg("--python")
         .arg(&python_version)
         .arg(&venv_dir);
+
     run_step(&mut venv_cmd, "uv venv")?;
 
     // Install Boltz (and its Torch stack) into the venv.

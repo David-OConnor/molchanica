@@ -53,21 +53,16 @@ and either installing the CUDA toolkit, or disabling CUDA.
 ### Installing integrated third-party software
 
 Molchanica works with none of these installed; each one unlocks a feature. Open the **Tools**
-panel in the GUI at any time to see which are installed, which are working, and the exact command
-to install the rest.
+panel in the GUI at any time to see which are installed and working. Missing tools with an
+unattended recipe have an **Install** button in that panel.
 
-Everything Molchanica can install itself goes through one script, which builds each Python-backed
-tool an isolated [uv](https://docs.astral.sh/uv/)-managed environment (or unpacks a native binary
-distribution) under your user data directory. Nothing is installed system-wide and nothing
-touches your system Python. On the first Python-backed tool install, the script installs uv with
-Astral's official standalone installer if uv is not already available.
-
-```
-install_scripts/install_tool.sh  <tool>...      # Linux, macOS
-install_scripts\install_tool.ps1 <tool>...      # Windows
-```
-
-Pass `--list` to see the tools, or `all` to install everything.
+Installation runs inside Molchanica through the shared `bio_tools` Rust library. Native
+distributions, source checkouts, and model assets live under the user data directory's
+`process_executables/`; each isolated Python or Conda environment lives under
+`process_executables/python_envs/`, the same layout used by Bio Web. Nothing is installed
+system-wide and nothing touches your system Python. On the first
+Python-backed tool install, `bio_tools` installs uv with Astral's official standalone installer
+if uv is not already available.
 
 | Tool          | Unlocks                                                                               | Size     |
 |---------------|---------------------------------------------------------------------------------------|----------|

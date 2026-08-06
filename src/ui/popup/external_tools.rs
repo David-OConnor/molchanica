@@ -260,10 +260,6 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
         });
     });
 
-    ui.label(
-        "Molchanica runs without any of these. Each one unlocks a feature; nothing here is \
-         required to open, view, edit, or simulate molecules.",
-    );
     ui.add_space(ROW_SPACING);
 
     ScrollArea::vertical()
@@ -542,8 +538,8 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
     ui.label(
         RichText::new(
-            "Installers live in install_scripts/. Run install_tool with a tool's name, or `all`. \
-             The Install buttons above run the same script for you.",
+            "Install buttons use the shared bio_tools Rust recipes and place each tool in \
+             Molchanica's managed data directory.",
         )
         .color(COLOR_INACTIVE),
     );

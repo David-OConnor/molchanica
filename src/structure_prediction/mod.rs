@@ -1,7 +1,7 @@
 //! Structure prediction through third-party models.
 //!
 //! We support OpenDDE and Boltz-2. Both are driven the same way: a dedicated Python virtual
-//! environment built by `install_scripts/install_tool`, discovered through the
+//! environment built by the shared `bio_tools` Rust installer, discovered through the
 //! [`crate::external_tools`] registry, and run as a child process. Neither is ever resolved through
 //! a bare `PATH` lookup, and neither runs under whatever interpreter happens to be first on it.
 //!

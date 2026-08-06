@@ -15,7 +15,7 @@
 //!
 //! - [`find_executable`]: resolve a tool to an absolute path, or explain why it can't be found.
 //! - [`check`] / [`check_all`]: probe whether it actually runs, for the tools status panel.
-//! - `install_scripts/install_tool.{sh,ps1} <slug>`: install it, parameterized by the same slugs.
+//! - [`install`]: install a managed tool through the shared `bio_tools` Rust recipes.
 //!
 //! # Where tools live
 //!
@@ -38,8 +38,7 @@
 //! executable. This prevents a desktop launch from silently selecting a system Python with an
 //! incompatible package set.
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+use bio_tools::install::{Installer as ToolInstaller, Tool as InstallableTool};
 use std::{
     env, fmt, fs, io,
     path::{Path, PathBuf},
@@ -162,7 +161,7 @@ impl Tool {
             .expect("every Tool variant has a registry entry")
     }
 
-    /// The tools Molchanica installs itself, in the order `install_tool <slug>` accepts.
+    /// The tools Molchanica can install through the shared `bio_tools` recipes.
     pub fn managed() -> impl Iterator<Item = Self> {
         Self::ALL
             .into_iter()
@@ -227,8 +226,8 @@ pub struct ToolSpec {
     pub tool: Tool,
     /// How the tool is written wherever a person reads it.
     pub name: &'static str,
-    /// The machine-readable identifier. Names the virtual environment (`<slug>-venv`), and is what
-    /// `install_tool.sh`/`install_tool.ps1` take as their argument. Changing it moves both.
+    /// The machine-readable identifier used by the registry, managed environment layout, and the
+    /// corresponding `bio_tools::install::Tool` recipe.
     pub slug: &'static str,
     /// One line, shown in the status panel.
     pub summary: &'static str,
@@ -247,7 +246,7 @@ pub struct ToolSpec {
     /// Independently overrides a checkout or binary bundle for Python tools that need both a
     /// virtual environment and repository assets.
     pub bundle_root_override_env: Option<&'static str>,
-    /// Subdirectory of `<data root>/molchanica/tools` holding a binary distribution or checkout.
+    /// Subdirectory of `<data root>/process_executables` holding a binary distribution or checkout.
     /// Self-contained distributions are unpacked whole: IgBLAST resolves `internal_data/` relative
     /// to itself, so the binary sits below the bundle root rather than at it.
     pub bundle_subdir: Option<&'static str>,
@@ -255,8 +254,8 @@ pub struct ToolSpec {
     pub colocated: bool,
     /// Weights and data files, relative to the bundle directory.
     pub required_assets: &'static [RequiredAsset],
-    /// Whether `install_tool` can install it. False for tools with a licence gate or an installer
-    /// of their own (ORCA), which the user has to obtain themselves.
+    /// Whether Molchanica can install it through `bio_tools`. False for tools with a licence gate
+    /// or vendor-managed installation (ORCA), which the user has to obtain themselves.
     pub molchanica_managed: bool,
     /// Shown when the tool cannot be found.
     pub install_hint: &'static str,
@@ -270,17 +269,21 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
-    /// `<data root>/molchanica/<slug>-venv`, or the `root_override_env` value.
+    /// `<data root>/process_executables/python_envs/<slug>`, or the override value.
     pub fn venv_root(&self) -> Option<PathBuf> {
         if let Some(name) = self.root_override_env
             && let Some(configured) = env::var_os(name)
         {
             return Some(PathBuf::from(configured));
         }
-        data_root().map(|root| root.join(format!("{}-venv", self.slug)))
+        data_root().map(|root| {
+            root.join("process_executables")
+                .join("python_envs")
+                .join(self.slug)
+        })
     }
 
-    /// `<data root>/molchanica/tools/<bundle_subdir>`, or the `root_override_env` value.
+    /// `<data root>/process_executables/<bundle_subdir>`, or the override value.
     pub fn bundle_root(&self) -> Option<PathBuf> {
         if let Some(name) = self.bundle_root_override_env.or(self.root_override_env)
             && let Some(configured) = env::var_os(name)
@@ -288,10 +291,10 @@ impl ToolSpec {
             return Some(PathBuf::from(configured));
         }
         let subdir = self.bundle_subdir?;
-        data_root().map(|root| root.join("tools").join(subdir))
+        data_root().map(|root| root.join("process_executables").join(subdir))
     }
 
-    /// The command that installs this tool, quoted for the current platform's shell.
+    /// User-facing instruction for installing this tool.
     pub fn install_command(&self) -> String {
         if !self.molchanica_managed {
             return self.install_hint.to_owned();
@@ -299,11 +302,10 @@ impl ToolSpec {
         if !self.platform.is_supported() {
             return format!("{} is available on Linux only.", self.name);
         }
-        if cfg!(target_os = "windows") {
-            format!(".\\install_scripts\\install_tool.ps1 {}", self.slug)
-        } else {
-            format!("./install_scripts/install_tool.sh {}", self.slug)
-        }
+        format!(
+            "Install {} from Molchanica's Tools panel (recipe `{}`).",
+            self.name, self.slug
+        )
     }
 
     pub fn can_install_here(&self) -> bool {
@@ -311,11 +313,9 @@ impl ToolSpec {
     }
 }
 
-/// Run Molchanica's installer for one managed optional tool.
+/// Install one managed optional tool with the shared `bio_tools` Rust installer.
 ///
-/// This blocks until the installer exits and is therefore intended to be called from a worker
-/// thread. Installer output is captured so a failed command can be reported in the UI without
-/// opening a separate terminal window.
+/// This blocks and is therefore intended to be called from a worker thread.
 pub fn install(tool: Tool) -> io::Result<()> {
     let spec = tool.spec();
     if !spec.platform.is_supported() {
@@ -335,62 +335,33 @@ pub fn install(tool: Tool) -> io::Result<()> {
         ));
     }
 
-    let script = installer_script_path()?;
+    let recipe = spec
+        .slug
+        .parse::<InstallableTool>()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    let root = data_root().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "unable to determine Molchanica's data directory",
+        )
+    })?;
+    let mut installer = ToolInstaller::for_process_executables(root.join("process_executables"))
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    installer.config.support_root = installer_support_root();
+    installer
+        .install(recipe)
+        .map_err(|error| io::Error::other(error.to_string()))
+}
 
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("powershell.exe");
-        command.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ]);
-        // Keep PowerShell from opening a console window beside the in-app progress indicator.
-        command.creation_flags(0x0800_0000);
-        command.arg(&script).arg(spec.slug);
-        command
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let mut command = {
-        let mut command = Command::new("sh");
-        command.arg(&script).arg(spec.slug);
-        command
-    };
-
-    let output = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("unable to start the {} installer: {error}", spec.name),
-            )
-        })?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let detail = if stderr.trim().is_empty() {
-        &stdout
-    } else {
-        &stderr
-    };
-    let detail = tail_lines(detail, 8, 2_048);
-    let detail = if detail.is_empty() {
-        format!("installer exited with {}", output.status)
-    } else {
-        detail
-    };
-
-    Err(io::Error::other(detail))
+fn installer_support_root() -> Option<PathBuf> {
+    let checkout = env::current_dir().ok();
+    let release = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    checkout.into_iter().chain(release).find(|root| {
+        root.join("scripts/convert_mpnn_weights.py").is_file()
+            || root.join("convert_mpnn_weights.py").is_file()
+    })
 }
 
 /// Estimate the space occupied by this tool inside Molchanica's managed data directory.
@@ -483,10 +454,14 @@ fn managed_install_roots(tool: Tool, data_root: &Path) -> Vec<PathBuf> {
     let spec = tool.spec();
     let mut roots = Vec::new();
     if matches!(spec.kind, ToolKind::VenvScript | ToolKind::VenvPython) {
-        roots.push(data_root.join(format!("{}-venv", spec.slug)));
+        roots.push(
+            data_root
+                .join("process_executables/python_envs")
+                .join(spec.slug),
+        );
     }
     if let Some(subdir) = spec.bundle_subdir {
-        roots.push(data_root.join("tools").join(subdir));
+        roots.push(data_root.join("process_executables").join(subdir));
     }
     roots
 }
@@ -502,59 +477,6 @@ fn path_disk_usage(path: &Path) -> io::Result<u64> {
         bytes = bytes.saturating_add(path_disk_usage(&entry?.path())?);
     }
     Ok(bytes)
-}
-
-fn installer_script_path() -> io::Result<PathBuf> {
-    let filename = if cfg!(target_os = "windows") {
-        "install_tool.ps1"
-    } else {
-        "install_tool.sh"
-    };
-
-    let mut candidates = Vec::new();
-    if let Ok(directory) = env::current_dir() {
-        candidates.push(directory.join("install_scripts").join(filename));
-        candidates.push(directory.join(filename));
-    }
-    if let Some(directory) = env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-    {
-        candidates.push(directory.join("install_scripts").join(filename));
-        // Release archives may flatten install_scripts/ beside the executable.
-        candidates.push(directory.join(filename));
-    }
-
-    candidates
-        .iter()
-        .find(|candidate| candidate.is_file())
-        .cloned()
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "could not find {filename}; expected it in install_scripts/ or beside Molchanica"
-                ),
-            )
-        })
-}
-
-fn tail_lines(text: &str, max_lines: usize, max_chars: usize) -> String {
-    let lines: Vec<_> = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    let first = lines.len().saturating_sub(max_lines);
-    let tail = lines[first..].join("\n");
-    if tail.chars().count() <= max_chars {
-        tail
-    } else {
-        let start = tail
-            .char_indices()
-            .nth(tail.chars().count() - max_chars)
-            .map_or(0, |(index, _)| index);
-        format!("…{}", &tail[start..])
-    }
 }
 
 /// The single description of every tool. See the module docs for how it is used.
@@ -660,7 +582,7 @@ static REGISTRY: &[ToolSpec] = &[
         "chai-lab",
         "MOLCHANICA_CHAI1_EXECUTABLE",
         true,
-        "Run install_tool with 'chai1'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_script_tool!(
         Protenix,
@@ -673,7 +595,7 @@ static REGISTRY: &[ToolSpec] = &[
         "protenix",
         "MOLCHANICA_PROTENIX_EXECUTABLE",
         true,
-        "Run install_tool with 'protenix'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_script_tool!(
         EsmFold2,
@@ -686,7 +608,7 @@ static REGISTRY: &[ToolSpec] = &[
         "esm-fold",
         "MOLCHANICA_ESMFOLD2_EXECUTABLE",
         true,
-        "Run install_tool with 'esmfold2'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_script_tool!(
         ImmuneBuilder,
@@ -699,7 +621,7 @@ static REGISTRY: &[ToolSpec] = &[
         "ABodyBuilder2",
         "MOLCHANICA_IMMUNEBUILDER_EXECUTABLE",
         true,
-        "Run install_tool with 'immunebuilder'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         HighFold,
@@ -715,7 +637,7 @@ static REGISTRY: &[ToolSpec] = &[
         "HighFold",
         &[required_asset!("README.md", "the HighFold checkout")],
         true,
-        "Run install_tool with 'highfold'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_script_tool!(
         BoltzGen,
@@ -728,7 +650,7 @@ static REGISTRY: &[ToolSpec] = &[
         "boltzgen",
         "MOLCHANICA_BOLTZGEN_EXECUTABLE",
         true,
-        "Run install_tool with 'boltzgen'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         BindCraft,
@@ -760,7 +682,7 @@ static REGISTRY: &[ToolSpec] = &[
         "biophi",
         "MOLCHANICA_BIOPHI_EXECUTABLE",
         true,
-        "Run install_tool with 'biophi'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         AntiFold,
@@ -776,7 +698,7 @@ static REGISTRY: &[ToolSpec] = &[
         "AntiFold",
         &[required_asset!("antifold/main.py", "the AntiFold runner")],
         true,
-        "Run install_tool with 'antifold'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_script_tool!(
         ProteinMpnnDdg,
@@ -789,7 +711,7 @@ static REGISTRY: &[ToolSpec] = &[
         "proteinmpnn-ddg",
         "MOLCHANICA_PROTEINMPNN_DDG_EXECUTABLE",
         true,
-        "Run install_tool with 'proteinmpnn-ddg'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         RfDiffusion,
@@ -808,7 +730,7 @@ static REGISTRY: &[ToolSpec] = &[
             required_asset!("models/Base_ckpt.pt", "the base RFdiffusion weights")
         ],
         true,
-        "Run install_tool with 'rfdiffusion'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         RfAntibody,
@@ -824,7 +746,7 @@ static REGISTRY: &[ToolSpec] = &[
         "RFantibody",
         &[required_asset!("weights/RF2_ab.pt", "the RF2-Ab weights")],
         true,
-        "Run install_tool with 'rfantibody'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         Germinal,
@@ -853,7 +775,7 @@ static REGISTRY: &[ToolSpec] = &[
         "mber-vhh",
         "MOLCHANICA_MBER_EXECUTABLE",
         true,
-        "Run install_tool with 'mber'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         IgDesign,
@@ -869,7 +791,7 @@ static REGISTRY: &[ToolSpec] = &[
         "igdesign",
         &[required_asset!("predict.py", "the IgDesign runner")],
         true,
-        "Run install_tool with 'igdesign'; checkpoints may require a manual download."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         ThermoMpnn,
@@ -888,7 +810,7 @@ static REGISTRY: &[ToolSpec] = &[
             "the ThermoMPNN runner"
         )],
         true,
-        "Run install_tool with 'thermompnn'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         Genie3,
@@ -926,7 +848,7 @@ static REGISTRY: &[ToolSpec] = &[
             "the DeepSP model checkout"
         )],
         true,
-        "Run install_tool with 'deepsp'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         DeepImmuno,
@@ -945,7 +867,7 @@ static REGISTRY: &[ToolSpec] = &[
             "the DeepImmuno runner"
         )],
         true,
-        "Run install_tool with 'deepimmuno'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         TlImmuno2,
@@ -964,7 +886,7 @@ static REGISTRY: &[ToolSpec] = &[
             "the TLimmuno2 runner"
         )],
         true,
-        "Run install_tool with 'tlimmuno2'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         NetSolP,
@@ -986,7 +908,7 @@ static REGISTRY: &[ToolSpec] = &[
             )
         ],
         true,
-        "Run install_tool with 'netsolp'; model checkpoints require licence acceptance."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         DeepStabP,
@@ -1005,7 +927,7 @@ static REGISTRY: &[ToolSpec] = &[
             "the DeepSTABp prediction service"
         )],
         true,
-        "Run install_tool with 'deepstabp'."
+        "Install from Molchanica's Tools panel."
     ),
     ToolSpec {
         tool: Tool::AggreScan3d,
@@ -1024,7 +946,7 @@ static REGISTRY: &[ToolSpec] = &[
         colocated: false,
         required_assets: &[],
         molchanica_managed: true,
-        install_hint: "Run install_tool with 'aggrescan3d'.",
+        install_hint: "Install from Molchanica's Tools panel.",
         version_args: &["--help"],
         version_marker: "aggrescan",
         slow_probe: true,
@@ -1046,7 +968,7 @@ static REGISTRY: &[ToolSpec] = &[
             "the DLKcat prediction runner"
         )],
         true,
-        "Run install_tool with 'dlkcat'."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         CatPred,
@@ -1065,7 +987,7 @@ static REGISTRY: &[ToolSpec] = &[
             required_asset!("checkpoint_links/kcat", "the CatPred kcat checkpoints"),
         ],
         true,
-        "Run install_tool with 'catpred'; the checkpoint archive is about 10 GiB."
+        "Install from Molchanica's Tools panel."
     ),
     venv_python_tool!(
         Tap,
@@ -1103,7 +1025,7 @@ static REGISTRY: &[ToolSpec] = &[
             required_asset!("weights", "the PLACER model weights")
         ],
         true,
-        "Run install_tool with 'placer'."
+        "Install from Molchanica's Tools panel."
     ),
     ToolSpec {
         tool: Tool::OpenDde,
@@ -1124,7 +1046,7 @@ static REGISTRY: &[ToolSpec] = &[
         colocated: false,
         required_assets: &[],
         molchanica_managed: true,
-        install_hint: "Run install_tool with `opendde`, or set MOLCHANICA_OPENDDE_EXECUTABLE.",
+        install_hint: "Install from Molchanica's Tools panel.",
         version_args: &["--version"],
         version_marker: "opendde",
         slow_probe: true,
@@ -1146,7 +1068,7 @@ static REGISTRY: &[ToolSpec] = &[
         colocated: false,
         required_assets: &[],
         molchanica_managed: true,
-        install_hint: "Run install_tool with `boltz2`, or set MOLCHANICA_BOLTZ_EXECUTABLE.",
+        install_hint: "Install from Molchanica's Tools panel.",
         // Boltz has no --version; `boltz --help` exits 0 and lists its `predict` subcommand.
         version_args: &["--help"],
         version_marker: "predict",
@@ -1178,7 +1100,7 @@ static REGISTRY: &[ToolSpec] = &[
             },
         ],
         molchanica_managed: true,
-        install_hint: "Run install_tool with `ligandmpnn`.",
+        install_hint: "Install from Molchanica's Tools panel.",
         version_args: &["--version"],
         version_marker: "Python 3",
         slow_probe: false,
@@ -1209,7 +1131,7 @@ static REGISTRY: &[ToolSpec] = &[
             },
         ],
         molchanica_managed: true,
-        install_hint: "Run install_tool with `proteinmpnn`.",
+        install_hint: "Install from Molchanica's Tools panel.",
         version_args: &["--version"],
         version_marker: "Python 3",
         slow_probe: false,
@@ -1233,7 +1155,7 @@ static REGISTRY: &[ToolSpec] = &[
             description: "IgBLAST's internal_data directory",
         }],
         molchanica_managed: true,
-        install_hint: "Run install_tool with `igblast`.",
+        install_hint: "Install from Molchanica's Tools panel.",
         // `igblastn -version` prints "igblastn: 1.22.0" plus the BLAST package line.
         version_args: &["-version"],
         platform: PlatformSupport::All,
@@ -1256,7 +1178,7 @@ static REGISTRY: &[ToolSpec] = &[
         required_assets: &[],
         molchanica_managed: true,
         platform: PlatformSupport::All,
-        install_hint: "Run install_tool with `anarcii`.",
+        install_hint: "Install from Molchanica's Tools panel.",
         version_args: &["--version"],
         version_marker: "Python 3",
         bundle_root_override_env: None,
@@ -1471,7 +1393,8 @@ pub(crate) fn uv_managed_python(slug: &str, override_env: &str) -> io::Result<Pa
 
     let root = data_root()
         .ok_or_else(|| io::Error::other("unable to determine Molchanica's data directory"))?
-        .join(format!("{slug}-venv"));
+        .join("process_executables/python_envs")
+        .join(slug);
     executable_in(&venv_bin(&root), "python").ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -1960,18 +1883,15 @@ mod tests {
     }
 
     #[test]
-    fn installer_error_summary_keeps_the_last_lines() {
-        let text = (0..12)
-            .map(|i| format!("line {i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let summary = tail_lines(&text, 3, 2_048);
-        assert_eq!(summary, "line 9\nline 10\nline 11");
-    }
-
-    #[test]
-    fn installer_error_summary_respects_the_character_limit() {
-        assert_eq!(tail_lines("abcdefghij", 8, 4), "…ghij");
+    fn every_managed_tool_has_a_bio_tools_recipe() {
+        for tool in Tool::managed() {
+            let spec = tool.spec();
+            let recipe = spec
+                .slug
+                .parse::<InstallableTool>()
+                .unwrap_or_else(|error| panic!("{}: {error}", spec.slug));
+            assert_eq!(recipe.slug(), spec.slug);
+        }
     }
 
     #[test]

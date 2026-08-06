@@ -5,9 +5,9 @@
 //! [Inference instructions](https://github.com/aurekaresearch/OpenDDE/blob/main/docs/inference_instructions.md)
 //! [Website](https://aurekaresearch.github.io/OpenDDE-Website/)
 //!
-//! The four installers in `install_scripts` automatically select the CUDA 12.6 backend when a
-//! working NVIDIA GPU and compatible Windows or Linux driver are detected. They fall back to CPU
-//! if detection, installation, or runtime verification fails.
+//! The shared `bio_tools` installer automatically selects the CUDA 12.6 backend when a working
+//! NVIDIA GPU and compatible Windows or Linux driver are detected. It falls back to CPU if
+//! detection, installation, or runtime verification fails.
 //!
 //! The module supports
 //! proteins, DNA, RNA, ligands (SMILES, `CCD_...`, or `FILE_...`), ions, and explicit covalent

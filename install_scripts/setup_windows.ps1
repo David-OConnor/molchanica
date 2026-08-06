@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$SourceDirectory,
-    [string]$InstallDirectory,
+    [string]$InstallDirectory
 #     [switch]$InstallOpenDde,
 #     [switch]$SkipOpenDde
 )
@@ -24,7 +24,7 @@ $NAME = "molchanica"
 $EXE = "$NAME.exe"
 $GEMMI_DIR = "gemmi"
 $CUFFT_LIB = "cufft64_12.dll"
-$TOOL_SCRIPT = "install_tool.ps1"
+$MPNN_CONVERTER = "convert_mpnn_weights.py"
 $DESCRIPTION = "Molecule and protein viewer"
 
 function Copy-Payload {
@@ -47,6 +47,19 @@ function Copy-Payload {
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     Copy-Item -LiteralPath $exeSource -Destination $Destination -Force
     Write-Host "Copied $EXE to $Destination."
+
+    # The Rust bio_tools installer uses this optional adapter to convert ProteinMPNN's checkpoint
+    # for Molchanica's native ΔΔG scanner.
+    $converterSource = Join-Path $Source $MPNN_CONVERTER
+    if (-not (Test-Path -LiteralPath $converterSource -PathType Leaf)) {
+        $converterSource = Join-Path $Source "scripts\$MPNN_CONVERTER"
+    }
+    if (Test-Path -LiteralPath $converterSource -PathType Leaf) {
+        Copy-Item -LiteralPath $converterSource -Destination $Destination -Force
+        Write-Host "Copied $MPNN_CONVERTER to $Destination."
+    } else {
+        Write-Warning "$MPNN_CONVERTER was not found; native ProteinMPNN ΔΔG conversion will be skipped."
+    }
 
     # The application looks for Gemmi in a folder colocated with the executable, before falling
     # back to the system path. (See `file_io::gemmi_path`.)
@@ -161,39 +174,7 @@ if (-not $InstallDirectory) {
 
 Copy-Payload -Source $SourceDirectory -Destination $InstallDirectory
 New-StartMenuEntry -Destination $InstallDirectory
-# $toolScript = Join-Path $SourceDirectory $TOOL_SCRIPT
-#
-# $installOpenDdeNow = $false
-# if ($InstallOpenDde) {
-#     $installOpenDdeNow = $true
-# } elseif (-not $SkipOpenDde) {
-#     $ans = Read-Host "Install OpenDDE to a uv-managed Python environment, to support structure prediction? Warning: Multi-Gb. [y/n]"
-#     $installOpenDdeNow = $ans -match "^[Yy]"
-# }
-#
-# if ($installOpenDdeNow) {
-#     if (Test-Path -LiteralPath $toolScript -PathType Leaf) {
-#         & $toolScript opendde
-#         Write-Host "`nOpenDDE installed into a dedicated uv-managed Python environment."
-#     } else {
-#         Write-Warning "$TOOL_SCRIPT was not found in $SourceDirectory; skipping the OpenDDE install."
-#     }
-# }
-#
-# # The antibody tools are offered separately because they are a different proposition: tens of
-# # megabytes rather than gigabytes, and useful the moment a structure is open.
-# if (-not $SkipOpenDde) {
-#     if (Test-Path -LiteralPath $toolScript -PathType Leaf) {
-#         $ans = Read-Host "Install the antibody tools (IgBLAST and ANARCII)? These are comparatively small. [y/n]"
-#         if ($ans -match "^[Yy]") {
-#             & $toolScript igblast anarcii
-#         }
-#         Write-Host ""
-#         Write-Host "Other optional tools (boltz2, ligandmpnn, proteinmpnn) can be installed at any time with"
-#         Write-Host "$TOOL_SCRIPT. Run it with --list to see them all, or 'all' for everything."
-#         Write-Host "Molchanica's `"Tools`" panel shows which are installed and working."
-#     }
-# }
+# Optional third-party tools are installed in-process from Molchanica's Tools panel.
 
 Write-Host ""
 Write-Host "$NAME_UPPER is installed in $InstallDirectory."

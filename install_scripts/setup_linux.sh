@@ -2,6 +2,7 @@
 
 NAME_UPPER="Molchanica"
 NAME="molchanica"
+mpnn_converter="convert_mpnn_weights.py"
 
 APP_DIR="$HOME/${NAME}"
 DESKTOP_PATH="$HOME/.local/share/applications/${NAME}.desktop"
@@ -14,6 +15,12 @@ fi
 
 cp "$NAME" "$APP_DIR"
 cp icon.png "$APP_DIR/icon.png"
+if [ -f "$mpnn_converter" ]; then
+  cp "$mpnn_converter" "$APP_DIR/$mpnn_converter"
+else
+  printf "Warning: %s was not found; native ProteinMPNN ΔΔG conversion will be skipped.\n" \
+    "$mpnn_converter"
+fi
 
 # We create a .desktop file dynamically here; one fewer file to manage.
 cat > "$DESKTOP_PATH" <<EOF
@@ -42,24 +49,8 @@ fi
 #  printf "\ngemmi installed. You can uninstall it with sudo apt remove gemmi.\n"
 #fi
 
-## Each of these installs into its own uv-managed environment under
-## ${XDG_DATA_HOME:-$HOME/.local/share}/molchanica, so nothing touches the system Python. The first
-## Python-backed tool install also installs uv for the current user if it is not already available.
-#read -p "Install OpenDDE, to support structure prediction? Warning: Multi-Gb. [y/n] " ans
-#if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
-#  ./install_tool.sh opendde
-#  printf "\nOpenDDE installed.\n"
-#fi
-
-#read -p "Install the antibody tools (IgBLAST and ANARCII)? These are comparatively small. [y/n] " ans
-#if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
-#  ./install_tool.sh igblast anarcii
-#  printf "\nAntibody tools installed.\n"
-#fi
-#
-#printf "\nOther optional tools (boltz2, ligandmpnn, proteinmpnn) can be installed at any time with\n"
-#printf "install_scripts/install_tool.sh. Run it with --list to see them all, or 'all' for everything.\n"
-#printf "Molchanica's \"Tools\" panel shows which are installed and working.\n"
+# Optional third-party tools are installed in-process from Molchanica's Tools panel.
+# Each recipe keeps its environment and assets under the per-user Molchanica data directory.
 
 printf "\nMoved the ${NAME_UPPER} executable and icon to ${APP_DIR}."
 printf "\n\nYou can launch ${NAME_UPPER} through the GUI (e.g., search \"${NAME_UPPER}\") and/or add it to favorites.\n"

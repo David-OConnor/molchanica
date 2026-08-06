@@ -13,8 +13,8 @@
 //! The earlier integration provisioned its own environment at runtime and, failing that, fell back
 //! to whatever `boltz` happened to be on `PATH`. Both were fragile for the same reason the module
 //! docs in [`super`] describe: they depended on the user's Python setup. Boltz now installs the
-//! same way OpenDDE does — a dedicated virtual environment built by `install_tool`, discovered by
-//! the [`crate::external_tools`] registry, never resolved through a bare `PATH` lookup.
+//! same way OpenDDE does — a dedicated virtual environment built by `bio_tools`, discovered by the
+//! [`crate::external_tools`] registry, never resolved through a bare `PATH` lookup.
 //!
 //! Boltz requires Python `>=3.10,<3.13`, so its uv environment uses Python 3.12 rather than
 //! sharing OpenDDE's 3.13 environment;
