@@ -10,7 +10,7 @@
 //! thread and reports, per tool, whether it runs, where it was found, what version answered, and —
 //! when it is missing — an in-app installer for the tools Molchanica can manage itself.
 
-use std::{collections::HashMap, sync::mpsc, thread, time::Duration};
+use std::{collections::HashMap, fs, io, process::Command, sync::mpsc, thread, time::Duration};
 
 use egui::{Align, Color32, Layout, RichText, ScrollArea, Ui};
 
@@ -36,6 +36,10 @@ pub struct ExternalToolsUi {
     probed_once: bool,
     /// Tool whose full detail text is expanded.
     expanded: Option<Tool>,
+    /// Case-insensitive filter for the tool list.
+    search: String,
+    /// Error from attempting to open the managed installation directory.
+    install_folder_error: Option<String>,
 }
 
 enum InstallResult {
@@ -220,6 +224,36 @@ fn format_disk_size(bytes: u64) -> String {
     }
 }
 
+fn open_install_folder() -> io::Result<()> {
+    let data_root = external_tools::data_root().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "unable to determine Molchanica's data directory",
+        )
+    })?;
+    let folder = data_root.join("process_executables");
+    fs::create_dir_all(&folder)?;
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut c = Command::new("explorer.exe");
+        c.arg(&folder);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = Command::new("open");
+        c.arg(&folder);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut c = Command::new("xdg-open");
+        c.arg(&folder);
+        c
+    };
+    command.spawn().map(|_| ())
+}
 pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let context = ui.ctx().clone();
     let tools = &mut state.ui.external_tools;
@@ -262,6 +296,26 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
 
     ui.add_space(ROW_SPACING);
 
+    ui.horizontal(|ui| {
+        ui.label("Search:");
+        ui.add(
+            egui::TextEdit::singleline(&mut tools.search)
+                .hint_text("Filter tools by name")
+                .desired_width(220.0),
+        );
+        if ui.button("Open install folder").clicked() {
+            tools.install_folder_error = open_install_folder().err().map(|error| error.to_string());
+        }
+    });
+    if let Some(error) = &tools.install_folder_error {
+        ui.label(
+            RichText::new(format!("Could not open install folder: {error}"))
+                .color(Color32::ORANGE)
+                .small(),
+        );
+    }
+
+    ui.add_space(ROW_SPACING);
     ScrollArea::vertical()
         .auto_shrink([false, true])
         .show(ui, |ui| {
@@ -272,8 +326,14 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     .get(tool)
                     .map_or(u8::MAX, |status| status.result.rank())
             });
+            let search = tools.search.trim().to_lowercase();
+            let mut visible_tools = 0;
             for tool in ordered_tools {
                 let spec = tool.spec();
+                if !search.is_empty() && !spec.name.to_lowercase().contains(&search) {
+                    continue;
+                }
+                visible_tools += 1;
                 let Some(status) = statuses.get(&tool) else {
                     ui.horizontal(|ui| {
                         ui.label(
@@ -532,6 +592,9 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     }
                 });
                 ui.add_space(6.0);
+            }
+            if visible_tools == 0 {
+                ui.label(RichText::new("No tools match the search.").color(COLOR_INACTIVE));
             }
         });
 

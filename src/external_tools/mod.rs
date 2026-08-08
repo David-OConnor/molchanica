@@ -38,7 +38,7 @@
 //! executable. This prevents a desktop launch from silently selecting a system Python with an
 //! incompatible package set.
 
-use bio_tools::install::{Installer as ToolInstaller, Tool as InstallableTool};
+use bio_tools::{install::Installer as ToolInstaller, tool_definitions::Tool as InstallableTool};
 use std::{
     env, fmt, fs, io,
     path::{Path, PathBuf},
@@ -460,7 +460,12 @@ fn managed_install_roots(tool: Tool, data_root: &Path) -> Vec<PathBuf> {
                 .join(spec.slug),
         );
     }
-    if let Some(subdir) = spec.bundle_subdir {
+    // AlphaFold 3's checkout and model parameters are operator-provided licensed assets. The
+    // shared installer manages only its interpreter, so never count or remove the checkout as
+    // Molchanica-managed data.
+    if tool != Tool::AlphaFold3
+        && let Some(subdir) = spec.bundle_subdir
+    {
         roots.push(data_root.join("process_executables").join(subdir));
     }
     roots
@@ -568,8 +573,8 @@ static REGISTRY: &[ToolSpec] = &[
             "run_alphafold.py",
             "the operator-provided AlphaFold 3 checkout"
         )],
-        false,
-        "Request the AlphaFold 3 parameters, install the licensed checkout, and set the override variables."
+        true,
+        "Prepare AlphaFold 3 from Molchanica's Tools panel, then add the licensed checkout and model parameters."
     ),
     venv_script_tool!(
         Chai1,
@@ -1373,9 +1378,8 @@ pub fn bundle_root(tool: Tool) -> io::Result<PathBuf> {
 
 /// Resolve the interpreter in a named Molchanica uv environment.
 ///
-/// This is used by adapters that are not currently exposed in the tool registry (ESMFold2 is
-/// compiled out today) so that re-enabling one cannot reintroduce a bare `python` lookup.
-#[allow(dead_code)]
+/// Used when an adapter needs the environment's interpreter in addition to its console script.
+/// Keeping this lookup here prevents model integrations from reintroducing a bare `python` call.
 pub(crate) fn uv_managed_python(slug: &str, override_env: &str) -> io::Result<PathBuf> {
     if let Some(configured) = env::var_os(override_env) {
         let configured = PathBuf::from(configured);

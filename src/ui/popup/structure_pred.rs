@@ -12,6 +12,7 @@ use egui::{
 };
 
 use crate::{
+    external_tools::{self, Tool},
     state::State,
     structure_prediction::{
         PredictionControl, StructurePredictionModel, StructurePredictionOutcome,
@@ -22,9 +23,32 @@ use crate::{
     util::handle_err,
 };
 
-const OPENDDE_URL: &str = "https://github.com/aurekaresearch/OpenDDE";
+const LINUX_ONLY_COLOR: Color32 = Color32::from_rgb(218, 165, 32);
 
 type OpenDdeProbeResult = Result<OpenDdeRuntimeInfo, String>;
+type ToolActionResult = Result<(), String>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToolActionKind {
+    Install,
+    Uninstall,
+}
+
+impl ToolActionKind {
+    fn present_participle(self) -> &'static str {
+        match self {
+            Self::Install => "Installing",
+            Self::Uninstall => "Uninstalling",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ActiveToolAction {
+    tool: Tool,
+    kind: ToolActionKind,
+    receiver: mpsc::Receiver<ToolActionResult>,
+}
 
 #[derive(Debug, Default)]
 enum OpenDdeRuntimeStatus {
@@ -146,6 +170,9 @@ pub(crate) struct StructurePredUi {
     open_dde_runtime_status: OpenDdeRuntimeStatus,
     open_dde_runtime_rx: Option<mpsc::Receiver<OpenDdeProbeResult>>,
     cancel_requested: bool,
+    tool_action: Option<ActiveToolAction>,
+    tool_action_result: Option<(Tool, ToolActionKind, ToolActionResult)>,
+    confirm_uninstall: Option<Tool>,
     completed_message: Option<String>,
 }
 
@@ -164,6 +191,9 @@ impl Default for StructurePredUi {
             open_dde_runtime_status: OpenDdeRuntimeStatus::Unchecked,
             open_dde_runtime_rx: None,
             cancel_requested: false,
+            tool_action: None,
+            tool_action_result: None,
+            confirm_uninstall: None,
             completed_message: None,
         }
     }
@@ -250,26 +280,99 @@ impl StructurePredUi {
             self.cancel_requested = true;
         }
     }
+
+    fn tool_action_is_running(&self) -> bool {
+        self.tool_action.is_some()
+    }
+
+    fn start_tool_action(&mut self, kind: ToolActionKind, context: &Context) {
+        if self.is_running() || self.tool_action_is_running() {
+            return;
+        }
+
+        let tool = self.model.tool();
+        let spec = tool.spec();
+        let allowed = spec.platform.is_supported()
+            && match kind {
+                ToolActionKind::Install => spec.can_install_here(),
+                ToolActionKind::Uninstall => spec.molchanica_managed,
+            };
+        if !allowed {
+            return;
+        }
+
+        let (tx, receiver) = mpsc::channel();
+        self.tool_action = Some(ActiveToolAction {
+            tool,
+            kind,
+            receiver,
+        });
+        self.tool_action_result = None;
+        self.confirm_uninstall = None;
+
+        let context = context.clone();
+        thread::spawn(move || {
+            let result = match kind {
+                ToolActionKind::Install => external_tools::install(tool),
+                ToolActionKind::Uninstall => external_tools::uninstall(tool),
+            }
+            .map_err(|error| error.to_string());
+            let _ = tx.send(result);
+            context.request_repaint();
+        });
+    }
+
+    fn poll_tool_action(&mut self) {
+        let Some(action) = &self.tool_action else {
+            return;
+        };
+        let tool = action.tool;
+        let kind = action.kind;
+        let result = match action.receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Err(format!(
+                "{} stopped without reporting a result",
+                kind.present_participle()
+            )),
+        };
+
+        if tool == Tool::OpenDde && result.is_ok() {
+            self.open_dde_runtime_status = OpenDdeRuntimeStatus::Unchecked;
+            self.open_dde_runtime_rx = None;
+        }
+        self.tool_action_result = Some((tool, kind, result));
+        self.tool_action = None;
+    }
 }
 
 pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui) {
+    state.ui.structure_pred.poll_tool_action();
+    let model = state.ui.structure_pred.model;
+
     ui.heading("Structure prediction and co-folding");
     ui.horizontal(|ui| {
         ui.label("All-atom prediction powered by");
-        ui.hyperlink_to("OpenDDE", OPENDDE_URL);
+        ui.hyperlink_to(model.label(), model.tool().spec().url);
     });
 
-    state
-        .ui
-        .structure_pred
-        .ensure_open_dde_runtime_probe(ui.ctx());
+    if model == StructurePredictionModel::OpenDDE {
+        state
+            .ui
+            .structure_pred
+            .ensure_open_dde_runtime_probe(ui.ctx());
+    }
 
     let elapsed = state
         .ui
         .structure_pred
         .started_at
         .map(|started_at| started_at.elapsed());
-    open_dde_runtime_status_ui(&mut state.ui.structure_pred, elapsed, ui);
+    if model == StructurePredictionModel::OpenDDE {
+        open_dde_runtime_status_ui(&mut state.ui.structure_pred, elapsed, ui);
+    } else if let Some(elapsed) = elapsed {
+        ui.label(format!("Time running: {}", format_elapsed(elapsed)));
+    }
 
     if let Some(elapsed) = elapsed {
         if state.ui.structure_pred.cancel_requested {
@@ -286,8 +389,9 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
     }
     ui.add_space(ROW_SPACING);
 
-    let running = state.ui.structure_pred.is_running();
-    ui.add_enabled_ui(!running, |ui| {
+    let prediction_running = state.ui.structure_pred.is_running();
+    let tool_action_running = state.ui.structure_pred.tool_action_is_running();
+    ui.add_enabled_ui(!prediction_running && !tool_action_running, |ui| {
         ui.horizontal(|ui| {
             ui.label("Model:");
             ComboBox::from_id_salt("structure_prediction_model")
@@ -302,7 +406,12 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
                     }
                 });
         });
+    });
 
+    selected_model_tool_ui(&mut state.ui.structure_pred, prediction_running, ui);
+
+    ui.add_enabled_ui(!prediction_running && !tool_action_running, |ui| {
+        ui.add_space(ROW_SPACING);
         ui.label(
             "Each component below is one chain or molecule. Add multiple components to predict a complex.",
         );
@@ -315,7 +424,15 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
 
     ui.add_space(ROW_SPACING);
     ui.horizontal(|ui| {
-        if state.ui.structure_pred.is_running() {
+        let model_supported = state
+            .ui
+            .structure_pred
+            .model
+            .tool()
+            .spec()
+            .platform
+            .is_supported();
+        if prediction_running {
             if ui
                 .add_enabled(
                     !state.ui.structure_pred.cancel_requested,
@@ -325,15 +442,128 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
             {
                 state.ui.structure_pred.cancel_prediction();
             }
-        } else if ui
-            .button(RichText::new("Predict structure").color(COLOR_ACTION))
-            .clicked()
-        {
-            predict(state, ui.ctx());
+        } else {
+            let response = ui.add_enabled(
+                model_supported && !tool_action_running,
+                Button::new(RichText::new("Predict structure").color(COLOR_ACTION)),
+            );
+            let clicked = response.clicked();
+            if !model_supported {
+                response.on_hover_text("Linux only; cannot run on this operating system.");
+            }
+            if clicked {
+                predict(state, ui.ctx());
+            }
         }
 
         close_btn(ui, &mut state.ui.popup.structure_pred);
     });
+}
+
+fn selected_model_tool_ui(
+    prediction_ui: &mut StructurePredUi,
+    prediction_running: bool,
+    ui: &mut Ui,
+) {
+    let tool = prediction_ui.model.tool();
+    let spec = tool.spec();
+    if !spec.platform.is_supported() {
+        ui.label(
+            RichText::new("Linux only; can't install or run.")
+                .color(LINUX_ONLY_COLOR)
+                .strong(),
+        );
+        return;
+    }
+
+    let installed = external_tools::is_installed(tool);
+    let managed_install_present = spec.molchanica_managed
+        && match spec.kind {
+            external_tools::ToolKind::VenvScript | external_tools::ToolKind::VenvPython => {
+                spec.venv_root().is_some_and(|root| root.is_dir())
+            }
+            external_tools::ToolKind::Executable => installed,
+        };
+    let active_kind = prediction_ui
+        .tool_action
+        .as_ref()
+        .filter(|action| action.tool == tool)
+        .map(|action| action.kind);
+    ui.horizontal(|ui| {
+        if let Some(kind) = active_kind {
+            ui.spinner();
+            ui.label(
+                RichText::new(format!("{} {}...", kind.present_participle(), spec.name))
+                    .color(COLOR_ACTION),
+            );
+        } else if managed_install_present {
+            let confirming = prediction_ui.confirm_uninstall == Some(tool);
+            let label = if confirming {
+                "Confirm uninstall"
+            } else {
+                "Uninstall"
+            };
+            let response = ui.add_enabled(
+                !prediction_running && !prediction_ui.tool_action_is_running(),
+                Button::new(label),
+            );
+            if response.clicked() {
+                if confirming {
+                    prediction_ui.start_tool_action(ToolActionKind::Uninstall, ui.ctx());
+                } else {
+                    prediction_ui.confirm_uninstall = Some(tool);
+                }
+            }
+        } else if !installed && spec.can_install_here() {
+            let response = ui.add_enabled(
+                !prediction_running && !prediction_ui.tool_action_is_running(),
+                Button::new("Install"),
+            );
+            if response.clicked() {
+                prediction_ui.start_tool_action(ToolActionKind::Install, ui.ctx());
+            }
+        } else if !installed {
+            ui.label(RichText::new(spec.install_hint).color(COLOR_INACTIVE));
+        }
+
+        ui.label(
+            RichText::new(if installed {
+                format!("{} is installed", spec.name)
+            } else if managed_install_present {
+                format!("{} setup is incomplete", spec.name)
+            } else {
+                format!("{} is not installed", spec.name)
+            })
+            .color(if installed {
+                Color32::LIGHT_GREEN
+            } else if managed_install_present {
+                Color32::ORANGE
+            } else {
+                COLOR_INACTIVE
+            }),
+        );
+    });
+
+    if let Some((result_tool, kind, result)) = &prediction_ui.tool_action_result
+        && *result_tool == tool
+    {
+        let action_name = match kind {
+            ToolActionKind::Install => "Installation",
+            ToolActionKind::Uninstall => "Uninstallation",
+        };
+        match result {
+            Ok(()) => {
+                ui.label(
+                    RichText::new(format!("{action_name} completed.")).color(Color32::LIGHT_GREEN),
+                );
+            }
+            Err(error) => {
+                ui.label(
+                    RichText::new(format!("{action_name} failed: {error}")).color(Color32::ORANGE),
+                );
+            }
+        }
+    }
 }
 
 fn open_dde_runtime_status_ui(
