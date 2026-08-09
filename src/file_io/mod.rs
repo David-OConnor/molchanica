@@ -1206,7 +1206,7 @@ pub struct FileDialogs {
     pub parquet_mols_dir: FileDialog,
     /// Adding a single molecule file (SDF or Mol2) to a Parquet database.
     pub parquet_mol_file: FileDialog,
-    /// Selecting a PDB or mmCIF backbone for ProteinMPNN without opening it in the scene.
+    /// Selecting an mmCIF backbone for ProteinMPNN without opening it in the scene.
     pub sequence_prediction: FileDialog,
     /// E.g. GROMACS files ready to be run in a sim. (.top, .mdp, .gro); choose a folder to save these in.
     pub save_md: FileDialog,
@@ -1284,16 +1284,13 @@ impl Default for FileDialogs {
         let parquet_mol_file =
             FileDialog::with_config(cfg_parquet_mol_file).default_file_filter(&mol_file_descrip);
 
-        let sequence_prediction_descrip = "Protein backbone (PDB or mmCIF)";
+        let sequence_prediction_descrip = "Protein backbone (mmCIF)";
         let sequence_prediction = FileDialog::with_config(
             FileDialogConfig {
                 title: Some("Select a protein backbone".to_owned()),
                 ..Default::default()
             }
-            .add_file_filter_extensions(
-                sequence_prediction_descrip,
-                vec!["pdb", "ent", "cif", "mmcif"],
-            ),
+            .add_file_filter_extensions(sequence_prediction_descrip, vec!["cif", "mmcif"]),
         )
         .default_file_filter(sequence_prediction_descrip);
 

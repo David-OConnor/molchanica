@@ -210,7 +210,7 @@ pub fn run_model_command(
     control.check_cancelled()?;
     crate::external_tools::scrub_python_environment(command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    println!("{model} input command: {command:?}");
+    let _banner = crate::external_tools::ToolRunBanner::new("structure prediction", model, command);
 
     let mut child = command.spawn().map_err(|error| {
         io::Error::new(

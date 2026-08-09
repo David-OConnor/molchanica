@@ -445,7 +445,7 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
         } else {
             let response = ui.add_enabled(
                 model_supported && !tool_action_running,
-                Button::new(RichText::new("Predict structure").color(COLOR_ACTION)),
+                Button::new(RichText::new("Pred struct").color(COLOR_ACTION)),
             );
             let clicked = response.clicked();
             if !model_supported {

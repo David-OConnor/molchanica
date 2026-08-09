@@ -953,7 +953,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
                 if button!(
                     ui,
-                    "Predict seq",
+                    "Pred seq",
                     COLOR_HIGHLIGHT,
                     "Predict amino-acid sequences for a protein backbone using ProteinMPNN."
                 )

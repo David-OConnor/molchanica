@@ -322,7 +322,7 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
             }
             ProteinSource::Disk => {
                 ui.horizontal(|ui| {
-                    if ui.button("Choose PDB or mmCIF…").clicked() {
+                    if ui.button("Choose mmCIF…").clicked() {
                         pick_file = true;
                     }
                     ui.label(
@@ -535,7 +535,7 @@ fn predict_opened_protein(
     protein: &MoleculePeptide,
     request: &DesignRequest,
 ) -> std::io::Result<DesignResult> {
-    mpnn::design(protein, request)
+    mpnn::design_mmcif(protein, request)
 }
 
 fn show_result(result: &DesignResult, ui: &mut Ui) {

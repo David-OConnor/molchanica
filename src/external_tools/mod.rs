@@ -40,7 +40,10 @@
 
 use bio_tools::{install::Installer as ToolInstaller, tool_definitions::Tool as InstallableTool};
 use std::{
-    env, fmt, fs, io,
+    env,
+    ffi::OsStr,
+    fmt, fs, io,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc::{self, Receiver},
@@ -1802,6 +1805,143 @@ pub fn run_to_completion(command: &mut Command, tool_name: &str) -> io::Result<S
     )))
 }
 
+/// Run a subprocess while mirroring its two output streams to Molchanica's corresponding Rust
+/// streams. A descriptive banner and shell-free command rendering make GUI-launched model runs
+/// diagnosable from the terminal without merging stderr into stdout.
+pub fn run_to_completion_logged(
+    command: &mut Command,
+    tool_name: &str,
+    workflow: &str,
+) -> io::Result<String> {
+    scrub_python_environment(command);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("PYTHONUNBUFFERED", "1");
+    let _banner = ToolRunBanner::new(workflow, tool_name, command);
+
+    let mut child = command.spawn().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("unable to start {tool_name}: {error}"),
+        )
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other(format!("unable to capture {tool_name} stdout")))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other(format!("unable to capture {tool_name} stderr")))?;
+
+    let stdout_reader = thread::spawn(move || read_and_forward(stdout, false));
+    let stderr_reader = thread::spawn(move || read_and_forward(stderr, true));
+    let status = child.wait()?;
+    let stdout = join_forward_reader(stdout_reader, tool_name, "stdout")?;
+    let stderr = join_forward_reader(stderr_reader, tool_name, "stderr")?;
+
+    if status.success() {
+        return Ok(String::from_utf8_lossy(&stdout).into_owned());
+    }
+
+    let stderr = String::from_utf8_lossy(&stderr);
+    let stdout = String::from_utf8_lossy(&stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    Err(io::Error::other(format!(
+        "{tool_name} exited with {status}: {}",
+        crate::util::truncate_str(detail, 4_096)
+    )))
+}
+
+fn read_and_forward(mut pipe: impl Read, stderr: bool) -> io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut buffer = [0_u8; 4_096];
+    loop {
+        let count = pipe.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(captured);
+        }
+        let bytes = &buffer[..count];
+        if stderr {
+            let mut output = io::stderr().lock();
+            let _ = output.write_all(bytes);
+            let _ = output.flush();
+        } else {
+            let mut output = io::stdout().lock();
+            let _ = output.write_all(bytes);
+            let _ = output.flush();
+        }
+        captured.extend_from_slice(bytes);
+    }
+}
+
+fn join_forward_reader(
+    reader: thread::JoinHandle<io::Result<Vec<u8>>>,
+    tool_name: &str,
+    stream: &str,
+) -> io::Result<Vec<u8>> {
+    reader.join().map_err(|_| {
+        io::Error::other(format!(
+            "{tool_name} {stream} reader thread terminated unexpectedly"
+        ))
+    })?
+}
+
+pub(crate) struct ToolRunBanner;
+
+impl ToolRunBanner {
+    pub(crate) fn new(workflow: &str, tool_name: &str, command: &Command) -> Self {
+        let mut output = io::stdout().lock();
+        let _ = writeln!(
+            output,
+            "\nRunning {workflow} with {tool_name}\n============\nCommand: {}",
+            display_command(command)
+        );
+        if let Some(directory) = command.get_current_dir() {
+            let _ = writeln!(output, "Working directory: {}", directory.display());
+        }
+        let _ = output.flush();
+        Self
+    }
+}
+
+impl Drop for ToolRunBanner {
+    fn drop(&mut self) {
+        let mut output = io::stdout().lock();
+        let _ = writeln!(output, "\n============\n");
+        let _ = output.flush();
+    }
+}
+
+pub(crate) fn display_command(command: &Command) -> String {
+    std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(display_command_argument)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn display_command_argument(argument: &OsStr) -> String {
+    let value = argument.to_string_lossy();
+    if value.is_empty() {
+        return "\"\"".to_owned();
+    }
+    if value
+        .chars()
+        .any(|character| character.is_whitespace() || character == '"')
+    {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        value.into_owned()
+    }
+}
+
 /// Keep activated virtualenvs, Conda, and user Python settings from leaking into a managed tool.
 /// Explicit venv interpreters and console-script launchers do not need activation.
 pub(crate) fn scrub_python_environment(command: &mut Command) {
@@ -1920,5 +2060,31 @@ mod tests {
     fn unmanaged_tools_cannot_be_uninstalled_automatically() {
         let error = uninstall(Tool::Orca).expect_err("ORCA must stay vendor-managed");
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn diagnostic_command_rendering_quotes_paths_with_spaces() {
+        let mut command = Command::new(r"C:\Program Files\Python\python.exe");
+        command.arg("runner.py").arg("two words").arg("plain");
+        assert_eq!(
+            display_command(&command),
+            r#""C:\Program Files\Python\python.exe" runner.py "two words" plain"#
+        );
+    }
+
+    #[test]
+    fn logged_runner_returns_stdout_without_merging_stderr() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "echo normal & echo warning 1>&2"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "printf normal; printf warning >&2"]);
+            command
+        };
+        let stdout = run_to_completion_logged(&mut command, "test tool", "test workflow").unwrap();
+        assert!(stdout.contains("normal"));
+        assert!(!stdout.contains("warning"));
     }
 }

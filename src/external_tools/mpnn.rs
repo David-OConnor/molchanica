@@ -30,7 +30,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Write as _,
     fs, io,
     path::{Path, PathBuf},
     process::Command,
@@ -43,7 +42,6 @@ use crate::{
     external_tools::{
         Tool, ToolWorkspace, bundle_root, find_executable,
         pdb_write::{PdbWriteOptions, chain_letter, peptide_to_pdb},
-        run_to_completion,
     },
     molecules::peptide::MoleculePeptide,
 };
@@ -318,25 +316,84 @@ pub fn design(mol: &MoleculePeptide, request: &DesignRequest) -> io::Result<Desi
     design_pdb_text(&peptide_to_pdb(mol, &options)?, request)
 }
 
-/// Run an MPNN design against a PDB or mmCIF selected from disk without adding it to the scene.
+/// Run ProteinMPNN against an mmCIF selected from disk without adding it to the scene.
 pub fn design_file(path: &Path, request: &DesignRequest) -> io::Result<DesignResult> {
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "cif" | "mmcif") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "sequence prediction input must be an mmCIF (.cif or .mmcif) file",
+        ));
+    }
     let text = fs::read_to_string(path)?;
-    let pdb = match extension.as_str() {
-        "pdb" | "ent" => text,
-        "cif" | "mmcif" => mmcif_to_pdb(&MmCif::new(&text)?)?,
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "ProteinMPNN input must be a PDB, ENT, CIF, or mmCIF file",
-            ));
-        }
-    };
-    design_pdb_text(&pdb, request)
+    design_protein_mpnn_structure(mmcif_to_mpnn_structure(&MmCif::new(&text)?)?, request)
+}
+
+/// Run the original ProteinMPNN workflow from an opened protein without using PDB as an
+/// interchange format. The structure is encoded directly in ProteinMPNN's structure JSONL schema.
+pub fn design_mmcif(mol: &MoleculePeptide, request: &DesignRequest) -> io::Result<DesignResult> {
+    design_protein_mpnn_structure(peptide_to_mpnn_structure(mol)?, request)
+}
+
+#[derive(Debug)]
+struct MpnnStructure {
+    value: Value,
+    residues: BTreeMap<String, Vec<i32>>,
+    chains: Vec<String>,
+}
+
+#[derive(Debug)]
+struct MpnnResidue {
+    number: i32,
+    amino_acid: String,
+    atoms: BTreeMap<String, [f64; 3]>,
+}
+
+fn design_protein_mpnn_structure(
+    structure: MpnnStructure,
+    request: &DesignRequest,
+) -> io::Result<DesignResult> {
+    request.validate()?;
+    if !matches!(request.model, MpnnModel::ProteinMpnn | MpnnModel::AbMpnn) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the mmCIF-only sequence workflow supports ProteinMPNN and AbMPNN",
+        ));
+    }
+
+    let python = find_executable(request.model.tool())?;
+    let checkout = bundle_root(request.model.tool())?;
+    let workspace = ToolWorkspace::new("mpnn")?;
+    let input_path = workspace.path("input.jsonl");
+    fs::write(&input_path, serde_json::to_string(&structure.value)? + "\n")?;
+    let output_dir = workspace.create_dir("output")?;
+
+    let mut command = Command::new(&python);
+    configure_protein_mpnn_jsonl(&mut command, &checkout, &workspace, &structure, request)?;
+    command
+        .arg("--jsonl_path")
+        .arg(&input_path)
+        .arg("--out_folder")
+        .arg(&output_dir)
+        .arg("--seed")
+        .arg(request.seed.to_string())
+        .current_dir(&checkout);
+
+    crate::external_tools::run_to_completion_logged(
+        &mut command,
+        request.model.label(),
+        "sequence prediction",
+    )?;
+
+    let fasta_path = find_output_fasta(&output_dir)?;
+    let fasta = fs::read_to_string(&fasta_path)?;
+    let mut result = parse_design_fasta(&fasta);
+    result.raw_fasta = fasta;
+    Ok(result)
 }
 
 fn design_pdb_text(pdb: &str, request: &DesignRequest) -> io::Result<DesignResult> {
@@ -356,30 +413,57 @@ fn design_pdb_text(pdb: &str, request: &DesignRequest) -> io::Result<DesignResul
     let output_dir = workspace.create_dir("output")?;
 
     let mut command = Command::new(&python);
-    match request.model.ligand_model_type() {
+    let ligand_model_type = request.model.ligand_model_type();
+    match ligand_model_type {
         Some(model_type) => {
             configure_ligand_mpnn(&mut command, &checkout, model_type, request)?;
         }
         None => configure_protein_mpnn(&mut command, &checkout, &workspace, pdb, request)?,
     }
+    // The original ProteinMPNN runner uses the complete --pdb_path value as its output FASTA
+    // stem. An absolute Windows path therefore becomes an invalid filename containing `C:\`.
+    // Run that checkout from the workspace and give it a relative input name. LigandMPNN does
+    // not have this bug and still needs the checkout as its working directory.
+    let workspace_root = workspace.path("");
+    let (pdb_argument, current_dir) = mpnn_process_paths(
+        ligand_model_type.is_none(),
+        &input_path,
+        &workspace_root,
+        &checkout,
+    );
     command
         .arg("--pdb_path")
-        .arg(&input_path)
+        .arg(pdb_argument)
         .arg("--out_folder")
         .arg(&output_dir)
         .arg("--seed")
         .arg(request.seed.to_string())
-        // Run from the checkout: both entry points resolve auxiliary data relative to the working
-        // directory rather than to the script.
-        .current_dir(&checkout);
+        .current_dir(current_dir);
 
-    run_to_completion(&mut command, request.model.label())?;
+    crate::external_tools::run_to_completion_logged(
+        &mut command,
+        request.model.label(),
+        "sequence prediction",
+    )?;
 
     let fasta_path = find_output_fasta(&output_dir)?;
     let fasta = fs::read_to_string(&fasta_path)?;
     let mut result = parse_design_fasta(&fasta);
     result.raw_fasta = fasta;
     Ok(result)
+}
+
+fn mpnn_process_paths(
+    original_protein_mpnn: bool,
+    input_path: &Path,
+    workspace: &Path,
+    checkout: &Path,
+) -> (PathBuf, PathBuf) {
+    if original_protein_mpnn {
+        (PathBuf::from("input.pdb"), workspace.to_owned())
+    } else {
+        (input_path.to_owned(), checkout.to_owned())
+    }
 }
 
 fn configure_ligand_mpnn(
@@ -448,6 +532,25 @@ fn configure_protein_mpnn(
     pdb: &str,
     request: &DesignRequest,
 ) -> io::Result<()> {
+    configure_protein_mpnn_base(command, checkout, request)?;
+
+    let chains = if request.chains_to_design.is_empty() {
+        pdb_chain_residues(pdb).into_keys().collect::<Vec<_>>()
+    } else {
+        request.chains_to_design.clone()
+    };
+    if !chains.is_empty() {
+        command.arg("--pdb_path_chains").arg(chains.join(" "));
+    }
+    configure_protein_mpnn_constraints(command, workspace, pdb, &chains, request)?;
+    Ok(())
+}
+
+fn configure_protein_mpnn_base(
+    command: &mut Command,
+    checkout: &Path,
+    request: &DesignRequest,
+) -> io::Result<()> {
     let runner = checkout.join("protein_mpnn_run.py");
     if !runner.is_file() {
         return Err(missing_checkout(&runner));
@@ -489,16 +592,39 @@ fn configure_protein_mpnn(
         .arg("--batch_size")
         .arg("1");
 
+    Ok(())
+}
+
+fn configure_protein_mpnn_jsonl(
+    command: &mut Command,
+    checkout: &Path,
+    workspace: &ToolWorkspace,
+    structure: &MpnnStructure,
+    request: &DesignRequest,
+) -> io::Result<()> {
+    configure_protein_mpnn_base(command, checkout, request)?;
     let chains = if request.chains_to_design.is_empty() {
-        pdb_chain_residues(pdb).into_keys().collect::<Vec<_>>()
+        structure.chains.clone()
     } else {
         request.chains_to_design.clone()
     };
-    if !chains.is_empty() {
-        command.arg("--pdb_path_chains").arg(chains.join(" "));
-    }
-    configure_protein_mpnn_constraints(command, workspace, pdb, &chains, request)?;
-    Ok(())
+    let fixed_chains = structure
+        .chains
+        .iter()
+        .filter(|chain| !chains.contains(chain))
+        .cloned()
+        .collect::<Vec<_>>();
+    write_named_jsonl(workspace, "chain_ids.jsonl", json!([chains, fixed_chains]))?;
+    command
+        .arg("--chain_id_jsonl")
+        .arg(workspace.path("chain_ids.jsonl"));
+    configure_protein_mpnn_constraints_from_residues(
+        command,
+        workspace,
+        &structure.residues,
+        &chains,
+        request,
+    )
 }
 
 fn configure_protein_mpnn_constraints(
@@ -509,6 +635,16 @@ fn configure_protein_mpnn_constraints(
     request: &DesignRequest,
 ) -> io::Result<()> {
     let residues = pdb_chain_residues(pdb);
+    configure_protein_mpnn_constraints_from_residues(command, workspace, &residues, chains, request)
+}
+
+fn configure_protein_mpnn_constraints_from_residues(
+    command: &mut Command,
+    workspace: &ToolWorkspace,
+    residues: &BTreeMap<String, Vec<i32>>,
+    chains: &[String],
+    request: &DesignRequest,
+) -> io::Result<()> {
     let designed = parse_designed_residues(&request.designed_residues)?;
     let mut fixed: BTreeMap<String, BTreeSet<i32>> = BTreeMap::new();
 
@@ -833,19 +969,65 @@ fn protein_mpnn_omit_map(sparse: Map<String, Value>, chains: &[String]) -> io::R
     Ok(json!(grouped))
 }
 
-fn mmcif_to_pdb(cif: &MmCif) -> io::Result<String> {
+fn peptide_to_mpnn_structure(mol: &MoleculePeptide) -> io::Result<MpnnStructure> {
+    let mut chains = Vec::new();
+    let mut used = BTreeSet::new();
+    for (chain_index, chain) in mol.chains.iter().enumerate() {
+        let chain_id = unique_mpnn_chain_id(&chain.id, chain_index, &mut used)?;
+        let mut residues = Vec::new();
+        for &residue_index in &chain.residues {
+            let Some(residue) = mol.residues.get(residue_index) else {
+                continue;
+            };
+            let ResidueType::AminoAcid(amino_acid) = residue.res_type else {
+                continue;
+            };
+            let mut atoms = BTreeMap::new();
+            for &atom_index in &residue.atoms {
+                let Some(atom) = mol.common.atoms.get(atom_index) else {
+                    continue;
+                };
+                let Some(name) = atom
+                    .type_in_res
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .or_else(|| atom.type_in_res_general.clone())
+                else {
+                    continue;
+                };
+                if matches!(name.to_ascii_uppercase().as_str(), "N" | "CA" | "C" | "O") {
+                    atoms.insert(
+                        name.to_ascii_uppercase(),
+                        [atom.posit.x, atom.posit.y, atom.posit.z],
+                    );
+                }
+            }
+            residues.push(MpnnResidue {
+                number: residue.serial_number as i32,
+                amino_acid: amino_acid.to_str(na_seq::AaIdent::OneLetter),
+                atoms,
+            });
+        }
+        if !residues.is_empty() {
+            chains.push((chain_id, residues));
+        }
+    }
+    build_mpnn_structure(chains)
+}
+
+fn mmcif_to_mpnn_structure(cif: &MmCif) -> io::Result<MpnnStructure> {
     let atoms = cif
         .atoms
         .iter()
         .map(|atom| (atom.serial_number, atom))
         .collect::<BTreeMap<_, _>>();
-    let mut output = String::new();
-    let mut serial = 0_u32;
+    let mut chains = Vec::new();
+    let mut used = BTreeSet::new();
     for (chain_index, chain) in cif.chains.iter().enumerate() {
-        let chain_id = chain_letter(&chain.id, chain_index);
+        let chain_id = unique_mpnn_chain_id(&chain.id, chain_index, &mut used)?;
+        let mut chain_residues = Vec::new();
         for residue in cif.residues.iter().filter(|residue| {
             chain.residue_sns.contains(&residue.serial_number)
-                && matches!(residue.res_type, ResidueType::AminoAcid(_))
                 && residue
                     .atom_sns
                     .iter()
@@ -854,46 +1036,110 @@ fn mmcif_to_pdb(cif: &MmCif) -> io::Result<String> {
             let ResidueType::AminoAcid(amino_acid) = residue.res_type else {
                 continue;
             };
-            let residue_name = amino_acid.to_str(na_seq::AaIdent::ThreeLetters);
+            let mut backbone = BTreeMap::new();
             for atom_sn in &residue.atom_sns {
                 let Some(atom) = atoms.get(atom_sn) else {
                     continue;
                 };
-                if atom.element == na_seq::Element::Hydrogen {
-                    continue;
-                }
-                serial += 1;
-                let element = atom.element.to_letter().to_ascii_uppercase();
-                let atom_name = atom
+                let Some(name) = atom
                     .type_in_res
                     .as_ref()
                     .map(ToString::to_string)
                     .or_else(|| atom.type_in_res_general.clone())
-                    .unwrap_or_else(|| element.clone());
-                let _ = writeln!(
-                    output,
-                    "ATOM  {serial:>5} {atom_name:<4} {residue_name:>3} {chain_id}{residue_number:>4}    {x:>8.3}{y:>8.3}{z:>8.3}{occupancy:>6.2}{b_factor:>6.2}          {element:>2}",
-                    atom_name = atom_name.chars().take(4).collect::<String>(),
-                    residue_number = residue.serial_number % 10_000,
-                    x = atom.posit.x,
-                    y = atom.posit.y,
-                    z = atom.posit.z,
-                    occupancy = atom.occupancy.unwrap_or(1.0),
-                    b_factor = 0.0,
-                );
+                else {
+                    continue;
+                };
+                if matches!(name.to_ascii_uppercase().as_str(), "N" | "CA" | "C" | "O") {
+                    backbone.insert(
+                        name.to_ascii_uppercase(),
+                        [atom.posit.x, atom.posit.y, atom.posit.z],
+                    );
+                }
             }
+            chain_residues.push(MpnnResidue {
+                number: residue.serial_number as i32,
+                amino_acid: amino_acid.to_str(na_seq::AaIdent::OneLetter),
+                atoms: backbone,
+            });
         }
-        let _ = writeln!(output, "TER");
+        if !chain_residues.is_empty() {
+            chains.push((chain_id, chain_residues));
+        }
     }
-    let _ = writeln!(output, "END");
-    if serial == 0 {
-        Err(io::Error::new(
+    build_mpnn_structure(chains)
+}
+
+fn unique_mpnn_chain_id(
+    source_id: &str,
+    chain_index: usize,
+    used: &mut BTreeSet<String>,
+) -> io::Result<String> {
+    let preferred = chain_letter(source_id, chain_index).to_string();
+    if used.insert(preferred.clone()) {
+        return Ok(preferred);
+    }
+    for candidate in ('A'..='Z').map(|letter| letter.to_string()) {
+        if used.insert(candidate.clone()) {
+            return Ok(candidate);
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "ProteinMPNN supports at most 26 uniquely addressable chains",
+    ))
+}
+
+fn build_mpnn_structure(chains: Vec<(String, Vec<MpnnResidue>)>) -> io::Result<MpnnStructure> {
+    if chains.is_empty() {
+        return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "the mmCIF file contains no protein atoms",
-        ))
-    } else {
-        Ok(output)
+            "the mmCIF structure contains no protein chains",
+        ));
     }
+    let mut value = Map::new();
+    value.insert("name".to_owned(), json!("input"));
+    value.insert("num_of_chains".to_owned(), json!(chains.len()));
+    let mut full_sequence = String::new();
+    let mut residue_numbers = BTreeMap::new();
+    let mut chain_ids = Vec::new();
+
+    for (chain_id, residues) in chains {
+        let mut sequence = String::new();
+        let mut coords = Map::new();
+        for atom_name in ["N", "CA", "C", "O"] {
+            let mut atom_coords = Vec::with_capacity(residues.len());
+            for residue in &residues {
+                let coordinate = residue.atoms.get(atom_name).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "mmCIF chain {chain_id} residue {} is missing backbone atom {atom_name}",
+                            residue.number
+                        ),
+                    )
+                })?;
+                atom_coords.push(*coordinate);
+            }
+            coords.insert(format!("{atom_name}_chain_{chain_id}"), json!(atom_coords));
+        }
+        for residue in &residues {
+            sequence.push_str(&residue.amino_acid);
+        }
+        full_sequence.push_str(&sequence);
+        residue_numbers.insert(
+            chain_id.clone(),
+            residues.iter().map(|residue| residue.number).collect(),
+        );
+        value.insert(format!("seq_chain_{chain_id}"), json!(sequence));
+        value.insert(format!("coords_chain_{chain_id}"), Value::Object(coords));
+        chain_ids.push(chain_id);
+    }
+    value.insert("seq".to_owned(), json!(full_sequence));
+    Ok(MpnnStructure {
+        value: Value::Object(value),
+        residues: residue_numbers,
+        chains: chain_ids,
+    })
 }
 
 fn missing_checkout(path: &Path) -> io::Error {
@@ -964,8 +1210,9 @@ fn parse_design_fasta(fasta: &str) -> DesignResult {
         let Some(header) = header else { return };
         let fields = header_fields(header);
 
-        // The input record has no score; that is what distinguishes it from the designs.
-        if result.input_sequence.is_none() && !fields.iter().any(|(key, _)| key == "score") {
+        // Both repositories write the native/input sequence first. Original ProteinMPNN includes
+        // a score on that record, while LigandMPNN does not, so record order is the reliable marker.
+        if result.input_sequence.is_none() {
             result.input_sequence = Some(sequence_text);
             return;
         }
@@ -1134,5 +1381,34 @@ QVQLQESG
         request.bias_amino_acids_per_residue = r#"{"A1":{"G":1.0}}"#.to_owned();
         request.omit_amino_acids_per_residue = r#"{"A1":"CP"}"#.to_owned();
         assert!(request.validate().is_ok());
+    }
+
+    #[test]
+    fn original_protein_mpnn_uses_a_relative_pdb_path() {
+        let input = Path::new(r"C:\Temp\molchanica-mpnn\input.pdb");
+        let workspace = Path::new(r"C:\Temp\molchanica-mpnn");
+        let checkout = Path::new(r"C:\Tools\ProteinMPNN");
+
+        let (argument, directory) = mpnn_process_paths(true, input, workspace, checkout);
+        assert_eq!(argument, Path::new("input.pdb"));
+        assert_eq!(directory, workspace);
+
+        let (argument, directory) = mpnn_process_paths(false, input, workspace, checkout);
+        assert_eq!(argument, input);
+        assert_eq!(directory, checkout);
+    }
+
+    #[test]
+    #[ignore = "requires the locally installed ProteinMPNN weights"]
+    fn smoke_tests_mmcif_jsonl_with_installed_protein_mpnn() {
+        let mut request = DesignRequest::default();
+        request.model = MpnnModel::ProteinMpnn;
+        request.num_sequences = 1;
+        request.fixed_residues = vec!["A1".to_owned()];
+        request.bias_amino_acids = "W:0.1".to_owned();
+        request.bias_amino_acids_per_residue = r#"{"A2":{"G":0.1}}"#.to_owned();
+        request.omit_amino_acids_per_residue = r#"{"A3":"CP"}"#.to_owned();
+        let result = design_file(Path::new("molecules/1ubq.cif"), &request).unwrap();
+        assert_eq!(result.designs.len(), 1);
     }
 }
