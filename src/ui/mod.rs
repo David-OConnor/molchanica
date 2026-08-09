@@ -953,6 +953,17 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
                 if button!(
                     ui,
+                    "Predict seq",
+                    COLOR_HIGHLIGHT,
+                    "Predict amino-acid sequences for a protein backbone using ProteinMPNN."
+                )
+                    .clicked()
+                {
+                    state.ui.popup.sequence_pred = !state.ui.popup.sequence_pred;
+                }
+
+                if button!(
+                    ui,
                     "Design",
                     COLOR_HIGHLIGHT,
                     "Design sequences for the active protein's backbone, scan every point mutation \

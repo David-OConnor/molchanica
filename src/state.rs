@@ -50,7 +50,7 @@ use crate::{
     threads::ThreadReceivers,
     ui::popup::{
         external_tools::ExternalToolsUi, ff_params::FfParamsUi, protein_design::ProteinDesignUi,
-        structure_pred::StructurePredUi,
+        sequence_pred::SequencePredUi, structure_pred::StructurePredUi,
     },
     util::{gemmi_avail, gromacs_avail, mdtraj_avail, orca_avail},
 };
@@ -556,6 +556,8 @@ pub struct StateUi {
     pub ff_params: FfParamsUi,
     /// Input state for the structure-prediction popup.
     pub structure_pred: StructurePredUi,
+    /// Input and result state for the dedicated ProteinMPNN sequence-prediction popup.
+    pub sequence_pred: SequencePredUi,
     /// Cached results of the third-party tools status probe.
     pub external_tools: ExternalToolsUi,
     /// Input and results for the sequence-design, ΔΔG, and antibody tools.
@@ -717,6 +719,7 @@ pub struct PopupState {
     pub md_mol_set_editor: bool,
     pub ff_params: bool,
     pub structure_pred: bool,
+    pub sequence_pred: bool,
     /// The third-party tools status panel.
     pub external_tools: bool,
     /// Sequence design, ΔΔG scanning, and antibody annotation.

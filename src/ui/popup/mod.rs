@@ -5,6 +5,7 @@ pub mod pharmacophore;
 pub mod protein_design;
 pub(in crate::ui) mod rama_plot;
 pub mod recent_files;
+pub(crate) mod sequence_pred;
 pub(crate) mod structure_pred;
 
 use bio_apis::{amber_geostd, rcsb};
@@ -170,6 +171,15 @@ pub(in crate::ui) fn load_popups(
         popup("Structure prediction").show(ui.ctx(), |ui| {
             structure_pred::structure_prediction_window(state, ui);
         });
+    }
+
+    if state.ui.popup.sequence_pred {
+        popup("Sequence prediction")
+            .default_width(620.0)
+            .max_height(1000.0)
+            .show(ui.ctx(), |ui| {
+                sequence_pred::sequence_prediction_window(state, ui);
+            });
     }
 
     if state.ui.popup.external_tools {

@@ -51,6 +51,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.parquet_db_save.update(ctx);
     state.volatile.dialogs.parquet_mols_dir.update(ctx);
     state.volatile.dialogs.parquet_mol_file.update(ctx);
+    state.volatile.dialogs.sequence_prediction.update(ctx);
     state.volatile.dialogs.save_md.update(ctx);
     state.volatile.dialogs.save_gro.update(ctx);
 

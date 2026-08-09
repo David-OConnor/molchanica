@@ -210,6 +210,7 @@ impl ProteinDesignUi {
             num_sequences: self.num_sequences,
             temperature: self.temperature,
             seed: self.seed,
+            ..Default::default()
         }
     }
 }

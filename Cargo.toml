@@ -26,7 +26,7 @@ bio_apis = { version = "0.2.8", features = ["encode"] }
 bio_files = { version = "0.5.3", features = ["encode"] }
 bio_tools = { path = "../bio_tools" }  # todo: Experimental
 mcubes = "0.1.7"
-dynamics = { version = "0.2.0", features = ["encode"] }
+dynamics = { version = "0.2.1", features = ["encode"] }
 
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
 ewald = { version = "0.1.14" }
