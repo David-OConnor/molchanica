@@ -386,7 +386,7 @@ Molchanica supports a very limited subset of PyMol's CLI interface. Supported co
 - `orient`
 - `reset`
 
-![Protein A](screenshots/protein_a.png)
+![Example of seq prediction with MPNN](screenshots/molchanica_seq_pred_mpnn.png)
 
 ### Selection modes
 
