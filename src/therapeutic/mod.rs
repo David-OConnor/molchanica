@@ -26,6 +26,7 @@ mod mol_gen;
 mod non_nn_ml;
 mod postgres;
 mod train_md;
+#[cfg(feature = "train")]
 mod train_test_split_indices;
 // Pub to allow access from the training entry point.
 
@@ -93,7 +94,7 @@ impl DatasetTdc {
             Self::Cyp2d6Veith => "cyp2d6_veith",
             Self::Cyp3a4Veith => "cyp3a4_veith",
             Self::Cyp1a2Veith => "cyp1a2_veith",
-            Self::Cyp2c9Veith => "cypc9_veith",
+            Self::Cyp2c9Veith => "cyp2c9_veith",
             Self::Dili => "dili",
             Self::HalfLifeObach => "half_life_obach",
             Self::Herg => "herg",

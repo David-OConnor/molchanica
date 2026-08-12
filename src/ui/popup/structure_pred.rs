@@ -7,8 +7,8 @@ use std::{
 };
 
 use egui::{
-    Button, CollapsingHeader, Color32, ComboBox, Context, DragValue, Resize, RichText, ScrollArea,
-    TextEdit, Ui,
+    Align, Button, CollapsingHeader, Color32, ComboBox, Context, DragValue, Layout, Resize,
+    RichText, ScrollArea, TextEdit, Ui,
 };
 
 use crate::{
@@ -350,7 +350,12 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
     state.ui.structure_pred.poll_tool_action();
     let model = state.ui.structure_pred.model;
 
-    ui.heading("Structure prediction and co-folding");
+    ui.horizontal(|ui| {
+        ui.heading("Structure prediction and co-folding");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            close_btn(ui, &mut state.ui.popup.structure_pred);
+        });
+    });
     ui.horizontal(|ui| {
         ui.label("All-atom prediction powered by");
         ui.hyperlink_to(model.label(), model.tool().spec().url);
@@ -455,8 +460,6 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
                 predict(state, ui.ctx());
             }
         }
-
-        close_btn(ui, &mut state.ui.popup.structure_pred);
     });
 }
 

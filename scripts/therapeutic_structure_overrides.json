@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "datasets": {
+    "solubility_aqsoldb": {
+      "4792": {
+        "original_smiles": "CC1=CC=C[NH+2]([O-])[CH-]1",
+        "replacement_smiles": "CC1=C[N+](=CC=C1)[O-]",
+        "reason": "Correct invalid pyridine N-oxide valence notation for 3-methylpyridine N-oxide.",
+        "source": "PubChem CID 13858"
+      },
+      "5043": {
+        "original_smiles": "O=C(O)C1=C[NH+2]([O-])[CH-]C=C1",
+        "replacement_smiles": "C1=CC(=C[N+](=C1)[O-])C(=O)O",
+        "reason": "Correct invalid pyridine N-oxide valence notation for nicotinic acid N-oxide.",
+        "source": "PubChem CID 16976"
+      }
+    }
+  }
+}

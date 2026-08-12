@@ -9,9 +9,11 @@
 
 // todo: Consider reorging, then trimming down this list.
 
+mod antibody;
 pub mod bond_inference;
 pub mod cam;
 pub mod cli;
+mod crystal;
 pub mod docking;
 pub mod drawing;
 pub mod drug_design;
@@ -22,6 +24,7 @@ pub mod inputs;
 pub mod md;
 pub mod mol_alignment;
 pub mod mol_components;
+mod mol_db;
 pub mod mol_editor;
 pub mod mol_manip;
 pub mod molecules;
@@ -36,6 +39,7 @@ pub mod sfc_mesh;
 pub mod smiles;
 pub mod sonification;
 pub mod state;
+mod structure_prediction;
 pub mod tautomers;
 pub mod therapeutic;
 pub mod threads;

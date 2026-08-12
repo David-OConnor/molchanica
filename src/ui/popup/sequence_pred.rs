@@ -8,7 +8,8 @@ use std::{
 };
 
 use egui::{
-    Button, CollapsingHeader, Color32, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui,
+    Align, Button, CollapsingHeader, Color32, ComboBox, DragValue, Layout, RichText, ScrollArea,
+    TextEdit, Ui,
 };
 
 use crate::{
@@ -260,7 +261,12 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
     state.ui.sequence_pred.job.poll();
     state.ui.sequence_pred.poll_tool_action();
 
-    ui.heading("Protein sequence prediction");
+    ui.horizontal(|ui| {
+        ui.heading("Protein sequence prediction");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            close_btn(ui, &mut state.ui.popup.sequence_pred);
+        });
+    });
     ui.label("Predict amino-acid sequences for a fixed protein backbone.");
     ui.add_space(ROW_SPACING);
 
@@ -441,7 +447,6 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
         {
             run_prediction = true;
         }
-        close_btn(ui, &mut state.ui.popup.sequence_pred);
     });
 
     if run_prediction {

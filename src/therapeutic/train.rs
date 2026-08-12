@@ -1555,18 +1555,24 @@ pub(in crate::therapeutic) fn load_training_data(
         } else if test_set.contains(&i) {
             result.test.push((mol, target));
         } else {
-            eprintln!("Warning: Record {i} not present in the train/test split for set {filename}");
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("record {i} is not assigned to a split for dataset {filename}"),
+            ));
         }
     }
 
     if record_count != tts.train.len() + tts.validation.len() + tts.test.len() {
-        eprintln!(
-            "\n\n Error: Train/test/split for {csv_path:?} counts do not match record count.\n\
-        records: {record_count}, \ntrain: {}\nvalid: {}\ntest:{}",
-            tts.train.len(),
-            tts.validation.len(),
-            tts.test.len()
-        );
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "split coverage for {csv_path:?} does not match the CSV: records={record_count}, \
+                 train={}, validation={}, test={}",
+                tts.train.len(),
+                tts.validation.len(),
+                tts.test.len()
+            ),
+        ));
     }
 
     Ok(result)
@@ -1868,7 +1874,7 @@ pub(in crate::therapeutic) fn train(
 
     println!("Started training on {csv_path:?}");
 
-    let tts = TrainTestSplit::new(dataset);
+    let tts = TrainTestSplit::load(dataset, &csv_path, tgt_col)?;
     let param_cfg = load_param_cfg(&dataset.name())?;
     let atom_graph_analysis = atom_graph_analysis_from_param_cfg(&param_cfg);
     let comp_graph_analysis = comp_graph_analysis_from_param_cfg(&param_cfg);

@@ -236,7 +236,7 @@ pub fn eval(
 
     let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
 
-    let tts = TrainTestSplit::new(dataset);
+    let tts = TrainTestSplit::load(dataset, &csv_path, tgt_col)?;
     println!(
         "\nTraining on the train set of len {}...\n",
         tts.train.len()
