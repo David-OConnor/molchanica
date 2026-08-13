@@ -36,12 +36,12 @@ use std::{
 };
 
 use dynamics::params::ProtFfChargeMapSet;
+use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::{AminoAcid, Nucleotide};
 use serde_json::Value;
 
 use crate::{
     external_tools::{Tool, find_executable},
-    molecules::peptide::MoleculePeptide,
     structure_prediction::{
         PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
         opendde::{OpenDdeEntity, OpenDdeRequest},

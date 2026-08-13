@@ -5,7 +5,7 @@
 //!
 //! - **Design sequences** runs the MPNN family ([`crate::external_tools::mpnn`]) to propose
 //!   sequences that would fold into the backbone on screen.
-//! - **Stability scan** runs the native ΔΔG scanner ([`crate::therapeutic::ddg`]) over every
+//! - **Stability scan** runs the native ΔΔG scanner ([`crate::adme_::ddg`]) over every
 //!   position and every substitution in one pass.
 //! - **Antibody** annotates chains, and — when ANARCII or IgBLAST is installed — replaces the
 //!   sequence-position approximations with a real numbering assignment and germline calls.
@@ -25,6 +25,7 @@ use std::{
 };
 
 use egui::{Button, Color32, ComboBox, DragValue, RichText, ScrollArea, Ui};
+use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::AaIdent;
 
 use crate::{
@@ -33,9 +34,8 @@ use crate::{
         Tool, anarcii,
         mpnn::{self, DesignRequest, DesignResult, MpnnModel, designable_chains},
     },
-    molecules::peptide::MoleculePeptide,
     state::State,
-    therapeutic::ddg::{self, DdgScan},
+    therapeutic_misc::ddg::{self, DdgScan},
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
 };
 

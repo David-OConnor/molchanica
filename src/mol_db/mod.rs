@@ -26,6 +26,10 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use bytes::Bytes;
+use mol_defs::{
+    molecules::{MolIdent, small::MoleculeSmall},
+    serialization::{idents_from_bytes, idents_to_bytes, metadata_from_bytes, metadata_to_bytes},
+};
 use na_seq::Element;
 use parquet::{
     arrow::{
@@ -39,17 +43,11 @@ use parquet::{
 };
 
 use crate::{
-    mol_db::serialization::{
-        idents_from_bytes, idents_to_bytes, metadata_from_bytes, metadata_to_bytes,
-    },
-    molecules::{MolIdent, small::MoleculeSmall},
     prefs::OpenType,
     screening::{collect_mol_files, load_mol_batch},
     state::{DbSel, State},
     util::{handle_err, handle_success},
 };
-
-mod serialization;
 
 /// Column names; keep in sync with `schema` and `StoredMol`.
 const COL_SMILES: &str = "smiles";

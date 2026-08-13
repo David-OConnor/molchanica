@@ -11,13 +11,13 @@ use egui::{
     Align, Button, CollapsingHeader, Color32, ComboBox, DragValue, Layout, RichText, ScrollArea,
     TextEdit, Ui,
 };
+use mol_defs::molecules::peptide::MoleculePeptide;
 
 use crate::{
     external_tools::{
         self, Tool,
         mpnn::{self, DesignRequest, DesignResult, MpnnModel, ProteinMpnnCheckpoint},
     },
-    molecules::peptide::MoleculePeptide,
     state::State,
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
 };

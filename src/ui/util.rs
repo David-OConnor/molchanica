@@ -10,6 +10,10 @@ use std::{
 use bio_apis::pubchem::find_cids_from_search;
 use egui::{Color32, Response, RichText, Ui};
 use graphics::{EngineUpdates, FWD_VEC, Scene};
+use mol_defs::{
+    molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
+    smiles::is_smiles,
+};
 
 use crate::{
     cam::reset_camera,
@@ -26,10 +30,9 @@ use crate::{
     md::viewer,
     mol_db::{CHEBI_DB_NAME, ParquetMolDb},
     mol_editor,
-    molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
+    pocket_render::PocketRender,
     prefs::OpenType,
     render::{Color, set_flashlight, set_static_light},
-    smiles::is_smiles,
     state::{DbSel, OperatingMode, State},
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},

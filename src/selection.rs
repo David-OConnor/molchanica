@@ -7,6 +7,9 @@ use bincode::{Decode, Encode};
 use bio_files::ResidueType;
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
+use mol_defs::molecules::{
+    Atom, AtomRole, Bond, Chain, MolType, common::MoleculeCommon, peptide::MoleculePeptide,
+};
 use na_seq::{AminoAcid, Element, Element::Hydrogen};
 
 use crate::{
@@ -14,7 +17,6 @@ use crate::{
     mol_editor::sync_md,
     mol_manip,
     mol_manip::ManipMode,
-    molecules::{Atom, AtomRole, Bond, Chain, MolType, common::MoleculeCommon},
     state::{OperatingMode, State, StateUi},
     util::{RedrawFlags, orbit_center},
 };
@@ -1446,4 +1448,27 @@ pub fn select_from_search(state: &mut State) -> bool {
         }
     }
     false
+}
+
+/// Resolving a selection to a specific atom. `MoleculePeptide` is defined in `mol_defs`, which has
+/// no notion of what the user has selected, so this hangs off an extension trait here.
+pub trait SelAtom {
+    fn get_sel_atom(&self, sel: &Selection) -> Option<&Atom>;
+}
+
+impl SelAtom for MoleculePeptide {
+    /// If a residue, get the alpha C. If multiple, get an arbitrary one.
+    /// todo: Make this work for non-peptides.
+    fn get_sel_atom(&self, sel: &Selection) -> Option<&Atom> {
+        match sel {
+            Selection::AtomPeptide(i) => self.common.atoms.get(*i),
+            Selection::Residue(i) => self.get_res_sel_atom(*i),
+            Selection::AtomsPeptide(is) => {
+                // todo temp?
+                self.common.atoms.get(is[0])
+            }
+            Selection::None => None,
+            _ => None, // Bonds
+        }
+    }
 }

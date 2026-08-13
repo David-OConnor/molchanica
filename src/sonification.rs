@@ -7,10 +7,11 @@
 use std::io;
 
 use bio_files::{BondType, md_params::ForceFieldParams};
+use mol_defs::molecules::common::MoleculeCommon;
 use na_seq::Element::Hydrogen;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source, source::SineWave};
 
-use crate::{molecules::common::MoleculeCommon, util};
+use crate::util;
 
 const AUDIO_TRANSPOSITION_FROM_HZ: f64 = 2.0e-11;
 const PS_INV_TO_HZ: f64 = 1.0e12;

@@ -2,13 +2,18 @@ use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::BondType;
 use graphics::{Entity, UP_VEC};
 use lin_alg::f32::{Quaternion, Vec3};
+use mol_defs::{
+    mol_components::MolComponents,
+    molecules::{Atom, Chain, MolType, Residue},
+};
 use na_seq::Element;
 
 use crate::{
     drawing,
-    drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_PEPTIDE_AMT, MESH_BOND_CAP},
-    mol_components::MolComponents,
-    molecules::{Atom, Chain, MolType, Residue},
+    drawing::{
+        CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_PEPTIDE_AMT, MESH_BOND_CAP,
+        MolTypeExt,
+    },
     render::{BACKGROUND_COLOR, Color, MESH_BOND},
     selection::{Selection, ViewSelLevel},
     state::ResColoring,

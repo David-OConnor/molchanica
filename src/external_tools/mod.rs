@@ -38,7 +38,6 @@
 //! executable. This prevents a desktop launch from silently selecting a system Python with an
 //! incompatible package set.
 
-use bio_tools::{install::Installer as ToolInstaller, tool_definitions::Tool as InstallableTool};
 use std::{
     env,
     ffi::OsStr,
@@ -50,6 +49,8 @@ use std::{
     thread::{self, sleep},
     time::{Duration, Instant},
 };
+
+use bio_tools::{install::Installer as ToolInstaller, tool_definitions::Tool as InstallableTool};
 
 pub mod anarcii;
 pub mod igblast;

@@ -15,6 +15,10 @@ use dynamics::{
 };
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f64::Vec3;
+use mol_defs::molecules::{
+    Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, common::MoleculeCommon,
+    lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
+};
 use na_seq::Element;
 
 use crate::{
@@ -23,10 +27,6 @@ use crate::{
         draw_mol, draw_water,
     },
     mol_manip::ManipMode,
-    molecules::{
-        Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, common::MoleculeCommon,
-        lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
-    },
     prefs::{OpenHistory, OpenType},
     state::{OperatingMode, State},
     util::handle_err,

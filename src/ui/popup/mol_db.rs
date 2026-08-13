@@ -1,15 +1,15 @@
 //! A popup of a UI viewer and editor for molecule databases, e.g. as implemented
 //! in parquet.
 
-use std::{path::Path, slice, sync::mpsc, thread};
+use std::{path::Path, slice};
 
 use egui::{Color32, Grid, RichText, ScrollArea, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
+use mol_defs::molecules::MoleculeGeneric;
 
 use crate::{
     button, label,
     mol_db::{MolMeta, ParquetMolDb},
-    molecules::MoleculeGeneric,
     prefs::OpenType,
     state::{DbSel, PopupState, State},
     ui::{

@@ -53,16 +53,9 @@ use na_seq::Element;
 use rand::Rng;
 use rayon::prelude::*;
 
-use crate::{
-    ComputationDevice,
-    bond_inference::create_hydrogen_bonds_one_way,
-    docking::prep::{DockingSetup, LIGAND_SAMPLE_RATIO, Torsion},
-    dynamics::prep::build_dynamics_docking,
-    forces,
-    forces::{V_lj, V_lj_x8},
-    mol_lig::{Ligand, MoleculeSmall},
-    molecule::Atom,
-};
+use crate::{ComputationDevice, docking::prep::{DockingSetup, LIGAND_SAMPLE_RATIO, Torsion}, dynamics::prep::build_dynamics_docking, forces, forces::{V_lj, V_lj_x8}, mol_lig::{Ligand, MoleculeSmall}, molecule::Atom};
+
+use mol_defs::{bond_inference::create_hydrogen_bonds_one_way};
 
 pub mod find_sites;
 pub mod prep;

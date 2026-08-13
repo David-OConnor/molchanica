@@ -1,14 +1,7 @@
 [package]
 name = "molchanica"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2024"
-default-run = "molchanica"
-
-# For training the ADME model
-[[bin]]
-name = "train"
-path = "src/train_entry.rs"
-required-features = ["train"]
 
 
 [dependencies]
@@ -19,6 +12,8 @@ egui = "0.34.1"
 egui-file-dialog = "0.13.0" #  For file dialogs.
 egui_plot = "0.35.0"  # For Rama plots
 
+# My own libraries here, many of which were designed specilfically for use
+# with Molchanica.
 lin_alg = { version = "1.4.3", features = ["encode"] }
 na_seq = "0.3.15"
 bio_apis = { version = "0.2.8", features = ["encode"] }
@@ -26,6 +21,8 @@ bio_files = { version = "0.5.3", features = ["encode"] }
 bio_tools = { path = "../bio_tools" }  # todo: Experimental
 mcubes = "0.1.7"
 dynamics = { version = "0.2.1", features = ["encode"] }
+mol_defs = { path = "../mol_defs", features = ["render"] }
+adme = { path = "../adme" }
 
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
 ewald = { version = "0.1.14" }
@@ -43,14 +40,9 @@ regex = "1.13.0"
 chrono = "0.4.45"
 serde = { version = "1.0.228", features = ["derive"] }
 
-csv = { version = "1.4.0", optional = true }  # Tran only
-sha2 = { version = "0.10.9", optional = true }  # Dataset snapshot integrity for training.
-
-# Note: Burn v20 only supports cudarc with dynamic-loading. And we get a "cuda_runtime.h" error with it.
-# And using WGPU allows us to use this on PCs that have non-nvidia GPUs.
-burn = { version = "0.21.0", features = ["std", "train", "fusion", "ndarray", "autotune"], default-features = false }
-
-serde_json = "1.0.150"  # For [de]serializing ML model configs and scalers.
+# For structure prediction (Boltz-2, ESM-Fold, OpenDDE) and external tools (ANARCII, ProteinMPNN),
+# which exchange JSON with the processes they drive.
+serde_json = "1.0.150"
 
 # We use Parquet for molecule databases, e.g. for screening, and a built-in convenience set.
 # Parquet is the on-disk format; Arrow is its in-memory format.
@@ -67,12 +59,8 @@ bytes = "1.12.1"
 # but it will be unable to find the GPU at runtime. edit: Nvm; not working there with loading either.
 cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking", "cuda-13000"], optional = true }
 
-# Convenient for our large quantity of model files.
-include_dir = "0.7.4"
-
 rodio = "0.22.2"  # For sonification of bonds etc (Experimental)
 
-pyo3 = { version = "0.29.0", optional = true }  # For Python-based structure prediction like Boltz-2
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
@@ -97,15 +85,6 @@ default = ["cuda"]
 
 #cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/vkfft", "ewald/vkfft"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
-
-# We use GPU for training only.
-train = ["burn/wgpu", "burn/tui", "csv", "sha2"]
-
-### Embeds a Python interpreter (PyO3) so Boltz-2 can run in-process, and enables the self-provisioning
-### managed Boltz environment. `auto-initialize` starts the embedded interpreter on first use.
-### Note: building with this feature requires a libpython to link against, and the resulting binary
-### depends on a matching libpython at runtime. See src/structure_prediction/pyo3_interface.rs.
-#python_for_structure_prediction = ["pyo3", "pyo3/auto-initialize"]
 
 
 [profile.release]

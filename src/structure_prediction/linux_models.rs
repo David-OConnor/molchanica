@@ -3,11 +3,11 @@
 use std::{fs, io, process::Command};
 
 use dynamics::params::ProtFfChargeMapSet;
+use mol_defs::molecules::peptide::MoleculePeptide;
 use serde_json::{Value, json};
 
 use crate::{
     external_tools::{self, Tool},
-    molecules::peptide::MoleculePeptide,
     structure_prediction::{
         PredictionControl, PredictionWorkspace, StructurePredictionModel, load_prediction,
         opendde::{OpenDdeEntity, OpenDdeRequest},

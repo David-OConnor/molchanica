@@ -10,12 +10,13 @@ use lin_alg::{
     f32::{Quaternion, Vec3},
     f64::Vec3 as Vec3F64,
 };
+use mol_defs::molecules::{MolType, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
     drawing::{EntityClass, MoleculeView},
     inputs::{SENS_MOL_ROT_MOUSE, SENS_MOL_ROT_SCROLL},
-    molecules::{MolType, common::MoleculeCommon},
+    pocket_render::PocketRender,
     selection::Selection,
     state::{OperatingMode, State},
     util::RedrawFlags,

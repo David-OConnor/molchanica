@@ -13,13 +13,17 @@ use lin_alg::{
     f32::{Quaternion as QuaternionF32, Vec3 as Vec3F32},
     f64::Vec3,
 };
+use mol_defs::{
+    bond_inference::create_hydrogen_bonds_two_mols,
+    mol_components::MolComponents,
+    molecules::{Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, small::MoleculeSmall},
+};
 use na_seq::{
     AtomTypeInRes,
     Element::{Carbon, Hydrogen},
 };
 
 use crate::{
-    bond_inference::create_hydrogen_bonds_two_mols,
     cam,
     cam::move_cam_to_mol,
     drawing::{
@@ -29,9 +33,7 @@ use crate::{
         },
         draw_mol, draw_pocket,
     },
-    mol_components::MolComponents,
     mol_manip::ManipMode,
-    molecules::{Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolType, small::MoleculeSmall},
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
     state::{OperatingMode, State, StateUi},

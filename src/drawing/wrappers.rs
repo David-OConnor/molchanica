@@ -4,11 +4,11 @@
 // todo: Drawing module A/R.
 
 use graphics::{EngineUpdates, Entity, EntityUpdate, Scene};
+use mol_defs::molecules::{MolGeneric, MolGenericRef, MolType};
 
 use crate::{
     drawing,
-    drawing::EntityClass,
-    molecules::{MolGeneric, MolGenericRef, MolType},
+    drawing::{EntityClass, MolTypeExt},
     render::MESH_POCKET_START,
     state::{OperatingMode, State},
     util::clear_mol_entity_indices,

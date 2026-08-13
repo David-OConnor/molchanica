@@ -14,15 +14,15 @@ use std::{
 
 use bio_files::ResidueType;
 use graphics::{EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC, arc_rotation};
+use mol_defs::molecules::AtomRole;
 use na_seq::{AminoAcid, Element};
 use regex::Regex;
 
 use crate::{
     cam::{cam_look_at, reset_camera},
     file_io::download_mols,
-    molecules::AtomRole,
     render::set_flashlight,
-    selection::Selection,
+    selection::{SelAtom, Selection},
     state::State,
     util,
 };

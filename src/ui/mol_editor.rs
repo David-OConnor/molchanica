@@ -2,6 +2,7 @@ use bio_files::BondType;
 use dynamics::Solvent;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
+use mol_defs::molecules::{Bond, MolIdent, MolType, small::MoleculeSmall};
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
@@ -10,6 +11,7 @@ use na_seq::{
 use crate::{
     cam::{cam_reset_controls, set_fog},
     drawing::MoleculeView,
+    file_io::save_mol,
     mol_editor,
     mol_editor::{
         add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
@@ -18,7 +20,6 @@ use crate::{
     },
     mol_manip,
     mol_manip::{ManipMode, set_manip},
-    molecules::{Bond, MolIdent, MolType, small::MoleculeSmall},
     render::MESH_POCKET_START,
     selection::{Selection, ViewSelLevel},
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
@@ -272,12 +273,12 @@ pub(in crate::ui) fn editor(
         if ui
             .button(RichText::new("Save"))
             .on_hover_text("Save to a Mol2, SDF, or PDBQT file")
-            .clicked() && state
-            .mol_editor
-            .mol
-            .common
-            .save(MolType::Ligand, &mut state.volatile.dialogs.save)
-            .is_err()
+            .clicked() && save_mol(
+            &state.mol_editor.mol.common,
+            MolType::Ligand,
+            &mut state.volatile.dialogs.save,
+        )
+        .is_err()
         {
             handle_err(&mut state.ui, "Problem saving this file".to_owned());
         }

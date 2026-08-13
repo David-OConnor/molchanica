@@ -12,9 +12,8 @@
 use std::{fmt::Write as _, io};
 
 use bio_files::ResidueType;
+use mol_defs::molecules::{Atom, peptide::MoleculePeptide};
 use na_seq::AaIdent;
-
-use crate::molecules::{Atom, peptide::MoleculePeptide};
 
 /// What to include in the written file.
 #[derive(Clone, Debug)]

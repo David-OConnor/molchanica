@@ -25,6 +25,13 @@ use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
 };
+use mol_defs::{
+    molecules::{
+        Atom, Bond, Chain, MolGenericRefMut, MolType, MoleculeGeneric, Residue, aa_color,
+        peptide::MoleculePeptide, small::MoleculeSmall,
+    },
+    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
+};
 
 use crate::{
     drawing::{
@@ -34,16 +41,11 @@ use crate::{
     },
     external_tools::{self, CheckResult, Tool},
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
-    molecules::{
-        Atom, Bond, Chain, MolGenericRefMut, MolType, MoleculeGeneric, Residue, aa_color,
-        peptide::MoleculePeptide, small::MoleculeSmall,
-    },
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
     render::{Color, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE, set_flashlight},
     selection::Selection,
     sfc_mesh,
-    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
 };
 

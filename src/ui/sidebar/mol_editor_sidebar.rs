@@ -5,6 +5,7 @@ use crate::{
     button,
     drawing::{EntityClass, draw_pocket},
     label,
+    pocket_render::PocketRender,
     selection::Selection,
     state::State,
     ui::{COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup::pharmacophore},

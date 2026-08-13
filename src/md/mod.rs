@@ -16,6 +16,7 @@ use dynamics::{
 };
 use graphics::{EngineUpdates, Entity, FWD_VEC, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
+use mol_defs::molecules::{Atom, Bond, common::MoleculeCommon, nucleic_acid::NucleicAcidType};
 use rand::RngExt;
 use viewer::SnapshotViewer;
 
@@ -24,7 +25,6 @@ use crate::{
     file_io::save_mol_set_as_gro,
     gromacs,
     md::trajectory::{TrajFormat, Trajectory},
-    molecules::{Atom, Bond, common::MoleculeCommon, nucleic_acid::NucleicAcidType},
     state::State,
     util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
 };

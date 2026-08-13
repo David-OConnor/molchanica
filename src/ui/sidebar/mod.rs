@@ -3,11 +3,20 @@ use dynamics::{FfMolType, merge_params};
 use egui::{Color32, RichText, TextEdit, Ui};
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use lin_alg::f64::Vec3;
+use mol_defs::{
+    molecules::{
+        MolGenericRef, MolGenericRefMut, MolIdent, MolType, common::MoleculeCommon,
+        nucleic_acid::NucleicAcidType,
+    },
+    properties::mol_characterization::MolCharacterization,
+    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
+};
 use na_seq::AaIdent;
 
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
+    file_io::save_mol,
     label,
     md::{
         trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj},
@@ -15,15 +24,8 @@ use crate::{
         viewer::ViewerMolSet,
     },
     mol_manip::{ManipMode, set_manip},
-    molecules::{
-        MolGenericRef, MolGenericRefMut, MolIdent, MolType, common::MoleculeCommon,
-        nucleic_acid::NucleicAcidType,
-    },
-    properties::{
-        crystal, logp, mol_characterization::MolCharacterization, sol_shrinking_box, water_sol,
-        water_sol_mix,
-    },
-    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
+    pocket_render::PocketRender,
+    properties::{crystal, logp, sol_shrinking_box, water_sol, water_sol_mix},
     sonification,
     state::{OperatingMode, PlayingAudio, PopupState, State},
     ui::{
@@ -833,9 +835,7 @@ pub(in crate::ui) fn sidebar(
                 }
 
                 if let Some((mol, mol_type)) = mol_to_save
-                    && mol
-                        .save(mol_type, &mut state.volatile.dialogs.save)
-                        .is_err()
+                    && save_mol(&mol, mol_type, &mut state.volatile.dialogs.save).is_err()
                 {
                     handle_err(&mut state.ui, "Problem saving this file".to_owned());
                 }

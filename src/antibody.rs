@@ -42,12 +42,10 @@ use std::{
 
 use bio_files::ResidueType;
 use lin_alg::f64::Vec3;
+use mol_defs::molecules::{AtomRole, peptide::MoleculePeptide};
 use na_seq::{AaIdent, AminoAcid, Element};
 
-use crate::{
-    external_tools::{anarcii, igblast},
-    molecules::{AtomRole, peptide::MoleculePeptide},
-};
+use crate::external_tools::{anarcii, igblast};
 
 const VARIABLE_DOMAIN_SCAN_LEN: usize = 130;
 

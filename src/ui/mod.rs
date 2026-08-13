@@ -11,6 +11,7 @@ use egui::{
     Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
+use mol_defs::molecules::{MolGenericRef, MolIdent, MolType};
 use na_seq::Element;
 use panels::{
     md::md_setup,
@@ -32,7 +33,6 @@ use crate::{
     drawing::{MoleculeView, color_viridis},
     file_io::{download_mols::load_atom_coords_rcsb, gemmi_path},
     mol_editor::enter_edit_mode,
-    molecules::{MolGenericRef, MolIdent, MolType},
     prefs::ControlSchemeType,
     render::set_flashlight,
     selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},

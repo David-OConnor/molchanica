@@ -1,16 +1,16 @@
 use egui::Ui;
 use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
 use lin_alg::f32::{Quaternion, Vec3};
+use mol_defs::molecules::{
+    MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
+    nucleic_acid::MoleculeNucleicAcid, peptide::MoleculePeptide, pocket::Pocket,
+    small::MoleculeSmall,
+};
 use na_seq::Element;
 
 use crate::{
-    molecules::{
-        MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
-        nucleic_acid::MoleculeNucleicAcid, peptide::MoleculePeptide, pocket::Pocket,
-        small::MoleculeSmall,
-    },
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
-    selection::Selection,
+    selection::{SelAtom, Selection},
     state::{State, StateUi},
 };
 

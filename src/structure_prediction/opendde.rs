@@ -58,9 +58,10 @@ const PROTEIN_SEQUENCE_ALPHABET: &[u8] = b"ACDEFGHIKLMNPQRSTVWYX";
 const DNA_SEQUENCE_ALPHABET: &[u8] = b"ATGCNX";
 const RNA_SEQUENCE_ALPHABET: &[u8] = b"AUGCNX";
 
+use mol_defs::molecules::peptide::MoleculePeptide;
+
 use crate::{
     external_tools::{self, Tool},
-    molecules::peptide::MoleculePeptide,
     structure_prediction::{
         PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
         run_model_command,

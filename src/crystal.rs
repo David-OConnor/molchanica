@@ -14,9 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 use bio_files::BondType;
 use lin_alg::f64::Vec3;
+use mol_defs::molecules::{Atom, Bond, common::MoleculeCommon};
 use na_seq::Element::{self, Carbon, Chlorine, Sodium};
-
-use crate::molecules::{Atom, Bond, common::MoleculeCommon};
 
 const SQRT_3_DIV_2: f64 = 0.866_025_403_784_438_6;
 const LATTICE_DET_EPS: f64 = 1.0e-12;

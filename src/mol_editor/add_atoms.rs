@@ -1,17 +1,19 @@
 use bio_files::BondType;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate};
 use lin_alg::f64::Vec3;
-use na_seq::{Element, Element::Hydrogen};
-
-use crate::{
+use mol_defs::{
     mol_components::MolComponents,
-    mol_editor,
-    mol_editor::{MolEditorState, templates::Template},
-    mol_manip::ManipMode,
     molecules::{
         Bond,
         common::{MoleculeCommon, bonds_avail},
     },
+};
+use na_seq::{Element, Element::Hydrogen};
+
+use crate::{
+    mol_editor,
+    mol_editor::{MolEditorState, templates::Template},
+    mol_manip::ManipMode,
     state::StateUi,
 };
 

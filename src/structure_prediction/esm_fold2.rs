@@ -15,14 +15,12 @@ use dynamics::params::ProtFfChargeMapSet;
 use na_seq::{AminoAcid, Nucleotide};
 use serde_json::json;
 
-use crate::{
-    external_tools::uv_managed_python,
-    molecules::peptide::MoleculePeptide,
-    structure_prediction::{
+use crate::{external_tools::uv_managed_python, structure_prediction::{
         PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
         run_model_command,
-    },
-};
+    }};
+
+use mol_defs::{molecules::peptide::MoleculePeptide};
 
 const PYTHON_RUNNER: &str = r#"import json
 import sys

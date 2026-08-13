@@ -1,6 +1,7 @@
 use dynamics::snapshot::Snapshot;
 use egui::{Color32, RichText, ScrollArea, Slider, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use mol_defs::molecules::{Atom, MolType, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
@@ -8,7 +9,6 @@ use crate::{
     cam::reset_camera,
     label,
     md::{viewer, viewer::ViewerMolecule},
-    molecules::{Atom, MolType, common::MoleculeCommon},
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,

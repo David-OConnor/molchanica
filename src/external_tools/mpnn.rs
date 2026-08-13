@@ -36,14 +36,12 @@ use std::{
 };
 
 use bio_files::{MmCif, ResidueType};
+use mol_defs::molecules::peptide::MoleculePeptide;
 use serde_json::{Map, Value, json};
 
-use crate::{
-    external_tools::{
-        Tool, ToolWorkspace, bundle_root, find_executable,
-        pdb_write::{PdbWriteOptions, chain_letter, peptide_to_pdb},
-    },
-    molecules::peptide::MoleculePeptide,
+use crate::external_tools::{
+    Tool, ToolWorkspace, bundle_root, find_executable,
+    pdb_write::{PdbWriteOptions, chain_letter, peptide_to_pdb},
 };
 
 /// Which network and weights to run.

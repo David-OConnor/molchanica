@@ -15,6 +15,11 @@ use egui::{
 };
 use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
+use mol_defs::molecules::{
+    MolGenericRef, MolIdent, MolType,
+    common::MoleculeCommon,
+    pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
+};
 use na_seq::AaIdent;
 
 use crate::{
@@ -25,11 +30,6 @@ use crate::{
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
     mol_alignment::run_alignment,
-    molecules::{
-        MolGenericRef, MolIdent, MolType,
-        common::MoleculeCommon,
-        pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
-    },
     render::MESH_POCKET_START,
     screening::screen_by_alignment,
     selection::{Selection, ViewSelLevel},

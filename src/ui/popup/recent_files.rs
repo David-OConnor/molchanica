@@ -6,10 +6,10 @@ use std::{
 use chrono::Utc;
 use egui::{Align, Color32, Grid, Layout, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
+use mol_defs::molecules::MolType;
 
 use crate::{
     file_io::managed_mols,
-    molecules::MolType,
     prefs::OpenType,
     state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, popup},

@@ -25,29 +25,47 @@ use std::{
 };
 
 use chrono::{TimeZone, Utc};
-
-use crate::{
+use mol_defs::{
     copy_le,
-    docking::DockingSite,
-    drawing::MoleculeView,
-    md::MdBackend,
     molecules::{
         MolIdent,
         lipid::LipidShape,
         nucleic_acid::{NucleicAcidType, Strands},
     },
     parse_le,
+    sfc_mesh::MeshColoring,
+};
+
+use crate::{
+    docking::DockingSite,
+    drawing::MoleculeView,
+    md::MdBackend,
     prefs::{
         ControlSchemeType, ControlSettings, Graphics, MdPrefs, OpenHistory, OpenType, PerMolToSave,
         ToSave, UiPrefs,
     },
     selection::{Selection, ViewSelLevel},
-    sfc_mesh::MeshColoring,
     state::{
         CamSnapshot, LabelVis, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, UiVisibility,
         Visibility,
     },
 };
+
+/// A compact single-byte representation, for enums stored in this format.
+///
+/// This is a trait rather than a set of inherent methods because several of the enums we store
+/// (`MeshColoring`, `LipidShape`, ...) are defined in `mol_defs`, and how *this* file format encodes
+/// them is our concern, not theirs.
+trait PrefsByte: Sized {
+    fn to_u8(self) -> u8;
+    fn from_u8(v: u8) -> Self;
+}
+
+/// As `PrefsByte`, for types needing more than a single byte.
+trait PrefsBytes: Sized {
+    fn to_bytes(&self) -> Vec<u8>;
+    fn from_bytes(data: &[u8]) -> io::Result<Self>;
+}
 
 /// A sanity check: The start byte will always be this.
 const MCA_START_BYTE: u8 = 0x69;
@@ -196,7 +214,7 @@ impl ResColoring {
     }
 }
 
-impl MeshColoring {
+impl PrefsByte for MeshColoring {
     fn to_u8(self) -> u8 {
         match self {
             Self::Solid => 0,
@@ -278,7 +296,7 @@ impl MdBackend {
     }
 }
 
-impl LipidShape {
+impl PrefsByte for LipidShape {
     fn to_u8(self) -> u8 {
         match self {
             Self::Free => 0,
@@ -298,7 +316,7 @@ impl LipidShape {
     }
 }
 
-impl NucleicAcidType {
+impl PrefsByte for NucleicAcidType {
     fn to_u8(self) -> u8 {
         match self {
             Self::Dna => 0,
@@ -313,7 +331,7 @@ impl NucleicAcidType {
     }
 }
 
-impl Strands {
+impl PrefsByte for Strands {
     fn to_u8(self) -> u8 {
         match self {
             Self::Single => 0,
@@ -763,8 +781,8 @@ impl Selection {
     }
 }
 
-impl MolIdent {
-    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+impl PrefsBytes for MolIdent {
+    fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
             MolIdent::PubChem(n) => {
@@ -809,7 +827,7 @@ impl MolIdent {
         }
         out
     }
-    pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
+    fn from_bytes(data: &[u8]) -> io::Result<Self> {
         let mut i = 1;
         Ok(match data[0] {
             0 => MolIdent::PubChem(parse_le!(data, u32, i..i + 4)),

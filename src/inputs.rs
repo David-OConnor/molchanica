@@ -8,6 +8,7 @@ use graphics::{
     winit::keyboard::{KeyCode, PhysicalKey::Code},
 };
 use lin_alg::f32::Vec3;
+use mol_defs::molecules::MolType;
 use na_seq::Element::Carbon;
 
 use crate::{
@@ -19,7 +20,6 @@ use crate::{
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
     mol_manip::{ManipMode, set_manip},
-    molecules::MolType,
     render::set_flashlight,
     selection,
     selection::{Selection, cycle_selected},

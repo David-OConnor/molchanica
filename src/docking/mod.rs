@@ -15,19 +15,19 @@ use dynamics::{
 };
 use graphics::{EngineUpdates, Scene};
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
+use mol_defs::molecules::{peptide::MoleculePeptide, small::MoleculeSmall};
 
 use crate::{
     md::{filter_peptide_atoms, post_run_cleanup, run_dynamics_blocking},
-    molecules::{peptide::MoleculePeptide, small::MoleculeSmall},
     state::State,
 };
 
-#[derive(Clone, Debug, Default)]
-/// Bonds that are marked as flexible, using a semi-rigid conformation.
-pub struct Torsion {
-    pub bond: usize, // Index.
-    pub dihedral_angle: f64,
-}
+// #[derive(Clone, Debug, Default)]
+// /// Bonds that are marked as flexible, using a semi-rigid conformation.
+// pub struct Torsion {
+//     pub bond: usize, // Index.
+//     pub dihedral_angle: f64,
+// }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
 /// Area IVO the docking site.

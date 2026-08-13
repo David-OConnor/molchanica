@@ -22,14 +22,17 @@ use lin_alg::f64::Vec3;
 
 mod file_format;
 
+use mol_defs::{
+    molecules::{MolIdent, MolType, peptide::MoleculePeptide},
+    sfc_mesh::MeshColoring,
+};
+
 use crate::{
     docking::DockingSite,
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     md::MdBackend,
-    molecules::{MolIdent, MolType, peptide::MoleculePeptide},
     selection::{Selection, ViewSelLevel},
-    sfc_mesh::MeshColoring,
     state::{
         CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, State, UiVisibility,
         Visibility,

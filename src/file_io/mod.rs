@@ -7,6 +7,7 @@ use std::{
     time::Instant,
 };
 
+use adme::spawn_therapeutic_inference;
 use bio_files::{
     DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz,
     gromacs::gro::{AtomGro, Gro},
@@ -18,6 +19,15 @@ use dynamics::MdConfig;
 use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
+use mol_defs::{
+    molecules::{
+        MolGeneric, MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
+        POCKET_METADATA_KEY, common::MoleculeCommon, peptide::MoleculePeptide,
+        small::MoleculeSmall,
+    },
+    reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
+    screening::pharmacophore::Pharmacophore,
+};
 use na_seq::{AaIdent, Element};
 use rand::RngExt;
 
@@ -25,18 +35,13 @@ use crate::{
     cam,
     cam::move_mol_to_cam,
     drawing::{
-        draw_peptide,
+        MolTypeExt, draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     md::trajectory::Trajectory,
-    molecules::{
-        MolGeneric, MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        POCKET_METADATA_KEY, common::MoleculeCommon, peptide::MoleculePeptide,
-        small::MoleculeSmall,
-    },
+    pocket_render::PocketRender,
     prefs::{OpenHistory, OpenType},
-    reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
-    screening::pharmacophore::Pharmacophore,
+    reflection::DensityRectExt,
     selection::Selection,
     state::State,
     util::{handle_err, handle_success},
@@ -935,6 +940,11 @@ impl State {
                     mol.update_aux(
                         &self.to_save.pubchem_properties_map,
                         &mut self.volatile.thread_receivers.pubchem_properties_avail,
+                        self.ff_param_set.small_mol.as_ref().unwrap(),
+                    );
+
+                    spawn_therapeutic_inference(
+                        &mol,
                         &mut self.volatile.inference_models,
                         self.ff_param_set.small_mol.as_ref().unwrap(),
                         &mut self.volatile.thread_receivers.therapeutic_properties_avail,
@@ -1113,25 +1123,30 @@ pub fn gemmi_path() -> Option<&'static Path> {
     }
 }
 
-impl MoleculeCommon {
-    /// Save to disk.
-    pub fn save(&self, mol_type: MolType, dialog: &mut FileDialog) -> io::Result<()> {
-        let fname_default = {
-            let name = if self.ident.is_empty() {
-                "molecule".to_string()
-            } else {
-                self.ident.clone()
-            };
-            format!("{name}.{}", mol_type.default_file_ext())
+/// Save a molecule to disk, prompting for a location.
+///
+/// A free function rather than a method on `MoleculeCommon`: the type is defined in `mol_defs`, and
+/// the file dialog is ours.
+pub fn save_mol(
+    mol: &MoleculeCommon,
+    mol_type: MolType,
+    dialog: &mut FileDialog,
+) -> io::Result<()> {
+    let fname_default = {
+        let name = if mol.ident.is_empty() {
+            "molecule".to_string()
+        } else {
+            mol.ident.clone()
         };
+        format!("{name}.{}", mol_type.default_file_ext())
+    };
 
-        dialog.config_mut().default_file_name = fname_default.to_string();
-        dialog.config_mut().default_file_filter = Some("Molecule (small)".to_owned());
+    dialog.config_mut().default_file_name = fname_default.to_string();
+    dialog.config_mut().default_file_filter = Some("Molecule (small)".to_owned());
 
-        dialog.save_file();
+    dialog.save_file();
 
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Convert a `ViewerMolSet` to a `Gro` and write it to `path`.

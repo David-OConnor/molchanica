@@ -8,7 +8,7 @@
 //! a PDBbind release is a directory tree, and everything Molchanica wants from it (an entry's
 //! affinity, and paths to files it can already open) is a filesystem lookup and one index file to
 //! parse. Wrapping that in a subprocess would add a dependency and take away the ability to iterate
-//! the whole set, which is what makes it useful for the affinity models in `therapeutic`.
+//! the whole set, which is what makes it useful for the affinity models in `adme_`.
 //!
 //! # Licence
 //!

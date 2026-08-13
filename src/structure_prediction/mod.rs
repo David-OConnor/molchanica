@@ -33,9 +33,8 @@ use std::{
 
 use bio_files::MmCif;
 use dynamics::params::ProtFfChargeMapSet;
+use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::{AaIdent, AminoAcid, Nucleotide};
-
-use crate::molecules::peptide::MoleculePeptide;
 
 pub mod boltz2;
 mod linux_models;

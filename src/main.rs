@@ -16,11 +16,11 @@
 //! [S3 Gemmi link](https://daedalus-mols.s3.us-east-1.amazonaws.com/gemmi.exe)
 //! [S3 Geostd link](https://daedalus-mols.s3.us-east-1.amazonaws.com/amber_geostd)
 
-mod bond_inference;
 mod docking;
 mod drawing;
 mod file_io;
 mod inputs;
+mod pocket_render;
 mod prefs;
 mod render;
 mod sfc_mesh;
@@ -30,6 +30,7 @@ mod util;
 mod cli;
 mod reflection;
 
+// mod adme_;
 pub mod antibody;
 mod cam;
 mod crystal;
@@ -39,29 +40,25 @@ mod gromacs;
 mod lod_generalization;
 mod md;
 mod mol_alignment;
-mod mol_components;
 mod mol_db;
 mod mol_editor;
 mod mol_manip;
-mod molecules;
 mod orca;
 mod properties;
 mod screening;
 mod selection;
-mod smiles;
 mod sonification;
 mod state;
 mod structure_prediction;
-mod tautomers;
 #[cfg(test)]
 mod tests;
-mod therapeutic;
+mod therapeutic_misc;
 mod threads;
 
 use std::time::Instant;
 
 use dynamics::{Integrator, params::FfParamSet};
-use molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
+use mol_defs::molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
 use crate::{render::render, util::handle_err};
@@ -73,10 +70,10 @@ use crate::{render::render, util::handle_err};
 fn handle_cli_flags() -> Option<i32> {
     let flag = std::env::args().nth(1)?;
     match flag.as_str() {
-        // Checks the native ProteinMPNN port in src/therapeutic/ddg against the reference forward
+        // Checks the native ProteinMPNN port in src/adme_/ddg against the reference forward
         // pass scripts/convert_mpnn_weights.py recorded from upstream. See that module's docs.
         "--verify-mpnn" => {
-            let path = match therapeutic::ddg::weights_path() {
+            let path = match therapeutic_misc::ddg::weights_path() {
                 Some(path) => path,
                 None => {
                     eprintln!("No location is known for the ProteinMPNN weights.");
@@ -87,7 +84,7 @@ fn handle_cli_flags() -> Option<i32> {
                 "Verifying the native ProteinMPNN implementation against {}",
                 path.display()
             );
-            match therapeutic::ddg::verify(&path) {
+            match therapeutic_misc::ddg::verify(&path) {
                 Ok(difference) => {
                     println!("Largest disagreement with upstream: {difference:.3e}");
                     // A port that matches should agree to within f32 accumulation noise over six

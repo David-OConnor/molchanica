@@ -1,14 +1,14 @@
 use egui::{ComboBox, RichText, Slider, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
+use mol_defs::{molecules::MolType, sfc_mesh::MeshColoring};
 
 use crate::{
     drawing::{
         EntityClass, MoleculeView, draw_density_point_cloud, draw_density_surface, draw_water,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
-    molecules::MolType,
     render::MESH_POCKET_START,
-    sfc_mesh::{MeshColoring, apply_mesh_colors, get_mesh_colors},
+    sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::State,
     ui::{
         COL_SPACING, DENS_ISO_MAX, DENS_ISO_MIN, misc,

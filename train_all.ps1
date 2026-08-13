@@ -1,1 +1,0 @@
-cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/tdc_data

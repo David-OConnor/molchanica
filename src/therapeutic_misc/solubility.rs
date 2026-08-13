@@ -14,8 +14,7 @@
 //! are soluble, those in the range of −2 to −4 are slightly soluble and insoluble if less than −4
 
 use dynamics::ParamError;
-
-use crate::molecules::small::MoleculeSmall;
+use mol_defs::molecules::small::MoleculeSmall;
 
 /// Using MD on the MqSolDB dataset.
 pub fn solubility_from_ml(mol: &MoleculeSmall) -> f32 {

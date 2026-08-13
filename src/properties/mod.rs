@@ -6,14 +6,12 @@ use std::{collections::HashMap, io};
 use bio_files::md_params::ForceFieldParams;
 use dynamics::{alchemical::AlchemicalError, params::FfParamSet};
 use lin_alg::f32::Vec3;
-
-use crate::molecules::small::MoleculeSmall;
+use mol_defs::molecules::small::MoleculeSmall;
 
 pub mod crystal;
 pub mod ionization;
 pub mod logp;
 mod mixing_analysis;
-pub mod mol_characterization;
 pub mod sol_shrinking_box;
 pub mod water_sol;
 mod water_sol_analytic;

@@ -2,17 +2,20 @@ use std::{collections::HashMap, slice};
 
 use egui::{Align, Color32, ComboBox, Layout, RichText, ScrollArea, Ui};
 use graphics::{EngineUpdates, Scene};
+use mol_defs::{
+    molecules::{MolType, MoleculeGeneric},
+    screening::pharmacophore::{
+        FeatureRelation, PHARMACOPHORE_SCREENING_THRESH_DEFAULT, Pharmacophore,
+        PharmacophoreFeatType, PharmacophoreFeature, PharmacophoreState, add_pharmacophore_feat,
+    },
+};
 
 use crate::{
     button, drawing,
     drawing::blend_color,
     label, mol_manip,
     mol_manip::ManipMode,
-    molecules::{MolType, MoleculeGeneric},
-    screening::pharmacophore::{
-        FeatureRelation, PHARMACOPHORE_SCREENING_THRESH_DEFAULT, Pharmacophore,
-        PharmacophoreFeatType, PharmacophoreFeature, PharmacophoreState, add_pharmacophore_feat,
-    },
+    screening::PharmacophoreScreen,
     selection::Selection,
     state::{PopupState, State},
     ui::{

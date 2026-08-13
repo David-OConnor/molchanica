@@ -1,13 +1,15 @@
+use adme::{Adme, Toxicity};
 use egui::{Color32, RichText, ScrollArea, Ui};
 use lin_alg::f64::Vec3;
+use mol_defs::{
+    molecules::{MolIdent, small::MoleculeSmall},
+    properties::mol_characterization::MolCharacterization,
+};
 
 use crate::{
     button,
     crystal::CrystalCell,
     label,
-    molecules::{MolIdent, small::MoleculeSmall},
-    properties::mol_characterization::MolCharacterization,
-    therapeutic::{Adme, Toxicity},
     ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
 };
 

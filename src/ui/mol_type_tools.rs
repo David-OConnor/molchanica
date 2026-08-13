@@ -2,6 +2,11 @@
 
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use mol_defs::molecules::{
+    MolGenericRef,
+    lipid::{LipidShape, make_bacterial_lipids},
+    nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
+};
 use na_seq::seq_from_str;
 
 use crate::{
@@ -9,11 +14,6 @@ use crate::{
     drawing::{
         EntityClass,
         wrappers::{draw_all_lipids, draw_all_nucleic_acids},
-    },
-    molecules::{
-        MolGenericRef,
-        lipid::{LipidShape, make_bacterial_lipids},
-        nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
     },
     state::State,
     ui,

@@ -10,17 +10,22 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::{mpsc, mpsc::Receiver},
+    thread,
     time::Instant,
 };
 
 use bio_files::{Mol2, Sdf};
+use mol_defs::{
+    molecules::small::MoleculeSmall,
+    screening::pharmacophore::{PhScreeningScore, Pharmacophore},
+};
+use rayon::prelude::*;
 
 use crate::{
     mol_alignment::{RING_ALIGN_ROT_COUNT_QUICK, make_initial_alignment},
-    molecules::small::MoleculeSmall,
+    mol_db::{DbSource, ParquetMolDb},
 };
-
-pub mod pharmacophore;
 
 // We load molecules from disk in batches, to prevent using too much memory. We use
 // atom count as a proxy; better than molecule count, but perhaps not as regular as bytes.
@@ -222,4 +227,114 @@ fn _load_mols(path: &Path, skip: usize) -> io::Result<(Vec<MoleculeSmall>, bool)
     let (mols, consumed) = load_mol_batch(remaining)?;
     let has_more = skip + consumed < files.len();
     Ok((mols, has_more))
+}
+
+/// Screening a molecule database against a pharmacophore.
+///
+/// `Pharmacophore` is defined in `mol_defs`; loading candidates out of a Parquet database is ours,
+/// so this hangs off an extension trait here.
+pub trait PharmacophoreScreen {
+    fn screen_ligs(
+        &self,
+        db_source: &DbSource,
+        thresh: f32,
+        ph_screening_in_progress: &mut bool,
+    ) -> Receiver<Vec<PhScreeningScore>>;
+}
+
+impl PharmacophoreScreen for Pharmacophore {
+    /// Spawn a background thread that screens all molecules in the given Parquet DB against this
+    /// pharmacophore, sending results through the returned channel when complete.
+    ///
+    /// All molecules are loaded from the DB, characterization is computed in place, then
+    /// Rayon parallelises scoring.  Results arrive as a single `Vec<PhScreeningScore>` message.
+    /// When the thread is done the channel closes and the receiver returns `Disconnected`.
+    ///
+    /// Poll the returned [`Receiver`] each frame (see `threads::handle_thread_rx`).
+    fn screen_ligs(
+        &self,
+        db_source: &DbSource,
+        thresh: f32,
+        ph_screening_in_progress: &mut bool,
+    ) -> Receiver<Vec<PhScreeningScore>> {
+        println!("Pharmacophore screening started");
+
+        let pharmacophore = self.clone();
+        // Reopened on the screening thread rather than sharing the DB: the caller's copy stays
+        // usable, and `DbSource` is cheap to clone whether it's a path or embedded bytes.
+        let db_source = db_source.clone();
+
+        *ph_screening_in_progress = true;
+
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let db = match ParquetMolDb::open_source(db_source.clone()) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Error opening parquet DB {}: {e}", db_source.name());
+                    return;
+                }
+            };
+
+            let mut mols = match db.load_all() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Error loading molecules from parquet DB: {e}");
+                    return;
+                }
+            };
+
+            println!(
+                "Pharmacophore screening: {} molecules loaded from DB",
+                mols.len()
+            );
+
+            // Characterization is not stored in the parquet binary; compute it now.
+            for mol in &mut mols {
+                mol.update_characterization();
+            }
+
+            // Score in parallel.
+            let results: Vec<_> = mols
+                .par_iter()
+                .enumerate()
+                .filter_map(|(i, mol)| {
+                    let score = pharmacophore.score(mol);
+                    if score < thresh {
+                        None
+                    } else {
+                        // Some((i, mol.common.ident.clone(), vec![], score, db_path.clone()))
+
+                        // Using smiles
+
+                        let smiles = match mol.get_smiles() {
+                            Some(s) => s.to_string(),
+                            None => {
+                                eprintln!("Error: Missing smiles for mol: {:?}", mol.common.ident);
+                                return None;
+                            }
+                        };
+
+                        // We assume smiles is populated already.
+                        Some(PhScreeningScore {
+                            index: i,
+                            smiles_or_ident: smiles,
+                            score,
+                        })
+                    }
+                })
+                .collect();
+
+            println!(
+                "Pharmacophore screening complete: {}/{} molecules passed",
+                results.len(),
+                mols.len()
+            );
+
+            let _ = tx.send(results);
+        });
+
+        rx
+    }
 }

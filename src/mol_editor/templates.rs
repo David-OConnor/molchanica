@@ -3,12 +3,11 @@ use std::f64::consts::TAU;
 use bio_files::BondType;
 use dynamics::find_planar_posit;
 use lin_alg::f64::{Quaternion, Vec3, X_VEC, Z_VEC};
+use mol_defs::molecules::{Atom, Bond};
 use na_seq::{
     AtomTypeInRes,
     Element::{self, Carbon, Nitrogen, Oxygen},
 };
-
-use crate::molecules::{Atom, Bond};
 
 const BOND_LEN_AROMATIC: f64 = 1.39;
 // const BOND_LEN_PENT_SAT: f64 = 1.53; // C-C single bonds

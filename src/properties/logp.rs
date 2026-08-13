@@ -16,10 +16,10 @@ use dynamics::{
     snapshot::SnapshotHandlers,
 };
 use graphics::{EngineUpdates, Scene};
+use mol_defs::molecules::small::MoleculeSmall;
 
 use crate::{
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
-    molecules::small::MoleculeSmall,
     state::State,
     util::handle_success,
 };

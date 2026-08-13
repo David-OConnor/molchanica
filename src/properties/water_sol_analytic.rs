@@ -1,6 +1,6 @@
 //! Analytic properties for water solubility. We will likely remove in favor of ML and MD approaches.
 
-use crate::properties::mol_characterization::MolCharacterization;
+use mol_defs::properties::mol_characterization::MolCharacterization;
 
 #[derive(Clone, Debug)]
 pub(in crate::properties) struct WaterSolAnalyticProps {

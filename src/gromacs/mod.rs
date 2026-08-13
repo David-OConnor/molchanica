@@ -38,6 +38,7 @@ use dynamics::{
     params::FfParamSet,
 };
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3 as Vec3F64};
+use mol_defs::molecules::common::MoleculeCommon;
 use na_seq::Element;
 
 use crate::{
@@ -45,7 +46,6 @@ use crate::{
         STATIC_ATOM_DIST_THRESH, add_copies, filter_peptide_atoms, get_mols_sel_for_md,
         trajectory::Trajectory,
     },
-    molecules::common::MoleculeCommon,
     state::State,
     util::{handle_err, handle_success},
 };

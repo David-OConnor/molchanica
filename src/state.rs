@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+use adme::{DatasetTdc, infer::Infer};
 use bincode::{Decode, Encode};
 use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
@@ -21,6 +22,18 @@ use dynamics::{
 use egui::{FontId, Galley};
 use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
+use mol_defs::{
+    molecules::{
+        MolGenericRef, MolGenericRefMut, MolType,
+        lipid::{LipidShape, MoleculeLipid},
+        nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
+        peptide::MoleculePeptide,
+        pocket::Pocket,
+        small::MoleculeSmall,
+    },
+    screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
+    sfc_mesh::MeshColoring,
+};
 
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
@@ -32,21 +45,10 @@ use crate::{
     mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
     mol_editor::MolEditorState,
     mol_manip::MolManip,
-    molecules::{
-        MolGenericRef, MolGenericRefMut, MolType,
-        lipid::{LipidShape, MoleculeLipid},
-        nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
-        peptide::MoleculePeptide,
-        pocket::Pocket,
-        small::MoleculeSmall,
-    },
     orca::StateOrca,
     prefs::ToSave,
-    screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
     selection::{Selection, ViewSelLevel},
-    sfc_mesh::MeshColoring,
     sonification::MoleculeSonification,
-    therapeutic::{DatasetTdc, infer::Infer},
     threads::ThreadReceivers,
     ui::popup::{
         external_tools::ExternalToolsUi, ff_params::FfParamsUi, protein_design::ProteinDesignUi,

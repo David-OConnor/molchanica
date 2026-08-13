@@ -5,7 +5,7 @@
 //!
 //! This exists so Molchanica can produce a whole saturation-mutagenesis scan without shelling out
 //! to Python. The upstream ProteinMPNN-ddG is JAX-on-CUDA and Linux-only, so it could never be one
-//! of the tools in [`crate::external_tools`]; but the network itself is small — six message-passing
+//! of the tools in [`lib_::external_tools`]; but the network itself is small — six message-passing
 //! layers over a 128-dimensional hidden state — and the arithmetic is entirely ordinary, so there
 //! is nothing about it that needs a framework.
 //!

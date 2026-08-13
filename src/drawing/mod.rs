@@ -12,6 +12,14 @@ use lin_alg::{
     f64::Vec3 as Vec3F64,
     map_linear,
 };
+use mol_defs::{
+    molecules::{
+        Atom, AtomRole, Chain, HydrogenBondTwoMols, MolGenericRef, MolType,
+        peptide::MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
+    },
+    reflection::DensityPt,
+    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
+};
 use na_seq::Element;
 
 use crate::{
@@ -25,18 +33,13 @@ use crate::{
         viridis_lut::VIRIDIS,
     },
     mol_manip::{ManipMode, PeptideMeshTransform},
-    molecules::{
-        Atom, AtomRole, Chain, HydrogenBondTwoMols, MolGenericRef, MolType,
-        peptide::MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
-    },
-    reflection::DensityPt,
+    prefs::OpenType,
     render::{
         Color, MESH_BOND, MESH_CUBE, MESH_DENSITY_SURFACE, MESH_PEP_SOLVENT_SURFACE,
         MESH_POCKET_START, MESH_SECONDARY_STRUCTURE, MESH_SPHERE_HIGHRES, MESH_SPHERE_LOWRES,
         MESH_SPHERE_MEDRES,
     },
     selection::{Selection, ViewSelLevel},
-    sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
     state::{OperatingMode, ResColoring, State, StateUi, Visibility},
     util::{
         aromatic_ring_centroid, clear_mol_entity_indices, find_neighbor_posit, orbit_center,
@@ -246,6 +249,42 @@ pub enum EntityClass {
     PharmacophoreHint = 12,
     Pocket = 13,
     Other = 99,
+}
+
+/// Maps a molecule type onto the application's vocabulary for it: which class of entity we draw it
+/// as, and which slot it occupies in the file-open flow.
+///
+/// This is a trait on our side rather than methods on `MolType` because `EntityClass` and `OpenType`
+/// are presentation concerns; `mol_defs` has no reason to know about either.
+pub trait MolTypeExt {
+    fn entity_type(self) -> EntityClass;
+    fn to_open_type(self) -> OpenType;
+}
+
+impl MolTypeExt for MolType {
+    fn entity_type(self) -> EntityClass {
+        use MolType::*;
+        match self {
+            Peptide => EntityClass::Protein,
+            Ligand => EntityClass::Ligand,
+            NucleicAcid => EntityClass::NucleicAcid,
+            Lipid => EntityClass::Lipid,
+            Pocket => EntityClass::Pocket,
+            Water => EntityClass::Protein, // todo for now
+        }
+    }
+
+    fn to_open_type(self) -> OpenType {
+        use MolType::*;
+        match self {
+            Peptide => OpenType::Peptide,
+            Ligand => OpenType::Ligand,
+            NucleicAcid => OpenType::NucleicAcid,
+            Lipid => OpenType::Lipid,
+            Pocket => OpenType::Pocket,
+            Water => panic!("Can't convert water to open type"),
+        }
+    }
 }
 
 // todo: For ligands that are flexible, highlight the fleixble bonds in a bright color.

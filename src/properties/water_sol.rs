@@ -23,17 +23,16 @@ use dynamics::{
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::f32::Vec3;
+use mol_defs::{
+    bond_inference::h_bond_geometry_strength, molecules::small::MoleculeSmall,
+    properties::mol_characterization::MolCharacterization,
+};
 use na_seq::Element;
 
 use crate::{
-    bond_inference::h_bond_geometry_strength,
     gromacs::make_gromacs_input,
     md::{MdBackend, build_dynamics, run_dynamics_blocking},
-    molecules::small::MoleculeSmall,
-    properties::{
-        AMU_A3_TO_G_CM3, io_error, mean, min_image, mol_characterization::MolCharacterization,
-        prepare_mol_for_md,
-    },
+    properties::{AMU_A3_TO_G_CM3, io_error, mean, min_image, prepare_mol_for_md},
 };
 
 // todo: Set higher once confident this works.

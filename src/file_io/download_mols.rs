@@ -9,16 +9,16 @@ use bio_apis::{
 };
 use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
+use mol_defs::molecules::{
+    MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, peptide::MoleculePeptide,
+    small::MoleculeSmall,
+};
 
 use crate::{
     drawing::EntityClass,
     file_io::{
         load_peptide,
         managed_mols::{self, ManagedMolProvider},
-    },
-    molecules::{
-        MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, peptide::MoleculePeptide,
-        small::MoleculeSmall,
     },
     prefs::OpenType,
     render::set_flashlight,

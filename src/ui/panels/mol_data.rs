@@ -6,6 +6,11 @@ use dynamics::merge_params;
 use egui::{Color32, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
+use mol_defs::molecules::{
+    Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
+    nucleic_acid::NucleicAcidType,
+    pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
+};
 
 use crate::{
     button,
@@ -15,13 +20,8 @@ use crate::{
         CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, wrappers::draw_all_pockets,
     },
     label,
-    molecules::{
-        Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
-        nucleic_acid::NucleicAcidType,
-        pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
-    },
     render::MESH_POCKET_START,
-    selection::Selection,
+    selection::{SelAtom, Selection},
     state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popup},
     util,

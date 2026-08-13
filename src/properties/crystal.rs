@@ -20,14 +20,15 @@ use dynamics::{
     snapshot::{Snapshot, SnapshotHandlers, gromacs_frames_to_ss},
 };
 use lin_alg::f32::Vec3;
+use mol_defs::{
+    molecules::small::MoleculeSmall, properties::mol_characterization::MolCharacterization,
+};
 
 use crate::{
     gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
     md::{MdBackend, build_dynamics, run_dynamics_blocking, setup_mols_dyn},
-    molecules::small::MoleculeSmall,
     properties::{
-        AMU_A3_TO_G_CM3, io_error, mean, min_image, mol_bounding_radius,
-        mol_characterization::MolCharacterization, prepare_mol_for_md,
+        AMU_A3_TO_G_CM3, io_error, mean, min_image, mol_bounding_radius, prepare_mol_for_md,
     },
 };
 

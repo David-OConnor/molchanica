@@ -24,10 +24,9 @@ use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
 };
+use mol_defs::properties::mol_characterization::Ring;
 use na_seq::{Element, Element::*};
 use rayon::prelude::*;
-
-use crate::properties::mol_characterization::Ring;
 
 // For initial rotation. Higher values take longer, but provide more precise results.
 pub const RING_ALIGN_ROT_COUNT: u16 = 1_000;
@@ -54,14 +53,23 @@ const TEMP: f32 = 60.; // K. Very low to minimize jiggling.
 // Lower means more aggressive damping.
 const TEMP_COEFF: f64 = 0.01;
 
-use crate::{
-    docking::Torsion,
-    md::{build_dynamics, launch_md_energy_computation},
+use mol_defs::{
     molecules::{Atom, Bond, common::MoleculeCommon, small::MoleculeSmall},
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
+};
+
+use crate::{
+    md::{build_dynamics, launch_md_energy_computation},
     state::State,
     util::rotate_about_point,
 };
+
+#[derive(Clone, Debug, Default)]
+/// Bonds that are marked as flexible, using a semi-rigid conformation.
+pub struct Torsion {
+    pub bond: usize, // Index.
+    pub dihedral_angle: f64,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct StateAlignment {

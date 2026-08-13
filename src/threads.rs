@@ -2,6 +2,7 @@
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
+use adme::TherapeuticProperties;
 use bio_apis::{
     ReqError,
     amber_geostd::GeostdData,
@@ -11,17 +12,19 @@ use bio_apis::{
 };
 use bio_files::gromacs::GromacsOutput;
 use graphics::{EngineUpdates, Scene};
+use mol_defs::{
+    molecules::{MolIdent, MolType},
+    screening::pharmacophore::PhScreeningScore,
+    sfc_mesh::MeshColors,
+};
 use na_seq::AaIdent;
 
 use crate::{
     gromacs::on_gromacs_md_complete,
-    molecules::{MolIdent, MolType},
     render::MESH_PEP_SOLVENT_SURFACE,
-    screening::pharmacophore::PhScreeningScore,
-    sfc_mesh::{MeshColors, apply_mesh_colors},
+    sfc_mesh::apply_mesh_colors,
     state::State,
     structure_prediction::StructurePredictionOutcome,
-    therapeutic::TherapeuticProperties,
     util::{RedrawFlags, handle_err, handle_success},
 };
 

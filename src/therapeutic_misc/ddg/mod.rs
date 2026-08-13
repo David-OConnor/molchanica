@@ -3,7 +3,7 @@
 //! Answers "which mutations would this protein tolerate, and which would destabilize it?" for
 //! every position and every substitution at once. That is the question behind stability
 //! engineering, affinity maturation, and developability triage, and it is the natural companion to
-//! the inverse-folding designs in [`crate::external_tools::mpnn`]: MPNN proposes sequences, this
+//! the inverse-folding designs in [`lib_::external_tools::mpnn`]: MPNN proposes sequences, this
 //! scores every single-point change against the structure you already have.
 //!
 //! # Why this one is native
@@ -34,11 +34,12 @@ pub mod mpnn;
 use std::{io, path::PathBuf};
 
 use bio_files::ResidueType;
+use mol_defs::molecules::{AtomRole, peptide::MoleculePeptide};
 use na_seq::{AaIdent, AminoAcid};
 
 use crate::{
-    molecules::{AtomRole, peptide::MoleculePeptide},
-    therapeutic::ddg::mpnn::{ALPHABET, Backbone, ProteinMpnnWeights},
+    external_tools::Tool,
+    therapeutic_misc::ddg::mpnn::{ALPHABET, Backbone, ProteinMpnnWeights},
 };
 
 /// The twenty proteinogenic amino acids, in the alphabet's own order. `X` is excluded: it is the
@@ -186,7 +187,7 @@ pub fn weights_path() -> Option<PathBuf> {
     if let Some(configured) = std::env::var_os("MOLCHANICA_MPNN_WEIGHTS") {
         return Some(PathBuf::from(configured));
     }
-    crate::external_tools::Tool::ProteinMpnn
+    Tool::ProteinMpnn
         .spec()
         .bundle_root()
         .map(|root| root.join("converted/v_48_020.mcnn"))
@@ -370,154 +371,4 @@ pub fn verify(reference_path: &std::path::Path) -> io::Result<f32> {
         .zip(&expected)
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn metadata(wild_types: &[AminoAcid]) -> Vec<PositionMetadata> {
-        wild_types
-            .iter()
-            .enumerate()
-            .map(|(index, wild_type)| PositionMetadata {
-                residue_index: index,
-                residue_number: index as u32 + 10,
-                chain_id: "H".to_owned(),
-                wild_type: *wild_type,
-            })
-            .collect()
-    }
-
-    /// One position whose distribution favours alanine over the wild-type glycine.
-    fn log_probs(rows: Vec<[f32; 21]>) -> mpnn::LogProbabilities {
-        mpnn::LogProbabilities {
-            length: rows.len(),
-            data: rows.into_iter().flatten().collect(),
-        }
-    }
-
-    #[test]
-    fn wild_type_substitution_has_zero_ddg() {
-        let mut row = [-5.0f32; 21];
-        row[alphabet_index(AminoAcid::Gly).unwrap()] = -0.5;
-        let scan = build_scan(&log_probs(vec![row]), &metadata(&[AminoAcid::Gly]));
-
-        let position = &scan.positions[0];
-        assert_eq!(position.ddg_for(AminoAcid::Gly), Some(0.0));
-        assert_eq!(position.wild_type_log_probability, -0.5);
-    }
-
-    #[test]
-    fn destabilizing_substitutions_are_positive() {
-        let mut row = [-5.0f32; 21];
-        row[alphabet_index(AminoAcid::Gly).unwrap()] = -0.5;
-        // Tryptophan is much less likely than the wild type here.
-        row[alphabet_index(AminoAcid::Trp).unwrap()] = -8.0;
-        let scan = build_scan(&log_probs(vec![row]), &metadata(&[AminoAcid::Gly]));
-
-        let ddg = scan.positions[0].ddg_for(AminoAcid::Trp).unwrap();
-        assert!((ddg - 7.5).abs() < 1e-5, "expected +7.5, got {ddg}");
-        assert!(ddg > 0.0);
-    }
-
-    #[test]
-    fn stabilizing_substitutions_are_negative_and_ranked() {
-        let mut row = [-9.0f32; 21];
-        row[alphabet_index(AminoAcid::Gly).unwrap()] = -3.0;
-        row[alphabet_index(AminoAcid::Ala).unwrap()] = -1.0;
-        row[alphabet_index(AminoAcid::Leu).unwrap()] = -2.0;
-        let scan = build_scan(&log_probs(vec![row]), &metadata(&[AminoAcid::Gly]));
-
-        let stabilizing = scan.positions[0].stabilizing();
-        // Alanine is the most favourable, then leucine; the wild type itself is exactly zero and
-        // so is not counted as stabilizing.
-        assert_eq!(stabilizing[0].0, AminoAcid::Ala);
-        assert!((stabilizing[0].1 + 2.0).abs() < 1e-5);
-        assert_eq!(stabilizing[1].0, AminoAcid::Leu);
-        assert!(!stabilizing.iter().any(|(aa, _)| *aa == AminoAcid::Gly));
-    }
-
-    #[test]
-    fn best_mutations_rank_across_positions_and_exclude_wild_type() {
-        let mut first = [-9.0f32; 21];
-        first[alphabet_index(AminoAcid::Gly).unwrap()] = -3.0;
-        first[alphabet_index(AminoAcid::Ala).unwrap()] = -1.0;
-        let mut second = [-9.0f32; 21];
-        second[alphabet_index(AminoAcid::Ser).unwrap()] = -3.0;
-        second[alphabet_index(AminoAcid::Lys).unwrap()] = -0.1;
-
-        let scan = build_scan(
-            &log_probs(vec![first, second]),
-            &metadata(&[AminoAcid::Gly, AminoAcid::Ser]),
-        );
-
-        let best = scan.best_mutations(3);
-        // Position 2's K is the biggest improvement (−2.9), then position 1's A (−2.0).
-        assert_eq!(best[0].1, AminoAcid::Lys);
-        assert_eq!(best[0].0.residue_number, 11);
-        assert_eq!(best[1].1, AminoAcid::Ala);
-        // A wild-type "mutation" is never proposed.
-        assert!(!best.iter().any(|(pos, aa, _)| *aa == pos.wild_type));
-    }
-
-    #[test]
-    fn constraint_is_higher_where_nothing_is_tolerated() {
-        // A position that only accepts its wild type.
-        let mut buried = [-12.0f32; 21];
-        buried[alphabet_index(AminoAcid::Trp).unwrap()] = -0.05;
-        // A position with a flat distribution tolerates anything.
-        let exposed = [(1.0f32 / 21.0).ln(); 21];
-
-        let scan = build_scan(
-            &log_probs(vec![buried, exposed]),
-            &metadata(&[AminoAcid::Trp, AminoAcid::Ser]),
-        );
-        let ranked = scan.most_constrained(2);
-        assert_eq!(ranked[0].residue_number, 10);
-        assert!(ranked[0].constraint() > ranked[1].constraint());
-        // A flat distribution means every substitution is free.
-        assert!(ranked[1].constraint().abs() < 1e-5);
-    }
-
-    #[test]
-    fn alphabet_maps_round_trip() {
-        for index in 0..MUTABLE {
-            let aa = amino_acid_at(index).expect("every slot names an amino acid");
-            assert_eq!(
-                alphabet_index(aa),
-                Some(index),
-                "{aa:?} does not round-trip through the alphabet"
-            );
-        }
-        // X is the unknown class and must not be reachable as a mutation target.
-        assert!(amino_acid_at(MUTABLE).is_none());
-    }
-
-    #[test]
-    fn tsv_has_a_column_per_substitution() {
-        let mut row = [-3.0f32; 21];
-        row[alphabet_index(AminoAcid::Gly).unwrap()] = -1.0;
-        let scan = build_scan(&log_probs(vec![row]), &metadata(&[AminoAcid::Gly]));
-
-        let tsv = scan.to_tsv();
-        let mut lines = tsv.lines();
-        let header: Vec<&str> = lines.next().unwrap().split('\t').collect();
-        assert_eq!(header.len(), 3 + MUTABLE);
-        assert_eq!(&header[..3], ["chain", "position", "wild_type"]);
-
-        let data: Vec<&str> = lines.next().unwrap().split('\t').collect();
-        assert_eq!(data[0], "H");
-        assert_eq!(data[1], "10");
-        assert_eq!(data[2], "G");
-        assert_eq!(data.len(), 3 + MUTABLE);
-    }
-
-    #[test]
-    fn mutation_labels_read_the_conventional_way() {
-        let mut row = [-3.0f32; 21];
-        row[alphabet_index(AminoAcid::Ala).unwrap()] = -1.0;
-        let scan = build_scan(&log_probs(vec![row]), &metadata(&[AminoAcid::Ala]));
-        assert_eq!(scan.positions[0].mutation_label(AminoAcid::Gly), "A10G");
-    }
 }

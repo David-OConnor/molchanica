@@ -33,12 +33,12 @@ use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3 as Vec3F64},
 };
+use mol_defs::molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall};
 use na_seq::Element;
 
 use crate::{
     gromacs::{make_gromacs_input, molecule_input_from_packed_copies},
     md::MdBackend,
-    molecules::{Atom, common::MoleculeCommon, small::MoleculeSmall},
     properties::{AMU_A3_TO_G_CM3, mean, mixing_analysis, mol_bounding_radius, prepare_mol_for_md},
 };
 
