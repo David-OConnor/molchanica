@@ -5,7 +5,7 @@
 //!
 //! This is tailored towards data from Therapeutic Data Commons (TDC), but is more broadly applicable.
 
-//! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data`
+//! To run: `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/tdc_data`
 //!
 //! Add the `tgt` param if training on a single file. Can be a single target, or multiple.
 //! e.g: `--tgt bbb_martins`
@@ -60,13 +60,15 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "train")]
 use crate::therapeutic::eval::eval;
+#[cfg(feature = "train")]
+use crate::therapeutic::{
+    adme_data::CanonicalAdmeDataset, train_test_split_indices::TrainTestSplit,
+};
 use crate::{
     molecules::{conformers::resolve_conformer, small::MoleculeSmall},
     screening::pharmacophore::Pharmacophore,
     therapeutic::{
-        DatasetTdc,
-        adme_data::CanonicalAdmeDataset,
-        ensure_single_component, gnn,
+        DatasetTdc, ensure_single_component, gnn,
         gnn::{
             GRAPH_ANALYSIS_FEATURE_VERSION,
             atom_bond::{
@@ -83,7 +85,6 @@ use crate::{
         },
         mlp, non_nn_ml,
         non_nn_ml::GnnAnalysisTools,
-        train_test_split_indices::TrainTestSplit,
     },
 };
 

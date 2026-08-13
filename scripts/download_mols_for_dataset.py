@@ -9,7 +9,7 @@
 # `python download_mols_for_dataset.py --csv /set1.csv --out /sdf_out_set1
 #
 # Or for our current use:
-# `python .\download_mols_for_dataset.py --csv C:\Users\the_a\Desktop\bio_misc\tdc_data\caco2_wang.csv --out C:\Users\the_a\Desktop\bio_misc\tdc_data\mols_caco2_wang`
+# `python .\download_mols_for_dataset.py --csv C:\Users\the_a\Desktop\tdc_data\caco2_wang.csv --out C:\Users\the_a\Desktop\bio_misc\tdc_data\mols_caco2_wang`
 # """
 
 import argparse

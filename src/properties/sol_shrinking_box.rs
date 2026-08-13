@@ -1702,9 +1702,8 @@ pub mod runner {
             16, 569, 18, 579,
         ];
 
-        let csv_path =
-            PathBuf::from("C:/Users/the_a/Desktop/bio_misc/tdc_data/solubility_aqsoldb.csv");
-        let path = PathBuf::from("C:/Users/the_a/Desktop/bio_misc/tdc_data/solubility_aqsoldb");
+        let csv_path = PathBuf::from("C:/Users/the_a/Desktop/tdc_data/solubility_aqsoldb.csv");
+        let path = PathBuf::from("C:/Users/the_a/Desktop/tdc_data/solubility_aqsoldb");
         let nominal_solubilities = match load_nominal_solubilities(&csv_path) {
             Ok(values) => values,
             Err(e) => {

@@ -18,7 +18,7 @@ it at the folder of dataset CSVs; for each `<folder>/<name>.csv` it works on the
 Datasets whose SMILES column contains no `.` are left completely untouched.
 
 Run it from the `scripts/` folder, same as `download_all.py`:
-    python repair_split_mols.py --path C:/Users/the_a/Desktop/bio_misc/tdc_data
+    python repair_split_mols.py --path C:/Users/the_a/Desktop/tdc_data
 """
 
 import argparse

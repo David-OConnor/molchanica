@@ -16,7 +16,7 @@ row assignments.
 Example::
 
     python scripts/train_test_split.py \
-        --data-dir S:\\bio_misc\\tdc_data \
+        --data-dir C:/Users/the_a/Desktop/tdc_data \
         --dataset-version tdc-local-2026-01-v1
 
 Training independently revalidates the file hash, full coverage, split overlap,

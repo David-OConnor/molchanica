@@ -8,7 +8,7 @@
 //! See `scripts/train_test_split.py` for an example of how to use this.
 //!
 //! You can run the eval fns directly, or call the `train` executable with the `--eval` param:
-//! `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/bio_misc/tdc_data --eval`
+//! `cargo r --release --features train --bin train -- --path C:/Users/the_a/Desktop/tdc_data --eval`
 //!
 //! Add a `--tgt herg` etc flag to specify a single target, vs every data file in the directory.
 

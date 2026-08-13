@@ -73,7 +73,7 @@ kept unchanged inside the row's provenance record:
 python scripts\merge_adme_upstream_metadata.py `
   --canonical-dir S:\bio_misc\tdc_data\canonical\v1 `
   --source S:\bio_misc\tdc_data\upstream\freesolv.parquet `
-  --output-dir S:\bio_misc\tdc_data\canonical\v1-freesolv `
+  --output-dir C:/Users/the_a/Desktop/tdc_data\canonical\v1-freesolv `
   --source-name FreeSolv `
   --source-version 0.52 `
   --source-license MIT

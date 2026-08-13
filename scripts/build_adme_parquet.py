@@ -7,7 +7,7 @@ standardized parent used for grouping and ML.
 Example:
 
     python scripts/build_adme_parquet.py \
-        --data-dir S:\\bio_misc\\tdc_data \
+        --data-dir C:/Users/the_a/Desktop/tdc_data \
         --dataset-version tdc-local-2026-01-v1
 """
 
