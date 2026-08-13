@@ -37,12 +37,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from rdkit import Chem, RDLogger, rdBase
-from rdkit.Chem import inchi
-from rdkit.Chem.MolStandardize import rdMolStandardize
-from rdkit.Chem.Scaffolds import MurckoScaffold
-
-RDLogger.DisableLog("rdApp.*")
+from adme_data_model import (
+    RDKit_VERSION,
+    load_structure_overrides,
+    sha256_bytes,
+    sha256_file,
+    standardize_parent,
+    validated_override,
+)
 
 SCHEMA_VERSION = 1
 ALGORITHM = "deterministic_scaffold_group"
@@ -93,60 +95,14 @@ class SourceRow:
     scaffold_key: str
 
 
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def find_column(header: list[str], candidates: Iterable[str], kind: str) -> int:
     by_lower = {name.strip().lower(): i for i, name in enumerate(header)}
     for candidate in candidates:
         if candidate in by_lower:
             return by_lower[candidate]
-    raise ValueError(f"No {kind} column in header {header!r}; expected one of {tuple(candidates)!r}")
-
-
-def load_structure_overrides(path: Path | None) -> tuple[dict, str | None]:
-    if path is None:
-        return {}, None
-    raw = path.read_bytes()
-    payload = json.loads(raw)
-    if payload.get("schema_version") != 1 or not isinstance(payload.get("datasets"), dict):
-        raise ValueError(f"Invalid structure override file: {path}")
-    return payload["datasets"], sha256_bytes(raw)
-
-
-def standardize_parent(smiles: str) -> tuple[str, str]:
-    """Return standardized parent InChIKey and scaffold grouping key."""
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        raise ValueError("RDKit could not parse the SMILES")
-
-    mol = rdMolStandardize.Cleanup(mol)
-    mol = rdMolStandardize.FragmentParent(mol)
-    mol = rdMolStandardize.Uncharger().uncharge(mol)
-    Chem.SanitizeMol(mol)
-    parent_inchi_key = inchi.MolToInchiKey(mol)
-    if not parent_inchi_key:
-        raise ValueError("RDKit could not calculate a standard parent InChIKey")
-
-    # RDKit can retain directional bond stereo next to a bond removed while building
-    # a Murcko framework. Strip stereo on a copy because scaffolds are intentionally
-    # achiral here; keep it on `mol` for the full parent InChIKey above.
-    scaffold_mol = Chem.Mol(mol)
-    Chem.RemoveStereochemistry(scaffold_mol)
-    scaffold = MurckoScaffold.MurckoScaffoldSmiles(mol=scaffold_mol, includeChirality=False)
-    # All acyclic molecules have an empty Murcko scaffold. Treat each standardized
-    # parent as its own scaffold group while still grouping duplicate molecules.
-    scaffold_key = f"MURCKO:{scaffold}" if scaffold else f"ACYCLIC:{parent_inchi_key}"
-    return parent_inchi_key, scaffold_key
+    raise ValueError(
+        f"No {kind} column in header {header!r}; expected one of {tuple(candidates)!r}"
+    )
 
 
 def normalize_binary_target(value: float, dataset: str, row_id: int) -> str:
@@ -181,26 +137,17 @@ def read_dataset(
             if len(record) <= max(smiles_col, target_col):
                 raise ValueError(f"{dataset} row {row_id} is shorter than its header")
             raw_smiles = record[smiles_col].strip()
-            override = dataset_overrides.get(str(row_id))
+            override = validated_override(overrides, dataset, row_id, raw_smiles)
             if override:
-                required = ("original_smiles", "replacement_smiles", "reason", "source")
-                missing = [key for key in required if not override.get(key)]
-                if missing:
-                    raise ValueError(
-                        f"{dataset} structure override {row_id} is missing {missing}"
-                    )
-                if override["original_smiles"] != raw_smiles:
-                    raise ValueError(
-                        f"{dataset} structure override {row_id} expected "
-                        f"{override['original_smiles']!r}, found {raw_smiles!r}"
-                    )
                 used_override_ids.add(str(row_id))
             smiles = override["replacement_smiles"] if override else raw_smiles
             used_override = used_override or override is not None
             try:
                 target = float(record[target_col].strip())
             except ValueError as error:
-                raise ValueError(f"{dataset} row {row_id} has a non-numeric target") from error
+                raise ValueError(
+                    f"{dataset} row {row_id} has a non-numeric target"
+                ) from error
             if not math.isfinite(target):
                 raise ValueError(f"{dataset} row {row_id} has a non-finite target")
             if task_type == "classification":
@@ -292,7 +239,9 @@ def assign_groups(
     class_totals = Counter()
     assigned_classes: dict[str, Counter] = {split: Counter() for split in SPLITS}
     if task_type == "classification":
-        class_totals.update(normalize_binary_target(row.target, "dataset", row.row_id) for row in rows)
+        class_totals.update(
+            normalize_binary_target(row.target, "dataset", row.row_id) for row in rows
+        )
 
     # Large scaffold families are placed first so a late oversized family cannot
     # unexpectedly consume an entire validation or test split. Hash-based ties make
@@ -308,17 +257,23 @@ def assign_groups(
         group_classes = Counter()
         if task_type == "classification":
             group_classes.update(
-                normalize_binary_target(row.target, "dataset", row.row_id) for row in group_rows
+                normalize_binary_target(row.target, "dataset", row.row_id)
+                for row in group_rows
             )
 
         def candidate_score(split: str) -> tuple[float, float, int]:
-            row_fill = (assigned_rows[split] + group_size) / max(target_rows[split], 1.0)
+            row_fill = (assigned_rows[split] + group_size) / max(
+                target_rows[split], 1.0
+            )
             fills = [row_fill]
             if task_type == "classification":
                 for class_name in ("0", "1"):
                     target_class = class_totals[class_name] * fractions[split]
                     fills.append(
-                        (assigned_classes[split][class_name] + group_classes[class_name])
+                        (
+                            assigned_classes[split][class_name]
+                            + group_classes[class_name]
+                        )
                         / max(target_class, 1.0)
                     )
             # Minimize the worst capacity fill, then average fill. This yields a
@@ -334,16 +289,22 @@ def assign_groups(
     return assignments
 
 
-def summarize(rows: list[SourceRow], assignments: dict[int, str], task_type: str) -> dict:
+def summarize(
+    rows: list[SourceRow], assignments: dict[int, str], task_type: str
+) -> dict:
     split_counts = {split: 0 for split in SPLITS}
     values: dict[str, list[float]] = {split: [] for split in SPLITS}
-    distributions: dict[str, Counter] = {split: Counter({"0": 0, "1": 0}) for split in SPLITS}
+    distributions: dict[str, Counter] = {
+        split: Counter({"0": 0, "1": 0}) for split in SPLITS
+    }
     for row in rows:
         split = assignments[row.row_id]
         split_counts[split] += 1
         values[split].append(row.target)
         if task_type == "classification":
-            distributions[split][normalize_binary_target(row.target, "dataset", row.row_id)] += 1
+            distributions[split][
+                normalize_binary_target(row.target, "dataset", row.row_id)
+            ] += 1
 
     expected = {"split_counts": split_counts}
     if task_type == "classification":
@@ -375,7 +336,9 @@ def assert_invariants(
     if set(assignments) != expected_ids:
         missing = sorted(expected_ids - set(assignments))
         extra = sorted(set(assignments) - expected_ids)
-        raise AssertionError(f"{dataset}: incomplete row coverage; missing={missing}, extra={extra}")
+        raise AssertionError(
+            f"{dataset}: incomplete row coverage; missing={missing}, extra={extra}"
+        )
 
     parent_splits: dict[str, str] = {}
     scaffold_splits: dict[str, str] = {}
@@ -383,7 +346,9 @@ def assert_invariants(
         split = assignments[row.row_id]
         previous = parent_splits.setdefault(row.parent_inchi_key, split)
         if previous != split:
-            raise AssertionError(f"{dataset}: parent molecule leakage for {row.parent_inchi_key}")
+            raise AssertionError(
+                f"{dataset}: parent molecule leakage for {row.parent_inchi_key}"
+            )
         previous = scaffold_splits.setdefault(row.scaffold_key, split)
         if previous != split:
             raise AssertionError(f"{dataset}: scaffold leakage for {row.scaffold_key}")
@@ -448,7 +413,7 @@ def generate_manifest(
         "row_count": len(rows),
         "smiles_column": smiles_column,
         "target_column": target_column,
-        "rdkit_version": rdBase.rdkitVersion,
+        "rdkit_version": RDKit_VERSION,
     }
     if used_override:
         dataset_info["structure_overrides_sha256"] = override_hash
@@ -471,7 +436,9 @@ def generate_manifest(
     counts = expected["split_counts"]
     detail = ""
     if task_type == "classification":
-        detail = " classes=" + json.dumps(expected["class_distribution"], separators=(",", ":"))
+        detail = " classes=" + json.dumps(
+            expected["class_distribution"], separators=(",", ":")
+        )
     print(
         f"{dataset}: rows={len(rows)} train={counts['train']} "
         f"validation={counts['validation']} test={counts['test']}{detail}"
@@ -481,7 +448,12 @@ def generate_manifest(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", type=Path, required=True, help="Folder containing <dataset>.csv snapshots")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        required=True,
+        help="Folder containing <dataset>.csv snapshots",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -500,9 +472,15 @@ def parse_args() -> argparse.Namespace:
         help="Generate only this dataset; repeat as needed (default: every supported dataset)",
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--train-fraction", type=float, default=DEFAULT_FRACTIONS["train"])
-    parser.add_argument("--validation-fraction", type=float, default=DEFAULT_FRACTIONS["validation"])
-    parser.add_argument("--test-fraction", type=float, default=DEFAULT_FRACTIONS["test"])
+    parser.add_argument(
+        "--train-fraction", type=float, default=DEFAULT_FRACTIONS["train"]
+    )
+    parser.add_argument(
+        "--validation-fraction", type=float, default=DEFAULT_FRACTIONS["validation"]
+    )
+    parser.add_argument(
+        "--test-fraction", type=float, default=DEFAULT_FRACTIONS["test"]
+    )
     parser.add_argument(
         "--structure-overrides",
         type=Path,
@@ -521,8 +499,13 @@ def main() -> int:
         "validation": args.validation_fraction,
         "test": args.test_fraction,
     }
-    if any(value <= 0 for value in fractions.values()) or abs(sum(fractions.values()) - 1.0) > 1e-12:
-        raise SystemExit(f"Split fractions must be positive and sum to 1.0: {fractions}")
+    if (
+        any(value <= 0 for value in fractions.values())
+        or abs(sum(fractions.values()) - 1.0) > 1e-12
+    ):
+        raise SystemExit(
+            f"Split fractions must be positive and sum to 1.0: {fractions}"
+        )
     if args.seed <= 0:
         raise SystemExit("Seed must be a positive integer")
     if not args.dataset_version.strip():

@@ -17,21 +17,22 @@ import csv
 import os
 import time
 import urllib.parse
+from pathlib import Path
 
 import requests
 from rdkit import Chem, RDLogger
 from rdkit.Chem import AllChem
-from rdkit.Chem.MolStandardize import rdMolStandardize
+
+from adme_data_model import (
+    load_structure_overrides,
+    standardize_structure,
+    validate_assayed_sdf,
+    validate_parent_sdf,
+    validated_override,
+)
 
 # RDKit logs parse/sanitize chatter to stderr; silence it so our own output stays readable.
 RDLogger.DisableLog("rdApp.*")
-
-# Neutralizes charges where chemically possible (e.g. a carboxylate left after stripping a
-# metal counterion becomes the neutral acid), while leaving permanent charges such as
-# quaternary ammonium intact. PubChem's exact-structure lookup usually has the neutral
-# parent on file but not the bare ion, so this markedly improves the hit rate after desalting.
-_UNCHARGER = rdMolStandardize.Uncharger()
-
 
 AQ_SOL_ID_COL = 0
 AQ_SOL_INCHIKEY_COL = 3
@@ -50,74 +51,17 @@ MAX_HTTP_RETRIES = 3
 HTTP_BACKOFF_BASE = 1.0  # Seconds; doubled each retry (1, 2, 4, ...).
 
 
-def _finalize_fragment(mol):
-    """Neutralize a chosen parent fragment where chemically possible, then return its
-    canonical SMILES. Falls back to the original (charged) form if neutralization fails."""
-    try:
-        mol = _UNCHARGER.uncharge(mol)
-    except Exception:
-        pass
-    return Chem.MolToSmiles(mol)
-
-
 def clean_smiles(smiles: str):
-    """Reduce a (possibly multi-component) SMILES to a single, non-ionic organic molecule.
+    """Return the standardized ML parent without modifying the assayed form.
 
-    Returns the cleaned SMILES string, or None if the entry should be skipped. The steps,
-    applied only when the SMILES has more than one component (contains `.`):
-
-      1. Split into fragments and dedupe identical ones (collapses e.g. 2:1 salts that
-         repeat the same anion).
-      2. Keep only organic fragments (those containing carbon). This drops monatomic metal
-         cations, halides, and polyatomic inorganic counterions (sulfate, phosphate,
-         silicate, ...), none of which contain carbon.
-      3. Keep the largest remaining organic fragment — the drug-like parent — discarding
-         smaller counterions / co-formers (acetate, piperazine, etc.) whatever their size.
-         Ties on heavy-atom count are broken by canonical SMILES so the choice is reproducible.
-      4. Return None only when nothing organic remains (e.g. a purely inorganic salt) or the
-         SMILES can't be parsed.
-
-    The chosen parent is then neutralized where chemically possible (so a carboxylate left
-    after dropping a metal counterion becomes the neutral acid), which PubChem is far more
-    likely to have on file than the bare ion.
+    Kept as a compatibility helper for ``repair_split_mols.py``. New downloads
+    call :func:`standardize_structure` and store assayed and parent SDFs separately.
     """
-    smiles = smiles.strip()
-    if not smiles:
+
+    try:
+        return standardize_structure(smiles).parent_smiles
+    except Exception:
         return None
-
-    # Fast path: already a single component — pass through untouched, so well-formed
-    # single-component SMILES reach PubChem exactly as the dataset wrote them.
-    if "." not in smiles:
-        return smiles
-
-    mol = Chem.MolFromSmiles(smiles, sanitize=True)
-    if mol is not None:
-        frags = list(Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=True))
-    else:
-        # RDKit couldn't parse the combined SMILES; fall back to parsing each fragment
-        # string on its own so one bad counterion doesn't sink an otherwise-usable row.
-        frags = [Chem.MolFromSmiles(s) for s in smiles.split(".") if s]
-        frags = [f for f in frags if f is not None]
-        if not frags:
-            return None
-
-    # Dedupe identical fragments by canonical SMILES.
-    unique = {}
-    for f in frags:
-        unique.setdefault(Chem.MolToSmiles(f), f)
-    frags = list(unique.values())
-
-    # Organic = contains at least one carbon atom.
-    organic = [f for f in frags if any(a.GetAtomicNum() == 6 for a in f.GetAtoms())]
-
-    if not organic:
-        return None
-
-    # Always keep the largest organic fragment (the drug-like parent); ties on heavy-atom
-    # count are broken by canonical SMILES so the pick is reproducible across runs and
-    # independent of the order the fragments were written in.
-    organic.sort(key=lambda f: (-f.GetNumHeavyAtoms(), Chem.MolToSmiles(f)))
-    return _finalize_fragment(organic[0])
 
 
 # def sdf_url_from_smiles(ident: str) -> str:
@@ -146,7 +90,9 @@ def download_sdf(ident: str, timeout_s: float, max_retries: int = MAX_HTTP_RETRI
 
         for attempt in range(max_retries + 1):
             try:
-                resp = requests.get(base, params=params, headers=headers, timeout=timeout_s)
+                resp = requests.get(
+                    base, params=params, headers=headers, timeout=timeout_s
+                )
             except requests.RequestException:
                 # Connection error / timeout: back off and retry, else give up on PubChem.
                 if attempt < max_retries:
@@ -174,7 +120,12 @@ def download_sdf(ident: str, timeout_s: float, max_retries: int = MAX_HTTP_RETRI
     return None
 
 
-def generate_sdf_local(ident: str):
+def generate_sdf_local(
+    ident: str,
+    *,
+    structure_role: str = "parent",
+    assayed_smiles: str | None = None,
+):
     """Generate a 3D conformer locally with RDKit, for when PubChem has no record.
 
     Returns SDF text (a molblock, a `GENERATED_BY` marker field, and the `$$$$` terminator),
@@ -209,7 +160,14 @@ def generate_sdf_local(ident: str):
     if not molblock.endswith("\n"):
         molblock += "\n"
 
-    return f"{molblock}> <GENERATED_BY>\nRDKit ETKDGv3 (no PubChem record)\n\n$$$$\n"
+    metadata = (
+        f"> <GENERATED_BY>\nRDKit ETKDGv3\n\n"
+        f"> <STRUCTURE_ROLE>\n{structure_role}\n\n"
+        f"> <STRUCTURE_SMILES>\n{ident}\n\n"
+    )
+    if assayed_smiles is not None:
+        metadata += f"> <ASSAYED_SMILES>\n{assayed_smiles}\n\n"
+    return f"{molblock}{metadata}$$$$\n"
 
 
 def sdf_component_count(path):
@@ -225,9 +183,33 @@ def sdf_component_count(path):
     return len(Chem.GetMolFrags(mol))
 
 
+def annotate_sdf(
+    sdf_text: str, structure_role: str, smiles: str, assayed_smiles: str
+) -> str:
+    """Add provenance fields without changing the SDF molecular graph."""
+
+    marker = sdf_text.rfind("$$$$")
+    if marker < 0:
+        return sdf_text
+    metadata = (
+        f"> <STRUCTURE_ROLE>\n{structure_role}\n\n"
+        f"> <STRUCTURE_SMILES>\n{smiles}\n\n"
+        f"> <ASSAYED_SMILES>\n{assayed_smiles}\n\n"
+    )
+    return f"{sdf_text[:marker]}{metadata}$$$$\n"
+
+
+def write_sdf(path: str, sdf_text: str) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as out_f:
+        out_f.write(sdf_text)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Download PubChem 3D SDFs associated with a data set."
+        description=(
+            "Prepare separate assayed-form and standardized-parent SDFs for a dataset. "
+            "The original structure is never replaced by the parent."
+        )
     )
     ap.add_argument(
         "--csv", type=str, required=True, help="Path to the CSV listing mols"
@@ -246,23 +228,46 @@ def main() -> int:
     )
     ap.add_argument(
         "--out_path",
+        "--out",
+        dest="out_path",
         type=str,
         required=True,
-        help="Folder to place the downloaded molecules",
+        help="Folder for standardized-parent SDFs (legacy training location)",
+    )
+    ap.add_argument(
+        "--assayed_out_path",
+        type=str,
+        default=None,
+        help="Folder for exact assayed-form SDFs (default: <data-dir>/assayed_forms/<dataset>)",
     )
     ap.add_argument("--smiles_col", type=int, default=TDC_SMILES_COL)
     ap.add_argument("--id_col", type=int, default=None)
+    ap.add_argument(
+        "--structure_overrides",
+        default=os.path.join(
+            os.path.dirname(__file__), "therapeutic_structure_overrides.json"
+        ),
+        help="Documented source corrections used only to derive standardized parents",
+    )
 
     args = ap.parse_args()
 
     os.makedirs(args.out_path, exist_ok=True)
+    dataset_stem = os.path.splitext(os.path.basename(args.csv))[0]
+    data_dir = os.path.dirname(os.path.abspath(args.csv))
+    assayed_out_path = args.assayed_out_path or os.path.join(
+        data_dir, "assayed_forms", dataset_stem
+    )
+    os.makedirs(assayed_out_path, exist_ok=True)
+    overrides, _ = load_structure_overrides(Path(args.structure_overrides))
 
-    downloaded = 0
-    skipped = 0
+    parent_downloaded = 0
+    parent_generated_local = 0
+    parent_skipped = 0
+    assayed_generated_local = 0
+    assayed_skipped = 0
     failed = 0
-    desalted = 0
-    generated_local = 0
-    removed = 0
+    assayed_unavailable = 0
 
     with open(args.csv, "r", newline="", encoding="utf-8") as f:
         rdr = csv.reader(f)
@@ -281,8 +286,7 @@ def main() -> int:
                 continue
 
             if args.id_col is None:
-                dataset_stem = os.path.splitext(os.path.basename(args.csv))[0]
-                mol_id = f"{dataset_stem}_id_{i + args.start}"
+                mol_id = f"{dataset_stem}_id_{i}"
             else:
                 mol_id = row[args.id_col].strip()
 
@@ -290,70 +294,117 @@ def main() -> int:
             smiles = row[args.smiles_col].strip()
 
             if not mol_id or not smiles:
-                skipped += 1
+                failed += 1
                 continue
 
-            # Reduce salts/mixtures to a single, non-ionic organic parent (or skip).
-            cleaned = clean_smiles(smiles)
-            out_path = os.path.join(args.out_path, f"{mol_id}.sdf")
+            try:
+                override = validated_override(overrides, dataset_stem, i, smiles)
+                structure = standardize_structure(
+                    smiles,
+                    replacement_smiles=(
+                        override["replacement_smiles"] if override is not None else None
+                    ),
+                )
+            except Exception as error:
+                print(f"Failed to standardize {mol_id}: {error}")
+                failed += 1
+                continue
 
-            if cleaned is None:
-                # Genuine mixture / all-ionic with no single organic parent. Skip the row,
-                # and clear any stale file a pre-fix run downloaded from the raw
-                # multi-component SMILES (so it isn't left for the loader to reject later).
-                if os.path.exists(out_path):
-                    os.remove(out_path)
-                    print(f"Removed stale file (no single organic parent): {mol_id}")
-                    removed += 1
+            assayed_path = os.path.join(assayed_out_path, f"{mol_id}.sdf")
+            if structure.assayed_component_count is None:
+                print(f"Assayed form unavailable (unparseable original): {mol_id}")
+                assayed_unavailable += 1
+            elif (
+                validate_assayed_sdf(
+                    Path(assayed_path),
+                    structure.assayed_inchi_key,
+                    structure.assayed_component_count,
+                )
+                is None
+            ):
+                assayed_skipped += 1
+            else:
+                assayed_sdf = generate_sdf_local(
+                    structure.assayed_canonical_smiles,
+                    structure_role="assayed",
+                    assayed_smiles=smiles,
+                )
+                if assayed_sdf is None:
+                    print(f"Failed to generate exact assayed form: {mol_id}")
+                    failed += 1
                 else:
-                    print(f"Skipped (multi-component, no single organic parent): {mol_id}")
-                    skipped += 1
+                    write_sdf(assayed_path, assayed_sdf)
+                    invalid_assayed = validate_assayed_sdf(
+                        Path(assayed_path),
+                        structure.assayed_inchi_key,
+                        structure.assayed_component_count,
+                    )
+                    if invalid_assayed is not None:
+                        os.remove(assayed_path)
+                        print(
+                            f"Failed assayed-form identity validation "
+                            f"({invalid_assayed}): {mol_id}"
+                        )
+                        failed += 1
+                    else:
+                        assayed_generated_local += 1
+
+            parent_path = os.path.join(args.out_path, f"{mol_id}.sdf")
+            if (
+                validate_parent_sdf(Path(parent_path), structure.parent_inchi_key)
+                is None
+            ):
+                parent_skipped += 1
                 continue
 
-            # Self-heal / resume: skip only when the file on disk is already a single-component
-            # structure. A missing, multi-component (pre-fix), or unreadable file is rebuilt.
-            if os.path.exists(out_path) and sdf_component_count(out_path) == 1:
-                skipped += 1
-                continue
+            parent_sdf = download_sdf(structure.parent_smiles, timeout_s=10)
+            if parent_sdf is not None:
+                parent_source = "pubchem"
+                parent_sdf = annotate_sdf(
+                    parent_sdf,
+                    "parent",
+                    structure.parent_smiles,
+                    smiles,
+                )
+            else:
+                parent_source = "local"
+                parent_sdf = generate_sdf_local(
+                    structure.parent_smiles,
+                    structure_role="parent",
+                    assayed_smiles=smiles,
+                )
 
-            if cleaned != smiles:
-                print(f"Desalted {mol_id}: {smiles} -> {cleaned}")
-                desalted += 1
-            smiles = cleaned
-
-            sdf_text = download_sdf(smiles, timeout_s=10)
-            source = "pubchem"
-            if sdf_text is None:
-                # PubChem had no record (or stayed unavailable); build the structure locally.
-                sdf_text = generate_sdf_local(smiles)
-                source = "local"
-
-            if sdf_text is None:
-                print(f"Failed (no PubChem record; local embedding failed): {mol_id}")
+            if parent_sdf is None:
+                print(f"Failed to prepare standardized parent: {mol_id}")
                 failed += 1
             else:
-                try:
-                    with open(out_path, "w", encoding="utf-8", newline="\n") as out_f:
-                        out_f.write(sdf_text)
-                    if source == "local":
-                        print(f"Generated locally (no PubChem record): {mol_id}")
-                        generated_local += 1
-                    else:
-                        print(f"Success: {mol_id}")
-                        downloaded += 1
-                except OSError:
-                    print(f"Failed (write error): {mol_id}")
+                write_sdf(parent_path, parent_sdf)
+                invalid_reason = validate_parent_sdf(
+                    Path(parent_path), structure.parent_inchi_key
+                )
+                if invalid_reason is not None:
+                    os.remove(parent_path)
+                    print(
+                        f"Failed parent identity validation ({invalid_reason}): {mol_id}"
+                    )
                     failed += 1
+                else:
+                    if parent_source == "pubchem":
+                        parent_downloaded += 1
+                    else:
+                        parent_generated_local += 1
+                    print(f"Prepared assayed/parent structures: {mol_id}")
 
             if SLEEP_BETWEEN_MOLS > 0:
                 time.sleep(SLEEP_BETWEEN_MOLS)
 
-    print(f"Downloaded:      {downloaded}")
-    print(f"Generated local: {generated_local}")
-    print(f"Skipped:         {skipped}")
-    print(f"Removed stale:   {removed}")
-    print(f"Failed:          {failed}")
-    print(f"Desalted:        {desalted}")
+    print(f"Parent downloaded:        {parent_downloaded}")
+    print(f"Parent generated locally: {parent_generated_local}")
+    print(f"Parent already present:   {parent_skipped}")
+    print(f"Assayed generated locally:{assayed_generated_local}")
+    print(f"Assayed already present:  {assayed_skipped}")
+    print(f"Assayed unavailable:      {assayed_unavailable}")
+    print(f"Failed:                   {failed}")
     return 0
 
 

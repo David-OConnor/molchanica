@@ -20,6 +20,7 @@ use crate::{
     molecules::small::MoleculeSmall,
     therapeutic::{
         DatasetTdc,
+        adme_data::CanonicalAdmeDataset,
         infer::Infer,
         train::{
             atom_graph_analysis_from_param_cfg, comp_graph_analysis_from_param_cfg, load_param_cfg,
@@ -234,9 +235,10 @@ pub fn eval(
     let start = Instant::now();
     println!("Gathering ML metrics");
 
-    let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
+    let csv_path = dataset.csv_path(data_path)?;
 
     let tts = TrainTestSplit::load(dataset, &csv_path, tgt_col)?;
+    let canonical = CanonicalAdmeDataset::load(data_path, &csv_path, dataset)?;
     println!(
         "\nTraining on the train set of len {}...\n",
         tts.train.len()
@@ -246,9 +248,8 @@ pub fn eval(
     // into samples ourselves and pass them to `train_with_samples`, so the SDF
     // files are not re-read inside the training pipeline.
     let data = load_training_data(
-        &csv_path,
-        &mol_path,
-        tgt_col,
+        data_path,
+        &canonical,
         &tts,
         mol_specific_params,
         ff_params,

@@ -19,6 +19,8 @@ mod solubility;
 pub mod train;
 
 #[cfg(feature = "train")]
+mod adme_data;
+#[cfg(feature = "train")]
 pub mod eval;
 mod gnn;
 mod mlp;
@@ -125,13 +127,12 @@ impl DatasetTdc {
     }
 
     #[cfg(feature = "train")]
-    /// Returns (csv file path, mols (SDF) folder)
-    fn csv_mol_paths(self, path: &Path) -> io::Result<(PathBuf, PathBuf)> {
+    /// Returns the original CSV snapshot path. Canonical Parquet rows carry
+    /// their own parent-SDF paths, so no parallel folder convention is assumed.
+    fn csv_path(self, path: &Path) -> io::Result<PathBuf> {
         let name = self.name();
 
         let csv = path.join(format!("{name}.csv"));
-
-        let mols = path.join(name);
 
         if !csv.is_file() {
             return Err(io::Error::new(ErrorKind::NotFound, "CSV file not found"));
@@ -141,11 +142,7 @@ impl DatasetTdc {
             return Err(io::Error::new(ErrorKind::NotFound, "CSV file not found"));
         }
 
-        if !mols.is_dir() {
-            return Err(io::Error::new(ErrorKind::NotFound, "Mols folder not found"));
-        }
-
-        Ok((csv, mols))
+        Ok(csv)
     }
 
     #[cfg(feature = "train")]

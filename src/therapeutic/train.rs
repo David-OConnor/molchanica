@@ -64,7 +64,9 @@ use crate::{
     molecules::{conformers::resolve_conformer, small::MoleculeSmall},
     screening::pharmacophore::Pharmacophore,
     therapeutic::{
-        DatasetTdc, ensure_single_component, gnn,
+        DatasetTdc,
+        adme_data::CanonicalAdmeDataset,
+        ensure_single_component, gnn,
         gnn::{
             GRAPH_ANALYSIS_FEATURE_VERSION,
             atom_bond::{
@@ -1463,17 +1465,13 @@ pub(in crate::therapeutic) struct TrainingData {
 /// We run this split while loading, upstream of skipping molecules for any reason.
 /// This ensures the indices remain correct after skipping molecules.
 pub(in crate::therapeutic) fn load_training_data(
-    csv_path: &Path,
-    sdf_path: &Path,
-    tgt_col: usize,
+    data_root: &Path,
+    canonical: &CanonicalAdmeDataset,
     tts: &TrainTestSplit,
     mol_specific_param_set: &mut HashMap<String, ForceFieldParams>,
     ff_params: &ForceFieldParams,
     test_only: bool,
 ) -> io::Result<TrainingData> {
-    let csv_file = fs::File::open(csv_path)?;
-    let mut rdr = csv::Reader::from_reader(csv_file);
-
     let mut result = TrainingData::default();
 
     // These Hash sets improve speed over  using the tts variables directly. (Double-nested loop)
@@ -1481,50 +1479,69 @@ pub(in crate::therapeutic) fn load_training_data(
     let validation_set: HashSet<usize> = tts.validation.iter().copied().collect();
     let test_set: HashSet<usize> = tts.test.iter().copied().collect();
 
-    let mut record_count = 0;
-    // Iterate over records (automatically handles quotes and headers)
-    for (i, record) in rdr.records().enumerate() {
-        record_count += 1;
-
+    let mut exclusion_counts: HashMap<String, usize> = HashMap::new();
+    for observation in &canonical.observations {
+        let i = observation.source_row_id;
+        let verified_split = if train_set.contains(&i) {
+            "train"
+        } else if validation_set.contains(&i) {
+            "validation"
+        } else if test_set.contains(&i) {
+            "test"
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("canonical source row {i} is not assigned to a split"),
+            ));
+        };
+        if observation.split != verified_split {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "canonical source row {i} declares split {:?}, verified manifest declares {verified_split:?}",
+                    observation.split
+                ),
+            ));
+        }
         if test_only && !test_set.contains(&i) {
             continue;
         }
-
-        let record = record?;
-
-        // Robust float parsing
-        let target_str = &record[tgt_col];
-        let target: f32 = match target_str.parse() {
-            Ok(v) => v,
-            Err(_) => {
-                // If we can't parse the target (e.g. "NaN"), skip this sample
-                continue;
-            }
-        };
-
-        // We determine which file to open based on our SDF-download script's convention,
-        // using the CSV filename, and row index (0-based, skipping header).
-        // let filename = &cols[0];
-        let filename = csv_path.file_stem().unwrap().to_str().unwrap();
-
-        let sdf_path = sdf_path.join(format!("{filename}_id_{i}.sdf"));
+        if !observation.training_eligible {
+            let reason = observation
+                .exclusion_reason
+                .as_deref()
+                .unwrap_or("unspecified_exclusion")
+                .to_owned();
+            *exclusion_counts.entry(reason).or_default() += 1;
+            continue;
+        }
+        let target = observation.value;
+        let relative_sdf = observation
+            .parent_sdf_relative_path
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("eligible canonical source row {i} has no parent SDF path"),
+                )
+            })?;
+        let sdf_path = data_root.join(relative_sdf);
 
         let mut mol: MoleculeSmall = {
-            let sdf = match Sdf::load(&sdf_path) {
-                Ok(s) => s,
-                Err(e) => {
-                    // We accept that some SDF files are missing from not being able
-                    // to download them from PubChem.
-                    // println!("Error loading SDF at path {sdf_path:?}: {:?}", e);
-                    continue;
-                }
-            };
+            let sdf = Sdf::load(&sdf_path).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("canonical parent SDF is unreadable at {sdf_path:?}: {e}"),
+                )
+            })?;
 
             match sdf.clone().try_into() {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("Error loading SDF; skipping mol at {sdf_path:?}: {e:?}");
-                    continue;
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("canonical parent SDF is invalid at {sdf_path:?}: {e:?}"),
+                    ));
                 }
             }
         };
@@ -1532,9 +1549,11 @@ pub(in crate::therapeutic) fn load_training_data(
         // Defensive guard: never train/validate/evaluate on split molecules (salts,
         // counterions, or multi-component mixtures whose SMILES contained `.` separators).
         // The guard logs an explanation; we skip the row so the remaining splits stay valid.
-        if ensure_single_component(&mol).is_err() {
-            continue;
-        }
+        ensure_single_component(&mol)?;
+        mol.common.metadata.insert(
+            "ADME_PARENT_INCHIKEY".to_owned(),
+            observation.parent_inchi_key.clone(),
+        );
 
         // Note: We are skipping populating mol-specific parameters. These are generally dihedrals,
         // but less commonly valence angles.
@@ -1548,31 +1567,30 @@ pub(in crate::therapeutic) fn load_training_data(
 
         mol.pharmacophore = Pharmacophore::new_all_candidates(&mol);
 
-        if train_set.contains(&i) {
+        if verified_split == "train" {
             result.train.push((mol, target));
-        } else if validation_set.contains(&i) {
+        } else if verified_split == "validation" {
             result.validation.push((mol, target));
-        } else if test_set.contains(&i) {
+        } else if verified_split == "test" {
             result.test.push((mol, target));
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("record {i} is not assigned to a split for dataset {filename}"),
-            ));
         }
     }
 
-    if record_count != tts.train.len() + tts.validation.len() + tts.test.len() {
+    if canonical.observations.len() != tts.train.len() + tts.validation.len() + tts.test.len() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "split coverage for {csv_path:?} does not match the CSV: records={record_count}, \
+                "split coverage does not match canonical data: records={}, \
                  train={}, validation={}, test={}",
+                canonical.observations.len(),
                 tts.train.len(),
                 tts.validation.len(),
                 tts.test.len()
             ),
         ));
+    }
+    if !exclusion_counts.is_empty() {
+        eprintln!("Canonical training exclusions: {exclusion_counts:?}");
     }
 
     Ok(result)
@@ -1870,20 +1888,20 @@ pub(in crate::therapeutic) fn train(
     mol_specific_params: &mut HashMap<String, ForceFieldParams>,
     ff_params: &ForceFieldParams,
 ) -> io::Result<()> {
-    let (csv_path, mol_path) = dataset.csv_mol_paths(data_path)?;
+    let csv_path = dataset.csv_path(data_path)?;
 
     println!("Started training on {csv_path:?}");
 
     let tts = TrainTestSplit::load(dataset, &csv_path, tgt_col)?;
+    let canonical = CanonicalAdmeDataset::load(data_path, &csv_path, dataset)?;
     let param_cfg = load_param_cfg(&dataset.name())?;
     let atom_graph_analysis = atom_graph_analysis_from_param_cfg(&param_cfg);
     let comp_graph_analysis = comp_graph_analysis_from_param_cfg(&param_cfg);
     let spacial_graph_analysis = spacial_graph_analysis_from_param_cfg(&param_cfg);
 
     let loaded = load_training_data(
-        Path::new(&csv_path),
-        Path::new(&mol_path),
-        tgt_col,
+        data_path,
+        &canonical,
         &tts,
         mol_specific_params,
         ff_params,
