@@ -30,7 +30,6 @@ mod util;
 mod cli;
 mod reflection;
 
-// mod adme_;
 pub mod antibody;
 mod cam;
 mod crystal;
@@ -57,7 +56,7 @@ mod threads;
 
 use std::time::Instant;
 
-use dynamics::{Integrator, params::FfParamSet};
+use dynamics::{Integrator, params::{FfParamSet, LIPID_21_LIB}};
 use mol_defs::molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 
@@ -70,7 +69,7 @@ use crate::{render::render, util::handle_err};
 fn handle_cli_flags() -> Option<i32> {
     let flag = std::env::args().nth(1)?;
     match flag.as_str() {
-        // Checks the native ProteinMPNN port in src/adme_/ddg against the reference forward
+        // Checks the native ProteinMPNN port in src/therapeutic_misc/ddg against the reference forward
         // pass scripts/convert_mpnn_weights.py recorded from upstream. See that module's docs.
         "--verify-mpnn" => {
             let path = match therapeutic_misc::ddg::weights_path() {
@@ -209,7 +208,7 @@ fn main() {
         state.graphics_settings.depth_aware_halos = state.to_save.graphics.depth_aware_halos;
     }
 
-    match load_lipid_templates() {
+    match load_lipid_templates(LIPID_21_LIB) {
         Ok(t) => {
             state.templates.lipid = t;
         }

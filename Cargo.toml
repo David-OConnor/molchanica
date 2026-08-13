@@ -46,8 +46,8 @@ serde_json = "1.0.150"
 
 # We use Parquet for molecule databases, e.g. for screening, and a built-in convenience set.
 # Parquet is the on-disk format; Arrow is its in-memory format.
-parquet = { version = "59.1.0", features = ["arrow"] }
-arrow = "59.1.0"
+parquet = { version = "59.2.0", features = ["arrow"] }
+arrow = "59.2.0"
 # Parquet reads from anything implementing `ChunkReader`; `Bytes` is how we point one at the
 # database embedded in the binary, rather than a file on disk.
 bytes = "1.12.1"

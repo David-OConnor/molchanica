@@ -37,13 +37,6 @@ Cargo.lock
 *.pqt
 *.parquet
 
-# ML models
-*.pt
-*.safetensors
-*.vocab
-/AqSolDb_mols
-/mol_models
-/ml_models
 
 # ORCA input files
 *.inp
