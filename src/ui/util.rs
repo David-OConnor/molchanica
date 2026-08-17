@@ -7,7 +7,7 @@ use std::{
     slice,
 };
 
-use bio_apis::pubchem::find_cids_from_search;
+use bio_apis::{chebi, pubchem::find_cids_from_search};
 use egui::{Color32, Response, RichText, Ui};
 use graphics::{EngineUpdates, FWD_VEC, Scene};
 use mol_defs::{
@@ -22,7 +22,9 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     file_io::{
-        download_mols::{load_atom_coords_rcsb, load_sdf_drugbank, load_sdf_pubchem},
+        download_mols::{
+            load_atom_coords_rcsb, load_sdf_chebi, load_sdf_drugbank, load_sdf_pubchem,
+        },
         managed_mols::{self, ManagedMolProvider},
         save_mol_set_as_gro,
     },
@@ -574,6 +576,8 @@ enum EnterTarget {
     /// Enter does nothing: the query is too short, matches no lookup, or the built-in DB claimed it.
     None,
     PubchemCid,
+    /// A `chebi:`-prefixed accession, which no other lookup competes for.
+    ChebiId,
     Rcsb,
     Geostd,
     DrugBank,
@@ -581,10 +585,19 @@ enum EnterTarget {
     PubchemSearch,
 }
 
+/// Prefix that pins a query to ChEBI alone, e.g. `CHEBI:46195`. Matched case-insensitively, against
+/// the lowercased query.
+const CHEBI_PREFIX: &str = "chebi:";
+
 /// Decide which lookup Enter activates, mirroring the order the buttons are drawn in below. This is
 /// resolved once, ahead of drawing, so the highlighted button and the one Enter actually loads can't
 /// disagree.
 fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
+    // An explicitly prefixed ChEBI accession names its database, so nothing else can claim it.
+    if inp_l.starts_with(CHEBI_PREFIX) {
+        return EnterTarget::ChebiId;
+    }
+
     // A numeric query is a PubChem CID, and takes Enter even when it also looks like an RCSB ident
     // (4 digits) or a Geostd one (3 digits): those idents are alphanumeric in practice, so an
     // all-digit query is far more likely meant as a CID. Their buttons are still drawn, one click away.
@@ -631,11 +644,51 @@ fn query_btn(ui: &mut Ui, text: &str, is_enter_target: bool) -> Response {
     })
 }
 
+/// Download and open a molecule from ChEBI, by numeric accession. Shared by the bare-number query,
+/// where ChEBI is the alternative to PubChem, and the `chebi:`-prefixed one, where it's the only
+/// database consulted.
+fn load_chebi_id(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+    id: u32,
+) {
+    match load_sdf_chebi(id) {
+        Ok(downloaded) => {
+            let key = id.to_string();
+            let Some(cache_path) = cache_sdf_source(
+                state,
+                ManagedMolProvider::Chebi,
+                &key,
+                &key,
+                &downloaded.source_text,
+            ) else {
+                return;
+            };
+            open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
+            redraw.ligand = true;
+
+            handle_success(
+                &mut state.ui,
+                format!(
+                    "Loaded CHEBI:{id} from ChEBI (over the internet). Note that ChEBI structures \
+                     are 2D."
+                ),
+            );
+        }
+        Err(e) => {
+            let msg = format!("Error loading SDF file: {e:?}");
+            handle_err(&mut state.ui, msg);
+        }
+    }
+}
+
 /// Handles a general query, which could be a name, identifier etc. Attempts to query
 /// the correct database based on the  text.
 ///
 /// inp is trimmed and case-preserving; inp_l is its ASCII-lowercase form.
-pub(in crate::ui) fn query(
+pub(in crate::ui) fn load_mol_from_query(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
@@ -680,6 +733,25 @@ pub(in crate::ui) fn query(
         },
     };
 
+    // A prefixed ChEBI accession, e.g. `CHEBI:46195`. This names one database, so unlike the bare
+    // number below it queries ChEBI alone, and nothing further down is offered for it.
+    if inp_l.starts_with(CHEBI_PREFIX) {
+        let is_tgt = enter_tgt == EnterTarget::ChebiId;
+        let button_clicked = query_btn(ui, "Load ChEBI", is_tgt).clicked();
+
+        if button_clicked || (enter_pressed && is_tgt) {
+            match chebi::parse_id(inp_l) {
+                Ok(id) => load_chebi_id(state, scene, redraw, updates, id),
+                Err(e) => handle_err(
+                    &mut state.ui,
+                    format!("{inp} is not a valid ChEBI accession: {e:?}"),
+                ),
+            }
+        }
+
+        return;
+    }
+
     // PubChem CID. Don't return early here; continue to allow for other
     if let Ok(cid) = inp.parse::<u32>() {
         let is_tgt = enter_tgt == EnterTarget::PubchemCid;
@@ -709,6 +781,12 @@ pub(in crate::ui) fn query(
                     handle_err(&mut state.ui, msg);
                 }
             }
+        }
+
+        // A bare number is also a ChEBI accession. PubChem owns Enter, being the larger database;
+        // ChEBI is one click away, or unambiguous with a `chebi:` prefix.
+        if query_btn(ui, "Load ChEBI", false).clicked() {
+            load_chebi_id(state, scene, redraw, updates, cid);
         }
     }
 

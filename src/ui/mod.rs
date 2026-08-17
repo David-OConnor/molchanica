@@ -45,7 +45,8 @@ use crate::{
         mol_type_tools::mol_type_toolbars,
         sidebar::sidebar,
         util::{
-            QUERY_ENTER_LEN_MIN, color_egui_from_f32, handle_redraw, query, update_file_dialogs,
+            QUERY_ENTER_LEN_MIN, color_egui_from_f32, handle_redraw, load_mol_from_query,
+            update_file_dialogs,
         },
     },
     util::{
@@ -1129,7 +1130,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 COLOR_INACTIVE
             };
 
-            let query_help = "Download and view a molecule from RCSB PDB, PubChem, DrugBank, or Amber Geostd";
+            let query_help = "Download and view a molecule from RCSB PDB, PubChem, DrugBank, ChEBI, or Amber Geostd";
             ui.label(RichText::new("Query:").color(color_open_tools))
                 .on_hover_text(query_help);
 
@@ -1154,7 +1155,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                     && edit_resp.lost_focus()
                     && ui.input(|i| i.key_pressed(Key::Enter));
 
-                query(
+                load_mol_from_query(
                     state,
                     scene,
                     &mut redraw,

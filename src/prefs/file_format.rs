@@ -824,6 +824,10 @@ impl PrefsBytes for MolIdent {
                 out.extend_from_slice(&(s.len() as u32).to_le_bytes());
                 out.extend_from_slice(s.as_bytes());
             }
+            MolIdent::Chebi(n) => {
+                out.push(8);
+                out.extend_from_slice(&n.to_le_bytes());
+            }
         }
         out
     }
@@ -865,6 +869,10 @@ impl PrefsBytes for MolIdent {
                 let len = parse_le!(data, u32, i..i + 4) as usize;
                 i += 4;
                 MolIdent::PubchemTitle(String::from_utf8(data[i..i + len].to_vec()).unwrap())
+            }
+            8 => {
+                i += 4;
+                MolIdent::Chebi(parse_le!(data, u32, i..i + 4))
             }
             other => {
                 return Err(io::Error::new(

@@ -16,12 +16,12 @@ egui_plot = "0.35.0"  # For Rama plots
 # with Molchanica.
 lin_alg = { version = "1.4.3", features = ["encode"] }
 na_seq = "0.3.15"
-bio_apis = { version = "0.2.8", features = ["encode"] }
+bio_apis = { version = "0.3.0", features = ["encode"] }
 bio_files = { version = "0.5.3", features = ["encode"] }
 bio_tools = { path = "../bio_tools" }  # todo: Experimental
 mcubes = "0.1.7"
 dynamics = { version = "0.2.1", features = ["encode"] }
-mol_defs = { path = "../mol_defs", features = ["render"] }
+mol_defs = { version = "0.1.0", features = ["render"] }
 adme = { path = "../adme" }
 
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
@@ -36,13 +36,13 @@ rayon = "1.12.0"  # Parallel execution on CPU using thread pools.
 rustfft = "6.4.1"
 
 rand = "0.10.2"
-regex = "1.13.0"
+regex = "1.13.1"
 chrono = "0.4.45"
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 
 # For structure prediction (Boltz-2, ESM-Fold, OpenDDE) and external tools (ANARCII, ProteinMPNN),
 # which exchange JSON with the processes they drive.
-serde_json = "1.0.150"
+serde_json = "1.0.151"
 
 # We use Parquet for molecule databases, e.g. for screening, and a built-in convenience set.
 # Parquet is the on-disk format; Arrow is its in-memory format.
@@ -52,14 +52,11 @@ arrow = "59.2.0"
 # database embedded in the binary, rather than a file on disk.
 bytes = "1.12.1"
 
-# Note: This section must be at the bottom; applies to all elements below it.
-#[target.'cfg(not(target_os = "windows"))'.dependencies]
-
 # Observation, 2026-02-09: Dynamic Linking seems to be required for Ubuntu; dynamic loading will launch,
 # but it will be unable to find the GPU at runtime. edit: Nvm; not working there with loading either.
 cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking", "cuda-13000"], optional = true }
 
-rodio = "0.22.2"  # For sonification of bonds etc (Experimental)
+rodio = "0.22.2"  # For sonification of bonds etc.
 
 
 # We use these when developing locally to reduce friction.
@@ -71,6 +68,7 @@ bio_apis = { path = "../bio_apis" }
 #mcubes = { path = "../mcubes" }
 bio_files = { path = "../bio_files" }
 dynamics = { path = "../dynamics" }
+mol_defs = { path = "../mol_defs" }
 
 
 [build-dependencies]

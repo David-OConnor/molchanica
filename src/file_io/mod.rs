@@ -130,7 +130,8 @@ impl State {
             .unwrap_or_default()
         {
             // The cif branch here also handles 2fo-fc mmCIF files.
-            "sdf" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" => {
+            // Note: `mol` is ChEBI's SDF; same or similar in most or all cases?
+            "sdf" | "mol" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" => {
                 self.open_mol_from_file(path, scene, engine_updates)?
             }
             "gro" => {
@@ -187,7 +188,7 @@ impl State {
         let molecule = match extension.to_str().unwrap() {
             // Note: We handle loading pockets from these files downstream,
             // by parsing their metadata.
-            "sdf" => {
+            "sdf" | "mol" => {
                 let mut m: MoleculeSmall = Sdf::load(path)?.try_into()?;
                 m.common.update_path(path);
 
@@ -550,7 +551,7 @@ impl State {
                 fs::write(path, data)?;
                 OpenType::Peptide
             }
-            "sdf" => match self.active_mol() {
+            "sdf" | "mol" => match self.active_mol() {
                 Some(mol) => {
                     // V2000 only for now. Allow configuring, eventually.
                     mol.to_sdf()?.save(path, SdfFormat::V2000)?;
@@ -1239,13 +1240,13 @@ impl Default for FileDialogs {
             .add_file_filter_extensions(
                 "All",
                 vec![
-                    "cif", "mol2", "sdf", "xyz", "pdbqt", "gro", "map", "mtz", "frcmod", "dat",
-                    "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
+                    "cif", "mol", "mol2", "sdf", "xyz", "pdbqt", "gro", "map", "mtz", "frcmod",
+                    "dat", "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
                 ],
             )
             .add_file_filter_extensions(
                 "Molecule (small)",
-                vec!["mol2", "sdf", "xyz", "pdbqt", "prmtop"],
+                vec!["mol", "mol2", "sdf", "xyz", "pdbqt", "prmtop"],
             )
             .add_file_filter_extensions("GROMACS molecule input", vec!["gro"])
             .add_file_filter_extensions("Protein (CIF)", vec!["cif"])
@@ -1294,7 +1295,7 @@ impl Default for FileDialogs {
             title: Some("Select a molecule file".to_string()),
             ..Default::default()
         }
-        .add_file_filter_extensions(&mol_file_descrip, vec!["sdf", "mol2"]);
+        .add_file_filter_extensions(&mol_file_descrip, vec!["sdf", "mol2", "mol"]);
 
         let parquet_mol_file =
             FileDialog::with_config(cfg_parquet_mol_file).default_file_filter(&mol_file_descrip);

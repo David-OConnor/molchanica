@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use bio_apis::{
-    ReqError, amber_geostd, drugbank,
+    ReqError, amber_geostd, chebi, drugbank,
     pubchem::{self, StructureSearchNamespace},
     rcsb,
 };
@@ -57,6 +57,20 @@ pub fn load_sdf_pubchem(cid: u32) -> Result<DownloadedSmallMol, ReqError> {
     let source_text = pubchem::load_sdf(StructureSearchNamespace::Cid, &cid.to_string())?;
     let sdf = Sdf::new(&source_text).map_err(ReqError::from)?;
     let mol = sdf.try_into().map_err(ReqError::from)?;
+    Ok(DownloadedSmallMol { mol, source_text })
+}
+
+/// Download a structure from ChEBI as SDF, retaining its source text for session persistence. Note
+/// that ChEBI's structures are 2D; they carry no z coordinates.
+///
+/// ChEBI serves bare Molfiles, with no data fields, so the accession is attached as an ident here
+/// rather than being picked up from the file the way PubChem's CID is.
+pub fn load_sdf_chebi(id: u32) -> Result<DownloadedSmallMol, ReqError> {
+    let source_text = chebi::load_sdf(id)?;
+    let sdf = Sdf::new(&source_text).map_err(ReqError::from)?;
+    let mut mol: MoleculeSmall = sdf.try_into().map_err(ReqError::from)?;
+    mol.idents.push(MolIdent::Chebi(id));
+
     Ok(DownloadedSmallMol { mol, source_text })
 }
 
