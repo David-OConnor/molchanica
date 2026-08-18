@@ -1,6 +1,6 @@
 //! Information and settings for the opened, or to-be opened molecules.
 
-use bio_apis::{drugbank, lmsd, pdbe, pubchem, rcsb};
+use bio_apis::{chebi, drugbank, lmsd, pdbe, pubchem, rcsb};
 use bio_files::{ResidueType, md_params::ForceFieldParams};
 use dynamics::merge_params;
 use egui::{Color32, RichText, Ui};
@@ -707,23 +707,6 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
                     }
                 }
             }
-
-            if button!(
-                ui,
-                "Metadata",
-                Color32::GRAY,
-                "Display metadata for this molecule"
-            )
-            .clicked()
-            {
-                if let Some((mol_type, _)) = state.ui.popup.metadata
-                    && mol_type == MolType::Ligand
-                {
-                    state.ui.popup.metadata = None;
-                } else {
-                    state.ui.popup.metadata = Some((MolType::Ligand, active_mol_i))
-                }
-            }
         }
 
         let mut update_cid = None; // to avoid a borrow error.
@@ -764,6 +747,11 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
                                     pubchem::open_overview(*cid);
                                 }
                                 pubchem_cid = Some(*cid);
+                            }
+                            MolIdent::Chebi(id) => {
+                                if ui.button(format!("CHEBI:{id}")).clicked() {
+                                    chebi::open_overview(*id);
+                                }
                             }
                             MolIdent::PdbeAmber(id) => {
                                 if ui.button(format!("PDBe: {id}")).clicked() {
@@ -863,7 +851,33 @@ pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui
         None
     };
 
-    popup::metadata_popup(&mut state.ui.popup, &common, idents.as_deref(), ui);
+    let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
+    // Cloned to avoid holding a borrow of `state` alongside the mutable one below.
+    let prefs_dir = state.volatile.prefs_dir.clone();
+    let load_all_idents = popup::metadata_popup(
+        &mut state.ui.popup,
+        &common,
+        idents.as_ref(),
+        loading_idents,
+        &prefs_dir,
+        ui,
+    );
+
+    if load_all_idents
+        && mol_type == MolType::Ligand
+        && let Some(idents) = idents
+    {
+        crate::threads::start_all_idents_lookup(
+            &mut state.volatile.thread_receivers,
+            i,
+            common.ident,
+            idents,
+        );
+        handle_success(
+            &mut state.ui,
+            "Loading molecule identifiers from PubChem and ChEBI...".to_owned(),
+        );
+    }
 }
 
 pub(in crate::ui) fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {

@@ -4,6 +4,7 @@ use std::{
     io,
     io::Write,
     path::{Path, PathBuf},
+    process::Command,
     slice,
 };
 
@@ -11,16 +12,18 @@ use bio_apis::{chebi, pubchem::find_cids_from_search};
 use egui::{Color32, Response, RichText, Ui};
 use graphics::{EngineUpdates, FWD_VEC, Scene};
 use mol_defs::{
-    molecules::{MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
+    molecules::{MolIdent, MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
     smiles::is_smiles,
 };
 
+use crate::ui::COL_SPACING;
 use crate::{
     cam::reset_camera,
     drawing::{
         draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
+    external_tools::home_directory,
     file_io::{
         download_mols::{
             load_atom_coords_rcsb, load_sdf_chebi, load_sdf_drugbank, load_sdf_pubchem,
@@ -39,6 +42,94 @@ use crate::{
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
 };
+
+/// A path formatted for display: the home directory abbreviated to "~", and forward slashes on all
+/// platforms, e.g. "~/Desktop/4091.mol2".
+pub(in crate::ui) fn display_path(path: &Path) -> String {
+    let abbreviated = home_directory()
+        .and_then(|home| {
+            path.strip_prefix(&home)
+                .ok()
+                .map(|rel| Path::new("~").join(rel))
+        })
+        .unwrap_or_else(|| path.to_path_buf());
+
+    abbreviated.to_string_lossy().replace('\\', "/")
+}
+
+/// Show a folder in the platform's file browser. Shared by every "open this location" button in the
+/// UI, so they all behave the same way, and so the per-platform command lives in one place.
+pub(in crate::ui) fn open_dir(folder: &Path) -> io::Result<()> {
+    #[cfg(target_os = "windows")]
+    const OPENER: &str = "explorer.exe";
+    #[cfg(target_os = "macos")]
+    const OPENER: &str = "open";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    const OPENER: &str = "xdg-open";
+
+    Command::new(OPENER).arg(folder).spawn().map(|_| ())
+}
+
+/// Display small-molecule identifiers consistently wherever they are listed in the UI.
+pub(in crate::ui) fn list_idents(
+    idents: &[MolIdent],
+    path: &Option<PathBuf>,
+    prefs_dir: &Path,
+    ui: &mut Ui,
+) {
+    if let Some(p) = path {
+        ui.horizontal_wrapped(|ui| {
+            // Managed molecules were never saved to disk by the user; their cache path is an
+            // implementation detail, so describe where they came from instead.
+            crate::label!(ui, "File:", Color32::GRAY);
+            if managed_mols::is_managed_path(prefs_dir, p) {
+                ui.label(RichText::new("Downloaded; not saved permanently").color(Color32::WHITE))
+                    .on_hover_text(p.to_string_lossy());
+            } else {
+                // The unabbreviated, native-separator path is available on hover.
+                ui.label(RichText::new(display_path(p)).color(Color32::WHITE))
+                    .on_hover_text(p.to_string_lossy());
+            }
+
+            if let Some(dir) = p.parent() {
+                if ui
+                    .button("Open dir")
+                    .on_hover_text(
+                        "Open your OS's file browser to the directory containing this file.",
+                    )
+                    .clicked()
+                {
+                    // No `handle_err` here: this is drawn while the molecule is borrowed from
+                    // state, so the CLI output line is out of reach.
+                    if let Err(e) = open_dir(dir) {
+                        eprintln!("Error opening the folder {}: {e}", dir.display());
+                    }
+                }
+            }
+        });
+    }
+
+    for ident in idents {
+        // Wrap long identifiers instead of expanding the containing panel.
+        ui.horizontal_wrapped(|ui| {
+            crate::label!(ui, format!("{}:", ident.label()), Color32::GRAY);
+
+            let mut ident_text = RichText::new(ident.ident_inner()).color(Color32::WHITE);
+
+            if matches!(
+                ident,
+                MolIdent::InchIKey(_)
+                    | MolIdent::InchI(_)
+                    | MolIdent::Smiles(_)
+                    | MolIdent::IupacName(_)
+            ) {
+                ident_text = ident_text.font(egui::FontId::proportional(10.0));
+            }
+
+            ui.label(ident_text);
+        });
+    }
+}
 
 /// Run this each frame, after all UI elements that affect it are rendered.
 pub fn update_file_dialogs(
@@ -657,13 +748,17 @@ fn load_chebi_id(
     match load_sdf_chebi(id) {
         Ok(downloaded) => {
             let key = id.to_string();
-            let Some(cache_path) = cache_sdf_source(
-                state,
+            // Cache the molecule rather than the file ChEBI served: that file has no data fields,
+            // so it can't carry the accession we just attached, and the accession must survive a
+            // restart. `to_sdf` writes our identifier metadata.
+            let cache_result = managed_mols::store_sdf(
+                &state.volatile.prefs_dir,
                 ManagedMolProvider::Chebi,
                 &key,
                 &key,
-                &downloaded.source_text,
-            ) else {
+                &downloaded.mol.to_sdf(),
+            );
+            let Some(cache_path) = report_cache_result(state, cache_result) else {
                 return;
             };
             open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);

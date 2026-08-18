@@ -1,13 +1,17 @@
 //! Handle threads for potentially long-running calls, e.g. HTTP.
 
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::{
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
+};
 
 use adme::TherapeuticProperties;
 use bio_apis::{
     ReqError,
     amber_geostd::GeostdData,
+    chebi,
     pdbe::SiftsUniprotMapping,
-    pubchem,
+    pubchem::{self, StructureSearchNamespace},
     rcsb::{FilesAvailable, PdbDataResults},
 };
 use bio_files::gromacs::GromacsOutput;
@@ -20,6 +24,7 @@ use mol_defs::{
 use na_seq::AaIdent;
 
 use crate::{
+    file_io::managed_mols,
     gromacs::on_gromacs_md_complete,
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
@@ -44,6 +49,10 @@ pub struct ThreadReceivers {
     /// Receives thread data upon an HTTP result completion.
     pub pubchem_properties_avail:
         Option<Receiver<(MolIdent, Result<pubchem::Properties, ReqError>)>>,
+    /// Identifiers found for a ligand by querying PubChem and ChEBI. The tuple carries the ligand
+    /// index and internal name from when the request started, so a removed/reordered ligand does
+    /// not receive another molecule's result.
+    pub all_idents_avail: Option<(usize, String, Receiver<IdentLookupOutcome>)>,
     /// The first param is the index.
     pub therapeutic_properties_avail: Option<Receiver<(usize, TherapeuticProperties)>>,
     /// The first param is the index.
@@ -66,6 +75,7 @@ impl ThreadReceivers {
     pub fn has_pending(&self) -> bool {
         !self.mol_pending_data_avail.is_empty()
             || self.pubchem_properties_avail.is_some()
+            || self.all_idents_avail.is_some()
             || self.therapeutic_properties_avail.is_some()
             || self.amber_geostd_data_avail.is_some()
             || !self.sifts_mapping_avail.is_empty()
@@ -76,6 +86,261 @@ impl ThreadReceivers {
     }
 }
 
+/// Result of asking the online small-molecule databases to fill identifier gaps.
+#[derive(Debug, Default)]
+pub struct IdentLookupOutcome {
+    pub idents: Vec<MolIdent>,
+    pub warnings: Vec<String>,
+}
+
+/// Start the shared online identifier lookup used by the metadata popup and characterization
+/// sidebar. Only one lookup is kept at a time; callers disable their buttons while it is pending.
+pub fn start_all_idents_lookup(
+    receivers: &mut ThreadReceivers,
+    ligand_i: usize,
+    ligand_ident: String,
+    idents: Vec<MolIdent>,
+) {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let outcome = load_all_idents(&idents);
+        let _ = tx.send(outcome);
+    });
+    receivers.all_idents_avail = Some((ligand_i, ligand_ident, rx));
+}
+
+fn has_ident_kind(idents: &[MolIdent], candidate: &MolIdent) -> bool {
+    let kind = std::mem::discriminant(candidate);
+    idents
+        .iter()
+        .any(|ident| std::mem::discriminant(ident) == kind)
+}
+
+fn push_if_kind_missing(idents: &mut Vec<MolIdent>, ident: MolIdent) {
+    if !has_ident_kind(idents, &ident) {
+        idents.push(ident);
+    }
+}
+
+fn apply_pubchem_properties(idents: &mut Vec<MolIdent>, props: &pubchem::Properties) {
+    push_if_kind_missing(idents, MolIdent::PubChem(props.cid));
+    if !props.smiles.is_empty() {
+        push_if_kind_missing(idents, MolIdent::Smiles(props.smiles.clone()));
+    }
+    if !props.inchi.is_empty() {
+        push_if_kind_missing(idents, MolIdent::InchI(props.inchi.clone()));
+    }
+    if !props.inchi_key.is_empty() {
+        push_if_kind_missing(idents, MolIdent::InchIKey(props.inchi_key.clone()));
+    }
+    if !props.iupac_name.is_empty() {
+        push_if_kind_missing(idents, MolIdent::IupacName(props.iupac_name.clone()));
+    }
+    if !props.title.is_empty() {
+        push_if_kind_missing(idents, MolIdent::PubchemTitle(props.title.clone()));
+    }
+}
+
+fn apply_chebi_compound(idents: &mut Vec<MolIdent>, compound: &chebi::Compound) {
+    push_if_kind_missing(idents, MolIdent::Chebi(compound.id));
+
+    let props = chebi::Properties::from(compound);
+    if let Some(value) = props.smiles {
+        push_if_kind_missing(idents, MolIdent::Smiles(value));
+    }
+    if let Some(value) = props.inchi {
+        push_if_kind_missing(idents, MolIdent::InchI(value));
+    }
+    if let Some(value) = props.inchi_key {
+        push_if_kind_missing(idents, MolIdent::InchIKey(value));
+    }
+    if let Some(value) = props.iupac_name {
+        push_if_kind_missing(idents, MolIdent::IupacName(value));
+    }
+
+    if let Some(value) = compound.xrefs_from_source("DrugBank").into_iter().next() {
+        push_if_kind_missing(idents, MolIdent::DrugBank(value));
+    }
+    if let Some(value) = compound.xrefs_from_source("PDBeChem").into_iter().next() {
+        push_if_kind_missing(idents, MolIdent::PdbeAmber(value));
+    }
+}
+
+fn pubchem_properties_from_idents(idents: &[MolIdent]) -> Result<pubchem::Properties, ReqError> {
+    let mut last_error = None;
+
+    for ident in idents {
+        let query = match ident {
+            MolIdent::PubChem(cid) => Some((StructureSearchNamespace::Cid, cid.to_string())),
+            MolIdent::InchIKey(value) => Some((StructureSearchNamespace::InchiKey, value.clone())),
+            MolIdent::InchI(value) => Some((StructureSearchNamespace::Inchi, value.clone())),
+            MolIdent::Smiles(value) => Some((StructureSearchNamespace::Smiles, value.clone())),
+            _ => None,
+        };
+
+        if let Some((namespace, value)) = query {
+            match pubchem::properties(namespace, &value) {
+                Ok(props) => return Ok(props),
+                Err(error) => last_error = Some(error),
+            }
+        }
+    }
+
+    if let Some(MolIdent::PdbeAmber(value)) = idents
+        .iter()
+        .find(|ident| matches!(ident, MolIdent::PdbeAmber(_)))
+    {
+        match pubchem::properties_from_pdbe_id(value) {
+            Ok(props) => return Ok(props),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    // PubChem's name namespace also accepts many registry identifiers, including DrugBank IDs.
+    for text in idents.iter().filter_map(|ident| match ident {
+        MolIdent::DrugBank(value) | MolIdent::IupacName(value) | MolIdent::PubchemTitle(value) => {
+            Some(value.as_str())
+        }
+        _ => None,
+    }) {
+        let lookup = pubchem::find_cids_from_search(text, false).and_then(|cids| {
+            let cid = cids.into_iter().next().ok_or(ReqError::Deserialize)?;
+            pubchem::properties(StructureSearchNamespace::Cid, &cid.to_string())
+        });
+        match lookup {
+            Ok(props) => return Ok(props),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or(ReqError::Deserialize))
+}
+
+fn chebi_id_from_idents(idents: &[MolIdent]) -> Result<Option<u32>, ReqError> {
+    if let Some(cid) = idents.iter().find_map(|ident| match ident {
+        MolIdent::PubChem(value) => Some(*value),
+        _ => None,
+    }) {
+        if let Some(id) = pubchem::chebi_id_from_cid(cid)? {
+            return Ok(Some(id));
+        }
+    }
+
+    if let Some(key) = idents.iter().find_map(|ident| match ident {
+        MolIdent::InchIKey(value) => Some(value.as_str()),
+        _ => None,
+    }) {
+        let normalized = key.trim().trim_start_matches("InChIKey=");
+        let result = chebi::search(normalized, 1, 15)?;
+        if let Some(hit) = result.results.into_iter().find(|hit| {
+            hit.data
+                .inchi_key
+                .as_deref()
+                .map(|value| value.trim().trim_start_matches("InChIKey=") == normalized)
+                .unwrap_or(false)
+        }) {
+            return Ok(Some(hit.id));
+        }
+    }
+
+    if let Some(drugbank_id) = idents.iter().find_map(|ident| match ident {
+        MolIdent::DrugBank(value) => Some(value.as_str()),
+        _ => None,
+    }) {
+        for hit in chebi::search(drugbank_id, 1, 15)?
+            .results
+            .into_iter()
+            .take(3)
+        {
+            let compound = chebi::load_compound(hit.id)?;
+            if compound
+                .xrefs_from_source("DrugBank")
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(drugbank_id))
+            {
+                return Ok(Some(compound.id));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Query PubChem and ChEBI using whichever identifiers are already available, then return one
+/// value for every identifier kind those databases can resolve. This performs blocking HTTP and
+/// is intended to run on a worker thread.
+pub fn load_all_idents(existing: &[MolIdent]) -> IdentLookupOutcome {
+    let mut outcome = IdentLookupOutcome {
+        idents: existing.to_vec(),
+        warnings: Vec::new(),
+    };
+
+    let mut chebi_loaded = false;
+    if let Some(id) = existing.iter().find_map(|ident| match ident {
+        MolIdent::Chebi(value) => Some(*value),
+        _ => None,
+    }) {
+        match chebi::load_compound(id) {
+            Ok(compound) => {
+                apply_chebi_compound(&mut outcome.idents, &compound);
+                chebi_loaded = true;
+            }
+            Err(error) => outcome
+                .warnings
+                .push(format!("ChEBI lookup for {id} failed: {error:?}")),
+        }
+    }
+
+    let mut pubchem_loaded = false;
+    match pubchem_properties_from_idents(&outcome.idents) {
+        Ok(props) => {
+            apply_pubchem_properties(&mut outcome.idents, &props);
+            pubchem_loaded = true;
+        }
+        Err(error) => outcome
+            .warnings
+            .push(format!("PubChem lookup failed: {error:?}")),
+    }
+
+    if !chebi_loaded {
+        match chebi_id_from_idents(&outcome.idents) {
+            Ok(Some(id)) => match chebi::load_compound(id) {
+                Ok(compound) => {
+                    apply_chebi_compound(&mut outcome.idents, &compound);
+                    chebi_loaded = true;
+                }
+                Err(error) => outcome
+                    .warnings
+                    .push(format!("ChEBI lookup for {id} failed: {error:?}")),
+            },
+            Ok(None) => {}
+            Err(error) => outcome
+                .warnings
+                .push(format!("ChEBI identifier lookup failed: {error:?}")),
+        }
+    }
+
+    // Starting from ChEBI often gives us the structure identifier PubChem needs.
+    if !pubchem_loaded && chebi_loaded {
+        match pubchem_properties_from_idents(&outcome.idents) {
+            Ok(props) => apply_pubchem_properties(&mut outcome.idents, &props),
+            Err(error) => outcome
+                .warnings
+                .push(format!("PubChem retry failed: {error:?}")),
+        }
+    }
+
+    // If PubChem was reached only on the retry, make one final attempt at its curated ChEBI link.
+    if !chebi_loaded
+        && let Ok(Some(id)) = chebi_id_from_idents(&outcome.idents)
+        && let Ok(compound) = chebi::load_compound(id)
+    {
+        apply_chebi_compound(&mut outcome.idents, &compound);
+    }
+
+    outcome
+}
+
 /// Poll receivers for data on potentially long-running calls. E.g. HTTP.
 pub fn handle_thread_rx(
     state: &mut State,
@@ -83,6 +348,102 @@ pub fn handle_thread_rx(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
+    let all_idents_result = state
+        .volatile
+        .thread_receivers
+        .all_idents_avail
+        .as_ref()
+        .map(|(ligand_i, ligand_ident, rx)| (*ligand_i, ligand_ident.clone(), rx.try_recv()));
+    match all_idents_result {
+        Some((requested_i, ligand_ident, Ok(outcome))) => {
+            state.volatile.thread_receivers.all_idents_avail = None;
+
+            let ligand_i = state
+                .ligands
+                .get(requested_i)
+                .filter(|mol| mol.common.ident == ligand_ident)
+                .map(|_| requested_i)
+                .or_else(|| {
+                    state
+                        .ligands
+                        .iter()
+                        .position(|mol| mol.common.ident == ligand_ident)
+                });
+            let Some(ligand_i) = ligand_i else {
+                handle_err(
+                    &mut state.ui,
+                    "The molecule was removed before its identifiers finished loading".to_owned(),
+                );
+                return;
+            };
+            // Taken before the molecule is borrowed mutably below.
+            let prefs_dir = state.volatile.prefs_dir.clone();
+
+            let Some(mol) = state.ligands.get_mut(ligand_i) else {
+                return;
+            };
+
+            let count_before = mol.idents.len();
+            for ident in outcome.idents {
+                if !mol.idents.contains(&ident) {
+                    mol.idents.push(ident);
+                }
+            }
+            let added = mol.idents.len() - count_before;
+
+            // A downloaded molecule's source file is ours to maintain; refresh it so the
+            // identifiers we just resolved are there the next time the program opens it.
+            let cache_error = if added > 0 {
+                managed_mols::update_managed_mol(&prefs_dir, mol)
+                    .err()
+                    .map(|error| error.to_string())
+            } else {
+                None
+            };
+
+            if let Some(error) = cache_error {
+                handle_err(
+                    &mut state.ui,
+                    format!("Loaded identifiers, but could not update the downloaded copy: {error}"),
+                );
+            }
+
+            if added > 0 {
+                state.to_save.save_flag = true;
+                let suffix = if outcome.warnings.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({} online lookup(s) failed)", outcome.warnings.len())
+                };
+                handle_success(
+                    &mut state.ui,
+                    format!("Loaded {added} additional molecule identifier(s){suffix}"),
+                );
+            } else if outcome.warnings.is_empty() {
+                handle_success(
+                    &mut state.ui,
+                    "No additional molecule identifiers were found".to_owned(),
+                );
+            } else {
+                handle_err(
+                    &mut state.ui,
+                    format!(
+                        "No additional molecule identifiers were loaded: {}",
+                        outcome.warnings.join("; ")
+                    ),
+                );
+            }
+        }
+        Some((_, _, Err(TryRecvError::Disconnected))) => {
+            state.volatile.thread_receivers.all_idents_avail = None;
+            handle_err(
+                &mut state.ui,
+                "The molecule identifier lookup stopped before returning a result".to_owned(),
+            );
+        }
+        Some((_, _, Err(TryRecvError::Empty))) | None => {}
+    }
+
     if let Some(rx) = &mut state.volatile.thread_receivers.pubchem_properties_avail
         && let Ok((ident, http_result)) = rx.try_recv()
     {

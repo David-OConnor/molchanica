@@ -874,20 +874,23 @@ pub(in crate::ui) fn sidebar(
 
             // todo: UI flag to show or hide this.
             if state.ui.ui_vis.mol_char && !edit_mode {
-                // Avoid double borrow.
+                // Thse vars are all to avoid a double borrow.
                 let mut run_logp_sim = false;
                 let mut run_crystal_sim = false;
                 let mut run_water_sol_sim_mix = false;
                 let mut run_water_sol_sim_layers = false;
                 let mut run_shrinking_box = false;
                 let mut new_crystal_mol = None;
-                // let mut run_water_sol_sim_layers_middle = false;
+                let mut load_all_idents = false;
+                let mut toggle_metadata_popup = false;
 
                 if let Some(m) = &state.active_mol()
                     && let MolGenericRef::Small(mol) = m
                 {
-                    char_adme::mol_char_disp(
+                    load_all_idents = char_adme::mol_char_disp(
                         mol,
+                        state.volatile.thread_receivers.all_idents_avail.is_some(),
+                        &state.volatile.prefs_dir,
                         ui,
                         &mut run_logp_sim,
                         &mut run_crystal_sim,
@@ -895,6 +898,30 @@ pub(in crate::ui) fn sidebar(
                         &mut run_water_sol_sim_layers,
                         &mut run_shrinking_box,
                         &mut new_crystal_mol,
+                        &mut toggle_metadata_popup,
+                    );
+                }
+
+                if toggle_metadata_popup {
+                    state.ui.popup.metadata = match state.ui.popup.metadata {
+                        Some(_) => None,
+                        None => state.volatile.active_mol,
+                    };
+                }
+
+                if load_all_idents
+                    && let Some((MolType::Ligand, ligand_i)) = state.volatile.active_mol
+                    && let Some(mol) = state.ligands.get(ligand_i)
+                {
+                    crate::threads::start_all_idents_lookup(
+                        &mut state.volatile.thread_receivers,
+                        ligand_i,
+                        mol.common.ident.clone(),
+                        mol.idents.clone(),
+                    );
+                    handle_success(
+                        &mut state.ui,
+                        "Loading molecule identifiers from PubChem and ChEBI...".to_owned(),
                     );
                 }
 

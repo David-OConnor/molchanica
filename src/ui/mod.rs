@@ -81,6 +81,23 @@ pub(in crate::ui) const _COLOR_ATTENTION: Color32 = Color32::ORANGE;
 // Creation, simulation runs etc.
 pub(in crate::ui) const COLOR_ACTION: Color32 = Color32::GOLD;
 
+/// Shared trigger for the small-molecule identifier lookup. The lookup itself and its receiver
+/// are shared in `threads`; this keeps its two UI entry points consistent as well.
+pub(in crate::ui) fn load_all_idents_button(ui: &mut Ui, loading: bool) -> bool {
+    if loading {
+        ui.label(RichText::new("Loading identifiers...").color(Color32::GRAY));
+        false
+    } else {
+        button!(
+            ui,
+            "Load all idents",
+            COLOR_ACTION,
+            "Query online databases to load other idents, e.g. ChEBI, PubChem etc"
+        )
+        .clicked()
+    }
+}
+
 const COLOR_OUT_ERROR: Color32 = Color32::LIGHT_RED;
 const COLOR_OUT_NORMAL: Color32 = Color32::WHITE;
 const _COLOR_OUT_SUCCESS: Color32 = Color32::LIGHT_GREEN; // Unused for now

@@ -10,13 +10,16 @@
 //! thread and reports, per tool, whether it runs, where it was found, what version answered, and —
 //! when it is missing — an in-app installer for the tools Molchanica can manage itself.
 
-use std::{collections::HashMap, fs, io, process::Command, sync::mpsc, thread, time::Duration};
+use std::{collections::HashMap, fs, io, sync::mpsc, thread, time::Duration};
 
 use egui::{Align, Color32, Layout, RichText, ScrollArea, Ui};
 
 use crate::{
     external_tools::{self, CheckResult, Tool, ToolCheckUpdate, ToolStatus},
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
+    ui::{
+        COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn,
+        util::open_dir,
+    },
 };
 
 type DiskUsage = Result<Option<u64>, String>;
@@ -234,26 +237,9 @@ fn open_install_folder() -> io::Result<()> {
     let folder = data_root.join("process_executables");
     fs::create_dir_all(&folder)?;
 
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut c = Command::new("explorer.exe");
-        c.arg(&folder);
-        c
-    };
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut c = Command::new("open");
-        c.arg(&folder);
-        c
-    };
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = {
-        let mut c = Command::new("xdg-open");
-        c.arg(&folder);
-        c
-    };
-    command.spawn().map(|_| ())
+    open_dir(&folder)
 }
+
 pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let context = ui.ctx().clone();
     let tools = &mut state.ui.external_tools;
@@ -307,6 +293,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
             tools.install_folder_error = open_install_folder().err().map(|error| error.to_string());
         }
     });
+
     if let Some(error) = &tools.install_folder_error {
         ui.label(
             RichText::new(format!("Could not open install folder: {error}"))

@@ -11,6 +11,7 @@ use std::{
 };
 
 use bio_files::{Sdf, SdfFormat};
+use mol_defs::molecules::small::MoleculeSmall;
 use serde::{Deserialize, Serialize};
 
 const MANAGED_MOLS_DIR: &str = "managed_molecules";
@@ -263,6 +264,39 @@ pub(crate) fn store_geostd(
     )?;
 
     Ok(main_path)
+}
+
+/// Rewrite a managed molecule's source file from the molecule we hold in memory, so data gained
+/// after the download — e.g. the ChEBI and PDBe accessions "Load all idents" resolves — is still
+/// present on the next run. Identifiers ride along in the file's metadata; see
+/// `MoleculeSmall::metadata_with_ids_pocket`.
+///
+/// These files are our own cached copies rather than files the user chose, so updating one in
+/// place is safe. Molecules the user has saved themselves, and managed files in formats we don't
+/// write back (e.g. RCSB CIFs), are left alone; both return `false`.
+pub(crate) fn update_managed_mol(prefs_dir: &Path, mol: &MoleculeSmall) -> io::Result<bool> {
+    let Some(path) = &mol.common.path else {
+        return Ok(false);
+    };
+
+    if !is_managed_path(prefs_dir, path) {
+        return Ok(false);
+    }
+
+    let extension = path.extension().unwrap_or_default().to_ascii_lowercase();
+    match extension.to_str().unwrap_or_default() {
+        "sdf" | "mol" => {
+            let sdf = mol.to_sdf();
+            write_atomically(path, |temp| sdf.save(temp, SdfFormat::V2000))?;
+        }
+        "mol2" => {
+            let mol2 = mol.to_mol2();
+            write_atomically(path, |temp| mol2.save(temp))?;
+        }
+        _ => return Ok(false),
+    }
+
+    Ok(true)
 }
 
 pub(crate) fn is_managed_path(prefs_dir: &Path, path: &Path) -> bool {

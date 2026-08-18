@@ -56,7 +56,10 @@ mod threads;
 
 use std::time::Instant;
 
-use dynamics::{Integrator, params::{FfParamSet, LIPID_21_LIB}};
+use dynamics::{
+    Integrator,
+    params::{FfParamSet, LIPID_21_LIB},
+};
 use mol_defs::molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
 use state::State;
 

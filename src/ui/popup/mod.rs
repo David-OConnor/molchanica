@@ -8,6 +8,8 @@ pub mod recent_files;
 pub(crate) mod sequence_pred;
 pub(crate) mod structure_pred;
 
+use std::path::Path;
+
 use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
 use egui::{
@@ -36,13 +38,19 @@ use crate::{
     state::{MsaaSetting, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        load_all_idents_button,
         panels::{md_viewer, mol_data::metadata},
+        util::list_idents,
     },
     util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
 };
 
 /// Where popups start, unless they override it.
 const POPUP_POS: Pos2 = Pos2::new(300., 300.);
+
+/// Metadata values and identifiers (e.g. InChI, SMILES) can be very long; wrap them at this
+/// width instead of letting the popup grow to the width of the application window.
+const METADATA_MAX_WIDTH: f32 = 600.;
 
 pub(in crate::ui) fn close_btn(ui: &mut Ui, popup: &mut bool) {
     if ui
@@ -133,9 +141,11 @@ pub(in crate::ui) fn load_popups(
     }
 
     if let Some((mol_type, i)) = state.ui.popup.metadata {
-        popup("Metadata").show(ui.ctx(), |ui| {
-            metadata(mol_type, i, state, ui);
-        });
+        popup("Metadata")
+            .max_width(METADATA_MAX_WIDTH)
+            .show(ui.ctx(), |ui| {
+                metadata(mol_type, i, state, ui);
+            });
     }
 
     if state.ui.popup.lig_pocket_creation {
@@ -409,57 +419,63 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
                 break;
             }
         }
-
-        //
-        // let res = &state.volatile.alignment.results_screening[0];
-        // ui.label("Results:");
-        //
-        // label!(ui, format!("Score: {:.2} E template: {:.2} E query: {:.2} Vol: {:.2}",
-        // res.score, res.avg_potential_e_template, res.avg_potential_e_query, res.volume),
-        //     Color32::WHITE);
     }
 }
 
 pub(in crate::ui) fn metadata_popup(
     popup_state: &mut PopupState,
     mol: &MoleculeCommon,
-    idents: Option<&[MolIdent]>,
+    idents: Option<&Vec<MolIdent>>,
+    loading_idents: bool,
+    prefs_dir: &Path,
     ui: &mut Ui,
-) {
-    ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
+) -> bool {
+    let mut load_all_idents = false;
+
+    // Everything here is left-aligned and wrapping: a right-aligned or non-wrapping row would
+    // stretch the popup to the width available to it, instead of to the width its content needs.
+    ui.horizontal_wrapped(|ui| {
         if ui
             .button(RichText::new("Close").color(Color32::LIGHT_RED))
             .clicked()
         {
             popup_state.metadata = None;
         }
-    });
 
-    ui.heading(RichText::new(format!("Metadata for {}", mol.ident)).color(Color32::WHITE));
+        ui.add_space(COL_SPACING);
+
+        let name = mol.name(idents);
+        ui.heading(RichText::new(format!("Metadata for {name}")).color(Color32::WHITE));
+
+        ui.add_space(COL_SPACING);
+
+        // Only small molecules have `MolIdent`s. Other molecule types still use this popup for
+        // their general metadata, but must not offer the online small-molecule lookup.
+        if idents.is_some() && load_all_idents_button(ui, loading_idents) {
+            load_all_idents = true;
+        }
+    });
 
     ScrollArea::vertical()
         .min_scrolled_height(800.0)
         .show(ui, |ui| {
             if let Some(idents_) = idents {
                 ui.add_space(ROW_SPACING);
-
-                for ident in idents_ {
-                    ui.horizontal(|ui| {
-                        label!(ui, ident.label(), Color32::GRAY);
-                        label!(ui, ident.ident_inner(), Color32::WHITE);
-                    });
-                }
+                list_idents(idents_, &mol.path, prefs_dir, ui);
             }
 
             ui.add_space(ROW_SPACING);
 
             for (k, v) in mol.metadata.iter() {
-                ui.horizontal(|ui| {
+                // Wrap long values instead of widening the popup to fit them on one line.
+                ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("{k}: ")));
                     label!(ui, v.to_string(), Color32::WHITE);
                 });
             }
         });
+
+    load_all_idents
 }
 
 fn graphics_settings(

@@ -1,16 +1,20 @@
-use adme::{Adme, Toxicity};
-use egui::{Color32, RichText, ScrollArea, Ui};
-use lin_alg::f64::Vec3;
-use mol_defs::{
-    molecules::{MolIdent, small::MoleculeSmall},
-    properties::mol_characterization::MolCharacterization,
-};
+use std::path::Path;
 
+use crate::util::handle_success;
 use crate::{
     button,
     crystal::CrystalCell,
     label,
-    ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
+    ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING, load_all_idents_button, util::list_idents},
+};
+use adme::{Adme, Toxicity};
+use bio_apis::rhea;
+use egui::{Color32, ScrollArea, Ui};
+use lin_alg::f64::Vec3;
+use mol_defs::molecules::MolIdentType;
+use mol_defs::{
+    molecules::{MolIdent, small::MoleculeSmall},
+    properties::mol_characterization::MolCharacterization,
 };
 
 fn char_basics(
@@ -485,6 +489,8 @@ fn char_item(ui: &mut Ui, items: &[(&str, &str, &str)]) {
 
 pub(in crate::ui) fn mol_char_disp(
     mol: &MoleculeSmall,
+    loading_idents: bool,
+    prefs_dir: &Path,
     ui: &mut Ui,
     run_logp_sim: &mut bool,
     run_crystal_sim: &mut bool,
@@ -492,42 +498,77 @@ pub(in crate::ui) fn mol_char_disp(
     run_water_sol_sim_layers: &mut bool,
     run_shrinking_box: &mut bool,
     new_crystal_mol: &mut Option<MoleculeSmall>,
+    toggle_metadata_popup: &mut bool,
     // run_water_sol_sim_layers_middle: &mut bool,
-) {
+) -> bool {
     let Some(char) = &mol.characterization else {
-        return;
+        return false;
     };
 
-    // todo: Not working.
+    let mut load_all_idents = false;
     ScrollArea::vertical()
         .min_scrolled_height(400.0)
         .show(ui, |ui| {
-            // todo: Small font?
-            for ident in &mol.idents {
-                ui.horizontal(|ui| {
-                    // Wrap long names, like InChi etc.
-                    ui.horizontal_wrapped(|ui| {
-                        label!(ui, format!("{}:", ident.label()), Color32::GRAY);
+            ui.horizontal(|ui| {
+                if load_all_idents_button(ui, loading_idents) {
+                    load_all_idents = true;
+                }
 
-                        let mut ident_txt =
-                            RichText::new(ident.ident_inner()).color(Color32::WHITE);
+                if button!(
+                    ui,
+                    "Metadata",
+                    Color32::GRAY,
+                    "Display metadata for this molecule"
+                )
+                .clicked()
+                {
+                    *toggle_metadata_popup = true;
+                }
 
-                        // These are longer idents.
-                        if matches!(
-                            ident,
-                            MolIdent::InchIKey(_)
-                                | MolIdent::InchI(_)
-                                | MolIdent::Smiles(_)
-                                | MolIdent::IupacName(_)
-                        ) {
-                            let font = egui::FontId::proportional(10.0);
-                            ident_txt = ident_txt.font(font);
+
+                if button!(
+                    ui,
+                    "Rhea Reactions",
+                    Color32::GRAY,
+                    "Display Rhea (enzyme-catalogued) reactions involving this molecule. Queries the Rhea API."
+                )
+                .clicked()
+                {
+                    match mol.get_ident(MolIdentType::Chebi) {
+                        Some(chebi_ident) => {
+                            // todo: Blocking, and displayed as a status for now.
+                            // todo: Determine how you will work this, including loading enymes and molecules
+                            // todo from this reaction, and displaying the results in a popup, the sidebar etc.
+                            // todo: Or add a new molecule data type for reactions.
+                            if let MolIdent::Chebi(id) = chebi_ident {
+                                println!("Finding reactions on Rhea...");
+                                let reactions = rhea::reactions_from_chebi_exact(*id, Some(6));
+
+                                if let Ok(r) = reactions {
+                                    println!("\nReactions for CHEBI:{id}:");
+                                    for r_ in r {
+                                        println!("- {}", r_.format_simple())
+                                    }
+                                    println!("------------");
+                                } else {
+                                    // handle_success(&mut state_ui, )
+                                    println!("No reactions found for CHEBI:{id}");
+                                }
+                            }
                         }
+                        None => {
+                            // todo: Should then queue the task at hand.
+                            // handle_success(&mut state_ui, "Missing CheBI ident; loading that. Try again once complete");
+                            println!("Missing CheBI ident; loading that. Try again once complete");
+                            load_all_idents = true;
+                        }
+                    }
+                }
+            });
 
-                        ui.label(ident_txt);
-                    });
-                });
-            }
+            ui.add_space(ROW_SPACING);
+
+            list_idents(&mol.idents, &mol.common.path, prefs_dir, ui);
 
             ui.separator();
             ui.add_space(ROW_SPACING);
@@ -555,6 +596,8 @@ pub(in crate::ui) fn mol_char_disp(
                 tox_disp(&ther.toxicity, ui);
             }
         });
+
+    load_all_idents
 }
 
 fn tox_disp(tox: &Toxicity, ui: &mut Ui) {
