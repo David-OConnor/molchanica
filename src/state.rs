@@ -93,16 +93,18 @@ pub struct State {
     /// failed to load.
     ///
     /// We use [HMDB (Human Metabolome Database)](hmdb.ca/downloads) for this; it's provided as a single
-    /// SDF. This isn't source controlled. To build it, download this as a single SDF file. Create a DB in
+    /// SDF ("Metabolite Structures"), and an archive of data in XML format; we use both.
+    /// This isn't source controlled. To build it, download these directly. Create a DB in
     /// the GUI. Add this molecule to the DB. Name/rename the file `hmdb_mol_db.parquet`.
-    /// Note: We also run `python scripts/populate_hmdb_cids.py ~/Desktop` etc to populate CIDs
-    /// in the SDF prior to loading. Requires you to have the .sdf and the associated XML in the selected
-    ///directory.
+    /// Note: We also run `python scripts/populate_hmdb_cids.py ~/Desktop` etc to copy the PubChem
+    /// CIDs and ChEBI, DrugBank and KEGG accessions from the XML into the SDF prior to loading.
+    /// Requires you to have the .sdf and the associated XML in the selected directory.
     pub hmdb_mol_db: Option<ParquetMolDb>,
     /// [Chebi SDF files](https://ftp.ebi.ac.uk/pub/databases/chebi/SDF/)
     /// Download `chebi_3_stars.sdf.gz`. (3 stars implies they are vetted, I believe). Don't
     /// use the Lite version; we need the additional metadata fields e.g. PubChem CID that aren't
-    /// in it.
+    /// in it. Like with the built-in HMDB database, load it using the GUI. (No pre-processing required, unlike
+    /// HMDB)
     pub chebi_mol_db: Option<ParquetMolDb>,
 }
 
@@ -726,6 +728,8 @@ pub struct PopupState {
     pub external_tools: bool,
     /// Sequence design, ΔΔG scanning, and antibody annotation.
     pub protein_design: bool,
+    /// Program name, version, and links.
+    pub about: bool,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]

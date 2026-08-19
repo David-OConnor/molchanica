@@ -1,11 +1,17 @@
 //! A popup of a UI viewer and editor for molecule databases, e.g. as implemented
 //! in parquet.
+//!
+//! Regarding the built-in databases, see notes in the `State` struct on the fields for these databases
+//! on how we build them: We download official files from the DB source manually, then load them as
+//! databases in the GUI, the same way a user would. Then name the `.parquet` filess appropriatley, and
+//! place them in the project dir. Note that for HMDB, we run a python script on the data prior to loading
+//! it to populate Pubchem CID.
 
 use std::{path::Path, slice};
 
 use egui::{Color32, Grid, RichText, ScrollArea, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
-use mol_defs::molecules::MoleculeGeneric;
+use mol_defs::molecules::{MoleculeGeneric, small::hmdb_accession};
 
 use crate::{
     button, label,
@@ -21,17 +27,29 @@ use crate::{
 
 /// Characters shown in a cell before it's truncated; the full text is available on hover.
 const TITLE_CHARS_MAX: usize = 30;
-const SMILES_CHARS_MAX: usize = 30;
+const SMILES_CHARS_MAX: usize = 38;
 
-// Fixed per-column widths for the molecule table. The narrow columns (Load, CID, Heavy atoms,
-// Delete) are kept tight so the width they'd otherwise waste goes to Title and SMILES. The header
-// and body are drawn as separate grids, so both must use these same widths to stay aligned.
+/// SMILES strings are long, and are reference data rather than something read at a glance, so
+/// they're set smaller than the rest of the table to fit more of each one.
+const SMILES_FONT_SIZE: f32 = 10.;
+
+// Fixed per-column widths for the molecule table. The narrow columns (Load, the accessions, Heavy
+// atoms, Delete) are kept tight so the width they'd otherwise waste goes to Title and SMILES. The
+// header and body are drawn as separate grids, so both must use these same widths — and the same
+// spacing — to stay aligned. `cell` keeps content inside its column, which is what makes that hold.
 const W_LOAD: f32 = 50.;
 const W_CID: f32 = 90.;
+const W_CHEBI: f32 = 76.;
+// Wider than the others: HMDB accessions are written in full, e.g. "HMDB0002111".
+const W_HMDB: f32 = 100.;
 const W_TITLE: f32 = 156.;
-const W_SMILES: f32 = 210.;
+const W_SMILES: f32 = 200.;
 const W_HEAVY: f32 = 84.;
 const W_DELETE: f32 = 46.;
+
+/// Space between the table's columns. Narrower than the `COL_SPACING` used elsewhere in the popup:
+/// with eight columns, that one spends more width on gaps than on several of the columns.
+const TABLE_COL_SPACING: f32 = 14.;
 
 /// Rows shown per page in the molecule table.
 const MOLS_PER_PAGE: usize = 40;
@@ -109,8 +127,17 @@ pub(in crate::ui) fn parquet_db(
 
         ui.add_space(ROW_SPACING);
 
-        // The built-in DB is fixed at compile time; only the loaded ones can be added to.
-        let editable = matches!(db_sel, DbSel::Loaded(_));
+        // The built-in DBs are fixed at compile time: no adding, and no per-row delete button.
+        // Taken from the DB itself rather than the selection, so the two can't disagree.
+        let editable = match db_sel {
+            DbSel::Hmdb => false,
+            DbSel::Chebi => false,
+            DbSel::Loaded(i) => state
+                .volatile
+                .parquet_dbs
+                .get(i)
+                .is_some_and(|db| db.source.writable()),
+        };
         let can_edit = editable;
 
         // Gathered up front: the button row below borrows `state` mutably. Only ligands not already
@@ -135,7 +162,7 @@ pub(in crate::ui) fn parquet_db(
                     ui,
                     "Add mols from dir",
                     COLOR_ACTION,
-                    "Add all molecules in a folder (Mol2 or SDF, recursively) to this database."
+                    "Add all molecules in a folder (Mol2 or SDF, recursively) to this db."
                 )
                 .clicked()
                 {
@@ -146,7 +173,7 @@ pub(in crate::ui) fn parquet_db(
                     ui,
                     "Add mol[s] from file",
                     COLOR_ACTION,
-                    "Add a single molecule file (Mol2 or SDF) or multi-mol SDF file to this database."
+                    "Add a single molecule file (Mol2 or SDF) or multi-mol SDF to this db."
                 )
                 .clicked()
                 {
@@ -155,7 +182,7 @@ pub(in crate::ui) fn parquet_db(
             } else {
                 label!(
                     ui,
-                    "This database ships with the application; it can't be modified.",
+                    "This database ships with the application. Warning: ChEBI and HMDB mols are 2D.",
                     Color32::GRAY
                 );
             }
@@ -541,19 +568,25 @@ fn db_summary_table(
     }
 
     // A read-only DB has no delete column.
-    let cols = if editable { 6 } else { 5 };
+    let cols = if editable { 8 } else { 7 };
 
     // Column headers (outside the scroll area so they stay fixed).
     Grid::new(format!("parquet_mol_headers_{id}"))
         .num_columns(cols)
         .min_col_width(0.)
-        .spacing([COL_SPACING, 4.])
+        .spacing([TABLE_COL_SPACING, 4.])
         .show(ui, |ui| {
-            cell(ui, W_LOAD, |ui| {
-                label!(ui, "Load", Color32::GRAY);
-            });
+            // No heading: every button in this column is labelled "Load". The cell is still drawn,
+            // empty, so the column keeps its width and the headings that follow stay over theirs.
+            cell(ui, W_LOAD, |_ui| {});
             cell(ui, W_CID, |ui| {
                 label!(ui, "CID", Color32::GRAY);
+            });
+            cell(ui, W_CHEBI, |ui| {
+                label!(ui, "ChEBI", Color32::GRAY);
+            });
+            cell(ui, W_HMDB, |ui| {
+                label!(ui, "HMDB", Color32::GRAY);
             });
             cell(ui, W_TITLE, |ui| {
                 label!(ui, "Title", Color32::GRAY);
@@ -583,7 +616,7 @@ fn db_summary_table(
                 .num_columns(cols)
                 .striped(true)
                 .min_col_width(0.)
-                .spacing([COL_SPACING, 4.])
+                .spacing([TABLE_COL_SPACING, 4.])
                 .show(ui, |ui| {
                     for smiles in keys.iter().skip(page * MOLS_PER_PAGE).take(MOLS_PER_PAGE) {
                         // The key came from `index_meta`, so this lookup succeeds; skip
@@ -613,13 +646,32 @@ fn db_summary_table(
                             }
                         });
 
+                        cell(ui, W_CHEBI, |ui| match meta.chebi_id {
+                            Some(id) => {
+                                label!(ui, id.to_string(), Color32::LIGHT_BLUE);
+                            }
+                            None => {
+                                label!(ui, "—", Color32::DARK_GRAY);
+                            }
+                        });
+
+                        cell(ui, W_HMDB, |ui| match meta.hmdb_id {
+                            Some(id) => {
+                                label!(ui, hmdb_accession(id), Color32::LIGHT_BLUE);
+                            }
+                            None => {
+                                label!(ui, "—", Color32::DARK_GRAY);
+                            }
+                        });
+
                         cell(ui, W_TITLE, |ui| match &meta.pubchem_title {
                             Some(title) => {
                                 label!(
                                     ui,
                                     truncate_str(title, TITLE_CHARS_MAX),
                                     Color32::LIGHT_BLUE
-                                );
+                                )
+                                .on_hover_text(title);
                             }
                             None => {
                                 label!(ui, "—", Color32::DARK_GRAY);
@@ -627,10 +679,10 @@ fn db_summary_table(
                         });
 
                         cell(ui, W_SMILES, |ui| {
-                            label!(
-                                ui,
-                                truncate_str(&meta.smiles, SMILES_CHARS_MAX),
-                                Color32::GRAY
+                            ui.label(
+                                RichText::new(truncate_str(&meta.smiles, SMILES_CHARS_MAX))
+                                    .color(Color32::GRAY)
+                                    .size(SMILES_FONT_SIZE),
                             )
                             .on_hover_text(&meta.smiles);
                         });
@@ -690,7 +742,8 @@ fn db_summary_table(
     action
 }
 
-/// The search box for the molecule table; filters on CID, title, or SMILES as the user types.
+/// The search box for the molecule table; filters on CID, ChEBI or HMDB accession, title, or
+/// SMILES as the user types.
 /// Drawn in the row of DB buttons, above the table it applies to.
 fn search_input(popup: &mut PopupState, ui: &mut Ui) {
     label!(ui, "Search", Color32::GRAY);
@@ -699,7 +752,7 @@ fn search_input(popup: &mut PopupState, ui: &mut Ui) {
         .add(
             TextEdit::singleline(&mut popup.parquet_db_search)
                 .desired_width(240.)
-                .hint_text("CID, title, or SMILES"),
+                .hint_text("CID, ChEBI, HMDB, title, or SMILES"),
         )
         .changed()
     {
@@ -717,13 +770,31 @@ fn search_input(popup: &mut PopupState, ui: &mut Ui) {
 
 /// Lay out one table cell at a fixed width. This is what keeps the narrow columns narrow: egui's
 /// `Grid` otherwise sizes every column to `min_col_width`, so the short Load/CID/Heavy/Delete
-/// cells would claim as much room as Title and SMILES. Allocating an exact width per cell also
-/// keeps the separate header and body grids aligned.
+/// cells would claim as much room as Title and SMILES.
+///
+/// The width is a minimum as well as a maximum, and both halves matter for keeping the header grid
+/// and the body grid in step:
+///
+/// - Minimum: a cell only claims the width its content drew (egui advances the cursor by the child's
+///   `min_rect`), so without `set_min_width` a column is as wide as its widest *content* — the
+///   heading text in one grid, the data in the other. Those rarely match, and the header ends up
+///   spaced for itself rather than for the column below it.
+/// - Maximum: text in a horizontal layout extends past its bounds by default, and a cell wider than
+///   its column widens that column. Truncating instead holds the declared width.
+///
+/// With both pinned, every column is exactly as wide as it's declared whatever the content, so the
+/// two grids agree.
 fn cell<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.allocate_ui_with_layout(
         egui::vec2(width, ui.spacing().interact_size.y),
         egui::Layout::left_to_right(egui::Align::Center),
-        add,
+        |ui| {
+            ui.set_min_width(width);
+            ui.set_max_width(width);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+
+            add(ui)
+        },
     )
     .inner
 }

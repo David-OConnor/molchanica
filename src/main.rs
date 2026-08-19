@@ -65,6 +65,10 @@ use state::State;
 
 use crate::{render::render, util::handle_err};
 
+/// The application version, e.g. for the About popup. Cargo.toml's `[package] version` is the
+/// single place it's set; the `make_release` scripts read it from there too.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Handle the maintenance flags that run instead of launching the GUI.
 ///
 /// Kept to a hand-rolled match rather than an argument parser: there is one flag, and the normal
@@ -147,7 +151,7 @@ fn main() {
         }
     }
 
-    println!("Using computing device: {:?}/n", dev);
+    println!("Using computing device: {:?}\n", dev);
 
     let mut state = State {
         dev,

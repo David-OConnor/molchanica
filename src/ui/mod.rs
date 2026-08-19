@@ -1004,6 +1004,17 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 {
                     state.ui.popup.external_tools = !state.ui.popup.external_tools;
                 }
+
+                if button!(
+                    ui,
+                    "About",
+                    COLOR_HIGHLIGHT,
+                    "Show this program's version, and links to its home page and source code."
+                )
+                    .clicked()
+                {
+                    state.ui.popup.about = !state.ui.popup.about;
+                }
             });
 
             let metadata_loaded = false; // avoids borrow error.

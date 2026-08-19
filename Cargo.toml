@@ -1,6 +1,8 @@
 [package]
 name = "molchanica"
-version = "0.3.0"
+# Single source of truth for the app version: the About popup reads it via `CARGO_PKG_VERSION`,
+# and the `make_release` scripts parse it out of this file.
+version = "0.3.7"
 edition = "2024"
 
 
@@ -20,13 +22,12 @@ bio_apis = { version = "0.3.0", features = ["encode"] }
 bio_files = { version = "0.5.3", features = ["encode"] }
 bio_tools = { path = "../bio_tools" }  # todo: Experimental
 mcubes = "0.1.7"
-dynamics = { version = "0.2.1", features = ["encode"] }
+dynamics = { version = "0.2.2", features = ["encode"] }
 mol_defs = { version = "0.1.0", features = ["render"] }
 adme = { path = "../adme" }
 
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
-ewald = { version = "0.1.14" }
-#ewald = { path = "../ewald" }
+ewald = { version = "0.1.15" }
 
 # For loading and saving config
 bincode = "2.0.1"
@@ -52,11 +53,19 @@ arrow = "59.2.0"
 # database embedded in the binary, rather than a file on disk.
 bytes = "1.12.1"
 
-# Observation, 2026-02-09: Dynamic Linking seems to be required for Ubuntu; dynamic loading will launch,
-# but it will be unable to find the GPU at runtime. edit: Nvm; not working there with loading either.
-cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-linking", "cuda-13000"], optional = true }
+# `dynamic-loading` rather than `dynamic-linking`: the CUDA driver library is resolved with
+# `dlopen`/`LoadLibrary` on first use instead of being a load-time dependency of the executable.
+# That is what lets the default (CUDA-enabled) build start on machines with no NVIDIA driver, on
+# both Windows and Linux; `util::get_computation_device` probes for the library and falls back to
+# `ComputationDevice::Cpu`. Cargo unions features, and cudarc's build script rejects having both
+# loading and linking active, so `ewald` and `dynamics` declare the same set.
+# (An earlier note here said loading couldn't find the GPU on Ubuntu. `libcuda.so.1` -- the name
+# the driver actually installs -- is in cudarc's candidate list, so if that recurs, check what
+# `ldconfig -p | grep libcuda` reports on the affected machine before reaching for linking again.)
+cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
 
 rodio = "0.22.2"  # For sonification of bonds etc.
+webbrowser = "1.2.4"  # For opening links, e.g. from the About popup.
 
 
 # We use these when developing locally to reduce friction.
@@ -69,6 +78,7 @@ bio_apis = { path = "../bio_apis" }
 bio_files = { path = "../bio_files" }
 dynamics = { path = "../dynamics" }
 mol_defs = { path = "../mol_defs" }
+ewald = { path = "../ewald" }
 
 
 [build-dependencies]

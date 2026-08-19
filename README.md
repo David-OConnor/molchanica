@@ -30,15 +30,17 @@ left to navigate these documentation pages.
 
 [Download, unzip, and run](https://github.com/David-OConnor/molchanica/releases).
 
-Notes:
+Setup scripts are included; these are optional. (The application can be launched directly), but are
+useful for setting up shortcuts in your OS.
 
 - On Linux distros that use Gnome (e.g. Ubuntu), run
-  `setup_linux_desktop.sh`, included in the zip, to create a Desktop
+  `setup_molchanica.sh`, included in the zip, to create a Desktop
   GUI entry. (Do not run this with `sudo`.)
-- On Windows, the first time you run the program, you may get the message *"Microsoft Defender
-  prevented an unrecognized
-  app from starting"*.
-  To bypass this, click *More info*, then *Run Anyway*.
+- On Windows, run `setup_molchanica.ps1` to move the program to `~/AppData\Local\molchanica`, and create a start menu shortcut. The first time you run the program, you may get the message
+  *"
+  Microsoft Defender
+  prevented an unrecognized app from starting"*. To bypass this, click *More info*, then *Run
+  Anyway*.
 
 ![Ligand dynamics](screenshots/docked_2.png)
 
@@ -133,7 +135,7 @@ protein currently open:
   [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), conditioned on ligands and nucleic acids where present
 - Scan every point mutation at every position for stability (ΔΔG), in a single pass, natively — no Python needed at run time
 - Antibody workflows: real numbering with insertion codes ([ANARCII](https://github.com/oxpig/ANARCII)),
-  germline V(D)J assignment ([IgBLAST](https://ncbi.github.io/igblast/)), CDR selection, paratope contacts, and developability triage
+  germline V (D)J assignment ([IgBLAST](https://ncbi.github.io/igblast/)), CDR selection, paratope contacts, and developability triage
 - Read a local [PDBbind](https://www.pdbbind-plus.org.cn/) release: look up a complex's measured binding affinity and open its protein, pocket, and ligand files
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
   and more.
@@ -208,6 +210,12 @@ and SIMD instructions. It uses all cores available, and either 512-bit, or 256-b
 on CPU capability.
 
 GPU functionality requires Nvidia driver version 580 or higher.
+
+The standard Windows and Linux downloads are built with CUDA support, but do not require it: CUDA's
+libraries are looked up when the program starts rather than being linked into the executable. On a
+machine with no Nvidia GPU, no driver, or a driver too old for the CUDA version we build against,
+the program starts normally and reports `Cpu` as its computing device. The separate `nocuda`
+downloads are smaller, and are otherwise equivalent on such machines.
 
 ## Molecular dynamics
 

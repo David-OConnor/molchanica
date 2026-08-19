@@ -27,7 +27,10 @@ use arrow::{
 };
 use bytes::Bytes;
 use mol_defs::{
-    molecules::{MolIdent, small::MoleculeSmall},
+    molecules::{
+        MolIdent,
+        small::{MoleculeSmall, hmdb_accession, idents_from_metadata},
+    },
     serialization::{idents_from_bytes, idents_to_bytes, metadata_from_bytes, metadata_to_bytes},
 };
 use na_seq::Element;
@@ -53,6 +56,8 @@ use crate::{
 const COL_SMILES: &str = "smiles";
 const COL_PUBCHEM_CID: &str = "pubchem_cid";
 const COL_PUBCHEM_TITLE: &str = "pubchem_title";
+const COL_CHEBI_ID: &str = "chebi_id";
+const COL_HMDB_ID: &str = "hmdb_id";
 const COL_HEAVY_ATOM_COUNT: &str = "heavy_atom_count";
 const COL_MOL_DATA: &str = "mol_data";
 const COL_IDENTS: &str = "idents";
@@ -92,6 +97,8 @@ struct StoredMol {
     smiles: String,
     pubchem_cid: Option<u32>,
     pubchem_title: Option<String>,
+    chebi_id: Option<u32>,
+    hmdb_id: Option<u32>,
     heavy_atom_count: u16,
     /// Serialized as binary; see the `to_bytes` and `from_bytes` serializations
     /// in the `serialization` module. This may only be atoms, bonds, and common.ident. Heavy compared
@@ -110,22 +117,15 @@ impl StoredMol {
     /// leaving the title and CID blank unless the source file's metadata already carried them.
     // fn from_mol(mut m: MoleculeSmall, look_up_pubchem: bool) -> io::Result<Self> {
     fn from_mol(mut m: MoleculeSmall) -> io::Result<Self> {
-        let smiles = smiles_from_idents(&m.idents).unwrap_or_else(|| m.common.ident.clone());
-        let (mut pubchem_cid, mut pubchem_title) =
-            pubchem_cid_title_from_idents(&m.idents, &m.common.metadata);
+        // Recover accessions the molecule's metadata carries but its idents don't; see
+        // [`idents_augmented`].
+        let idents = idents_augmented(&m.idents, &m.common.metadata);
 
-        // // Molecule files generally don't carry a title, so look it up over HTTP. Without one, the
-        // // DB table has only a SMILES string to identify the molecule by. The idents we store are
-        // // updated to match, so a molecule loaded back out of the DB carries them too.
-        // if look_up_pubchem
-        //     && pubchem_title.is_none()
-        //     && let Some(props) = pubchem_props(pubchem_cid, &smiles)
-        // {
-        //     m.update_idents_and_char_from_pubchem(&props);
-        //
-        //     pubchem_cid = Some(props.cid);
-        //     pubchem_title = Some(props.title);
-        // }
+        let smiles = smiles_from_idents(&idents).unwrap_or_else(|| m.common.ident.clone());
+        let (mut pubchem_cid, mut pubchem_title) =
+            pubchem_cid_title_from_idents(&idents, &m.common.metadata);
+        let chebi_id = chebi_id_from_idents(&idents);
+        let hmdb_id = hmdb_id_from_idents(&idents);
 
         let heavy_atom_count = m
             .common
@@ -140,9 +140,11 @@ impl StoredMol {
             smiles,
             pubchem_cid,
             pubchem_title,
+            chebi_id,
+            hmdb_id,
             heavy_atom_count,
             mol_data,
-            idents: m.idents,
+            idents,
             metadata: m.common.metadata,
         })
     }
@@ -160,6 +162,39 @@ fn pubchem_cid_from_idents(idents: &[MolIdent]) -> Option<u32> {
         MolIdent::PubChem(cid) => Some(*cid),
         _ => None,
     })
+}
+
+fn chebi_id_from_idents(idents: &[MolIdent]) -> Option<u32> {
+    idents.iter().find_map(|id| match id {
+        MolIdent::Chebi(v) => Some(*v),
+        _ => None,
+    })
+}
+
+fn hmdb_id_from_idents(idents: &[MolIdent]) -> Option<u32> {
+    idents.iter().find_map(|id| match id {
+        MolIdent::Hmdb(v) => Some(*v),
+        _ => None,
+    })
+}
+
+/// A molecule's identifiers, plus any its metadata carries that they don't. Rows written before an
+/// ident type was supported (ChEBI and HMDB are both recent) hold the accession only in the source
+/// file's tags — e.g. `HMDB_ID` in the built-in HMDB database, `ChEBI ID` in the ChEBI one — so
+/// this is how those molecules get the ident without the DB being rebuilt.
+///
+/// The `ident` argument to [`idents_from_metadata`] is deliberately empty: that path guesses a PDBe
+/// or PubChem ident from the molecule's *name*, which is not something a DB row should infer.
+fn idents_augmented(idents: &[MolIdent], metadata: &HashMap<String, String>) -> Vec<MolIdent> {
+    let mut res = idents.to_vec();
+
+    for ident in idents_from_metadata("", metadata) {
+        if !res.contains(&ident) {
+            res.push(ident);
+        }
+    }
+
+    res
 }
 
 /// Repetitive with [`pubchem_cid_from_idents`], but may be more efficient to group this way.
@@ -219,13 +254,15 @@ pub struct MolMeta {
     pub smiles: String,
     pub pubchem_cid: Option<u32>,
     pub pubchem_title: Option<String>,
+    pub chebi_id: Option<u32>,
+    pub hmdb_id: Option<u32>,
     pub heavy_atom_count: u16,
 }
 
 impl MolMeta {
-    /// Whether this molecule matches a search: a substring of its SMILES, PubChem title, or CID.
-    /// `search` must already be trimmed and lowercased; the caller usually does that once for a
-    /// whole scan.
+    /// Whether this molecule matches a search: a substring of its SMILES, PubChem title, CID, or
+    /// ChEBI/HMDB accession. `search` must already be trimmed and lowercased; the caller usually
+    /// does that once for a whole scan.
     pub fn matches_search(&self, search: &str) -> bool {
         if self.smiles.to_lowercase().contains(search) {
             return true;
@@ -237,8 +274,25 @@ impl MolMeta {
             return true;
         }
 
-        match self.pubchem_cid {
-            Some(cid) => cid.to_string().contains(search),
+        if let Some(cid) = self.pubchem_cid
+            && cid.to_string().contains(search)
+        {
+            return true;
+        }
+
+        // Both the bare number and the way each database writes it, so "15377" and "chebi:15377"
+        // (or "2111" and "hmdb0002111") each find their molecule.
+        if let Some(id) = self.chebi_id
+            && (id.to_string().contains(search) || format!("chebi:{id}").contains(search))
+        {
+            return true;
+        }
+
+        match self.hmdb_id {
+            Some(id) => {
+                id.to_string().contains(search)
+                    || hmdb_accession(id).to_lowercase().contains(search)
+            }
             None => false,
         }
     }
@@ -247,21 +301,36 @@ impl MolMeta {
     /// must already be trimmed and lowercased. Shared by the query bar and the DB table so both
     /// rank the same way; see [`ParquetMolDb::search_ranked`].
     ///
-    /// The primary key is a tier: an exact match on the CID or title beats a prefix match, which
-    /// beats a plain substring hit. This is what floats "702" (CID 702) or "ethanol" (the molecule
-    /// named exactly that) to the top instead of burying them among longer names that merely
-    /// contain the text. Within a tier, a shorter title is the closer match, then a shorter SMILES.
+    /// The primary key is a tier: an exact match on an accession or the title beats a prefix match,
+    /// which beats a plain substring hit. This is what floats "702" (CID 702) or "ethanol" (the
+    /// molecule named exactly that) to the top instead of burying them among longer names that
+    /// merely contain the text. Within a tier, a shorter title is the closer match, then a shorter
+    /// SMILES.
     pub fn search_rank(&self, search: &str) -> (u8, usize, usize) {
         let title_lower = self.pubchem_title.as_deref().map(str::to_lowercase);
-        let cid_str = self.pubchem_cid.map(|cid| cid.to_string());
         let smiles_lower = self.smiles.to_lowercase();
 
-        let exact = title_lower.as_deref() == Some(search) || cid_str.as_deref() == Some(search);
+        // An accession pasted from either database should rank as well as the bare number typed by
+        // hand, so both spellings count.
+        let mut ids: Vec<String> = Vec::new();
+        if let Some(cid) = self.pubchem_cid {
+            ids.push(cid.to_string());
+        }
+        if let Some(id) = self.chebi_id {
+            ids.push(id.to_string());
+            ids.push(format!("chebi:{id}"));
+        }
+        if let Some(id) = self.hmdb_id {
+            ids.push(id.to_string());
+            ids.push(hmdb_accession(id).to_lowercase());
+        }
+
+        let exact = title_lower.as_deref() == Some(search) || ids.iter().any(|id| id == search);
 
         let prefix = title_lower
             .as_deref()
             .is_some_and(|t| t.starts_with(search))
-            || cid_str.as_deref().is_some_and(|c| c.starts_with(search))
+            || ids.iter().any(|id| id.starts_with(search))
             || smiles_lower.starts_with(search);
 
         let tier = if exact {
@@ -411,6 +480,8 @@ impl ParquetMolDb {
             Field::new(COL_SMILES, DataType::Utf8, false),
             Field::new(COL_PUBCHEM_CID, DataType::UInt32, true),
             Field::new(COL_PUBCHEM_TITLE, DataType::Utf8, true),
+            Field::new(COL_CHEBI_ID, DataType::UInt32, true),
+            Field::new(COL_HMDB_ID, DataType::UInt32, true),
             Field::new(COL_HEAVY_ATOM_COUNT, DataType::UInt16, false),
             // This contains our atoms, bonds, and common.ident. Serialized as binary.
             Field::new(COL_MOL_DATA, DataType::LargeBinary, false),
@@ -632,6 +703,8 @@ impl ParquetMolDb {
         let pubchem_arr: UInt32Array = rows.iter().map(|r| r.pubchem_cid).collect();
         let pubchem_title_arr: StringArray =
             rows.iter().map(|r| r.pubchem_title.as_deref()).collect();
+        let chebi_arr: UInt32Array = rows.iter().map(|r| r.chebi_id).collect();
+        let hmdb_arr: UInt32Array = rows.iter().map(|r| r.hmdb_id).collect();
 
         let heavy_count_arr: UInt16Array = rows.iter().map(|r| r.heavy_atom_count).collect();
 
@@ -657,6 +730,8 @@ impl ParquetMolDb {
             Arc::new(smiles_arr),
             Arc::new(pubchem_arr),
             Arc::new(pubchem_title_arr),
+            Arc::new(chebi_arr),
+            Arc::new(hmdb_arr),
             Arc::new(heavy_count_arr),
             Arc::new(mol_data_arr),
             Arc::new(idents_arr),
@@ -673,13 +748,18 @@ impl ParquetMolDb {
         // Every rewrite of the file goes through here, so this is where the cache goes stale.
         self.idents_cache = None;
 
-        // A DB written before the title column existed is still readable; titles come back `None`,
-        // and the column is gained when the file is next rewritten.
+        // A DB written before the title (or ChEBI/HMDB) columns existed is still readable; those
+        // fields come back `None`, and the columns are gained when the file is next rewritten.
         let has_title = has_cols(&self.source, &[COL_PUBCHEM_TITLE])?;
+        let has_chebi_hmdb = has_chebi_hmdb_cols(&self.source)?;
 
         let mut cols = vec![COL_SMILES, COL_PUBCHEM_CID, COL_HEAVY_ATOM_COUNT];
         if has_title {
             cols.push(COL_PUBCHEM_TITLE);
+        }
+        if has_chebi_hmdb {
+            cols.push(COL_CHEBI_ID);
+            cols.push(COL_HMDB_ID);
         }
 
         let mut reader = open_reader(&self.source, &cols)?;
@@ -691,16 +771,18 @@ impl ParquetMolDb {
                 true => Some(str_col(&batch, COL_PUBCHEM_TITLE)?),
                 false => None,
             };
+            let chebi_col = match has_chebi_hmdb {
+                true => Some(u32_col(&batch, COL_CHEBI_ID)?),
+                false => None,
+            };
+            let hmdb_col = match has_chebi_hmdb {
+                true => Some(u32_col(&batch, COL_HMDB_ID)?),
+                false => None,
+            };
             let heavy_atom_count_col = u16_col(&batch, COL_HEAVY_ATOM_COUNT)?;
 
             for i in 0..smiles_col.len() {
                 let smiles = smiles_col.value(i).to_string();
-
-                let pubchem_cid = if cid_col.is_null(i) {
-                    None
-                } else {
-                    Some(cid_col.value(i))
-                };
 
                 let pubchem_title = title_col.and_then(|c| {
                     if c.is_null(i) {
@@ -714,8 +796,10 @@ impl ParquetMolDb {
                     smiles.clone(),
                     MolMeta {
                         smiles,
-                        pubchem_cid,
+                        pubchem_cid: u32_at(Some(cid_col), i),
                         pubchem_title,
+                        chebi_id: u32_at(chebi_col, i),
+                        hmdb_id: u32_at(hmdb_col, i),
                         heavy_atom_count: heavy_atom_count_col.value(i),
                     },
                 );
@@ -736,6 +820,7 @@ impl ParquetMolDb {
         // those rows simply come back empty, and gain the columns when the file is rewritten.
         let has_idents_meta = has_idents_meta_cols(&self.source)?;
         let has_title = has_cols(&self.source, &[COL_PUBCHEM_TITLE])?;
+        let has_chebi_hmdb = has_chebi_hmdb_cols(&self.source)?;
 
         let mut cols = vec![
             COL_SMILES,
@@ -745,6 +830,10 @@ impl ParquetMolDb {
         ];
         if has_title {
             cols.push(COL_PUBCHEM_TITLE);
+        }
+        if has_chebi_hmdb {
+            cols.push(COL_CHEBI_ID);
+            cols.push(COL_HMDB_ID);
         }
         if has_idents_meta {
             cols.push(COL_IDENTS);
@@ -759,6 +848,14 @@ impl ParquetMolDb {
             let cid_col = u32_col(&batch, COL_PUBCHEM_CID)?;
             let pubchem_title_col = match has_title {
                 true => Some(str_col(&batch, COL_PUBCHEM_TITLE)?),
+                false => None,
+            };
+            let chebi_col = match has_chebi_hmdb {
+                true => Some(u32_col(&batch, COL_CHEBI_ID)?),
+                false => None,
+            };
+            let hmdb_col = match has_chebi_hmdb {
+                true => Some(u32_col(&batch, COL_HMDB_ID)?),
                 false => None,
             };
             let heavy_atom_count_col = u16_col(&batch, COL_HEAVY_ATOM_COUNT)?;
@@ -783,12 +880,6 @@ impl ParquetMolDb {
                     None => HashMap::new(),
                 };
 
-                let pubchem_cid = if cid_col.is_null(i) {
-                    None
-                } else {
-                    Some(cid_col.value(i))
-                };
-
                 let pubchem_title = pubchem_title_col.and_then(|c| {
                     if c.is_null(i) {
                         None
@@ -797,10 +888,17 @@ impl ParquetMolDb {
                     }
                 });
 
+                // A row from a DB predating these columns keeps its accessions in the metadata
+                // tags it was loaded with; recover them so the rewrite this read feeds fills the
+                // new columns in. See [`idents_augmented`].
+                let idents = idents_augmented(&idents, &metadata);
+
                 rows.push(StoredMol {
                     smiles: smiles_col.value(i).to_string(),
-                    pubchem_cid,
+                    pubchem_cid: u32_at(Some(cid_col), i),
                     pubchem_title,
+                    chebi_id: u32_at(chebi_col, i).or_else(|| chebi_id_from_idents(&idents)),
+                    hmdb_id: u32_at(hmdb_col, i).or_else(|| hmdb_id_from_idents(&idents)),
                     heavy_atom_count: heavy_atom_count_col.value(i),
                     mol_data: mol_data_col.value(i).to_vec(),
                     idents,
@@ -824,20 +922,53 @@ impl ParquetMolDb {
         })
     }
 
-    /// Read `mol_data` for a subset of molecules (by SMILES key) in a single disk pass.
+    /// Read `mol_data` for a subset of molecules (by SMILES key) in a single disk pass. The
+    /// accession columns come along with it; see [`apply_ident_cols`].
     pub fn load_mols(&self, smiles_keys: &[&str]) -> io::Result<Vec<MoleculeSmall>> {
         let targets: HashSet<&str> = smiles_keys.iter().copied().collect();
 
-        let mut reader = open_reader(&self.source, &[COL_SMILES, COL_MOL_DATA])?;
+        let has_chebi_hmdb = has_chebi_hmdb_cols(&self.source)?;
+
+        let mut cols = vec![COL_SMILES, COL_MOL_DATA, COL_PUBCHEM_CID];
+        if has_chebi_hmdb {
+            cols.push(COL_CHEBI_ID);
+            cols.push(COL_HMDB_ID);
+        }
+
+        let mut reader = open_reader(&self.source, &cols)?;
 
         let mut result = Vec::with_capacity(targets.len());
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
             let smiles_col = str_col(&batch, COL_SMILES)?;
             let mol_data_col = bin_col(&batch, COL_MOL_DATA)?;
+            let cid_col = u32_col(&batch, COL_PUBCHEM_CID)?;
+            let (chebi_col, hmdb_col) = match has_chebi_hmdb {
+                true => (
+                    Some(u32_col(&batch, COL_CHEBI_ID)?),
+                    Some(u32_col(&batch, COL_HMDB_ID)?),
+                ),
+                false => (None, None),
+            };
 
             for i in 0..smiles_col.len() {
                 if targets.contains(smiles_col.value(i)) {
-                    result.push(MoleculeSmall::from_bytes(mol_data_col.value(i))?);
+                    let mut mol = MoleculeSmall::from_bytes(mol_data_col.value(i))?;
+                    apply_ident_cols(
+                        &mut mol,
+                        u32_at(Some(cid_col), i),
+                        u32_at(chebi_col, i),
+                        u32_at(hmdb_col, i),
+                    );
+
+                    // `from_bytes` re-derives a SMILES from the structure, which is often written
+                    // differently from the one this row is keyed by. Keep the key as an ident too,
+                    // so the row can still be found from the molecule; see [`smiles_keys`].
+                    let key = MolIdent::Smiles(smiles_col.value(i).to_owned());
+                    if !mol.idents.contains(&key) {
+                        mol.idents.push(key);
+                    }
+
+                    result.push(mol);
                 }
             }
         }
@@ -845,16 +976,41 @@ impl ParquetMolDb {
         Ok(result)
     }
 
-    /// Read all `mol_data` from disk and deserialize into molecules.
+    /// Read all `mol_data` from disk and deserialize into molecules. The accession columns come
+    /// along with it; see [`apply_ident_cols`].
     pub fn load_all(&self) -> io::Result<Vec<MoleculeSmall>> {
-        let mut reader = open_reader(&self.source, &[COL_MOL_DATA])?;
+        let has_chebi_hmdb = has_chebi_hmdb_cols(&self.source)?;
+
+        let mut cols = vec![COL_MOL_DATA, COL_PUBCHEM_CID];
+        if has_chebi_hmdb {
+            cols.push(COL_CHEBI_ID);
+            cols.push(COL_HMDB_ID);
+        }
+
+        let mut reader = open_reader(&self.source, &cols)?;
 
         let mut result = Vec::with_capacity(self.index_meta.len());
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
             let mol_data_col = bin_col(&batch, COL_MOL_DATA)?;
+            let cid_col = u32_col(&batch, COL_PUBCHEM_CID)?;
+            let (chebi_col, hmdb_col) = match has_chebi_hmdb {
+                true => (
+                    Some(u32_col(&batch, COL_CHEBI_ID)?),
+                    Some(u32_col(&batch, COL_HMDB_ID)?),
+                ),
+                false => (None, None),
+            };
 
             for i in 0..mol_data_col.len() {
-                result.push(MoleculeSmall::from_bytes(mol_data_col.value(i))?);
+                let mut mol = MoleculeSmall::from_bytes(mol_data_col.value(i))?;
+                apply_ident_cols(
+                    &mut mol,
+                    u32_at(Some(cid_col), i),
+                    u32_at(chebi_col, i),
+                    u32_at(hmdb_col, i),
+                );
+
+                result.push(mol);
             }
         }
 
@@ -944,28 +1100,29 @@ impl ParquetMolDb {
     ///
     /// Molecules missing a SMILES ident, or absent from the DB, are left as-is.
     pub fn apply_idents_meta(&self, mols: &mut [MoleculeSmall]) -> io::Result<()> {
-        let keys: Vec<String> = mols
-            .iter()
-            .filter_map(|m| m.get_smiles().map(|s| s.to_string()))
-            .collect();
+        let keys: Vec<String> = mols.iter().flat_map(smiles_keys).collect();
 
         let keys_ref: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
         let loaded = self.load_idents_meta_multi(&keys_ref)?;
 
         for mol in mols.iter_mut() {
-            let Some(smiles) = mol.get_smiles().map(|s| s.to_string()) else {
-                continue;
-            };
-            let Some(im) = loaded.get(&smiles) else {
+            // Any of the molecule's SMILES may be the one the row is keyed by; see [`smiles_keys`].
+            let Some(im) = smiles_keys(mol).iter().find_map(|s| loaded.get(s)) else {
                 continue;
             };
 
             // Merge, rather than replace: a molecule deserialized from `mol_data` already has its
-            // SMILES ident, and we don't want to drop it if the DB row is empty.
-            for ident in &im.idents {
-                if !mol.idents.contains(ident) {
-                    mol.idents.push(ident.clone());
+            // SMILES ident, and we don't want to drop it if the DB row is empty. The row's metadata
+            // is folded in too, which is where the built-in databases keep their ChEBI and HMDB
+            // accessions; see [`idents_augmented`].
+            for ident in idents_augmented(&im.idents, &im.metadata) {
+                // Rows written by older versions carry the odd blank ident, which would show as an
+                // empty row in the UI.
+                if ident.ident_inner().is_empty() || mol.idents.contains(&ident) {
+                    continue;
                 }
+
+                mol.idents.push(ident);
             }
             for (key, val) in &im.metadata {
                 mol.common.metadata.insert(key.clone(), val.clone());
@@ -994,13 +1151,19 @@ impl ParquetMolDb {
             row.idents = im.idents.clone();
             row.metadata = im.metadata.clone();
 
-            // Keep the searchable CID and title columns in sync with the idents they're derived from.
+            // Keep the searchable ident columns in sync with the idents they're derived from.
             let (cid, title) = pubchem_cid_title_from_idents(&im.idents, &im.metadata);
             if let Some(cid) = cid {
                 row.pubchem_cid = Some(cid);
             }
             if let Some(title) = title {
                 row.pubchem_title = Some(title);
+            }
+            if let Some(id) = chebi_id_from_idents(&im.idents) {
+                row.chebi_id = Some(id);
+            }
+            if let Some(id) = hmdb_id_from_idents(&im.idents) {
+                row.hmdb_id = Some(id);
             }
         }
 
@@ -1085,6 +1248,55 @@ fn has_cols(source: &DbSource, cols: &[&str]) -> io::Result<bool> {
 /// don't.
 fn has_idents_meta_cols(source: &DbSource) -> io::Result<bool> {
     has_cols(source, &[COL_IDENTS, COL_METADATA])
+}
+
+/// Whether this DB has the ChEBI and HMDB accession columns. The two were added together, so one
+/// flag covers both; the databases built into the binary predate them.
+fn has_chebi_hmdb_cols(source: &DbSource) -> io::Result<bool> {
+    has_cols(source, &[COL_CHEBI_ID, COL_HMDB_ID])
+}
+
+/// Every SMILES a molecule carries, as candidate row keys. A molecule loaded from `mol_data`
+/// re-derives its SMILES from the structure, and that rarely matches character-for-character the
+/// SMILES its source file gave — which is what the DB is keyed by. Looking a row up by only the
+/// first would silently miss for those molecules.
+fn smiles_keys(mol: &MoleculeSmall) -> Vec<String> {
+    mol.idents
+        .iter()
+        .filter_map(|id| match id {
+            MolIdent::Smiles(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Fold the accession columns stored alongside `mol_data` into a molecule loaded from it.
+/// `mol_data` holds atoms, bonds and the molecule's ident only, so without this a molecule loaded
+/// for screening carries no PubChem, ChEBI or HMDB accession at all. The full `idents` column is a
+/// separate, on-demand load; see [`ParquetMolDb::apply_idents_meta`].
+fn apply_ident_cols(
+    mol: &mut MoleculeSmall,
+    pubchem_cid: Option<u32>,
+    chebi_id: Option<u32>,
+    hmdb_id: Option<u32>,
+) {
+    let from_cols = [
+        pubchem_cid.map(MolIdent::PubChem),
+        chebi_id.map(MolIdent::Chebi),
+        hmdb_id.map(MolIdent::Hmdb),
+    ];
+
+    for ident in from_cols.into_iter().flatten() {
+        if !mol.idents.contains(&ident) {
+            mol.idents.push(ident);
+        }
+    }
+}
+
+/// A nullable `u32` cell: `None` if the cell is null, or the column isn't in this file at all.
+fn u32_at(col: Option<&UInt32Array>, i: usize) -> Option<u32> {
+    let col = col?;
+    (!col.is_null(i)).then(|| col.value(i))
 }
 
 fn col<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> io::Result<&'a T> {
@@ -1181,7 +1393,7 @@ pub fn load_embedded_mol_db(bytes: &'static [u8], name: &'static str) -> Option<
             Some(db)
         }
         Err(e) => {
-            eprintln!("Error loading the built-in {name} molecule database: {e}");
+            eprintln!("Error loading the {name} molecule database: {e}");
             None
         }
     }
@@ -1195,4 +1407,160 @@ pub fn load_hmdb_mol_db() -> Option<ParquetMolDb> {
 /// Load the built-in ChEBI database; see [`load_embedded_mol_db`].
 pub fn load_chebi_mol_db() -> Option<ParquetMolDb> {
     load_embedded_mol_db(CHEBI_MOL_DB, CHEBI_DB_NAME)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use bio_files::BondType;
+    use mol_defs::molecules::{Atom, Bond};
+    use na_seq::Element;
+
+    use super::*;
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "molchanica-mol-db-{name}-{}-{nonce}.parquet",
+            std::process::id()
+        ))
+    }
+
+    fn test_mol(metadata: HashMap<String, String>) -> MoleculeSmall {
+        let atoms = vec![
+            Atom {
+                serial_number: 1,
+                element: Element::Carbon,
+                ..Default::default()
+            },
+            Atom {
+                serial_number: 2,
+                element: Element::Oxygen,
+                ..Default::default()
+            },
+        ];
+
+        let bonds = vec![Bond {
+            bond_type: BondType::Single,
+            atom_0_sn: 1,
+            atom_1_sn: 2,
+            atom_0: 0,
+            atom_1: 1,
+            is_backbone: false,
+        }];
+
+        MoleculeSmall::new("Methanol".to_owned(), atoms, bonds, metadata, None)
+    }
+
+    /// The ChEBI and HMDB accessions get their own columns, so the table can show and search them
+    /// without loading every row's idents. This covers the write path (schema and column order) as
+    /// well as both reads.
+    #[test]
+    fn chebi_and_hmdb_columns_round_trip() {
+        let path = temp_db_path("accession-cols");
+        let mut db = ParquetMolDb::new(&path).unwrap();
+
+        let mut mol = test_mol(HashMap::new());
+        mol.idents.push(MolIdent::Chebi(15377));
+        mol.idents.push(MolIdent::Hmdb(2111));
+
+        let smiles = mol.get_smiles().unwrap().to_owned();
+        db.add_mols(&[mol]).unwrap();
+
+        // The lightweight index the table draws from.
+        let meta = db.index_meta.get(&smiles).unwrap();
+        assert_eq!(meta.chebi_id, Some(15377));
+        assert_eq!(meta.hmdb_id, Some(2111));
+
+        // Both accession forms find the row; see `MolMeta::matches_search`.
+        assert!(meta.matches_search("15377"));
+        assert!(meta.matches_search("chebi:15377"));
+        assert!(meta.matches_search("hmdb0002111"));
+
+        // `mol_data` alone doesn't carry idents, so this is the accession columns coming back.
+        let loaded = db.load_mol(&smiles).unwrap();
+        assert!(loaded.idents.contains(&MolIdent::Chebi(15377)));
+        assert!(loaded.idents.contains(&MolIdent::Hmdb(2111)));
+
+        // And the on-demand idents load, which the UI folds in after `load_mol`.
+        let mut loaded = [db.load_mol(&smiles).unwrap()];
+        db.apply_idents_meta(&mut loaded).unwrap();
+        assert!(loaded[0].idents.contains(&MolIdent::Chebi(15377)));
+        assert!(loaded[0].idents.contains(&MolIdent::Hmdb(2111)));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    /// End to end over a database as actually shipped: load a molecule the way the UI does, and
+    /// check the accession comes with it. These two are the case that motivated the metadata
+    /// fallback — both were built before the ChEBI and HMDB idents existed, so neither has the
+    /// accession columns, and neither stores the ident in its `idents` column.
+    #[test]
+    fn built_in_dbs_yield_their_accessions() {
+        for (bytes, name, has_ident) in [
+            (
+                HMDB_MOL_DB,
+                HMDB_DB_NAME,
+                (|i: &MolIdent| matches!(i, MolIdent::Hmdb(_))) as fn(&MolIdent) -> bool,
+            ),
+            (CHEBI_MOL_DB, CHEBI_DB_NAME, |i: &MolIdent| {
+                matches!(i, MolIdent::Chebi(_))
+            }),
+        ] {
+            // A build without the database embedded has nothing to check.
+            if bytes.is_empty() {
+                continue;
+            }
+
+            let db = ParquetMolDb::from_embedded(bytes, name).unwrap();
+            let smiles = db.index_meta.keys().next().unwrap().clone();
+
+            let mut mols = [db.load_mol(&smiles).unwrap()];
+            db.apply_idents_meta(&mut mols).unwrap();
+
+            assert!(
+                mols[0].idents.iter().any(has_ident),
+                "{name}: no accession on the molecule loaded for {smiles}: {:?}",
+                mols[0].idents
+            );
+        }
+    }
+
+    /// The databases built into the binary predate these idents: their rows carry the accession
+    /// only in the metadata tags the source files were loaded with. Those rows must still yield the
+    /// ident, without the DB being rebuilt.
+    #[test]
+    fn accessions_are_recovered_from_stored_metadata() {
+        // The tags HMDB and ChEBI use in the SDFs they distribute.
+        let metadata = HashMap::from([
+            ("HMDB_ID".to_owned(), "HMDB0002111".to_owned()),
+            ("ChEBI ID".to_owned(), "CHEBI:15377".to_owned()),
+        ]);
+
+        let idents = idents_augmented(&[], &metadata);
+        assert!(idents.contains(&MolIdent::Chebi(15377)));
+        assert!(idents.contains(&MolIdent::Hmdb(2111)));
+
+        // A molecule's own name must not be inferred into an ident here; that guess belongs to
+        // file loading, not to a DB row.
+        assert!(!idents.iter().any(|i| matches!(i, MolIdent::PdbeAmber(_))));
+
+        // Existing idents are kept, and not duplicated by the metadata pass.
+        let idents = idents_augmented(&[MolIdent::Hmdb(2111)], &metadata);
+        assert_eq!(
+            idents
+                .iter()
+                .filter(|i| matches!(i, MolIdent::Hmdb(_)))
+                .count(),
+            1
+        );
+    }
 }

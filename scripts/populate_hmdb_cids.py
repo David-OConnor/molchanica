@@ -1,4 +1,8 @@
-"""Add HMDB's PubChem compound IDs to the HMDB structures SDF.
+"""Add HMDB's cross-database identifiers to the HMDB structures SDF.
+
+PubChem CIDs and ChEBI, DrugBank and KEGG accessions all live in the metabolite XML but not
+in the structures SDF, where our ingest pipeline can see them. This copies each across, for
+the metabolites that have it.
 
 Download ``hmdb_metabolites.zip`` and ``structures.sdf`` from:
 https://hmdb.ca/downloads
@@ -19,6 +23,8 @@ import re
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -29,14 +35,47 @@ OUTPUT_NAME = "structures_with_pubchem.sdf"
 HMDB_NAMESPACE = "http://www.hmdb.ca"
 METABOLITE_TAG = f"{{{HMDB_NAMESPACE}}}metabolite"
 ACCESSION_TAG = f"{{{HMDB_NAMESPACE}}}accession"
-PUBCHEM_ID_TAG = f"{{{HMDB_NAMESPACE}}}pubchem_compound_id"
 
 DATABASE_ID_RE = re.compile(
     rb"(?m)^>\s*<DATABASE_ID>[^\r\n]*\r?\n([^\r\n]*)"
 )
-PUBCHEM_VALUE_RE = re.compile(
-    rb"(?m)(^>\s*<PUBCHEM_COMPOUND_CID>[^\r\n]*\r?\n)([^\r\n]*)"
+
+
+def _chebi_accession(value: str) -> str:
+    """ChEBI accessions are conventionally written ``CHEBI:15377``; HMDB stores the bare number."""
+    digits = value[6:].strip() if value[:6].upper() == "CHEBI:" else value
+    return f"CHEBI:{digits}"
+
+
+@dataclass(frozen=True)
+class IdField:
+    """One identifier, copied from a ``<metabolite>`` child element to an SDF data field."""
+
+    xml_tag: str
+    sdf_key: str
+    format_value: Callable[[str], str] = str
+
+    @property
+    def element_tag(self) -> str:
+        return f"{{{HMDB_NAMESPACE}}}{self.xml_tag}"
+
+    @property
+    def value_re(self) -> re.Pattern[bytes]:
+        """Match an existing occurrence of this field in a record: the header, then its value."""
+        key = re.escape(self.sdf_key.encode("utf-8"))
+        return re.compile(rb"(?m)(^>\s*<" + key + rb">[^\r\n]*\r?\n)([^\r\n]*)")
+
+
+# The SDF keys are the ones the ingest pipeline reads identifiers back out of; see `MD_KEYS_*`
+# in `mol_defs`.
+ID_FIELDS: tuple[IdField, ...] = (
+    IdField("pubchem_compound_id", "PUBCHEM_COMPOUND_CID"),
+    IdField("chebi_id", "ChEBI ID", _chebi_accession),
+    IdField("drugbank_id", "DRUGBANK_ID"),
+    IdField("kegg_id", "KEGG COMPOUND Database Links"),
 )
+
+VALUE_RE_BY_KEY = {field.sdf_key: field.value_re for field in ID_FIELDS}
 
 
 def _text(element: ET.Element | None) -> str | None:
@@ -44,6 +83,10 @@ def _text(element: ET.Element | None) -> str | None:
         return None
     value = element.text.strip()
     return value or None
+
+
+def _counts_summary(counts: dict[str, int]) -> str:
+    return ", ".join(f"{count:,} {key}" for key, count in counts.items())
 
 
 def _xml_member_name(archive: zipfile.ZipFile) -> str:
@@ -67,11 +110,21 @@ def _xml_member_name(archive: zipfile.ZipFile) -> str:
     )
 
 
-def load_pubchem_cids(archive_path: Path) -> dict[str, str]:
-    """Return a mapping of primary/secondary HMDB accessions to PubChem CIDs."""
-    cid_by_accession: dict[str, str] = {}
+def _metabolite_ids(element: ET.Element) -> dict[str, str]:
+    """The identifiers one metabolite carries, keyed by SDF field name; absent ones are omitted."""
+    ids: dict[str, str] = {}
+    for field in ID_FIELDS:
+        value = _text(element.find(field.element_tag))
+        if value is not None:
+            ids[field.sdf_key] = field.format_value(value)
+    return ids
+
+
+def load_ids(archive_path: Path) -> dict[str, dict[str, str]]:
+    """Return a mapping of primary/secondary HMDB accessions to their cross-database identifiers."""
+    ids_by_accession: dict[str, dict[str, str]] = {}
     metabolite_count = 0
-    cid_count = 0
+    counts = {field.sdf_key: 0 for field in ID_FIELDS}
 
     with zipfile.ZipFile(archive_path) as archive:
         member_name = _xml_member_name(archive)
@@ -84,10 +137,10 @@ def load_pubchem_cids(archive_path: Path) -> dict[str, str]:
                     continue
 
                 metabolite_count += 1
-                cid = _text(element.find(PUBCHEM_ID_TAG))
+                ids = _metabolite_ids(element)
                 primary_accession = _text(element.find(ACCESSION_TAG))
 
-                if cid and primary_accession:
+                if ids and primary_accession:
                     accessions = [primary_accession]
                     secondary = element.find(f"{{{HMDB_NAMESPACE}}}secondary_accessions")
                     if secondary is not None:
@@ -98,14 +151,18 @@ def load_pubchem_cids(archive_path: Path) -> dict[str, str]:
                         )
 
                     for accession in accessions:
-                        previous = cid_by_accession.get(accession)
-                        if previous is not None and previous != cid:
-                            raise ValueError(
-                                f"conflicting PubChem CIDs for HMDB accession {accession}: "
-                                f"{previous} and {cid}"
-                            )
-                        cid_by_accession[accession] = cid
-                    cid_count += 1
+                        known = ids_by_accession.setdefault(accession, {})
+                        for key, value in ids.items():
+                            previous = known.get(key)
+                            if previous is not None and previous != value:
+                                raise ValueError(
+                                    f"conflicting {key} values for HMDB accession "
+                                    f"{accession}: {previous} and {value}"
+                                )
+                            known[key] = value
+
+                    for key in ids:
+                        counts[key] += 1
 
                 # Discard the just-processed subtree. This is essential for the multi-GB XML.
                 root.clear()
@@ -113,16 +170,15 @@ def load_pubchem_cids(archive_path: Path) -> dict[str, str]:
                 if metabolite_count % 10_000 == 0:
                     print(
                         f"[XML] processed {metabolite_count:,} metabolites; "
-                        f"found {cid_count:,} PubChem CIDs",
+                        f"found {_counts_summary(counts)}",
                         flush=True,
                     )
 
     print(
-        f"[XML] complete: {metabolite_count:,} metabolites; "
-        f"{cid_count:,} with PubChem CIDs",
+        f"[XML] complete: {metabolite_count:,} metabolites; {_counts_summary(counts)}",
         flush=True,
     )
-    return cid_by_accession
+    return ids_by_accession
 
 
 def _database_id(record: bytes) -> str | None:
@@ -132,31 +188,47 @@ def _database_id(record: bytes) -> str | None:
     return match.group(1).strip().decode("utf-8", errors="replace") or None
 
 
-def _with_pubchem_cid(record: bytes, cid: str) -> bytes:
-    """Add the CID property to one complete SDF record, replacing it if present."""
-    cid_bytes = cid.encode("ascii")
-    if PUBCHEM_VALUE_RE.search(record):
-        return PUBCHEM_VALUE_RE.sub(
-            lambda match: match.group(1) + cid_bytes, record, count=1
+def _with_ids(record: bytes, ids: dict[str, str]) -> bytes:
+    """Add the identifier properties to one complete SDF record, replacing any already present."""
+    for key, value in ids.items():
+        value_bytes = value.encode("utf-8")
+        value_re = VALUE_RE_BY_KEY[key]
+
+        if value_re.search(record):
+            record = value_re.sub(
+                lambda match, value_bytes=value_bytes: match.group(1) + value_bytes,
+                record,
+                count=1,
+            )
+            continue
+
+        delimiter_match = re.search(rb"(?m)^\$\$\$\$(?:\r?\n)?\Z", record)
+        if delimiter_match is None:
+            raise ValueError("encountered an SDF record without a $$$$ delimiter")
+
+        newline = b"\r\n" if b"\r\n" in record else b"\n"
+        body = record[: delimiter_match.start()]
+        delimiter = record[delimiter_match.start() :]
+        if body and not body.endswith((b"\n", b"\r")):
+            body += newline
+        field = (
+            b"> <"
+            + key.encode("utf-8")
+            + b">"
+            + newline
+            + value_bytes
+            + newline
+            + newline
         )
+        record = body + field + delimiter
 
-    delimiter_match = re.search(rb"(?m)^\$\$\$\$(?:\r?\n)?\Z", record)
-    if delimiter_match is None:
-        raise ValueError("encountered an SDF record without a $$$$ delimiter")
-
-    newline = b"\r\n" if b"\r\n" in record else b"\n"
-    body = record[: delimiter_match.start()]
-    delimiter = record[delimiter_match.start() :]
-    if body and not body.endswith((b"\n", b"\r")):
-        body += newline
-    field = b"> <PUBCHEM_COMPOUND_CID>" + newline + cid_bytes + newline + newline
-    return body + field + delimiter
+    return record
 
 
 def populate_sdf(
     structures_path: Path,
     output_path: Path,
-    cid_by_accession: dict[str, str],
+    ids_by_accession: dict[str, dict[str, str]],
 ) -> tuple[int, int, int]:
     """Stream SDF records to a temporary file and atomically install the result."""
     record_count = 0
@@ -183,11 +255,11 @@ def populate_sdf(
                 record_count += 1
                 record_bytes = bytes(record)
                 accession = _database_id(record_bytes)
-                cid = cid_by_accession.get(accession) if accession else None
-                if cid is None:
+                ids = ids_by_accession.get(accession) if accession else None
+                if not ids:
                     missing_count += 1
                 else:
-                    record_bytes = _with_pubchem_cid(record_bytes, cid)
+                    record_bytes = _with_ids(record_bytes, ids)
                     populated_count += 1
                 destination.write(record_bytes)
                 record.clear()
@@ -217,7 +289,8 @@ def populate_sdf(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Add PubChem compound IDs from hmdb_metabolites.zip to structures.sdf."
+            "Add PubChem, ChEBI, DrugBank and KEGG identifiers from hmdb_metabolites.zip "
+            "to structures.sdf."
         )
     )
     parser.add_argument(
@@ -250,15 +323,15 @@ def main() -> int:
             f"error: output already exists: {output_path} (pass --force to replace it)"
         )
 
-    print(f"Reading PubChem CIDs from {archive_path}", flush=True)
-    cid_by_accession = load_pubchem_cids(archive_path)
+    print(f"Reading identifiers from {archive_path}", flush=True)
+    ids_by_accession = load_ids(archive_path)
     print(f"Writing {output_path}", flush=True)
     records, populated, missing = populate_sdf(
-        structures_path, output_path, cid_by_accession
+        structures_path, output_path, ids_by_accession
     )
     print(
         f"[done] {records:,} SDF records; {populated:,} populated; "
-        f"{missing:,} without a matching PubChem CID",
+        f"{missing:,} without any matching identifier",
         flush=True,
     )
     return 0

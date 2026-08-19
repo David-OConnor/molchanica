@@ -14,8 +14,8 @@ param(
 # is not writable by a normal process.
 #
 # Run it from the folder you extracted the release into, e.g. by double-clicking
-# setup_windows.bat, or with:
-#   powershell -NoProfile -ExecutionPolicy Bypass -File setup_windows.ps1
+# setup_molchanica.bat, or with:
+#   powershell -NoProfile -ExecutionPolicy Bypass -File setup_molchanica.ps1
 
 $ErrorActionPreference = "Stop"
 
@@ -153,7 +153,7 @@ function Show-PreviousInstallNotice {
 # }
 
 # We default this here rather than in the param block: Windows PowerShell 5.1 leaves $PSScriptRoot
-# empty while binding parameters when a script is run with -File, as setup_windows.bat does. It is
+# empty while binding parameters when a script is run with -File, as setup_molchanica.bat does. It is
 # populated by the time the body runs, in every host.
 if (-not $SourceDirectory) {
     $SourceDirectory = $PSScriptRoot

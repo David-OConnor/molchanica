@@ -1,3 +1,4 @@
+pub mod about;
 pub mod external_tools;
 pub mod ff_params;
 pub mod mol_db;
@@ -204,6 +205,12 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.protein_design {
         popup("Protein design").show(ui.ctx(), |ui| {
             protein_design::protein_design_window(state, ui);
+        });
+    }
+
+    if state.ui.popup.about {
+        popup("About").show(ui.ctx(), |ui| {
+            about::about_window(state, ui);
         });
     }
 }

@@ -1066,28 +1066,58 @@ pub fn make_lig_from_res(
 /// This enables GPU computation if the right compiler flag is set, and there aren't
 /// errors setting up the Cuda stream. It also handles loading cuda kernels used directly
 /// by this application. (Dynamics modules, for example, are handled by that library)
+///
+/// Every step here is fallible on purpose: the CUDA-enabled build is also what we ship to people
+/// with no NVIDIA hardware or driver, so any failure has to degrade to `ComputationDevice::Cpu`
+/// rather than abort. We link CUDA with cudarc's `dynamic-loading`, meaning the driver library is
+/// looked up with `dlopen`/`LoadLibrary` on first use; that keeps the executable startable without
+/// it, but it also means calling into cudarc *before* checking `is_culib_present` would panic
+/// rather than return an error.
 #[cfg(feature = "cuda")]
 pub fn get_computation_device() -> (ComputationDevice, Option<CudaFunction>) {
-    match cudarc::driver::result::init() {
-        Ok(_) => {
-            let ctx = CudaContext::new(0).unwrap();
-            let stream = ctx.default_stream();
+    // SAFETY: This only attempts to open the CUDA driver library; it does not call into it.
+    if !unsafe { cudarc::driver::sys::is_culib_present() } {
+        println!("No CUDA driver library found; using the CPU.");
+        return (ComputationDevice::Cpu, None);
+    }
 
-            let module_reflections = ctx.load_module(Ptx::from_src(PTX));
+    if let Err(e) = cudarc::driver::result::init() {
+        eprintln!("Unable to init Cuda module: {e:?}");
+        return (ComputationDevice::Cpu, None);
+    }
 
-            match module_reflections {
-                Ok(m) => {
-                    let function = m.load_function("make_densities_kernel").unwrap();
-                    (ComputationDevice::Gpu(stream), Some(function))
-                }
-                Err(e) => {
-                    eprintln!("Error loading CUDA module; not using CUDA. Error: {e}");
-                    (ComputationDevice::Cpu, None)
-                }
-            }
-        }
+    // Present but unusable: e.g. a driver with no NVIDIA device attached, or one too old for the
+    // CUDA version we were built against.
+    let ctx = match CudaContext::new(0) {
+        Ok(c) => c,
         Err(e) => {
-            eprintln!("Unable to init Cuda module: {e:?}");
+            eprintln!("Unable to create a CUDA context; using the CPU. Error: {e}");
+            return (ComputationDevice::Cpu, None);
+        }
+    };
+
+    // SPME's reciprocal-space step has no GPU path without cuFFT, which (like the driver) is
+    // resolved at runtime. Check it here so we don't hand the rest of the app a GPU device that
+    // molecular dynamics can't actually use.
+    if !ewald::gpu_fft_available() {
+        eprintln!("The cuFFT library is unavailable; using the CPU.");
+        return (ComputationDevice::Cpu, None);
+    }
+
+    let stream = ctx.default_stream();
+
+    let module_reflections = match ctx.load_module(Ptx::from_src(PTX)) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Error loading CUDA module; not using CUDA. Error: {e}");
+            return (ComputationDevice::Cpu, None);
+        }
+    };
+
+    match module_reflections.load_function("make_densities_kernel") {
+        Ok(function) => (ComputationDevice::Gpu(stream), Some(function)),
+        Err(e) => {
+            eprintln!("Error loading the density CUDA kernel; not using CUDA. Error: {e}");
             (ComputationDevice::Cpu, None)
         }
     }

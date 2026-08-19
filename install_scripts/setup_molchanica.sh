@@ -36,11 +36,14 @@ EOF
 
 chmod +x "$DESKTOP_PATH"
 
-# If the cuda FFT lib is packaged with the download, move it to the correct place.
+# If the cuda FFT lib is packaged with the download, place it beside the executable. Molchanica
+# loads cuFFT at runtime and looks in its own directory, so this needs neither root nor a
+# system-wide install. Machines that already have CUDA use their own copy, and machines without an
+# Nvidia driver ignore it and fall back to the CPU.
 cufft_lib="libcufft.so.12"
 if [ -f "./$cufft_lib" ]; then
-  sudo cp "./$cufft_lib" /usr/lib/
-  printf "Moved the libcufft.so.12 library (for the cuFFT dependency)  to /usr/lib.\n"
+  cp "./$cufft_lib" "$APP_DIR/$cufft_lib"
+  printf "Copied %s (the cuFFT dependency) to %s.\n" "$cufft_lib" "$APP_DIR"
 fi
 
 #read -p "Install gemmi from apt, to support unprocessed electron density files? [y/n] " ans

@@ -112,7 +112,7 @@ pub(in crate::ui) fn list_idents(
     for ident in idents {
         // Wrap long identifiers instead of expanding the containing panel.
         ui.horizontal_wrapped(|ui| {
-            crate::label!(ui, format!("{}:", ident.label()), Color32::GRAY);
+            crate::label!(ui, format!("{}:", ident.ident_type()), Color32::GRAY);
 
             let mut ident_text = RichText::new(ident.ident_inner()).color(Color32::WHITE);
 
