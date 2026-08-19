@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$version = "0_3_6"
+$version = "0_3_7"
 $outDir = "target\release"
 $exe    = Join-Path $outDir "molchanica.exe"
 $readme = "README.md"
