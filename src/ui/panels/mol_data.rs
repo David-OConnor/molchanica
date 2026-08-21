@@ -1,7 +1,11 @@
 //! Information and settings for the opened, or to-be opened molecules.
 
+use std::io::Cursor;
+
 use bio_apis::{chebi, drugbank, lmsd, pdbe, pubchem, rcsb};
-use bio_files::{ResidueType, md_params::ForceFieldParams};
+use bio_files::{
+    DensityMap, ResidueType, density_from_2fo_fc_rcsb_gemmi, md_params::ForceFieldParams,
+};
 use dynamics::merge_params;
 use egui::{Color32, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
@@ -19,6 +23,7 @@ use crate::{
     drawing::{
         CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, wrappers::draw_all_pockets,
     },
+    file_io::gemmi_path,
     label,
     render::MESH_POCKET_START,
     selection::{SelAtom, Selection},
@@ -420,9 +425,11 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
     });
 }
 
-// todo: Unify this with non-peptide.
-pub(in crate::ui) fn display_mol_data_peptide(
+/// Actions that are specific to the active protein. The common molecule description is rendered
+/// by [`display_mol_data`], alongside the corresponding actions for every other molecule type.
+fn display_peptide_actions(
     state: &mut State,
+    peptide_i: usize,
     scene: &mut Scene,
     ui: &mut Ui,
     redraw_lig: &mut bool,
@@ -433,60 +440,50 @@ pub(in crate::ui) fn display_mol_data_peptide(
     let mut move_lig_to_res = None;
     let mut move_lig_to_sel = None;
     let mut move_cam = false;
-    let peptide_i = state.peptide_for_tools_i();
+    if let Some(pep) = state.peptides.get(peptide_i) {
+        // if ui.button(RichText::new("Close").color(Color32::LIGHT_RED)).clicked() {
+        //     *close = true;
+        // }
 
-    ui.horizontal(|ui| {
-        if let Some(pep) = peptide_i.and_then(|i| state.peptides.get(i)) {
-            mol_descrip(&MolGenericRef::Peptide(pep), ui);
-
-            // if ui.button(RichText::new("Close").color(Color32::LIGHT_RED)).clicked() {
-            //     *close = true;
-            // }
-
-            if pep.common.ident.len() <= 5 {
-                // todo: You likely need a better approach.
-                if ui
-                    .button("RCSB")
-                    .on_hover_text("Open a web browser to the RCSB PDB page for this molecule.")
-                    .clicked()
-                {
-                    rcsb::open_overview(&pep.common.ident);
-                }
+        if pep.common.ident.len() <= 5 {
+            // todo: You likely need a better approach.
+            if ui
+                .button("RCSB")
+                .on_hover_text("Open a web browser to the RCSB PDB page for this molecule.")
+                .clicked()
+            {
+                rcsb::open_overview(&pep.common.ident);
             }
+        }
 
-            if ui.button("Dihe")
-                .on_hover_text("Draw a Ramachandran plot of the dihedral angles of the peptide.")
-                .clicked() {
-                state.ui.popup.rama_plot = !state.ui.popup.rama_plot;
+        if ui
+            .button("Dihe")
+            .on_hover_text("Draw a Ramachandran plot of the dihedral angles of the peptide.")
+            .clicked()
+        {
+            state.ui.popup.rama_plot = !state.ui.popup.rama_plot;
+        }
+
+        let res_selected = match state.ui.selection {
+            Selection::AtomPeptide(sel_i) => {
+                let atom = &pep.common.atoms[sel_i];
+                atom.residue.as_ref().map(|res_i| &pep.residues[*res_i])
             }
-
-            if ui.button("Meta")
-                .on_hover_text("Display metadata for this molecule")
-                .clicked() {
-                if let Some((mol_type, _)) = state.ui.popup.metadata && mol_type == MolType::Peptide {
-                    state.ui.popup.metadata = None;
+            Selection::Residue(sel_i) => {
+                if sel_i >= pep.residues.len() {
+                    handle_err(
+                        &mut state.ui,
+                        "Residue selection is out of bounds.".to_owned(),
+                    );
+                    None
                 } else {
-                    state.ui.popup.metadata = Some((MolType::Peptide, peptide_i.unwrap_or(0)))
+                    Some(&pep.residues[sel_i])
                 }
             }
+            _ => None,
+        };
 
-            let res_selected = match state.ui.selection {
-                Selection::AtomPeptide(sel_i) => {
-                    let atom = &pep.common.atoms[sel_i];
-                    atom.residue.as_ref().map(|res_i| &pep.residues[*res_i])
-                }
-                Selection::Residue(sel_i) => {
-                    if sel_i >= pep.residues.len() {
-                        handle_err(&mut state.ui, "Residue selection is out of bounds.".to_owned());
-                        None
-                    } else {
-                        Some(&pep.residues[sel_i])
-                    }
-                }
-                _ => None,
-            };
-
-            if let Some(res) = res_selected && ui
+        if let Some(res) = res_selected && ui
                 .button(
                     RichText::new(format!("Lig from {}", res.res_type))
                         .color(COLOR_ACTION),
@@ -501,20 +498,19 @@ pub(in crate::ui) fn display_mol_data_peptide(
                 res_to_make = Some(res.clone());
             }
 
+        if let Some(mol) = state.active_mol() {
+            for res in &pep.het_residues {
+                // Note: This approach will fail if there are multiple hetero residues of similar len to
+                // this ligand.
 
-            if let Some(mol) = state.active_mol() {
-                for res in &pep.het_residues {
-                    // Note: This approach will fail if there are multiple hetero residues of similar len to
-                    // this ligand.
+                if (res.atoms.len() as i32 - mol.common().atoms.len() as i32) < 3 {
+                    let name = match &res.res_type {
+                        ResidueType::Other(name) => name,
+                        _ => "hetero residue",
+                    };
+                    ui.add_space(COL_SPACING / 2.);
 
-                    if (res.atoms.len() as i32 - mol.common().atoms.len() as i32) < 3 {
-                        let name = match &res.res_type {
-                            ResidueType::Other(name) => name,
-                            _ => "hetero residue",
-                        };
-                        ui.add_space(COL_SPACING / 2.);
-
-                        if button!(ui, format!("Lig to {name}"), COLOR_HIGHLIGHT,
+                    if button!(ui, format!("Lig to {name}"), COLOR_HIGHLIGHT,
                         "Move the ligand to be colocated with this residue. this is intended to \
                     be used to synchronize the ligand with a pre-positioned hetero residue in the protein file, e.g. \
                     prior to docking. In addition to moving \
@@ -526,34 +522,87 @@ pub(in crate::ui) fn display_mol_data_peptide(
                             // todo: I don't like this clone, but it avoids a dbl-borrow.
                             move_lig_to_res = Some(res.clone());
                         }
-                        break;
-                    }
+                    break;
                 }
             }
-
-            if let Some((mol_type, _)) = state.volatile.active_mol && mol_type == MolType::Ligand &&  !matches!(
-                state.ui.selection,
-                Selection::None | Selection::AtomLig(_)
-            ) && button!(
-                            ui,
-                            "Move lig to sel",
-                            COLOR_HIGHLIGHT,
-                            "Re-position the ligand to be colocated with the selected atom or residue."
-                        )
-                .clicked()
-            {
-                let peptide = peptide_i.and_then(|i| state.peptides.get(i)).unwrap();
-                let atom_sel = peptide.get_sel_atom(&state.ui.selection);
-
-                if let Some(a) = atom_sel {
-                    // See note on why we clone above.
-                    move_lig_to_sel = Some(a.clone());
-                }
-            }
-
         }
 
-    });
+        if let Some((mol_type, _)) = state.volatile.active_mol
+            && mol_type == MolType::Ligand
+            && !matches!(state.ui.selection, Selection::None | Selection::AtomLig(_))
+            && button!(
+                ui,
+                "Move lig to sel",
+                COLOR_HIGHLIGHT,
+                "Re-position the ligand to be colocated with the selected atom or residue."
+            )
+            .clicked()
+        {
+            let peptide = &state.peptides[peptide_i];
+            let atom_sel = peptide.get_sel_atom(&state.ui.selection);
+
+            if let Some(a) = atom_sel {
+                // See note on why we clone above.
+                move_lig_to_sel = Some(a.clone());
+            }
+        }
+    }
+
+    let mut density_to_load = None;
+    if let Some(mol) = state.peptides.get(peptide_i)
+        && let Some(files_avail) = &mol.rcsb_files_avail
+    {
+        if files_avail.validation_2fo_fc
+            && ui
+                .button(RichText::new("Fetch elec ρ").color(COLOR_HIGHLIGHT))
+                .on_hover_text(
+                    "Load 2fo-fc electron density data from RCSB PDB. Convert to CCP4 map format and display.",
+                )
+                .clicked()
+        {
+            match density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, gemmi_path()) {
+                Ok(density) => {
+                    density_to_load = Some(density);
+                    handle_success(&mut state.ui, "Loaded density data from RCSB".to_owned());
+                }
+                Err(e) => handle_err(
+                    &mut state.ui,
+                    format!(
+                        "Error loading or processing RCSB 2fo-fc map for {:?}: {e:?}",
+                        &mol.common.ident
+                    ),
+                ),
+            }
+        }
+
+        if files_avail.map
+            && ui
+                .button(RichText::new("Map").color(COLOR_HIGHLIGHT))
+                .on_hover_text("Load the electron-density map available from RCSB PDB.")
+                .clicked()
+        {
+            match rcsb::load_map(&mol.common.ident) {
+                Ok(data) => {
+                    let mut cursor = Cursor::new(data);
+                    match DensityMap::open(&mut cursor) {
+                        Ok(density) => density_to_load = Some(density),
+                        Err(_) => handle_err(
+                            &mut state.ui,
+                            format!("Error loading RCSB Map for {:?}", &mol.common.ident),
+                        ),
+                    }
+                }
+                Err(_) => handle_err(
+                    &mut state.ui,
+                    format!("Error loading RCSB Map for {:?}", &mol.common.ident),
+                ),
+            }
+        }
+    }
+
+    if let Some(density) = density_to_load {
+        state.load_density(density);
+    }
 
     if let Some(res) = res_to_make {
         make_lig_from_res(state, &res, scene, updates);
@@ -565,7 +614,6 @@ pub(in crate::ui) fn display_mol_data_peptide(
     if let Some(res) = move_lig_to_res {
         if let Some((_, i)) = state.volatile.active_mol
             && i < state.ligands.len()
-            && let Some(peptide_i) = state.peptide_for_tools_i()
         {
             let pep = &state.peptides[peptide_i];
             let center = pep.center;
@@ -581,8 +629,9 @@ pub(in crate::ui) fn display_mol_data_peptide(
         let mut mol = state.active_mol_mut().unwrap();
         mol.common_mut().move_to(sel_atom.posit);
 
-        let center = peptide_i
-            .and_then(|i| state.peptides.get(i))
+        let center = state
+            .peptides
+            .get(peptide_i)
             .map(|mol| mol.center)
             .unwrap_or_else(Vec3::new_zero);
         move_cam_to_active_mol(state, scene, center, updates);
@@ -593,8 +642,9 @@ pub(in crate::ui) fn display_mol_data_peptide(
     }
 
     if move_cam {
-        let center = peptide_i
-            .and_then(|i| state.peptides.get(i))
+        let center = state
+            .peptides
+            .get(peptide_i)
             .map(|mol| mol.center)
             .unwrap_or_else(Vec3::new_zero);
 
@@ -603,7 +653,7 @@ pub(in crate::ui) fn display_mol_data_peptide(
 
     let mut pocket_to_add = None;
 
-    if let Some(mol) = peptide_i.and_then(|i| state.peptides.get(i)) {
+    if let Some(mol) = state.peptides.get(peptide_i) {
         // todo: Temp location
         if let Selection::AtomPeptide(sel_i) = state.ui.selection && button!(
                 ui,
@@ -647,7 +697,13 @@ pub(in crate::ui) fn display_mol_data_peptide(
     }
 }
 
-pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
+pub(in crate::ui) fn display_mol_data(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    redraw_lig: &mut bool,
+    updates: &mut EngineUpdates,
+) {
     ui.horizontal(|ui| {
         let Some((active_mol_type, active_mol_i)) = state.volatile.active_mol else {
             return;
@@ -655,6 +711,11 @@ pub(in crate::ui) fn display_mol_data(state: &mut State, ui: &mut Ui) {
 
         if let Some(mol) = state.active_mol() {
             mol_descrip(&mol, ui);
+        }
+
+        if active_mol_type == MolType::Peptide {
+            display_peptide_actions(state, active_mol_i, scene, ui, redraw_lig, updates);
+            return;
         }
 
         if active_mol_type == MolType::Ligand {
@@ -854,8 +915,17 @@ pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui
     let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
     // Cloned to avoid holding a borrow of `state` alongside the mutable one below.
     let prefs_dir = state.volatile.prefs_dir.clone();
-    let load_all_idents = popup::metadata_popup(
+    // Edit rows belong to the molecule they were loaded from; another one starts fresh.
+    if state.ui.metadata_edit.mol != Some((mol_type, i)) {
+        state.ui.metadata_edit.mol = Some((mol_type, i));
+        state.ui.metadata_edit.rows.clear();
+        state.ui.editing_metadata = false;
+    }
+
+    let result = popup::metadata_popup(
         &mut state.ui.popup,
+        &mut state.ui.editing_metadata,
+        &mut state.ui.metadata_edit.rows,
         &common,
         idents.as_ref(),
         loading_idents,
@@ -863,7 +933,14 @@ pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui
         ui,
     );
 
-    if load_all_idents
+    // The popup edits a clone; apply the result to the molecule itself.
+    if let Some(metadata) = result.metadata
+        && let Some(mut mol) = state.get_mol_mut(mol_type, i)
+    {
+        mol.common_mut().metadata = metadata;
+    }
+
+    if result.load_all_idents
         && mol_type == MolType::Ligand
         && let Some(idents) = idents
     {

@@ -404,7 +404,9 @@ pub fn handle_thread_rx(
             if let Some(error) = cache_error {
                 handle_err(
                     &mut state.ui,
-                    format!("Loaded identifiers, but could not update the downloaded copy: {error}"),
+                    format!(
+                        "Loaded identifiers, but could not update the downloaded copy: {error}"
+                    ),
                 );
             }
 

@@ -884,22 +884,28 @@ pub(in crate::ui) fn sidebar(
                 let mut load_all_idents = false;
                 let mut toggle_metadata_popup = false;
 
-                if let Some(m) = &state.active_mol()
-                    && let MolGenericRef::Small(mol) = m
-                {
-                    load_all_idents = char_adme::mol_char_disp(
-                        mol,
-                        state.volatile.thread_receivers.all_idents_avail.is_some(),
-                        &state.volatile.prefs_dir,
-                        ui,
-                        &mut run_logp_sim,
-                        &mut run_crystal_sim,
-                        &mut run_water_sol_sim_mix,
-                        &mut run_water_sol_sim_layers,
-                        &mut run_shrinking_box,
-                        &mut new_crystal_mol,
-                        &mut toggle_metadata_popup,
-                    );
+                if let Some(mol) = state.active_mol() {
+                    match mol {
+                        MolGenericRef::Small(mol) => {
+                            load_all_idents = char_adme::mol_char_disp(
+                                mol,
+                                state.volatile.thread_receivers.all_idents_avail.is_some(),
+                                &state.volatile.prefs_dir,
+                                ui,
+                                &mut run_logp_sim,
+                                &mut run_crystal_sim,
+                                &mut run_water_sol_sim_mix,
+                                &mut run_water_sol_sim_layers,
+                                &mut run_shrinking_box,
+                                &mut new_crystal_mol,
+                                &mut toggle_metadata_popup,
+                            );
+                        }
+                        MolGenericRef::Peptide(mol) => {
+                            char_adme::peptide_data_buttons(mol, ui, &mut toggle_metadata_popup)
+                        }
+                        _ => {}
+                    }
                 }
 
                 if toggle_metadata_popup {

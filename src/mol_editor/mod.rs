@@ -86,7 +86,6 @@ impl Default for MdEditor {
 /// For editing small organic molecules.
 pub struct MolEditorState {
     pub mol: MoleculeSmall,
-    // pub pocket: Option<Pocket>,
     /// Hydrogen bonds between the mol and pocket.
     pub h_bonds: Vec<HydrogenBondTwoMols>,
     /// I.e. state.ligands[i]. For instance, we replace this in the primary state

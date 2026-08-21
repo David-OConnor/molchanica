@@ -572,6 +572,19 @@ pub struct StateUi {
     pub color_by_mol: bool,
     // todo: Dedicated pharmacophore sub-state A/R.
     pub pharmacaphore_type: PharmacophoreFeatType,
+    pub editing_metadata: bool,
+    pub metadata_edit: MetadataEdit,
+}
+
+/// Rows shown by the metadata editor, populated from the molecule when editing is enabled.
+/// A `Vec` instead of the molecule's `HashMap`: rows need a stable order between frames, and
+/// may transiently hold blank or duplicate keys while the user types them.
+#[derive(Default)]
+pub struct MetadataEdit {
+    /// The molecule these rows were loaded from. Rows are discarded when the metadata popup
+    /// moves to a different molecule, so edits can't be applied to the wrong one.
+    pub mol: Option<(MolType, usize)>,
+    pub rows: Vec<(String, String)>,
 }
 
 /// Cached egui layout for the amino-acid sequence. The sequence itself remains in

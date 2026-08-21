@@ -16,7 +16,6 @@ use mol_defs::{
     smiles::is_smiles,
 };
 
-use crate::ui::COL_SPACING;
 use crate::{
     cam::reset_camera,
     drawing::{
@@ -39,7 +38,7 @@ use crate::{
     prefs::OpenType,
     render::{Color, set_flashlight, set_static_light},
     state::{DbSel, OperatingMode, State},
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
 };
 
@@ -696,13 +695,10 @@ fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
         return EnterTarget::PubchemCid;
     }
 
-    // A `pdb_`-prefixed ident draws the RCSB button but isn't an Enter target; only a bare
-    // 4-character one is. Either way the query belongs to RCSB, so nothing below can claim it.
-    if inp.len() == 4 {
+    // An RCSB ident, in either the bare 4-character form or the 12-character `pdb_`-prefixed one.
+    // Both belong to RCSB, so nothing below can claim them.
+    if inp.len() == 4 || inp_l.starts_with("pdb_") {
         return EnterTarget::Rcsb;
-    }
-    if inp_l.starts_with("pdb_") {
-        return EnterTarget::None;
     }
 
     if inp.len() == 3 {
@@ -886,10 +882,11 @@ pub(in crate::ui) fn load_mol_from_query(
     }
 
     if inp.len() == 4 || inp_l.starts_with("pdb_") {
-        // Enter only acts on a bare 4-character ident here, so a `pdb_`-prefixed one isn't a target.
+        // Both ident forms load: the bare 4-character one, and the 12-character `pdb_`-prefixed one
+        // RCSB has moved to. `files.rcsb.org` accepts either.
         let is_tgt = enter_tgt == EnterTarget::Rcsb;
         let button_clicked = query_btn(ui, "Load RCSB", is_tgt).clicked();
-        if (button_clicked || (enter_pressed && is_tgt)) && inp.len() == 4 {
+        if button_clicked || (enter_pressed && is_tgt) {
             load_atom_coords_rcsb(inp_l, state, scene, updates, &mut redraw.peptide, reset_cam);
 
             state.ui.db_input = String::new();

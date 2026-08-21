@@ -437,7 +437,7 @@ This application is written in rust, so it compiles normally using
 `cargo build --release`, which produces a
 standalone executable.
 
-If you're not running on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the
+If you're not compiling on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the
 `--no-default-features` to the build command. This will disable GPU support on the executable produced.
 
 #### Compiling with GPU support

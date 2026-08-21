@@ -9,7 +9,7 @@ pub mod recent_files;
 pub(crate) mod sequence_pred;
 pub(crate) mod structure_pred;
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
@@ -26,7 +26,7 @@ use mol_defs::molecules::{
 use na_seq::AaIdent;
 
 use crate::{
-    cam,
+    button, cam,
     cam::move_cam_to_mol,
     drawing::wrappers::draw_all_pockets,
     file_io::download_mols::load_atom_coords_rcsb,
@@ -52,6 +52,11 @@ const POPUP_POS: Pos2 = Pos2::new(300., 300.);
 /// Metadata values and identifiers (e.g. InChI, SMILES) can be very long; wrap them at this
 /// width instead of letting the popup grow to the width of the application window.
 const METADATA_MAX_WIDTH: f32 = 600.;
+
+/// Widths of the metadata editor's key and value text boxes. They must sum to less than
+/// `METADATA_MAX_WIDTH`, leaving room for the row's delete button.
+const KEY_EDIT_WIDTH: f32 = 160.;
+const VAL_EDIT_WIDTH: f32 = 340.;
 
 pub(in crate::ui) fn close_btn(ui: &mut Ui, popup: &mut bool) {
     if ui
@@ -429,23 +434,32 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
     }
 }
 
+/// What the metadata popup asks its caller to do, once the frame is drawn.
+pub(in crate::ui) struct MetadataPopupResult {
+    pub load_all_idents: bool,
+    /// Set when the user changed a field: the molecule's metadata, rebuilt from the edit rows.
+    pub metadata: Option<HashMap<String, String>>,
+}
+
 pub(in crate::ui) fn metadata_popup(
     popup_state: &mut PopupState,
+    editing: &mut bool,
+    edit_rows: &mut Vec<(String, String)>,
     mol: &MoleculeCommon,
     idents: Option<&Vec<MolIdent>>,
     loading_idents: bool,
     prefs_dir: &Path,
     ui: &mut Ui,
-) -> bool {
-    let mut load_all_idents = false;
+) -> MetadataPopupResult {
+    let mut result = MetadataPopupResult {
+        load_all_idents: false,
+        metadata: None,
+    };
 
     // Everything here is left-aligned and wrapping: a right-aligned or non-wrapping row would
     // stretch the popup to the width available to it, instead of to the width its content needs.
     ui.horizontal_wrapped(|ui| {
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
+        if button!(ui, "Close", Color32::LIGHT_RED, "").clicked() {
             popup_state.metadata = None;
         }
 
@@ -456,10 +470,42 @@ pub(in crate::ui) fn metadata_popup(
 
         ui.add_space(COL_SPACING);
 
+        let (color, text) = if *editing {
+            (COLOR_ACTIVE, "Disable editing")
+        } else {
+            (COLOR_INACTIVE, "Enable editing")
+        };
+
+        if button!(
+            ui,
+            text,
+            color,
+            "Enable or disable editing metadata fields."
+        )
+        .clicked()
+        {
+            *editing = !*editing;
+
+            if *editing {
+                // Sorted: a `HashMap`'s iteration order is arbitrary, and rows that jumped around
+                // between frames would be unusable to edit.
+                *edit_rows = mol
+                    .metadata
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                edit_rows.sort_by(|a, b| a.0.cmp(&b.0));
+            } else {
+                edit_rows.clear();
+            }
+        }
+
+        ui.add_space(COL_SPACING);
+
         // Only small molecules have `MolIdent`s. Other molecule types still use this popup for
         // their general metadata, but must not offer the online small-molecule lookup.
         if idents.is_some() && load_all_idents_button(ui, loading_idents) {
-            load_all_idents = true;
+            result.load_all_idents = true;
         }
     });
 
@@ -473,6 +519,11 @@ pub(in crate::ui) fn metadata_popup(
 
             ui.add_space(ROW_SPACING);
 
+            if *editing {
+                metadata_editor(edit_rows, &mut result, ui);
+                return;
+            }
+
             for (k, v) in mol.metadata.iter() {
                 // Wrap long values instead of widening the popup to fit them on one line.
                 ui.horizontal_wrapped(|ui| {
@@ -482,7 +533,76 @@ pub(in crate::ui) fn metadata_popup(
             }
         });
 
-    load_all_idents
+    result
+}
+
+/// Editable rows of key/value metadata fields, with controls to add and remove them. Sets
+/// `result.metadata` on any change, so the caller can apply it to the molecule.
+fn metadata_editor(
+    edit_rows: &mut Vec<(String, String)>,
+    result: &mut MetadataPopupResult,
+    ui: &mut Ui,
+) {
+    let mut changed = false;
+    // Applied after the loop; removing a row while iterating it would shift the rows below.
+    let mut to_remove = None;
+
+    ui.horizontal(|ui| {
+        if button!(ui, "+", COLOR_ACTION, "Add a metadata field.").clicked() {
+            edit_rows.push((String::new(), String::new()));
+        }
+        ui.add_space(COL_SPACING);
+        label!(ui, "Fields with a blank name are discarded.", Color32::GRAY);
+    });
+
+    ui.add_space(ROW_SPACING);
+
+    for (i, (k, v)) in edit_rows.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            if ui
+                .add(TextEdit::singleline(k).desired_width(KEY_EDIT_WIDTH))
+                .changed()
+            {
+                changed = true;
+            }
+
+            // Multiline so long values wrap inside the popup instead of widening it; a single
+            // row tall, growing as needed.
+            if ui
+                .add(
+                    TextEdit::multiline(v)
+                        .desired_width(VAL_EDIT_WIDTH)
+                        .desired_rows(1),
+                )
+                .changed()
+            {
+                changed = true;
+            }
+
+            if button!(ui, "❌", Color32::LIGHT_RED, "Delete this field.").clicked() {
+                to_remove = Some(i);
+            }
+        });
+    }
+
+    if let Some(i) = to_remove {
+        edit_rows.remove(i);
+        changed = true;
+    }
+
+    if changed {
+        let mut metadata = HashMap::with_capacity(edit_rows.len());
+        for (k, v) in edit_rows.iter() {
+            // A blank key can't be stored; it's the state a newly-added row starts in. Duplicate
+            // keys collapse to the last one, which is also transient while a key is being typed.
+            if k.is_empty() {
+                continue;
+            }
+            metadata.insert(k.clone(), v.clone());
+        }
+
+        result.metadata = Some(metadata);
+    }
 }
 
 fn graphics_settings(

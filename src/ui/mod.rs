@@ -1,11 +1,9 @@
 use std::{
-    io::Cursor,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use bio_apis::{pdbe, rcsb};
-use bio_files::{DensityMap, density_from_2fo_fc_rcsb_gemmi};
 use egui::{
     Color32, ComboBox, CornerRadius, Event, Frame, Key, Margin, Panel, RichText, Sense, Slider,
     Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
@@ -16,7 +14,7 @@ use na_seq::Element;
 use panels::{
     md::md_setup,
     mol_data,
-    mol_data::{display_mol_data, display_mol_data_peptide},
+    mol_data::display_mol_data,
     orca::orca_input,
     view::{ui_section_vis, view_settings},
 };
@@ -31,7 +29,7 @@ use crate::{
     cli,
     cli::autocomplete_cli,
     drawing::{MoleculeView, color_viridis},
-    file_io::{download_mols::load_atom_coords_rcsb, gemmi_path},
+    file_io::download_mols::load_atom_coords_rcsb,
     mol_editor::enter_edit_mode,
     prefs::ControlSchemeType,
     render::set_flashlight,
@@ -50,8 +48,7 @@ use crate::{
         },
     },
     util::{
-        RedrawFlags, check_prefs_save, close_mol, handle_err, handle_scene_flags, handle_success,
-        orbit_center,
+        RedrawFlags, check_prefs_save, close_mol, handle_err, handle_scene_flags, orbit_center,
     },
 };
 
@@ -796,7 +793,7 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
             ui.label("pH:");
             if ui
                 .add_sized(
-                    [20., Ui::available_height(ui)],
+                    [34., Ui::available_height(ui)],
                     TextEdit::singleline(&mut state.ui.ph_input),
                 )
                 .changed()
@@ -1015,223 +1012,24 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 {
                     state.ui.popup.about = !state.ui.popup.about;
                 }
+
+                ui.add_space(COL_SPACING * 2.);
+                query_input(state, scene, ui, &mut redraw, &mut updates, &mut reset_cam);
             });
-
-            let metadata_loaded = false; // avoids borrow error.
-            display_mol_data_peptide(state, scene, ui, &mut redraw.ligand, &mut updates);
-
-            let mut dm_loaded = None; // avoids a double-borrow error.
-
-            if let Some(mol) = state.peptide_for_tools_i().and_then(|i| state.peptides.get_mut(i)) {
-
-                // todo: Move these A/R. LIkely in a sub menu.
-                if let Some(files_avail) = &mol.rcsb_files_avail {
-                    // if files_avail.structure_factors {
-                    //     if ui
-                    //         .button(RichText::new("SF").color(COLOR_HIGHLIGHT))
-                    //         .clicked()
-                    //     {
-                    //         match rcsb::load_structure_factors_cif(&mol.common.ident) {
-                    //             Ok(data) => {
-                    //                 // println!("SF data: {:?}", data);
-                    //             }
-                    //             Err(_) => {
-                    //                 let msg = format!(
-                    //                     "Error loading RCSB structure factors for {:?}",
-                    //                     &mol.common.ident
-                    //                 );
-                    //
-                    //                 handle_err(&mut state.ui, msg);
-                    //             }
-                    //         }
-                    //     }
-                    // }
-                    if files_avail.validation_2fo_fc && ui
-                        .button(RichText::new("Fetch elec ρ").color(COLOR_HIGHLIGHT))
-                        .on_hover_text("Load 2fo-fc electron density data from RCSB PDB. Convert to CCP4 map format and display.")
-                        .clicked()
-                    {
-                        // todo: For now, we rely on Gemmi being available on the Path.
-                        // todo: We will eventually get our own reflections loader working.
-
-                        match density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, gemmi_path()) {
-                            Ok(dm) => {
-                                dm_loaded = Some(dm);
-                                handle_success(&mut state.ui, "Loaded density data from RSCB".to_owned());
-                            }
-                            Err(e) => {
-                                let msg = format!(
-                                    "Error loading or processing RCSB 2fo-fc map for {:?}: {e:?}",
-                                    &mol.common.ident
-                                );
-                                handle_err(&mut state.ui, msg);
-                            }
-                        }
-                    }
-                    // todo: Add these if you end up with a way to use them. We currently use 2fo-fc only.
-                    // if files_avail.validation_fo_fc {
-                    //     if ui
-                    //         .button(RichText::new("fo-fc").color(COLOR_HIGHLIGHT))
-                    //         .clicked()
-                    //     {
-                    //         match rcsb::load_validation_fo_fc_cif(&mol.common.ident) {
-                    //             Ok(data) => {
-                    //                 // println!("SF data: {:?}", data);
-                    //             }
-                    //             Err(_) => {
-                    //                 let msg = format!(
-                    //                     "Error loading RCSB fo-fc map for {:?}",
-                    //                     &mol.common.ident
-                    //                 );
-                    //                 handle_err(&mut state.ui, msg);
-                    //             }
-                    //         }
-                    //     }
-                    // }
-                    //
-                    // if files_avail.validation {
-                    //     if ui
-                    //         .button(RichText::new("Val").color(COLOR_HIGHLIGHT))
-                    //         .clicked()
-                    //     {
-                    //         match rcsb::load_validation_cif(&mol.common.ident) {
-                    //             Ok(data) => {
-                    //                 // println!("VAL DATA: {:?}", data);
-                    //             }
-                    //             Err(_) => {
-                    //                 let msg = format!(
-                    //                     "Error loading RCSB validation for {:?}",
-                    //                     &mol.common.ident
-                    //                 );
-                    //                 handle_err(&mut state.ui, msg);
-                    //             }
-                    //         }
-                    //     }
-                    // }
-
-                    if files_avail.map && ui
-                        .button(RichText::new("Map").color(COLOR_HIGHLIGHT))
-                        .clicked()
-                    {
-                        match rcsb::load_map(&mol.common.ident) {
-                            Ok(data) => {
-                                let mut cursor = Cursor::new(data);
-                                match DensityMap::open(&mut cursor) {
-                                    Ok(dm) => {
-                                        dm_loaded = Some(dm);
-                                        println!("Succsesfully loaded Map rom RSCB.");
-                                    }
-                                    Err(_) => {
-                                        let msg = format!(
-                                            "Error loading RCSB Map for {:?}",
-                                            &mol.common.ident
-                                        );
-                                        handle_err(&mut state.ui, msg);
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                let msg =
-                                    format!("Error loading RCSB Map for {:?}", &mol.common.ident);
-                                handle_err(&mut state.ui, msg);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(dm) = dm_loaded {
-                state.load_density(dm);
-            }
-
-
-            if metadata_loaded {
-                state.update_save_prefs();
-            }
-
-            ui.add_space(COL_SPACING);
-
-            let color_open_tools = if state.peptides.is_empty()
-                && state.ligands.is_empty() {
-                COLOR_ACTION
-            } else {
-                COLOR_INACTIVE
-            };
-
-            let query_help = "Download and view a molecule from RCSB PDB, PubChem, DrugBank, ChEBI, or Amber Geostd";
-            ui.label(RichText::new("Query:").color(color_open_tools))
-                .on_hover_text(query_help);
-
-            let mut input_trimmed = std::mem::take(&mut state.ui.db_input_trimmed);
-            let mut input_lowercase = std::mem::take(&mut state.ui.db_input_lowercase);
-            let edit_resp = ui
-                .add(TextEdit::singleline(&mut state.ui.db_input).desired_width(100.))
-                .on_hover_text(query_help);
-
-            if edit_resp.changed() {
-                input_trimmed.clear();
-                input_trimmed.push_str(state.ui.db_input.trim());
-                input_lowercase.clear();
-                input_lowercase.push_str(&input_trimmed);
-                input_lowercase.make_ascii_lowercase();
-            }
-
-            if !state.ui.db_input.is_empty() {
-                // Preserve original case — SMILES uses lowercase for aromatic atoms and
-                // uppercase for aliphatic atoms; lowercasing destroys that distinction.
-                let enter_pressed = input_trimmed.len() >= QUERY_ENTER_LEN_MIN
-                    && edit_resp.lost_focus()
-                    && ui.input(|i| i.key_pressed(Key::Enter));
-
-                load_mol_from_query(
-                    state,
-                    scene,
-                    &mut redraw,
-                    &mut reset_cam,
-                    &mut updates,
-                    ui,
-                    &input_trimmed,
-                    &input_lowercase,
-                    enter_pressed,
-                );
-            }
-
-            if state.ui.db_input.is_empty() {
-                input_trimmed.clear();
-                input_lowercase.clear();
-            }
-            state.ui.db_input_trimmed = input_trimmed;
-            state.ui.db_input_lowercase = input_lowercase;
-            if state.peptides.is_empty() && state.active_mol().is_none() {
-                ui.add_space(COL_SPACING / 2.);
-                if ui
-                    .button(RichText::new("I'm feeling lucky 🍀").color(color_open_tools))
-                    .on_hover_text("Open a random recently-uploaded protein from RCSB PDB.")
-                    .clicked()
-                {
-                    match rcsb::get_newly_released() {
-                        Ok(ident) => {
-                            load_atom_coords_rcsb(
-                                &ident,
-                                state,
-                                scene,
-                                &mut updates,
-                                &mut redraw.peptide,
-                                &mut reset_cam,
-                            );
-                        }
-                        Err(e) => handle_err(&mut state.ui, format!("Error loading a protein from RCSB: {e:?}"))
-                    }
-                }
-            }
         });
 
         let close_active_mol = false; // to avoid borrow error.
 
         ui.horizontal(|ui| {
             section_box().show(ui, |ui| {
-                if !state.ligands.is_empty() || !state.lipids.is_empty() || !state.nucleic_acids.is_empty() || !state.pockets.is_empty() {
-                    display_mol_data(state, ui);
+                if state.volatile.active_mol.is_some() {
+                    display_mol_data(
+                        state,
+                        scene,
+                        ui,
+                        &mut redraw.ligand,
+                        &mut updates,
+                    );
                 }
 
                 if state.ligands.len() >= 2 && ui.button("Align")
@@ -1316,9 +1114,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         if state.ui.ui_vis.smiles
             && let Some(MolGenericRef::Small(molecule)) = state.active_mol()
             && let Some(smiles) = molecule.idents.iter().find_map(|ident| match ident {
-                MolIdent::Smiles(smiles) => Some(smiles.as_str()),
-                _ => None,
-            })
+            MolIdent::Smiles(smiles) => Some(smiles.as_str()),
+            _ => None,
+        })
         {
             draw_smiles(smiles, &mut smiles_cache, ui);
         }
@@ -1679,5 +1477,92 @@ pub(in crate::ui) fn highlighted_box(active: bool, fill: Color32) -> Frame {
             .outer_margin(Margin::symmetric(0, 0))
     } else {
         Frame::new()
+    }
+}
+
+/// An input element to query remote databases, and similar.
+fn query_input(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+    reset_cam: &mut bool,
+) {
+    let color_open_tools = if state.peptides.is_empty() && state.ligands.is_empty() {
+        COLOR_ACTION
+    } else {
+        COLOR_INACTIVE
+    };
+
+    let query_help =
+        "Download and view a molecule from RCSB PDB, PubChem, DrugBank, ChEBI, or Amber Geostd";
+    ui.label(RichText::new("Query:").color(color_open_tools))
+        .on_hover_text(query_help);
+
+    let mut input_trimmed = std::mem::take(&mut state.ui.db_input_trimmed);
+    let mut input_lowercase = std::mem::take(&mut state.ui.db_input_lowercase);
+    let edit_resp = ui
+        .add(TextEdit::singleline(&mut state.ui.db_input).desired_width(180.))
+        .on_hover_text(query_help);
+
+    if edit_resp.changed() {
+        input_trimmed.clear();
+        input_trimmed.push_str(state.ui.db_input.trim());
+        input_lowercase.clear();
+        input_lowercase.push_str(&input_trimmed);
+        input_lowercase.make_ascii_lowercase();
+    }
+
+    if !state.ui.db_input.is_empty() {
+        // Preserve original case — SMILES uses lowercase for aromatic atoms and
+        // uppercase for aliphatic atoms; lowercasing destroys that distinction.
+        let enter_pressed = input_trimmed.len() >= QUERY_ENTER_LEN_MIN
+            && edit_resp.lost_focus()
+            && ui.input(|i| i.key_pressed(Key::Enter));
+
+        load_mol_from_query(
+            state,
+            scene,
+            redraw,
+            reset_cam,
+            updates,
+            ui,
+            &input_trimmed,
+            &input_lowercase,
+            enter_pressed,
+        );
+    }
+
+    if state.ui.db_input.is_empty() {
+        input_trimmed.clear();
+        input_lowercase.clear();
+    }
+    state.ui.db_input_trimmed = input_trimmed;
+    state.ui.db_input_lowercase = input_lowercase;
+    if state.peptides.is_empty() && state.active_mol().is_none() {
+        ui.add_space(COL_SPACING / 2.);
+        if ui
+            .button(RichText::new("I'm feeling lucky 🍀").color(color_open_tools))
+            .on_hover_text("Open a random recently-uploaded protein from RCSB PDB.")
+            .clicked()
+        {
+            match rcsb::get_newly_released() {
+                Ok(ident) => {
+                    load_atom_coords_rcsb(
+                        &ident,
+                        state,
+                        scene,
+                        updates,
+                        &mut redraw.peptide,
+                        reset_cam,
+                    );
+                }
+                Err(e) => handle_err(
+                    &mut state.ui,
+                    format!("Error loading a protein from RCSB: {e:?}"),
+                ),
+            }
+        }
     }
 }

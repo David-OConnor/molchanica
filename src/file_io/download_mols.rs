@@ -87,10 +87,19 @@ pub fn load_atom_coords_rcsb(
 
     match load_cif_rcsb(ident) {
         Ok((cif, cif_text)) => {
+            // Key the cache on the entry ID the file itself reports, not on the query text: RCSB
+            // serves the same structure for the bare 4-character ident and the 12-character
+            // `pdb_`-prefixed one, so keying on what was typed would cache it twice. The query is
+            // still recorded in the manifest.
+            let cache_key = match cif.ident.is_empty() {
+                true => ident,
+                false => &cif.ident,
+            };
+
             let cache_path = match managed_mols::store_text(
                 &state.volatile.prefs_dir,
                 ManagedMolProvider::Rcsb,
-                ident,
+                cache_key,
                 ident,
                 "cif",
                 &cif_text,

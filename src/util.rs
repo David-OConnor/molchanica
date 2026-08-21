@@ -719,9 +719,6 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
     }
 
     if state.volatile.flags.update_ss_mesh {
-        // todo temp
-        println!("\n\nRebuilding ribbon mesh.\n\n");
-
         state.volatile.flags.update_ss_mesh = false;
         state.volatile.flags.ss_mesh_created = true;
         state.volatile.mol_manip.ribbon_mesh_transform = PeptideMeshTransform::default();
