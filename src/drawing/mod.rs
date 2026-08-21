@@ -654,6 +654,35 @@ pub fn draw_mol(
     num_mols: usize,
     draw_md_mols: bool,
 ) -> Vec<Entity> {
+    let show_pharmacophore = !ui.visibility.hide_pharmacophore || mode == OperatingMode::MolEditor;
+
+    draw_mol_with_pharmacophore_visibility(
+        mol,
+        mol_i,
+        ui,
+        active_mol,
+        manip_mode,
+        mode,
+        num_mols,
+        draw_md_mols,
+        show_pharmacophore,
+    )
+}
+
+/// Draw a molecule with an explicit override for its pharmacophore feature renders.
+/// The molecule editor uses this instead of the global visibility preference.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_mol_with_pharmacophore_visibility(
+    mol: MolGenericRef,
+    mol_i: usize,
+    ui: &StateUi,
+    active_mol: &Option<(MolType, usize)>,
+    manip_mode: ManipMode,
+    mode: OperatingMode,
+    num_mols: usize,
+    draw_md_mols: bool,
+    show_pharmacophore: bool,
+) -> Vec<Entity> {
     let mut result = Vec::new();
 
     if !mol.common().visible {
@@ -1074,7 +1103,7 @@ pub fn draw_mol(
         }
 
         if let MolGenericRef::Small(m) = &mol
-            && (!ui.visibility.hide_pharmacophore || mode == OperatingMode::MolEditor)
+            && show_pharmacophore
         {
             result.extend(draw_mol_pharmacophore(m, mode));
         }

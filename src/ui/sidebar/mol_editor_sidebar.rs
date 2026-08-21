@@ -82,25 +82,20 @@ pub(in crate::ui) fn pocket_list(
 pub(in crate::ui) fn pharmacophore_list(state: &mut State, ui: &mut Ui) {
     // todo: Make this work eventually when out of hte mol editor.
 
-    let mol = &mut state.mol_editor.mol;
-    let mut closed = false;
-
     ui.add_space(ROW_SPACING);
 
     // todo: Hmm. Need to redraw.
     let mut redraw_mol_editor = false;
+
+    // The visibility flag goes in directly: `pharmacophore_list` clears it when its Close button
+    // is hit. These are disjoint fields of `state`, so borrowing them together is fine.
     pharmacophore::pharmacophore_list(
-        &mut mol.pharmacophore,
+        &mut state.mol_editor.mol.pharmacophore,
         &mut state.ui.popup,
-        &mut closed,
+        &mut state.ui.ui_vis.pharmacophore_list,
         ui,
         &mut redraw_mol_editor,
     );
-
-    if closed {
-        // Broken out to avoid double borrow.
-        state.ui.ui_vis.pharmacophore_list = false;
-    }
 }
 
 /// e.g. functional groups, rings, etc.

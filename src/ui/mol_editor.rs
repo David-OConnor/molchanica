@@ -12,9 +12,12 @@ use crate::{
     cam::{cam_reset_controls, set_fog},
     drawing::MoleculeView,
     file_io::save_mol,
-    mol_editor,
+    label, mol_editor,
     mol_editor::{
-        add_atoms::{add_atom, add_from_template, populate_hydrogens_on_atom, remove_hydrogens},
+        add_atoms::{
+            HCountOp, add_atom, add_from_template, adjust_h_count, h_count, index_of_sn,
+            refresh_hydrogens,
+        },
         exit_edit_mode, sync_md,
         templates::Template,
     },
@@ -27,7 +30,10 @@ use crate::{
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, misc,
         misc::{active_color, section_box},
-        panels::{md_viewer::energy_disp, mol_data::selected_data, view::mesh_coloring_selector},
+        panels::{
+            md_viewer::energy_disp, mol_data::selected_data_mol_editor,
+            view::mesh_coloring_selector,
+        },
         popup::pharmacophore::pharmacophore_edit_tools,
         util::color_egui_from_f32,
     },
@@ -81,13 +87,23 @@ fn change_el_button(
 
         // let mol = &mut editor.mol;
 
-        for i in idxs {
+        // Serial numbers, not indices: re-populating hydrogens removes atoms, which renumbers the
+        // ones after them.
+        let sns: Vec<u32> = idxs
+            .iter()
+            .filter_map(|i| mol.common.atoms.get(*i))
+            .map(|a| a.serial_number)
+            .collect();
+
+        for sn in sns {
+            let Some(i) = index_of_sn(&mol.common, sn) else {
+                continue;
+            };
             mol.common.atoms[i].element = el;
 
-            remove_hydrogens(&mut mol.common, i);
-            populate_hydrogens_on_atom(
+            refresh_hydrogens(
                 &mut mol.common,
-                i,
+                sn,
                 entities,
                 state_ui,
                 engine_updates,
@@ -236,16 +252,23 @@ pub(in crate::ui) fn editor(
             let started = !prev && state.mol_editor.md.running;
 
             if started && (state.mol_editor.md.rebuild_required || state.mol_editor.md.md.is_none()) {
-                match mol_editor::build_dynamics(
+                let build_result = mol_editor::build_dynamics(
                     &state.dev,
                     &mut state.mol_editor,
                     &state.ff_param_set,
                     &state.to_save.md.config,
-                ) {
-                    Ok(d) => state.mol_editor.md.md = Some(d),
-                    Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
+                );
+                match build_result {
+                    Ok(d) => {
+                        state.mol_editor.md.md = Some(d);
+                        state.mol_editor.md.rebuild_required = false;
+                    }
+                    Err(e) => {
+                        state.mol_editor.md.md = None;
+                        state.mol_editor.md.rebuild_required = true;
+                        eprintln!("Problem setting up dynamics for the editor: {e:?}");
+                    }
                 }
-                state.mol_editor.md.rebuild_required = false;
             }
         });
 
@@ -327,17 +350,24 @@ pub(in crate::ui) fn editor(
                 updates,
             );
 
-            if state.mol_editor.md.md.is_none() {
-                match mol_editor::build_dynamics(
+            if state.mol_editor.md.rebuild_required || state.mol_editor.md.md.is_none() {
+                let build_result = mol_editor::build_dynamics(
                     &state.dev,
                     &mut state.mol_editor,
                     &state.ff_param_set,
                     &state.to_save.md.config,
-                ) {
+                );
+
+                match build_result {
                     Ok(md) => {
                         state.mol_editor.md.md = Some(md);
+                        state.mol_editor.md.rebuild_required = false;
                     }
-                    Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
+                    Err(e) => {
+                        // Never fall through to minimizing an older state after a rebuild failure.
+                        state.mol_editor.md.md = None;
+                        eprintln!("Problem setting up dynamics for the editor: {e:?}");
+                    }
                 }
             }
 
@@ -417,12 +447,21 @@ pub(in crate::ui) fn editor(
 
                 // todo: For now, so we don't need to add positioning logic to the find_tautomers function.
                 // todo: Only re-populate hydrogens on the changed atoms.
-                for i in 0..state.mol_editor.mol.common.atoms.len() {
-                    // Re-populate hydrogens on any atoms bonded to this.
-                    remove_hydrogens(&mut state.mol_editor.mol.common, i);
-                    populate_hydrogens_on_atom(
+                // Snapshot serial numbers first: each refresh removes and re-adds atoms, so
+                // indices -- and the atom count -- shift as we go.
+                let sns: Vec<u32> = state
+                    .mol_editor
+                    .mol
+                    .common
+                    .atoms
+                    .iter()
+                    .map(|a| a.serial_number)
+                    .collect();
+
+                for sn in sns {
+                    refresh_hydrogens(
                         &mut state.mol_editor.mol.common,
-                        i,
+                        sn,
                         &mut scene.entities,
                         &mut state.ui,
                         updates,
@@ -439,6 +478,19 @@ pub(in crate::ui) fn editor(
 
     ui.horizontal(|ui| {
         pharmacophore_edit_tools(state, scene, ui, updates, &mut redraw);
+
+        ui.add_space(COL_SPACING);
+
+        let color = active_color(state.mol_editor.show_pharmacophore_renders);
+        if ui
+            .button(RichText::new("Show ph 3D").color(color))
+            .on_hover_text("Show or hide the molecule's 3D pharmacophore feature indicators.")
+            .clicked()
+        {
+            state.mol_editor.show_pharmacophore_renders =
+                !state.mol_editor.show_pharmacophore_renders;
+            redraw = true;
+        }
 
         ui.add_space(COL_SPACING);
 
@@ -506,10 +558,7 @@ pub(in crate::ui) fn editor(
         }
     });
 
-    // This trick prevents a clone.
-    let mol = std::mem::take(&mut state.mol_editor.mol); // move out, leave default in place
-    selected_data(state, &state.ui.selection, ui);
-    state.mol_editor.mol = mol;
+    selected_data_mol_editor(state, &state.ui.selection, ui);
 
     // Prevents the UI from jumping when going between a selection and none.
     if state.ui.selection == Selection::None {
@@ -579,6 +628,102 @@ fn bond_edit_tools(
     }
 }
 
+/// Buttons for setting how many hydrogens an atom carries.
+///
+/// The automatic count assumes a neutral atom in its usual valence state, which covers most of
+/// what you draw but not charged centres: an ammonium N wants four bonds, an azide's terminal N
+/// wants none beyond the one it has, and a carboxylate O wants none. Those need setting by hand.
+#[allow(clippy::too_many_arguments)]
+fn h_count_tools(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    engine_updates: &mut EngineUpdates,
+    redraw: &mut bool,
+    rebuild_md: &mut bool,
+    mol_i: usize,
+    selected_idxs: &[usize],
+) {
+    let h_now: usize = selected_idxs
+        .iter()
+        .map(|i| h_count(&state.mol_editor.mol.common, *i))
+        .sum();
+
+    label!(ui, format!("H: {h_now}"), Color32::GRAY);
+
+    let mut op = None;
+
+    if ui
+        .button("−H")
+        .on_hover_text("Remove one hydrogen from the selected atom[s].")
+        .clicked()
+    {
+        op = Some(HCountOp::Remove);
+    }
+
+    if ui
+        .button("+H")
+        .on_hover_text(
+            "Add one hydrogen to the selected atom[s], past what its valence implies. E.g. \
+            for an ammonium nitrogen. Does nothing if there's no room left around the atom.",
+        )
+        .clicked()
+    {
+        op = Some(HCountOp::Add);
+    }
+
+    if ui
+        .button("H↺")
+        .on_hover_text(
+            "Reset the selected atom[s] to the number of hydrogens their element and bonds imply.",
+        )
+        .clicked()
+    {
+        op = Some(HCountOp::Auto);
+    }
+
+    let Some(op) = op else {
+        return;
+    };
+
+    // Serial numbers, not indices: removing a hydrogen renumbers the atoms after it.
+    let sns: Vec<u32> = selected_idxs
+        .iter()
+        .filter_map(|i| state.mol_editor.mol.common.atoms.get(*i))
+        .map(|a| a.serial_number)
+        .collect();
+
+    for sn in &sns {
+        adjust_h_count(
+            &mut state.mol_editor.mol.common,
+            *sn,
+            op,
+            &mut scene.entities,
+            &mut state.ui,
+            engine_updates,
+            state.volatile.mol_manip.mode,
+            &state.mol_editor.mol.components,
+        );
+    }
+
+    // Re-point the selection at the same atoms; their indices may have moved.
+    let new_idxs: Vec<usize> = sns
+        .iter()
+        .filter_map(|sn| index_of_sn(&state.mol_editor.mol.common, *sn))
+        .collect();
+
+    state.ui.selection = match new_idxs.len() {
+        0 => Selection::None,
+        1 => Selection::AtomLig((mol_i, new_idxs[0])),
+        _ => Selection::AtomsLig((mol_i, new_idxs)),
+    };
+
+    state.mol_editor.mol.update_characterization();
+
+    *redraw = true;
+    *rebuild_md = true;
+}
+
 fn edit_tools(
     state: &mut State,
     scene: &mut Scene,
@@ -622,19 +767,24 @@ fn edit_tools(
         );
 
         if rebuild_ff_params {
-            // Rebuild hydrogens on the changed bond atoms.
-            // for (i, atom) in state.mol_editor.mol.common.atoms.iter().enumerate() {
-            for i in 0..state.mol_editor.mol.common.atoms.len() {
-                let bond = &state.mol_editor.mol.common.bonds[selected_idxs[0]];
-                if bond.atom_0 != i && bond.atom_1 != i {
-                    continue;
+            // Rebuild hydrogens on the two atoms the changed bond joins; its new order changes how
+            // much room each has. By serial number, since the rebuild shifts indices.
+            let sns: Vec<u32> = {
+                let mol = &state.mol_editor.mol.common;
+                match mol.bonds.get(selected_idxs[0]) {
+                    Some(bond) => [bond.atom_0, bond.atom_1]
+                        .iter()
+                        .filter_map(|i| mol.atoms.get(*i))
+                        .map(|a| a.serial_number)
+                        .collect(),
+                    None => Vec::new(),
                 }
+            };
 
-                // Re-populate hydrogens on any atoms bonded to this.
-                remove_hydrogens(&mut state.mol_editor.mol.common, i);
-                populate_hydrogens_on_atom(
+            for sn in sns {
+                refresh_hydrogens(
                     &mut state.mol_editor.mol.common,
-                    i,
+                    sn,
                     &mut scene.entities,
                     &mut state.ui,
                     engine_updates,
@@ -663,8 +813,8 @@ fn edit_tools(
                         *atom_i,
                         Carbon,
                         BondType::Single,
-                        Some("c".to_owned()), // todo
-                        Some(1.4),            // todo
+                        None, // Inferred from the completed local bonding environment below.
+                        Some(1.4), // todo
                         // Some(0.13),           // todo
                         None,
                         &mut state.ui,
@@ -693,8 +843,8 @@ fn edit_tools(
                         *atom_i,
                         Carbon,
                         BondType::Single,
-                        Some("ca".to_owned()), // todo
-                        Some(1.4),             // todo
+                        None, // Inferred from the completed local bonding environment below.
+                        Some(1.4), // todo
                         // Some(0.13),            // todo
                         None,
                         &mut state.ui,
@@ -734,6 +884,18 @@ fn edit_tools(
                     state.volatile.mol_manip.mode,
                 );
             }
+
+            ui.add_space(COL_SPACING / 2.);
+            h_count_tools(
+                state,
+                scene,
+                ui,
+                engine_updates,
+                redraw,
+                &mut rebuild_md,
+                mol_i,
+                &selected_idxs,
+            );
         });
 
         if selected_idxs.len() == 2 {

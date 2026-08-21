@@ -191,6 +191,70 @@ fn disp_bond_data(bond: &Bond, atoms: &[Atom], params: Option<&ForceFieldParams>
     }
 }
 
+/// Display data for a selection owned by the molecule editor.
+///
+/// Editor selections use the ligand variants of `Selection`, but their atom and bond indices refer
+/// to `state.mol_editor.mol`, not to the corresponding molecule in `state.ligands`. Looking them up
+/// through the normal `selected_data` path can therefore display an unrelated original atom, or no
+/// data at all when the edited molecule has grown beyond the original molecule's length.
+pub(in crate::ui) fn selected_data_mol_editor(state: &State, selection: &Selection, ui: &mut Ui) {
+    let mol = &state.mol_editor.mol;
+    let params = state
+        .ff_param_set
+        .small_mol
+        .as_ref()
+        .map(|general| merge_params(general, &state.mol_editor.md.mol_specific_params));
+
+    ui.horizontal(|ui| match selection {
+        Selection::AtomLig((_, atom_i)) => {
+            let Some(atom) = mol.common.get_atom(*atom_i) else {
+                return;
+            };
+            let posit = mol
+                .common
+                .atom_posits
+                .get(*atom_i)
+                .copied()
+                .unwrap_or(atom.posit);
+
+            disp_atom_data(atom, &[], Some(posit), ui, false, true);
+        }
+        Selection::AtomsLig((_, atom_is)) => {
+            ui.label(format!("{} atoms |", atom_is.len()));
+
+            for atom_i in atom_is {
+                let Some(atom) = mol.common.get_atom(*atom_i) else {
+                    continue;
+                };
+                let posit = mol
+                    .common
+                    .atom_posits
+                    .get(*atom_i)
+                    .copied()
+                    .unwrap_or(atom.posit);
+
+                disp_atom_data(atom, &[], Some(posit), ui, false, false);
+                ui.label("|");
+            }
+        }
+        Selection::BondLig((_, bond_i)) => {
+            let Some(bond) = mol.common.get_bond(*bond_i) else {
+                return;
+            };
+            disp_bond_data(bond, &mol.common.atoms, params.as_ref(), ui);
+        }
+        Selection::BondsLig((_, bond_is)) => {
+            for bond_i in bond_is {
+                let Some(bond) = mol.common.get_bond(*bond_i) else {
+                    continue;
+                };
+                disp_bond_data(bond, &mol.common.atoms, params.as_ref(), ui);
+            }
+        }
+        _ => {}
+    });
+}
+
 /// Display text of the selected atom or residue.
 pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mut Ui) {
     ui.horizontal(|ui| {

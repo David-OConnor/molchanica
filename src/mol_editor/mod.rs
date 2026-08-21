@@ -31,7 +31,7 @@ use crate::{
         atoms_bonds::{
             ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, atom_color, bond_entities,
         },
-        draw_mol, draw_pocket,
+        draw_mol_with_pharmacophore_visibility, draw_pocket,
     },
     mol_manip::ManipMode,
     render::{set_flashlight, set_static_light},
@@ -98,6 +98,7 @@ pub struct MolEditorState {
     // todo: DRY with mol char?
     pub rotatable_bonds: Vec<usize>,
     pub selected_comp: Option<usize>,
+    pub show_pharmacophore_renders: bool,
 }
 
 impl MolEditorState {
@@ -336,9 +337,27 @@ impl MolEditorState {
         manip_mode: ManipMode,
     ) {
         let Some(md) = &self.md.md else { return };
-        for (i, atom) in md.atoms.iter().enumerate() {
-            self.mol.common.atoms[i].posit = atom.posit.into();
-            self.mol.common.atom_posits[i] = atom.posit.into();
+        let mol = &mut self.mol.common;
+
+        if md.atoms.len() != mol.atoms.len() || mol.atoms.len() != mol.atom_posits.len() {
+            eprintln!(
+                "Unable to fully sync mol-editor MD positions: MD has {} atoms, while the editor has {} atoms and {} positions.",
+                md.atoms.len(),
+                mol.atoms.len(),
+                mol.atom_posits.len()
+            );
+        }
+
+        // Zip the collections so a stale or failed MD rebuild cannot turn a size mismatch into an
+        // index-out-of-bounds panic. Normal edit paths rebuild MD before reaching this point.
+        for ((atom, posit), md_atom) in mol
+            .atoms
+            .iter_mut()
+            .zip(&mut mol.atom_posits)
+            .zip(&md.atoms)
+        {
+            atom.posit = md_atom.posit.into();
+            *posit = md_atom.posit.into();
         }
 
         redraw(entities, self, state_ui, manip_mode, updates);
@@ -394,6 +413,7 @@ impl MolEditorState {
         }
 
         self.mol.frcmod_loaded = false;
+        self.md.mol_specific_params = ForceFieldParams::default();
 
         // if let Some(p) = &param_set.small_mol {
         //     editor.mol.update_ff_related(&mut msp, p);
@@ -576,7 +596,7 @@ pub fn redraw(
 ) {
     *entities = Vec::new();
 
-    entities.extend(draw_mol(
+    entities.extend(draw_mol_with_pharmacophore_visibility(
         MolGenericRef::Small(&editor.mol),
         0,
         ui,
@@ -585,6 +605,7 @@ pub fn redraw(
         OperatingMode::MolEditor,
         1,
         false,
+        editor.show_pharmacophore_renders,
     ));
 
     if let Some(p) = &editor.mol.pharmacophore.pocket {
@@ -888,17 +909,28 @@ pub(super) fn build_dynamics(
 pub fn sync_md(state: &mut State) {
     if state.mol_editor.md.running {
         // todo: Ideally don't rebuild the whole dynamics, for performance reasons.
-        match build_dynamics(
+        let build_result = build_dynamics(
             &state.dev,
             &mut state.mol_editor,
             &state.ff_param_set,
             &state.to_save.md.config,
-        ) {
-            Ok(d) => state.mol_editor.md.md = Some(d),
-            Err(e) => eprintln!("Problem setting up dynamics for the editor: {e:?}"),
+        );
+        match build_result {
+            Ok(d) => {
+                state.mol_editor.md.md = Some(d);
+                state.mol_editor.md.rebuild_required = false;
+            }
+            Err(e) => {
+                state.mol_editor.md.md = None;
+                state.mol_editor.md.rebuild_required = true;
+                eprintln!("Problem setting up dynamics for the editor: {e:?}");
+            }
         }
     } else {
-        // The MD build Will be triggered next time MD is started.
+        // The MD build will be triggered the next time MD is started or Relax is clicked. Drop the
+        // old state now: its atom count and topology no longer describe the edited molecule.
+        state.mol_editor.md.md = None;
+        state.mol_editor.md.snap = None;
         state.mol_editor.md.rebuild_required = true;
         state.mol_editor.rebuild_ff_related(&state.ff_param_set);
     }

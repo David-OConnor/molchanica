@@ -8,6 +8,9 @@ use mol_defs::{
         common::{MoleculeCommon, bonds_avail},
     },
 };
+// Shared with the rest of the app, and used unchanged here. Re-exported so callers in the editor
+// don't need to know which crate they live in, and so there's a single copy of the tables.
+pub use mol_defs::molecules::common::{hydrogens_avail, remove_hydrogens};
 use na_seq::{Element, Element::Hydrogen};
 
 use crate::{
@@ -51,11 +54,12 @@ pub fn add_from_template(
 
     mol.next_atom_sn += atoms.len() as u32;
 
-    let mut i_added = Vec::new(); // Used for populating H.
+    // Serial numbers rather than indices: we remove atoms below, which renumbers everything after
+    // them. Used for populating H.
+    let added_sns: Vec<u32> = atoms.iter().map(|a| a.serial_number).collect();
 
     for atom in &atoms {
         mol.atoms.push(atom.clone());
-        i_added.push(mol.atoms.len() - 1);
     }
     for bond in bonds {
         mol.bonds.push(bond);
@@ -76,49 +80,36 @@ pub fn add_from_template(
     mol.reset_posits();
     mol.build_adjacency_list();
 
-    // Set the anchor bond to Aromatic type if appropriate.
+    // Set the anchor bond to Aromatic type if appropriate. The anchors' hydrogens are refreshed
+    // below, which picks up the changed bond order.
     if template == Template::AromaticRing && anchor_is.len() == 2 {
-        let mut atoms_to_update_h = Vec::new(); // avoids db-borrow error.
         for bond in &mut mol.bonds {
             if (bond.atom_0 == anchor_is[0] && bond.atom_1 == anchor_is[1])
-                | (bond.atom_0 == anchor_is[1] && bond.atom_1 == anchor_is[0])
+                || (bond.atom_0 == anchor_is[1] && bond.atom_1 == anchor_is[0])
             {
                 bond.bond_type = BondType::Aromatic;
             }
+        }
+    }
 
-            // todo: This section is dry with the GUI buttons to change bond types. Use a common fn for htis.
-            for i in 0..mol.atoms.len() {
-                if bond.atom_0 != i && bond.atom_1 != i {
-                    continue;
-                }
-                atoms_to_update_h.push(i);
+    // For non-rings, the template's own anchor atom replaces the selected one, so the selected one
+    // goes -- along with its hydrogens, which would otherwise be left bonded to nothing.
+    if !template.is_ring() {
+        for sn in anchor_sns {
+            if let Some(i) = index_of_sn(mol, *sn) {
+                remove_hydrogens(mol, i);
+            }
+            if let Some(i) = index_of_sn(mol, *sn) {
+                mol.remove_atom(i);
             }
         }
-
-        for i in atoms_to_update_h {
-            remove_hydrogens(mol, i);
-            populate_hydrogens_on_atom(
-                mol,
-                i,
-                &mut Vec::new(),
-                state_ui,
-                &mut Default::default(),
-                manip_mode,
-                components,
-            );
-        }
     }
 
-    // Get the FF type for this atom prior to adding H.
-    // For non-rings, we are currently the selected atom with the added group's anchor.
-    // So, remove it and its H atoms.
-    for &anchor_i in anchor_is {
-        if !template.is_ring() {
-            mol.remove_atom(anchor_i);
-        }
-    }
+    for sn in &added_sns {
+        let Some(i) = index_of_sn(mol, *sn) else {
+            continue;
+        };
 
-    for i in i_added {
         populate_hydrogens_on_atom(
             mol,
             i,
@@ -130,17 +121,20 @@ pub fn add_from_template(
         );
     }
 
-    for &anchor_i in anchor_is {
-        remove_hydrogens(mol, anchor_i);
-        populate_hydrogens_on_atom(
-            mol,
-            anchor_i,
-            &mut Vec::new(),
-            state_ui,
-            &mut Default::default(),
-            manip_mode,
-            components,
-        );
+    // Ring anchors stay in the molecule, but now carry the ring's bonds, so how much room they
+    // have for hydrogens has changed.
+    if template.is_ring() {
+        for sn in anchor_sns {
+            refresh_hydrogens(
+                mol,
+                *sn,
+                &mut Vec::new(),
+                state_ui,
+                &mut Default::default(),
+                manip_mode,
+                components,
+            );
+        }
     }
 
     *controls = ControlScheme::Arc {
@@ -159,20 +153,143 @@ impl MolEditorState {
     }
 }
 
-/// Remove all hydrogens bonded to an atom.
-pub fn remove_hydrogens(mol: &mut MoleculeCommon, i: usize) {
-    let mut h_to_del = Vec::new();
+/// An atom's index, from its serial number. Indices shift whenever an atom is removed; serial
+/// numbers don't, so we hold onto those across edits that both add and remove atoms.
+pub fn index_of_sn(mol: &MoleculeCommon, sn: u32) -> Option<usize> {
+    mol.atoms.iter().position(|a| a.serial_number == sn)
+}
 
-    // Remove Hydrogens; we'll add any back as applicable.
-    for j in &mol.adjacency_list[i] {
-        if mol.atoms[*j].element == Hydrogen {
-            h_to_del.push(*j);
-        }
+/// The number of hydrogens covalently bonded to an atom.
+pub fn h_count(mol: &MoleculeCommon, i: usize) -> usize {
+    let Some(adj) = mol.adjacency_list.get(i) else {
+        return 0;
+    };
+
+    adj.iter()
+        .filter(|j| mol.atoms[**j].element == Hydrogen)
+        .count()
+}
+
+/// Which way a hydrogen-count edit goes. See `adjust_h_count`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum HCountOp {
+    /// One more hydrogen than the atom currently has.
+    Add,
+    /// One fewer.
+    Remove,
+    /// However many the atom's element and bonds imply.
+    Auto,
+}
+
+/// The hydrogen force-field type and bond length to use when adding one to an atom of a given
+/// force field type. Falls back to a generic 1.1 Å where we have no entry, e.g. because the atom
+/// hasn't been typed yet.
+fn h_bond_params(ff_type: &Option<String>) -> (Option<String>, f64) {
+    // Grabbing the first, arbitrarily.
+    match hydrogens_avail(ff_type).into_iter().next() {
+        Some((ff, bond_len)) => (Some(ff), bond_len),
+        None => (None, 1.1),
+    }
+}
+
+/// Add or remove a single hydrogen on an atom, or reset it to the count its valence implies.
+///
+/// The automatic count assumes a neutral atom in its usual valence state, so it gets charged
+/// centres wrong: an ammonium N takes four bonds, and the terminal N of an azide takes none
+/// beyond the one it has. This is the escape hatch for those, and for any other case where the
+/// implied count isn't what you're drawing.
+///
+/// Takes a serial number rather than an index, since removing a hydrogen renumbers the atoms
+/// after it.
+pub fn adjust_h_count(
+    mol: &mut MoleculeCommon,
+    sn: u32,
+    op: HCountOp,
+    entities: &mut Vec<Entity>,
+    state_ui: &mut StateUi,
+    engine_updates: &mut EngineUpdates,
+    manip_mode: ManipMode,
+    components: &Option<MolComponents>,
+) {
+    let Some(i) = index_of_sn(mol, sn) else {
+        return;
+    };
+
+    if mol.atoms[i].element == Hydrogen {
+        return; // Hydrogen carries none of its own.
     }
 
-    h_to_del.sort_unstable_by(|a, b| b.cmp(a));
-    for j in h_to_del {
-        mol.remove_atom(j);
+    match op {
+        HCountOp::Auto => refresh_hydrogens(
+            mol,
+            sn,
+            entities,
+            state_ui,
+            engine_updates,
+            manip_mode,
+            components,
+        ),
+        HCountOp::Remove => {
+            let Some(adj) = mol.adjacency_list.get(i) else {
+                return;
+            };
+            let Some(&j) = adj.iter().find(|j| mol.atoms[**j].element == Hydrogen) else {
+                return;
+            };
+
+            mol.remove_atom(j);
+            engine_updates.entities = EntityUpdate::All;
+        }
+        HCountOp::Add => {
+            let (ff_type, bond_len) = h_bond_params(&mol.atoms[i].force_field_type);
+
+            // `add_atom` returns `None` if the coordination sphere is full, in which case there's
+            // nothing to do.
+            add_atom(
+                mol,
+                entities,
+                i,
+                Hydrogen,
+                BondType::Single,
+                ff_type,
+                Some(bond_len),
+                None,
+                state_ui,
+                engine_updates,
+                &mut ControlScheme::None,
+                manip_mode,
+                components,
+            );
+        }
+    }
+}
+
+/// Strip an atom's hydrogens, and add back however many its element and bonds now imply. Use this
+/// after changing an atom's element, or the type of a bond it's part of. Identifies the atom by
+/// serial number, as removing its hydrogens shifts indices.
+pub fn refresh_hydrogens(
+    mol: &mut MoleculeCommon,
+    sn: u32,
+    entities: &mut Vec<Entity>,
+    state_ui: &mut StateUi,
+    engine_updates: &mut EngineUpdates,
+    manip_mode: ManipMode,
+    components: &Option<MolComponents>,
+) {
+    if let Some(i) = index_of_sn(mol, sn) {
+        remove_hydrogens(mol, i);
+    }
+
+    if let Some(i) = index_of_sn(mol, sn) {
+        populate_hydrogens_on_atom(
+            mol,
+            i,
+            entities,
+            state_ui,
+            engine_updates,
+            manip_mode,
+            components,
+        );
     }
 }
 
@@ -194,6 +311,10 @@ pub fn add_atom(
     manip_mode: ManipMode,
     components: &Option<MolComponents>,
 ) -> Option<usize> {
+    // Adding a non-hydrogen strips the parent's hydrogens to make room, which shifts indices. The
+    // parent's serial number survives that.
+    let par_sn = mol.atoms.get(i_par)?.serial_number;
+
     let (i_new_atom, i_new_bond) = mol.add_atom(i_par, element, bond_type, ff_type, bond_len, q)?;
 
     mol_editor::draw_atom(entities, &mol.atoms[i_new_atom], components, ui);
@@ -207,12 +328,18 @@ pub fn add_atom(
         components,
     );
 
-    // Add hydrogens to the new atom.
-    // Up to one recursion to add hydrogens to this parent and to the new atom.
     if element != Hydrogen {
+        // Hydrogens on the new atom, then back onto the parent: the bond we just made used up one
+        // of the parent's free valences, but any others it had still want filling. Without this
+        // second step, building a chain leaves every atom but the last one bare.
         populate_hydrogens_on_atom(
             mol, i_new_atom, entities, ui, updates, manip_mode, components,
         );
+
+        if let Some(i_par) = index_of_sn(mol, par_sn) {
+            populate_hydrogens_on_atom(mol, i_par, entities, ui, updates, manip_mode, components);
+        }
+
         *control = ControlScheme::Arc {
             center: mol.centroid().into(),
         };
@@ -222,7 +349,7 @@ pub fn add_atom(
     // todo index buffer.
     updates.entities = EntityUpdate::All;
 
-    Some(i_new_bond)
+    Some(i_new_atom)
 }
 
 /// Populate hydrogens on a single atom. Uses tetrahedral, or planar geometry as required
@@ -253,22 +380,8 @@ pub fn populate_hydrogens_on_atom(
 
     let h_to_add = bonds_avail(i, mol, el);
 
-    // let bonds_remaining = bonds_avail.saturating_sub(adj.len());
-
     for _ in 0..h_to_add {
-        let atom = &mol.atoms[i];
-        let (ff_type, bond_len) = {
-            let mut v = (None, 1.1);
-
-            // Grabbing the first, arbitrarily.
-            for (ff, bl) in hydrogens_avail(&atom.force_field_type) {
-                v.0 = Some(ff);
-                v.1 = bl;
-                break;
-            }
-
-            v
-        };
+        let (ff_type, bond_len) = h_bond_params(&mol.atoms[i].force_field_type);
 
         add_atom(
             mol,
@@ -285,148 +398,5 @@ pub fn populate_hydrogens_on_atom(
             manip_mode,
             components,
         );
-    }
-}
-
-// todo: I think this approach is wrong. You can add multiple of the same one...
-/// This is built from Amber's gaff2.dat. Returns each H FF type that can be bound to a given atom
-/// (by force field type), and the bond distance in Å.
-pub fn hydrogens_avail(ff_type: &Option<String>) -> Vec<(String, f64)> {
-    let Some(f) = ff_type else { return Vec::new() };
-    match f.as_ref() {
-        // Water
-        "ow" => vec![("hw".to_owned(), 0.9572)],
-        "hw" => vec![("hw".to_owned(), 1.5136)],
-
-        // Generic sp carbon (c )
-        "c" => vec![
-            ("h4".to_owned(), 1.1123),
-            ("h5".to_owned(), 1.1053),
-            ("ha".to_owned(), 1.1010),
-        ],
-
-        // sp2 carbon families
-        "c1" => vec![("ha".to_owned(), 1.0666), ("hc".to_owned(), 1.0600)],
-        "c2" => vec![
-            ("h4".to_owned(), 1.0865),
-            ("h5".to_owned(), 1.0908),
-            ("ha".to_owned(), 1.0882),
-            ("hc".to_owned(), 1.0870),
-            ("hx".to_owned(), 1.0836),
-        ],
-        "c3" => vec![
-            ("h1".to_owned(), 1.0969),
-            ("h2".to_owned(), 1.0950),
-            ("h3".to_owned(), 1.0938),
-            ("hc".to_owned(), 1.0962),
-            ("hx".to_owned(), 1.0911),
-        ],
-        "c5" => vec![
-            ("h1".to_owned(), 1.0972),
-            ("h2".to_owned(), 1.0955),
-            ("h3".to_owned(), 1.0958),
-            ("hc".to_owned(), 1.0954),
-            ("hx".to_owned(), 1.0917),
-        ],
-        "c6" => vec![
-            ("h1".to_owned(), 1.0984),
-            ("h2".to_owned(), 1.0985),
-            ("h3".to_owned(), 1.0958),
-            ("hc".to_owned(), 1.0979),
-            ("hx".to_owned(), 1.0931),
-        ],
-
-        // Aromatic/condensed ring carbons
-        "ca" => vec![
-            ("ha".to_owned(), 1.0860),
-            ("h4".to_owned(), 1.0885),
-            ("h5".to_owned(), 1.0880),
-        ],
-        "cc" => vec![
-            ("h4".to_owned(), 1.0809),
-            ("h5".to_owned(), 1.0820),
-            ("ha".to_owned(), 1.0838),
-            ("hx".to_owned(), 1.0827),
-        ],
-        "cd" => vec![
-            ("h4".to_owned(), 1.0818),
-            ("h5".to_owned(), 1.0821),
-            ("ha".to_owned(), 1.0835),
-            ("hx".to_owned(), 1.0801),
-        ],
-        "ce" => vec![
-            ("h4".to_owned(), 1.0914),
-            ("h5".to_owned(), 1.0895),
-            ("ha".to_owned(), 1.0880),
-        ],
-        "cf" => vec![
-            ("h4".to_owned(), 1.0942),
-            ("ha".to_owned(), 1.0885),
-            // table also lists h5-cf (reverse order) at 1.0890
-            ("h5".to_owned(), 1.0890),
-        ],
-        "cg" => Vec::new(), // no H entries shown for cg in the provided snippet
-
-        // Other carbon families frequently seen
-        "cu" => vec![("ha".to_owned(), 1.0786)],
-        "cv" => vec![("ha".to_owned(), 1.0878)],
-        "cx" => vec![
-            ("h1".to_owned(), 1.0888),
-            ("h2".to_owned(), 1.0869),
-            ("hc".to_owned(), 1.0865),
-            ("hx".to_owned(), 1.0849),
-        ],
-        "cy" => vec![
-            ("h1".to_owned(), 1.0946),
-            ("h2".to_owned(), 1.0930),
-            ("hc".to_owned(), 1.0947),
-            ("hx".to_owned(), 1.0913),
-        ],
-
-        // Nitrogen families: protonated H type is "hn"
-        "n1" => vec![("hn".to_owned(), 0.9860)],
-        "n2" => vec![("hn".to_owned(), 1.0221)],
-        "n3" => vec![("hn".to_owned(), 1.0190)],
-        "n4" => vec![("hn".to_owned(), 1.0300)],
-        "n" => vec![("hn".to_owned(), 1.0130)],
-        "n5" => vec![("hn".to_owned(), 1.0211)],
-        "n6" => vec![("hn".to_owned(), 1.0183)],
-        "n7" => vec![("hn".to_owned(), 1.0195)],
-        "n8" => vec![("hn".to_owned(), 1.0192)],
-        "n9" => vec![("hn".to_owned(), 1.0192)],
-        "na" => vec![("hn".to_owned(), 1.0095)],
-        "nh" => vec![("hn".to_owned(), 1.0120)],
-        "nj" => vec![("hn".to_owned(), 1.0130)],
-        "nl" => vec![("hn".to_owned(), 1.0476)],
-        "no" => vec![("hn".to_owned(), 1.0440)],
-        "np" => vec![("hn".to_owned(), 1.0210)],
-        "nq" => vec![("hn".to_owned(), 1.0180)],
-        "ns" => vec![("hn".to_owned(), 1.0132)],
-        "nt" => vec![("hn".to_owned(), 1.0105)],
-        "nu" => vec![("hn".to_owned(), 1.0137)],
-        "nv" => vec![("hn".to_owned(), 1.0114)],
-        "nx" => vec![("hn".to_owned(), 1.0338)],
-        "ny" => vec![("hn".to_owned(), 1.0339)],
-        "nz" => vec![("hn".to_owned(), 1.0271)],
-
-        // Oxygen families: hydroxyl H type is "ho"
-        "o" => vec![("ho".to_owned(), 0.9810)],
-        "oh" => vec![("ho".to_owned(), 0.9725)],
-
-        // Sulfur families: thiol H type is "hs"
-        "s" => vec![("hs".to_owned(), 1.3530)],
-        "s4" => vec![("hs".to_owned(), 1.3928)],
-        "s6" => vec![("hs".to_owned(), 1.3709)],
-        "sh" => vec![("hs".to_owned(), 1.3503)],
-        "sy" => vec![("hs".to_owned(), 1.3716)],
-
-        // Phosphorus families: acidic phosphate H type is "hp"
-        "p2" => vec![("hp".to_owned(), 1.4272)],
-        "p3" => vec![("hp".to_owned(), 1.4256)],
-        "p4" => vec![("hp".to_owned(), 1.4271)],
-        "p5" => vec![("hp".to_owned(), 1.4205)],
-        "py" => vec![("hp".to_owned(), 1.4150)],
-
-        _ => Vec::new(),
     }
 }
