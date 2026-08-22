@@ -28,7 +28,7 @@ use crate::{
     gromacs::on_gromacs_md_complete,
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
-    state::{IntegrationsAvail, State},
+    state::State,
     structure_prediction::StructurePredictionOutcome,
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -38,8 +38,6 @@ use crate::{
 #[allow(clippy::type_complexity)]
 #[derive(Default)]
 pub struct ThreadReceivers {
-    /// Availability of optional third-party tools, detected during startup.
-    pub integrations_avail: Option<Receiver<IntegrationsAvail>>,
     /// Receives thread data upon an HTTP result completion.
     pub mol_pending_data_avail: Vec<(
         usize,
@@ -75,8 +73,7 @@ pub struct ThreadReceivers {
 impl ThreadReceivers {
     /// True while any background worker still needs periodic non-blocking polling.
     pub fn has_pending(&self) -> bool {
-        self.integrations_avail.is_some()
-            || !self.mol_pending_data_avail.is_empty()
+        !self.mol_pending_data_avail.is_empty()
             || self.pubchem_properties_avail.is_some()
             || self.all_idents_avail.is_some()
             || self.therapeutic_properties_avail.is_some()
@@ -87,15 +84,6 @@ impl ThreadReceivers {
             || self.gromacs_md_avail.is_some()
             || self.structure_prediction.is_some()
     }
-}
-
-/// Start detecting optional third-party integrations without delaying application startup.
-pub fn start_integrations_check(receivers: &mut ThreadReceivers) {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(IntegrationsAvail::detect());
-    });
-    receivers.integrations_avail = Some(rx);
 }
 
 /// Result of asking the online small-molecule databases to fill identifier gaps.
@@ -360,25 +348,6 @@ pub fn handle_thread_rx(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
-    let integrations_result = state
-        .volatile
-        .thread_receivers
-        .integrations_avail
-        .as_ref()
-        .map(Receiver::try_recv);
-    match integrations_result {
-        Some(Ok(integrations_avail)) => {
-            state.volatile.thread_receivers.integrations_avail = None;
-            println!("{}", integrations_avail.descrip());
-            state.volatile.integrations_avail = integrations_avail;
-        }
-        Some(Err(TryRecvError::Disconnected)) => {
-            state.volatile.thread_receivers.integrations_avail = None;
-            eprintln!("Integration detection stopped before returning a result");
-        }
-        Some(Err(TryRecvError::Empty)) | None => {}
-    }
-
     let all_idents_result = state
         .volatile
         .thread_receivers

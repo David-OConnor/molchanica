@@ -10,6 +10,7 @@ use lin_alg::f32::Vec3 as Vec3F32;
 use crate::{
     button,
     drawing::EntityClass,
+    external_tools::{self, Tool},
     md,
     md::{MdBackend, launch_md, post_run_cleanup, start_md_energy_computation},
     prefs::ToSave,
@@ -145,18 +146,20 @@ pub fn md_setup(
                 md::start_md(state, scene, updates)
             }
 
-            if state.volatile.integrations_avail.gromacs || state.volatile.integrations_avail.orca {
+            let gromacs_available = external_tools::is_installed(Tool::Gromacs);
+            let orca_available = external_tools::is_installed(Tool::Orca);
+            if gromacs_available || orca_available {
                 ui.add_space(COL_SPACING / 2.);
                 ui.label("Backend:");
 
                 let mut backends = vec![MdBackend::Dynamics];
-                if state.volatile.integrations_avail.gromacs {
+                if gromacs_available {
                     backends.push(MdBackend::Gromacs);
                 }
 
                 // todo: For now, we launch Orca MD from its own UI section, but we may
                 // todo wish to move it here.
-                // if state.volatile.integrations_avail.orca {
+                // if orca_available {
                 //     backends.push(MdBackend::Orca);
                 // }
 

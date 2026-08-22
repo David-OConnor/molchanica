@@ -4,7 +4,6 @@
 
 use std::{
     f64::consts::TAU,
-    process::Command,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -39,7 +38,6 @@ use crate::{
         color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
         draw_peptide, ribbon_mesh::build_ribbon_mesh,
     },
-    external_tools::{self, CheckResult, Tool},
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
@@ -1408,19 +1406,6 @@ pub fn rotate_atoms_about_point(atoms: &mut [Atom], pivot: Vec3, rotator: Quater
 
 #[cfg(feature = "cuda")]
 pub const PTX: &str = include_str!("../molchanica.ptx");
-
-/// Checks if MdTry is available on the system path.
-/// todo: Add this to bio_tools, like the others. This is the exception.
-pub fn mdtraj_avail() -> bool {
-    match Command::new("mdconvert").arg("-h").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            output.status.success() && (stdout.contains("DCD, XTC"))
-        }
-        Err(_) => false,
-    }
-}
 
 /// Returns the frequency of a covalent bond, in ps^-1, assuming classical MD params.
 /// `k_b` is in kcal/mol/Å². Masses are in AMU.

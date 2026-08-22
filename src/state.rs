@@ -35,12 +35,9 @@ use mol_defs::{
     sfc_mesh::MeshColoring,
 };
 
-use crate::external_tools::is_installed;
-use crate::util::mdtraj_avail;
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
-    external_tools::Tool,
     file_io::FileDialogs,
     md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
@@ -333,55 +330,6 @@ impl State {
     }
 }
 
-/// Indicates if these third party tools are installed, and able to be run.
-/// Generally requires them to be available on the system Path.
-#[derive(Default)]
-pub struct IntegrationsAvail {
-    /// ORCA is available on the system path.
-    pub orca: bool,
-    /// GROMACS is available on the system path.
-    pub gromacs: bool,
-    /// For handling MTZ electron density measurements
-    pub gemmi: bool,
-    /// For reading and writing XTC files.
-    pub mdtraj: bool,
-    /// Protein structure prediction
-    pub boltz2: bool,
-    /// Structure prediction for a range of molecule types, and more
-    pub opendde: bool,
-}
-
-impl IntegrationsAvail {
-    /// Detect which optional third-party tools are available.
-    ///
-    /// This may launch external programs and must be run off the UI thread.
-    pub fn detect() -> Self {
-        let start = Instant::now();
-
-        // `is_installed` is a cheap filesystem-based lookup.
-        let result = Self {
-            orca: is_installed(Tool::Orca),
-            gromacs: is_installed(Tool::Gromacs),
-            gemmi: is_installed(Tool::Gemmi),
-            mdtraj: mdtraj_avail(), // todo: Not on Bio Tools yet.
-            boltz2: is_installed(Tool::Boltz2),
-            opendde: is_installed(Tool::OpenDde),
-        };
-
-        let elapsed = start.elapsed().as_millis();
-        println!("Identified integrated programs in {elapsed}ms");
-
-        result
-    }
-
-    pub fn descrip(&self) -> String {
-        format!(
-            "\nAuxillary programs available: ORCA: {}, GROMACS: {}, Gemmi: {}, MdTraj: {}, Boltz-2: {}, OpenDDE: {}\n",
-            self.orca, self.gromacs, self.gemmi, self.mdtraj, self.boltz2, self.opendde
-        )
-    }
-}
-
 /// Temporary, and generated state.
 #[derive(Default)]
 pub struct StateVolatile {
@@ -415,8 +363,6 @@ pub struct StateVolatile {
     pub primary_mode_cam: Camera,
     pub md_local: MdStateLocal,
     pub orbit_center: Option<(MolType, usize)>,
-    /// Populated by the startup integration check; all flags are false while it is pending.
-    pub integrations_avail: IntegrationsAvail,
     pub alignment: StateAlignment,
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
@@ -429,12 +375,10 @@ pub struct StateVolatile {
 
 impl StateVolatile {
     pub fn new() -> Self {
-        let mut result = Self {
+        Self {
             prefs_dir: env::current_dir().unwrap(),
             ..Default::default()
-        };
-        crate::threads::start_integrations_check(&mut result.thread_receivers);
-        result
+        }
     }
 
     pub fn is_playing_audio_for(&self, mol_type: MolType, i_mol: usize) -> bool {

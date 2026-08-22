@@ -9,6 +9,7 @@ use bio_files::orca::{
 use egui::{Color32, ComboBox, RichText, Ui};
 
 use crate::{
+    external_tools::{self, Tool},
     label, orca,
     orca::TaskType,
     state::State,
@@ -43,9 +44,10 @@ fn keyword_toggle(
 }
 
 pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
+    let orca_available = external_tools::is_installed(Tool::Orca);
     misc::section_box().show(ui, |ui| {
         ui.horizontal(|ui| {
-            if state.volatile.integrations_avail.orca {
+            if orca_available {
                 label!(ui, "ORCA ready", Color32::LIGHT_GREEN)
                     .on_hover_text("ORCA is installed and available; ready to run");
             } else {
@@ -244,7 +246,7 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                 //
                 //     ui.add_space(COL_SPACING);
 
-                if state.volatile.integrations_avail.orca && ui
+                if orca_available && ui
                         .button(RichText::new("Run").color(COLOR_ACTION))
                         .on_hover_text(
                             "Run ORCA using the settings here, on the active molecule.",
