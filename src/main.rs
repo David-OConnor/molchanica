@@ -158,8 +158,6 @@ fn main() {
         ..Default::default()
     };
 
-    println!("{}", state.volatile.integrations_avail.descrip());
-
     #[cfg(feature = "cuda")]
     if let Some(k) = kernel_reflections {
         state.kernel_reflections = Some(k);

@@ -1533,10 +1533,12 @@ pub fn is_installed(tool: Tool) -> bool {
     let Ok(_) = find_executable(tool) else {
         return false;
     };
+
     let spec = tool.spec();
     let Some(root) = spec.bundle_root() else {
         return spec.required_assets.is_empty();
     };
+
     spec.required_assets
         .iter()
         .all(|asset| root.join(asset.relative_path).exists())

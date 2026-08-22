@@ -1409,34 +1409,8 @@ pub fn rotate_atoms_about_point(atoms: &mut [Atom], pivot: Vec3, rotator: Quater
 #[cfg(feature = "cuda")]
 pub const PTX: &str = include_str!("../molchanica.ptx");
 
-/// Whether ORCA is installed and answers as ORCA.
-///
-/// The banner check is not incidental: `orca` on Linux is commonly the GNOME screen reader, which
-/// never answers a `--help` and used to hang this probe indefinitely. The registry's probe applies
-/// a deadline and matches on the ORCA banner, which covers both hazards.
-pub fn orca_avail() -> bool {
-    tool_avail(Tool::Orca)
-}
-
-/// Checks if GROMACS is available.
-pub fn gromacs_avail() -> bool {
-    tool_avail(Tool::Gromacs)
-}
-
-/// Checks if Gemmi is available. A copy colocated with our executable is preferred, since we may
-/// ship one in the release archive; the registry entry marks it as such.
-pub fn gemmi_avail() -> bool {
-    tool_avail(Tool::Gemmi)
-}
-
-/// Whether a registered tool is installed and working.
-///
-/// Runs a subprocess, so cache the answer rather than calling it every frame.
-pub fn tool_avail(tool: Tool) -> bool {
-    external_tools::check(tool).result == CheckResult::Pass
-}
-
-/// Checks if GROMACS is available on the system path.
+/// Checks if MdTry is available on the system path.
+/// todo: Add this to bio_tools, like the others. This is the exception.
 pub fn mdtraj_avail() -> bool {
     match Command::new("mdconvert").arg("-h").output() {
         Ok(output) => {
@@ -1446,16 +1420,6 @@ pub fn mdtraj_avail() -> bool {
         }
         Err(_) => false,
     }
-}
-
-/// Checks if Boltz-2 is available in its managed environment or on the system path.
-pub fn boltz2_avail() -> bool {
-    tool_avail(Tool::Boltz2)
-}
-
-/// Checks if OpenDDE is available in its managed environment or on the system path.
-pub fn opendde_avail() -> bool {
-    tool_avail(Tool::OpenDde)
 }
 
 /// Returns the frequency of a covalent bond, in ps^-1, assuming classical MD params.
