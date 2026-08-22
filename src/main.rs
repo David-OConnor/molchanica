@@ -132,6 +132,10 @@ fn main() {
         std::process::exit(code);
     }
 
+    // Before anything reads the data root: earlier versions installed optional tools into the
+    // per-user data directory instead of beside the executable.
+    external_tools::migrate_legacy_data();
+
     #[cfg(not(feature = "cuda"))]
     let dev = dynamics::ComputationDevice::Cpu;
 

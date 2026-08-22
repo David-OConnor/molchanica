@@ -48,6 +48,10 @@ Cargo.lock
 /managed_molecules
 /gpu_cache
 
+# A build run from the checkout keeps its data here; see `external_tools::data_root`.
+/process_executables
+/datasets
+
 ## New below; old above
 *.cfa
 *.mca

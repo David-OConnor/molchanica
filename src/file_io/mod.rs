@@ -1,9 +1,10 @@
 use std::{
-    fs,
+    env, fs,
     fs::File,
     io,
     io::{ErrorKind, Read},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::OnceLock,
     time::Instant,
 };
 
@@ -1217,17 +1218,28 @@ impl State {
     }
 }
 
-/// Utility for finding the Gemmi application, used for opening mmCIF structure factors,
-/// and MTZ. This allows gemmi to be distributed in a folder colacated with this program's executable.
+/// The `gemmi` folder the setup scripts install beside the executable, if it's there.
+///
+/// Gemmi is what opens mmCIF structure factors and MTZ files.
+///
+/// `None` means fall back to the system `Path`. Anchored on the executable's own directory rather
+/// than the working directory, so launching from elsewhere doesn't lose the colocated copy; the
+/// working directory is still checked, which is where a source checkout keeps it.
 pub fn gemmi_path() -> Option<&'static Path> {
-    let local_gemmi = Path::new("./gemmi");
-    if local_gemmi.exists() {
-        Some(local_gemmi)
-    } else {
-        // If Gemmi is not in a folder colacated with the application, fall back
-        // to the system Path.
-        None
-    }
+    static GEMMI_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    GEMMI_DIR
+        .get_or_init(|| {
+            let beside_exe = env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join("gemmi")));
+
+            beside_exe
+                .into_iter()
+                .chain([PathBuf::from("./gemmi")])
+                .find(|dir| dir.exists())
+        })
+        .as_deref()
 }
 
 /// Save a molecule to disk, prompting for a location.

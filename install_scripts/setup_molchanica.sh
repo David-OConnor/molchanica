@@ -1,4 +1,9 @@
-# This file sets up a Linux desktop entry, and moves the application to the home directory.
+# This file sets up a Linux desktop entry, and moves the application into ~/molchanica.
+#
+# That one directory is the whole install: Molchanica resolves everything it writes relative to
+# its own executable, so the preferences file, the cache of molecules downloaded from the web, the
+# graphics pipeline cache, and the optional third-party tools installed from the Tools panel all
+# end up beside the binary, rather than scattered across ~/.local/share and friends.
 
 NAME_UPPER="Molchanica"
 NAME="molchanica"
@@ -28,6 +33,9 @@ cat > "$DESKTOP_PATH" <<EOF
 Name=${NAME_UPPER}
 Exec=${APP_DIR}/${NAME}
 Icon=${APP_DIR}/icon.png
+# Molchanica finds its data next to its executable rather than through the working directory. Path
+# is set only so that file dialogs open somewhere predictable.
+Path=${APP_DIR}
 Type=Application
 Terminal=false
 Categories=Development;Science;Biology;
@@ -52,8 +60,14 @@ fi
 #  printf "\ngemmi installed. You can uninstall it with sudo apt remove gemmi.\n"
 #fi
 
-# Optional third-party tools are installed in-process from Molchanica's Tools panel.
-# Each recipe keeps its environment and assets under the per-user Molchanica data directory.
+# Optional third-party tools are installed in-process from Molchanica's Tools panel. Each recipe
+# keeps its environment and assets under $APP_DIR/process_executables, along with everything else.
 
 printf "\nMoved the ${NAME_UPPER} executable and icon to ${APP_DIR}."
+printf "\n\nEverything ${NAME_UPPER} writes stays in that one folder:"
+printf "\n  molchanica_prefs.mca    preferences and per-molecule settings"
+printf "\n  managed_molecules/      molecules downloaded or generated in the app"
+printf "\n  gpu_cache/              the graphics pipeline cache"
+printf "\n  process_executables/    optional third-party tools from the Tools panel"
+printf "\n\nSet MOLCHANICA_DATA_DIR to keep them somewhere else, e.g. on another drive."
 printf "\n\nYou can launch ${NAME_UPPER} through the GUI (e.g., search \"${NAME_UPPER}\") and/or add it to favorites.\n"

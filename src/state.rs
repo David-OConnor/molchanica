@@ -38,6 +38,7 @@ use mol_defs::{
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
+    external_tools::data_root,
     file_io::FileDialogs,
     md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
@@ -346,7 +347,10 @@ pub struct StateVolatile {
     /// We Use this to keep track of key press state for the camera movement, so we can continuously
     /// update the flashlight when moving.
     pub inputs_commanded: InputsCommanded,
-    /// We may change CWD during CLI navigation; keep prefs directory constant.
+    /// The one folder Molchanica writes to: the prefs file, `managed_molecules/`, and
+    /// `gpu_cache/` all sit directly in it, alongside `process_executables/`. Resolved once at
+    /// startup by `external_tools::data_root`, so that CLI navigation changing the working
+    /// directory cannot move it.
     pub prefs_dir: PathBuf,
     /// Entered by the user, for this session.
     pub cli_input_history: Vec<String>,
@@ -384,7 +388,9 @@ pub struct StateVolatile {
 impl StateVolatile {
     pub fn new() -> Self {
         Self {
-            prefs_dir: env::current_dir().unwrap(),
+            // Falling back to the working directory keeps a session usable even if no data
+            // directory could be resolved; the prefs file is a convenience, not a requirement.
+            prefs_dir: data_root().unwrap_or_else(|| env::current_dir().unwrap()),
             ..Default::default()
         }
     }
@@ -690,6 +696,9 @@ pub struct PopupState {
     pub protein_design: bool,
     /// Program name, version, and links.
     pub about: bool,
+    /// Why the About window's "Open data folder" button last failed, if it did. Reported in the
+    /// window rather than only on stderr, which a GUI launch has nowhere to show.
+    pub about_folder_error: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]

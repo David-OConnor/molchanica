@@ -9,9 +9,11 @@ param(
 # This file installs the application for the current user, and creates a Start menu entry.
 #
 # We install to %LOCALAPPDATA%\Programs, rather than Program Files, so that no administrator
-# rights are required, and so the application can write its preferences file and its cache of
-# molecules downloaded from the web; it stores both alongside its executable, and Program Files
-# is not writable by a normal process.
+# rights are required, and so the application can write everything it keeps into its own install
+# folder: the preferences file, the cache of molecules downloaded from the web, the graphics
+# pipeline cache, and the optional third-party tools installed from the Tools panel. Molchanica
+# resolves all of those relative to its own executable, so this one directory is the whole
+# install. Program Files is not writable by a normal process, which is why it isn't used.
 #
 # Run it from the folder you extracted the release into, e.g. by double-clicking
 # setup_molchanica.bat, or with:
@@ -102,7 +104,8 @@ function New-StartMenuEntry {
     try {
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = $target
-        # The application resolves the colocated `gemmi` folder relative to the working directory.
+        # Molchanica locates its data next to its executable, not via the working directory, so
+        # this is only so that file dialogs and any relative paths start somewhere sensible.
         $shortcut.WorkingDirectory = $Destination
         # The executable embeds its own icon; see build.rs.
         $shortcut.IconLocation = "$target,0"
@@ -116,8 +119,9 @@ function New-StartMenuEntry {
 }
 
 # An all-users install from an earlier version of this script is no longer used, and its Start menu
-# entry launches a copy that cannot save preferences. We only point it out; removing it requires
-# administrator rights, so we leave that to the user.
+# entry launches a copy that cannot write to its own folder, so it would fall back to scattering
+# data under %LOCALAPPDATA%. We only point it out; removing it requires administrator rights, so we
+# leave that to the user.
 function Show-PreviousInstallNotice {
     $stale = @()
 
@@ -178,7 +182,12 @@ New-StartMenuEntry -Destination $InstallDirectory
 
 Write-Host ""
 Write-Host "$NAME_UPPER is installed in $InstallDirectory."
-Write-Host "Its preferences file and downloaded-molecule cache are kept there too, and survive a re-run of this script."
+Write-Host "Everything it writes stays in that one folder, and survives a re-run of this script:"
+Write-Host "  molchanica_prefs.mca    preferences and per-molecule settings"
+Write-Host "  managed_molecules\      molecules downloaded or generated in the app"
+Write-Host "  gpu_cache\              the graphics pipeline cache"
+Write-Host "  process_executables\    optional third-party tools installed from the Tools panel"
+Write-Host "Set MOLCHANICA_DATA_DIR to keep them somewhere else, e.g. on another drive."
 Write-Host "You can launch it from the Start menu (e.g., search `"$NAME_UPPER`"), and/or pin it to the taskbar."
 
 Show-PreviousInstallNotice

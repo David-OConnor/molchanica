@@ -36,7 +36,7 @@ useful for setting up shortcuts in your OS.
 - On Linux distros that use Gnome (e.g. Ubuntu), run
   `setup_molchanica.sh`, included in the zip, to create a Desktop
   GUI entry. (Do not run this with `sudo`.)
-- On Windows, run `setup_molchanica.ps1` to move the program to `~/AppData\Local\molchanica`, and create a start menu shortcut. The first time you run the program, you may get the message
+- On Windows, run `setup_molchanica.ps1` to move the program to `~/AppData/Local/Programs/Molchanica`, and create a start menu shortcut. The first time you run the program, you may get the message
   *"
   Microsoft Defender
   prevented an unrecognized app from starting"*. To bypass this, click *More info*, then *Run
@@ -59,12 +59,13 @@ panel in the GUI at any time to see which are installed and working. Missing too
 unattended recipe have an **Install** button in that panel.
 
 Installation runs inside Molchanica through the shared `bio_tools` Rust library. Native
-distributions, source checkouts, and model assets live under the user data directory's
-`process_executables/`; each isolated Python or Conda environment lives under
-`process_executables/python_envs/`, the same layout used by Bio Web. Nothing is installed
-system-wide and nothing touches your system Python. On the first
-Python-backed tool install, `bio_tools` installs uv with Astral's official standalone installer
-if uv is not already available.
+distributions, source checkouts, and model assets go into `process_executables/` in Molchanica's
+own folder — the one the executable is in, described under
+[*The preferences file*](#the-preferences-file-and-where-molchanica-keeps-its-data) below; each
+isolated Python or Conda environment lives under `process_executables/python_envs/`, the same
+layout used by Bio Web. Nothing is installed system-wide, nothing touches your system Python, and
+nothing is written outside that one folder. On the first Python-backed tool install, `bio_tools`
+installs uv with Astral's official standalone installer if uv is not already available.
 
 | Tool          | Unlocks                                                                               | Size     |
 |---------------|---------------------------------------------------------------------------------------|----------|
@@ -98,7 +99,7 @@ tool's variable name.
 
 Molchanica can read a locally downloaded [PDBbind](https://www.pdbbind-plus.org.cn/) release:
 measured binding affinities, plus each complex's protein, pocket, and ligand files. Unpack one
-into `<data dir>/molchanica/datasets/pdbbind`, or set `MOLCHANICA_PDBBIND_ROOT`. Nothing
+into `datasets/pdbbind` in Molchanica's own folder, or set `MOLCHANICA_PDBBIND_ROOT`. Nothing
 downloads it for you — PDBbind+ is distributed under registration, free for academic use, with
 commercial use requiring a subscription.
 
@@ -421,13 +422,76 @@ You can add DNA, RNA, and lipids in various configurations without loading files
 them procedurally using the GUI. It can create DNA and RNA from a given nucleic acid or amino acid sequence. It
 can create lipids arranged freely, as membrances, or as lipid nanoparticles (LNPs).
 
-### The preferences file
+### The preferences file, and where Molchanica keeps its data
 
-You may notice that this program places a
-*molchanica_prefs.mca* file in the same folder as the executable. This
-is a small binary file containing application state. It's what lets it remember the last file opened, current
-view settings etc. It will grow with the number of molecules you've opened, as it stores per-molecule
-settings. Deleting it is harmless, other than resetting these conveniences.
+*molchanica_prefs.mca* is a small binary file containing application state. It's what lets the
+program remember the last file opened, current view settings etc. It will grow with the number of
+molecules you've opened, as it stores per-molecule settings. Deleting it is harmless, other than
+resetting these conveniences.
+
+Molchanica keeps everything it writes in **one folder: the one its executable is in**. Nothing is
+installed system-wide, and nothing is scattered across the OS's various per-user data locations —
+an install can be found, backed up, moved, or deleted in a single place.
+
+```text
+<install folder>/
+    molchanica[.exe]         the program itself
+    cufft64_12.dll           the cuFFT library, if your download shipped with it
+    gemmi/                   Gemmi, if your download shipped with it
+    molchanica_prefs.mca     preferences and per-molecule settings
+    managed_molecules/       molecules downloaded or generated in the app
+    gpu_cache/               the graphics pipeline cache
+    process_executables/     optional third-party tools installed from the Tools panel
+        python_envs/<tool>   one isolated Python or Conda environment per Python-backed tool
+    datasets/                PDBbind and similar, when used
+```
+
+The **About** window has an *Open data folder* button that shows this folder in your file browser,
+and displays its path. (The **Tools** panel has the equivalent button for `process_executables/`.)
+
+Where that folder is, per platform:
+
+| Platform | Installed with                             | Folder                                       |
+|----------|--------------------------------------------|----------------------------------------------|
+| Windows  | `setup_molchanica.ps1`                     | `C:\Users\<you>\AppData\Local\Programs\Molchanica` |
+| Linux    | `setup_molchanica.sh`                      | `~/molchanica`                               |
+| Any      | No setup script — run the binary in place  | Wherever you unzipped or built it            |
+
+Both setup scripts deliberately install somewhere you can write without administrator or root
+rights, which is what makes this possible. On Windows that means `%LOCALAPPDATA%\Programs` rather
+than `Program Files`; on Linux it means your home directory rather than `/usr/local/bin`.
+
+`managed_molecules/` holds durable source files for molecules that didn't come from your disk:
+RCSB, PubChem, DrugBank, ChEBI, and Amber Geostd downloads, molecules built from SMILES, and
+generated structures. Keeping them as real files on disk is what lets them be restored on the next
+launch the same way a file you opened is.
+
+#### Putting the data somewhere else
+
+Set `MOLCHANICA_DATA_DIR` to move all of the above out of the install folder. This is worth doing
+if you install the optional tools — several are multi-GB — and want them on a different drive.
+Individual tools can be pointed at an existing installation with their own
+`MOLCHANICA_<TOOL>_EXECUTABLE`, `MOLCHANICA_<TOOL>_VENV_DIR`, and `MOLCHANICA_<TOOL>_ROOT`
+variables, which take precedence over everything above.
+
+Two cases resolve elsewhere automatically:
+
+- **Running from a source checkout.** When the executable is inside `target/debug` or
+  `target/release`, the working directory — normally the checkout root — is used instead. `cargo
+  clean` would otherwise delete multi-GB tool installs, and debug and release builds would each
+  keep their own copy.
+- **An install into a read-only location**, such as `Program Files` or a packaged `/usr/bin`.
+  Molchanica falls back to the OS per-user data directory: `%LOCALAPPDATA%\molchanica`,
+  `~/Library/Application Support/molchanica`, or `$XDG_DATA_HOME/molchanica` (defaulting to
+  `~/.local/share/molchanica`). Prefer moving the install somewhere writable over relying on this.
+
+#### Upgrading from an earlier version
+
+Versions before this change always kept `process_executables/` and `datasets/` in the OS per-user
+data directory, separate from the executable. On first launch, Molchanica moves them into the
+install folder — a rename, so it's instant and doesn't re-download anything. If the two are on
+different drives the rename can't work; Molchanica then prints both paths and leaves the files
+alone, so move them yourself or point `MOLCHANICA_DATA_DIR` at the old location.
 
 ![ELectron density](screenshots/iso_a.png)
 
