@@ -46,6 +46,7 @@ Cargo.lock
 
 # E.g. molecules pulled from queries, but not explicitly saved to disk
 /managed_molecules
+/gpu_cache
 
 ## New below; old above
 *.cfa

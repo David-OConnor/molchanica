@@ -18,6 +18,7 @@ use crate::{
     mol_db::{MolMeta, ParquetMolDb},
     prefs::OpenType,
     state::{DbSel, PopupState, State},
+    threads::start_builtin_mol_db_load,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         popup,
@@ -71,6 +72,10 @@ pub(in crate::ui) fn parquet_db(
     updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
+    // The embedded files are large; opening this popup is the first point at which the user needs
+    // them. Decoding happens in the same receiver-driven background system as other long calls.
+    start_builtin_mol_db_load(state);
+
     ui.horizontal(|ui| {
         label!(ui, "Molecule databases", Color32::WHITE);
 
@@ -359,6 +364,10 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
     ui.separator();
     label!(ui, "Databases loaded", Color32::GRAY);
+
+    if state.volatile.thread_receivers.builtin_mol_dbs.is_some() {
+        label!(ui, "Loading built-in databases…", Color32::GRAY);
+    }
 
     // Applied after the loops below: they borrow `state` fields, and selecting touches all of
     // `state`.

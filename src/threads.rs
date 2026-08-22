@@ -1,6 +1,7 @@
 //! Handle threads for potentially long-running calls, e.g. HTTP.
 
 use std::{
+    path::PathBuf,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
 };
@@ -24,8 +25,9 @@ use mol_defs::{
 use na_seq::AaIdent;
 
 use crate::{
-    file_io::managed_mols,
+    file_io::{SessionRestoreItem, SessionRestorePayload, managed_mols, parse_session_history},
     gromacs::on_gromacs_md_complete,
+    mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
     state::State,
@@ -38,6 +40,11 @@ use crate::{
 #[allow(clippy::type_complexity)]
 #[derive(Default)]
 pub struct ThreadReceivers {
+    /// Built-in molecule databases are decoded only if their popup is opened.
+    pub builtin_mol_dbs: Option<Receiver<BuiltinMolDbResult>>,
+    /// Previous-session files are parsed serially on one worker and applied one at a time on the
+    /// UI thread. Keeping the failure list alongside the receiver mirrors the worker's lifetime.
+    pub session_restore: Option<SessionRestoreReceiver>,
     /// Receives thread data upon an HTTP result completion.
     pub mol_pending_data_avail: Vec<(
         usize,
@@ -70,10 +77,22 @@ pub struct ThreadReceivers {
     pub structure_prediction: Option<Receiver<StructurePredictionOutcome>>,
 }
 
+pub struct SessionRestoreReceiver {
+    receiver: Receiver<Result<SessionRestoreItem, SessionRestoreFailure>>,
+    failed: Vec<PathBuf>,
+}
+
+pub struct SessionRestoreFailure {
+    path: PathBuf,
+    error: String,
+}
+
 impl ThreadReceivers {
     /// True while any background worker still needs periodic non-blocking polling.
     pub fn has_pending(&self) -> bool {
-        !self.mol_pending_data_avail.is_empty()
+        self.builtin_mol_dbs.is_some()
+            || self.session_restore.is_some()
+            || !self.mol_pending_data_avail.is_empty()
             || self.pubchem_properties_avail.is_some()
             || self.all_idents_avail.is_some()
             || self.therapeutic_properties_avail.is_some()
@@ -84,6 +103,180 @@ impl ThreadReceivers {
             || self.gromacs_md_avail.is_some()
             || self.structure_prediction.is_some()
     }
+}
+
+/// One database produced by the on-demand built-in database worker.
+pub enum BuiltinMolDbResult {
+    Hmdb(Option<ParquetMolDb>),
+    Chebi(Option<ParquetMolDb>),
+}
+
+/// Decode and index the large embedded databases away from the UI thread. Results are streamed so
+/// the first database can become available without waiting for the second one.
+pub fn start_builtin_mol_db_load(state: &mut State) {
+    if state.volatile.builtin_mol_db_load_started {
+        return;
+    }
+
+    state.volatile.builtin_mol_db_load_started = true;
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        if tx
+            .send(BuiltinMolDbResult::Hmdb(load_hmdb_mol_db()))
+            .is_err()
+        {
+            return;
+        }
+        let _ = tx.send(BuiltinMolDbResult::Chebi(load_chebi_mol_db()));
+    });
+    state.volatile.thread_receivers.builtin_mol_dbs = Some(rx);
+}
+
+/// Begin restoring the previous session after the first UI frame has started. File reads and
+/// format parsing happen on the worker; state and scene updates remain on the UI thread.
+pub fn start_session_restore(state: &mut State) {
+    if state.volatile.session_restore_started {
+        return;
+    }
+
+    state.volatile.session_restore_started = true;
+    let histories = state.to_save.open_history.clone();
+    let referenced = histories
+        .iter()
+        .map(|history| history.path.clone())
+        .collect::<Vec<_>>();
+    let prefs_dir = state.volatile.prefs_dir.clone();
+    let peptide_ff_q_map = state.ff_param_set.peptide_ff_q_map.clone();
+    let ph = state.to_save.ph;
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        if let Err(error) = managed_mols::cleanup_orphans(&prefs_dir, &referenced) {
+            eprintln!("Unable to clean managed molecule cache: {error}");
+        }
+
+        for history in histories.into_iter().filter(|history| history.last_session) {
+            let path = history.path.clone();
+            let result = parse_session_history(history, &prefs_dir, peptide_ff_q_map.as_ref(), ph)
+                .map_err(|error| SessionRestoreFailure {
+                    path,
+                    error: error.to_string(),
+                });
+            if tx.send(result).is_err() {
+                return;
+            }
+        }
+    });
+
+    state.volatile.thread_receivers.session_restore = Some(SessionRestoreReceiver {
+        receiver: rx,
+        failed: Vec::new(),
+    });
+}
+
+fn apply_session_restore_item(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    item: SessionRestoreItem,
+) {
+    let history = item.history;
+    match item.payload {
+        SessionRestorePayload::Molecule {
+            molecule,
+            raw_cif,
+            specific_params,
+        } => {
+            if let Some((name, params)) = specific_params {
+                state.mol_specific_params.insert(name, params);
+            }
+            if let Some((ident, cif)) = raw_cif {
+                state.cif_pdb_raw.insert(ident, cif);
+            }
+
+            let mol_type = molecule.mol_type();
+            let mol_i = match mol_type {
+                MolType::Peptide => state.peptides.len(),
+                MolType::Ligand => state.ligands.len(),
+                MolType::NucleicAcid => state.nucleic_acids.len(),
+                MolType::Lipid => state.lipids.len(),
+                MolType::Pocket => state.pockets.len(),
+                MolType::Water => return,
+            };
+            state.restore_mol_to_state(molecule, scene, updates, &history.path);
+
+            if let Some(position) = history.position {
+                if mol_type == MolType::Peptide {
+                    if let Some(peptide) = state.peptides.get_mut(mol_i) {
+                        peptide.common.move_to(position);
+                        peptide.center = position;
+                    }
+                } else if let Some(mut molecule) = state.get_mol_mut(mol_type, mol_i) {
+                    molecule.common_mut().move_to(position);
+                }
+            }
+        }
+        SessionRestorePayload::Density(density) => state.load_density(density),
+        SessionRestorePayload::GeneralForceField(params) => {
+            state.ff_param_set.small_mol = Some(params);
+        }
+        SessionRestorePayload::SpecificForceField(name, params) => {
+            state.mol_specific_params.insert(name.clone(), params);
+            for ligand in &mut state.ligands {
+                if ligand.common.ident.eq_ignore_ascii_case(&name) {
+                    ligand.frcmod_loaded = true;
+                }
+            }
+        }
+        SessionRestorePayload::Trajectory(trajectory) => state.trajectories.push(trajectory),
+        SessionRestorePayload::ParquetDb(db) => {
+            state.volatile.parquet_dbs.push(db);
+            if state.volatile.parquet_dbs.len() == 1 {
+                state.volatile.parquet_db_active = Some(crate::state::DbSel::Loaded(0));
+            }
+        }
+        SessionRestorePayload::MdMols(viewer) => state.volatile.md_local.viewer = viewer,
+        SessionRestorePayload::MdParams => {}
+    }
+}
+
+fn finish_session_restore(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    failed: Vec<PathBuf>,
+) {
+    if !failed.is_empty() {
+        state
+            .to_save
+            .open_history
+            .retain(|history| !failed.contains(&history.path));
+        for path in &failed {
+            if let Err(error) = managed_mols::remove_entry(&state.volatile.prefs_dir, path) {
+                eprintln!("Unable to remove invalid managed molecule cache entry: {error}");
+            }
+        }
+
+        let names = failed
+            .iter()
+            .map(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("<unknown>")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        handle_err(
+            &mut state.ui,
+            format!(
+                "Problem opening the following files from history: {}",
+                names.join(", ")
+            ),
+        );
+        state.update_save_prefs();
+    }
+
+    crate::ui::util::finish_session_restore(state, scene, updates);
 }
 
 /// Result of asking the online small-molecule databases to fill identifier gaps.
@@ -348,6 +541,52 @@ pub fn handle_thread_rx(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
+    let builtin_db_result = state
+        .volatile
+        .thread_receivers
+        .builtin_mol_dbs
+        .as_ref()
+        .map(Receiver::try_recv);
+    match builtin_db_result {
+        Some(Ok(BuiltinMolDbResult::Hmdb(db))) => state.hmdb_mol_db = db,
+        Some(Ok(BuiltinMolDbResult::Chebi(db))) => state.chebi_mol_db = db,
+        Some(Err(TryRecvError::Disconnected)) => {
+            state.volatile.thread_receivers.builtin_mol_dbs = None;
+        }
+        Some(Err(TryRecvError::Empty)) | None => {}
+    }
+
+    let session_restore_result = state
+        .volatile
+        .thread_receivers
+        .session_restore
+        .as_ref()
+        .map(|pending| pending.receiver.try_recv());
+    match session_restore_result {
+        Some(Ok(Ok(item))) => apply_session_restore_item(state, scene, updates, item),
+        Some(Ok(Err(failure))) => {
+            eprintln!(
+                "Unable to restore session file {}: {}",
+                failure.path.display(),
+                failure.error
+            );
+            if let Some(pending) = &mut state.volatile.thread_receivers.session_restore {
+                pending.failed.push(failure.path);
+            }
+        }
+        Some(Err(TryRecvError::Disconnected)) => {
+            let failed = state
+                .volatile
+                .thread_receivers
+                .session_restore
+                .take()
+                .map(|pending| pending.failed)
+                .unwrap_or_default();
+            finish_session_restore(state, scene, updates, failed);
+        }
+        Some(Err(TryRecvError::Empty)) | None => {}
+    }
+
     let all_idents_result = state
         .volatile
         .thread_receivers

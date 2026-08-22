@@ -16,7 +16,7 @@ use crate::{
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::State,
-    ui::{ui_handler, util::init_with_scene},
+    ui::ui_handler,
 };
 
 pub type Color = (f32, f32, f32);
@@ -91,7 +91,7 @@ fn render_handler(_state: &mut State, _scene: &mut Scene, _dt: f32) -> EngineUpd
 }
 
 /// Entry point to our render and event loop.
-pub fn render(mut state: State) {
+pub fn render(state: State) {
     let white = [1., 1., 1., 0.5];
     let pink = [1., 0., 1., 1.];
 
@@ -202,10 +202,12 @@ pub fn render(mut state: State) {
         layout_sides: UiLayoutSides::Left,
         layout_top_bottom: UiLayoutTopBottom::Top,
         icon_path: Some("resources/icon.png".to_owned()),
+        pipeline_cache_dir: Some(state.volatile.prefs_dir.join("gpu_cache")),
     };
 
-    let mut updates = EngineUpdates::default(); // todo: Dummy/not used?
-    init_with_scene(&mut state, &mut scene, &mut updates);
+    // Session files are parsed after the first frame by the receiver-driven startup worker. The
+    // initial scene only needs its camera-relative light to be valid before entering the event loop.
+    set_flashlight(&mut scene);
 
     let graphics_settings = state.graphics_settings.clone();
 

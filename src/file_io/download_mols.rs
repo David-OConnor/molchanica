@@ -136,7 +136,7 @@ pub fn load_atom_coords_rcsb(
                 }
             };
 
-            let (loaded_ident, centroid) = load_peptide(state, scene, mol, updates);
+            let (loaded_ident, centroid) = load_peptide(state, scene, mol, updates, true);
             state.update_history(&cache_path, OpenType::Peptide, Some(loaded_ident.clone()));
             if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
                 *center = centroid.into();

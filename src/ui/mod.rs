@@ -37,7 +37,7 @@ use crate::{
     state::{
         AaSeqDisplayCache, CamSnapshot, OperatingMode, ResColoring, SmilesDisplayCache, State,
     },
-    threads::handle_thread_rx,
+    threads::{handle_thread_rx, start_session_restore},
     ui::{
         misc::section_box,
         mol_type_tools::mol_type_toolbars,
@@ -1169,6 +1169,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     handle_scene_flags(state, scene, &mut updates);
     handle_thread_rx(state, scene, &mut redraw, &mut updates);
+    start_session_restore(state);
     if state.volatile.thread_receivers.has_pending() {
         ui.request_repaint_after(Duration::from_millis(50));
     }

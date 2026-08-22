@@ -41,7 +41,7 @@ use crate::{
     file_io::FileDialogs,
     md::{MdStateLocal, trajectory::Trajectory},
     mol_alignment::StateAlignment,
-    mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
+    mol_db::ParquetMolDb,
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     orca::StateOrca,
@@ -85,10 +85,10 @@ pub struct State {
     /// todo: Pharmacophore state
     pub pharmacophore: PharmacophoreState,
     pub graphics_settings: GraphicsSettings,
-    /// A curated set of common small molecules, embedded in the binary and loaded at startup, so
-    /// they're available without an internet query. Read-only; unlike `StateVolatile::parquet_dbs`,
-    /// it can't be added to or deleted from. `None` if this build has no database embedded, or it
-    /// failed to load.
+    /// A curated set of common small molecules embedded in the binary and loaded on demand when
+    /// the database popup first opens. Read-only; unlike `StateVolatile::parquet_dbs`, it can't be
+    /// added to or deleted from. `None` before loading, if this build has no database embedded, or
+    /// if it failed to load.
     ///
     /// We use [HMDB (Human Metabolome Database)](hmdb.ca/downloads) for this; it's provided as a single
     /// SDF ("Metabolite Structures"), and an archive of data in XML format; we use both.
@@ -152,8 +152,10 @@ impl Default for State {
                 // intersection_revealing_contour_lines: Some(1.),
                 ..Default::default()
             },
-            hmdb_mol_db: load_hmdb_mol_db(),
-            chebi_mol_db: load_chebi_mol_db(),
+            // These embedded databases are large enough that decoding and indexing them delays
+            // the first window. They are loaded on demand when the database popup is first opened.
+            hmdb_mol_db: None,
+            chebi_mol_db: None,
         }
     }
 }
@@ -335,6 +337,12 @@ impl State {
 pub struct StateVolatile {
     pub dialogs: FileDialogs,
     pub thread_receivers: ThreadReceivers,
+    /// Prevents repeatedly starting the built-in database worker if an embedded database is
+    /// absent or failed to decode.
+    pub builtin_mol_db_load_started: bool,
+    /// Session restoration starts after egui has produced its first frame, instead of delaying
+    /// creation of the native window and graphics surface.
+    pub session_restore_started: bool,
     /// We Use this to keep track of key press state for the camera movement, so we can continuously
     /// update the flashlight when moving.
     pub inputs_commanded: InputsCommanded,

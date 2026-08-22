@@ -339,9 +339,12 @@ impl MolEditorState {
         let Some(md) = &self.md.md else { return };
         let mol = &mut self.mol.common;
 
-        if md.atoms.len() != mol.atoms.len() || mol.atoms.len() != mol.atom_posits.len() {
+        // `MdState::atoms` stores the caller-supplied solute first, followed by any explicit
+        // solvent atoms or counterions added during MD initialization. Only the leading solute
+        // atoms correspond to the molecule in the editor.
+        if md.atoms.len() < mol.atoms.len() || mol.atoms.len() != mol.atom_posits.len() {
             eprintln!(
-                "Unable to fully sync mol-editor MD positions: MD has {} atoms, while the editor has {} atoms and {} positions.",
+                "Unable to fully sync mol-editor MD positions: MD has {} atoms, while the editor requires {} atoms and has {} positions.",
                 md.atoms.len(),
                 mol.atoms.len(),
                 mol.atom_posits.len()
@@ -859,6 +862,9 @@ pub(super) fn build_dynamics(
     }];
 
     let cfg = MdConfig {
+        // The editor has its own solvent toggle. Inheriting the application-wide MD solvent here
+        // made Relax unexpectedly initialize water even when "MD Water" was disabled.
+        solvent: editor.md.solvent.clone(),
         max_init_relaxation_iters: Some(50), // todo A/R
         overrides: MdOverrides {
             // todo: Reduced number of water relax steps to make it faster?

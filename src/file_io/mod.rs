@@ -15,7 +15,7 @@ use bio_files::{
     sdf::Sdf,
 };
 use chrono::Utc;
-use dynamics::MdConfig;
+use dynamics::{MdConfig, params::ProtFfChargeMapSet};
 use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -38,7 +38,8 @@ use crate::{
         MolTypeExt, draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
-    md::trajectory::Trajectory,
+    md::{trajectory::Trajectory, viewer::SnapshotViewer},
+    mol_db::ParquetMolDb,
     pocket_render::PocketRender,
     prefs::{OpenHistory, OpenType},
     reflection::DensityRectExt,
@@ -53,12 +54,200 @@ pub(crate) mod managed_mols;
 // When opening molecules deconflict; don't allow a mol to be closer than this to another.
 const MOL_MIN_DIST_OPEN: f64 = 12.;
 
+/// CPU/file result produced while restoring one item from the previous session. Parsing stays on
+/// the worker; application and graphics state are updated later on the UI thread.
+pub(crate) enum SessionRestorePayload {
+    Molecule {
+        molecule: MoleculeGeneric,
+        raw_cif: Option<(String, String)>,
+        specific_params: Option<(String, ForceFieldParams)>,
+    },
+    Density(DensityMap),
+    GeneralForceField(ForceFieldParams),
+    SpecificForceField(String, ForceFieldParams),
+    Trajectory(Trajectory),
+    ParquetDb(ParquetMolDb),
+    MdMols(SnapshotViewer),
+    MdParams,
+}
+
+pub(crate) struct SessionRestoreItem {
+    pub history: OpenHistory,
+    pub payload: SessionRestorePayload,
+}
+
+/// Parse one previous-session item without borrowing `State` or touching the scene. This function
+/// is intentionally self-contained so `threads.rs` can run it on its startup worker.
+pub(crate) fn parse_session_history(
+    history: OpenHistory,
+    prefs_dir: &Path,
+    peptide_ff_q_map: Option<&ProtFfChargeMapSet>,
+    ph: f32,
+) -> io::Result<SessionRestoreItem> {
+    let path = &history.path;
+    let payload = match history.type_ {
+        OpenType::Peptide
+        | OpenType::Ligand
+        | OpenType::NucleicAcid
+        | OpenType::Lipid
+        | OpenType::Pocket => {
+            let manifest = managed_mols::read_manifest(prefs_dir, path)?;
+            let specific_params = if let Some(manifest) = &manifest
+                && let Some(filename) = &manifest.frcmod_file
+            {
+                let entry_dir = path.parent().ok_or_else(|| {
+                    io::Error::new(
+                        ErrorKind::InvalidInput,
+                        "Managed molecule path has no parent",
+                    )
+                })?;
+                Some((
+                    manifest.query.to_uppercase(),
+                    ForceFieldParams::load_frcmod(&entry_dir.join(filename))?,
+                ))
+            } else {
+                None
+            };
+
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let mut raw_cif = None;
+            let mut molecule = match extension.as_str() {
+                "sdf" | "mol" => {
+                    let mut molecule: MoleculeSmall = Sdf::load(path)?.try_into()?;
+                    molecule.common.update_path(path);
+                    if molecule.common.metadata.contains_key(POCKET_METADATA_KEY) {
+                        MoleculeGeneric::Pocket(molecule.common.into())
+                    } else {
+                        MoleculeGeneric::Small(molecule)
+                    }
+                }
+                "mol2" => {
+                    let mut molecule: MoleculeSmall = Mol2::load(path)?.try_into()?;
+                    molecule.common.update_path(path);
+                    if molecule.common.metadata.contains_key(POCKET_METADATA_KEY) {
+                        MoleculeGeneric::Pocket(molecule.common.into())
+                    } else {
+                        MoleculeGeneric::Small(molecule)
+                    }
+                }
+                "xyz" => MoleculeGeneric::Small(MoleculeSmall::from_xyz(Xyz::load(path)?, path)?),
+                "pdbqt" => {
+                    let mut molecule: MoleculeSmall = Pdbqt::load(path)?.try_into()?;
+                    molecule.common.update_path(path);
+                    MoleculeGeneric::Small(molecule)
+                }
+                "cif" => {
+                    let data = fs::read_to_string(path)?;
+                    let cif = MmCif::new(&data)?;
+                    let ff_map = peptide_ff_q_map.ok_or_else(|| {
+                        io::Error::other("Missing FF map when opening a protein; can't validate H")
+                    })?;
+                    let molecule =
+                        MoleculePeptide::from_mmcif(cif, ff_map, Some(path.to_owned()), ph)?;
+                    raw_cif = Some((molecule.common.ident.clone(), data));
+                    MoleculeGeneric::Peptide(molecule)
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "Invalid molecule file extension",
+                    ));
+                }
+            };
+
+            if let Some(manifest) = &manifest
+                && manifest.provider == "geostd"
+                && let MoleculeGeneric::Small(molecule) = &mut molecule
+            {
+                let geostd_ident = MolIdent::PdbeAmber(manifest.query.clone());
+                if !molecule.idents.contains(&geostd_ident) {
+                    molecule.idents.push(geostd_ident);
+                }
+                if let Some(cid) = manifest.pubchem_cid
+                    && !molecule.idents.contains(&MolIdent::PubChem(cid))
+                {
+                    molecule.idents.push(MolIdent::PubChem(cid));
+                }
+            }
+            molecule
+                .common_mut()
+                .metadata
+                .remove(PHARMACOPHORE_POCKET_ATOMS_KEY);
+
+            SessionRestorePayload::Molecule {
+                molecule,
+                raw_cif,
+                specific_params,
+            }
+        }
+        OpenType::Map => {
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let density = if matches!(extension.as_str(), "mtz" | "cif") {
+                DensityMap::load_sf_or_mtz(path, gemmi_path())?
+            } else {
+                DensityMap::load(path)?
+            };
+            SessionRestorePayload::Density(density)
+        }
+        OpenType::Frcmod => {
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            match extension.as_str() {
+                "dat" => {
+                    SessionRestorePayload::GeneralForceField(ForceFieldParams::load_dat(path)?)
+                }
+                "frcmod" => {
+                    let name = path
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| {
+                            io::Error::new(ErrorKind::InvalidInput, "Invalid frcmod filename")
+                        })?
+                        .to_uppercase();
+                    SessionRestorePayload::SpecificForceField(
+                        name,
+                        ForceFieldParams::load_frcmod(path)?,
+                    )
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidFilename,
+                        "Attempting to parse a non-dat/frcmod file as a force field",
+                    ));
+                }
+            }
+        }
+        OpenType::Trajectory => SessionRestorePayload::Trajectory(Trajectory::new(path)?),
+        OpenType::MdParams => SessionRestorePayload::MdParams,
+        OpenType::ParquetDb => SessionRestorePayload::ParquetDb(ParquetMolDb::new(path)?),
+        OpenType::MdMols => {
+            let mut viewer = SnapshotViewer::default();
+            viewer.load_gro(path)?;
+            SessionRestorePayload::MdMols(viewer)
+        }
+    };
+
+    Ok(SessionRestoreItem { history, payload })
+}
+
 /// Shared between loading protein from file, and from RCSB.
 pub(in crate::file_io) fn load_peptide(
     state: &mut State,
     scene: &mut Scene,
     mol: MoleculePeptide,
     updates: &mut EngineUpdates,
+    draw_now: bool,
 ) -> (String, Vec3) {
     state.volatile.aa_seq_text = String::with_capacity(mol.common.atoms.len());
     for aa in &mol.aa_seq {
@@ -81,7 +270,9 @@ pub(in crate::file_io) fn load_peptide(
     state.volatile.active_peptide = Some(peptide_i);
     state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
 
-    draw_peptide(state, scene, updates);
+    if draw_now {
+        draw_peptide(state, scene, updates);
+    }
 
     (ident, centroid)
 }
@@ -723,131 +914,6 @@ impl State {
         println!("Loaded Amber Geostd in {elapsed:.1}ms");
     }
 
-    /// We run this at init. Loads all relevant files marked as "last opened".
-    ///
-    /// Unlike the individual open handlers, a failure here (e.g. a file that has since been
-    /// removed) does not raise its own error popup. Instead we drop the offending entry from the
-    /// open history and, once all entries have been processed, surface a single combined error
-    /// listing every file that failed to open.
-    pub fn load_last_opened(&mut self, scene: &mut Scene) {
-        let referenced: Vec<_> = self
-            .to_save
-            .open_history
-            .iter()
-            .map(|history| history.path.clone())
-            .collect();
-        if let Err(error) = managed_mols::cleanup_orphans(&self.volatile.prefs_dir, &referenced) {
-            eprintln!("Unable to clean managed molecule cache: {error}");
-        }
-        let histories = self.to_save.open_history.clone();
-
-        // This prevents loading duplicates
-        // todo: When you place paths in mol.common etc, re-implement this.
-        // todo: We must track which files are open.
-
-        // Paths of history entries that failed to open, to be pruned and reported together.
-        let mut failed = Vec::new();
-
-        for history in &histories {
-            if !history.last_session {
-                continue;
-            }
-
-            // Each branch yields an `io::Result<()>`; we handle reporting/pruning centrally below.
-            let result: io::Result<()> = match history.type_ {
-                OpenType::Peptide => self
-                    .open_mol_from_file(&history.path, scene, &mut Default::default())
-                    .map(|()| {
-                        if let Some(p) = &history.position {
-                            let peptide = self.peptides.last_mut().unwrap();
-                            peptide.common.move_to(*p);
-                            peptide.center = *p;
-                        }
-                    }),
-                OpenType::Ligand => {
-                    let len = self.ligands.len();
-                    self.last_opened_helper(history, scene, MolType::Ligand, len)
-                }
-                OpenType::Lipid => {
-                    let len = self.lipids.len();
-                    self.last_opened_helper(history, scene, MolType::Lipid, len)
-                }
-                OpenType::NucleicAcid => {
-                    let len = self.nucleic_acids.len();
-                    self.last_opened_helper(history, scene, MolType::NucleicAcid, len)
-                }
-                OpenType::Pocket => {
-                    let len = self.pockets.len();
-                    self.last_opened_helper(history, scene, MolType::Pocket, len)
-                }
-                OpenType::Map => self.open_file(&history.path, scene, &mut Default::default()),
-                OpenType::Frcmod => self.open_force_field(&history.path),
-                OpenType::Trajectory => self.open_trajectory(&history.path),
-                OpenType::MdParams => Ok(()), // We don't re-load these directly; stored in ToSave.
-                OpenType::ParquetDb => self.load_parquet_db_inner(&history.path),
-                // GRO viewer mols; todo: Update when you support more formats.
-                OpenType::MdMols => self.volatile.md_local.viewer.load_gro(&history.path),
-            };
-
-            if result.is_err() {
-                failed.push(history.path.clone());
-            }
-        }
-
-        if !failed.is_empty() {
-            // Remove the failed entries from the open history so we don't try to reopen them again.
-            self.to_save
-                .open_history
-                .retain(|h| !failed.contains(&h.path));
-
-            for path in &failed {
-                if let Err(error) = managed_mols::remove_entry(&self.volatile.prefs_dir, path) {
-                    eprintln!("Unable to remove invalid managed molecule cache entry: {error}");
-                }
-            }
-
-            let names: Vec<String> = failed
-                .iter()
-                .map(|p| {
-                    p.file_name()
-                        .and_then(|f| f.to_str())
-                        .unwrap_or("<unknown>")
-                        .to_string()
-                })
-                .collect();
-
-            handle_err(
-                &mut self.ui,
-                format!(
-                    "Problem opening the following files from history: {}",
-                    names.join(", ")
-                ),
-            );
-
-            // Persist the pruned history.
-            self.update_save_prefs();
-        }
-    }
-
-    fn last_opened_helper(
-        &mut self,
-        history: &OpenHistory,
-        scene: &mut Scene,
-        mol_type: MolType,
-        len: usize,
-    ) -> io::Result<()> {
-        self.open_mol_from_file(&history.path, scene, &mut Default::default())?;
-
-        if let Some(p) = &history.position {
-            match self.get_mol_mut(mol_type, len) {
-                Some(mut m) => m.common_mut().move_to(*p),
-                None => eprintln!("Error loading last opened; missing mol"),
-            }
-        }
-
-        Ok(())
-    }
-
     /// Add a history event, or update its timestamp and restor the list.
     pub fn update_history(&mut self, path: &Path, type_: OpenType, ident: Option<String>) {
         let mut first_i = None;
@@ -890,10 +956,34 @@ impl State {
     /// between different molecule types.
     pub fn load_mol_to_state(
         &mut self,
+        mol: MoleculeGeneric,
+        scene: &mut Scene,
+        updates: &mut EngineUpdates,
+        path: Option<&Path>,
+    ) {
+        self.load_mol_to_state_inner(mol, scene, updates, path, true);
+    }
+
+    /// Add a molecule parsed by the startup worker without repeatedly rebuilding all render
+    /// entities or rewriting preferences. Session restoration performs those operations once,
+    /// after every streamed item has been applied.
+    pub(crate) fn restore_mol_to_state(
+        &mut self,
+        mol: MoleculeGeneric,
+        scene: &mut Scene,
+        updates: &mut EngineUpdates,
+        path: &Path,
+    ) {
+        self.load_mol_to_state_inner(mol, scene, updates, Some(path), false);
+    }
+
+    fn load_mol_to_state_inner(
+        &mut self,
         mut mol: MoleculeGeneric,
         scene: &mut Scene,
         updates: &mut EngineUpdates,
         path: Option<&Path>,
+        draw_now: bool,
     ) {
         if let Some(path) = path {
             mol.common_mut().update_path(path);
@@ -917,7 +1007,7 @@ impl State {
         let (ident, centroid) = match mol {
             MoleculeGeneric::Peptide(m) => {
                 // Shared fn, as this is shared with loading mol from RCSB.
-                load_peptide(self, scene, m, updates)
+                load_peptide(self, scene, m, updates, draw_now)
             }
             MoleculeGeneric::Small(mut mol) => {
                 if !mol
@@ -987,7 +1077,9 @@ impl State {
 
                 self.ligands.push(mol);
 
-                draw_all_ligs(self, scene, updates);
+                if draw_now {
+                    draw_all_ligs(self, scene, updates);
+                }
 
                 (ident, centroid)
             }
@@ -1002,7 +1094,9 @@ impl State {
 
                 self.nucleic_acids.push(mol);
 
-                draw_all_nucleic_acids(self, scene, updates);
+                if draw_now {
+                    draw_all_nucleic_acids(self, scene, updates);
+                }
 
                 (ident, centroid)
             }
@@ -1019,7 +1113,9 @@ impl State {
 
                 // if let Some(ref mut s) = scene {
                 //     draw_all_lipids(self, s);
-                draw_all_lipids(self, scene, updates);
+                if draw_now {
+                    draw_all_lipids(self, scene, updates);
+                }
                 // }
 
                 (ident, centroid)
@@ -1047,13 +1143,17 @@ impl State {
                     pocket.volume.spheres[0].center
                 );
 
-                draw_all_pockets(self, scene, updates);
+                if draw_now {
+                    draw_all_pockets(self, scene, updates);
+                }
 
                 (ident, centroid)
             }
         };
 
-        updates.entities.push_class(entity_class);
+        if draw_now {
+            updates.entities.push_class(entity_class);
+        }
 
         self.volatile.active_mol = Some((mol_type, mol_i));
         if mol_type == MolType::Peptide {
@@ -1093,21 +1193,27 @@ impl State {
             }
         }
 
-        if let Some(p) = path {
-            self.update_history(p, open_type, Some(ident.clone()));
+        if draw_now {
+            if let Some(p) = path {
+                self.update_history(p, open_type, Some(ident.clone()));
+            }
+
+            // Save the open history.
+            self.update_save_prefs();
+
+            // Now, save prefs: This is to save last opened. Note that anomalies happen
+            // if we update the molecule here, e.g. with docking site posit.
+            self.update_save_prefs_no_mol();
         }
 
-        // Save the open history.
-        self.update_save_prefs();
-
-        // Now, save prefs: This is to save last opened. Note that anomalies happen
-        // if we update the molecule here, e.g. with docking site posit.
-        self.update_save_prefs_no_mol();
-
-        self.volatile.flags.new_mol_loaded = true;
+        if draw_now {
+            self.volatile.flags.new_mol_loaded = true;
+        }
 
         // Note: This may be overwritten by `load_file` with the full file path.
-        handle_success(&mut self.ui, format!("Loaded molecule {ident}"));
+        if draw_now {
+            handle_success(&mut self.ui, format!("Loaded molecule {ident}"));
+        }
     }
 }
 

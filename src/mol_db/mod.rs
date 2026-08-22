@@ -765,6 +765,8 @@ impl ParquetMolDb {
         let mut reader = open_reader(&self.source, &cols)?;
 
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
+            // Avoid repeated HashMap growth while indexing large embedded databases.
+            self.index_meta.reserve(batch.num_rows());
             let smiles_col = str_col(&batch, COL_SMILES)?;
             let cid_col = u32_col(&batch, COL_PUBCHEM_CID)?;
             let title_col = match has_title {

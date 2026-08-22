@@ -38,7 +38,7 @@ use crate::{
     prefs::OpenType,
     render::{Color, set_flashlight, set_static_light},
     state::{DbSel, OperatingMode, State},
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
+    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
 };
 
@@ -411,14 +411,13 @@ fn cache_sdf_source(
     report_cache_result(state, result)
 }
 
-/// Contains functionality we wish to run at program load, but can't do until the scene is loaded.
-/// Run this near the top of the UI initialization.
-pub fn init_with_scene(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    // We must have loaded prefs prior to this, so we know which file to open.
-    state.load_last_opened(scene);
-    // todo trouble: It's somewhere around here, saving the inited-from-load atom posits, overwriting
-    // todo the previously-saved ones.
-
+/// Finish session restoration after all worker results have been applied. Expensive entity rebuilds
+/// are deliberately batched here instead of running once for every restored molecule.
+pub(crate) fn finish_session_restore(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+) {
     // todo: Workaround to allow us to apply params to the ligand once it's loaded. Unfortunate we have
     // todo to double-load prefs.
     {
@@ -463,27 +462,19 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene, updates: &mut Engin
     let standalone_pocket_count = state.pockets.len();
     for (i, pocket) in state.pockets.iter_mut().enumerate() {
         pocket.mesh_i_rel = i;
-        pocket.reset_post_manip(
-            &mut scene.meshes,
-            state.ui.mesh_coloring,
-            &mut Default::default(),
-        );
+        pocket.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
     }
     // Same treatment for pockets embedded in ligand pharmacophores.
     for (lig_i, lig) in state.ligands.iter_mut().enumerate() {
         if let Some(pocket) = &mut lig.pharmacophore.pocket {
             pocket.mesh_i_rel = standalone_pocket_count + lig_i;
-            pocket.reset_post_manip(
-                &mut scene.meshes,
-                state.ui.mesh_coloring,
-                &mut Default::default(),
-            );
+            pocket.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
         }
     }
 
     reset_orbit_center(state, scene);
 
-    reset_camera(state, scene, &mut EngineUpdates::default(), FWD_VEC);
+    reset_camera(state, scene, updates, FWD_VEC);
 
     draw_peptide(state, scene, updates);
     draw_all_ligs(state, scene, updates);
@@ -492,6 +483,7 @@ pub fn init_with_scene(state: &mut State, scene: &mut Scene, updates: &mut Engin
     draw_all_pockets(state, scene, updates);
 
     set_flashlight(scene);
+    updates.lighting = true;
 }
 
 /// An assistant to make a colored label.
