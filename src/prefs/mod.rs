@@ -620,8 +620,6 @@ impl State {
         self.ui.rotation_sens_input = self.to_save.control_settings.rotation_sens.to_string();
         self.ui.mol_move_sens_input = self.to_save.control_settings.mol_move_sens.to_string();
         self.ui.mesh_coloring = self.to_save.mesh_coloring;
-
-        println!("Done");
     }
 
     pub fn load_prefs(&mut self) {

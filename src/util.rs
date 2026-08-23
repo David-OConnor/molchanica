@@ -18,7 +18,7 @@ use cudarc::{
 };
 #[cfg(feature = "cuda")]
 use dynamics::ComputationDevice;
-use egui::Color32;
+use egui::{Color32, RichText, Ui};
 use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::{
     f32::Vec3 as Vec3F32,
@@ -32,6 +32,7 @@ use mol_defs::{
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
 
+use crate::ui::misc;
 use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,

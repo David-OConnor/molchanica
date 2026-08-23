@@ -20,6 +20,7 @@ use panels::{
 };
 use popup::load_popups;
 
+use crate::ui::util::chain_selector;
 use crate::{
     button, cam,
     cam::{
@@ -185,73 +186,6 @@ pub fn handle_input(
 fn get_snap_name(snap: Option<usize>, snaps: &[CamSnapshot]) -> &str {
     snap.and_then(|i| snaps.get(i))
         .map_or("None", |snapshot| snapshot.name.as_str())
-}
-
-/// Toggles chain visibility
-fn chain_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
-    // todo: For now, DRY with res selec
-    let Some(mol) = state
-        .peptide_for_tools_i()
-        .and_then(|i| state.peptides.get_mut(i))
-    else {
-        return;
-    };
-
-    ui.horizontal(|ui| {
-        ui.label("Chain vis:");
-        for chain in &mut mol.chains {
-            let color = misc::active_color(chain.visible);
-
-            if ui
-                .button(RichText::new(chain.id.clone()).color(color))
-                .clicked()
-            {
-                chain.visible = !chain.visible;
-                if state.ui.mol_view_peptide == MoleculeView::Ribbon {
-                    state.volatile.flags.update_ss_mesh = true;
-                } else {
-                    state.volatile.flags.ss_mesh_dirty = true;
-                }
-                *redraw = true;
-            }
-        }
-
-        ui.add_space(COL_SPACING);
-
-        ui.label("Select residues from:");
-
-        for (i, chain) in mol.chains.iter().enumerate() {
-            let mut color = Color32::GRAY;
-            if let Some(i_sel) = state.ui.chain_to_pick_res
-                && i == i_sel
-            {
-                color = COLOR_ACTIVE
-            }
-            if ui
-                .button(RichText::new(chain.id.clone()).color(color))
-                .clicked()
-            {
-                // Toggle behavior.
-                if let Some(sel_i) = state.ui.chain_to_pick_res {
-                    if i == sel_i {
-                        state.ui.chain_to_pick_res = None;
-                    } else {
-                        state.ui.chain_to_pick_res = Some(i);
-                    }
-                } else {
-                    state.ui.chain_to_pick_res = Some(i);
-                }
-
-                state.ui.popup.residue_selector = !state.ui.popup.residue_selector;
-            }
-        }
-
-        if state.ui.chain_to_pick_res.is_some() {
-            if ui.button("(None)").clicked() {
-                state.ui.chain_to_pick_res = None;
-            }
-        }
-    });
 }
 
 // todo: Update params A/R
