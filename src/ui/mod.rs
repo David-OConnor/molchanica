@@ -174,9 +174,8 @@ pub fn handle_input(
 ) {
     ui.ctx().input(|ip| {
         // Check for file drop
-        if let Some(dropped_files) = ip.raw.dropped_files.first()
-            && let Some(path) = &dropped_files.path
-            && let Err(e) = state.open_file(path, scene, engine_updates)
+        if let Some(dropped_file) = ip.raw.dropped_files.first()
+            && let Err(e) = state.open_file(dropped_file.path(), scene, engine_updates)
         {
             handle_err(&mut state.ui, e.to_string());
         }
@@ -403,7 +402,7 @@ fn add_aa_seq(
         if response.clicked()
             && let Some(pointer) = response.interact_pointer_pos()
         {
-            let residue = galley.cursor_from_pos(pointer - rect.min).index;
+            let residue = galley.cursor_from_pos(pointer - rect.min).index.0;
             if residue < seq_text.len() {
                 *selection = Selection::Residue(residue);
                 *redraw = true;
@@ -824,7 +823,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     sidebar(state, scene, &mut redraw, &mut updates, ui);
 
-    let out_main_panel = Panel::top("0").show_inside(ui, |ui| {
+    let out_main_panel = Panel::top("0").show(ui, |ui| {
         ui.spacing_mut().slider_width = 120.;
 
         handle_input(

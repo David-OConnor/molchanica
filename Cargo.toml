@@ -7,12 +7,12 @@ edition = "2024"
 
 
 [dependencies]
-graphics = { version = "0.6.4", features = ["app_utils"] }
-egui = "0.34.1"
+graphics = { version = "0.6.5", features = ["app_utils"] }
+egui = "0.36.1"
 
 #egui_tiles = "0.12.0" # For layouts etc. Experimenting
-egui-file-dialog = "0.13.0" #  For file dialogs.
-egui_plot = "0.35.0"  # For Rama plots
+egui-file-dialog = "0.15.0" #  For file dialogs.
+egui_plot = "0.37.0"  # For Rama plots
 
 # My own libraries here, many of which were designed specilfically for use
 # with Molchanica.

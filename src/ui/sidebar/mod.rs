@@ -780,7 +780,7 @@ pub(in crate::ui) fn sidebar(
         let out = egui::Panel::left("sidebar_hidden")
             .resizable(false)
             .exact_size(SIDEBAR_HIDDEN_WIDTH)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 if button!(ui, "▶", COLOR_ACTION, "Show the sidebar").clicked() {
                     state.ui.ui_vis.sidebar = true;
                 }
@@ -794,7 +794,7 @@ pub(in crate::ui) fn sidebar(
         .resizable(true) // let user drag the width
         .default_size(140.0)
         .size_range(60.0..=800.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if button!(ui, "◀", COLOR_ACTION, "Hide the sidebar").clicked() {
                     state.ui.ui_vis.sidebar = false;
