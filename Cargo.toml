@@ -2,7 +2,7 @@
 name = "molchanica"
 # Single source of truth for the app version: the About popup reads it via `CARGO_PKG_VERSION`,
 # and the `make_release` scripts parse it out of this file.
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 
 
