@@ -841,7 +841,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             }
 
             state.mol_editor.md_step(&state.dev, &mut scene.entities, &state.ui,
-                                     &mut updates, state.volatile.mol_manip.mode, );
+                                     &mut updates, state.volatile.mol_manip.mode);
 
             load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
 
@@ -850,7 +850,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         }
 
 
-        ui.horizontal(|ui| {
+        let close_active_mol = false; // to avoid borrow error.
+
+        ui.horizontal_wrapped(|ui| {
             section_box().show(ui, |ui| {
                 let color_settings = if state.ui.popup.show_settings {
                     Color32::LIGHT_RED
@@ -949,11 +951,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 ui.add_space(COL_SPACING * 2.);
                 query_input(state, scene, ui, &mut redraw, &mut updates, &mut reset_cam);
             });
-        });
 
-        let close_active_mol = false; // to avoid borrow error.
-
-        ui.horizontal(|ui| {
             section_box().show(ui, |ui| {
                 if state.volatile.active_mol.is_some() {
                     display_mol_data(
@@ -1211,7 +1209,7 @@ pub(crate) fn cam_controls(
 
     section_box()
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 cam::cam_reset_controls(state, scene, ui, engine_updates, &mut changed);
 
                 ui.add_space(COL_SPACING);

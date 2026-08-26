@@ -17,7 +17,7 @@ use bio_apis::{
 };
 use chrono::{DateTime, Utc};
 use dynamics::MdConfig;
-use graphics::{AmbientOcclusion, ControlScheme};
+use graphics::{AmbientOcclusion, ControlScheme, GraphicsSettings};
 use lin_alg::f64::Vec3;
 
 mod file_format;
@@ -153,6 +153,9 @@ impl ControlSchemeType {
 pub struct Graphics {
     pub msaa: MsaaSetting,
     pub ambient_occlusion: AmbientOcclusion,
+    /// World-space radius of the ambient-occlusion sample hemisphere, in Å. Larger values
+    /// shade broader hollows; smaller ones pick out only tight crevices.
+    pub ssao_radius: f32,
     pub edge_cueing: Option<f32>,
     pub depth_aware_halos: Option<f32>,
 }
@@ -162,6 +165,7 @@ impl Default for Graphics {
         Self {
             msaa: Default::default(),
             ambient_occlusion: Default::default(),
+            ssao_radius: GraphicsSettings::default().ssao_radius,
             edge_cueing: Some(1.),
             depth_aware_halos: Some(0.03),
         }

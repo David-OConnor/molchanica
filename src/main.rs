@@ -175,7 +175,7 @@ fn main() {
         Ok(f) => {
             state.ff_param_set = f;
             let elapsed = start.elapsed().as_millis();
-            println!("Loaded data in {elapsed}ms");
+            println!("Loaded FF data in {elapsed}ms");
         }
         Err(e) => {
             handle_err(
@@ -213,6 +213,7 @@ fn main() {
         // Graphics settings
         state.graphics_settings.msaa_samples = state.to_save.graphics.msaa as u8 as u32;
         state.graphics_settings.ambient_occlusion = state.to_save.graphics.ambient_occlusion;
+        state.graphics_settings.ssao_radius = state.to_save.graphics.ssao_radius;
         state.graphics_settings.edge_cueing = state.to_save.graphics.edge_cueing;
         state.graphics_settings.depth_aware_halos = state.to_save.graphics.depth_aware_halos;
     }
