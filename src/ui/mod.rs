@@ -20,7 +20,6 @@ use panels::{
 };
 use popup::load_popups;
 
-use crate::ui::util::chain_selector;
 use crate::{
     button, cam,
     cam::{
@@ -44,8 +43,8 @@ use crate::{
         mol_type_tools::mol_type_toolbars,
         sidebar::sidebar,
         util::{
-            QUERY_ENTER_LEN_MIN, color_egui_from_f32, handle_redraw, load_mol_from_query,
-            update_file_dialogs,
+            QUERY_ENTER_LEN_MIN, chain_selector, color_egui_from_f32, handle_redraw,
+            load_mol_from_query, update_file_dialogs,
         },
     },
     util::{

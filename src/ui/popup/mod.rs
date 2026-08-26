@@ -609,7 +609,7 @@ fn metadata_editor(
 // Slider ranges for the graphics settings, in the engine's own units — no scaling between
 // what the slider shows and what `GraphicsSettings` receives.
 /// World-space SSAO sample radius, in Å.
-const SSAO_RADIUS_RANGE: RangeInclusive<f32> = 0.1..=5.0;
+const SSAO_RADIUS_RANGE: RangeInclusive<f32> = 0.1..=40.0;
 /// Edge-cueing strength. Unitless; the engine treats 0 as disabled.
 const EDGE_CUEING_RANGE: RangeInclusive<f32> = 0.0..=3.0;
 /// Mesh inflation for depth-aware halos, in Å.
@@ -657,7 +657,6 @@ fn graphics_settings(
         });
 
     if state.to_save.graphics.msaa != msaa_prev {
-        state.graphics_settings.msaa_samples = state.to_save.graphics.msaa as u32;
         changed = true;
         save = true;
     }
@@ -673,7 +672,6 @@ fn graphics_settings(
             AmbientOcclusion::None
         };
 
-        state.graphics_settings.ambient_occlusion = state.to_save.graphics.ambient_occlusion;
         changed = true;
         save = true;
     }
@@ -695,8 +693,6 @@ fn graphics_settings(
 
         if val != prev {
             state.to_save.graphics.ssao_radius = val;
-
-            state.graphics_settings.ssao_radius = val;
             changed = true;
         }
         save |= interaction_finished(&resp);
@@ -715,8 +711,6 @@ fn graphics_settings(
         if val != prev {
             // The engine takes `None` for "off"; the slider bottoming out means the same thing.
             state.to_save.graphics.edge_cueing = if val <= 0. { None } else { Some(val) };
-
-            state.graphics_settings.edge_cueing = state.to_save.graphics.edge_cueing;
             changed = true;
         }
         save |= interaction_finished(&resp);
@@ -736,14 +730,16 @@ fn graphics_settings(
 
         if val != prev {
             state.to_save.graphics.depth_aware_halos = if val <= 0. { None } else { Some(val) };
-
-            state.graphics_settings.depth_aware_halos = state.to_save.graphics.depth_aware_halos;
             changed = true;
         }
         save |= interaction_finished(&resp);
     }
 
     if changed {
+        // Re-derive the engine settings from the prefs, rather than mirroring each control into
+        // `graphics_settings` as it changes: `to_engine` is the one place that mapping lives.
+        state.graphics_settings = state.to_save.graphics.to_engine();
+
         // Mark prefs dirty rather than writing them: `check_prefs_save` flushes within
         // PREFS_SAVE_INTERVAL. This is the backstop for changes that never finish an
         // interaction, such as nudging a slider with the arrow keys and then walking away.

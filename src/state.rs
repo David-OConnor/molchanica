@@ -141,18 +141,9 @@ impl Default for State {
             mol_editor: Default::default(),
             orca: Default::default(),
             pharmacophore: Default::default(),
-            // Note: We override GraphicsSettings after loading from prefs.
-            graphics_settings: GraphicsSettings {
-                msaa_samples: MsaaSetting::default() as u32,
-                depth_aware_halos: Some(0.04), // The default
-                // depth_aware_halos: None, // The default
-                edge_cueing: Some(2.),
-                // The contour line are having a surprising effect, and I'm not sure what the intended
-                // effect is.
-                // depth_revealing_contour_lines: Some(0.1),
-                // intersection_revealing_contour_lines: Some(1.),
-                ..Default::default()
-            },
+            // The defaults live in `prefs::Graphics`; `load_prefs` then replaces this wholesale
+            // with whatever the user last saved.
+            graphics_settings: crate::prefs::Graphics::default().to_engine(),
             // These embedded databases are large enough that decoding and indexing them delays
             // the first window. They are loaded on demand when the database popup is first opened.
             hmdb_mol_db: None,

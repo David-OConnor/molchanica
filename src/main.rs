@@ -210,12 +210,7 @@ fn main() {
             _ => "0.".to_string(),
         };
 
-        // Graphics settings
-        state.graphics_settings.msaa_samples = state.to_save.graphics.msaa as u8 as u32;
-        state.graphics_settings.ambient_occlusion = state.to_save.graphics.ambient_occlusion;
-        state.graphics_settings.ssao_radius = state.to_save.graphics.ssao_radius;
-        state.graphics_settings.edge_cueing = state.to_save.graphics.edge_cueing;
-        state.graphics_settings.depth_aware_halos = state.to_save.graphics.depth_aware_halos;
+        state.graphics_settings = state.to_save.graphics.to_engine();
     }
 
     match load_lipid_templates(LIPID_21_LIB) {

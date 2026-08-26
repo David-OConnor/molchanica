@@ -1,6 +1,9 @@
 use bio_files::BondType;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate};
 use lin_alg::f64::Vec3;
+// Shared with the rest of the app, and used unchanged here. Re-exported so callers in the editor
+// don't need to know which crate they live in, and so there's a single copy of the tables.
+pub use mol_defs::molecules::common::{hydrogens_avail, remove_hydrogens};
 use mol_defs::{
     mol_components::MolComponents,
     molecules::{
@@ -8,9 +11,6 @@ use mol_defs::{
         common::{MoleculeCommon, bonds_avail},
     },
 };
-// Shared with the rest of the app, and used unchanged here. Re-exported so callers in the editor
-// don't need to know which crate they live in, and so there's a single copy of the tables.
-pub use mol_defs::molecules::common::{hydrogens_avail, remove_hydrogens};
 use na_seq::{Element, Element::Hydrogen};
 
 use crate::{
