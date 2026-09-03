@@ -3,8 +3,10 @@
 //! Three things that all start from a loaded structure and all take long enough to need a worker
 //! thread, grouped into one window rather than three:
 //!
-//! - **Design sequences** runs the MPNN family ([`crate::external_tools::mpnn`]) to propose
-//!   sequences that would fold into the backbone on screen.
+//! - **Design sequences** runs the ProteinMPNN checkout ([`crate::external_tools::mpnn`]) to
+//!   propose sequences that would fold into the backbone on screen, including its antibody-tuned
+//!   AbMPNN checkpoint. The general-purpose LigandMPNN models live in the sequence-prediction
+//!   window instead.
 //! - **Stability scan** runs the native ΔΔG scanner ([`crate::adme_::ddg`]) over every
 //!   position and every substitution in one pass.
 //! - **Antibody** annotates chains, and — when ANARCII or IgBLAST is installed — replaces the
@@ -41,6 +43,11 @@ use crate::{
 
 /// How many rows of each result table to show before the user has to export.
 const RESULT_ROWS: usize = 20;
+
+/// The models this window offers. AbMPNN is the reason it has a model choice at all: it pairs
+/// with the CDR annotation next door. Everything else MPNN can do is in the sequence-prediction
+/// window.
+const MODELS: [MpnnModel; 2] = [MpnnModel::AbMpnn, MpnnModel::ProteinMpnn];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum DesignTab {
@@ -167,7 +174,7 @@ impl Default for ProteinDesignUi {
     fn default() -> Self {
         Self {
             tab: DesignTab::default(),
-            model: MpnnModel::default(),
+            model: MpnnModel::AbMpnn,
             num_sequences: 8,
             temperature: 0.1,
             seed: 37,
@@ -282,7 +289,7 @@ fn sequences_tab(
             ComboBox::from_id_salt("mpnn_model")
                 .selected_text(design_ui.model.label())
                 .show_ui(ui, |ui| {
-                    for model in MpnnModel::ALL {
+                    for model in MODELS {
                         ui.selectable_value(&mut design_ui.model, model, model.label())
                             .on_hover_text(model.help());
                     }

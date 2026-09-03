@@ -1,14 +1,14 @@
 //! Structure prediction through third-party models.
 //!
-//! We support OpenDDE, Boltz-2, Chai-1, AlphaFold 3, and ESMFold 2. Each is driven from a
+//! We support OpenDDE, Boltz-2, and ESMFold 2. Each is driven from a
 //! dedicated Python virtual environment built by the shared `bio_tools` Rust installer,
 //! discovered through the [`crate::external_tools`] registry, and run as a child process. None is
 //! ever resolved through a bare `PATH` lookup or run under whichever interpreter happens to be
 //! first on it.
 //!
-//! Chai-1, AlphaFold 3, and ESMFold 2 are Linux-only because their upstream wheels, CUDA kernels,
-//! or databases do not support the other desktop platforms. They remain visible to those users so
-//! the limitation is explicit rather than making the available model list look incomplete.
+//! ESMFold 2 is Linux-only because its upstream wheels and CUDA kernels do not support the other
+//! desktop platforms. It remains visible to those users so the limitation is explicit rather than
+//! making the available model list look incomplete.
 //!
 //! Boltz-2 additionally predicts binding affinity for a ligand in the complex it folds — see
 //! [`boltz2::BoltzOptions::affinity_binder`] — which the shared dispatch below does not expose,
@@ -53,26 +53,16 @@ pub enum StructurePredictionModel {
     OpenDDE,
     /// Also predicts binding affinity; see [`boltz2::predict`].
     Boltz2,
-    Chai1,
-    AlphaFold3,
     EsmFold2,
 }
 
 impl StructurePredictionModel {
-    pub const ALL: [Self; 5] = [
-        Self::OpenDDE,
-        Self::Boltz2,
-        Self::Chai1,
-        Self::AlphaFold3,
-        Self::EsmFold2,
-    ];
+    pub const ALL: [Self; 3] = [Self::OpenDDE, Self::Boltz2, Self::EsmFold2];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::OpenDDE => "OpenDDE",
             Self::Boltz2 => "Boltz-2",
-            Self::Chai1 => "Chai-1",
-            Self::AlphaFold3 => "AlphaFold 3",
             Self::EsmFold2 => "ESMFold 2",
         }
     }
@@ -82,8 +72,6 @@ impl StructurePredictionModel {
         match self {
             Self::OpenDDE => crate::external_tools::Tool::OpenDde,
             Self::Boltz2 => crate::external_tools::Tool::Boltz2,
-            Self::Chai1 => crate::external_tools::Tool::Chai1,
-            Self::AlphaFold3 => crate::external_tools::Tool::AlphaFold3,
             Self::EsmFold2 => crate::external_tools::Tool::EsmFold2,
         }
     }
@@ -137,9 +125,7 @@ pub fn predict_structure_from_request(
     match model {
         StructurePredictionModel::OpenDDE => opendde::predict_structure(request, ff_map, control),
         StructurePredictionModel::Boltz2 => boltz2::predict_structure(request, ff_map, control),
-        StructurePredictionModel::Chai1
-        | StructurePredictionModel::AlphaFold3
-        | StructurePredictionModel::EsmFold2 => {
+        StructurePredictionModel::EsmFold2 => {
             linux_models::predict_structure(model, request, ff_map, control)
         }
     }

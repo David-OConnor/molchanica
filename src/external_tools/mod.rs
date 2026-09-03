@@ -37,7 +37,9 @@
 //!             opendde/             a uv-managed Python environment per Python-based tool. These
 //!             boltz2/              deliberately do not share an interpreter: OpenDDE wants Python
 //!             ligandmpnn/          >= 3.11, Boltz-2 wants < 3.13, and ProteinMPNN wants numpy < 2,
-//!             anarcii/             whose newest wheel is cp312.
+//!             proteinmpnn/         whose newest wheel is cp312.
+//!             anarcii/
+//!             rfd3/
 //!         igblast/                 a self-contained binary distribution
 //!         LigandMPNN/              a checkout plus its downloaded model weights
 //!         ProteinMPNN/
@@ -99,40 +101,14 @@ const PROBE_TIMEOUT_NATIVE: Duration = Duration::from_secs(3);
 /// same [`ToolSpec::slug`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Tool {
-    AlphaFold3,
     OpenDde,
     Boltz2,
-    Chai1,
-    Protenix,
     EsmFold2,
-    ImmuneBuilder,
-    HighFold,
-    BoltzGen,
-    BindCraft,
     IgBlast,
-    BioPhi,
-    AntiFold,
     ProteinMpnn,
     LigandMpnn,
-    ProteinMpnnDdg,
     RfDiffusion3,
-    RfAntibody,
-    Germinal,
-    Mber,
-    IgDesign,
-    ThermoMpnn,
-    Genie3,
-    DeepSp,
-    DeepImmuno,
-    TlImmuno2,
-    NetSolP,
-    DeepStabP,
-    AggreScan3d,
-    DlkCat,
-    CatPred,
     Anarcii,
-    Tap,
-    Placer,
     Gromacs,
     Orca,
     Gemmi,
@@ -141,41 +117,15 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 37] = [
-        Self::AlphaFold3,
+    pub const ALL: [Self; 11] = [
         Self::OpenDde,
         Self::Boltz2,
-        Self::Chai1,
-        Self::Protenix,
         Self::EsmFold2,
-        Self::ImmuneBuilder,
-        Self::HighFold,
-        Self::BoltzGen,
-        Self::BindCraft,
         Self::LigandMpnn,
         Self::ProteinMpnn,
-        Self::ProteinMpnnDdg,
         Self::RfDiffusion3,
-        Self::RfAntibody,
-        Self::Germinal,
-        Self::Mber,
-        Self::IgDesign,
-        Self::ThermoMpnn,
-        Self::Genie3,
-        Self::DeepSp,
-        Self::DeepImmuno,
-        Self::TlImmuno2,
-        Self::NetSolP,
-        Self::DeepStabP,
-        Self::AggreScan3d,
-        Self::DlkCat,
-        Self::CatPred,
         Self::IgBlast,
-        Self::BioPhi,
-        Self::AntiFold,
         Self::Anarcii,
-        Self::Tap,
-        Self::Placer,
         Self::Gromacs,
         Self::Orca,
         Self::Gemmi,
@@ -610,12 +560,7 @@ fn managed_install_roots(tool: Tool, data_root: &Path) -> Vec<PathBuf> {
                 .join(spec.slug()),
         );
     }
-    // AlphaFold 3's checkout and model parameters are operator-provided licensed assets. The
-    // shared installer manages only its interpreter, so never count or remove the checkout as
-    // Molchanica-managed data.
-    if tool != Tool::AlphaFold3
-        && let Some(subdir) = spec.bundle_subdir
-    {
+    if let Some(subdir) = spec.bundle_subdir {
         roots.push(data_root.join("process_executables").join(subdir));
     }
     roots
@@ -661,32 +606,6 @@ macro_rules! venv_script_tool {
     };
 }
 
-macro_rules! venv_python_tool {
-    (
-        $tool:ident, $catalog:literal, $platform:expr, $override:literal, $venv_override:expr,
-        $bundle_override:expr, $bundle:literal, $assets:expr, $managed:literal, $hint:literal
-    ) => {
-        ToolSpec {
-            tool: Tool::$tool,
-            identity: ToolIdentity::Shared($catalog),
-            platform: $platform,
-            kind: ToolKind::VenvPython,
-            executable: "python",
-            exe_override_env: $override,
-            root_override_env: $venv_override,
-            bundle_root_override_env: $bundle_override,
-            bundle_subdir: Some($bundle),
-            colocated: false,
-            required_assets: $assets,
-            molchanica_managed: $managed,
-            install_hint: $hint,
-            version_args: &["--version"],
-            version_marker: "Python 3",
-            slow_probe: false,
-        }
-    };
-}
-
 macro_rules! required_asset {
     ($path:literal, $description:literal) => {
         RequiredAsset {
@@ -697,120 +616,12 @@ macro_rules! required_asset {
 }
 
 static REGISTRY: &[ToolSpec] = &[
-    venv_python_tool!(
-        AlphaFold3,
-        "alphafold3",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_ALPHAFOLD3_PYTHON",
-        Some("MOLCHANICA_ALPHAFOLD3_VENV_DIR"),
-        Some("MOLCHANICA_ALPHAFOLD3_ROOT"),
-        "AlphaFold3",
-        &[required_asset!(
-            "run_alphafold.py",
-            "the operator-provided AlphaFold 3 checkout"
-        )],
-        true,
-        "Prepare AlphaFold 3 from Molchanica's Tools panel, then add the licensed checkout and model parameters."
-    ),
-    venv_script_tool!(
-        Chai1,
-        "chai1",
-        PlatformSupport::LinuxOnly,
-        "chai-lab",
-        "MOLCHANICA_CHAI1_EXECUTABLE",
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_script_tool!(
-        Protenix,
-        "protenix",
-        PlatformSupport::LinuxOnly,
-        "protenix",
-        "MOLCHANICA_PROTENIX_EXECUTABLE",
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
     venv_script_tool!(
         EsmFold2,
         "esmfold2",
         PlatformSupport::LinuxOnly,
         "esm-fold",
         "MOLCHANICA_ESMFOLD2_EXECUTABLE",
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_script_tool!(
-        ImmuneBuilder,
-        "immunebuilder",
-        PlatformSupport::All,
-        "ABodyBuilder2",
-        "MOLCHANICA_IMMUNEBUILDER_EXECUTABLE",
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        HighFold,
-        "highfold",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_HIGHFOLD_PYTHON",
-        Some("MOLCHANICA_HIGHFOLD_VENV_DIR"),
-        Some("MOLCHANICA_HIGHFOLD_ROOT"),
-        "HighFold",
-        &[required_asset!("README.md", "the HighFold checkout")],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_script_tool!(
-        BoltzGen,
-        "boltzgen",
-        PlatformSupport::LinuxOnly,
-        "boltzgen",
-        "MOLCHANICA_BOLTZGEN_EXECUTABLE",
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        BindCraft,
-        "bindcraft",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_BINDCRAFT_PYTHON",
-        Some("MOLCHANICA_BINDCRAFT_VENV_DIR"),
-        Some("MOLCHANICA_BINDCRAFT_ROOT"),
-        "BindCraft",
-        &[
-            required_asset!("bindcraft.py", "the BindCraft runner"),
-            required_asset!("params/params_model_5_ptm.npz", "AlphaFold 2 parameters")
-        ],
-        false,
-        "Install BindCraft with its upstream Conda installer, then set the Python and root overrides."
-    ),
-    venv_script_tool!(
-        BioPhi,
-        "biophi",
-        PlatformSupport::All,
-        "biophi",
-        "MOLCHANICA_BIOPHI_EXECUTABLE",
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        AntiFold,
-        "antifold",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_ANTIFOLD_PYTHON",
-        Some("MOLCHANICA_ANTIFOLD_VENV_DIR"),
-        Some("MOLCHANICA_ANTIFOLD_ROOT"),
-        "AntiFold",
-        &[required_asset!("antifold/main.py", "the AntiFold runner")],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_script_tool!(
-        ProteinMpnnDdg,
-        "proteinmpnn_ddg",
-        PlatformSupport::LinuxOnly,
-        "proteinmpnn-ddg",
-        "MOLCHANICA_PROTEINMPNN_DDG_EXECUTABLE",
         true,
         "Install from Molchanica's Tools panel."
     ),
@@ -840,237 +651,6 @@ static REGISTRY: &[ToolSpec] = &[
         version_marker: "rfd3",
         slow_probe: true,
     },
-    venv_python_tool!(
-        RfAntibody,
-        "rfantibody",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_RFANTIBODY_PYTHON",
-        Some("MOLCHANICA_RFANTIBODY_VENV_DIR"),
-        Some("MOLCHANICA_RFANTIBODY_ROOT"),
-        "RFantibody",
-        &[required_asset!("weights/RF2_ab.pt", "the RF2-Ab weights")],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        Germinal,
-        "germinal",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_GERMINAL_PYTHON",
-        Some("MOLCHANICA_GERMINAL_VENV_DIR"),
-        Some("MOLCHANICA_GERMINAL_ROOT"),
-        "germinal",
-        &[required_asset!("run_germinal.py", "the Germinal runner")],
-        false,
-        "Install Germinal and PyRosetta with its upstream Conda installer, then set the overrides."
-    ),
-    venv_script_tool!(
-        Mber,
-        "mber",
-        PlatformSupport::LinuxOnly,
-        "mber-vhh",
-        "MOLCHANICA_MBER_EXECUTABLE",
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        IgDesign,
-        "igdesign",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_IGDESIGN_PYTHON",
-        Some("MOLCHANICA_IGDESIGN_VENV_DIR"),
-        Some("MOLCHANICA_IGDESIGN_ROOT"),
-        "igdesign",
-        &[required_asset!("predict.py", "the IgDesign runner")],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        ThermoMpnn,
-        "thermompnn",
-        PlatformSupport::All,
-        "MOLCHANICA_THERMOMPNN_PYTHON",
-        Some("MOLCHANICA_THERMOMPNN_VENV_DIR"),
-        Some("MOLCHANICA_THERMOMPNN_ROOT"),
-        "ThermoMPNN",
-        &[required_asset!(
-            "analysis/custom_inference.py",
-            "the ThermoMPNN runner"
-        )],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        Genie3,
-        "genie3",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_GENIE3_PYTHON",
-        Some("MOLCHANICA_GENIE3_VENV_DIR"),
-        Some("MOLCHANICA_GENIE3_ROOT"),
-        "genie3",
-        &[required_asset!(
-            "pretrained",
-            "the Genie 3 pretrained weights"
-        )],
-        false,
-        "Install Genie 3 with its upstream Conda setup, then set the Python and root overrides."
-    ),
-    venv_python_tool!(
-        DeepSp,
-        "deepsp",
-        PlatformSupport::All,
-        "MOLCHANICA_DEEPSP_PYTHON",
-        Some("MOLCHANICA_DEEPSP_VENV_DIR"),
-        Some("MOLCHANICA_DEEPSP_ROOT"),
-        "DeepSP",
-        &[required_asset!(
-            "DeepSP_predictor.ipynb",
-            "the DeepSP model checkout"
-        )],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        DeepImmuno,
-        "deepimmuno",
-        PlatformSupport::All,
-        "MOLCHANICA_DEEPIMMUNO_PYTHON",
-        Some("MOLCHANICA_DEEPIMMUNO_VENV_DIR"),
-        Some("MOLCHANICA_DEEPIMMUNO_ROOT"),
-        "DeepImmuno",
-        &[required_asset!(
-            "deepimmuno-cnn.py",
-            "the DeepImmuno runner"
-        )],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        TlImmuno2,
-        "tlimmuno",
-        PlatformSupport::All,
-        "MOLCHANICA_TLIMMUNO2_PYTHON",
-        Some("MOLCHANICA_TLIMMUNO2_VENV_DIR"),
-        Some("MOLCHANICA_TLIMMUNO2_ROOT"),
-        "TLimmuno2",
-        &[required_asset!(
-            "Python/TLimmuno2.py",
-            "the TLimmuno2 runner"
-        )],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        NetSolP,
-        "netsolp",
-        PlatformSupport::All,
-        "MOLCHANICA_NETSOLP_PYTHON",
-        Some("MOLCHANICA_NETSOLP_VENV_DIR"),
-        Some("MOLCHANICA_NETSOLP_ROOT"),
-        "NetSolP-1.0",
-        &[
-            required_asset!("PredictionServer/predict.py", "the NetSolP runner"),
-            required_asset!(
-                "PredictionServer/models",
-                "licensed NetSolP model checkpoints"
-            )
-        ],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        DeepStabP,
-        "deepstabp",
-        PlatformSupport::All,
-        "MOLCHANICA_DEEPSTABP_PYTHON",
-        Some("MOLCHANICA_DEEPSTABP_VENV_DIR"),
-        Some("MOLCHANICA_DEEPSTABP_ROOT"),
-        "deepStabP",
-        &[required_asset!(
-            "src/Api/app",
-            "the DeepSTABp prediction service"
-        )],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    ToolSpec {
-        tool: Tool::AggreScan3d,
-        identity: ToolIdentity::Shared("aggrescan3d"),
-        platform: PlatformSupport::LinuxOnly,
-        kind: ToolKind::VenvScript,
-        executable: "aggrescan",
-        exe_override_env: "MOLCHANICA_AGGRESCAN3D_EXECUTABLE",
-        root_override_env: Some("MOLCHANICA_AGGRESCAN3D_VENV_DIR"),
-        bundle_root_override_env: None,
-        bundle_subdir: None,
-        colocated: false,
-        required_assets: &[],
-        molchanica_managed: true,
-        install_hint: "Install from Molchanica's Tools panel.",
-        version_args: &["--help"],
-        version_marker: "aggrescan",
-        slow_probe: true,
-    },
-    venv_python_tool!(
-        DlkCat,
-        "dlkcat",
-        PlatformSupport::All,
-        "MOLCHANICA_DLKCAT_PYTHON",
-        Some("MOLCHANICA_DLKCAT_VENV_DIR"),
-        Some("MOLCHANICA_DLKCAT_ROOT"),
-        "DLKcat",
-        &[required_asset!(
-            "DeeplearningApproach/Code/example/prediction_for_input.py",
-            "the DLKcat prediction runner"
-        )],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        CatPred,
-        "catpred",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_CATPRED_PYTHON",
-        Some("MOLCHANICA_CATPRED_VENV_DIR"),
-        Some("MOLCHANICA_CATPRED_ROOT"),
-        "CatPred",
-        &[
-            required_asset!("predict.py", "the CatPred runner"),
-            required_asset!("checkpoint_links/kcat", "the CatPred kcat checkpoints"),
-        ],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
-    venv_python_tool!(
-        Tap,
-        "tap",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_TAP_PYTHON",
-        Some("MOLCHANICA_TAP_VENV_DIR"),
-        Some("MOLCHANICA_TAP_ROOT"),
-        "TAP",
-        &[required_asset!(
-            "README.md",
-            "the operator-provided TAP distribution"
-        )],
-        false,
-        "Request TAP from OPIG and set MOLCHANICA_TAP_PYTHON and MOLCHANICA_TAP_ROOT."
-    ),
-    venv_python_tool!(
-        Placer,
-        "placer",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_PLACER_PYTHON",
-        Some("MOLCHANICA_PLACER_VENV_DIR"),
-        Some("MOLCHANICA_PLACER_ROOT"),
-        "PLACER",
-        &[
-            required_asset!("run_PLACER.py", "the PLACER runner"),
-            required_asset!("weights", "the PLACER model weights")
-        ],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
     ToolSpec {
         tool: Tool::OpenDde,
         identity: ToolIdentity::Shared("opendde"),
@@ -2225,7 +1805,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn linux_only_install_returns_unsupported() {
-        let error = install(Tool::HighFold).expect_err("HighFold is Linux-only");
+        let error = install(Tool::EsmFold2).expect_err("ESMFold 2 is Linux-only");
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 

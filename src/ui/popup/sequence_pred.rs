@@ -1,4 +1,8 @@
-//! Dedicated ProteinMPNN sequence-prediction window.
+//! Dedicated MPNN sequence-prediction window.
+//!
+//! Offers the general-purpose networks — the original ProteinMPNN checkout and the LigandMPNN
+//! repository's three model types. AbMPNN is antibody-specific and stays in the design window,
+//! beside the CDR annotation that scopes it.
 
 use std::{
     path::PathBuf,
@@ -15,28 +19,20 @@ use mol_defs::molecules::peptide::MoleculePeptide;
 
 use crate::{
     external_tools::{
-        self, Tool,
+        self,
         mpnn::{self, DesignRequest, DesignResult, MpnnModel, ProteinMpnnCheckpoint},
     },
     state::State,
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
 };
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum SequencePredictionModel {
-    #[default]
-    ProteinMpnn,
-}
-
-impl SequencePredictionModel {
-    const ALL: [Self; 1] = [Self::ProteinMpnn];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::ProteinMpnn => "ProteinMPNN",
-        }
-    }
-}
+/// The models this window offers, in the order the dropdown lists them.
+const MODELS: [MpnnModel; 4] = [
+    MpnnModel::ProteinMpnn,
+    MpnnModel::LigandMpnn,
+    MpnnModel::ProteinMpnnViaLigand,
+    MpnnModel::SolubleMpnn,
+];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ProteinSource {
@@ -120,8 +116,7 @@ impl PredictionJob {
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.error =
-                    Some("The ProteinMPNN worker stopped without returning a result.".to_owned());
+                self.error = Some("The MPNN worker stopped without returning a result.".to_owned());
                 self.receiver = None;
                 self.started_at = None;
             }
@@ -135,7 +130,7 @@ struct ToolAction {
 }
 
 pub(crate) struct SequencePredUi {
-    model: SequencePredictionModel,
+    model: MpnnModel,
     source: ProteinSource,
     opened_protein: usize,
     disk_path: Option<PathBuf>,
@@ -160,7 +155,7 @@ pub(crate) struct SequencePredUi {
 impl Default for SequencePredUi {
     fn default() -> Self {
         Self {
-            model: SequencePredictionModel::default(),
+            model: MpnnModel::ProteinMpnn,
             source: ProteinSource::default(),
             opened_protein: 0,
             disk_path: None,
@@ -187,7 +182,7 @@ impl Default for SequencePredUi {
 impl SequencePredUi {
     fn request(&self) -> DesignRequest {
         DesignRequest {
-            model: MpnnModel::ProteinMpnn,
+            model: self.model,
             chains_to_design: split_words(&self.chains),
             fixed_residues: Vec::new(),
             num_sequences: self.num_sequences,
@@ -227,11 +222,12 @@ impl SequencePredUi {
         let (tx, rx) = mpsc::channel();
         self.tool_action = Some(ToolAction { kind, receiver: rx });
         self.tool_action_result = None;
+        let tool = self.model.tool();
         let context = context.clone();
         thread::spawn(move || {
             let result = match kind {
-                ToolActionKind::Install => external_tools::install(Tool::ProteinMpnn),
-                ToolActionKind::Uninstall => external_tools::uninstall(Tool::ProteinMpnn),
+                ToolActionKind::Install => external_tools::install(tool),
+                ToolActionKind::Uninstall => external_tools::uninstall(tool),
             }
             .map_err(|error| error.to_string());
             let _ = tx.send(result);
@@ -281,16 +277,29 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
             ComboBox::from_id_salt("sequence_prediction_model")
                 .selected_text(state.ui.sequence_pred.model.label())
                 .show_ui(ui, |ui| {
-                    for model in SequencePredictionModel::ALL {
+                    for model in MODELS {
                         ui.selectable_value(
                             &mut state.ui.sequence_pred.model,
                             model,
                             model.label(),
-                        );
+                        )
+                        .on_hover_text(model.help());
                     }
                 });
         });
+        ui.label(
+            RichText::new(state.ui.sequence_pred.model.help())
+                .color(COLOR_INACTIVE)
+                .small(),
+        );
 
+        // The disk source encodes an mmCIF backbone straight into ProteinMPNN's JSONL schema.
+        // LigandMPNN needs a PDB carrying the ligands, ions, and nucleic acids it conditions on,
+        // so it runs only from a structure already loaded in the scene.
+        let mmcif_workflow = state.ui.sequence_pred.model.supports_mmcif_workflow();
+        if !mmcif_workflow {
+            state.ui.sequence_pred.source = ProteinSource::Opened;
+        }
         ui.horizontal(|ui| {
             ui.label("Protein:");
             ui.radio_value(
@@ -298,11 +307,17 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
                 ProteinSource::Opened,
                 "Opened",
             );
-            ui.radio_value(
-                &mut state.ui.sequence_pred.source,
-                ProteinSource::Disk,
-                "From disk",
-            );
+            ui.add_enabled_ui(mmcif_workflow, |ui| {
+                ui.radio_value(
+                    &mut state.ui.sequence_pred.source,
+                    ProteinSource::Disk,
+                    "From disk",
+                )
+                .on_disabled_hover_text(
+                    "The LigandMPNN models need the non-protein context of a loaded \
+                     structure, which an mmCIF read straight from disk does not carry.",
+                );
+            });
         });
 
         match state.ui.sequence_pred.source {
@@ -364,18 +379,22 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
         );
 
         ui.horizontal(|ui| {
-            ui.label("Checkpoint:");
-            ComboBox::from_id_salt("sequence_prediction_checkpoint")
-                .selected_text(state.ui.sequence_pred.checkpoint.name())
-                .show_ui(ui, |ui| {
-                    for checkpoint in ProteinMpnnCheckpoint::ALL {
-                        ui.selectable_value(
-                            &mut state.ui.sequence_pred.checkpoint,
-                            checkpoint,
-                            checkpoint.name(),
-                        );
-                    }
-                });
+            // Only the original checkout selects among the vanilla noise-level checkpoints; the
+            // LigandMPNN repository ships one set of weights per model type.
+            ui.add_enabled_ui(mmcif_workflow, |ui| {
+                ui.label("Checkpoint:");
+                ComboBox::from_id_salt("sequence_prediction_checkpoint")
+                    .selected_text(state.ui.sequence_pred.checkpoint.name())
+                    .show_ui(ui, |ui| {
+                        for checkpoint in ProteinMpnnCheckpoint::ALL {
+                            ui.selectable_value(
+                                &mut state.ui.sequence_pred.checkpoint,
+                                checkpoint,
+                                checkpoint.name(),
+                            );
+                        }
+                    });
+            });
             ui.label("Sequences:");
             ui.add(DragValue::new(&mut state.ui.sequence_pred.num_sequences).range(1..=1_000));
         });
@@ -425,6 +444,7 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
 
     ui.add_space(ROW_SPACING);
     tool_controls(&mut state.ui.sequence_pred, running, ui);
+    let tool = state.ui.sequence_pred.model.tool();
 
     let input_ready = match state.ui.sequence_pred.source {
         ProteinSource::Opened => state.ui.sequence_pred.opened_protein < state.peptides.len(),
@@ -440,7 +460,7 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
             }
         } else if ui
             .add_enabled(
-                input_ready && !managing_tool && external_tools::is_installed(Tool::ProteinMpnn),
+                input_ready && !managing_tool && external_tools::is_installed(tool),
                 Button::new(RichText::new("Predict sequence").color(COLOR_ACTION)),
             )
             .clicked()
@@ -462,11 +482,12 @@ pub(in crate::ui) fn sequence_prediction_window(state: &mut State, ui: &mut Ui) 
 }
 
 fn tool_controls(prediction_ui: &mut SequencePredUi, prediction_running: bool, ui: &mut Ui) {
-    let installed = external_tools::is_installed(Tool::ProteinMpnn);
+    let name = prediction_ui.model.tool().spec().name();
+    let installed = external_tools::is_installed(prediction_ui.model.tool());
     ui.horizontal(|ui| {
         if let Some(action) = &prediction_ui.tool_action {
             ui.spinner();
-            ui.label(format!("{} ProteinMPNN…", action.kind.progress()));
+            ui.label(format!("{} {name}…", action.kind.progress()));
         } else if installed {
             let label = if prediction_ui.confirm_uninstall {
                 "Confirm uninstall"
@@ -483,7 +504,7 @@ fn tool_controls(prediction_ui: &mut SequencePredUi, prediction_running: bool, u
                     prediction_ui.confirm_uninstall = true;
                 }
             }
-            ui.label(RichText::new("ProteinMPNN is installed").color(Color32::LIGHT_GREEN));
+            ui.label(RichText::new(format!("{name} is installed")).color(Color32::LIGHT_GREEN));
         } else {
             if ui
                 .add_enabled(!prediction_running, Button::new("Install"))
@@ -491,15 +512,15 @@ fn tool_controls(prediction_ui: &mut SequencePredUi, prediction_running: bool, u
             {
                 prediction_ui.start_tool_action(ToolActionKind::Install, ui.ctx());
             }
-            ui.label(RichText::new("ProteinMPNN is not installed").color(COLOR_INACTIVE));
+            ui.label(RichText::new(format!("{name} is not installed")).color(COLOR_INACTIVE));
         }
     });
     if let Some((kind, result)) = &prediction_ui.tool_action_result {
         match result {
             Ok(()) => ui.label(
                 RichText::new(match kind {
-                    ToolActionKind::Install => "ProteinMPNN installation completed.",
-                    ToolActionKind::Uninstall => "ProteinMPNN was uninstalled.",
+                    ToolActionKind::Install => format!("{name} installation completed."),
+                    ToolActionKind::Uninstall => format!("{name} was uninstalled."),
                 })
                 .color(Color32::LIGHT_GREEN),
             ),
@@ -536,23 +557,28 @@ fn start_prediction(state: &mut State, context: &egui::Context) {
     }
 }
 
+/// The LigandMPNN repository conditions on the non-protein content of the structure, so it is
+/// given a PDB written from the loaded peptide. The original ProteinMPNN checkout takes the
+/// backbone directly in its own JSONL schema instead, keeping PDB out of that path.
 fn predict_opened_protein(
     protein: &MoleculePeptide,
     request: &DesignRequest,
 ) -> std::io::Result<DesignResult> {
-    mpnn::design_mmcif(protein, request)
+    if request.model.supports_mmcif_workflow() {
+        mpnn::design_mmcif(protein, request)
+    } else {
+        mpnn::design(protein, request)
+    }
 }
 
 fn show_result(result: &DesignResult, ui: &mut Ui) {
     ui.separator();
     ui.label(RichText::new("Predicted amino-acid sequences").strong());
     if result.designs.is_empty() {
-        ui.label(
-            RichText::new("ProteinMPNN returned no designed sequences.").color(COLOR_INACTIVE),
-        );
+        ui.label(RichText::new("The model returned no designed sequences.").color(COLOR_INACTIVE));
         return;
     }
-    ui.label("Best first; lower ProteinMPNN score is better.");
+    ui.label("Best first; lower score is better.");
     ScrollArea::vertical()
         .id_salt("sequence_prediction_results")
         .max_height(320.0)
@@ -602,10 +628,31 @@ mod tests {
     }
 
     #[test]
-    fn popup_request_always_selects_original_protein_mpnn() {
+    fn the_window_opens_on_the_original_protein_mpnn() {
         let request = SequencePredUi::default().request();
         assert_eq!(request.model, MpnnModel::ProteinMpnn);
         assert_eq!(request.num_sequences, 4);
         assert_eq!(request.omit_amino_acids, "X");
+    }
+
+    #[test]
+    fn the_selected_model_reaches_the_request() {
+        let mut ui = SequencePredUi::default();
+        ui.model = MpnnModel::LigandMpnn;
+        assert_eq!(ui.request().model, MpnnModel::LigandMpnn);
+    }
+
+    /// Only the original checkout takes the backbone as JSONL; everything from the LigandMPNN
+    /// repository needs a PDB, which is what restricts those models to an opened structure.
+    #[test]
+    fn only_the_original_checkout_runs_the_mmcif_workflow() {
+        assert!(MpnnModel::ProteinMpnn.supports_mmcif_workflow());
+        for model in [
+            MpnnModel::LigandMpnn,
+            MpnnModel::ProteinMpnnViaLigand,
+            MpnnModel::SolubleMpnn,
+        ] {
+            assert!(!model.supports_mmcif_workflow(), "{model:?}");
+        }
     }
 }

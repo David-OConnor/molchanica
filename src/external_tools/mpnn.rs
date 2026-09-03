@@ -62,14 +62,6 @@ pub enum MpnnModel {
 }
 
 impl MpnnModel {
-    pub const ALL: [Self; 5] = [
-        Self::LigandMpnn,
-        Self::ProteinMpnnViaLigand,
-        Self::SolubleMpnn,
-        Self::ProteinMpnn,
-        Self::AbMpnn,
-    ];
-
     /// Which registry entry — and therefore which checkout and virtual environment — this uses.
     pub fn tool(self) -> Tool {
         match self {
@@ -107,6 +99,13 @@ impl MpnnModel {
                  pairs with the antibody tools."
             }
         }
+    }
+
+    /// Whether this model can run the mmCIF/JSONL workflow, which keeps PDB out of the pipeline
+    /// but carries backbone atoms only. The LigandMPNN repository needs a PDB: its whole point is
+    /// the non-protein context a backbone-only encoding cannot express.
+    pub fn supports_mmcif_workflow(self) -> bool {
+        matches!(self, Self::ProteinMpnn | Self::AbMpnn)
     }
 
     /// `--model_type` for LigandMPNN's `run.py`.
@@ -356,7 +355,7 @@ fn design_protein_mpnn_structure(
     request: &DesignRequest,
 ) -> io::Result<DesignResult> {
     request.validate()?;
-    if !matches!(request.model, MpnnModel::ProteinMpnn | MpnnModel::AbMpnn) {
+    if !request.model.supports_mmcif_workflow() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "the mmCIF-only sequence workflow supports ProteinMPNN and AbMPNN",
