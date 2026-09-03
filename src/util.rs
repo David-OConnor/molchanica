@@ -32,7 +32,6 @@ use mol_defs::{
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
 
-use crate::ui::misc;
 use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
@@ -46,6 +45,7 @@ use crate::{
     selection::Selection,
     sfc_mesh,
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
+    ui::misc,
 };
 
 pub const AMU_TO_KG: f64 = 1.660_539e-27;

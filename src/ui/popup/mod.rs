@@ -9,12 +9,13 @@ pub mod recent_files;
 pub(crate) mod sequence_pred;
 pub(crate) mod structure_pred;
 
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, ops::RangeInclusive, path::Path};
 
 use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
 use egui::{
-    Align, Color32, ComboBox, Layout, Pos2, RichText, ScrollArea, Slider, TextEdit, Ui, Window,
+    Align, Color32, ComboBox, Layout, Pos2, Response, RichText, ScrollArea, Slider, TextEdit, Ui,
+    Window,
 };
 use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -605,13 +606,38 @@ fn metadata_editor(
     }
 }
 
+// Slider ranges for the graphics settings, in the engine's own units — no scaling between
+// what the slider shows and what `GraphicsSettings` receives.
+/// World-space SSAO sample radius, in Å.
+const SSAO_RADIUS_RANGE: RangeInclusive<f32> = 0.1..=40.0;
+/// Edge-cueing strength. Unitless; the engine treats 0 as disabled.
+const EDGE_CUEING_RANGE: RangeInclusive<f32> = 0.0..=3.0;
+/// Mesh inflation for depth-aware halos, in Å.
+const HALO_RANGE: RangeInclusive<f32> = 0.0..=0.1;
+
+/// True on the frame a slider interaction ends — the drag is released, or a keyboard edit of
+/// the value box is committed. Dragging changes the value every frame, so this is what
+/// distinguishes "the user is still choosing" from "the user has chosen", and keeps prefs
+/// writes to one per adjustment.
+///
+/// Checked outside the value-changed branch on purpose: the frame a drag ends is usually not
+/// a frame on which the value moved.
+fn interaction_finished(resp: &Response) -> bool {
+    resp.drag_stopped() || resp.lost_focus()
+}
+
 fn graphics_settings(
     state: &mut State,
     scene: &mut Scene,
     ui: &mut Ui,
     updates: &mut EngineUpdates,
 ) {
+    // Set whenever a value changes, including mid-drag: the 3D view should track a slider
+    // live. Writing the prefs file is gated separately, since that serializes the whole
+    // state and hits the disk — doing it once per frame of a drag is what made saves spam.
     let mut changed = false;
+    // Set only when an interaction *finishes* (drag released, or a discrete control used).
+    let mut save = false;
 
     let msaa_prev = state.to_save.graphics.msaa;
     ComboBox::from_id_salt(10)
@@ -631,10 +657,8 @@ fn graphics_settings(
         });
 
     if state.to_save.graphics.msaa != msaa_prev {
-        state.update_save_prefs();
-
-        state.graphics_settings.msaa_samples = state.to_save.graphics.msaa as u32;
         changed = true;
+        save = true;
     }
 
     ui.add_space(COL_SPACING);
@@ -648,59 +672,84 @@ fn graphics_settings(
             AmbientOcclusion::None
         };
 
-        state.graphics_settings.ambient_occlusion = state.to_save.graphics.ambient_occlusion;
         changed = true;
+        save = true;
     }
 
     ui.add_space(COL_SPACING);
     {
-        // todo: I don't like this constant mul.
-        let mut val = (state.to_save.graphics.edge_cueing.unwrap_or_default() * 100.) as u16;
+        let mut val = state.to_save.graphics.ssao_radius;
         let prev = val;
         ui.spacing_mut().slider_width = 160.;
 
-        ui.label("Edge cueing:");
-        ui.add(Slider::new(&mut val, 0..=300));
+        ui.label("AO radius (Å):").on_hover_text(
+            "How far ambient occlusion looks for occluders, in Å. Small values shade only \
+             tight crevices; large ones shade broad hollows, but lose fine detail.",
+        );
+        let resp = ui.add_enabled(
+            ao_en,
+            Slider::new(&mut val, SSAO_RADIUS_RANGE).fixed_decimals(1),
+        );
 
         if val != prev {
-            state.to_save.graphics.edge_cueing = if val == 0 {
-                None
-            } else {
-                Some(val as f32 / 100.)
-            };
-
-            state.graphics_settings.edge_cueing = state.to_save.graphics.edge_cueing;
+            state.to_save.graphics.ssao_radius = val;
             changed = true;
         }
+        save |= interaction_finished(&resp);
     }
 
     ui.add_space(COL_SPACING);
-    // todo: DRY. Helper?
     {
-        // todo: I don't like this constant mul.
-        let mut val = (state.to_save.graphics.depth_aware_halos.unwrap_or_default() * 1000.) as u16;
+        let mut val = state.to_save.graphics.edge_cueing.unwrap_or_default();
         let prev = val;
         ui.spacing_mut().slider_width = 160.;
 
-        ui.label("Halos:");
-        ui.add(Slider::new(&mut val, 0..=100));
+        ui.label("Edge cueing (strength):")
+            .on_hover_text("Darkens surfaces as they turn away from the camera. 0 disables it.");
+        let resp = ui.add(Slider::new(&mut val, EDGE_CUEING_RANGE).fixed_decimals(2));
 
         if val != prev {
-            state.to_save.graphics.depth_aware_halos = if val == 0 {
-                None
-            } else {
-                Some(val as f32 / 1000.)
-            };
-
-            state.graphics_settings.depth_aware_halos = state.to_save.graphics.depth_aware_halos;
+            // The engine takes `None` for "off"; the slider bottoming out means the same thing.
+            state.to_save.graphics.edge_cueing = if val <= 0. { None } else { Some(val) };
             changed = true;
         }
+        save |= interaction_finished(&resp);
+    }
+
+    ui.add_space(COL_SPACING);
+    {
+        let mut val = state.to_save.graphics.depth_aware_halos.unwrap_or_default();
+        let prev = val;
+        ui.spacing_mut().slider_width = 160.;
+
+        ui.label("Halos (Å):").on_hover_text(
+            "Mesh inflation, in Å, used to draw dark rings where near geometry overlaps far \
+             geometry. 0 disables it.",
+        );
+        let resp = ui.add(Slider::new(&mut val, HALO_RANGE).fixed_decimals(3));
+
+        if val != prev {
+            state.to_save.graphics.depth_aware_halos = if val <= 0. { None } else { Some(val) };
+            changed = true;
+        }
+        save |= interaction_finished(&resp);
     }
 
     if changed {
-        state.update_save_prefs();
+        // Re-derive the engine settings from the prefs, rather than mirroring each control into
+        // `graphics_settings` as it changes: `to_engine` is the one place that mapping lives.
+        state.graphics_settings = state.to_save.graphics.to_engine();
+
+        // Mark prefs dirty rather than writing them: `check_prefs_save` flushes within
+        // PREFS_SAVE_INTERVAL. This is the backstop for changes that never finish an
+        // interaction, such as nudging a slider with the arrow keys and then walking away.
+        state.to_save.save_flag = true;
         // Triggers a graphics re-init
         updates.graphics_settings = Some(state.graphics_settings.clone());
+    }
+
+    if save {
+        state.update_save_prefs();
     }
 }
 

@@ -16,12 +16,10 @@ use mol_defs::{
     smiles::is_smiles,
 };
 
-use crate::drawing::MoleculeView;
-use crate::ui::misc;
 use crate::{
     cam::reset_camera,
     drawing::{
-        draw_peptide,
+        MoleculeView, draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     external_tools::home_directory,
@@ -40,7 +38,7 @@ use crate::{
     prefs::OpenType,
     render::{Color, set_flashlight, set_static_light},
     state::{DbSel, OperatingMode, State},
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, set_window_title},
+    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, misc, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
 };
 

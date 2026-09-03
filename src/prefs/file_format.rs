@@ -25,6 +25,7 @@ use std::{
 };
 
 use chrono::{TimeZone, Utc};
+use graphics::GraphicsSettings;
 use mol_defs::{
     copy_le,
     molecules::{
@@ -1038,6 +1039,9 @@ impl Graphics {
             }
             None => out.push(0),
         }
+        // Appended after the fields above shipped, so it must stay last: `from_bytes`
+        // treats its absence as "prefs written before this setting existed".
+        out.extend_from_slice(&self.ssao_radius.to_le_bytes());
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1069,9 +1073,18 @@ impl Graphics {
         } else {
             None
         };
+        // Absent in prefs files written before this setting was added; fall back to the
+        // engine default rather than failing to load them.
+        let ssao_radius = if i + 4 <= data.len() {
+            parse_le!(data, f32, i..i + 4)
+        } else {
+            GraphicsSettings::default().ssao_radius
+        };
+
         Ok(Self {
             msaa,
             ambient_occlusion,
+            ssao_radius,
             edge_cueing,
             depth_aware_halos,
         })

@@ -20,7 +20,7 @@ use crate::{
 fn molecule_view_selector(
     ui: &mut Ui,
     label: &str,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
     view: &mut MoleculeView,
     options: &[MoleculeView],
     help_text: &str,

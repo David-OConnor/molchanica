@@ -20,7 +20,6 @@ use panels::{
 };
 use popup::load_popups;
 
-use crate::ui::util::chain_selector;
 use crate::{
     button, cam,
     cam::{
@@ -44,8 +43,8 @@ use crate::{
         mol_type_tools::mol_type_toolbars,
         sidebar::sidebar,
         util::{
-            QUERY_ENTER_LEN_MIN, color_egui_from_f32, handle_redraw, load_mol_from_query,
-            update_file_dialogs,
+            QUERY_ENTER_LEN_MIN, chain_selector, color_egui_from_f32, handle_redraw,
+            load_mol_from_query, update_file_dialogs,
         },
     },
     util::{
@@ -174,9 +173,8 @@ pub fn handle_input(
 ) {
     ui.ctx().input(|ip| {
         // Check for file drop
-        if let Some(dropped_files) = ip.raw.dropped_files.first()
-            && let Some(path) = &dropped_files.path
-            && let Err(e) = state.open_file(path, scene, engine_updates)
+        if let Some(dropped_file) = ip.raw.dropped_files.first()
+            && let Err(e) = state.open_file(dropped_file.path(), scene, engine_updates)
         {
             handle_err(&mut state.ui, e.to_string());
         }
@@ -403,7 +401,7 @@ fn add_aa_seq(
         if response.clicked()
             && let Some(pointer) = response.interact_pointer_pos()
         {
-            let residue = galley.cursor_from_pos(pointer - rect.min).index;
+            let residue = galley.cursor_from_pos(pointer - rect.min).index.0;
             if residue < seq_text.len() {
                 *selection = Selection::Residue(residue);
                 *redraw = true;
@@ -824,7 +822,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     sidebar(state, scene, &mut redraw, &mut updates, ui);
 
-    let out_main_panel = Panel::top("0").show_inside(ui, |ui| {
+    let out_main_panel = Panel::top("0").show(ui, |ui| {
         ui.spacing_mut().slider_width = 120.;
 
         handle_input(
@@ -842,7 +840,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             }
 
             state.mol_editor.md_step(&state.dev, &mut scene.entities, &state.ui,
-                                     &mut updates, state.volatile.mol_manip.mode, );
+                                     &mut updates, state.volatile.mol_manip.mode);
 
             load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
 
@@ -851,7 +849,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         }
 
 
-        ui.horizontal(|ui| {
+        let close_active_mol = false; // to avoid borrow error.
+
+        ui.horizontal_wrapped(|ui| {
             section_box().show(ui, |ui| {
                 let color_settings = if state.ui.popup.show_settings {
                     Color32::LIGHT_RED
@@ -950,11 +950,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 ui.add_space(COL_SPACING * 2.);
                 query_input(state, scene, ui, &mut redraw, &mut updates, &mut reset_cam);
             });
-        });
 
-        let close_active_mol = false; // to avoid borrow error.
-
-        ui.horizontal(|ui| {
             section_box().show(ui, |ui| {
                 if state.volatile.active_mol.is_some() {
                     display_mol_data(
@@ -1212,7 +1208,7 @@ pub(crate) fn cam_controls(
 
     section_box()
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 cam::cam_reset_controls(state, scene, ui, engine_updates, &mut changed);
 
                 ui.add_space(COL_SPACING);

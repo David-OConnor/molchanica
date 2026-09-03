@@ -17,7 +17,7 @@ use bio_apis::{
 };
 use chrono::{DateTime, Utc};
 use dynamics::MdConfig;
-use graphics::{AmbientOcclusion, ControlScheme};
+use graphics::{AmbientOcclusion, ControlScheme, GraphicsSettings};
 use lin_alg::f64::Vec3;
 
 mod file_format;
@@ -153,6 +153,9 @@ impl ControlSchemeType {
 pub struct Graphics {
     pub msaa: MsaaSetting,
     pub ambient_occlusion: AmbientOcclusion,
+    /// World-space radius of the ambient-occlusion sample hemisphere, in Å. Larger values
+    /// shade broader hollows; smaller ones pick out only tight crevices.
+    pub ssao_radius: f32,
     pub edge_cueing: Option<f32>,
     pub depth_aware_halos: Option<f32>,
 }
@@ -162,8 +165,38 @@ impl Default for Graphics {
         Self {
             msaa: Default::default(),
             ambient_occlusion: Default::default(),
+            // The `graphics` radius default is for unit-scale objects. Here, we
+            // use a larger scale. We use something that wouldn't be appropriate for realistic scenes
+            // of this scale, but make sense for molecule visualization / contrast. This is useful for
+            // darkening the inside of proteins.
+            // A larger SSAO radius can darken the interior of proteins, but it seems only to a
+            // point. And a larger one shows the blurry/grimy(?) effect more prominently when zoomed in.
+            ssao_radius: 10.0,
             edge_cueing: Some(1.),
             depth_aware_halos: Some(0.03),
+        }
+    }
+}
+
+impl Graphics {
+    /// The engine-side view of these settings.
+    ///
+    /// This struct is the single source of truth for every graphics setting it covers: `State`'s
+    /// initial value and the application of loaded prefs both go through here, so there's nowhere
+    /// for a second, stale set of defaults to hide. Fields the prefs don't cover keep
+    /// `GraphicsSettings`' own defaults.
+    pub fn to_engine(&self) -> GraphicsSettings {
+        GraphicsSettings {
+            msaa_samples: self.msaa as u32,
+            ambient_occlusion: self.ambient_occlusion,
+            ssao_radius: self.ssao_radius,
+            edge_cueing: self.edge_cueing,
+            depth_aware_halos: self.depth_aware_halos,
+            // The contour lines have a surprising effect, and I'm not sure what the intended
+            // one is:
+            // depth_revealing_contour_lines: Some(0.1),
+            // intersection_revealing_contour_lines: Some(1.),
+            ..Default::default()
         }
     }
 }
