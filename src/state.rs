@@ -52,7 +52,7 @@ use crate::{
     threads::ThreadReceivers,
     ui::popup::{
         external_tools::ExternalToolsUi, ff_params::FfParamsUi, protein_design::ProteinDesignUi,
-        sequence_pred::SequencePredUi, structure_pred::StructurePredUi,
+        rfdiffusion3::Rfd3Ui, sequence_pred::SequencePredUi, structure_pred::StructurePredUi,
     },
 };
 
@@ -506,6 +506,8 @@ pub struct StateUi {
     pub structure_pred: StructurePredUi,
     /// Input and result state for the dedicated ProteinMPNN sequence-prediction popup.
     pub sequence_pred: SequencePredUi,
+    /// Input and result state for the RFdiffusion3 backbone-generation popup.
+    pub rfd3: Rfd3Ui,
     /// Cached results of the third-party tools status probe.
     pub external_tools: ExternalToolsUi,
     /// Input and results for the sequence-design, ΔΔG, and antibody tools.
@@ -681,6 +683,8 @@ pub struct PopupState {
     pub ff_params: bool,
     pub structure_pred: bool,
     pub sequence_pred: bool,
+    /// RFdiffusion3 backbone generation.
+    pub rfd3: bool,
     /// The third-party tools status panel.
     pub external_tools: bool,
     /// Sequence design, ΔΔG scanning, and antibody annotation.

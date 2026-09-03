@@ -1342,6 +1342,12 @@ pub struct FileDialogs {
     pub parquet_mol_file: FileDialog,
     /// Selecting an mmCIF backbone for ProteinMPNN without opening it in the scene.
     pub sequence_prediction: FileDialog,
+    /// Selecting a structure or an input document for an RFdiffusion3 run. One dialog serves
+    /// every file-valued field in that window; the field waiting for it is remembered in
+    /// `rfd3_input_field`.
+    pub rfd3_input: FileDialog,
+    /// Which RFdiffusion3 form field the next pick belongs to.
+    pub rfd3_input_field: Option<String>,
     /// E.g. GROMACS files ready to be run in a sim. (.top, .mdp, .gro); choose a folder to save these in.
     pub save_md: FileDialog,
     /// Save an MD mol set as a GRO file.
@@ -1428,6 +1434,21 @@ impl Default for FileDialogs {
         )
         .default_file_filter(sequence_prediction_descrip);
 
+        let rfd3_descrip = "Structure or input document";
+        let rfd3_input = FileDialog::with_config(
+            FileDialogConfig {
+                title: Some("Select an RFdiffusion3 input".to_owned()),
+                ..Default::default()
+            }
+            .add_file_filter_extensions(
+                rfd3_descrip,
+                vec!["pdb", "cif", "ent", "json", "yaml", "yml"],
+            )
+            .add_file_filter_extensions("Structure", vec!["pdb", "cif", "ent"])
+            .add_file_filter_extensions("Input document", vec!["json", "yaml", "yml"]),
+        )
+        .default_file_filter(rfd3_descrip);
+
         let cfg_parquet_db = FileDialogConfig::default()
             .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
             .add_save_extension(&parquet_descrip, "parquet");
@@ -1456,6 +1477,8 @@ impl Default for FileDialogs {
             parquet_mols_dir,
             parquet_mol_file,
             sequence_prediction,
+            rfd3_input,
+            rfd3_input_field: None,
             save_md,
             save_gro,
             save_gro_mol_set_i: None,

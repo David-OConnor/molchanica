@@ -358,7 +358,7 @@ pub(in crate::ui) fn structure_prediction_window(state: &mut State, ui: &mut Ui)
     });
     ui.horizontal(|ui| {
         ui.label("All-atom prediction powered by");
-        ui.hyperlink_to(model.label(), model.tool().spec().url);
+        ui.hyperlink_to(model.label(), model.tool().spec().url());
     });
 
     if model == StructurePredictionModel::OpenDDE {
@@ -496,7 +496,7 @@ fn selected_model_tool_ui(
         if let Some(kind) = active_kind {
             ui.spinner();
             ui.label(
-                RichText::new(format!("{} {}...", kind.present_participle(), spec.name))
+                RichText::new(format!("{} {}...", kind.present_participle(), spec.name()))
                     .color(COLOR_ACTION),
             );
         } else if managed_install_present {
@@ -531,11 +531,11 @@ fn selected_model_tool_ui(
 
         ui.label(
             RichText::new(if installed {
-                format!("{} is installed", spec.name)
+                format!("{} is installed", spec.name())
             } else if managed_install_present {
-                format!("{} setup is incomplete", spec.name)
+                format!("{} setup is incomplete", spec.name())
             } else {
-                format!("{} is not installed", spec.name)
+                format!("{} is not installed", spec.name())
             })
             .color(if installed {
                 Color32::LIGHT_GREEN

@@ -6,6 +6,7 @@ pub mod pharmacophore;
 pub mod protein_design;
 pub(in crate::ui) mod rama_plot;
 pub mod recent_files;
+pub(crate) mod rfdiffusion3;
 pub(crate) mod sequence_pred;
 pub(crate) mod structure_pred;
 
@@ -188,6 +189,15 @@ pub(in crate::ui) fn load_popups(
         popup("Structure prediction").show(ui.ctx(), |ui| {
             structure_pred::structure_prediction_window(state, ui);
         });
+    }
+
+    if state.ui.popup.rfd3 {
+        popup("RFdiffusion3")
+            .default_width(680.0)
+            .max_height(1000.0)
+            .show(ui.ctx(), |ui| {
+                rfdiffusion3::rfdiffusion3_window(state, scene, updates, ui);
+            });
     }
 
     if state.ui.popup.sequence_pred {

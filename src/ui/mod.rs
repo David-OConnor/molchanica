@@ -891,6 +891,19 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
                 if button!(
                     ui,
+                    "RFdiffusion3",
+                    COLOR_HIGHLIGHT,
+                    "Generate protein backbones with RFdiffusion3: unconditional, around a \
+                    target, ligand, nucleic acid, or motif, or under a point group. Feed the \
+                    result to ProteinMPNN to get a sequence."
+                )
+                    .clicked()
+                {
+                    state.ui.popup.rfd3 = !state.ui.popup.rfd3;
+                }
+
+                if button!(
+                    ui,
                     "Predict structure",
                     COLOR_HIGHLIGHT,
                     "Predict a structure from an amino-acid or nucleotide sequence."

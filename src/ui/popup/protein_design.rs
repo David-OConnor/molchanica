@@ -340,7 +340,7 @@ fn sequences_tab(
             });
         }
         ui.label(
-            RichText::new(format!("via {}", tool.spec().name))
+            RichText::new(format!("via {}", tool.spec().name()))
                 .color(COLOR_INACTIVE)
                 .small(),
         );

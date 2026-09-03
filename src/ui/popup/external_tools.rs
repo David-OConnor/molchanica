@@ -317,7 +317,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
             let mut visible_tools = 0;
             for tool in ordered_tools {
                 let spec = tool.spec();
-                if !search.is_empty() && !spec.name.to_lowercase().contains(&search) {
+                if !search.is_empty() && !spec.name().to_lowercase().contains(&search) {
                     continue;
                 }
                 visible_tools += 1;
@@ -328,14 +328,14 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                                 .color(COLOR_ACTION)
                                 .monospace(),
                         );
-                        ui.label(RichText::new(spec.name).strong());
+                        ui.label(RichText::new(spec.name()).strong());
                         if let Some(label) = spec.platform.label() {
                             ui.label(RichText::new(label).color(Color32::LIGHT_BLUE).small());
                         }
                         ui.spinner();
                     });
-                    ui.indent(spec.slug, |ui| {
-                        ui.label(RichText::new(spec.summary).color(COLOR_INACTIVE));
+                    ui.indent(spec.slug(), |ui| {
+                        ui.label(RichText::new(spec.summary()).color(COLOR_INACTIVE));
                     });
                     ui.add_space(6.0);
                     continue;
@@ -347,7 +347,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             .color(result_color(status.result))
                             .monospace(),
                     );
-                    ui.label(RichText::new(spec.name).strong());
+                    ui.label(RichText::new(spec.name()).strong());
                     if let Some(label) = spec.platform.label() {
                         ui.label(
                             RichText::new(label).color(Color32::LIGHT_BLUE).small(),
@@ -356,8 +356,11 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     if ui
                         .small_button("?")
                         .on_hover_text(format!(
-                            "{}\n\nLicence: {}\n{}",
-                            spec.summary, spec.license, spec.url
+                            "{}\n\nLicence: {} — {}\n{}",
+                            spec.summary(),
+                            spec.license(),
+                            spec.license_details(),
+                            spec.url()
                         ))
                         .clicked()
                     {
@@ -451,8 +454,8 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     }
                 });
 
-                ui.indent(spec.slug, |ui| {
-                    ui.label(RichText::new(spec.summary).color(COLOR_INACTIVE));
+                ui.indent(spec.slug(), |ui| {
+                    ui.label(RichText::new(spec.summary()).color(COLOR_INACTIVE));
 
                     match status.result {
                         CheckResult::Pass => {
@@ -571,11 +574,15 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                         }
 
                         ui.label(
-                            RichText::new(format!("Licence: {}", spec.license))
-                                .color(COLOR_INACTIVE)
-                                .small(),
+                            RichText::new(format!(
+                                "Licence: {} — {}",
+                                spec.license(),
+                                spec.license_details()
+                            ))
+                            .color(COLOR_INACTIVE)
+                            .small(),
                         );
-                        ui.hyperlink(spec.url);
+                        ui.hyperlink(spec.url());
                     }
                 });
                 ui.add_space(6.0);

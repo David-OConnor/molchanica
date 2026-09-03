@@ -1,7 +1,11 @@
 //! Registry of the optional third-party tools Molchanica can drive.
 //!
-//! This should be kept somewhat in sync with `bio_web`, in tool selection (Although this will be
-//! close to a subset), and approach to installing and managing their [e.g. python] environments.
+//! Which tools exist, what they are called, what they do, and what they are licensed under is not
+//! decided here: that lives once, in `bio_tools`' shared catalog, which `bio_web` reads too. Each
+//! entry below names its catalog slug (see [`ToolIdentity`]) and adds only what is Molchanica's
+//! own — where the tool is installed, how it is launched, and how it is probed. Molchanica drives
+//! a subset of the catalog, so a tool being absent from [`Tool`] does not mean `bio_tools` lacks
+//! it.
 //!
 //! Molchanica works without any of these installed; each one unlocks a feature. The problem this
 //! module solves is that every tool was previously discovered, probed, and reported on by
@@ -60,12 +64,21 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bio_tools::{install::Installer as ToolInstaller, tool_definitions::Tool as InstallableTool};
+use bio_tools::{
+    License,
+    install::Installer as ToolInstaller,
+    tool_definitions::{
+        Tool as InstallableTool,
+        catalog::{self, CatalogEntry},
+    },
+};
 
 pub mod anarcii;
 pub mod igblast;
 pub mod mpnn;
 pub mod pdb_write;
+pub mod rfdiffusion3;
+pub mod tool_form;
 
 /// How long a `--version`/`--help` style probe is given before it is killed.
 ///
@@ -102,7 +115,7 @@ pub enum Tool {
     ProteinMpnn,
     LigandMpnn,
     ProteinMpnnDdg,
-    RfDiffusion,
+    RfDiffusion3,
     RfAntibody,
     Germinal,
     Mber,
@@ -142,7 +155,7 @@ impl Tool {
         Self::LigandMpnn,
         Self::ProteinMpnn,
         Self::ProteinMpnnDdg,
-        Self::RfDiffusion,
+        Self::RfDiffusion3,
         Self::RfAntibody,
         Self::Germinal,
         Self::Mber,
@@ -185,7 +198,7 @@ impl Tool {
 
 impl fmt::Display for Tool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.spec().name)
+        f.write_str(self.spec().name())
     }
 }
 
@@ -235,19 +248,56 @@ pub struct RequiredAsset {
     pub description: &'static str,
 }
 
+/// Shown if a registry entry ever names a catalog slug `bio_tools` no longer has.
+///
+/// `catalog_entries_resolve` covers every entry, so this is a guard against a future rename on
+/// the `bio_tools` side rather than a state to expect.
+const MISSING_CATALOG: &str = "(the bio_tools catalog entry for this tool is missing)";
+
+/// Where a tool's identity and human-readable description come from.
+///
+/// `bio_tools` already describes every tool worth describing — name, slug, summary, home page,
+/// licence — and `bio_web` reads that same table. Restating any of it here is how the two drifted
+/// apart, so the registry points at the shared catalog entry and holds only what is genuinely
+/// Molchanica's own: where a tool is installed, how it is launched, and how it is probed.
+#[derive(Clone, Copy, Debug)]
+pub enum ToolIdentity {
+    /// `bio_tools` catalogues the tool under this slug. Note that a catalog slug is not always the
+    /// install recipe's slug — `antibody_annotator` installs as `anarcii` — so the recipe, where
+    /// one exists, is what [`ToolSpec::slug`] and [`ToolSpec::name`] prefer.
+    Shared(&'static str),
+    /// Molchanica-only: `bio_tools` neither installs nor catalogues it, so it is described here.
+    Local {
+        slug: &'static str,
+        name: &'static str,
+        summary: &'static str,
+        url: &'static str,
+        license: License,
+        license_details: &'static str,
+    },
+}
+
+impl ToolIdentity {
+    /// The shared catalog entry, for the tools `bio_tools` describes.
+    pub fn catalog(self) -> Option<&'static CatalogEntry> {
+        match self {
+            Self::Shared(slug) => catalog::by_slug(slug),
+            Self::Local { .. } => None,
+        }
+    }
+
+    /// The `bio_tools` install recipe backing this tool, where one exists. `None` for the tools
+    /// only ever obtained from a vendor or a system package manager.
+    pub fn recipe(self) -> Option<InstallableTool> {
+        self.catalog().and_then(|entry| entry.identity.tool())
+    }
+}
+
 /// Everything Molchanica knows about one tool.
 pub struct ToolSpec {
     pub tool: Tool,
-    /// How the tool is written wherever a person reads it.
-    pub name: &'static str,
-    /// The machine-readable identifier used by the registry, managed environment layout, and the
-    /// corresponding `bio_tools::install::Tool` recipe.
-    pub slug: &'static str,
-    /// One line, shown in the status panel.
-    pub summary: &'static str,
-    pub url: &'static str,
-    /// Licence terms of the whole stack a run needs, not just the upstream repository's label.
-    pub license: &'static str,
+    /// Name, slug, summary, home page, and licence, sourced from `bio_tools` wherever it has them.
+    pub identity: ToolIdentity,
     /// Upstream platform support, independent of whether Molchanica can install the tool.
     pub platform: PlatformSupport,
     pub kind: ToolKind,
@@ -283,6 +333,88 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
+    /// The shared `bio_tools` catalog entry, where there is one. See [`ToolIdentity`].
+    pub fn catalog(&self) -> Option<&'static CatalogEntry> {
+        self.identity.catalog()
+    }
+
+    /// The `bio_tools` install recipe backing this tool, where one exists.
+    pub fn recipe(&self) -> Option<InstallableTool> {
+        self.identity.recipe()
+    }
+
+    /// The machine-readable identifier: the managed environment's directory name, and the key the
+    /// `bio_tools` installer is asked for. Taken from the install recipe, so that the directory
+    /// Molchanica builds and the one `bio_tools` installs into cannot disagree.
+    pub fn slug(&self) -> &'static str {
+        match self.identity {
+            ToolIdentity::Shared(catalog_slug) => {
+                self.recipe().map_or(catalog_slug, InstallableTool::slug)
+            }
+            ToolIdentity::Local { slug, .. } => slug,
+        }
+    }
+
+    /// How the tool is written wherever a person reads it.
+    pub fn name(&self) -> &'static str {
+        match self.identity {
+            ToolIdentity::Shared(catalog_slug) => match self.recipe() {
+                Some(recipe) => recipe.name(),
+                None => self.catalog().map_or(catalog_slug, CatalogEntry::name),
+            },
+            ToolIdentity::Local { name, .. } => name,
+        }
+    }
+
+    /// A short description, shown in the status panel.
+    pub fn summary(&self) -> &'static str {
+        match self.identity {
+            ToolIdentity::Shared(_) => self
+                .catalog()
+                .map_or(MISSING_CATALOG, |entry| entry.spec.summary),
+            ToolIdentity::Local { summary, .. } => summary,
+        }
+    }
+
+    /// The page to send someone to for more: the project's home, else its repository, else docs.
+    pub fn url(&self) -> &'static str {
+        match self.identity {
+            ToolIdentity::Shared(_) => self
+                .catalog()
+                .and_then(|entry| {
+                    entry
+                        .spec
+                        .home_url
+                        .or(entry.spec.repo_url)
+                        .or(entry.spec.docs_url)
+                })
+                .unwrap_or(MISSING_CATALOG),
+            ToolIdentity::Local { url, .. } => url,
+        }
+    }
+
+    /// The licence's short label, e.g. `MIT`.
+    pub fn license(&self) -> License {
+        match self.identity {
+            ToolIdentity::Shared(_) => self
+                .catalog()
+                .map_or(License::Other, |entry| entry.spec.license),
+            ToolIdentity::Local { license, .. } => license,
+        }
+    }
+
+    /// Licence terms of the whole stack a run needs, not just the upstream repository's label.
+    pub fn license_details(&self) -> &'static str {
+        match self.identity {
+            ToolIdentity::Shared(_) => self
+                .catalog()
+                .map_or(MISSING_CATALOG, |entry| entry.spec.license_details),
+            ToolIdentity::Local {
+                license_details, ..
+            } => license_details,
+        }
+    }
+
     /// `<data root>/process_executables/python_envs/<slug>`, or the override value.
     pub fn venv_root(&self) -> Option<PathBuf> {
         if let Some(name) = self.root_override_env
@@ -293,7 +425,7 @@ impl ToolSpec {
         data_root().map(|root| {
             root.join("process_executables")
                 .join("python_envs")
-                .join(self.slug)
+                .join(self.slug())
         })
     }
 
@@ -314,11 +446,12 @@ impl ToolSpec {
             return self.install_hint.to_owned();
         }
         if !self.platform.is_supported() {
-            return format!("{} is available on Linux only.", self.name);
+            return format!("{} is available on Linux only.", self.name());
         }
         format!(
             "Install {} from Molchanica's Tools panel (recipe `{}`).",
-            self.name, self.slug
+            self.name(),
+            self.slug()
         )
     }
 
@@ -335,7 +468,7 @@ pub fn install(tool: Tool) -> io::Result<()> {
     if !spec.platform.is_supported() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            format!("{} is available on Linux only", spec.name),
+            format!("{} is available on Linux only", spec.name()),
         ));
     }
 
@@ -344,15 +477,18 @@ pub fn install(tool: Tool) -> io::Result<()> {
             io::ErrorKind::Unsupported,
             format!(
                 "{} cannot be installed automatically. {}",
-                spec.name, spec.install_hint
+                spec.name(),
+                spec.install_hint
             ),
         ));
     }
 
-    let recipe = spec
-        .slug
-        .parse::<InstallableTool>()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    let recipe = spec.recipe().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} has no bio_tools install recipe", spec.name()),
+        )
+    })?;
     let root = data_root().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -417,7 +553,7 @@ pub fn uninstall(tool: Tool) -> io::Result<()> {
             io::ErrorKind::Unsupported,
             format!(
                 "{} is managed outside Molchanica and cannot be uninstalled here",
-                spec.name
+                spec.name()
             ),
         ));
     }
@@ -435,7 +571,7 @@ pub fn uninstall(tool: Tool) -> io::Result<()> {
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("refusing to remove an unsafe path for {}", spec.name),
+            format!("refusing to remove an unsafe path for {}", spec.name()),
         ));
     }
 
@@ -443,7 +579,7 @@ pub fn uninstall(tool: Tool) -> io::Result<()> {
     if existing.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("no Molchanica-managed files were found for {}", spec.name),
+            format!("no Molchanica-managed files were found for {}", spec.name()),
         ));
     }
 
@@ -471,7 +607,7 @@ fn managed_install_roots(tool: Tool, data_root: &Path) -> Vec<PathBuf> {
         roots.push(
             data_root
                 .join("process_executables/python_envs")
-                .join(spec.slug),
+                .join(spec.slug()),
         );
     }
     // AlphaFold 3's checkout and model parameters are operator-provided licensed assets. The
@@ -501,17 +637,12 @@ fn path_disk_usage(path: &Path) -> io::Result<u64> {
 /// The single description of every tool. See the module docs for how it is used.
 macro_rules! venv_script_tool {
     (
-        $tool:ident, $name:literal, $slug:literal, $summary:literal, $url:literal,
-        $license:literal, $platform:expr, $executable:literal, $override:literal,
+        $tool:ident, $catalog:literal, $platform:expr, $executable:literal, $override:literal,
         $managed:literal, $hint:literal
     ) => {
         ToolSpec {
             tool: Tool::$tool,
-            name: $name,
-            slug: $slug,
-            summary: $summary,
-            url: $url,
-            license: $license,
+            identity: ToolIdentity::Shared($catalog),
             platform: $platform,
             kind: ToolKind::VenvScript,
             executable: $executable,
@@ -532,17 +663,12 @@ macro_rules! venv_script_tool {
 
 macro_rules! venv_python_tool {
     (
-        $tool:ident, $name:literal, $slug:literal, $summary:literal, $url:literal,
-        $license:literal, $platform:expr, $override:literal, $venv_override:expr,
+        $tool:ident, $catalog:literal, $platform:expr, $override:literal, $venv_override:expr,
         $bundle_override:expr, $bundle:literal, $assets:expr, $managed:literal, $hint:literal
     ) => {
         ToolSpec {
             tool: Tool::$tool,
-            name: $name,
-            slug: $slug,
-            summary: $summary,
-            url: $url,
-            license: $license,
+            identity: ToolIdentity::Shared($catalog),
             platform: $platform,
             kind: ToolKind::VenvPython,
             executable: "python",
@@ -573,11 +699,7 @@ macro_rules! required_asset {
 static REGISTRY: &[ToolSpec] = &[
     venv_python_tool!(
         AlphaFold3,
-        "AlphaFold 3",
         "alphafold3",
-        "Protein and protein-ligand structure prediction with AlphaFold 3.",
-        "https://github.com/google-deepmind/alphafold3",
-        "Apache 2.0 code; model parameters are non-commercial and must be obtained from Google.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_ALPHAFOLD3_PYTHON",
         Some("MOLCHANICA_ALPHAFOLD3_VENV_DIR"),
@@ -592,11 +714,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         Chai1,
-        "Chai-1",
         "chai1",
-        "Protein and protein-ligand complex structure prediction.",
-        "https://github.com/chaidiscovery/chai-lab",
-        "Apache 2.0 code and weights. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "chai-lab",
         "MOLCHANICA_CHAI1_EXECUTABLE",
@@ -605,11 +723,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         Protenix,
-        "Protenix-v2",
         "protenix",
-        "Protein and protein-ligand complex structure prediction.",
-        "https://github.com/bytedance/Protenix",
-        "Apache 2.0. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "protenix",
         "MOLCHANICA_PROTENIX_EXECUTABLE",
@@ -618,11 +732,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         EsmFold2,
-        "ESMFold 2",
         "esmfold2",
-        "Fast single-sequence protein structure prediction.",
-        "https://github.com/facebookresearch/esm",
-        "MIT fair-esm and weights; Apache 2.0 OpenFold dependency.",
         PlatformSupport::LinuxOnly,
         "esm-fold",
         "MOLCHANICA_ESMFOLD2_EXECUTABLE",
@@ -631,11 +741,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         ImmuneBuilder,
-        "ImmuneBuilder",
         "immunebuilder",
-        "Fast antibody, nanobody, and TCR structure prediction.",
-        "https://github.com/oxpig/ImmuneBuilder",
-        "BSD 3-Clause; OpenMM refinement is MIT/LGPL. Commercial use permitted.",
         PlatformSupport::All,
         "ABodyBuilder2",
         "MOLCHANICA_IMMUNEBUILDER_EXECUTABLE",
@@ -644,11 +750,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         HighFold,
-        "HighFold",
         "highfold",
-        "Cyclic-peptide and cyclic-peptide complex prediction.",
-        "https://github.com/hongliangduan/HighFold",
-        "MIT code over CC BY 4.0 AlphaFold 2 parameters.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_HIGHFOLD_PYTHON",
         Some("MOLCHANICA_HIGHFOLD_VENV_DIR"),
@@ -660,11 +762,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         BoltzGen,
-        "BoltzGen",
         "boltzgen",
-        "Protein, peptide, nanobody, and antibody binder design.",
-        "https://github.com/HannesStark/boltzgen",
-        "MIT code, weights, and training data. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "boltzgen",
         "MOLCHANICA_BOLTZGEN_EXECUTABLE",
@@ -673,11 +771,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         BindCraft,
-        "BindCraft",
         "bindcraft",
-        "De novo protein and peptide binder design.",
-        "https://github.com/martinpacesa/BindCraft",
-        "MIT code; required PyRosetta is non-commercial unless separately licensed.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_BINDCRAFT_PYTHON",
         Some("MOLCHANICA_BINDCRAFT_VENV_DIR"),
@@ -692,11 +786,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         BioPhi,
-        "BioPhi",
         "biophi",
-        "Antibody humanization and humanness estimation.",
-        "https://github.com/Merck/BioPhi",
-        "MIT. Commercial use permitted.",
         PlatformSupport::All,
         "biophi",
         "MOLCHANICA_BIOPHI_EXECUTABLE",
@@ -705,11 +795,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         AntiFold,
-        "AntiFold",
         "antifold",
-        "Score and sample antibody sequences from a structure.",
-        "https://github.com/oxpig/AntiFold",
-        "BSD 3-Clause. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_ANTIFOLD_PYTHON",
         Some("MOLCHANICA_ANTIFOLD_VENV_DIR"),
@@ -721,43 +807,42 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         ProteinMpnnDdg,
-        "ProteinMPNN-ddG",
-        "proteinmpnn-ddg",
-        "Predict stability effects for every point mutation in a protein chain.",
-        "https://github.com/PeptoneLtd/proteinmpnn_ddg",
-        "MIT. Commercial use permitted.",
+        "proteinmpnn_ddg",
         PlatformSupport::LinuxOnly,
         "proteinmpnn-ddg",
         "MOLCHANICA_PROTEINMPNN_DDG_EXECUTABLE",
         true,
         "Install from Molchanica's Tools panel."
     ),
-    venv_python_tool!(
-        RfDiffusion,
-        "RFdiffusion",
-        "rfdiffusion",
-        "Protein backbone and target-conditioned binder design.",
-        "https://github.com/RosettaCommons/RFdiffusion",
-        "University of Washington BSD-style licence; commercial use permitted.",
-        PlatformSupport::LinuxOnly,
-        "MOLCHANICA_RFDIFFUSION_PYTHON",
-        Some("MOLCHANICA_RFDIFFUSION_VENV_DIR"),
-        Some("MOLCHANICA_RFDIFFUSION_ROOT"),
-        "RFdiffusion",
-        &[
-            required_asset!("scripts/run_inference.py", "the RFdiffusion runner"),
-            required_asset!("models/Base_ckpt.pt", "the base RFdiffusion weights")
-        ],
-        true,
-        "Install from Molchanica's Tools panel."
-    ),
+    // RFdiffusion3 is a console script like the other uv-managed tools, but it also needs the
+    // checkpoint `bio_tools` downloads beside the environment, so it is spelled out rather than
+    // built by `venv_script_tool!`. RFdiffusion3 is the only RFdiffusion generation Molchanica
+    // supports: 1 and 2 are gone from `bio_tools`, and their Hydra-override command line has
+    // nothing in common with RFD3's JSON `InputSpecification`.
+    ToolSpec {
+        tool: Tool::RfDiffusion3,
+        identity: ToolIdentity::Shared("rfd3"),
+        platform: PlatformSupport::LinuxOnly,
+        kind: ToolKind::VenvScript,
+        executable: "rfd3",
+        exe_override_env: "MOLCHANICA_RFD3_EXECUTABLE",
+        root_override_env: Some("MOLCHANICA_RFD3_VENV_DIR"),
+        bundle_root_override_env: Some("MOLCHANICA_RFD3_ROOT"),
+        bundle_subdir: Some("rfd3"),
+        colocated: false,
+        required_assets: &[required_asset!(
+            "checkpoints/rfd3_latest.ckpt",
+            "the RFdiffusion3 checkpoint"
+        )],
+        molchanica_managed: true,
+        install_hint: "Install from Molchanica's Tools panel.",
+        version_args: &["--help"],
+        version_marker: "rfd3",
+        slow_probe: true,
+    },
     venv_python_tool!(
         RfAntibody,
-        "RFantibody",
         "rfantibody",
-        "Antibody and nanobody backbone design against a target.",
-        "https://github.com/RosettaCommons/RFantibody",
-        "MIT. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_RFANTIBODY_PYTHON",
         Some("MOLCHANICA_RFANTIBODY_VENV_DIR"),
@@ -769,11 +854,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         Germinal,
-        "Germinal",
         "germinal",
-        "De novo antibody design against a selected epitope.",
-        "https://github.com/SantiagoMille/germinal",
-        "MIT code; required PyRosetta and IgLM weights restrict commercial use.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_GERMINAL_PYTHON",
         Some("MOLCHANICA_GERMINAL_VENV_DIR"),
@@ -785,11 +866,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_script_tool!(
         Mber,
-        "mBER",
         "mber",
-        "VHH binder design with AlphaFold-Multimer backpropagation.",
-        "https://github.com/manifoldbio/mber-open",
-        "MIT over Apache 2.0 ColabDesign and CC BY 4.0 AlphaFold 2 parameters.",
         PlatformSupport::LinuxOnly,
         "mber-vhh",
         "MOLCHANICA_MBER_EXECUTABLE",
@@ -798,11 +875,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         IgDesign,
-        "IgDesign",
         "igdesign",
-        "Antibody CDR design by inverse folding.",
-        "https://github.com/AbSciBio/igdesign",
-        "Research release; confirm upstream terms before commercial use.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_IGDESIGN_PYTHON",
         Some("MOLCHANICA_IGDESIGN_VENV_DIR"),
@@ -814,11 +887,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         ThermoMpnn,
-        "ThermoMPNN",
         "thermompnn",
-        "Protein mutation stability prediction.",
-        "https://github.com/Kuhlman-Lab/ThermoMPNN",
-        "MIT. Commercial use permitted.",
         PlatformSupport::All,
         "MOLCHANICA_THERMOMPNN_PYTHON",
         Some("MOLCHANICA_THERMOMPNN_VENV_DIR"),
@@ -833,11 +902,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         Genie3,
-        "Genie 3",
         "genie3",
-        "All-atom target-conditioned protein binder generation.",
-        "https://github.com/aqlaboratory/genie3",
-        "Apache 2.0. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_GENIE3_PYTHON",
         Some("MOLCHANICA_GENIE3_VENV_DIR"),
@@ -852,11 +917,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         DeepSp,
-        "DeepSP",
         "deepsp",
-        "Sequence-only antibody developability descriptors.",
-        "https://github.com/Lailabcode/DeepSP",
-        "MIT. Commercial use permitted.",
         PlatformSupport::All,
         "MOLCHANICA_DEEPSP_PYTHON",
         Some("MOLCHANICA_DEEPSP_VENV_DIR"),
@@ -871,11 +932,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         DeepImmuno,
-        "DeepImmuno",
         "deepimmuno",
-        "Peptide-MHC-I immunogenicity prediction.",
-        "https://github.com/frankligy/DeepImmuno",
-        "MIT. Commercial use permitted.",
         PlatformSupport::All,
         "MOLCHANICA_DEEPIMMUNO_PYTHON",
         Some("MOLCHANICA_DEEPIMMUNO_VENV_DIR"),
@@ -890,11 +947,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         TlImmuno2,
-        "TLimmuno2",
-        "tlimmuno2",
-        "Peptide-MHC-II immunogenicity prediction.",
-        "https://github.com/XSLiuLab/TLimmuno2",
-        "Academic release; confirm upstream terms before commercial use.",
+        "tlimmuno",
         PlatformSupport::All,
         "MOLCHANICA_TLIMMUNO2_PYTHON",
         Some("MOLCHANICA_TLIMMUNO2_VENV_DIR"),
@@ -909,11 +962,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         NetSolP,
-        "NetSolP",
         "netsolp",
-        "Protein solubility and expression-usability prediction.",
-        "https://github.com/tvinet/NetSolP-1.0",
-        "Academic use only; commercial use requires an agreement with DTU Health Tech.",
         PlatformSupport::All,
         "MOLCHANICA_NETSOLP_PYTHON",
         Some("MOLCHANICA_NETSOLP_VENV_DIR"),
@@ -931,11 +980,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         DeepStabP,
-        "DeepSTABp",
         "deepstabp",
-        "Protein melting-temperature prediction.",
-        "https://github.com/CSBiology/deepStabP",
-        "MIT. Commercial use permitted.",
         PlatformSupport::All,
         "MOLCHANICA_DEEPSTABP_PYTHON",
         Some("MOLCHANICA_DEEPSTABP_VENV_DIR"),
@@ -950,11 +995,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     ToolSpec {
         tool: Tool::AggreScan3d,
-        name: "AggreScan3D",
-        slug: "aggrescan3d",
-        summary: "Map and score aggregation-prone regions on a protein structure.",
-        url: "https://bitbucket.org/lcbio/aggrescan3d",
-        license: "Free for academic use; commercial use requires a separate agreement.",
+        identity: ToolIdentity::Shared("aggrescan3d"),
         platform: PlatformSupport::LinuxOnly,
         kind: ToolKind::VenvScript,
         executable: "aggrescan",
@@ -972,11 +1013,7 @@ static REGISTRY: &[ToolSpec] = &[
     },
     venv_python_tool!(
         DlkCat,
-        "DLKcat",
         "dlkcat",
-        "Enzyme turnover prediction from sequence and substrate.",
-        "https://github.com/SysBioChalmers/DLKcat",
-        "MIT. Commercial use permitted.",
         PlatformSupport::All,
         "MOLCHANICA_DLKCAT_PYTHON",
         Some("MOLCHANICA_DLKCAT_VENV_DIR"),
@@ -991,11 +1028,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         CatPred,
-        "CatPred",
         "catpred",
-        "Enzyme kcat, Km, and Ki prediction with uncertainty.",
-        "https://github.com/maranasgroup/CatPred",
-        "MIT. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_CATPRED_PYTHON",
         Some("MOLCHANICA_CATPRED_VENV_DIR"),
@@ -1010,11 +1043,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         Tap,
-        "TAP",
         "tap",
-        "Therapeutic Antibody Profiler developability assessment.",
-        "https://opig.stats.ox.ac.uk/webapps/sabdab-sabpred/sabpred/tap/",
-        "Academic use only; obtain TAP directly from OPIG.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_TAP_PYTHON",
         Some("MOLCHANICA_TAP_VENV_DIR"),
@@ -1029,11 +1058,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     venv_python_tool!(
         Placer,
-        "PLACER",
         "placer",
-        "Protein-ligand pose and side-chain conformation generation.",
-        "https://github.com/baker-laboratory/PLACER",
-        "BSD 3-Clause. Commercial use permitted.",
         PlatformSupport::LinuxOnly,
         "MOLCHANICA_PLACER_PYTHON",
         Some("MOLCHANICA_PLACER_VENV_DIR"),
@@ -1048,11 +1073,7 @@ static REGISTRY: &[ToolSpec] = &[
     ),
     ToolSpec {
         tool: Tool::OpenDde,
-        name: "OpenDDE",
-        slug: "opendde",
-        summary: "All-atom co-folding: proteins, DNA/RNA, ligands, ions, and complexes.",
-        url: "https://github.com/aurekaresearch/OpenDDE",
-        license: "Apache 2.0. Commercial use permitted.",
+        identity: ToolIdentity::Shared("opendde"),
         platform: PlatformSupport::All,
         kind: ToolKind::VenvScript,
         executable: "opendde",
@@ -1072,12 +1093,8 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Boltz2,
-        name: "Boltz-2",
-        slug: "boltz2",
-        summary: "Co-folding with binding-affinity prediction.",
+        identity: ToolIdentity::Shared("boltz2"),
         platform: PlatformSupport::All,
-        url: "https://github.com/jwohlwend/boltz",
-        license: "MIT. Commercial use permitted.",
         kind: ToolKind::VenvScript,
         bundle_root_override_env: None,
         executable: "boltz",
@@ -1095,13 +1112,9 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::LigandMpnn,
-        name: "LigandMPNN",
+        identity: ToolIdentity::Shared("ligandmpnn"),
         platform: PlatformSupport::All,
-        slug: "ligandmpnn",
-        summary: "Inverse folding: design sequences for a backbone, in ligand and nucleic-acid context.",
-        url: "https://github.com/dauparas/LigandMPNN",
         bundle_root_override_env: Some("MOLCHANICA_LIGANDMPNN_ROOT"),
-        license: "MIT. Commercial use permitted.",
         kind: ToolKind::VenvPython,
         executable: "python",
         exe_override_env: "MOLCHANICA_LIGANDMPNN_PYTHON",
@@ -1127,12 +1140,8 @@ static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         platform: PlatformSupport::All,
         tool: Tool::ProteinMpnn,
-        name: "ProteinMPNN",
-        slug: "proteinmpnn",
+        identity: ToolIdentity::Shared("proteinmpnn"),
         bundle_root_override_env: Some("MOLCHANICA_PROTEINMPNN_ROOT"),
-        summary: "Inverse folding, plus the antibody-finetuned AbMPNN weights.",
-        url: "https://github.com/dauparas/ProteinMPNN",
-        license: "MIT code; AbMPNN weights CC BY 4.0. Commercial use permitted with attribution.",
         kind: ToolKind::VenvPython,
         executable: "python",
         exe_override_env: "MOLCHANICA_PROTEINMPNN_PYTHON",
@@ -1157,12 +1166,8 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::IgBlast,
+        identity: ToolIdentity::Shared("igblast"),
         bundle_root_override_env: None,
-        name: "IgBLAST",
-        slug: "igblast",
-        summary: "Antibody V(D)J germline assignment and framework/CDR delineation.",
-        url: "https://ncbi.github.io/igblast/",
-        license: "US Government public domain. No restrictions.",
         kind: ToolKind::Executable,
         executable: "igblastn",
         exe_override_env: "MOLCHANICA_IGBLAST_EXECUTABLE",
@@ -1183,11 +1188,10 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Anarcii,
-        name: "ANARCII",
-        slug: "anarcii",
-        summary: "Antibody/TCR numbering (IMGT, Kabat, Chothia, Martin) with insertion codes.",
-        url: "https://github.com/oxpig/ANARCII",
-        license: "BSD 3-Clause. Commercial use permitted.",
+        // `bio_tools` catalogues ANARCII together with this project's liability scan, as the
+        // "Antibody Annotator"; the install recipe behind that entry — and so the name and slug
+        // Molchanica uses for the environment — is ANARCII's own.
+        identity: ToolIdentity::Shared("antibody_annotator"),
         kind: ToolKind::VenvPython,
         executable: "python",
         exe_override_env: "MOLCHANICA_ANARCII_PYTHON",
@@ -1205,11 +1209,7 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Gromacs,
-        name: "GROMACS",
-        slug: "gromacs",
-        summary: "Molecular dynamics; an alternative backend to Molchanica's native MD.",
-        url: "https://www.gromacs.org/",
-        license: "LGPL 2.1. Commercial use permitted; redistribution is reciprocal.",
+        identity: ToolIdentity::Shared("gromacs"),
         kind: ToolKind::Executable,
         executable: "gmx",
         exe_override_env: "MOLCHANICA_GROMACS_EXECUTABLE",
@@ -1228,11 +1228,7 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Orca,
-        name: "ORCA",
-        slug: "orca",
-        summary: "Quantum chemistry: geometry optimization, single-point energies, MBIS charges.",
-        url: "https://www.faccts.de/orca/",
-        license: "Free for academic use; a licence is required for commercial use.",
+        identity: ToolIdentity::Shared("orca"),
         kind: ToolKind::Executable,
         executable: "orca",
         exe_override_env: "MOLCHANICA_ORCA_EXECUTABLE",
@@ -1253,12 +1249,17 @@ static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Gemmi,
-        name: "Gemmi",
-        slug: "gemmi",
-        summary: "Converts MTZ and unprocessed electron-density files.",
-        url: "https://gemmi.readthedocs.io/",
+        // The one tool `bio_tools` neither installs nor catalogues: a file-format converter
+        // Molchanica reaches for on its own, not a step in a prediction or design pipeline.
+        identity: ToolIdentity::Local {
+            slug: "gemmi",
+            name: "Gemmi",
+            summary: "Converts MTZ and unprocessed electron-density files.",
+            url: "https://gemmi.readthedocs.io/",
+            license: License::Other,
+            license_details: "MPL 2.0. Commercial use permitted.",
+        },
         platform: PlatformSupport::All,
-        license: "MPL 2.0. Commercial use permitted.",
         kind: ToolKind::Executable,
         executable: "gemmi",
         exe_override_env: "MOLCHANICA_GEMMI_EXECUTABLE",
@@ -1527,7 +1528,7 @@ pub fn bundle_root(tool: Tool) -> io::Result<PathBuf> {
                 io::ErrorKind::NotFound,
                 format!(
                     "{} is not installed. {}",
-                    tool.spec().name,
+                    tool.spec().name(),
                     tool.spec().install_command()
                 ),
             )
@@ -1571,7 +1572,7 @@ pub(crate) fn uv_managed_python(slug: &str, override_env: &str) -> io::Result<Pa
 fn not_found(spec: &ToolSpec) -> io::Error {
     io::Error::new(
         io::ErrorKind::NotFound,
-        format!("{} was not found. {}", spec.name, spec.install_command()),
+        format!("{} was not found. {}", spec.name(), spec.install_command()),
     )
 }
 
@@ -1712,7 +1713,7 @@ pub fn check(tool: Tool) -> ToolStatus {
     // which is exactly the confusion this panel exists to prevent.
     if !spec.required_assets.is_empty() {
         let Some(root) = spec.bundle_root() else {
-            return ToolStatus::cant_find(tool, format!("no data directory for {}", spec.name));
+            return ToolStatus::cant_find(tool, format!("no data directory for {}", spec.name()));
         };
         for asset in spec.required_assets {
             if !root.join(asset.relative_path).exists() {
@@ -1759,7 +1760,7 @@ pub fn check(tool: Tool) -> ToolStatus {
             detail: format!(
                 "{} did not identify itself as {}. Its output was: {}",
                 executable.display(),
-                spec.name,
+                spec.name(),
                 first_line(&output)
             ),
             path: Some(executable),
@@ -1789,7 +1790,7 @@ pub fn check_all() -> Receiver<ToolCheckUpdate> {
             let status = check(*tool);
             println!(
                 "External tool check for {} took {:.3}ms",
-                tool.spec().name,
+                tool.spec().name(),
                 started.elapsed().as_millis()
             );
 
@@ -2145,12 +2146,30 @@ mod tests {
         }
     }
 
+    /// Every `Shared` entry must name a catalog slug `bio_tools` still has: that lookup is where
+    /// the name, summary, home page, and licence in the tools panel come from, and a rename on the
+    /// `bio_tools` side would otherwise show up as placeholder text at runtime rather than here.
+    #[test]
+    fn catalog_entries_resolve() {
+        for tool in Tool::ALL {
+            let spec = tool.spec();
+            if let ToolIdentity::Shared(catalog_slug) = spec.identity {
+                assert!(
+                    spec.catalog().is_some(),
+                    "no bio_tools catalog entry for {catalog_slug}"
+                );
+                assert!(!spec.summary().is_empty());
+                assert!(spec.url().starts_with("http"));
+            }
+        }
+    }
+
     #[test]
     fn every_tool_variant_has_a_registry_entry() {
         for tool in Tool::ALL {
             let spec = tool.spec();
             assert_eq!(spec.tool, tool);
-            assert!(!spec.slug.is_empty());
+            assert!(!spec.slug().is_empty());
             assert!(!spec.version_marker.is_empty());
         }
     }
@@ -2161,7 +2180,7 @@ mod tests {
         // override variable would silently point one tool at another's executable.
         for (index, spec) in REGISTRY.iter().enumerate() {
             for other in &REGISTRY[index + 1..] {
-                assert_ne!(spec.slug, other.slug, "duplicate slug {}", spec.slug);
+                assert_ne!(spec.slug(), other.slug(), "duplicate slug {}", spec.slug());
                 assert_ne!(
                     spec.exe_override_env, other.exe_override_env,
                     "duplicate override variable {}",
@@ -2176,7 +2195,7 @@ mod tests {
         for tool in Tool::managed() {
             let spec = tool.spec();
             if spec.platform.is_supported() {
-                assert!(spec.install_command().contains(spec.slug));
+                assert!(spec.install_command().contains(spec.slug()));
             } else {
                 assert!(spec.install_command().contains("Linux only"));
             }
@@ -2215,10 +2234,9 @@ mod tests {
         for tool in Tool::managed() {
             let spec = tool.spec();
             let recipe = spec
-                .slug
-                .parse::<InstallableTool>()
-                .unwrap_or_else(|error| panic!("{}: {error}", spec.slug));
-            assert_eq!(recipe.slug(), spec.slug);
+                .recipe()
+                .unwrap_or_else(|| panic!("{} has no bio_tools recipe", spec.slug()));
+            assert_eq!(recipe.slug(), spec.slug());
         }
     }
 
@@ -2230,7 +2248,7 @@ mod tests {
             assert!(
                 !paths.is_empty(),
                 "{} has no managed install path",
-                tool.spec().name
+                tool.spec().name()
             );
             assert!(
                 paths
