@@ -4,7 +4,8 @@ use mol_defs::{molecules::MolType, sfc_mesh::MeshColoring};
 
 use crate::{
     drawing::{
-        EntityClass, MoleculeView, draw_density_point_cloud, draw_density_surface, draw_water,
+        EntityClass, MoleculeView, draw_water,
+        peptide::{draw_density_point_cloud, draw_density_surface},
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
     },
     render::MESH_POCKET_START,

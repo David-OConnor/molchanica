@@ -15,7 +15,7 @@ use bio_files::{DensityMap, MapHeader, UnitCell, cif_sf::CifStructureFactors};
 use cudarc::driver::{CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
 use dynamics::ComputationDevice;
 use ewald::fft3d_c2r;
-use graphics::{EngineUpdates, EntityUpdate, Mesh, Scene, Vertex};
+use graphics::{EngineUpdates, Mesh, Scene, Vertex};
 #[cfg(feature = "cuda")]
 use lin_alg::f32::Vec3 as Vec3F32;
 #[cfg(feature = "cuda")]
@@ -26,7 +26,9 @@ use mol_defs::reflection::{DensityPt, DensityRect};
 use rayon::prelude::*;
 use rustfft::{FftPlanner, num_complex::Complex};
 
-use crate::{drawing::draw_density_surface, render::MESH_DENSITY_SURFACE, state::State, util};
+use crate::{
+    drawing::peptide::draw_density_surface, render::MESH_DENSITY_SURFACE, state::State, util,
+};
 
 const DIST_TO_ATOMS_SAMPLE_RATIO: usize = 5;
 

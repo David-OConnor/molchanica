@@ -57,10 +57,11 @@ const SHEET_ARROW_RES: usize = 1;
 /// Radius of the coil / loop tube.
 const COIL_RADIUS: f32 = 0.25;
 
-/// Coil / loop segments whose total Cα path length exceeds this (Å) are not drawn.
-/// This suppresses artificially long connecting tubes that appear across large structural
-/// gaps (e.g. missing residues or discontinuous chain fragments).
-const MAX_COIL_LENGTH_ANG: f32 = 40.0;
+/// Coil / loop tubes are broken wherever the step between adjacent Cα positions exceeds this (Å).
+/// This suppresses artificially long connecting tubes across structural gaps (e.g. missing
+/// residues or discontinuous chain fragments), while still drawing the coil on either side of
+/// the gap. Consecutive Cα atoms are ~3.8 Å apart.
+const MAX_COIL_STEP_ANG: f32 = 5.0;
 
 // ── Tessellation ──────────────────────────────────────────────────────────────
 
@@ -651,15 +652,19 @@ fn atom_posit(atom_i: usize, atom: &Atom, atom_posits: &[Vec3F64]) -> Vec3F32 {
 
 // ── Coil-region helpers ───────────────────────────────────────────────────────
 
-/// Group a sorted list of residue indices into consecutive runs.
-fn group_consecutive(sorted: &[usize]) -> Vec<Vec<usize>> {
+/// Group a sorted list of residue indices into consecutive runs. Runs are also broken at chain
+/// boundaries: residues from different chains can be adjacent by index, but must not be joined
+/// into one coil.
+fn group_consecutive(sorted: &[usize], res_to_chain: &HashMap<usize, usize>) -> Vec<Vec<usize>> {
     if sorted.is_empty() {
         return Vec::new();
     }
     let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut current = vec![sorted[0]];
     for &r in &sorted[1..] {
-        if r == *current.last().unwrap() + 1 {
+        let prev = *current.last().unwrap();
+        let same_chain = res_to_chain.get(&r) == res_to_chain.get(&prev);
+        if r == prev + 1 && same_chain {
             current.push(r);
         } else {
             groups.push(std::mem::replace(&mut current, vec![r]));
@@ -669,20 +674,44 @@ fn group_consecutive(sorted: &[usize]) -> Vec<Vec<usize>> {
     groups
 }
 
+/// Split a coil run wherever the distance between adjacent Cα atoms is too large to be a real
+/// peptide bond, so a structural gap breaks the tube instead of drawing a long spurious
+/// connection across it.
+fn split_at_gaps(frames: &[ResidueFrame]) -> Vec<&[ResidueFrame]> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+
+    for i in 1..frames.len() {
+        if (frames[i].ca - frames[i - 1].ca).magnitude() > MAX_COIL_STEP_ANG {
+            runs.push(&frames[start..i]);
+            start = i;
+        }
+    }
+    if start < frames.len() {
+        runs.push(&frames[start..]);
+    }
+
+    runs
+}
+
 /// Extend a coil run by one residue into each adjacent SS segment so the tube
 /// meets the ribbon/helix without a gap.
 fn extend_run(
     run: &[usize],
     covered: &HashSet<usize>,
     ca_map: &HashMap<usize, Vec3F32>,
+    res_to_chain: &HashMap<usize, usize>,
 ) -> Vec<usize> {
     let mut ext = Vec::with_capacity(run.len() + 2);
+
+    // Only extend within the run's own chain.
+    let same_chain = |a: usize, b: usize| res_to_chain.get(&a) == res_to_chain.get(&b);
 
     if let Some(&first) = run.first()
         && first >= 1
     {
         let p1 = first - 1;
-        if covered.contains(&p1) && ca_map.contains_key(&p1) {
+        if covered.contains(&p1) && ca_map.contains_key(&p1) && same_chain(p1, first) {
             ext.push(p1);
         }
     }
@@ -691,7 +720,7 @@ fn extend_run(
 
     if let Some(&last) = run.last() {
         let n1 = last + 1;
-        if covered.contains(&n1) && ca_map.contains_key(&n1) {
+        if covered.contains(&n1) && ca_map.contains_key(&n1) && same_chain(n1, last) {
             ext.push(n1);
         }
     }
@@ -790,9 +819,9 @@ pub fn build_ribbon_mesh(
         .collect();
     coil_residues.sort_unstable();
 
-    for run in group_consecutive(&coil_residues) {
+    for run in group_consecutive(&coil_residues, &res_to_chain) {
         // Extend by 1 into adjacent SS segments for a seamless join.
-        let ext = extend_run(&run, &covered, &all_ca);
+        let ext = extend_run(&run, &covered, &all_ca, &res_to_chain);
         if ext.len() < 2 {
             continue;
         }
@@ -808,32 +837,29 @@ pub fn build_ribbon_mesh(
             })
             .collect();
 
-        if frames.len() < 2 {
-            continue;
-        }
+        // Break the run at structural gaps, and draw each side of the gap. A whole chain is a
+        // single run when the structure has no secondary-structure records (e.g. many predicted
+        // and designed models); it must still render as a continuous Cα trace.
+        for sub in split_at_gaps(&frames) {
+            if sub.len() < 2 {
+                continue;
+            }
 
-        let path_len: f32 = frames
-            .windows(2)
-            .map(|w| (w[1].ca - w[0].ca).magnitude())
-            .sum();
-        if path_len > MAX_COIL_LENGTH_ANG {
-            continue;
+            build_segment_mesh(
+                sub,
+                SecondaryStructure::Coil,
+                aa_count,
+                residues,
+                atoms,
+                res_coloring,
+                view_sel_level,
+                sifts,
+                chain_count,
+                chains,
+                &mut vertices,
+                &mut indices,
+            );
         }
-
-        build_segment_mesh(
-            &frames,
-            SecondaryStructure::Coil,
-            aa_count,
-            residues,
-            atoms,
-            res_coloring,
-            view_sel_level,
-            sifts,
-            chain_count,
-            chains,
-            &mut vertices,
-            &mut indices,
-        );
     }
 
     Mesh {
@@ -857,5 +883,50 @@ mod tests {
 
         assert_eq!(atom_posit(0, &atom, &current), Vec3F32::new(4.0, 5.0, 6.0));
         assert_eq!(atom_posit(0, &atom, &[]), Vec3F32::new(1.0, 2.0, 3.0));
+    }
+
+    fn frames_along_x(steps: &[f32]) -> Vec<ResidueFrame> {
+        let mut x = 0.;
+        let mut result = Vec::with_capacity(steps.len() + 1);
+
+        for (i, step) in [0.].iter().chain(steps).enumerate() {
+            x += step;
+            result.push(ResidueFrame {
+                ca: Vec3F32::new(x, 0., 0.),
+                o: None,
+                res_idx: i,
+            });
+        }
+
+        result
+    }
+
+    #[test]
+    fn coil_without_gaps_is_one_run_regardless_of_length() {
+        // A chain with no secondary structure is a single long coil run; it must still be drawn.
+        let frames = frames_along_x(&[3.8; 60]);
+        let runs = split_at_gaps(&frames);
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].len(), 61);
+    }
+
+    #[test]
+    fn coil_splits_at_a_structural_gap() {
+        let frames = frames_along_x(&[3.8, 3.8, 20.0, 3.8]);
+        let runs = split_at_gaps(&frames);
+
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].len(), 3);
+        assert_eq!(runs[1].len(), 2);
+    }
+
+    #[test]
+    fn coil_runs_do_not_span_chains() {
+        // Residues 0-3 are consecutive by index, but 2 and 3 are in different chains.
+        let res_to_chain = HashMap::from([(0, 0), (1, 0), (2, 0), (3, 1)]);
+        let groups = group_consecutive(&[0, 1, 2, 3], &res_to_chain);
+
+        assert_eq!(groups, vec![vec![0, 1, 2], vec![3]]);
     }
 }

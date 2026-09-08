@@ -14,7 +14,7 @@ use mol_defs::molecules::{MolType, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
-    drawing::{EntityClass, MoleculeView},
+    drawing::{EntityClass, MoleculeView, effective_mol_view_peptide},
     inputs::{SENS_MOL_ROT_MOUSE, SENS_MOL_ROT_SCROLL},
     pocket_render::PocketRender,
     selection::Selection,
@@ -110,7 +110,14 @@ fn update_visible_cached_peptide_mesh_entity(
     sas_mesh_created: bool,
     updates: &mut EngineUpdates,
 ) {
-    let (created, class, transform) = match state.ui.mol_view_peptide {
+    let Some(view) = state
+        .peptide_for_tools_i()
+        .map(|i| effective_mol_view_peptide(state, i))
+    else {
+        return;
+    };
+
+    let (created, class, transform) = match view {
         MoleculeView::Ribbon => (
             ss_mesh_created,
             EntityClass::SecondaryStructure,
@@ -153,7 +160,9 @@ fn handle_cached_peptide_mesh_delta(
     updates: &mut EngineUpdates,
 ) {
     let hide_dots = !state.volatile.mol_manip.peptide_mesh_manip_pending
-        && state.ui.mol_view_peptide == MoleculeView::Dots;
+        && state
+            .peptide_for_tools_i()
+            .is_some_and(|i| effective_mol_view_peptide(state, i) == MoleculeView::Dots);
 
     record_cached_peptide_mesh_transform(state, ss_mesh_created, sas_mesh_created, delta);
     update_visible_cached_peptide_mesh_entity(

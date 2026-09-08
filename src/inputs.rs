@@ -14,8 +14,7 @@ use na_seq::Element::Carbon;
 use crate::{
     cam,
     cam::{FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, move_cam_to_sel, set_fog_dist},
-    drawing,
-    drawing::{EntityClass, draw_pocket, wrappers},
+    drawing::{EntityClass, draw_pocket, peptide, wrappers},
     mol_editor,
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
@@ -812,7 +811,7 @@ fn post_event_cleanup(
     let op_mode = state.volatile.operating_mode;
 
     if redraw.peptide && op_mode == OperatingMode::Primary {
-        drawing::draw_peptide(state, scene, updates);
+        peptide::draw_peptide(state, scene, updates);
     }
 
     if redraw.ligand {
@@ -845,7 +844,7 @@ fn post_event_cleanup(
     }
 
     if redraw_in_place.peptide && op_mode == OperatingMode::Primary {
-        drawing::draw_peptide(state, scene, updates);
+        peptide::draw_peptide(state, scene, updates);
     }
 
     if redraw_in_place.ligand {

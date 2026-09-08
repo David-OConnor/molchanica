@@ -36,7 +36,8 @@ use crate::{
     cam,
     cam::move_mol_to_cam,
     drawing::{
-        MolTypeExt, draw_peptide,
+        MolTypeExt,
+        peptide::draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     md::{trajectory::Trajectory, viewer::SnapshotViewer},

@@ -19,7 +19,8 @@ use mol_defs::{
 use crate::{
     cam::reset_camera,
     drawing::{
-        MoleculeView, draw_peptide,
+        MoleculeView,
+        peptide::draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     external_tools::home_directory,

@@ -18,7 +18,7 @@ use cudarc::{
 };
 #[cfg(feature = "cuda")]
 use dynamics::ComputationDevice;
-use egui::{Color32, RichText, Ui};
+use egui::Color32;
 use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::{
     f32::Vec3 as Vec3F32,
@@ -35,8 +35,9 @@ use mol_defs::{
 use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_alternating_contrast, color_viridis, color_viridis_float, draw_density_point_cloud,
-        draw_peptide, ribbon_mesh::build_ribbon_mesh,
+        color_alternating_contrast, color_viridis, color_viridis_float,
+        peptide::{draw_density_point_cloud, draw_peptide},
+        ribbon_mesh::build_ribbon_mesh,
     },
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
@@ -45,7 +46,6 @@ use crate::{
     selection::Selection,
     sfc_mesh,
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
-    ui::misc,
 };
 
 pub const AMU_TO_KG: f64 = 1.660_539e-27;
