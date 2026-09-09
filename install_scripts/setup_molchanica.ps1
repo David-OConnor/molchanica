@@ -187,7 +187,9 @@ Write-Host "  molchanica_prefs.mca    preferences and per-molecule settings"
 Write-Host "  managed_molecules\      molecules downloaded or generated in the app"
 Write-Host "  gpu_cache\              the graphics pipeline cache"
 Write-Host "  process_executables\    optional third-party tools installed from the Tools panel"
+Write-Host ""
 Write-Host "Set MOLCHANICA_DATA_DIR to keep them somewhere else, e.g. on another drive."
-Write-Host "You can launch it from the Start menu (e.g., search `"$NAME_UPPER`"), and/or pin it to the taskbar."
+Write-Host "You can launch it from the Start menu (e.g., search `"$NAME`"), and/or pin it to the taskbar."
+Write-Host ""
 
 Show-PreviousInstallNotice

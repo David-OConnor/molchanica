@@ -37,34 +37,34 @@ pub(in crate::ui) fn mol_type_toolbars(
         if state.ui.ui_vis.amino_acids {
             aa_section(state, scene, engine_updates, ui);
         }
-
-        if let Some(mol) = &state.active_mol()
-            && !state.peptides.is_empty()
-            && let MolGenericRef::Small(_) = mol
-        {
-            ui.add_space(COL_SPACING);
-            ui.label("Docking:");
-
-            if ui
-                .button(RichText::new("Dock").color(Color32::GOLD))
-                .clicked()
-            {
-                // The other views make it tough to see the ligand rel the protein.
-                // if !matches!(state.ui.mol_view, MoleculeView::SpaceFill | MoleculeView::Surface) {
-                //     // todo: Dim peptide?
-                //     state.ui.mol_view = MoleculeView::Surface;
-                // }
-
-                if let Err(e) = dock(
-                    state,
-                    state.volatile.active_mol.unwrap().1,
-                    scene,
-                    engine_updates,
-                ) {
-                    handle_err(&mut state.ui, format!("Problem setting up docking: {e:?}"));
-                }
-            }
-        }
+        //
+        // if let Some(mol) = &state.active_mol()
+        //     && !state.peptides.is_empty()
+        //     && let MolGenericRef::Small(_) = mol
+        // {
+        //     ui.add_space(COL_SPACING);
+        //     ui.label("Docking:");
+        //
+        //     if ui
+        //         .button(RichText::new("Dock").color(Color32::GOLD))
+        //         .clicked()
+        //     {
+        //         // The other views make it tough to see the ligand rel the protein.
+        //         // if !matches!(state.ui.mol_view, MoleculeView::SpaceFill | MoleculeView::Surface) {
+        //         //     // todo: Dim peptide?
+        //         //     state.ui.mol_view = MoleculeView::Surface;
+        //         // }
+        //
+        //         if let Err(e) = dock(
+        //             state,
+        //             state.volatile.active_mol.unwrap().1,
+        //             scene,
+        //             engine_updates,
+        //         ) {
+        //             handle_err(&mut state.ui, format!("Problem setting up docking: {e:?}"));
+        //         }
+        //     }
+        // }
     });
 }
 

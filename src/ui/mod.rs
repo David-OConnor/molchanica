@@ -963,7 +963,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 ui.add_space(COL_SPACING * 2.);
                 query_input(state, scene, ui, &mut redraw, &mut updates, &mut reset_cam);
             });
+        });
 
+        ui.horizontal(|ui| {
             section_box().show(ui, |ui| {
                 if state.volatile.active_mol.is_some() {
                     display_mol_data(
@@ -1007,17 +1009,33 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             redraw.set_all();
         }
 
-        ui.horizontal_wrapped(|ui| {
-            cam_controls(scene, state, &mut updates, ui);
-            cam_snapshots(state, scene, &mut updates, ui);
+        // One wrapped row shared by the camera controls and the scene snapshots, so items wrap
+        // onto new lines when the window is narrow. (A `section_box` per group instead squeezes
+        // the second group into whatever width is left on the first row, hiding its buttons.)
+        section_box().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                cam_controls(scene, state, &mut updates, ui);
+
+                ui.add_space(COL_SPACING / 2.);
+                ui.separator();
+                ui.add_space(COL_SPACING / 2.);
+
+                cam_snapshots(state, scene, &mut updates, ui);
+            });
         });
 
-        ui.horizontal(|ui| {
-            view_settings(state, scene, &mut updates, &mut redraw, ui);
+        // A single wrapped row: view settings and the UI-section toggles share one flow, so
+        // individual items wrap onto new lines when the window is too narrow. (Nesting a
+        // `section_box` per group here instead squeezes the second group into whatever width is
+        // left on the first row, hiding its buttons.)
+        section_box().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                view_settings(state, scene, &mut updates, &mut redraw, ui);
 
-            ui.add_space(COL_SPACING);
+                ui.add_space(COL_SPACING / 2.);
+                ui.separator();
+                ui.add_space(COL_SPACING / 2.);
 
-            section_box().show(ui, |ui| {
                 ui_section_vis(state, ui);
             });
         });
@@ -1219,123 +1237,134 @@ pub(crate) fn cam_controls(
 
     // let cam = &mut scene.camera;
 
-    // This frame allows for a border to visually section this off.
+    cam::cam_reset_controls(state, scene, ui, engine_updates, &mut changed);
 
-    section_box()
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                cam::cam_reset_controls(state, scene, ui, engine_updates, &mut changed);
+    ui.add_space(COL_SPACING);
 
-                ui.add_space(COL_SPACING);
+    let free_active = scene.input_settings.control_scheme == ControlScheme::FreeCamera;
+    let arc_active = scene.input_settings.control_scheme != ControlScheme::FreeCamera;
 
-                let free_active = scene.input_settings.control_scheme == ControlScheme::FreeCamera;
-                let arc_active = scene.input_settings.control_scheme != ControlScheme::FreeCamera;
+    if ui
+        .button(RichText::new("Free").color(misc::active_color_sel(free_active)))
+        .on_hover_text("Set the camera is a first-person mode, where your controls move its position. Similar to video games.")
+        .clicked()
+    {
+        scene.input_settings.control_scheme = ControlScheme::FreeCamera;
+        state.to_save.control_scheme = ControlSchemeType::Free;
+    }
 
-                if ui
-                    .button(RichText::new("Free").color(misc::active_color_sel(free_active)))
-                    .on_hover_text("Set the camera is a first-person mode, where your controls move its position. Similar to video games.")
-                    .clicked()
-                {
-                    scene.input_settings.control_scheme = ControlScheme::FreeCamera;
-                    state.to_save.control_scheme = ControlSchemeType::Free;
-                }
+    if ui
+        .button(RichText::new("Arc").color(misc::active_color_sel(arc_active)))
+        .on_hover_text("Set the camera to orbit around a point: Either the center of the molecule, or the selection.")
+        .clicked()
+    {
+        let center = orbit_center(state);
 
-                if ui
-                    .button(RichText::new("Arc").color(misc::active_color_sel(arc_active)))
-                    .on_hover_text("Set the camera to orbit around a point: Either the center of the molecule, or the selection.")
-                    .clicked()
-                {
-                    let center = orbit_center(state);
+        scene.input_settings.control_scheme = ControlScheme::Arc { center };
+        state.to_save.control_scheme = ControlSchemeType::Arc;
+    }
 
-                    scene.input_settings.control_scheme = ControlScheme::Arc { center };
-                    state.to_save.control_scheme = ControlSchemeType::Arc;
-                }
+    if arc_active
+        && ui
+            .button(
+                RichText::new("Orbit sel").color(misc::active_color(state.ui.orbit_selected_atom)),
+            )
+            .on_hover_text(
+                "Toggle whether the camera orbits around the selection, or the molecule center.",
+            )
+            .clicked()
+    {
+        state.ui.orbit_selected_atom = !state.ui.orbit_selected_atom;
 
-                if arc_active && ui
-                    .button(
-                        RichText::new("Orbit sel")
-                            .color(misc::active_color(state.ui.orbit_selected_atom)),
-                    )
-                    .on_hover_text("Toggle whether the camera orbits around the selection, or the molecule center.")
-                    .clicked()
-                {
-                    state.ui.orbit_selected_atom = !state.ui.orbit_selected_atom;
+        let center = orbit_center(state);
+        scene.input_settings.control_scheme = ControlScheme::Arc { center };
+    }
 
-                    let center = orbit_center(state);
-                    scene.input_settings.control_scheme = ControlScheme::Arc { center };
-                }
+    ui.add_space(COL_SPACING);
 
-                ui.add_space(COL_SPACING);
+    if state.ui.selection != Selection::None
+        && ui
+            .button(RichText::new("Cam to sel").color(COLOR_HIGHLIGHT))
+            .on_hover_text(
+                "(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.",
+            )
+            .clicked()
+    {
+        move_cam_to_sel(
+            &mut state.ui,
+            &state.peptides,
+            state
+                .volatile
+                .active_mol
+                .and_then(|(t, i)| (t == MolType::Peptide).then_some(i)),
+            &state.ligands,
+            &state.nucleic_acids,
+            &state.lipids,
+            &state.pockets,
+            &mut scene.camera,
+            engine_updates,
+        );
+    }
 
-                if state.ui.selection != Selection::None && ui
-                    .button(RichText::new("Cam to sel").color(COLOR_HIGHLIGHT))
-                    .on_hover_text("(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.")
-                    .clicked()
-                {
-                    move_cam_to_sel(&mut state.ui, &state.peptides, state.volatile.active_mol.and_then(|(t, i)| (t == MolType::Peptide).then_some(i)), &state.ligands, &state.nucleic_acids,
-                                    &state.lipids, &state.pockets, &mut scene.camera, engine_updates);
-                }
+    // if state.volatile.active_mol.is_some() {
+    //     if ui
+    //         .button(RichText::new("Cam to mol").color(COLOR_HIGHLIGHT))
+    //         .on_hover_text("Move camera near active molecule, looking at it.")
+    //         .clicked()
+    //     {
+    //         let pep_center = match &state.peptide {
+    //             Some(mol) => mol.center,
+    //             None => lin_alg::f64::Vec3::new_zero(),
+    //         };
+    //         // Setting mol center to 0 if no mol.
+    //         move_cam_to_active_mol(state, scene, pep_center, engine_updates)
+    //     }
+    // }
 
-                // if state.volatile.active_mol.is_some() {
-                //     if ui
-                //         .button(RichText::new("Cam to mol").color(COLOR_HIGHLIGHT))
-                //         .on_hover_text("Move camera near active molecule, looking at it.")
-                //         .clicked()
-                //     {
-                //         let pep_center = match &state.peptide {
-                //             Some(mol) => mol.center,
-                //             None => lin_alg::f64::Vec3::new_zero(),
-                //         };
-                //         // Setting mol center to 0 if no mol.
-                //         move_cam_to_active_mol(state, scene, pep_center, engine_updates)
-                //     }
-                // }
+    ui.add_space(COL_SPACING);
 
-                ui.add_space(COL_SPACING);
+    ui.spacing_mut().slider_width = 60.;
 
-                ui.spacing_mut().slider_width = 60.;
+    let hover_text = "Don't render objects closer to the camera than this distance, in Å.";
+    ui.label("Depth. Near(×10):").on_hover_text(hover_text);
 
-                let hover_text = "Don't render objects closer to the camera than this distance, in Å.";
-                ui.label("Depth. Near(×10):")
-                    .on_hover_text(hover_text);
+    ui.add(Slider::new(
+        &mut state.ui.view_depth.0,
+        VIEW_DEPTH_NEAR_MIN..=VIEW_DEPTH_NEAR_MAX,
+    ))
+    .on_hover_text(hover_text);
 
-                ui.add(Slider::new(
-                    &mut state.ui.view_depth.0,
-                    VIEW_DEPTH_NEAR_MIN..=VIEW_DEPTH_NEAR_MAX,
-                )).on_hover_text(hover_text);
+    let hover_text = "(Hotkey: Ctrl + scroll) Fade distant objects. This may make it easier to see objects near the camera.";
+    ui.label("Far:").on_hover_text(hover_text);
 
-                let hover_text = "(Hotkey: Ctrl + scroll) Fade distant objects. This may make it easier to see objects near the camera.";
-                ui.label("Far:")
-                    .on_hover_text(hover_text);
+    let depth_prev = state.ui.view_depth;
+    ui.add(Slider::new(
+        &mut state.ui.view_depth.1,
+        FOG_DIST_MIN..=FOG_DIST_MAX,
+    ))
+    .on_hover_text(hover_text);
 
-                let depth_prev = state.ui.view_depth;
-                ui.add(Slider::new(
-                    &mut state.ui.view_depth.1,
-                    FOG_DIST_MIN..=FOG_DIST_MAX,
-                )).on_hover_text(hover_text);
+    if state.ui.view_depth != depth_prev {
+        // Interpret the slider being at min or max position to mean (effectively) unlimited.
 
-                if state.ui.view_depth != depth_prev {
-                    // Interpret the slider being at min or max position to mean (effectively) unlimited.
+        scene.camera.near = if state.ui.view_depth.0 == VIEW_DEPTH_NEAR_MIN {
+            RENDER_DIST_NEAR
+        } else {
+            state.ui.view_depth.0 as f32 / 10.
+        };
+        // todo: Only if near changed.
+        scene.camera.update_proj_mat();
 
-                    scene.camera.near = if state.ui.view_depth.0 == VIEW_DEPTH_NEAR_MIN {
-                        RENDER_DIST_NEAR
-                    } else {
-                        state.ui.view_depth.0 as f32 / 10.
-                    };
-                    // todo: Only if near changed.
-                    scene.camera.update_proj_mat();
+        changed = true;
+    }
 
-                    changed = true;
-                }
-
-                ui.label("Auto depth")
-                    .on_hover_text("Automatically adjust the far distance based on the camera's distance \
-                    from the nearest atoms. Consider setting this as a default in most cases.");
-                if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
-                    set_fog(state, &mut scene.camera);
-                }
-            });
-        });
+    ui.label("Auto depth").on_hover_text(
+        "Automatically adjust the far distance based on the camera's distance \
+        from the nearest atoms. Consider setting this as a default in most cases.",
+    );
+    if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
+        set_fog(state, &mut scene.camera);
+    }
 
     if changed {
         engine_updates.camera = true;
@@ -1354,62 +1383,57 @@ pub(crate) fn cam_snapshots(
     engine_updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
-    // todo: Wraping isn't working here.
-    section_box().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label("Scenes");
+    ui.label("Scenes");
 
-            ui.add(TextEdit::singleline(&mut state.ui.cam_snapshot_name).desired_width(60.))
-                .on_hover_text("Choose a name to save this scene as.");
+    ui.add(TextEdit::singleline(&mut state.ui.cam_snapshot_name).desired_width(60.))
+        .on_hover_text("Choose a name to save this scene as.");
 
-            if ui
-                .button("Save")
-                .on_hover_text("Save the current camera position and orientation to a scene.")
-                .clicked()
-            {
-                let name = if !state.ui.cam_snapshot_name.is_empty() {
-                    state.ui.cam_snapshot_name.clone()
-                } else {
-                    format!("Scene {}", state.cam_snapshots.len() + 1)
-                };
+    if ui
+        .button("Save")
+        .on_hover_text("Save the current camera position and orientation to a scene.")
+        .clicked()
+    {
+        let name = if !state.ui.cam_snapshot_name.is_empty() {
+            state.ui.cam_snapshot_name.clone()
+        } else {
+            format!("Scene {}", state.cam_snapshots.len() + 1)
+        };
 
-                crate::util::save_snap(state, &scene.camera, &name);
+        crate::util::save_snap(state, &scene.camera, &name);
+    }
+
+    let prev_snap = state.ui.cam_snapshot;
+    let snap_name = get_snap_name(prev_snap, &state.cam_snapshots);
+
+    ComboBox::from_id_salt(2)
+        .width(80.)
+        .selected_text(snap_name)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut state.ui.cam_snapshot, None, "(None)");
+            for (i, _snap) in state.cam_snapshots.iter().enumerate() {
+                ui.selectable_value(
+                    &mut state.ui.cam_snapshot,
+                    Some(i),
+                    get_snap_name(Some(i), &state.cam_snapshots),
+                );
             }
+        })
+        .response
+        .on_hover_text("Set the camera to a previously-saved scene.");
 
-            let prev_snap = state.ui.cam_snapshot;
-            let snap_name = get_snap_name(prev_snap, &state.cam_snapshots);
+    if let Some(i) = state.ui.cam_snapshot
+        && ui.button(RichText::new("❌").color(Color32::RED)).clicked()
+    {
+        if i < state.cam_snapshots.len() {
+            state.cam_snapshots.remove(i);
+        }
+        state.ui.cam_snapshot = None;
+        state.update_save_prefs();
+    }
 
-            ComboBox::from_id_salt(2)
-                .width(80.)
-                .selected_text(snap_name)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut state.ui.cam_snapshot, None, "(None)");
-                    for (i, _snap) in state.cam_snapshots.iter().enumerate() {
-                        ui.selectable_value(
-                            &mut state.ui.cam_snapshot,
-                            Some(i),
-                            get_snap_name(Some(i), &state.cam_snapshots),
-                        );
-                    }
-                })
-                .response
-                .on_hover_text("Set the camera to a previously-saved scene.");
-
-            if let Some(i) = state.ui.cam_snapshot
-                && ui.button(RichText::new("❌").color(Color32::RED)).clicked()
-            {
-                if i < state.cam_snapshots.len() {
-                    state.cam_snapshots.remove(i);
-                }
-                state.ui.cam_snapshot = None;
-                state.update_save_prefs();
-            }
-
-            if state.ui.cam_snapshot != prev_snap {
-                crate::util::load_snap(state, scene, engine_updates);
-            }
-        });
-    });
+    if state.ui.cam_snapshot != prev_snap {
+        crate::util::load_snap(state, scene, engine_updates);
+    }
 }
 
 /// Frame so we can draw a colored box around the active one.
