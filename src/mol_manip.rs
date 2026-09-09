@@ -404,6 +404,7 @@ pub fn handle_mol_manip_in_plane(
                     let pivot = mol.centroid().into();
 
                     mol.rotate(rot.into(), None);
+                    state.volatile.mol_manip.apply_gizmo_rotation(rot);
                     if peptide_meshes_are_target {
                         handle_cached_peptide_mesh_delta(
                             state,
@@ -446,6 +447,7 @@ pub fn handle_mol_manip_in_plane(
                         let rot = rot_y * rot_x;
 
                         mol.rotate(rot.into(), None);
+                        state.volatile.mol_manip.apply_gizmo_rotation(rot);
                     } else {
                         const ROT_FACTOR: f64 = 0.008;
                         mol.rotate_around_bond(mol_i, ROT_FACTOR * delta.0, None);
@@ -705,6 +707,7 @@ pub fn handle_mol_manip_in_out(
             let rot = Quaternion::from_axis_angle(fwd, scroll * SENS_MOL_ROT_SCROLL);
             let pivot = mol.centroid().into();
             mol.rotate(rot.into(), None);
+            state.volatile.mol_manip.apply_gizmo_rotation(rot);
 
             if peptide_meshes_are_target {
                 handle_cached_peptide_mesh_delta(
@@ -807,6 +810,9 @@ pub fn set_manip(
         }
         OperatingMode::ProteinEditor => unimplemented!(),
     };
+
+    vol.mol_manip
+        .set_gizmo_target((op_mode, mol_type_active, item_to_move_i));
 
     // if matches!(
     //     mode,
@@ -955,7 +961,7 @@ pub enum ManipMode {
 }
 
 /// State for dragging and rotating molecules.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct MolManip {
     /// Allows the user to move a molecule around with mouse or keyboard.
     pub mode: ManipMode,
@@ -964,6 +970,10 @@ pub struct MolManip {
     pub view_dir: Option<Vec3>,
     pub offset: Vec3,
     pub depth_bias: f32,
+    /// Accumulated local frame for the view-only object gizmo. Molecule coordinates are transformed
+    /// destructively, so this preserves the equivalent rigid orientation while a target is edited.
+    pub(crate) gizmo_orientation: Quaternion,
+    gizmo_target: Option<(OperatingMode, MolType, usize)>,
     /// Persistent transforms from the cached world-space mesh vertices to current peptide
     /// coordinates. They reset only when their corresponding mesh is regenerated.
     pub(crate) ribbon_mesh_transform: PeptideMeshTransform,
@@ -973,9 +983,37 @@ pub struct MolManip {
     pub(crate) peptide_mesh_manip_pending: bool,
 }
 
+impl Default for MolManip {
+    fn default() -> Self {
+        Self {
+            mode: ManipMode::None,
+            pivot: None,
+            view_dir: None,
+            offset: Vec3::new_zero(),
+            depth_bias: 0.,
+            gizmo_orientation: Quaternion::new_identity(),
+            gizmo_target: None,
+            ribbon_mesh_transform: PeptideMeshTransform::default(),
+            surface_mesh_transform: PeptideMeshTransform::default(),
+            peptide_mesh_manip_pending: false,
+        }
+    }
+}
+
 /// Set pivot, view_dir, and offset based on mol positions and other data.
 /// Run this whenever the position in plane is changed.
 impl MolManip {
+    fn set_gizmo_target(&mut self, target: (OperatingMode, MolType, usize)) {
+        if self.gizmo_target != Some(target) {
+            self.gizmo_target = Some(target);
+            self.gizmo_orientation = Quaternion::new_identity();
+        }
+    }
+
+    fn apply_gizmo_rotation(&mut self, rotation: Quaternion) {
+        self.gizmo_orientation = (rotation * self.gizmo_orientation).to_normalized();
+    }
+
     fn setup_params(
         &mut self,
         cam: &Camera,

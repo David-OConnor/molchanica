@@ -855,7 +855,7 @@ impl StateUiMd {
 }
 
 // todo: Rename A/R
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub enum OperatingMode {
     #[default]
     Primary,

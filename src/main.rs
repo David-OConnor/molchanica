@@ -35,6 +35,7 @@ mod cam;
 mod crystal;
 mod drug_design;
 mod external_tools;
+mod gizmo;
 mod gromacs;
 mod lod_generalization;
 mod md;

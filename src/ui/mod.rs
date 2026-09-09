@@ -1132,6 +1132,8 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.request_repaint();
     }
 
+    crate::gizmo::update_overlays(state, scene);
+
     updates
 }
 
