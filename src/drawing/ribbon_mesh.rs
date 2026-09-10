@@ -27,14 +27,14 @@ use bio_apis::pdbe::SiftsUniprotMapping;
 use bio_files::{BackboneSS, ResidueType, SecondaryStructure};
 use graphics::{Mesh, Vertex};
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3 as Vec3F64};
-use mol_defs::molecules::{Atom, AtomRole, Chain, Residue, aa_color};
+use mol_defs::molecules::{Atom, AtomRole, Bond, Chain, Residue, aa_color};
 
 use crate::{
     drawing::{
-        HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, color_alternating_contrast, color_viridis,
-        color_viridis_float,
+        COLOR_SELECTED, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, color_alternating_contrast,
+        color_viridis, color_viridis_float,
     },
-    selection::ViewSelLevel,
+    selection::{Selection, ViewSelLevel},
     state::ResColoring,
 };
 
@@ -283,8 +283,10 @@ fn build_segment_mesh(
     aa_count: usize,
     residues: &[Residue],
     atoms: &[Atom],
+    bonds: &[Bond],
     res_coloring: ResColoring,
     view_sel_level: ViewSelLevel,
+    selection: &Selection,
     sifts: Option<&[SiftsUniprotMapping]>,
     chain_count: usize,
     chains: &[Chain],
@@ -381,6 +383,15 @@ fn build_segment_mesh(
     let res_color = |res_f: f32| -> Option<(u8, u8, u8, u8)> {
         let res_i = (res_f.round() as usize).min(residues.len().saturating_sub(1));
         let fallback = || color_viridis(res_i, 0, aa_count);
+
+        if selection.includes_peptide_residue(res_i, atoms, bonds) {
+            return Some((
+                (COLOR_SELECTED.0 * 255.0) as u8,
+                (COLOR_SELECTED.1 * 255.0) as u8,
+                (COLOR_SELECTED.2 * 255.0) as u8,
+                255,
+            ));
+        }
 
         // Atom / Bond view level: color by element or partial charge, same as non-ribbon mode.
         if matches!(view_sel_level, ViewSelLevel::Atom | ViewSelLevel::Bond) {
@@ -731,11 +742,13 @@ fn extend_run(
 pub fn build_ribbon_mesh(
     backbone: &[BackboneSS],
     atoms: &[Atom],
+    bonds: &[Bond],
     atom_posits: &[Vec3F64],
     residues: &[Residue],
     chains: &[Chain],
     res_coloring: ResColoring,
     view_sel_level: ViewSelLevel,
+    selection: &Selection,
     sifts: Option<&[SiftsUniprotMapping]>,
 ) -> Mesh {
     let mut vertices = Vec::new();
@@ -798,8 +811,10 @@ pub fn build_ribbon_mesh(
             aa_count,
             residues,
             atoms,
+            bonds,
             res_coloring,
             view_sel_level,
+            selection,
             sifts,
             chain_count,
             chains,
@@ -851,8 +866,10 @@ pub fn build_ribbon_mesh(
                 aa_count,
                 residues,
                 atoms,
+                bonds,
                 res_coloring,
                 view_sel_level,
+                selection,
                 sifts,
                 chain_count,
                 chains,

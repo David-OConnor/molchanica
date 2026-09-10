@@ -63,6 +63,17 @@ pub enum Selection {
 }
 
 impl Selection {
+    pub(crate) fn is_peptide(&self) -> bool {
+        matches!(
+            self,
+            Self::AtomPeptide(_)
+                | Self::Residue(_)
+                | Self::Residues(_)
+                | Self::AtomsPeptide(_)
+                | Self::BondPeptide(_)
+        )
+    }
+
     pub fn is_bond(&self) -> bool {
         matches!(
             self,
@@ -94,6 +105,34 @@ impl Selection {
             MolType::Lipid => Self::BondLipid((mol_i, bond_i)),
             MolType::Pocket => Self::BondPocket((mol_i, bond_i)),
             MolType::Water => Self::None,
+        }
+    }
+
+    /// Whether this peptide selection includes `residue_i`.
+    ///
+    /// Ribbon geometry is colored per residue, so atom and bond selections must be projected onto
+    /// the residue(s) containing their atoms. Non-peptide selections never select a ribbon residue.
+    pub(crate) fn includes_peptide_residue(
+        &self,
+        residue_i: usize,
+        atoms: &[Atom],
+        bonds: &[Bond],
+    ) -> bool {
+        let atom_is_in_residue = |atom_i: usize| {
+            atoms
+                .get(atom_i)
+                .is_some_and(|atom| atom.residue == Some(residue_i))
+        };
+
+        match self {
+            Self::AtomPeptide(atom_i) => atom_is_in_residue(*atom_i),
+            Self::AtomsPeptide(atom_is) => atom_is.iter().any(|&i| atom_is_in_residue(i)),
+            Self::BondPeptide(bond_i) => bonds.get(*bond_i).is_some_and(|bond| {
+                atom_is_in_residue(bond.atom_0) || atom_is_in_residue(bond.atom_1)
+            }),
+            Self::Residue(selected_i) => *selected_i == residue_i,
+            Self::Residues(selected_is) => selected_is.contains(&residue_i),
+            _ => false,
         }
     }
 }
@@ -1470,5 +1509,65 @@ impl SelAtom for MoleculePeptide {
             Selection::None => None,
             _ => None, // Bonds
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peptide_atoms() -> Vec<Atom> {
+        vec![
+            Atom {
+                residue: Some(0),
+                ..Default::default()
+            },
+            Atom {
+                residue: Some(1),
+                ..Default::default()
+            },
+            Atom {
+                residue: Some(2),
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn peptide_atom_and_residue_selections_map_to_ribbon_residues() {
+        let atoms = peptide_atoms();
+
+        assert!(Selection::AtomPeptide(1).includes_peptide_residue(1, &atoms, &[]));
+        assert!(!Selection::AtomPeptide(1).includes_peptide_residue(0, &atoms, &[]));
+        assert!(Selection::AtomsPeptide(vec![0, 2]).includes_peptide_residue(2, &atoms, &[]));
+        assert!(Selection::Residue(1).includes_peptide_residue(1, &atoms, &[]));
+        assert!(Selection::Residues(vec![0, 2]).includes_peptide_residue(2, &atoms, &[]));
+    }
+
+    #[test]
+    fn peptide_bond_selection_maps_both_ends_to_ribbon_residues() {
+        let atoms = peptide_atoms();
+        let bonds = [Bond {
+            bond_type: bio_files::BondType::Single,
+            atom_0_sn: 1,
+            atom_1_sn: 2,
+            atom_0: 0,
+            atom_1: 1,
+            is_backbone: true,
+        }];
+        let selection = Selection::BondPeptide(0);
+
+        assert!(selection.includes_peptide_residue(0, &atoms, &bonds));
+        assert!(selection.includes_peptide_residue(1, &atoms, &bonds));
+        assert!(!selection.includes_peptide_residue(2, &atoms, &bonds));
+    }
+
+    #[test]
+    fn unrelated_or_invalid_selection_does_not_select_a_ribbon_residue() {
+        let atoms = peptide_atoms();
+
+        assert!(!Selection::AtomLig((0, 1)).includes_peptide_residue(1, &atoms, &[]));
+        assert!(!Selection::AtomPeptide(99).includes_peptide_residue(1, &atoms, &[]));
+        assert!(!Selection::BondPeptide(99).includes_peptide_residue(1, &atoms, &[]));
     }
 }

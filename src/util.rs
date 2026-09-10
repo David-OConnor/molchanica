@@ -676,6 +676,16 @@ pub fn reset_orbit_center(state: &mut State, scene: &mut Scene) {
 /// Code here is activated by flags. It's organized here, where we have access to the Scene.
 /// These flags are set in places that don't have access to the scene.
 pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    // Ribbon colors live on mesh vertices rather than entities. Any selection path (mouse,
+    // keyboard, search, sequence panel, or clear) therefore needs a mesh rebuild when its value
+    // changes.
+    if state.ui.mol_view_peptide == MoleculeView::Ribbon
+        && state.volatile.flags.ss_mesh_selection != state.ui.selection
+        && (state.volatile.flags.ss_mesh_selection.is_peptide() || state.ui.selection.is_peptide())
+    {
+        state.volatile.flags.update_ss_mesh = true;
+    }
+
     if state.volatile.flags.new_mol_loaded {
         state.volatile.flags.new_mol_loaded = false;
 
@@ -729,13 +739,16 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
             scene.meshes[MESH_SECONDARY_STRUCTURE] = build_ribbon_mesh(
                 &mol.secondary_structure,
                 &mol.common.atoms,
+                &mol.common.bonds,
                 &mol.common.atom_posits,
                 &mol.residues,
                 &mol.chains,
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
+                &state.ui.selection,
                 mol.sifts_mapping.as_deref(),
             );
+            state.volatile.flags.ss_mesh_selection = state.ui.selection.clone();
             updates.meshes = true;
         }
     }

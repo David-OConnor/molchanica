@@ -5,8 +5,8 @@ use std::{
 
 use bio_apis::{pdbe, rcsb};
 use egui::{
-    Color32, ComboBox, CornerRadius, Event, Frame, Key, Margin, Panel, RichText, Sense, Slider,
-    Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
+    Button, Color32, ComboBox, CornerRadius, Event, Frame, Key, Margin, Panel, Rect, RichText,
+    Sense, Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob, vec2,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolIdent, MolType};
@@ -328,6 +328,11 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
     }
 }
 
+/// Label on the button that copies the amino acid sequence to the clipboard.
+const SEQ_COPY_TEXT: &str = "Copy seq";
+/// Horizontal gap between the final residue and the copy button sharing its line.
+const SEQ_COPY_PAD: f32 = 40.;
+
 /// The display for the amino acid sequence of an opened protein.
 ///
 /// The colored sequence is one cached galley instead of one widget and color calculation per
@@ -344,7 +349,23 @@ fn add_aa_seq(
         _ => None,
     };
     let font_id = TextStyle::Body.resolve(ui.style());
-    let wrap_width = ui.available_width().max(1.0);
+
+    // The copy button shares the sequence's last line, so reserve its width before laying the
+    // text out; every row then breaks early enough that the button can't overrun the panel.
+    // `Ui::put` draws it at exactly this size, so size it the way the default style does: the
+    // text plus `button_padding` on each side.
+    let btn_text_size = ui
+        .fonts_mut(|fonts| {
+            fonts.layout_no_wrap(SEQ_COPY_TEXT.to_owned(), font_id.clone(), Color32::WHITE)
+        })
+        .size();
+    let btn_padding = ui.spacing().button_padding;
+    let btn_size = vec2(
+        btn_text_size.x + 2. * btn_padding.x,
+        (btn_text_size.y + 2. * btn_padding.y).max(ui.spacing().interact_size.y),
+    );
+
+    let wrap_width = (ui.available_width() - btn_size.x - SEQ_COPY_PAD).max(1.0);
     let pixels_per_point = ui.ctx().pixels_per_point();
     let rebuild = cache.dirty
         || cache.selected != selected
@@ -394,12 +415,43 @@ fn add_aa_seq(
         let Some(galley) = cache.galley.as_ref() else {
             return;
         };
-        let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::click());
+
+        // Sit the button just past the final residue, on the line it ends on. The allocation
+        // spans both, so the widgets below don't overlap the button.
+        let last_row = galley
+            .rows
+            .last()
+            .map(|row| row.rect())
+            .unwrap_or(Rect::ZERO);
+        let btn_offset = vec2(
+            last_row.right() + SEQ_COPY_PAD,
+            // Centered on the line it shares, but never above the galley: a single-row sequence
+            // is shorter than the button.
+            (last_row.center().y - btn_size.y / 2.).max(0.),
+        );
+        let size = vec2(
+            galley.size().x.max(btn_offset.x + btn_size.x),
+            galley.size().y.max(btn_offset.y + btn_size.y),
+        );
+
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         ui.painter()
             .galley(rect.min, Arc::clone(galley), Color32::WHITE);
 
+        let btn_rect = Rect::from_min_size(rect.min + btn_offset, btn_size);
+        if ui
+            .put(btn_rect, Button::new(SEQ_COPY_TEXT))
+            .on_hover_text("Copy this sequence to the clipboard")
+            .clicked()
+        {
+            ui.ctx().copy_text(seq_text.to_owned());
+        }
+
+        // The allocated area covers the button too, so skip clicks landing on it; otherwise
+        // copying would also select the last residue.
         if response.clicked()
             && let Some(pointer) = response.interact_pointer_pos()
+            && !btn_rect.contains(pointer)
         {
             let residue = galley.cursor_from_pos(pointer - rect.min).index.0;
             if residue < seq_text.len() {

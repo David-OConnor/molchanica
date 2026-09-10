@@ -990,6 +990,8 @@ pub struct Templates {
 pub struct SceneFlags {
     /// Secondary structure
     pub update_ss_mesh: bool,
+    /// Selection whose colors are currently baked into the ribbon mesh.
+    pub ss_mesh_selection: Selection,
     /// Set when chain visibility changes while NOT in Ribbon mode; flushed to
     /// `update_ss_mesh` the next time Ribbon mode is active.
     pub ss_mesh_dirty: bool,
