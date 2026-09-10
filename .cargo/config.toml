@@ -1,0 +1,43 @@
+# Statically link the MSVC C runtime on Windows, so the shipped executable is standalone.
+#
+# By default, Rust's `x86_64-pc-windows-msvc` target links the VC++ runtime dynamically. That puts
+# `VCRUNTIME140.dll` in the import table, and it is *not* a part of Windows: it ships in the Visual
+# C++ Redistributable. On a machine that has never had it installed, `molchanica.exe` dies at load
+# time -- before `main` runs, so the program cannot catch it or print anything useful -- with a
+# "System error" dialog naming that DLL. Nothing in our dependency tree asks for this; it is Rust's
+# own `std`. The eleven symbols we import from it are `memcpy`/`memset`/`memmove`/`memcmp` plus the
+# SEH and C++ exception-handling machinery that Rust panics are built on for this target
+# (`__C_specific_handler`, `__CxxFrameHandler3`, `_CxxThrowException`, `__current_exception`, ...).
+# So no amount of dependency pruning removes it; only this flag does.
+#
+# With `+crt-static`, both `VCRUNTIME140.dll` and the `api-ms-win-crt-*.dll` UCRT imports are linked
+# into the binary instead. (The UCRT ones were always fine on their own -- `ucrtbase.dll` is a part
+# of Windows 10 and 11 -- but they go the same way.) The size cost is irrelevant next to a binary
+# that is already several hundred MB.
+#
+# Scoped to the target rather than set under `[build]`: `+crt-static` on `x86_64-unknown-linux-gnu`
+# would try to statically link glibc, which is not what `make_release.sh` wants.
+#
+# Two things to keep in mind if this ever needs revisiting:
+#
+#  - C dependencies compiled through the `cc` crate (zstd, reached via `parquet`) switch to `/MT` on
+#    their own, because `cc` reads `crt-static` out of `CARGO_CFG_TARGET_FEATURE`. So there is no
+#    mixed-CRT hazard for anything we build from source.
+#  - The hazard that remains in principle is CRT-owned state crossing a DLL boundary: a `FILE*`, a
+#    `malloc`ed pointer, or `errno` handed between this binary and a separately-compiled DLL, which
+#    would now be talking to two different CRTs. We are clear of it because the libraries we load at
+#    runtime -- `nvcuda`, `cufft`, and the graphics drivers -- exchange only opaque handles and plain
+#    buffers, never CRT objects.
+#
+# Note that this does nothing for the bundled Gemmi: `gemmi.exe`, `gemmi_cpp.dll` and `zlib.dll` are
+# separately-built C++ binaries that import `MSVCP140.dll` and `VCRUNTIME140_1.dll` as well, so
+# loading MTZ and 2fo-fc files (see `file_io::gemmi_path`) still wants the redistributable present.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+
+[alias]
+rb = "run --bin"
+rrb = "run --release --bin"
+rr = "run --release"
+br = "build --release"
