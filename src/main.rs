@@ -76,21 +76,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn handle_cli_flags() -> Option<i32> {
     let flag = std::env::args().nth(1)?;
     match flag.as_str() {
-        "--bio-tools-adapter-rpc" => {
-            let mut arguments = std::env::args_os().skip(2);
-            let (Some(request), Some(response)) = (arguments.next(), arguments.next()) else {
-                eprintln!("The adapter bridge requires request and response file paths.");
-                return Some(1);
-            };
-            let result = bio_tools::adapters::rpc::serve(
-                std::path::Path::new(&request),
-                std::path::Path::new(&response),
-            );
-            if let Err(error) = &result {
-                eprintln!("Adapter bridge: {error}");
-            }
-            Some(if result.is_ok() { 0 } else { 1 })
-        }
         // Checks the native ProteinMPNN port in src/therapeutic_misc/ddg against the reference forward
         // pass scripts/convert_mpnn_weights.py recorded from upstream. See that module's docs.
         "--verify-mpnn" => {

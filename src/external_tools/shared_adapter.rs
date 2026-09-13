@@ -206,16 +206,18 @@ fn coordinator_command() -> io::Result<Command> {
     let mut command = Command::new(uv);
     command
         .args(["run", "--no-project"])
+        // The adapters `import bio_tools`: the Python bindings for the same crate this binary
+        // links, published as `athanor_bio_tools`. Pinned at or above the version whose catalog
+        // and `CommandSpec` APIs the embedded adapters expect.
+        .args(["--with", "athanor_bio_tools>=0.1.3"])
         .args(["--with", "pyyaml"])
         .args(["--python", "3.12"])
         .args(["python", "-c"])
         .arg(
             "import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); \
-             import bio_tools_desktop; bio_tools_desktop.install(); \
              runpy.run_module('bio_tool_adapters.desktop',run_name='__main__')",
         )
-        .arg(package)
-        .env("BIO_TOOLS_ADAPTER_HOST", env::current_exe()?);
+        .arg(package);
     Ok(command)
 }
 
