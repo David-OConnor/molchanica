@@ -956,7 +956,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
                 if button!(
                     ui,
-                    "Predict structure",
+                    "Pred struct",
                     COLOR_HIGHLIGHT,
                     "Predict a structure from an amino-acid or nucleotide sequence."
                 )

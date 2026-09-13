@@ -27,6 +27,7 @@ pub enum FieldKind {
     Select,
     /// A path to a file on disk. `bio_web` uploads these; Molchanica points at them in place.
     File,
+    Molecules,
     /// A widget the web app draws itself, or a `kind` added upstream after this was written.
     /// Rendered as a plain text box rather than dropped, so a new field is still reachable.
     Other,
@@ -41,6 +42,7 @@ impl FieldKind {
             "checkbox" => Self::Checkbox,
             "select" => Self::Select,
             "file" => Self::File,
+            "molecule_builder" => Self::Molecules,
             _ => Self::Other,
         }
     }
@@ -90,6 +92,10 @@ pub struct FormField {
     /// locally and mostly does not, so this is shown as a footnote rather than as the help text.
     #[serde(default)]
     pub help_note: String,
+    #[serde(default)]
+    pub task: String,
+    #[serde(default)]
+    pub molecule_features: String,
 }
 
 impl FormField {
@@ -145,6 +151,8 @@ pub struct InputModeSelector {
 /// Everything `bio_tools` says about one tool's inputs.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct FormContract {
+    #[serde(default)]
+    pub tasks: Vec<FieldOption>,
     #[serde(default)]
     pub fields: Vec<FormField>,
     #[serde(default)]

@@ -81,6 +81,7 @@ pub mod mpnn;
 pub mod pdb_write;
 pub mod rfdiffusion3;
 pub mod tool_form;
+pub mod shared_adapter;
 
 /// How long a `--version`/`--help` style probe is given before it is killed.
 ///
@@ -103,6 +104,7 @@ const PROBE_TIMEOUT_NATIVE: Duration = Duration::from_secs(3);
 pub enum Tool {
     OpenDde,
     Boltz2,
+    Chai1,
     EsmFold2,
     IgBlast,
     ProteinMpnn,
@@ -117,9 +119,10 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::OpenDde,
         Self::Boltz2,
+        Self::Chai1,
         Self::EsmFold2,
         Self::LigandMpnn,
         Self::ProteinMpnn,
@@ -616,6 +619,15 @@ macro_rules! required_asset {
 }
 
 static REGISTRY: &[ToolSpec] = &[
+    venv_script_tool!(
+        Chai1,
+        "chai1",
+        PlatformSupport::LinuxOnly,
+        "chai-lab",
+        "MOLCHANICA_CHAI1_EXECUTABLE",
+        true,
+        "Install from Molchanica's Tools panel."
+    ),
     venv_script_tool!(
         EsmFold2,
         "esmfold2",

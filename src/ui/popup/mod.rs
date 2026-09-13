@@ -9,6 +9,7 @@ pub mod recent_files;
 pub(crate) mod rfdiffusion3;
 pub(crate) mod sequence_pred;
 pub(crate) mod structure_pred;
+mod tool_runner;
 
 use std::{collections::HashMap, ops::RangeInclusive, path::Path};
 
@@ -187,7 +188,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.structure_pred {
         popup("Structure prediction").show(ui.ctx(), |ui| {
-            structure_pred::structure_prediction_window(state, ui);
+            structure_pred::structure_prediction_window(state, scene, updates, ui);
         });
     }
 
@@ -205,7 +206,7 @@ pub(in crate::ui) fn load_popups(
             .default_width(620.0)
             .max_height(1000.0)
             .show(ui.ctx(), |ui| {
-                sequence_pred::sequence_prediction_window(state, ui);
+                sequence_pred::sequence_prediction_window(state, scene, updates, ui);
             });
     }
 
