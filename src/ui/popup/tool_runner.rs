@@ -8,12 +8,14 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     fs, io,
+    io::Read,
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use bio_tools::tool_definitions::catalog::DataCategory;
 use egui::{
     Button, CollapsingHeader, Color32, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui,
 };
@@ -111,7 +113,11 @@ pub(in crate::ui) fn tool_window(
         close_btn(ui, open);
     });
 
-    let load = window.draw(kind.tools(), &state.peptides, ui);
+    let load = ui
+        .push_id(kind.heading(), |ui| {
+            window.draw(kind.tools(), &state.peptides, ui)
+        })
+        .inner;
 
     if let Some(path) = load
         && let Err(error) = state.open_file(&path, scene, updates)
@@ -160,8 +166,9 @@ impl Form {
 }
 
 enum FileAction {
-    Input(String),
+    Input(Tool, String),
     Export(PathBuf),
+    LoadRun(Tool),
 }
 
 enum JobResult {
@@ -224,10 +231,11 @@ impl ToolWindow {
 
         match result {
             JobResult::Run(Ok(result)) => {
+                let first = primary_file(self.tool, &result).cloned();
                 self.results.push((self.tool, result));
                 self.selected_result = self.results.len() - 1;
-                self.selected_file = None;
-                self.preview = None;
+                self.preview = first.as_ref().map(|path| preview_text(path));
+                self.selected_file = first;
                 self.message = Some("Run completed. All raw results are retained on disk.".into());
             }
             JobResult::Run(Err(error)) | JobResult::Install(Err(error)) => self.error = Some(error),
@@ -340,7 +348,7 @@ impl ToolWindow {
         });
 
         if let Some(field) = pick {
-            self.file_action = Some(FileAction::Input(field));
+            self.file_action = Some(FileAction::Input(self.tool, field));
             self.dialog.pick_file();
         }
 
@@ -370,6 +378,14 @@ impl ToolWindow {
                 )
                 .clicked();
             ui.label(RichText::new("Raw outputs are saved locally.").small());
+            if ui
+                .button("Open saved run…")
+                .on_hover_text("Choose result.json from a saved run folder.")
+                .clicked()
+            {
+                self.file_action = Some(FileAction::LoadRun(self.tool));
+                self.dialog.pick_file();
+            }
         });
 
         let tool = self.tool;
@@ -415,8 +431,8 @@ impl ToolWindow {
         };
 
         match self.file_action.take() {
-            Some(FileAction::Input(field)) => {
-                if let Some(form) = self.forms.get_mut(&self.tool) {
+            Some(FileAction::Input(tool, field)) => {
+                if let Some(form) = self.forms.get_mut(&tool) {
                     form.values.insert(field, path.display().to_string());
                 }
             }
@@ -424,6 +440,25 @@ impl ToolWindow {
                 Ok(_) => self.message = Some(format!("Saved {}", path.display())),
                 Err(error) => self.error = Some(error.to_string()),
             },
+            Some(FileAction::LoadRun(tool)) => {
+                match AdapterResult::load(path.parent().unwrap_or(Path::new(".")).to_owned()) {
+                    Ok(result) => {
+                        let saved_slug = result.details.get("tool_slug").and_then(Value::as_str);
+                        let tool = Tool::ALL
+                            .into_iter()
+                            .find(|candidate| {
+                                saved_slug.is_some()
+                                    && candidate.spec().adapter_slug() == saved_slug
+                            })
+                            .unwrap_or(tool);
+                        self.selected_file = primary_file(tool, &result).cloned();
+                        self.preview = self.selected_file.as_ref().map(|path| preview_text(path));
+                        self.selected_result = self.results.len();
+                        self.results.push((tool, result));
+                    }
+                    Err(error) => self.error = Some(error.to_string()),
+                }
+            }
             None => {}
         }
     }
@@ -487,13 +522,19 @@ impl ToolWindow {
                 }
             });
         if previous != self.selected_result {
-            self.selected_file = None;
-            self.preview = None;
+            let (tool, result) = &self.results[self.selected_result];
+            self.selected_file = primary_file(*tool, result).cloned();
+            self.preview = self.selected_file.as_ref().map(|path| preview_text(path));
         }
 
         let result = &self.results[self.selected_result].1;
         let mut export = None;
         ui.horizontal(|ui| {
+            if let Some(path) = &self.selected_file
+                && ui.button("Save selected output…").clicked()
+            {
+                export = Some(path.clone());
+            }
             if ui.button("Save raw results (.zip)…").clicked() {
                 export = Some(result.archive.clone());
             }
@@ -511,21 +552,28 @@ impl ToolWindow {
             .show(ui, |ui| {
                 for path in &result.files {
                     ui.horizontal(|ui| {
-                        let extension = path
-                            .extension()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        if matches!(extension.as_str(), "pdb" | "cif" | "mmcif")
+                        if output_category(path) == Some(DataCategory::Structure)
                             && ui.button("Load structure").clicked()
                         {
-                            load = Some(path.clone());
+                            match structure_for_loading(path, &result.directory) {
+                                Ok(path) => load = Some(path),
+                                Err(error) => self.error = Some(error.to_string()),
+                            }
                         }
                         if ui.button("Save…").clicked() {
                             export = Some(path.clone());
                         }
 
-                        let label = path.file_name().unwrap_or_default().to_string_lossy();
+                        let log_root = result
+                            .details
+                            .get("run_log_dir")
+                            .and_then(Value::as_str)
+                            .map(Path::new);
+                        let label = log_root
+                            .and_then(|root| path.strip_prefix(root.join("outputs")).ok())
+                            .unwrap_or(path)
+                            .display()
+                            .to_string();
                         if ui
                             .selectable_label(self.selected_file.as_ref() == Some(path), label)
                             .on_hover_text(path.display().to_string())
@@ -539,6 +587,13 @@ impl ToolWindow {
             });
 
         if let Some(text) = &self.preview {
+            if self
+                .selected_file
+                .as_ref()
+                .is_some_and(|path| output_category(path) == Some(DataCategory::Sequence))
+            {
+                sequence_results_ui(text, ui);
+            }
             ui.horizontal(|ui| {
                 ui.label("Selected output");
                 if ui.button("Copy text").clicked() {
@@ -568,6 +623,11 @@ impl ToolWindow {
         });
 
         if let Some(path) = export {
+            self.dialog.config_mut().default_file_name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             self.file_action = Some(FileAction::Export(path));
             self.dialog.save_file();
         }
@@ -577,12 +637,130 @@ impl ToolWindow {
 
 /// The text shown when an output file is selected.
 fn preview_text(path: &Path) -> String {
-    if !fs::metadata(path).is_ok_and(|metadata| metadata.len() <= MAX_PREVIEW_BYTES) {
-        return "This output is too large for inline preview. Use Save to export the original file."
-            .into();
+    read_output_text(path, MAX_PREVIEW_BYTES).unwrap_or_else(|error| error.to_string())
+}
+
+fn read_output_text(path: &Path, maximum: u64) -> io::Result<String> {
+    let file = fs::File::open(path)?;
+    let reader: Box<dyn Read> = if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"))
+    {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let mut bytes = Vec::new();
+    reader.take(maximum + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > maximum {
+        return Err(io::Error::other(
+            "This output is too large for inline preview. Save the original file to inspect it.",
+        ));
     }
-    fs::read_to_string(path)
-        .unwrap_or_else(|_| "Binary output. Use Save to export the original file.".into())
+    String::from_utf8(bytes)
+        .map_err(|_| io::Error::other("Binary output. Save the original file to inspect it."))
+}
+
+fn output_category(path: &Path) -> Option<DataCategory> {
+    let name = path.to_string_lossy().to_lowercase();
+    let name = name.strip_suffix(".gz").unwrap_or(&name);
+    [
+        DataCategory::Structure,
+        DataCategory::Sequence,
+        DataCategory::Table,
+    ]
+    .into_iter()
+    .find(|kind| kind.suffixes().iter().any(|suffix| name.ends_with(suffix)))
+}
+
+fn primary_file(tool: Tool, result: &AdapterResult) -> Option<&PathBuf> {
+    let category = tool
+        .spec()
+        .catalog()
+        .and_then(|entry| entry.primary_output)
+        .map(|kind| kind.category());
+    result
+        .files
+        .iter()
+        .find(|path| category.is_some() && output_category(path) == category)
+        .or_else(|| result.files.first())
+}
+
+fn structure_for_loading(path: &Path, directory: &Path) -> io::Result<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let gzip = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"));
+    let ent = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ent"));
+    if !gzip && !ent {
+        return Ok(path.to_owned());
+    }
+    let name = if gzip {
+        path.file_stem()
+    } else {
+        path.file_name()
+    }
+    .unwrap_or_default();
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hash);
+    let folder = directory
+        .join("viewer")
+        .join(format!("{:x}", hash.finish()));
+    fs::create_dir_all(&folder)?;
+    let mut destination = folder.join(name);
+    if destination
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ent"))
+    {
+        destination.set_extension("pdb");
+    }
+    fs::write(&destination, read_output_text(path, 200_000_000)?)?;
+    Ok(destination)
+}
+
+fn sequence_results_ui(fasta: &str, ui: &mut Ui) {
+    let mut records: Vec<(String, String)> = Vec::new();
+    for line in fasta.lines() {
+        if let Some(header) = line.strip_prefix('>') {
+            records.push((header.to_owned(), String::new()));
+        } else if let Some((_, sequence)) = records.last_mut() {
+            sequence.extend(line.chars().filter(|character| !character.is_whitespace()));
+        }
+    }
+    if records.is_empty() {
+        return;
+    }
+    ui.label(RichText::new(format!("{} sequence records", records.len())).strong());
+    ScrollArea::vertical()
+        .id_salt("designed_sequences")
+        .max_height(240.0)
+        .show(ui, |ui| {
+            for (index, (header, sequence)) in records.iter().take(500).enumerate() {
+                ui.push_id(index, |ui| {
+                    ui.group(|ui| {
+                        ui.label(header);
+                        ui.horizontal(|ui| {
+                            ui.label(format!(
+                                "{} residues",
+                                sequence.chars().filter(char::is_ascii_alphabetic).count()
+                            ));
+                            if ui.button("Copy sequence").clicked() {
+                                ui.ctx().copy_text(sequence.clone());
+                            }
+                            if ui.button("Copy FASTA").clicked() {
+                                ui.ctx().copy_text(format!(">{header}\n{sequence}\n"));
+                            }
+                        });
+                        ui.label(RichText::new(sequence).monospace());
+                    })
+                });
+            }
+        });
+    if records.len() > 500 {
+        ui.label("Showing the first 500 records. Save the FASTA file for every sequence.");
+    }
 }
 
 /// Write an opened protein to `process_executables/desktop_inputs`, for a form's structure field.
@@ -704,9 +882,7 @@ fn fields_ui(tool: Tool, form: &mut Form, pick: &mut Option<String>, ui: &mut Ui
 
                         let task = form.values.get("task").cloned().unwrap_or_default();
                         for field in fields {
-                            if !field.task.is_empty()
-                                && !field.task.split(',').any(|value| value.trim() == task)
-                            {
+                            if !field.applies_to_task(&task) {
                                 continue;
                             }
                             ui.push_id(&field.name, |ui| {
@@ -724,6 +900,10 @@ fn draw_field(
     pick: &mut Option<String>,
     ui: &mut Ui,
 ) {
+    if field.managed_by_runner {
+        ui.label(RichText::new(format!("{}: {}", field.label, field.help_note)).weak());
+        return;
+    }
     let value = values.entry(field.name.clone()).or_default();
     let label = format!("{}{}", field.label, if field.required { " *" } else { "" });
 
@@ -793,11 +973,45 @@ fn draw_field(
         }
     };
 
-    response.on_hover_text(format!("{}\n{}", field.help, field.help_note));
+    let mut help = format!("{}\n{}", field.help, field.help_note);
+    if field.kind() == FieldKind::Number {
+        if let Some(minimum) = field.minimum {
+            help.push_str(&format!("\nMinimum: {minimum}"));
+        }
+        if let Some(maximum) = field.maximum {
+            help.push_str(&format!("\nMaximum: {maximum}"));
+        }
+        if !field.step.is_null() {
+            help.push_str(&format!("\nStep: {}", value_to_hint(&field.step)));
+        }
+    }
+    response.on_hover_text(help);
+}
+
+fn value_to_hint(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 /// The molecule builder: one box per entity, over the JSON list the field holds.
 fn molecules(field: &FormField, text: &mut String, ui: &mut Ui) {
+    let editor_id = ui.id().with("molecule_json_editor");
+    let mut raw = ui.data_mut(|data| data.get_temp::<bool>(editor_id).unwrap_or(false));
+    ui.checkbox(&mut raw, "Edit molecules as JSON");
+    ui.data_mut(|data| data.insert_temp(editor_id, raw));
+    if raw {
+        ui.add(
+            TextEdit::multiline(text)
+                .desired_rows(10)
+                .desired_width(f32::INFINITY),
+        );
+        if let Err(error) = serde_json::from_str::<Vec<serde_json::Map<String, Value>>>(text) {
+            ui.colored_label(Color32::LIGHT_RED, error.to_string());
+        }
+        return;
+    }
     let Ok(mut boxes) = serde_json::from_str::<Vec<Value>>(text) else {
         ui.colored_label(
             Color32::LIGHT_RED,
@@ -806,6 +1020,13 @@ fn molecules(field: &FormField, text: &mut String, ui: &mut Ui) {
         ui.add(TextEdit::multiline(text).desired_rows(5));
         return;
     };
+    if boxes.iter().any(|value| !value.is_object()) {
+        ui.colored_label(
+            Color32::LIGHT_RED,
+            "Each molecule must be a JSON object. Enable the JSON editor to repair it.",
+        );
+        return;
+    }
 
     let features: Vec<_> = field.molecule_features.split(',').collect();
     let mut remove = None;
@@ -826,13 +1047,6 @@ fn molecules(field: &FormField, text: &mut String, ui: &mut Ui) {
     }
 
     *text = serde_json::to_string(&boxes).unwrap_or_default();
-    CollapsingHeader::new("Edit molecules as JSON").show(ui, |ui| {
-        ui.add(
-            TextEdit::multiline(text)
-                .desired_rows(5)
-                .desired_width(f32::INFINITY),
-        );
-    });
 }
 
 /// One molecule's box in the builder.
@@ -888,10 +1102,15 @@ fn molecule_ui(
     }
 
     if features.contains(&"id") {
-        let mut id = molecule["id"]
-            .as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(|| ((b'A' + (index % 26) as u8) as char).to_string());
+        let mut id = match &molecule["id"] {
+            Value::String(id) => id.clone(),
+            Value::Array(ids) => ids
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(","),
+            _ => ((b'A' + (index % 26) as u8) as char).to_string(),
+        };
         ui.horizontal(|ui| {
             ui.label("Entity ID(s)");
             if ui.text_edit_singleline(&mut id).changed() {
@@ -920,19 +1139,107 @@ fn molecule_ui(
         }
     }
 
-    CollapsingHeader::new("Molecule details (JSON)").show(ui, |ui| {
-        ui.label("Modifications, alignments and template paths use the tool's molecule fields.");
+    if !matches!(kind.as_str(), "ligand" | "ion") {
+        if features.contains(&"modifications") || features.contains(&"zero_indexed_modifications") {
+            modifications_ui(
+                molecule,
+                features.contains(&"zero_indexed_modifications"),
+                ui,
+            );
+        }
+        for (feature, key, label) in [
+            (
+                "protein_paired_msa",
+                "paired_msa_path",
+                "Paired protein MSA path",
+            ),
+            (
+                "protein_unpaired_msa",
+                "unpaired_msa_path",
+                "Unpaired protein MSA path",
+            ),
+            (
+                "protein_templates",
+                "templates_path",
+                "Protein templates path",
+            ),
+            ("rna_unpaired_msa", "unpaired_msa_path", "RNA MSA path"),
+            ("protein_msa", "msa", "Protein MSA"),
+            ("rna_msa", "msa", "RNA MSA"),
+        ] {
+            if features.contains(&feature) && feature.starts_with(&kind) {
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    let mut value = match &molecule[key] {
+                        Value::Null => String::new(),
+                        Value::String(value) => value.clone(),
+                        value => value.to_string(),
+                    };
+                    if ui.text_edit_singleline(&mut value).changed() {
+                        // Preserve ordinary paths; the whole-document editor also accepts structured MSAs.
+                        molecule[key] = json!(value);
+                    }
+                });
+            }
+        }
+    }
+}
 
-        let mut document = serde_json::to_string_pretty(molecule).unwrap_or_default();
-        let edited = ui
-            .add(
-                TextEdit::multiline(&mut document)
-                    .desired_rows(5)
-                    .desired_width(f32::INFINITY),
-            )
-            .changed();
-        if edited && let Ok(value @ Value::Object(_)) = serde_json::from_str(&document) {
-            *molecule = value;
+fn modifications_ui(molecule: &mut Value, zero_based: bool, ui: &mut Ui) {
+    CollapsingHeader::new("Modified residues").show(ui, |ui| {
+        let base = if zero_based { 0 } else { 1 };
+        ui.label(format!(
+            "Positions start at {base}. Residue codes use the CCD, e.g. MSE."
+        ));
+        let modifications = molecule
+            .as_object_mut()
+            .unwrap()
+            .entry("modifications")
+            .or_insert_with(|| json!([]));
+        let Some(modifications) = modifications.as_array_mut() else {
+            ui.colored_label(
+                Color32::LIGHT_RED,
+                "Modifications must be a list; repair them in the JSON editor.",
+            );
+            return;
+        };
+        let mut remove = None;
+        for (index, modification) in modifications.iter_mut().enumerate() {
+            if !modification.is_object() {
+                continue;
+            }
+            ui.push_id(index, |ui| {
+                ui.horizontal(|ui| {
+                    let mut position = modification["position"].as_i64().unwrap_or(base);
+                    ui.label("Position");
+                    if ui
+                        .add(DragValue::new(&mut position).range(base..=i64::MAX))
+                        .changed()
+                    {
+                        modification["position"] = json!(position);
+                    }
+                    let mut residue = modification["residue"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    ui.label("CCD");
+                    if ui
+                        .add(TextEdit::singleline(&mut residue).desired_width(80.0))
+                        .changed()
+                    {
+                        modification["residue"] = json!(residue);
+                    }
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(index);
+                    }
+                })
+            });
+        }
+        if let Some(index) = remove {
+            modifications.remove(index);
+        }
+        if ui.button("Add modification").clicked() {
+            modifications.push(json!({"position": base, "residue": ""}));
         }
     });
 }

@@ -172,6 +172,11 @@ pub fn run_tool(
     }
 
     prepare_python_environment(command);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -313,6 +318,24 @@ fn join_output_readers(
 }
 
 fn terminate_child(child: &mut Child) -> io::Result<()> {
+    // The coordinator starts Python and model workers beneath it. They inherit
+    // the isolated process group created by run_tool, including both output pipes.
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+        }
+        let group = i32::try_from(child.id())
+            .map_err(|_| io::Error::other("Child process ID exceeds the platform limit"))?;
+        // SIGKILL prevents a worker ignoring SIGTERM from keeping cancellation blocked.
+        if unsafe { kill(-group, 9) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(3) {
+            return Err(error);
+        }
+    }
     if child.try_wait()?.is_some() {
         return Ok(());
     }

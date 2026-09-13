@@ -59,9 +59,10 @@ pub fn slug(tool: Tool) -> &'static str {
 pub fn payload(tool: Tool, values: &HashMap<String, String>, mode: &str) -> io::Result<Value> {
     let contract = FormContract::load(slug(tool)).map_err(io::Error::other)?;
     let mut result = Map::new();
+    let task = values.get("task").map(String::as_str).unwrap_or("");
 
     for field in &contract.fields {
-        if !field.applies_to(mode) {
+        if field.managed_by_runner || !field.applies_to(mode) || !field.applies_to_task(task) {
             continue;
         }
         let Some(value) = values.get(&field.name) else {
@@ -117,6 +118,19 @@ pub fn run(tool: Tool, payload: Value, control: &RunControl) -> io::Result<Adapt
         .arg(&response)
         .env("BIO_TOOLS_EXECUTABLE_ROOT", &executables)
         .current_dir(&directory);
+    if let Some(environment) = spec.venv_root() {
+        command.env("BIO_TOOLS_ADAPTER_ENVIRONMENT", environment);
+    }
+    if let Some(bundle) = spec.bundle_root() {
+        command.env("BIO_TOOLS_ADAPTER_BUNDLE_ROOT", bundle);
+    }
+    if let Some(executable) = env::var_os(spec.exe_override_env) {
+        let variable = match spec.kind {
+            super::registry::ToolKind::VenvPython => "BIO_TOOLS_ADAPTER_PYTHON",
+            _ => "BIO_TOOLS_ADAPTER_EXECUTABLE",
+        };
+        command.env(variable, executable);
+    }
 
     let execution = run_tool(&mut command, tool, "the bio_tools adapter", Some(control));
     if control.is_cancel_requested() {
@@ -143,23 +157,40 @@ pub fn run(tool: Tool, payload: Value, control: &RunControl) -> io::Result<Adapt
         .get("result")
         .cloned()
         .ok_or_else(|| with_run_files("The adapter did not return results".to_owned()))?;
-    let run_log_dir = details
-        .get("run_log_dir")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            with_run_files("The adapter did not name its results directory".to_owned())
-        })?;
+    AdapterResult::from_details(directory, details)
+}
 
-    let mut files = Vec::new();
-    collect_files(&Path::new(run_log_dir).join("outputs"), &mut files)?;
-    files.sort();
+impl AdapterResult {
+    pub fn load(directory: PathBuf) -> io::Result<Self> {
+        let envelope: Value = serde_json::from_slice(&fs::read(directory.join("result.json"))?)?;
+        let details = envelope
+            .get("result")
+            .cloned()
+            .ok_or_else(|| io::Error::other("This run has no completed results"))?;
+        Self::from_details(directory, details)
+    }
 
-    Ok(AdapterResult {
-        archive: directory.join("raw-results.zip"),
-        directory,
-        files,
-        details,
-    })
+    fn from_details(directory: PathBuf, details: Value) -> io::Result<Self> {
+        let mut files = Vec::new();
+        if let Some(outputs) = details.get("output_files").and_then(Value::as_array) {
+            files.extend(outputs.iter().filter_map(Value::as_str).map(PathBuf::from));
+        } else {
+            let log = details
+                .get("run_log_dir")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    io::Error::other("The adapter did not name its results directory")
+                })?;
+            collect_files(&Path::new(log).join("outputs"), &mut files)?;
+        }
+        files.sort();
+        Ok(Self {
+            archive: directory.join("raw-results.zip"),
+            directory,
+            files,
+            details,
+        })
+    }
 }
 
 /// `uv run` for `bio_tools`' `desktop` coordinator, missing only the per-run arguments.
@@ -175,15 +206,16 @@ fn coordinator_command() -> io::Result<Command> {
     let mut command = Command::new(uv);
     command
         .args(["run", "--no-project"])
-        .args(["--with", "athanor_bio_tools>=0.1.2"])
         .args(["--with", "pyyaml"])
         .args(["--python", "3.12"])
         .args(["python", "-c"])
         .arg(
             "import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); \
+             import bio_tools_desktop; bio_tools_desktop.install(); \
              runpy.run_module('bio_tool_adapters.desktop',run_name='__main__')",
         )
-        .arg(package);
+        .arg(package)
+        .env("BIO_TOOLS_ADAPTER_HOST", env::current_exe()?);
     Ok(command)
 }
 

@@ -185,15 +185,18 @@ pub(in crate::ui) fn load_popups(
     }
 
     if state.ui.popup.structure_pred {
-        popup("Structure prediction").show(ui.ctx(), |ui| {
-            tool_window(
-                state,
-                ToolWindowKind::StructurePrediction,
-                scene,
-                updates,
-                ui,
-            );
-        });
+        popup("Structure prediction")
+            .default_width(680.0)
+            .max_height(1000.0)
+            .show(ui.ctx(), |ui| {
+                tool_window(
+                    state,
+                    ToolWindowKind::StructurePrediction,
+                    scene,
+                    updates,
+                    ui,
+                );
+            });
     }
 
     if state.ui.popup.rfd3 {

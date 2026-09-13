@@ -73,6 +73,12 @@ pub struct FormField {
     /// Preferred height of a `textarea`, in rows.
     #[serde(default)]
     pub rows: Option<usize>,
+    #[serde(default)]
+    pub minimum: Option<f64>,
+    #[serde(default)]
+    pub maximum: Option<f64>,
+    #[serde(default)]
+    pub step: Value,
     /// Comma-separated file extensions a `file` field accepts, e.g. `.pdb,.cif`.
     #[serde(default)]
     pub accept: String,
@@ -90,6 +96,8 @@ pub struct FormField {
     pub task: String,
     #[serde(default)]
     pub molecule_features: String,
+    #[serde(default)]
+    pub managed_by_runner: bool,
 }
 
 impl FormField {
@@ -104,6 +112,10 @@ impl FormField {
                 .input_modes
                 .split(',')
                 .any(|listed| listed.trim() == mode)
+    }
+
+    pub fn applies_to_task(&self, task: &str) -> bool {
+        self.task.trim().is_empty() || self.task.split(',').any(|listed| listed.trim() == task)
     }
 
     /// The default, in the string form the widgets and the adapter both work in.
