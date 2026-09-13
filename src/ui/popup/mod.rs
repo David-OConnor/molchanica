@@ -67,7 +67,6 @@ const VAL_EDIT_WIDTH: f32 = 340.;
 /// That flag cannot be the `PopupState` field itself: the contents borrow `state` too, and the two
 /// borrows would overlap. So it is a local the caller folds back into its field, and only a close
 /// folds back -- contents that close their own window are left to do so.
-#[must_use]
 fn show_popup(window: Window<'_>, ctx: &Context, contents: impl FnOnce(&mut Ui)) -> bool {
     let mut open = true;
     window.open(&mut open).show(ctx, contents);

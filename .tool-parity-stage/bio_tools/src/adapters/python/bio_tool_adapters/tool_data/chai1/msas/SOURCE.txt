@@ -1,6 +1,0 @@
-These two .aligned.pqt files are unmodified copies of Chai Discovery's official
-Chai-1 MSA example files:
-https://github.com/chaidiscovery/chai-lab/tree/66c38d1fe5c6756a89ff8596b1dea87d305ec06f/examples/msas
-
-They are distributed under the Chai-1 repository's Apache License 2.0.
-A copy of that license is in ../LICENSE.
