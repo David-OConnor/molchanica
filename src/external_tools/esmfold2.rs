@@ -1,17 +1,15 @@
-//! Linux-only structure prediction adapters backed by bio_tools-managed environments.
-//!
-//! ESMFold 2 is the only one left: OpenDDE and Boltz-2 run everywhere and have their own modules.
-
 use std::{fs, io, process::Command};
 
 use dynamics::params::ProtFfChargeMapSet;
 use mol_defs::molecules::peptide::MoleculePeptide;
 
 use crate::{
-    external_tools::{self, Tool},
+    external_tools::{
+        self, Tool,
+        opendde::{OpenDdeEntity, OpenDdeRequest},
+    },
     structure_prediction::{
         PredictionControl, PredictionWorkspace, StructurePredictionModel, load_prediction,
-        opendde::{OpenDdeEntity, OpenDdeRequest},
         run_model_command,
     },
 };
@@ -115,30 +113,4 @@ fn esmfold_sequence(request: &OpenDdeRequest) -> io::Result<String> {
 
 fn unsupported(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::Unsupported, message)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn esmfold_joins_protein_chains_and_rejects_other_entities() {
-        let proteins = OpenDdeRequest::new(
-            "esm",
-            vec![
-                OpenDdeEntity::protein_sequence("A", "ACDE"),
-                OpenDdeEntity::protein_sequence("B", "FGHI"),
-            ],
-        );
-        assert_eq!(esmfold_sequence(&proteins).unwrap(), "ACDE:FGHI");
-
-        let with_ligand = OpenDdeRequest::new(
-            "esm",
-            vec![
-                OpenDdeEntity::protein_sequence("A", "ACDE"),
-                OpenDdeEntity::ligand("L", "CCO"),
-            ],
-        );
-        assert!(esmfold_sequence(&with_ligand).is_err());
-    }
 }

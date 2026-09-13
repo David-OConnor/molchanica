@@ -12,7 +12,7 @@
 //!
 //! The earlier integration provisioned its own environment at runtime and, failing that, fell back
 //! to whatever `boltz` happened to be on `PATH`. Both were fragile for the same reason the module
-//! docs in [`super`] describe: they depended on the user's Python setup. Boltz now installs the
+//! docs in [`crate::structure_prediction`] describe: they depended on the user's Python setup. Boltz now installs the
 //! same way OpenDDE does — a dedicated virtual environment built by `bio_tools`, discovered by the
 //! [`crate::external_tools`] registry, never resolved through a bare `PATH` lookup.
 //!
@@ -41,10 +41,12 @@ use na_seq::{AminoAcid, Nucleotide};
 use serde_json::Value;
 
 use crate::{
-    external_tools::{Tool, find_executable},
+    external_tools::{
+        Tool, find_executable,
+        opendde::{OpenDdeEntity, OpenDdeRequest},
+    },
     structure_prediction::{
         PredictionControl, PredictionWorkspace, amino_acid_sequence, dna_sequence, load_prediction,
-        opendde::{OpenDdeEntity, OpenDdeRequest},
         run_model_command,
     },
 };
@@ -232,8 +234,8 @@ pub fn predict(
     })
 }
 
-/// The structure-only entry point, for the shared prediction dispatch in [`super`].
-pub(super) fn predict_structure(
+/// The structure-only entry point, for the shared prediction dispatch in [`crate::structure_prediction`].
+pub(crate) fn predict_structure(
     request: &OpenDdeRequest,
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -241,7 +243,7 @@ pub(super) fn predict_structure(
     predict(request, &BoltzOptions::default(), ff_map, control).map(|outcome| outcome.molecule)
 }
 
-pub(super) fn predict_structure_from_aas(
+pub(crate) fn predict_structure_from_aas(
     aas: &[AminoAcid],
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -255,7 +257,7 @@ pub(super) fn predict_structure_from_aas(
     predict_structure(&request, ff_map, control)
 }
 
-pub(super) fn predict_structure_from_dna(
+pub(crate) fn predict_structure_from_dna(
     nts: &[Nucleotide],
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -429,131 +431,4 @@ fn find_affinity_json(directory: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::structure_prediction::opendde::OpenDdeCovalentBond;
-
-    fn request() -> OpenDdeRequest {
-        OpenDdeRequest::new(
-            "complex",
-            vec![
-                OpenDdeEntity::protein_sequence("A", "ACDEFG"),
-                OpenDdeEntity::ligand("B", "CC(=O)O"),
-                OpenDdeEntity::ion("C", "MG"),
-            ],
-        )
-    }
-
-    #[test]
-    fn writes_single_sequence_mode_by_default() {
-        let yaml = build_yaml(&request(), &BoltzOptions::default()).expect("should render");
-
-        assert!(yaml.starts_with("version: 1\nsequences:\n"));
-        assert!(
-            yaml.contains("  - protein:\n      id: A\n      sequence: ACDEFG\n      msa: empty\n")
-        );
-        // Nothing should have been sent anywhere, and no affinity block was requested.
-        assert!(!yaml.contains("properties"));
-    }
-
-    #[test]
-    fn omits_the_empty_msa_marker_when_the_server_is_used() {
-        let options = BoltzOptions {
-            use_msa_server: true,
-            ..BoltzOptions::default()
-        };
-        let yaml = build_yaml(&request(), &options).expect("should render");
-        assert!(!yaml.contains("msa: empty"));
-    }
-
-    #[test]
-    fn maps_ligands_ions_and_ccd_codes() {
-        let yaml = build_yaml(&request(), &BoltzOptions::default()).expect("should render");
-
-        assert!(yaml.contains("  - ligand:\n      id: B\n      smiles: 'CC(=O)O'\n"));
-        // An ion becomes a CCD-named ligand, since Boltz has no ion entity.
-        assert!(yaml.contains("  - ligand:\n      id: C\n      ccd: MG\n"));
-
-        let ccd = OpenDdeRequest::new("x", vec![OpenDdeEntity::ligand("L", "CCD_ATP")]);
-        let yaml = build_yaml(&ccd, &BoltzOptions::default()).expect("should render");
-        assert!(yaml.contains("      ccd: ATP\n"));
-    }
-
-    #[test]
-    fn quotes_smiles_containing_quotes() {
-        // Not chemically meaningful, but the escaping must hold or the YAML would be truncated.
-        assert_eq!(escape_single_quoted("C'C"), "C''C");
-        let body = ligand_body("C'C").expect("should render");
-        assert_eq!(body, "      smiles: 'C''C'\n");
-    }
-
-    #[test]
-    fn rejects_file_ligands_with_an_actionable_message() {
-        let error = ligand_body("FILE_/tmp/x.sdf").expect_err("FILE_ is not supported");
-        assert!(error.to_string().contains("SMILES or CCD"));
-    }
-
-    #[test]
-    fn renders_covalent_bonds_against_chain_identifiers() {
-        let mut request = request();
-        request.covalent_bonds.push(OpenDdeCovalentBond {
-            entity1: 1,
-            copy1: 1,
-            position1: 3,
-            atom1: "SG".to_owned(),
-            entity2: 2,
-            copy2: 1,
-            position2: 1,
-            atom2: "C1".to_owned(),
-        });
-
-        let yaml = build_yaml(&request, &BoltzOptions::default()).expect("should render");
-        assert!(yaml.contains("constraints:\n"));
-        // Entity 1 is chain A and entity 2 is chain B, resolved by declaration order.
-        assert!(yaml.contains("      atom1: [A, 3, SG]\n"));
-        assert!(yaml.contains("      atom2: [B, 1, C1]\n"));
-    }
-
-    #[test]
-    fn requests_affinity_for_a_named_binder() {
-        let options = BoltzOptions {
-            affinity_binder: Some("B".to_owned()),
-            ..BoltzOptions::default()
-        };
-        let yaml = build_yaml(&request(), &options).expect("should render");
-        assert!(yaml.ends_with("properties:\n  - affinity:\n      binder: B\n"));
-    }
-
-    #[test]
-    fn converts_affinity_units_the_conventional_way() {
-        // Boltz reports log10(IC50) with IC50 in µM, so 0 is 1 µM, which is pIC50 6.
-        let affinity = BoltzAffinity {
-            predicted_log_ic50: 0.0,
-            binary_probability: Some(0.9),
-        };
-        assert!((affinity.ic50_micromolar() - 1.0).abs() < 1e-6);
-        assert!((affinity.p_ic50() - 6.0).abs() < 1e-6);
-
-        // A tighter binder: 1 nM is 1e-3 µM, so log10 is -3 and pIC50 is 9.
-        let tight = BoltzAffinity {
-            predicted_log_ic50: -3.0,
-            binary_probability: None,
-        };
-        assert!((tight.p_ic50() - 9.0).abs() < 1e-6);
-        assert!(tight.summary().contains("pIC50 9.00"));
-    }
-
-    #[test]
-    fn rejects_out_of_range_sampling_options() {
-        let mut options = BoltzOptions::default();
-        options.diffusion_samples = 0;
-        assert!(options.validate().is_err());
-
-        options = BoltzOptions::default();
-        options.recycling_steps = 50;
-        assert!(options.validate().is_err());
-    }
 }

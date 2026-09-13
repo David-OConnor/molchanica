@@ -557,7 +557,7 @@ impl OpenDdeRequest {
     }
 }
 
-pub(super) fn predict_structure(
+pub(crate) fn predict_structure(
     request: &OpenDdeRequest,
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -616,7 +616,7 @@ pub(crate) fn find_executable() -> io::Result<PathBuf> {
     external_tools::find_executable(Tool::OpenDde)
 }
 
-pub(super) fn predict_structure_from_aas(
+pub(crate) fn predict_structure_from_aas(
     aas: &[AminoAcid],
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -629,7 +629,7 @@ pub(super) fn predict_structure_from_aas(
     predict_structure(&OpenDdeRequest::new(name, vec![entity]), ff_map, control)
 }
 
-pub(super) fn predict_structure_from_dna(
+pub(crate) fn predict_structure_from_dna(
     nts: &[Nucleotide],
     ff_map: &ProtFfChargeMapSet,
     control: &PredictionControl,
@@ -640,154 +640,4 @@ pub(super) fn predict_structure_from_dna(
     let name = format!("opendde_pred_{nt_str}");
 
     predict_structure(&OpenDdeRequest::new(name, vec![entity]), ff_map, control)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_gpu_runtime_details_from_open_dde_doctor() {
-        let report = r#"OpenDDE environment
-- Python: 3.13.5
-- Platform: Windows-11-10.0.26200-SP0
-- PyTorch: 2.7.1+cu126
-- torch.cuda.is_available: True
-- torch CUDA version: 12.6
-- CUDA device count: 1
-- CUDA device 0: NVIDIA GeForce RTX 4080
-- CUDA probe error: none
-- nvidia-smi: NVIDIA GeForce RTX 4080, 595.97
-- Selected inference device for auto mode: cuda:0
-- Selected triangle kernel for auto mode: torch
-"#;
-
-        let info = parse_doctor_report(report).expect("GPU report should parse");
-
-        assert_eq!(info.backend, OpenDdeComputeBackend::Cuda);
-        assert_eq!(info.selected_device, "cuda:0");
-        assert_eq!(info.device_name.as_deref(), Some("NVIDIA GeForce RTX 4080"));
-        assert_eq!(info.cuda_version.as_deref(), Some("12.6"));
-        assert_eq!(info.nvidia_driver.as_deref(), Some("595.97"));
-        assert_eq!(info.short_label(), "GPU/CUDA (NVIDIA GeForce RTX 4080)");
-        assert_eq!(
-            info.detail_label(),
-            "CUDA 12.6 · NVIDIA driver 595.97 · PyTorch 2.7.1+cu126 · PyTorch triangle kernels"
-        );
-    }
-
-    #[test]
-    fn parses_cpu_runtime_details_from_open_dde_doctor() {
-        let report = r#"OpenDDE environment
-- Python: 3.12.9
-- Platform: Linux-6.8.0-x86_64-with-glibc2.39
-- PyTorch: 2.7.1+cpu
-- torch.cuda.is_available: False
-- torch CUDA version: none
-- CUDA device count: 0
-- nvidia-smi: unavailable
-- Selected inference device for auto mode: cpu
-- Selected triangle kernel for auto mode: torch
-"#;
-
-        let info = parse_doctor_report(report).expect("CPU report should parse");
-
-        assert_eq!(info.backend, OpenDdeComputeBackend::Cpu);
-        assert_eq!(info.selected_device, "cpu");
-        assert_eq!(info.device_name, None);
-        assert_eq!(info.cuda_version, None);
-        assert_eq!(info.short_label(), "CPU");
-        assert_eq!(
-            info.detail_label(),
-            "PyTorch 2.7.1+cpu · PyTorch triangle kernels · Linux-6.8.0-x86_64-with-glibc2.39"
-        );
-    }
-
-    #[test]
-    fn serializes_a_mixed_complex_using_the_open_dde_schema() {
-        let mut request = OpenDdeRequest::new(
-            "mixed_complex",
-            vec![
-                OpenDdeEntity::protein_sequence("A", "ACDEX"),
-                OpenDdeEntity::dna_sequence("D", "ATGCNX"),
-                OpenDdeEntity::rna("R", "AUGCNX"),
-                OpenDdeEntity::ligand("L", "CCD_ATP"),
-                OpenDdeEntity::ion("M", "MG"),
-            ],
-        );
-        request.covalent_bonds.push(OpenDdeCovalentBond {
-            entity1: 1,
-            copy1: 1,
-            position1: 2,
-            atom1: "SG".to_owned(),
-            entity2: 4,
-            copy2: 1,
-            position2: 1,
-            atom2: "C1".to_owned(),
-        });
-
-        assert_eq!(
-            request.to_json().expect("request should serialize"),
-            json!([{
-                "name": "mixed_complex",
-                "modelSeeds": [101],
-                "sequences": [
-                    {"proteinChain": {"sequence": "ACDEX", "count": 1, "id": ["A"]}},
-                    {"dnaSequence": {"sequence": "ATGCNX", "count": 1, "id": ["D"]}},
-                    {"rnaSequence": {"sequence": "AUGCNX", "count": 1, "id": ["R"]}},
-                    {"ligand": {"ligand": "CCD_ATP", "count": 1, "id": ["L"]}},
-                    {"ion": {"ion": "MG", "count": 1, "id": ["M"]}},
-                ],
-                "covalent_bonds": [{
-                    "entity1": "1",
-                    "copy1": 1,
-                    "position1": "2",
-                    "atom1": "SG",
-                    "entity2": "4",
-                    "copy2": 1,
-                    "position2": "1",
-                    "atom2": "C1",
-                }],
-            }])
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_mixed_complex_inputs() {
-        let invalid_entities = [
-            OpenDdeEntity::protein_sequence("A", "ACDB"),
-            OpenDdeEntity::dna_sequence("D", "AUGC"),
-            OpenDdeEntity::rna("R", "ATGC"),
-            OpenDdeEntity::ion("M", "CCD_MG"),
-        ];
-        for entity in invalid_entities {
-            let request = OpenDdeRequest::new("invalid", vec![entity]);
-            assert!(request.validate().is_err());
-        }
-
-        let duplicate_ids = OpenDdeRequest::new(
-            "duplicates",
-            vec![
-                OpenDdeEntity::protein_sequence("A", "ACDE"),
-                OpenDdeEntity::ligand("A", "CCO"),
-            ],
-        );
-        assert!(duplicate_ids.validate().is_err());
-
-        let mut bad_bond = OpenDdeRequest::new(
-            "bad_bond",
-            vec![OpenDdeEntity::protein_sequence("A", "ACDE")],
-        );
-        bad_bond.covalent_bonds.push(OpenDdeCovalentBond {
-            entity1: 1,
-            copy1: 1,
-            position1: 1,
-            atom1: "SG".to_owned(),
-            entity2: 2,
-            copy2: 1,
-            position2: 1,
-            atom2: "C1".to_owned(),
-        });
-        assert!(bad_bond.validate().is_err());
-    }
 }

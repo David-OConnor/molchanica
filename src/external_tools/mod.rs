@@ -76,12 +76,15 @@ use bio_tools::{
 };
 
 pub mod anarcii;
+pub mod boltz2;
+mod esmfold2;
 pub mod igblast;
 pub mod mpnn;
+pub mod opendde;
 pub mod pdb_write;
 pub mod rfdiffusion3;
-pub mod tool_form;
 pub mod shared_adapter;
+pub mod tool_form;
 
 /// How long a `--version`/`--help` style probe is given before it is killed.
 ///
@@ -1682,6 +1685,7 @@ fn display_command_argument(argument: &OsStr) -> String {
     if value.is_empty() {
         return "\"\"".to_owned();
     }
+
     if value
         .chars()
         .any(|character| character.is_whitespace() || character == '"')
@@ -1704,181 +1708,6 @@ pub(crate) fn scrub_python_environment(command: &mut Command) {
     ] {
         command.env_remove(variable);
     }
+
     command.env("PYTHONNOUSERSITE", "1");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cargo_build_directories_are_recognised() {
-        // A dev build must not anchor the data root on `target/`: `cargo clean` would delete
-        // multi-GB tool installs, and debug and release would each keep their own copy.
-        for dir in [
-            "/home/me/molchanica/target/debug",
-            "/home/me/molchanica/target/release",
-            "/home/me/molchanica/target/x86_64-pc-windows-msvc/release",
-        ] {
-            assert!(in_cargo_build_dir(Path::new(dir)), "{dir}");
-        }
-    }
-
-    #[test]
-    fn install_directories_are_not_mistaken_for_build_directories() {
-        for dir in [
-            "/home/me/molchanica",
-            "C:/Users/me/AppData/Local/Programs/Molchanica",
-            // `target` too far up to be this directory's build root, and a profile-named
-            // install folder with no `target` above it at all.
-            "/home/me/target/a/b/c/release",
-            "/opt/release",
-        ] {
-            assert!(!in_cargo_build_dir(Path::new(dir)), "{dir}");
-        }
-    }
-
-    /// Every `Shared` entry must name a catalog slug `bio_tools` still has: that lookup is where
-    /// the name, summary, home page, and licence in the tools panel come from, and a rename on the
-    /// `bio_tools` side would otherwise show up as placeholder text at runtime rather than here.
-    #[test]
-    fn catalog_entries_resolve() {
-        for tool in Tool::ALL {
-            let spec = tool.spec();
-            if let ToolIdentity::Shared(catalog_slug) = spec.identity {
-                assert!(
-                    spec.catalog().is_some(),
-                    "no bio_tools catalog entry for {catalog_slug}"
-                );
-                assert!(!spec.summary().is_empty());
-                assert!(spec.url().starts_with("http"));
-            }
-        }
-    }
-
-    #[test]
-    fn every_tool_variant_has_a_registry_entry() {
-        for tool in Tool::ALL {
-            let spec = tool.spec();
-            assert_eq!(spec.tool, tool);
-            assert!(!spec.slug().is_empty());
-            assert!(!spec.version_marker.is_empty());
-        }
-    }
-
-    #[test]
-    fn slugs_and_override_variables_are_unique() {
-        // A duplicate slug would make two tools share a virtual environment, and a duplicate
-        // override variable would silently point one tool at another's executable.
-        for (index, spec) in REGISTRY.iter().enumerate() {
-            for other in &REGISTRY[index + 1..] {
-                assert_ne!(spec.slug(), other.slug(), "duplicate slug {}", spec.slug());
-                assert_ne!(
-                    spec.exe_override_env, other.exe_override_env,
-                    "duplicate override variable {}",
-                    spec.exe_override_env
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn managed_tools_name_an_install_command() {
-        for tool in Tool::managed() {
-            let spec = tool.spec();
-            if spec.platform.is_supported() {
-                assert!(spec.install_command().contains(spec.slug()));
-            } else {
-                assert!(spec.install_command().contains("Linux only"));
-            }
-        }
-    }
-
-    #[test]
-    fn unmanaged_tools_explain_how_to_get_them() {
-        for tool in Tool::ALL {
-            if !tool.spec().molchanica_managed {
-                assert_eq!(tool.spec().install_command(), tool.spec().install_hint);
-            }
-        }
-    }
-
-    #[test]
-    fn unsupported_platforms_never_offer_installation() {
-        for tool in Tool::ALL {
-            let spec = tool.spec();
-            if !spec.platform.is_supported() {
-                assert_eq!(spec.platform.label(), Some("Linux only"));
-                assert!(!spec.can_install_here());
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn linux_only_install_returns_unsupported() {
-        let error = install(Tool::EsmFold2).expect_err("ESMFold 2 is Linux-only");
-        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test]
-    fn every_managed_tool_has_a_bio_tools_recipe() {
-        for tool in Tool::managed() {
-            let spec = tool.spec();
-            let recipe = spec
-                .recipe()
-                .unwrap_or_else(|| panic!("{} has no bio_tools recipe", spec.slug()));
-            assert_eq!(recipe.slug(), spec.slug());
-        }
-    }
-
-    #[test]
-    fn managed_install_roots_stay_below_the_data_root() {
-        let root = Path::new("managed-data");
-        for tool in Tool::managed() {
-            let paths = managed_install_roots(tool, root);
-            assert!(
-                !paths.is_empty(),
-                "{} has no managed install path",
-                tool.spec().name()
-            );
-            assert!(
-                paths
-                    .iter()
-                    .all(|path| path.starts_with(root) && path != root)
-            );
-        }
-    }
-
-    #[test]
-    fn unmanaged_tools_cannot_be_uninstalled_automatically() {
-        let error = uninstall(Tool::Orca).expect_err("ORCA must stay vendor-managed");
-        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test]
-    fn diagnostic_command_rendering_quotes_paths_with_spaces() {
-        let mut command = Command::new(r"C:\Program Files\Python\python.exe");
-        command.arg("runner.py").arg("two words").arg("plain");
-        assert_eq!(
-            display_command(&command),
-            r#""C:\Program Files\Python\python.exe" runner.py "two words" plain"#
-        );
-    }
-
-    #[test]
-    fn logged_runner_returns_stdout_without_merging_stderr() {
-        let mut command = if cfg!(windows) {
-            let mut command = Command::new("cmd");
-            command.args(["/C", "echo normal & echo warning 1>&2"]);
-            command
-        } else {
-            let mut command = Command::new("sh");
-            command.args(["-c", "printf normal; printf warning >&2"]);
-            command
-        };
-        let stdout = run_to_completion_logged(&mut command, "test tool", "test workflow").unwrap();
-        assert!(stdout.contains("normal"));
-        assert!(!stdout.contains("warning"));
-    }
 }

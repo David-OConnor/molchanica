@@ -1,21 +1,13 @@
-//! Structure prediction through third-party models.
+//! Structure prediction through third-party models, managed by [`bio_tools`].
 //!
-//! We support OpenDDE, Boltz-2, and ESMFold 2. Each is driven from a
-//! dedicated Python virtual environment built by the shared `bio_tools` Rust installer,
-//! discovered through the [`crate::external_tools`] registry, and run as a child process. None is
-//! ever resolved through a bare `PATH` lookup or run under whichever interpreter happens to be
-//! first on it.
+//! It supports OpenDDE, Boltz-2, ESMFold2, and Chai-1. Each is driven from a
+//! dedicated Python virtual environment built by the shared `bio_tools` installer,
+//! discovered through the [`external_tools`] registry, and run as a child process.
 //!
-//! ESMFold 2 is Linux-only because its upstream wheels and CUDA kernels do not support the other
-//! desktop platforms. It remains visible to those users so the limitation is explicit rather than
-//! making the available model list look incomplete.
+//! This module contains non-GUI code common to all integrated structure prediction
+//! tools.
 //!
-//! Boltz-2 additionally predicts binding affinity for a ligand in the complex it folds — see
-//! [`boltz2::BoltzOptions::affinity_binder`] — which the shared dispatch below does not expose,
-//! since it returns a structure alone. Call [`boltz2::predict`] for that.
-//!
-//! Predictions are blocking operations and should be moved to a worker thread when called by the
-//! GUI. A missing model does not prevent Molchanica from starting.
+//! todo: Predictions are blocking operations and should be moved to a worker thread.
 
 use std::{
     env, fs, io,
@@ -36,13 +28,8 @@ use dynamics::params::ProtFfChargeMapSet;
 use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::{AaIdent, AminoAcid, Nucleotide};
 
-pub mod boltz2;
-mod linux_models;
-// These legacy/experimental adapters stay disabled in production, but compiling them in tests
-// prevents their managed-Python setup from silently drifting or regressing to a system Python.
-#[cfg(test)]
-mod boltz_runtime;
-pub mod opendde;
+use external_tools::{boltz2, opendde};
+use crate::external_tools;
 
 /// pH used when Molchanica adds hydrogens and force-field parameters to a prediction.
 pub const DEFAULT_PREDICTION_PH: f32 = 7.0;
@@ -68,11 +55,11 @@ impl StructurePredictionModel {
     }
 
     /// The registry entry this model runs from, for availability checks.
-    pub fn tool(self) -> crate::external_tools::Tool {
+    pub fn tool(self) -> external_tools::Tool {
         match self {
-            Self::OpenDDE => crate::external_tools::Tool::OpenDde,
-            Self::Boltz2 => crate::external_tools::Tool::Boltz2,
-            Self::EsmFold2 => crate::external_tools::Tool::EsmFold2,
+            Self::OpenDDE => external_tools::Tool::OpenDde,
+            Self::Boltz2 => external_tools::Tool::Boltz2,
+            Self::EsmFold2 => external_tools::Tool::EsmFold2,
         }
     }
 }
@@ -126,7 +113,7 @@ pub fn predict_structure_from_request(
         StructurePredictionModel::OpenDDE => opendde::predict_structure(request, ff_map, control),
         StructurePredictionModel::Boltz2 => boltz2::predict_structure(request, ff_map, control),
         StructurePredictionModel::EsmFold2 => {
-            linux_models::predict_structure(model, request, ff_map, control)
+            esmfold2::predict_structure(model, request, ff_map, control)
         }
     }
 }
@@ -193,9 +180,9 @@ pub fn run_model_command(
     control: &PredictionControl,
 ) -> io::Result<()> {
     control.check_cancelled()?;
-    crate::external_tools::scrub_python_environment(command);
+    external_tools::scrub_python_environment(command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let _banner = crate::external_tools::ToolRunBanner::new("structure prediction", model, command);
+    let _banner = external_tools::ToolRunBanner::new("structure prediction", model, command);
 
     let mut child = command.spawn().map_err(|error| {
         io::Error::new(
@@ -511,3 +498,4 @@ impl Drop for PredictionWorkspace {
         }
     }
 }
+

@@ -49,7 +49,6 @@ mod screening;
 mod selection;
 mod sonification;
 mod state;
-mod structure_prediction;
 #[cfg(test)]
 mod tests;
 mod therapeutic_misc;

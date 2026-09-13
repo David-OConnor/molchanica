@@ -24,6 +24,8 @@ know existed, clarify how to use a given feature, and show assumptions and imple
 For advanced topics like molecular docking, it provides instructions for achieving the best results. Use the menu on the
 left to navigate these documentation pages.
 
+This README is a summary. For details, see [the documentation](https://www.athanorlab.com/docs).
+
 ## Installation
 
 ### Windows and Linux
@@ -52,48 +54,11 @@ in the project directory. See notes in the
 *compiling* section below about setting up Amber parameter files,
 and either installing the CUDA toolkit, or disabling CUDA.
 
-### Installing integrated third-party software
 
-Molchanica works with none of these installed; each one unlocks a feature. Open the **Tools**
-panel in the GUI at any time to see which are installed and working. Missing tools with an
-unattended recipe have an **Install** button in that panel.
-
-Installation runs inside Molchanica through the shared `bio_tools` Rust library. Native
-distributions, source checkouts, and model assets go into `process_executables/` in Molchanica's
-own folder — the one the executable is in, described under
-[*The preferences file*](#the-preferences-file-and-where-molchanica-keeps-its-data) below; each
-isolated Python or Conda environment lives under `process_executables/python_envs/`, the same
-layout used by Bio Web. Nothing is installed system-wide, nothing touches your system Python, and
-nothing is written outside that one folder. On the first Python-backed tool install, `bio_tools`
-installs uv with Astral's official standalone installer if uv is not already available.
-
-| Tool          | Unlocks                                                                               | Size     |
-|---------------|---------------------------------------------------------------------------------------|----------|
-| `opendde`     | Structure prediction and co-folding: proteins, DNA/RNA, ligands, ions, complexes      | Multi-GB |
-| `boltz2`      | Co-folding **and binding-affinity prediction** for a ligand in the complex            | Multi-GB |
-| `ligandmpnn`  | Inverse folding — design sequences for a backbone, in ligand and nucleic-acid context | ~1 GB    |
-| `proteinmpnn` | Inverse folding, the antibody-tuned AbMPNN weights, and native ΔΔG scanning           | ~1 GB    |
-| `igblast`     | Antibody V(D)J germline assignment and framework/CDR delineation                      | ~100 MB  |
-| `anarcii`     | Antibody/TCR numbering (IMGT, Kabat, Chothia, Martin, AHo) with insertion codes       | ~1 GB    |
-
-A CUDA build of PyTorch is selected automatically when an NVIDIA GPU with a new enough driver is
-present, and the install falls back to CPU if that turns out not to work at run time. Override
-with `MOLCHANICA_TORCH_BACKEND=cpu` or `=cu126`.
-
-Each tool requests an exact interpreter minor version from uv: Python 3.13 for OpenDDE and Python
-3.12 for Boltz-2, the MPNN tools, and ANARCII. `uv venv --managed-python` ensures these are
-uv-managed Python builds rather than matching interpreters found on the system. Set
-`MOLCHANICA_UV` only when the installer should use a particular uv executable.
-
-Two tools Molchanica cannot install for you, because they have their own licence gate or
-installer: **ORCA** (quantum chemistry, and MBIS partial charges for MD) and **GROMACS** (an
-alternative MD backend). Install those separately and put them on `PATH`. **Gemmi**, for MTZ and
-unprocessed electron-density files, is installed by the Linux setup script and shipped alongside
-the Windows release.
-
-Every tool can also be pointed at an existing installation with an environment variable —
-`MOLCHANICA_ORCA_EXECUTABLE`, `MOLCHANICA_IGBLAST_ROOT`, and so on. The Tools panel shows each
-tool's variable name.
+### Installing and using integrated third-party tools
+Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA,
+Gemmi, and ML-based protein design tools. See [the documentation](https://www.athanorlab.com/docs/third_party_tools.html)
+for details.
 
 ### Datasets
 
@@ -201,6 +166,7 @@ which may help. For example, loading molecules automatically from PubChem, drugb
 download associated ligands for a protein, automatically download molecule-specific force-field parameters, and
 other party tricks.
 
+
 ![UI image showing mol properties and a protien](/screenshots/molchanica_ui_apr_2026.png)
 
 ## Parallel computing
@@ -217,6 +183,7 @@ libraries are looked up when the program starts rather than being linked into th
 machine with no Nvidia GPU, no driver, or a driver too old for the CUDA version we build against,
 the program starts normally and reports `Cpu` as its computing device. The separate `nocuda`
 downloads are smaller, and are otherwise equivalent on such machines.
+
 
 ## Molecular dynamics
 

@@ -1,14 +1,10 @@
-//! The third-party tools status panel.
+//! The third-party tools status panel. Used to install, uninstall, and view the
+//! status of each of these tools. These include MD engines, ML-based protein
+//! design tools, ORCA, Gemmi, and others.
 //!
-//! Molchanica drives a handful of optional external tools, and every one of them can be absent,
-//! present-but-broken, or working. Before this panel each of those states surfaced only at the
-//! moment a user tried to use the feature, as a one-line error in a different part of the UI — so
-//! "why is the ORCA button doing nothing", "why did structure prediction fail", and "did the
-//! installer actually work" were four separate support conversations with no single place to look.
-//!
-//! This is that place. It probes every entry in [`crate::external_tools`] concurrently on a worker
-//! thread and reports, per tool, whether it runs, where it was found, what version answered, and —
-//! when it is missing — an in-app installer for the tools Molchanica can manage itself.
+//! The core tool functionality is handled by the [`bio_tools`] dependency; Molchanica-native
+//! functionality is primarily for the UI, and integrating tool inputs and outputs
+//! with Molchanica's native types and molecule state.
 
 use std::{collections::HashMap, fs, io, sync::mpsc, thread, time::Duration};
 
@@ -92,6 +88,7 @@ impl ExternalToolsUi {
         let Some(receiver) = &self.pending else {
             return;
         };
+
         let disconnected = loop {
             match receiver.try_recv() {
                 Ok(ToolCheckUpdate::Status(status)) => {
@@ -107,6 +104,7 @@ impl ExternalToolsUi {
                 Err(mpsc::TryRecvError::Disconnected) => break true,
             }
         };
+
         if disconnected {
             self.pending = None;
         }
@@ -120,6 +118,7 @@ impl ExternalToolsUi {
         }
 
         let (tx, rx) = mpsc::channel();
+
         self.install_pending = Some((tool, rx));
         self.install_results.remove(&tool);
         self.confirm_uninstall = None;
@@ -139,6 +138,7 @@ impl ExternalToolsUi {
         let Some((tool, receiver)) = &self.install_pending else {
             return false;
         };
+
         let tool = *tool;
         let result = match receiver.try_recv() {
             Ok(Ok(())) => InstallResult::Success,
@@ -179,6 +179,7 @@ impl ExternalToolsUi {
         let Some((tool, receiver)) = &self.uninstall_pending else {
             return false;
         };
+
         let tool = *tool;
         let result = match receiver.try_recv() {
             Ok(Ok(())) => UninstallResult::Success,
@@ -216,10 +217,12 @@ fn format_disk_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = bytes as f64;
     let mut unit = 0;
+
     while value >= 1_024.0 && unit < UNITS.len() - 1 {
         value /= 1_024.0;
         unit += 1;
     }
+
     if unit == 0 {
         format!("{bytes} B")
     } else {
@@ -234,6 +237,7 @@ fn open_install_folder() -> io::Result<()> {
             "unable to determine Molchanica's data directory",
         )
     })?;
+
     let folder = data_root.join("process_executables");
     fs::create_dir_all(&folder)?;
 
@@ -244,8 +248,10 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let context = ui.ctx().clone();
     let tools = &mut state.ui.external_tools;
     tools.poll();
+
     let install_finished = tools.poll_install();
     let uninstall_finished = tools.poll_uninstall();
+
     if install_finished || uninstall_finished {
         tools.start_probe();
     }
@@ -313,8 +319,10 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     .get(tool)
                     .map_or(u8::MAX, |status| status.result.rank())
             });
+
             let search = tools.search.trim().to_lowercase();
             let mut visible_tools = 0;
+
             for tool in ordered_tools {
                 let spec = tool.spec();
                 if !search.is_empty() && !spec.name().to_lowercase().contains(&search) {
@@ -353,6 +361,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             RichText::new(label).color(Color32::LIGHT_BLUE).small(),
                         );
                     }
+
                     if ui
                         .small_button("?")
                         .on_hover_text(format!(
@@ -375,6 +384,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                         let uninstalling = tools.uninstalling();
                         let confirming = tools.confirm_uninstall == Some(status.tool);
                         let (has_managed_files, disk_text, disk_hover) =
+
                             if !spec.molchanica_managed {
                                 (
                                     false,
@@ -421,6 +431,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                         } else {
                             "Uninstall"
                         };
+
                         let uninstall_hint = if !spec.molchanica_managed {
                             "This installation is managed outside Molchanica.".to_owned()
                         } else if !has_managed_files {
@@ -430,6 +441,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                         } else {
                             "Remove this tool's Molchanica-managed files.".to_owned()
                         };
+
                         let response = ui
                             .add_enabled(
                                 spec.molchanica_managed && has_managed_files && !tools.is_busy(),
