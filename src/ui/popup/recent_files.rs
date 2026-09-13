@@ -12,7 +12,7 @@ use crate::{
     file_io::managed_mols,
     prefs::OpenType,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING, popup},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING},
     util::{handle_err, handle_success},
 };
 
@@ -241,12 +241,8 @@ pub(in crate::ui::popup) fn recent_files_popup(
 
     ui.add_space(ROW_SPACING);
 
-    // Close button and pagination controls.
+    // Pagination controls.
     ui.horizontal(|ui| {
-        popup::close_btn(ui, &mut state.ui.popup.recent_files);
-
-        ui.add_space(COL_SPACING);
-
         if ui
             .button(RichText::new("Clear removed").color(COLOR_ACTION))
             .on_hover_text("Remove entries whose file is no longer present on disk.")

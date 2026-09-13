@@ -12,7 +12,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        highlighted_box, num_field, popup::close_btn,
+        highlighted_box, num_field,
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -334,9 +334,6 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             state.ui.md.set_editor_active_set =
                 Some(state.volatile.md_local.viewer.mol_sets.len() - 1);
         }
-        ui.add_space(COL_SPACING);
-
-        close_btn(ui, &mut state.ui.popup.md_mol_set_editor);
     });
     label!(
         ui,

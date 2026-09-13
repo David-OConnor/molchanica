@@ -19,10 +19,7 @@ use crate::{
     prefs::OpenType,
     state::{DbSel, PopupState, State},
     threads::start_builtin_mol_db_load,
-    ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        popup,
-    },
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
     util::{handle_err, handle_success, truncate_str},
 };
 
@@ -103,10 +100,6 @@ pub(in crate::ui) fn parquet_db(
         {
             state.volatile.dialogs.parquet_db_load.pick_file();
         }
-
-        ui.add_space(COL_SPACING);
-
-        popup::close_btn(ui, &mut state.ui.popup.parquet_db);
     });
 
     db_selector(state, ui);

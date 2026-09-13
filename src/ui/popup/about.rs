@@ -10,7 +10,6 @@ use crate::{
     state::State,
     ui::{
         COLOR_HIGHLIGHT, ROW_SPACING,
-        popup::close_btn,
         util::{display_path, open_dir},
     },
 };
@@ -98,8 +97,4 @@ pub(in crate::ui::popup) fn about_window(state: &mut State, ui: &mut Ui) {
                 .small(),
         );
     }
-
-    ui.add_space(ROW_SPACING);
-
-    close_btn(ui, &mut state.ui.popup.about);
 }

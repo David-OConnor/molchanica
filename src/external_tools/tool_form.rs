@@ -224,17 +224,24 @@ impl FormContract {
             .unwrap_or_default()
     }
 
-    /// The groups the fields visible in `mode` fall into, in the order `bio_tools` lists them,
-    /// each with its fields. A group with nothing visible in this mode is left out entirely.
-    pub fn groups_in_mode(&self, mode: &str) -> Vec<(Option<&FieldGroup>, Vec<&FormField>)> {
-        let mut ordered: Vec<String> = self
+    /// The groups the fields visible in `mode` fall into, in the order `bio_tools` lists them, each
+    /// with its heading, the declared group of that name if there is one, and its fields. A group
+    /// with nothing visible in this mode is left out entirely.
+    ///
+    /// The heading is the `group` the fields themselves carry, which is what `bio_web`'s form
+    /// groups by as well; `field_groups` names only the subset of those groups that have upstream
+    /// documentation to link, so a tool that declares none still gets one section per group its
+    /// fields name. Taking the heading from `field_groups` instead collapsed every group of such a
+    /// tool into one unnamed section, which then drew several identically-named headers.
+    pub fn groups_in_mode(&self, mode: &str) -> Vec<(&str, Option<&FieldGroup>, Vec<&FormField>)> {
+        let mut ordered: Vec<&str> = self
             .field_groups
             .iter()
-            .map(|group| group.label.clone())
+            .map(|group| group.label.as_str())
             .collect();
         for field in &self.fields {
-            if !ordered.contains(&field.group) {
-                ordered.push(field.group.clone());
+            if !ordered.contains(&field.group.as_str()) {
+                ordered.push(&field.group);
             }
         }
 
@@ -250,7 +257,7 @@ impl FormContract {
                     return None;
                 }
                 let group = self.field_groups.iter().find(|group| group.label == label);
-                Some((group, members))
+                Some((label, group, members))
             })
             .collect()
     }

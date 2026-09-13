@@ -13,8 +13,7 @@ use std::{collections::HashMap, ops::RangeInclusive, path::Path};
 use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
 use egui::{
-    Align, Color32, ComboBox, Layout, Pos2, Response, RichText, ScrollArea, Slider, TextEdit, Ui,
-    Window,
+    Color32, ComboBox, Context, Pos2, Response, RichText, ScrollArea, Slider, TextEdit, Ui, Window,
 };
 use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -37,7 +36,7 @@ use crate::{
     render::MESH_POCKET_START,
     screening::screen_by_alignment,
     selection::{Selection, ViewSelLevel},
-    state::{MsaaSetting, PopupState, State},
+    state::{MsaaSetting, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         load_all_idents_button,
@@ -59,13 +58,20 @@ const METADATA_MAX_WIDTH: f32 = 600.;
 const KEY_EDIT_WIDTH: f32 = 160.;
 const VAL_EDIT_WIDTH: f32 = 340.;
 
-pub(in crate::ui) fn close_btn(ui: &mut Ui, popup: &mut bool) {
-    if ui
-        .button(RichText::new("Close").color(Color32::LIGHT_RED))
-        .clicked()
-    {
-        *popup = false;
-    }
+/// Show one popup window, returning whether it should stay open.
+///
+/// The close button is egui's own, drawn at the right of the title bar of any window given an
+/// `open` flag. It sits in the title bar rather than in the window's contents, so it costs the
+/// contents no space and no layout of their own.
+///
+/// That flag cannot be the `PopupState` field itself: the contents borrow `state` too, and the two
+/// borrows would overlap. So it is a local the caller folds back into its field, and only a close
+/// folds back -- contents that close their own window are left to do so.
+#[must_use]
+fn show_popup(window: Window<'_>, ctx: &Context, contents: impl FnOnce(&mut Ui)) -> bool {
+    let mut open = true;
+    window.open(&mut open).show(ctx, contents);
+    open
 }
 
 /// Based on popup state, shows popups. This is the entry point for all popups.
@@ -78,46 +84,57 @@ pub(in crate::ui) fn load_popups(
     updates: &mut EngineUpdates,
 ) {
     if state.ui.popup.show_get_geostd {
-        popup("Load force-field parameters").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Load force-field parameters"), ui.ctx(), |ui| {
             get_geostd(state, scene, updates, ui);
         });
+        state.ui.popup.show_get_geostd &= open;
     }
 
     if state.ui.popup.show_associated_structures {
-        popup("Associated structures").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Associated structures"), ui.ctx(), |ui| {
             associated_structures(state, scene, updates, &mut redraw.peptide, reset_cam, ui);
         });
+        state.ui.popup.show_associated_structures &= open;
     }
 
     if state.ui.popup.alignment {
-        popup("Molecule alignment").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Molecule alignment"), ui.ctx(), |ui| {
             alignment(state, scene, &mut redraw.ligand, updates, ui);
         });
+        state.ui.popup.alignment &= open;
     };
 
     if state.ui.popup.alignment_screening {
-        popup("Alignment screening").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Alignment screening"), ui.ctx(), |ui| {
             alignment_screening(state, ui);
         });
+        state.ui.popup.alignment_screening &= open;
     }
 
     if state.ui.popup.show_settings {
-        popup("Settings").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Settings"), ui.ctx(), |ui| {
             settings(state, scene, ui, updates);
         });
+        state.ui.popup.show_settings &= open;
     }
 
     if state.ui.popup.residue_selector {
         // todo: Show hide based on AaCategory? i.e. residue.amino_acid.category(). Hydrophilic, acidic etc.
-        popup("Residue selector").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Residue selector"), ui.ctx(), |ui| {
             residue_selector(state, scene, ui, &mut redraw.peptide);
         });
+        if !open {
+            state.ui.popup.residue_selector = false;
+            // The chain whose residues were being picked is no longer being picked from.
+            state.ui.chain_to_pick_res = None;
+        }
     }
 
     if state.ui.popup.recent_files {
-        popup("Recent molecules").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Recent molecules"), ui.ctx(), |ui| {
             recent_files::recent_files_popup(state, scene, ui, updates);
         });
+        state.ui.popup.recent_files &= open;
     }
 
     if state.ui.popup.rama_plot
@@ -125,70 +142,81 @@ pub(in crate::ui) fn load_popups(
             .peptide_for_tools_i()
             .and_then(|i| state.peptides.get(i))
     {
-        popup("Ramachandran plot").show(ui.ctx(), |ui| {
-            rama_plot::plot_rama(
-                &mol.residues,
-                &mol.common.ident,
-                ui,
-                &mut state.ui.popup.rama_plot,
-            );
+        let open = show_popup(popup("Ramachandran plot"), ui.ctx(), |ui| {
+            rama_plot::plot_rama(&mol.residues, &mol.common.ident, ui);
         });
+        state.ui.popup.rama_plot &= open;
     }
 
     if state.ui.popup.pharmacophore_boolean {
-        popup("Pharmacophore (boolean)").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Pharmacophore (boolean)"), ui.ctx(), |ui| {
             pharmacophore::pharmacophore_boolean_window(state, ui);
         });
+        state.ui.popup.pharmacophore_boolean &= open;
     }
 
     if state.ui.popup.pharmacophore_screening {
-        popup("Pharmacophore screening").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Pharmacophore screening"), ui.ctx(), |ui| {
             pharmacophore::pharmacophore_screen(state, scene, ui, updates);
         });
+        state.ui.popup.pharmacophore_screening &= open;
     }
 
     if let Some((mol_type, i)) = state.ui.popup.metadata {
-        popup("Metadata")
-            .max_width(METADATA_MAX_WIDTH)
-            .show(ui.ctx(), |ui| {
+        let open = show_popup(
+            popup("Metadata").max_width(METADATA_MAX_WIDTH),
+            ui.ctx(),
+            |ui| {
                 metadata(mol_type, i, state, ui);
-            });
+            },
+        );
+        if !open {
+            state.ui.popup.metadata = None;
+        }
     }
 
     if state.ui.popup.lig_pocket_creation {
-        popup("Ligands & pockets from residues").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Ligands & pockets from residues"), ui.ctx(), |ui| {
             lig_pocket_from_het_res(state, scene, ui, updates);
         });
+        state.ui.popup.lig_pocket_creation &= open;
     }
 
     if state.ui.popup.parquet_db {
-        popup("Molecule databases").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Molecule databases"), ui.ctx(), |ui| {
             mol_db::parquet_db(state, scene, updates, ui);
         });
+        state.ui.popup.parquet_db &= open;
     }
 
     if state.ui.popup.md_mol_set_editor {
-        popup("MD molecule set editor").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("MD molecule set editor"), ui.ctx(), |ui| {
             md_viewer::md_mol_set_editor(state, ui);
         });
+        state.ui.popup.md_mol_set_editor &= open;
     }
 
     if state.ui.popup.ff_params {
         let (dx, dy) = ff_params::POPUP_OFFSET;
         let pos = Pos2::new(POPUP_POS.x + dx, POPUP_POS.y + dy);
 
-        popup("Force-field parameter editor")
-            .default_pos(pos)
-            .show(ui.ctx(), |ui| {
+        let open = show_popup(
+            popup("Force-field parameter editor").default_pos(pos),
+            ui.ctx(),
+            |ui| {
                 ff_params::ff_param_editor(state, ui);
-            });
+            },
+        );
+        state.ui.popup.ff_params &= open;
     }
 
     if state.ui.popup.structure_pred {
-        popup("Structure prediction")
-            .default_width(680.0)
-            .max_height(1000.0)
-            .show(ui.ctx(), |ui| {
+        let open = show_popup(
+            popup("Structure prediction")
+                .default_width(680.0)
+                .max_height(1000.0),
+            ui.ctx(),
+            |ui| {
                 tool_window(
                     state,
                     ToolWindowKind::StructurePrediction,
@@ -196,46 +224,62 @@ pub(in crate::ui) fn load_popups(
                     updates,
                     ui,
                 );
-            });
+            },
+        );
+        state.ui.popup.structure_pred &= open;
     }
 
     if state.ui.popup.rfd3 {
-        popup("RFdiffusion3")
-            .default_width(680.0)
-            .max_height(1000.0)
-            .show(ui.ctx(), |ui| {
+        let open = show_popup(
+            popup("RFdiffusion3")
+                .default_width(680.0)
+                .max_height(1000.0),
+            ui.ctx(),
+            |ui| {
                 tool_window(state, ToolWindowKind::BackboneDesign, scene, updates, ui);
-            });
+            },
+        );
+        state.ui.popup.rfd3 &= open;
     }
 
     if state.ui.popup.sequence_pred {
-        popup("Sequence prediction")
-            .default_width(620.0)
-            .max_height(1000.0)
-            .show(ui.ctx(), |ui| {
+        let open = show_popup(
+            popup("Sequence prediction")
+                .default_width(620.0)
+                .max_height(1000.0),
+            ui.ctx(),
+            |ui| {
                 tool_window(state, ToolWindowKind::SequenceDesign, scene, updates, ui);
-            });
+            },
+        );
+        state.ui.popup.sequence_pred &= open;
     }
 
     if state.ui.popup.external_tools {
-        popup("Third-party tools")
-            .default_width(620.0)
-            .max_height(1000.0)
-            .show(ui.ctx(), |ui| {
+        let open = show_popup(
+            popup("Third-party tools")
+                .default_width(620.0)
+                .max_height(1000.0),
+            ui.ctx(),
+            |ui| {
                 external_tools::external_tools_window(state, ui);
-            });
+            },
+        );
+        state.ui.popup.external_tools &= open;
     }
 
     if state.ui.popup.protein_design {
-        popup("Protein design").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("Protein design"), ui.ctx(), |ui| {
             protein_design::protein_design_window(state, ui);
         });
+        state.ui.popup.protein_design &= open;
     }
 
     if state.ui.popup.about {
-        popup("About").show(ui.ctx(), |ui| {
+        let open = show_popup(popup("About"), ui.ctx(), |ui| {
             about::about_window(state, ui);
         });
+        state.ui.popup.about &= open;
     }
 }
 
@@ -311,10 +355,6 @@ fn get_geostd(
             }
         }
     }
-
-    ui.add_space(ROW_SPACING);
-
-    close_btn(ui, &mut state.ui.popup.show_get_geostd);
 }
 
 fn associated_structures(
@@ -363,9 +403,6 @@ fn associated_structures(
 
             ui.add_space(ROW_SPACING);
         }
-
-        ui.add_space(ROW_SPACING);
-        close_btn(ui, &mut state.ui.popup.show_associated_structures);
     }
 }
 
@@ -425,10 +462,6 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
             ui.add_space(COL_SPACING);
             ui.label("No database selected.");
         }
-
-        ui.add_space(COL_SPACING);
-
-        close_btn(ui, &mut state.ui.popup.alignment_screening);
     });
 
     if !state.volatile.alignment.mols_passed_screening.is_empty() {
@@ -461,7 +494,6 @@ pub(in crate::ui) struct MetadataPopupResult {
 }
 
 pub(in crate::ui) fn metadata_popup(
-    popup_state: &mut PopupState,
     editing: &mut bool,
     edit_rows: &mut Vec<(String, String)>,
     mol: &MoleculeCommon,
@@ -478,12 +510,6 @@ pub(in crate::ui) fn metadata_popup(
     // Everything here is left-aligned and wrapping: a right-aligned or non-wrapping row would
     // stretch the popup to the width available to it, instead of to the width its content needs.
     ui.horizontal_wrapped(|ui| {
-        if button!(ui, "Close", Color32::LIGHT_RED, "").clicked() {
-            popup_state.metadata = None;
-        }
-
-        ui.add_space(COL_SPACING);
-
         let name = mol.name(idents);
         ui.heading(RichText::new(format!("Metadata for {name}")).color(Color32::WHITE));
 
@@ -857,10 +883,6 @@ fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut Eng
             state.update_save_prefs();
         }
     });
-
-    ui.add_space(ROW_SPACING);
-
-    close_btn(ui, &mut state.ui.popup.show_settings);
 }
 
 fn alignment(
@@ -870,13 +892,7 @@ fn alignment(
     engine_updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
-    ui.horizontal(|ui| {
-        ui.label("Alignment:");
-
-        ui.add_space(COL_SPACING);
-
-        close_btn(ui, &mut state.ui.popup.alignment);
-    });
+    ui.label("Alignment:");
 
     if !state.volatile.alignment.results.is_empty() {
         let res = &state.volatile.alignment.results[0];
@@ -986,16 +1002,6 @@ fn alignment(
 }
 
 fn residue_selector(state: &mut State, scene: &mut Scene, ui: &mut Ui, redraw: &mut bool) {
-    ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            state.ui.popup.residue_selector = false;
-            state.ui.chain_to_pick_res = None;
-        }
-    });
-    ui.add_space(ROW_SPACING);
     // This is a bit fuzzy, as the size varies by residue name (Not always 1 for non-AAs), and index digits.
 
     let mut update_arc_center = false;
@@ -1115,16 +1121,11 @@ fn lig_pocket_from_het_res(
     //     }
     // }
 
-    ui.horizontal(|ui| {
-        label!(
-            ui,
-            "Make ligands and pockets from het residues",
-            Color32::WHITE
-        );
-        ui.add_space(COL_SPACING / 2.);
-
-        close_btn(ui, &mut state.ui.popup.lig_pocket_creation);
-    });
+    label!(
+        ui,
+        "Make ligands and pockets from het residues",
+        Color32::WHITE
+    );
 
     // .on_hover_text(
     //     "Attempt to load a ligand molecule and force field \

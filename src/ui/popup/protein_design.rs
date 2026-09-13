@@ -38,7 +38,7 @@ use crate::{
     },
     state::State,
     therapeutic_misc::ddg::{self, DdgScan},
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn},
+    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
 };
 
 /// How many rows of each result table to show before the user has to export.
@@ -229,8 +229,6 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
         .cloned()
     else {
         ui.label(RichText::new("Open a protein to use these tools.").color(COLOR_INACTIVE));
-        ui.add_space(ROW_SPACING);
-        close_btn(ui, &mut state.ui.popup.protein_design);
         return;
     };
 
@@ -264,9 +262,6 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
         DesignTab::Stability => stability_tab(design_ui, &peptide, &context, ui),
         DesignTab::Antibody => antibody_tab(design_ui, &peptide, &context, ui),
     }
-
-    ui.add_space(ROW_SPACING);
-    close_btn(ui, &mut state.ui.popup.protein_design);
 }
 
 // ---------------------------------------------------------------------------------------------

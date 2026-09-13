@@ -8,14 +8,11 @@
 
 use std::{collections::HashMap, fs, io, sync::mpsc, thread, time::Duration};
 
-use egui::{Align, Color32, Layout, RichText, ScrollArea, Ui};
+use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::{
     external_tools::{self, CheckResult, Tool, ToolCheckUpdate, ToolStatus},
-    ui::{
-        COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn,
-        util::open_dir,
-    },
+    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, util::open_dir},
 };
 
 type DiskUsage = Result<Option<u64>, String>;
@@ -281,9 +278,6 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
         {
             tools.start_probe();
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            close_btn(ui, &mut state.ui.popup.external_tools);
-        });
     });
 
     ui.add_space(ROW_SPACING);

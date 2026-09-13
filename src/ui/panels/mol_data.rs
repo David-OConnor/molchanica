@@ -987,7 +987,6 @@ pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui
     }
 
     let result = popup::metadata_popup(
-        &mut state.ui.popup,
         &mut state.ui.editing_metadata,
         &mut state.ui.metadata_edit.rows,
         &common,

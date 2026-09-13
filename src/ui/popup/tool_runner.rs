@@ -24,7 +24,6 @@ use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::peptide::MoleculePeptide;
 use serde_json::{Value, json};
 
-use super::close_btn;
 use crate::{
     external_tools::{
         self, RunControl, Tool,
@@ -99,19 +98,13 @@ pub(in crate::ui) fn tool_window(
     ui: &mut Ui,
 ) {
     let windows = &mut state.ui.tool_windows;
-    let popup = &mut state.ui.popup;
-    let (window, open) = match kind {
-        ToolWindowKind::StructurePrediction => {
-            (&mut windows.structure_prediction, &mut popup.structure_pred)
-        }
-        ToolWindowKind::SequenceDesign => (&mut windows.sequence_design, &mut popup.sequence_pred),
-        ToolWindowKind::BackboneDesign => (&mut windows.backbone_design, &mut popup.rfd3),
+    let window = match kind {
+        ToolWindowKind::StructurePrediction => &mut windows.structure_prediction,
+        ToolWindowKind::SequenceDesign => &mut windows.sequence_design,
+        ToolWindowKind::BackboneDesign => &mut windows.backbone_design,
     };
 
-    ui.horizontal(|ui| {
-        ui.heading(kind.heading());
-        close_btn(ui, open);
-    });
+    ui.heading(kind.heading());
 
     let load = ui
         .push_id(kind.heading(), |ui| {
@@ -867,13 +860,18 @@ fn fields_ui(tool: Tool, form: &mut Form, pick: &mut Option<String>, ui: &mut Ui
         .max_height(480.0)
         .show(ui, |ui| {
             let groups = form.contract.groups_in_mode(&form.mode);
-            for (index, (group, fields)) in groups.into_iter().enumerate() {
-                let title = group
-                    .map(|group| group.label.as_str())
-                    .unwrap_or("Parameters");
+            for (index, (label, group, fields)) in groups.into_iter().enumerate() {
+                // Every group the contract names gets its own heading. The salt is the group name
+                // rather than the heading text so that the sections keep distinct ids: the one
+                // group a tool may leave unnamed is the only one drawn as "Parameters".
+                let title = if label.is_empty() {
+                    "Parameters"
+                } else {
+                    label
+                };
 
                 CollapsingHeader::new(title)
-                    .id_salt((shared_adapter::slug(tool), title))
+                    .id_salt((shared_adapter::slug(tool), label))
                     .default_open(index == 0)
                     .show(ui, |ui| {
                         if let Some(url) = group.and_then(|group| group.docs_url.as_deref()) {

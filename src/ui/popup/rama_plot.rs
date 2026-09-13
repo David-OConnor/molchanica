@@ -2,22 +2,13 @@
 
 use std::f64::consts::PI;
 
-use egui::{Align, Color32, Layout, RichText, Ui, Vec2};
+use egui::{Color32, RichText, Ui, Vec2};
 use egui_plot::{GridMark, Plot, PlotPoints, Points, uniform_grid_spacer};
 use mol_defs::molecules::Residue;
 
 pub const POINT_RADIUS: f32 = 2.5;
 
-pub fn plot_rama(residues: &[Residue], protein_ident: &str, ui: &mut Ui, popup_open: &mut bool) {
-    ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            *popup_open = false;
-        }
-    });
-
+pub fn plot_rama(residues: &[Residue], protein_ident: &str, ui: &mut Ui) {
     ui.vertical_centered(|ui| {
         ui.heading(
             RichText::new(format!("Ramachandran plot for {protein_ident}")).color(Color32::WHITE),

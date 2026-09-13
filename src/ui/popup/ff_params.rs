@@ -13,9 +13,7 @@ use na_seq::AminoAcidGeneral;
 use crate::{
     button, label,
     state::State,
-    ui::{
-        COL_SPACING, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, popup::close_btn,
-    },
+    ui::{COL_SPACING, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
 };
 
 /// Height of a table cell; matches EGUI's default `interact_size.y`. Rows must be exactly this
@@ -737,10 +735,6 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
         ui.label("Filter:");
         ui.add(TextEdit::singleline(&mut st.filter).desired_width(120.))
             .on_hover_text("Show only rows whose atom or residue types contain this text.");
-
-        ui.add_space(COL_SPACING);
-
-        close_btn(ui, &mut state.ui.popup.ff_params);
     });
 
     label!(

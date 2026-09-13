@@ -1,6 +1,6 @@
 use std::{collections::HashMap, slice};
 
-use egui::{Align, Color32, ComboBox, Layout, RichText, ScrollArea, Ui};
+use egui::{Color32, ComboBox, RichText, ScrollArea, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
     molecules::{MolType, MoleculeGeneric},
@@ -28,18 +28,7 @@ use crate::{
 /// Assumes run from the editor for now. For setting relations between
 /// Pharmacophore features, e.g. "or" logic.
 pub(in crate::ui) fn pharmacophore_boolean_window(state: &mut State, ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        label!(ui, "Relate pharmacophore features", Color32::WHITE);
-
-        ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
-            if ui
-                .button(RichText::new("Close").color(Color32::LIGHT_RED))
-                .clicked()
-            {
-                state.ui.popup.pharmacophore_boolean = false;
-            }
-        });
-    });
+    label!(ui, "Relate pharmacophore features", Color32::WHITE);
 
     ui.label(RichText::new("Select 2 features to mark with *Or* logic.").color(Color32::GRAY));
 
@@ -490,15 +479,6 @@ pub(in crate::ui) fn pharmacophore_screen(
             .clicked()
         {
             state.ui.popup.parquet_db = true;
-        }
-
-        ui.add_space(COL_SPACING);
-
-        if ui
-            .button(RichText::new("Close").color(Color32::LIGHT_RED))
-            .clicked()
-        {
-            state.ui.popup.pharmacophore_screening = false;
         }
     });
     ui.add_space(ROW_SPACING);
