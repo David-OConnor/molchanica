@@ -6,10 +6,7 @@ pub mod pharmacophore;
 pub mod protein_design;
 pub(in crate::ui) mod rama_plot;
 pub mod recent_files;
-pub(crate) mod rfdiffusion3;
-pub(crate) mod sequence_pred;
-pub(crate) mod structure_pred;
-mod tool_runner;
+pub(crate) mod tool_runner;
 
 use std::{collections::HashMap, ops::RangeInclusive, path::Path};
 
@@ -27,6 +24,7 @@ use mol_defs::molecules::{
     pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
 };
 use na_seq::AaIdent;
+use tool_runner::{ToolWindowKind, tool_window};
 
 use crate::{
     button, cam,
@@ -188,7 +186,13 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.structure_pred {
         popup("Structure prediction").show(ui.ctx(), |ui| {
-            structure_pred::structure_prediction_window(state, scene, updates, ui);
+            tool_window(
+                state,
+                ToolWindowKind::StructurePrediction,
+                scene,
+                updates,
+                ui,
+            );
         });
     }
 
@@ -197,7 +201,7 @@ pub(in crate::ui) fn load_popups(
             .default_width(680.0)
             .max_height(1000.0)
             .show(ui.ctx(), |ui| {
-                rfdiffusion3::rfdiffusion3_window(state, scene, updates, ui);
+                tool_window(state, ToolWindowKind::BackboneDesign, scene, updates, ui);
             });
     }
 
@@ -206,7 +210,7 @@ pub(in crate::ui) fn load_popups(
             .default_width(620.0)
             .max_height(1000.0)
             .show(ui.ctx(), |ui| {
-                sequence_pred::sequence_prediction_window(state, scene, updates, ui);
+                tool_window(state, ToolWindowKind::SequenceDesign, scene, updates, ui);
             });
     }
 

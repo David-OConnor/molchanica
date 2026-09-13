@@ -80,11 +80,8 @@ protein currently open:
 - **Stability scan** scores all twenty substitutions at every position in one pass, ranking the
   most stabilizing mutations and the positions the structure tolerates least. This runs natively;
   it needs the ProteinMPNN weights installed but no Python at run time.
-- **Antibody** identifies heavy and light chains, delineates CDRs, and flags developability
-  motifs. With ANARCII installed it upgrades from sequence-position approximations to a real
-  numbering assignment with insertion codes; with IgBLAST it adds germline V and J gene calls. The
-  panel always states which of the two you are looking at, so an approximation is never mistaken
-  for a numbering assignment.
+- **Antibody** identifies heavy and light chains, delineates CDRs from sequence-position
+  approximations, and flags developability motifs.
 
 ## Functionality
 
@@ -100,8 +97,7 @@ protein currently open:
 - Design sequences for a backbone with [LigandMPNN](https://github.com/dauparas/LigandMPNN) and
   [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), conditioned on ligands and nucleic acids where present
 - Scan every point mutation at every position for stability (ΔΔG), in a single pass, natively — no Python needed at run time
-- Antibody workflows: real numbering with insertion codes ([ANARCII](https://github.com/oxpig/ANARCII)),
-  germline V (D)J assignment ([IgBLAST](https://ncbi.github.io/igblast/)), CDR selection, paratope contacts, and developability triage
+- Antibody workflows: CDR selection, paratope contacts, and developability triage
 - Read a local [PDBbind](https://www.pdbbind-plus.org.cn/) release: look up a complex's measured binding affinity and open its protein, pocket, and ligand files
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
   and more.
@@ -154,8 +150,6 @@ or installed within the application's UI.
 - ORCA
 - Boltz-2
 - MPNN (Protein, ligand etc)
-- igBLAST
-- ANARCII
 
 (todo: Expand:)
 

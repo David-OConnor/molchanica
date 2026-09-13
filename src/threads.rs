@@ -22,7 +22,6 @@ use mol_defs::{
     screening::pharmacophore::PhScreeningScore,
     sfc_mesh::MeshColors,
 };
-use na_seq::AaIdent;
 
 use crate::{
     file_io::{SessionRestoreItem, SessionRestorePayload, managed_mols, parse_session_history},
@@ -31,7 +30,6 @@ use crate::{
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
     state::State,
-    structure_prediction::StructurePredictionOutcome,
     util::{RedrawFlags, handle_err, handle_success},
 };
 
@@ -73,8 +71,6 @@ pub struct ThreadReceivers {
     /// GROMACS MD run. Carries `(out, mol_start_indices, elapsed_ms)`.
     // pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<usize>, u128)>>,
     pub gromacs_md_avail: Option<Receiver<(GromacsOutput, u128)>>,
-    /// Structure prediction result. The worker streams model output directly while it runs.
-    pub structure_prediction: Option<Receiver<StructurePredictionOutcome>>,
 }
 
 pub struct SessionRestoreReceiver {
@@ -101,7 +97,6 @@ impl ThreadReceivers {
             || self.peptide_mesh_coloring.is_some()
             || self.ph_screening.is_some()
             || self.gromacs_md_avail.is_some()
-            || self.structure_prediction.is_some()
     }
 }
 
@@ -856,64 +851,5 @@ pub fn handle_thread_rx(
         // crate::gromacs::on_gromacs_md_complete(state, &out, mol_start_indices, elapsed_ms);
         on_gromacs_md_complete(state, &out, elapsed_ms);
         state.volatile.md_local.gromacs_output = Some(out);
-    }
-
-    let structure_prediction_result = state
-        .volatile
-        .thread_receivers
-        .structure_prediction
-        .as_ref()
-        .map(Receiver::try_recv);
-    match structure_prediction_result {
-        Some(Ok(outcome)) => {
-            state.volatile.thread_receivers.structure_prediction = None;
-            state.ui.structure_pred.finish_prediction();
-
-            match outcome {
-                StructurePredictionOutcome::Complete(mut molecule) => {
-                    state.volatile.aa_seq_text = molecule
-                        .aa_seq
-                        .iter()
-                        .map(|aa| aa.to_str(AaIdent::OneLetter))
-                        .collect();
-                    state.volatile.aa_seq_display_cache.dirty = true;
-                    // Register the model's raw mmCIF under the molecule's ident so it can be saved
-                    // back out as a file, mirroring how on-disk molecules populate `cif_pdb_raw`.
-                    if let Some(cif) = molecule.source_cif.take() {
-                        state.cif_pdb_raw.insert(molecule.common.ident.clone(), cif);
-                    }
-                    let peptide_i = state.peptides.len();
-                    state.peptides.push(molecule);
-                    state.volatile.active_mol = Some((MolType::Peptide, peptide_i));
-                    state.volatile.active_peptide = Some(peptide_i);
-                    state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
-                    state.reset_selections();
-                    state.volatile.flags.ss_mesh_created = false;
-                    state.volatile.flags.sas_mesh_created = false;
-                    state.volatile.flags.clear_density_drawing = true;
-                    state.volatile.flags.new_mol_loaded = true;
-                    redraw.peptide = true;
-                    let msg = "Structure prediction complete; loaded predicted molecule".to_owned();
-                    state.ui.structure_pred.mark_complete(msg.clone());
-                    handle_success(&mut state.ui, msg);
-                }
-                StructurePredictionOutcome::Cancelled => {
-                    handle_success(&mut state.ui, "Structure prediction cancelled".to_owned());
-                }
-                StructurePredictionOutcome::Failed(error) => handle_err(
-                    &mut state.ui,
-                    format!("Structure prediction failed: {error}"),
-                ),
-            }
-        }
-        Some(Err(TryRecvError::Disconnected)) => {
-            state.volatile.thread_receivers.structure_prediction = None;
-            state.ui.structure_pred.finish_prediction();
-            handle_err(
-                &mut state.ui,
-                "Structure prediction worker stopped before returning a result".to_owned(),
-            );
-        }
-        Some(Err(TryRecvError::Empty)) | None => {}
     }
 }

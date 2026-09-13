@@ -8,8 +8,8 @@
 //! other's list.
 //!
 //! Values are held as strings throughout, exactly as an HTML form would submit them. Interpreting
-//! them — a contig, a length range, an atom selection — belongs to the adapter for the tool, which
-//! is where the tool's own rules live; see [`super::rfdiffusion3`].
+//! them — a contig, a length range, an atom selection — belongs to `bio_tools`' Python adapter for
+//! the tool, which is where the tool's own rules live; see [`super::shared_adapter`].
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -73,12 +73,6 @@ pub struct FormField {
     /// Preferred height of a `textarea`, in rows.
     #[serde(default)]
     pub rows: Option<usize>,
-    #[serde(default)]
-    pub minimum: Option<f64>,
-    #[serde(default)]
-    pub maximum: Option<f64>,
-    #[serde(default)]
-    pub step: Option<f64>,
     /// Comma-separated file extensions a `file` field accepts, e.g. `.pdb,.cif`.
     #[serde(default)]
     pub accept: String,
@@ -179,12 +173,35 @@ impl FormContract {
         self.fields.iter().find(|field| field.name == name)
     }
 
-    /// Every field's default, keyed by field name.
+    /// Every field's default, keyed by field name, plus the first task where the tool has tasks.
+    /// What a fresh form, or one a preset is about to be loaded over, starts from.
     pub fn defaults(&self) -> HashMap<String, String> {
-        self.fields
+        let mut values: HashMap<String, String> = self
+            .fields
             .iter()
             .map(|field| (field.name.clone(), field.default_text()))
-            .collect()
+            .collect();
+
+        if let Some(task) = self.tasks.first() {
+            values.insert("task".into(), task.value.clone());
+        }
+        values
+    }
+
+    /// The field a structure file goes in, in `mode`: the first file field that accepts PDB.
+    ///
+    /// This is where the tool window puts a structure written from an opened molecule, so that
+    /// no tool's field names have to be known outside its contract. `None` for tools that take no
+    /// structure.
+    pub fn structure_field(&self, mode: &str) -> Option<&FormField> {
+        self.fields.iter().find(|field| {
+            field.kind() == FieldKind::File
+                && field.applies_to(mode)
+                && field
+                    .accepted_extensions()
+                    .iter()
+                    .any(|extension| extension.eq_ignore_ascii_case("pdb"))
+        })
     }
 
     /// The input mode to start in.

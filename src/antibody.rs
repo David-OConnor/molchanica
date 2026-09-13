@@ -15,37 +15,16 @@
 //! for triage, UI selection, MD region setup, and notebook-style analysis, but
 //! it should not be treated as a substitute for a full antibody numbering
 //! assignment with insertion codes.
-//!
-//! Where that substitute matters, two optional tools supply it, and
-//! [`refine_with_anarcii`] and [`germline_assignments`] below graft their
-//! results onto the same annotation types the approximations produce:
-//!
-//! - **ANARCII** assigns a canonical position and insertion code to every
-//!   residue, which is what makes CDR boundaries correct on a chain that is
-//!   longer or shorter than the canonical length — that is, on exactly the
-//!   chains anyone is interested in, since an unusual loop is usually the
-//!   point. A position approximation cannot do this: it counts from the start
-//!   of the chain, so one insertion in CDR1 shifts every boundary after it.
-//! - **IgBLAST** additionally reports which germline genes a chain came from,
-//!   which nothing here can infer from sequence heuristics alone.
-//!
-//! Neither is required. With neither installed the approximations are what you
-//! get, everything still works offline, and [`AntibodyChainAnnotation::source`]
-//! says which you are looking at — so a report never silently presents an
-//! approximation as a numbering assignment.
 
 use std::{
     collections::{BTreeMap, HashSet},
     fmt::{self, Display, Formatter},
-    io,
 };
 
 use bio_files::ResidueType;
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{AtomRole, peptide::MoleculePeptide};
 use na_seq::{AaIdent, AminoAcid, Element};
-
-use crate::external_tools::{anarcii, igblast};
 
 const VARIABLE_DOMAIN_SCAN_LEN: usize = 130;
 
@@ -229,31 +208,6 @@ impl CdrAnnotation {
     }
 }
 
-/// Where a chain's CDR boundaries came from.
-///
-/// Carried on the annotation so that a report or a UI can say which it is showing. The two are
-/// not interchangeable, and the difference is invisible in the boundaries themselves.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub enum AnnotationSource {
-    /// Sequence-position approximations computed here, with no external tool.
-    #[default]
-    Approximate,
-    /// A real numbering assignment from ANARCII, with insertion codes.
-    Anarcii,
-    /// Boundaries implied by IgBLAST's alignment against the germline databases.
-    IgBlast,
-}
-
-impl Display for AnnotationSource {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Approximate => "position approximation",
-            Self::Anarcii => "ANARCII numbering",
-            Self::IgBlast => "IgBLAST alignment",
-        })
-    }
-}
-
 /// Antibody-oriented annotation for one peptide chain.
 #[derive(Clone, Debug)]
 pub struct AntibodyChainAnnotation {
@@ -267,15 +221,6 @@ pub struct AntibodyChainAnnotation {
     pub cdrs: Vec<CdrAnnotation>,
     pub variable_domain_residues: Vec<ResidueRef>,
     pub notes: Vec<String>,
-    /// How `cdrs` were determined. See [`AnnotationSource`].
-    pub source: AnnotationSource,
-    /// Scheme positions per residue, when a real numbering was applied. Indexed the same way as
-    /// `residues`, with `None` where the numbering did not cover a residue — a leader sequence or
-    /// a constant domain outside the variable region.
-    pub numbering: Vec<Option<String>>,
-    /// Germline gene calls, when IgBLAST supplied them. Best hit first.
-    pub germline_v: Vec<String>,
-    pub germline_j: Vec<String>,
 }
 
 impl AntibodyChainAnnotation {
@@ -885,234 +830,10 @@ fn annotate_sequence_with_refs(
         confidence: classification.confidence,
         sequence: sequence_to_string(sequence),
         sequence_aa: sequence.to_vec(),
-        numbering: vec![None; residues.len()],
         residues,
         cdrs,
         variable_domain_residues,
         notes,
-        source: AnnotationSource::Approximate,
-        germline_v: Vec::new(),
-        germline_j: Vec::new(),
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Optional refinement through the external antibody tools
-// ---------------------------------------------------------------------------------------------
-
-/// Replace the approximated CDRs with ANARCII's numbering.
-///
-/// Every antibody-like chain is numbered in one invocation, because the cost is dominated by
-/// starting a Python process and importing Torch, not by the sequences themselves.
-///
-/// Chains ANARCII cannot number are left with their approximations and gain a note saying so:
-/// a scFv linker or a partially resolved chain should not lose the annotation it had.
-///
-/// Blocking — run it on a worker thread.
-pub fn refine_with_anarcii(
-    annotation: &mut AntibodyAnnotation,
-    scheme: anarcii::NumberingScheme,
-) -> io::Result<()> {
-    let indices: Vec<usize> = annotation
-        .chains
-        .iter()
-        .enumerate()
-        .filter(|(_, chain)| chain.kind.is_antibody_like() && !chain.sequence_aa.is_empty())
-        .map(|(index, _)| index)
-        .collect();
-    if indices.is_empty() {
-        return Ok(());
-    }
-
-    let sequences: Vec<String> = indices
-        .iter()
-        .map(|index| annotation.chains[*index].sequence.clone())
-        .collect();
-    let numbered = anarcii::number(
-        &sequences,
-        &anarcii::NumberingOptions {
-            scheme,
-            ..anarcii::NumberingOptions::default()
-        },
-    )?;
-
-    for (index, chain_numbering) in indices.into_iter().zip(numbered) {
-        apply_numbering(&mut annotation.chains[index], &chain_numbering);
-    }
-
-    annotation
-        .notes
-        .retain(|note| !note.contains("approximations"));
-    annotation.notes.push(format!(
-        "CDR boundaries refined with ANARCII ({}).",
-        scheme.label()
-    ));
-    Ok(())
-}
-
-/// Graft one chain's ANARCII numbering onto its annotation.
-fn apply_numbering(chain: &mut AntibodyChainAnnotation, numbered: &anarcii::NumberedChain) {
-    if let Some(error) = &numbered.error {
-        chain
-            .notes
-            .push(format!("ANARCII could not number this chain: {error}"));
-        return;
-    }
-    if numbered.residues.is_empty() {
-        chain
-            .notes
-            .push("ANARCII returned no numbering for this chain.".to_string());
-        return;
-    }
-
-    chain.numbering = vec![None; chain.residues.len()];
-    for residue in &numbered.residues {
-        if residue.is_gap() {
-            continue;
-        }
-        if let Some(slot) = chain.numbering.get_mut(residue.query_index) {
-            *slot = Some(residue.label());
-        }
-    }
-
-    // ANARCII decides the chain class from the sequence itself, which is a better answer than the
-    // motif heuristics here; adopt it so that Kabat and Chothia boundaries, which differ between
-    // heavy and light, are taken from the right table.
-    if let Some(kind) = chain_kind_from_anarcii(numbered.chain_type.as_deref()) {
-        chain.kind = kind;
-        chain.confidence = numbered.score.unwrap_or(chain.confidence);
-    }
-
-    let heavy = chain.kind.is_heavy();
-    let labels = if heavy {
-        [CdrLabel::H1, CdrLabel::H2, CdrLabel::H3]
-    } else {
-        [CdrLabel::L1, CdrLabel::L2, CdrLabel::L3]
-    };
-    let scheme = cdr_scheme_from_anarcii(numbered.scheme);
-
-    let mut cdrs = Vec::new();
-    for (label, residues) in labels.into_iter().zip(numbered.cdrs()) {
-        // Positions are query offsets, which index `chain.residues` directly.
-        let refs: Vec<ResidueRef> = residues
-            .iter()
-            .filter_map(|residue| chain.residues.get(residue.query_index).cloned())
-            .collect();
-        if refs.is_empty() {
-            continue;
-        }
-        // 1-based, to match the convention the approximated annotations already use.
-        let start_position = residues[0].query_index + 1;
-        let end_position = residues[residues.len() - 1].query_index + 1;
-
-        cdrs.push(CdrAnnotation {
-            label,
-            scheme,
-            chain_kind: chain.kind,
-            chain_id: chain.chain_id.clone(),
-            chain_i: chain.chain_i,
-            start_position,
-            end_position,
-            residues: refs,
-            // Recomputed by the caller where a structure is available; the sequence-only path has
-            // no coordinates to average.
-            centroid: None,
-            sequence: residues.iter().map(|residue| residue.amino_acid).collect(),
-        });
-    }
-
-    if cdrs.is_empty() {
-        chain
-            .notes
-            .push("ANARCII numbered this chain but found no CDR positions in it.".to_string());
-        return;
-    }
-
-    chain.cdrs = cdrs;
-    chain.source = AnnotationSource::Anarcii;
-    // The numbered region is the variable domain, which is a real boundary rather than the fixed
-    // 130-residue window the approximation scans.
-    if let (Some(start), Some(end)) = (numbered.query_start, numbered.query_end) {
-        let end = (end + 1).min(chain.residues.len());
-        if start < end {
-            chain.variable_domain_residues = chain.residues[start..end].to_vec();
-        }
-    }
-}
-
-fn chain_kind_from_anarcii(chain_type: Option<&str>) -> Option<AntibodyChainKind> {
-    match chain_type?.to_ascii_uppercase().as_str() {
-        "H" => Some(AntibodyChainKind::Heavy),
-        // ANARCII distinguishes the two light-chain loci; this module does not.
-        "K" | "L" => Some(AntibodyChainKind::Light),
-        _ => None,
-    }
-}
-
-/// Map ANARCII's scheme onto this module's, for labelling the refined CDRs.
-///
-/// Martin is reported as Chothia because it *is* Chothia with the Abhinandan corrections, and
-/// this module's enum does not distinguish them. AHo has no counterpart at all, so it falls back
-/// to IMGT — both are uniform across chain types, which is the property the label is used for.
-fn cdr_scheme_from_anarcii(scheme: anarcii::NumberingScheme) -> CdrNumberingScheme {
-    match scheme {
-        anarcii::NumberingScheme::Kabat => CdrNumberingScheme::Kabat,
-        anarcii::NumberingScheme::Chothia | anarcii::NumberingScheme::Martin => {
-            CdrNumberingScheme::Chothia
-        }
-        anarcii::NumberingScheme::Imgt | anarcii::NumberingScheme::Aho => CdrNumberingScheme::Imgt,
-    }
-}
-
-/// Germline V and J assignments for every antibody-like chain, from IgBLAST.
-///
-/// Returned rather than applied, and reported per chain, because a germline call is evidence
-/// about a chain rather than a property of it: which database it came from and how well it
-/// matched both bear on how much weight to give it.
-///
-/// Blocking, and one process per chain — IgBLAST takes a single query at a time.
-pub fn germline_assignments(
-    annotation: &AntibodyAnnotation,
-) -> io::Result<Vec<(String, igblast::IgBlastResult)>> {
-    let mut results = Vec::new();
-    for chain in annotation
-        .chains
-        .iter()
-        .filter(|c| c.kind.is_antibody_like())
-    {
-        let query = igblast::IgBlastQuery::protein(
-            format!("chain_{}", chain.chain_id),
-            chain.sequence.clone(),
-        );
-        results.push((chain.chain_id.clone(), igblast::run(&query)?));
-    }
-    Ok(results)
-}
-
-/// Attach IgBLAST's germline calls to an annotation.
-///
-/// Independent of [`refine_with_anarcii`]: the two can be used together, in which case ANARCII's
-/// numbering decides the CDR boundaries and IgBLAST supplies the gene names. IgBLAST's own
-/// boundaries are only adopted where no numbering has been applied, since a numbering assignment
-/// is the more precise of the two.
-pub fn apply_germline_assignments(
-    annotation: &mut AntibodyAnnotation,
-    assignments: &[(String, igblast::IgBlastResult)],
-) {
-    for (chain_id, result) in assignments {
-        let Some(chain) = annotation
-            .chains
-            .iter_mut()
-            .find(|chain| chain.chain_id == *chain_id)
-        else {
-            continue;
-        };
-        chain.germline_v = result.v_calls.clone();
-        chain.germline_j = result.j_calls.clone();
-        if chain.source == AnnotationSource::Approximate && !result.regions.is_empty() {
-            chain.source = AnnotationSource::IgBlast;
-        }
-        chain.notes.push(format!("IgBLAST: {}", result.summary()));
     }
 }
 

@@ -52,7 +52,7 @@ use crate::{
     threads::ThreadReceivers,
     ui::popup::{
         external_tools::ExternalToolsUi, ff_params::FfParamsUi, protein_design::ProteinDesignUi,
-        rfdiffusion3::Rfd3Ui, sequence_pred::SequencePredUi, structure_pred::StructurePredUi,
+        tool_runner::ToolWindows,
     },
 };
 
@@ -502,12 +502,8 @@ pub struct StateUi {
     pub md: StateUiMd,
     /// Selection state for the force-field parameter viewer/editor popup.
     pub ff_params: FfParamsUi,
-    /// Input state for the structure-prediction popup.
-    pub structure_pred: StructurePredUi,
-    /// Input and result state for the dedicated ProteinMPNN sequence-prediction popup.
-    pub sequence_pred: SequencePredUi,
-    /// Input and result state for the RFdiffusion3 backbone-generation popup.
-    pub rfd3: Rfd3Ui,
+    /// Forms, jobs, and results for the bio_tools shared-adapter tool windows.
+    pub tool_windows: ToolWindows,
     /// Cached results of the third-party tools status probe.
     pub external_tools: ExternalToolsUi,
     /// Input and results for the sequence-design, ΔΔG, and antibody tools.

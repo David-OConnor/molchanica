@@ -9,8 +9,8 @@
 //!   window instead.
 //! - **Stability scan** runs the native ΔΔG scanner ([`crate::adme_::ddg`]) over every
 //!   position and every substitution in one pass.
-//! - **Antibody** annotates chains, and — when ANARCII or IgBLAST is installed — replaces the
-//!   sequence-position approximations with a real numbering assignment and germline calls.
+//! - **Antibody** annotates antibody chains: CDRs from sequence-position approximations, the
+//!   paratope selection, and developability motifs.
 //!
 //! They belong together because they are used together: a scan says which positions to hold
 //! fixed, design proposes sequences for the rest, and the antibody annotation supplies the CDR
@@ -31,9 +31,9 @@ use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::AaIdent;
 
 use crate::{
-    antibody::{self, AnnotationSource, AntibodyAnnotation, CdrNumberingScheme},
+    antibody::{self, AntibodyAnnotation, CdrNumberingScheme},
     external_tools::{
-        Tool, anarcii,
+        Tool,
         mpnn::{self, DesignRequest, DesignResult, MpnnModel, designable_chains},
     },
     state::State,
@@ -165,8 +165,7 @@ pub struct ProteinDesignUi {
     stability: Job<DdgScan>,
 
     // Antibody
-    scheme: anarcii::NumberingScheme,
-    run_igblast: bool,
+    scheme: CdrNumberingScheme,
     antibody: Job<AntibodyAnnotation>,
 }
 
@@ -182,8 +181,7 @@ impl Default for ProteinDesignUi {
             fixed_residues: String::new(),
             design: Job::default(),
             stability: Job::default(),
-            scheme: anarcii::NumberingScheme::default(),
-            run_igblast: false,
+            scheme: CdrNumberingScheme::default(),
             antibody: Job::default(),
         }
     }
@@ -536,24 +534,23 @@ fn antibody_tab(
     ui.add_enabled_ui(!running, |ui| {
         ui.horizontal(|ui| {
             ui.label("Numbering:");
-            ComboBox::from_id_salt("anarcii_scheme")
-                .selected_text(design_ui.scheme.label())
+            ComboBox::from_id_salt("cdr_scheme")
+                .selected_text(design_ui.scheme.to_string())
                 .show_ui(ui, |ui| {
-                    for scheme in anarcii::NumberingScheme::ALL {
-                        ui.selectable_value(&mut design_ui.scheme, scheme, scheme.label());
+                    for scheme in [
+                        CdrNumberingScheme::Imgt,
+                        CdrNumberingScheme::Kabat,
+                        CdrNumberingScheme::Chothia,
+                    ] {
+                        ui.selectable_value(&mut design_ui.scheme, scheme, scheme.to_string());
                     }
                 });
-            ui.checkbox(&mut design_ui.run_igblast, "Germline assignment")
-                .on_hover_text(
-                    "Also run IgBLAST to identify which germline V and J genes each chain came \
-                     from. Slower, and needs the germline databases installed.",
-                );
         });
     });
     ui.label(
         RichText::new(
-            "Without ANARCII installed you still get CDRs, but from sequence-position \
-             approximations — the panel says which you are looking at.",
+            "CDRs are sequence-position approximations, not a numbering assignment with \
+             insertion codes.",
         )
         .color(COLOR_INACTIVE)
         .small(),
@@ -572,10 +569,9 @@ fn antibody_tab(
         {
             let peptide = peptide.clone();
             let scheme = design_ui.scheme;
-            let run_igblast = design_ui.run_igblast;
-            design_ui
-                .antibody
-                .start(context, move || Ok(annotate(&peptide, scheme, run_igblast)));
+            design_ui.antibody.start(context, move || {
+                Ok(antibody::annotate_antibody(&peptide, scheme))
+            });
         }
     });
 
@@ -596,28 +592,8 @@ fn antibody_tab(
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("Chain {}", chain.chain_id)).strong());
                         ui.label(RichText::new(chain.kind.to_string()).color(COLOR_HIGHLIGHT));
-                        // The source is shown, not buried: an approximation and a numbering
-                        // assignment look identical once they are just boundaries.
-                        ui.label(
-                            RichText::new(format!("[{}]", chain.source))
-                                .color(match chain.source {
-                                    AnnotationSource::Approximate => Color32::ORANGE,
-                                    _ => Color32::LIGHT_GREEN,
-                                })
-                                .small(),
-                        );
                     });
                     ui.indent(&chain.chain_id, |ui| {
-                        if !chain.germline_v.is_empty() {
-                            ui.label(
-                                RichText::new(format!(
-                                    "Germline: {} / {}",
-                                    chain.germline_v.first().map(String::as_str).unwrap_or("-"),
-                                    chain.germline_j.first().map(String::as_str).unwrap_or("-"),
-                                ))
-                                .small(),
-                            );
-                        }
                         for cdr in &chain.cdrs {
                             ui.label(
                                 RichText::new(format!(
@@ -653,36 +629,6 @@ fn antibody_tab(
             ui.ctx().copy_text(annotation.paratope_pymol_selection());
         }
     }
-}
-
-/// Annotate, then refine with whichever tools are installed.
-///
-/// Refinement failures are folded into the annotation's notes rather than failing the whole
-/// operation: an approximate annotation is still worth showing, and the note says why it was not
-/// upgraded — which is usually "the tool is not installed", the one thing the user can act on.
-fn annotate(
-    peptide: &MoleculePeptide,
-    scheme: anarcii::NumberingScheme,
-    run_igblast: bool,
-) -> AntibodyAnnotation {
-    let mut annotation = antibody::annotate_antibody(peptide, CdrNumberingScheme::Imgt);
-
-    if let Err(error) = antibody::refine_with_anarcii(&mut annotation, scheme) {
-        annotation
-            .notes
-            .push(format!("ANARCII numbering unavailable: {error}"));
-    }
-
-    if run_igblast {
-        match antibody::germline_assignments(&annotation) {
-            Ok(assignments) => antibody::apply_germline_assignments(&mut annotation, &assignments),
-            Err(error) => annotation
-                .notes
-                .push(format!("IgBLAST germline assignment unavailable: {error}")),
-        }
-    }
-
-    annotation
 }
 
 // ---------------------------------------------------------------------------------------------

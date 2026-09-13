@@ -992,7 +992,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                     ui,
                     "Tools",
                     COLOR_HIGHLIGHT,
-                    "Show which optional third-party tools (OpenDDE, Boltz-2, LigandMPNN, IgBLAST, \
+                    "Show which optional third-party tools (OpenDDE, Boltz-2, LigandMPNN, \
                     GROMACS, ORCA, ...) are installed and working, and how to install the ones that \
                     are not."
                 )

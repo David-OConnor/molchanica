@@ -1,32 +1,25 @@
-//! Inverse folding through the MPNN family: LigandMPNN, ProteinMPNN, and the AbMPNN weights.
+//! Inverse folding with the original ProteinMPNN checkout, and its antibody-tuned AbMPNN weights.
 //!
-//! [LigandMPNN](https://github.com/dauparas/LigandMPNN) ·
 //! [ProteinMPNN](https://github.com/dauparas/ProteinMPNN)
 //!
-//! These answer the question Molchanica otherwise cannot: given a backbone, what sequences would
-//! fold into it? That pairs directly with structures already loaded — a designed binder, a
-//! stabilized variant, a resurfaced antibody — and with the pocket and docking work, because
-//! LigandMPNN conditions on ligands, nucleic acids, and ions rather than treating the protein as
-//! though it sat in a vacuum.
+//! This answers the question Molchanica otherwise cannot: given a backbone, what sequences would
+//! fold into it? It backs the Protein design window's sequence tab, which pairs AbMPNN with the
+//! CDR annotation beside it and needs designs as typed values to rank and display.
 //!
-//! # Why three models behind one adapter
+//! The general-purpose MPNN runs — LigandMPNN, and ProteinMPNN with every option `bio_tools`
+//! exposes — go through the shared tool window and [`shared_adapter`](super::shared_adapter)
+//! instead, and are not duplicated here.
 //!
-//! They are the same architecture with different weights and different command-line front ends:
+//! # Why AbMPNN is a model rather than a tool
 //!
-//! - **LigandMPNN** (`run.py`) is the successor repository, and the one to reach for by default.
-//!   One entry point covers protein, ligand, soluble, and membrane model types.
-//! - **ProteinMPNN** (`protein_mpnn_run.py`) is the original. Kept because it is what the AbMPNN
-//!   checkpoint was trained as a drop-in for.
-//! - **AbMPNN** is ProteinMPNN's network with antibody-finetuned weights (Frey et al., ICML 2023
-//!   CompBio workshop, CC BY 4.0). It is not a separate installation: the weights sit beside the
-//!   vanilla ones in the same checkout, which is why it is a `MpnnModel` variant rather than its
-//!   own registry entry.
+//! AbMPNN is ProteinMPNN's network with antibody-finetuned weights (Frey et al., ICML 2023 CompBio
+//! workshop, CC BY 4.0). It is not a separate installation: the weights sit beside the vanilla ones
+//! in the same checkout, which is why it is an [`MpnnModel`] variant rather than a registry entry.
 //!
 //! # Platform note
 //!
-//! Both are plain PyTorch against a checkout — no compiled CUDA kernels, no conda — so they run on
-//! Windows and Linux alike, on CPU or GPU. The install script picks the Torch backend the same way
-//! the OpenDDE one does.
+//! Plain PyTorch against a checkout — no compiled CUDA kernels, no conda — so it runs on Windows
+//! and Linux alike, on CPU or GPU.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -35,27 +28,34 @@ use std::{
     process::Command,
 };
 
-use bio_files::{MmCif, ResidueType};
 use mol_defs::molecules::peptide::MoleculePeptide;
 use serde_json::{Map, Value, json};
 
 use crate::external_tools::{
     Tool, ToolWorkspace, bundle_root, find_executable,
     pdb_write::{PdbWriteOptions, chain_letter, peptide_to_pdb},
+    run_tool,
 };
 
-/// Which network and weights to run.
+/// The input file name, relative to the workspace the runner is started in.
+///
+/// `protein_mpnn_run.py` uses the complete `--pdb_path` value as its output FASTA stem, so an
+/// absolute Windows path becomes an invalid file name containing `C:\`. The run is therefore
+/// started in the workspace and given this relative name.
+const INPUT_PDB: &str = "input.pdb";
+
+/// The residue alphabet ProteinMPNN's bias matrices are indexed by.
+const ALPHABET: &str = "ACDEFGHIKLMNPQRSTVWYX";
+
+// ---------------------------------------------------------------------------------------------
+// Request
+// ---------------------------------------------------------------------------------------------
+
+/// Which weights to run.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MpnnModel {
-    /// LigandMPNN conditioned on the non-protein context present in the structure.
+    /// The original ProteinMPNN weights.
     #[default]
-    LigandMpnn,
-    /// LigandMPNN's protein-only model type: equivalent in scope to vanilla ProteinMPNN, but from
-    /// the maintained repository.
-    ProteinMpnnViaLigand,
-    /// LigandMPNN's soluble model type, trained without membrane context.
-    SolubleMpnn,
-    /// The original ProteinMPNN checkout and weights.
     ProteinMpnn,
     /// The ProteinMPNN network with the antibody-finetuned AbMPNN checkpoint.
     AbMpnn,
@@ -64,17 +64,11 @@ pub enum MpnnModel {
 impl MpnnModel {
     /// Which registry entry — and therefore which checkout and virtual environment — this uses.
     pub fn tool(self) -> Tool {
-        match self {
-            Self::LigandMpnn | Self::ProteinMpnnViaLigand | Self::SolubleMpnn => Tool::LigandMpnn,
-            Self::ProteinMpnn | Self::AbMpnn => Tool::ProteinMpnn,
-        }
+        Tool::ProteinMpnn
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::LigandMpnn => "LigandMPNN (ligand context)",
-            Self::ProteinMpnnViaLigand => "ProteinMPNN (LigandMPNN repo)",
-            Self::SolubleMpnn => "SolubleMPNN",
             Self::ProteinMpnn => "ProteinMPNN (original)",
             Self::AbMpnn => "AbMPNN (antibody-tuned)",
         }
@@ -82,17 +76,6 @@ impl MpnnModel {
 
     pub fn help(self) -> &'static str {
         match self {
-            Self::LigandMpnn => {
-                "Conditions on ligands, nucleic acids, and ions in the structure. The default \
-                 choice when the backbone has any non-protein context worth keeping."
-            }
-            Self::ProteinMpnnViaLigand => {
-                "Protein-only design from the maintained repository. Use when the non-protein \
-                 content should be ignored."
-            }
-            Self::SolubleMpnn => {
-                "Trained without membrane proteins; biases against hydrophobic surfaces."
-            }
             Self::ProteinMpnn => "The original network and weights.",
             Self::AbMpnn => {
                 "ProteinMPNN finetuned on antibody structures. Best for CDR and framework design; \
@@ -101,26 +84,32 @@ impl MpnnModel {
         }
     }
 
-    /// Whether this model can run the mmCIF/JSONL workflow, which keeps PDB out of the pipeline
-    /// but carries backbone atoms only. The LigandMPNN repository needs a PDB: its whole point is
-    /// the non-protein context a backbone-only encoding cannot express.
-    pub fn supports_mmcif_workflow(self) -> bool {
-        matches!(self, Self::ProteinMpnn | Self::AbMpnn)
-    }
-
-    /// `--model_type` for LigandMPNN's `run.py`.
-    fn ligand_model_type(self) -> Option<&'static str> {
+    /// The checkout directory holding this model's weights.
+    fn weights_dir(self) -> &'static str {
         match self {
-            Self::LigandMpnn => Some("ligand_mpnn"),
-            Self::ProteinMpnnViaLigand => Some("protein_mpnn"),
-            Self::SolubleMpnn => Some("soluble_mpnn"),
-            Self::ProteinMpnn | Self::AbMpnn => None,
+            Self::ProteinMpnn => "vanilla_model_weights",
+            Self::AbMpnn => "abmpnn_weights",
         }
     }
+}
 
-    /// Whether non-protein atoms should be written into the input file at all.
-    fn wants_hetero_context(self) -> bool {
-        matches!(self, Self::LigandMpnn)
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ProteinMpnnCheckpoint {
+    Noise002,
+    Noise010,
+    #[default]
+    Noise020,
+    Noise030,
+}
+
+impl ProteinMpnnCheckpoint {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Noise002 => "v_48_002",
+            Self::Noise010 => "v_48_010",
+            Self::Noise020 => "v_48_020",
+            Self::Noise030 => "v_48_030",
+        }
     }
 }
 
@@ -136,10 +125,10 @@ pub struct DesignRequest {
     /// How many sequences to generate.
     pub num_sequences: usize,
     /// Sampling temperature. Low values give conservative, near-consensus sequences; high values
-    /// give diversity at the cost of predicted stability. 0.1 is both repositories' default.
+    /// give diversity at the cost of predicted stability. 0.1 is the repository's default.
     pub temperature: f32,
     pub seed: u64,
-    /// Original ProteinMPNN checkpoint to use. Ignored by LigandMPNN-backed models.
+    /// Which noise level's checkpoint to use.
     pub checkpoint: ProteinMpnnCheckpoint,
     /// Gaussian coordinate noise added at inference time.
     pub backbone_noise: f32,
@@ -156,33 +145,6 @@ pub struct DesignRequest {
     pub bias_amino_acids_per_residue: String,
     /// Sparse JSON keyed by chain and residue, e.g. `{"A12":"CP"}`.
     pub omit_amino_acids_per_residue: String,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ProteinMpnnCheckpoint {
-    Noise002,
-    Noise010,
-    #[default]
-    Noise020,
-    Noise030,
-}
-
-impl ProteinMpnnCheckpoint {
-    pub const ALL: [Self; 4] = [
-        Self::Noise002,
-        Self::Noise010,
-        Self::Noise020,
-        Self::Noise030,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Noise002 => "v_48_002",
-            Self::Noise010 => "v_48_010",
-            Self::Noise020 => "v_48_020",
-            Self::Noise030 => "v_48_030",
-        }
-    }
 }
 
 impl Default for DesignRequest {
@@ -211,30 +173,28 @@ impl DesignRequest {
     /// as a message beside the field rather than as a model that quietly fixed nothing.
     pub fn validate(&self) -> io::Result<()> {
         if self.num_sequences == 0 || self.num_sequences > 1_000 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "number of sequences must be between 1 and 1000",
+            return Err(invalid_input(
+                "number of sequences must be between 1 and 1000".to_owned(),
             ));
         }
         if !(0.0001..=2.0).contains(&self.temperature) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "sampling temperature must be between 0.0001 and 2.0",
+            return Err(invalid_input(
+                "sampling temperature must be between 0.0001 and 2.0".to_owned(),
             ));
         }
         if !(0.0..=1.0).contains(&self.backbone_noise) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "backbone noise must be between 0 and 1",
+            return Err(invalid_input(
+                "backbone noise must be between 0 and 1".to_owned(),
             ));
         }
+
         let omit = compact_letters(&self.omit_amino_acids);
         if !omit.chars().all(|letter| letter.is_ascii_alphabetic()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "omitted amino acids must contain only one-letter amino-acid codes",
+            return Err(invalid_input(
+                "omitted amino acids must contain only one-letter amino-acid codes".to_owned(),
             ));
         }
+
         parse_designed_residues(&self.designed_residues)?;
         parse_bias_amino_acids(&self.bias_amino_acids)?;
         parse_json_object(
@@ -245,30 +205,41 @@ impl DesignRequest {
             &self.omit_amino_acids_per_residue,
             "per-residue omitted amino acids",
         )?;
+
         for residue in &self.fixed_residues {
-            // The repositories both parse these as a chain letter followed by a residue number.
+            // The runner parses these as a chain letter followed by a residue number.
             let mut chars = residue.chars();
             let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
                 && chars.clone().count() > 0
                 && chars.all(|c| c.is_ascii_digit());
             if !valid {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "fixed residue '{residue}' should be a chain letter followed by a residue \
-                         number, e.g. H97"
-                    ),
-                ));
+                return Err(invalid_input(format!(
+                    "fixed residue '{residue}' should be a chain letter followed by a residue \
+                     number, e.g. H97"
+                )));
             }
         }
         Ok(())
     }
 }
 
+/// The chain identifiers a design request can name, as this peptide presents them.
+pub fn designable_chains(mol: &MoleculePeptide) -> Vec<String> {
+    mol.chains
+        .iter()
+        .enumerate()
+        .map(|(index, chain)| chain_letter(&chain.id, index).to_string())
+        .collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------------------------
+
 /// One generated sequence.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DesignedSequence {
-    /// The designed sequence, chains joined by `/` as both repositories write them.
+    /// The designed sequence, chains joined by `/` as the runner writes them.
     pub sequence: String,
     /// Mean per-residue negative log likelihood over the designed positions. Lower is better; this
     /// is the model's own confidence, and is what to rank designs by.
@@ -278,13 +249,6 @@ pub struct DesignedSequence {
     pub sequence_recovery: Option<f32>,
     /// Sampling temperature this sequence was drawn at, as recorded in the FASTA header.
     pub temperature: Option<f32>,
-}
-
-impl DesignedSequence {
-    /// The chains, split back apart.
-    pub fn chains(&self) -> Vec<&str> {
-        self.sequence.split('/').collect()
-    }
 }
 
 /// What a run produced.
@@ -297,253 +261,57 @@ pub struct DesignResult {
     pub raw_fasta: String,
 }
 
-/// Run an MPNN design against a loaded peptide.
+// ---------------------------------------------------------------------------------------------
+// Run
+// ---------------------------------------------------------------------------------------------
+
+/// Run a design against a loaded peptide.
 ///
 /// Blocking, and slow enough to want a worker thread: the process start and Torch import dominate
 /// for small designs.
 pub fn design(mol: &MoleculePeptide, request: &DesignRequest) -> io::Result<DesignResult> {
-    let options = PdbWriteOptions {
-        // Chain filtering happens in the model, not the file: it needs the whole structure as
-        // context even when only part of it is redesigned.
-        chains: Vec::new(),
-        include_hetero: request.model.wants_hetero_context(),
-        include_hydrogen: false,
-        include_water: false,
-    };
-    design_pdb_text(&peptide_to_pdb(mol, &options)?, request)
-}
-
-/// Run ProteinMPNN against an mmCIF selected from disk without adding it to the scene.
-pub fn design_file(path: &Path, request: &DesignRequest) -> io::Result<DesignResult> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !matches!(extension.as_str(), "cif" | "mmcif") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "sequence prediction input must be an mmCIF (.cif or .mmcif) file",
-        ));
-    }
-    let text = fs::read_to_string(path)?;
-    design_protein_mpnn_structure(mmcif_to_mpnn_structure(&MmCif::new(&text)?)?, request)
-}
-
-/// Run the original ProteinMPNN workflow from an opened protein without using PDB as an
-/// interchange format. The structure is encoded directly in ProteinMPNN's structure JSONL schema.
-pub fn design_mmcif(mol: &MoleculePeptide, request: &DesignRequest) -> io::Result<DesignResult> {
-    design_protein_mpnn_structure(peptide_to_mpnn_structure(mol)?, request)
-}
-
-#[derive(Debug)]
-struct MpnnStructure {
-    value: Value,
-    residues: BTreeMap<String, Vec<i32>>,
-    chains: Vec<String>,
-}
-
-#[derive(Debug)]
-struct MpnnResidue {
-    number: i32,
-    amino_acid: String,
-    atoms: BTreeMap<String, [f64; 3]>,
-}
-
-fn design_protein_mpnn_structure(
-    structure: MpnnStructure,
-    request: &DesignRequest,
-) -> io::Result<DesignResult> {
     request.validate()?;
-    if !request.model.supports_mmcif_workflow() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the mmCIF-only sequence workflow supports ProteinMPNN and AbMPNN",
-        ));
-    }
 
-    let python = find_executable(request.model.tool())?;
-    let checkout = bundle_root(request.model.tool())?;
-    let workspace = ToolWorkspace::new("mpnn")?;
-    let input_path = workspace.path("input.jsonl");
-    fs::write(&input_path, serde_json::to_string(&structure.value)? + "\n")?;
-    let output_dir = workspace.create_dir("output")?;
-
-    let mut command = Command::new(&python);
-    configure_protein_mpnn_jsonl(&mut command, &checkout, &workspace, &structure, request)?;
-    command
-        .arg("--jsonl_path")
-        .arg(&input_path)
-        .arg("--out_folder")
-        .arg(&output_dir)
-        .arg("--seed")
-        .arg(request.seed.to_string())
-        .current_dir(&checkout);
-
-    crate::external_tools::run_to_completion_logged(
-        &mut command,
-        request.model.label(),
-        "sequence prediction",
-    )?;
-
-    let fasta_path = find_output_fasta(&output_dir)?;
-    let fasta = fs::read_to_string(&fasta_path)?;
-    let mut result = parse_design_fasta(&fasta);
-    result.raw_fasta = fasta;
-    Ok(result)
-}
-
-fn design_pdb_text(pdb: &str, request: &DesignRequest) -> io::Result<DesignResult> {
-    request.validate()?;
+    // Chain filtering happens in the model, not the file: it needs the whole structure as context
+    // even when only part of it is redesigned.
+    let pdb = peptide_to_pdb(mol, &PdbWriteOptions::default())?;
     if !pdb.lines().any(|line| line.starts_with("ATOM")) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the selected structure contains no protein ATOM records",
+        return Err(invalid_input(
+            "the selected structure contains no protein ATOM records".to_owned(),
         ));
     }
 
-    let python = find_executable(request.model.tool())?;
-    let checkout = bundle_root(request.model.tool())?;
-    let workspace = ToolWorkspace::new("mpnn")?;
-    let input_path = workspace.path("input.pdb");
-    fs::write(&input_path, pdb)?;
+    let tool = request.model.tool();
+    let python = find_executable(tool)?;
+    let checkout = bundle_root(tool)?;
+    let workspace = ToolWorkspace::new(tool)?;
+
+    workspace.write(INPUT_PDB, &pdb)?;
     let output_dir = workspace.create_dir("output")?;
 
     let mut command = Command::new(&python);
-    let ligand_model_type = request.model.ligand_model_type();
-    match ligand_model_type {
-        Some(model_type) => {
-            configure_ligand_mpnn(&mut command, &checkout, model_type, request)?;
-        }
-        None => configure_protein_mpnn(&mut command, &checkout, &workspace, pdb, request)?,
-    }
-    // The original ProteinMPNN runner uses the complete --pdb_path value as its output FASTA
-    // stem. An absolute Windows path therefore becomes an invalid filename containing `C:\`.
-    // Run that checkout from the workspace and give it a relative input name. LigandMPNN does
-    // not have this bug and still needs the checkout as its working directory.
-    let workspace_root = workspace.path("");
-    let (pdb_argument, current_dir) = mpnn_process_paths(
-        ligand_model_type.is_none(),
-        &input_path,
-        &workspace_root,
-        &checkout,
-    );
+    add_runner_args(&mut command, &checkout, request)?;
+    add_constraint_args(&mut command, &workspace, &pdb, request)?;
     command
         .arg("--pdb_path")
-        .arg(pdb_argument)
+        .arg(INPUT_PDB)
         .arg("--out_folder")
         .arg(&output_dir)
         .arg("--seed")
         .arg(request.seed.to_string())
-        .current_dir(current_dir);
+        .current_dir(workspace.root());
 
-    crate::external_tools::run_to_completion_logged(
-        &mut command,
-        request.model.label(),
-        "sequence prediction",
-    )?;
+    let workflow = format!("sequence design ({})", request.model.label());
+    run_tool(&mut command, tool, &workflow, None)?;
 
-    let fasta_path = find_output_fasta(&output_dir)?;
-    let fasta = fs::read_to_string(&fasta_path)?;
+    let fasta = workspace.read_output(&find_output_fasta(&output_dir)?)?;
     let mut result = parse_design_fasta(&fasta);
     result.raw_fasta = fasta;
     Ok(result)
 }
 
-fn mpnn_process_paths(
-    original_protein_mpnn: bool,
-    input_path: &Path,
-    workspace: &Path,
-    checkout: &Path,
-) -> (PathBuf, PathBuf) {
-    if original_protein_mpnn {
-        (PathBuf::from("input.pdb"), workspace.to_owned())
-    } else {
-        (input_path.to_owned(), checkout.to_owned())
-    }
-}
-
-fn configure_ligand_mpnn(
-    command: &mut Command,
-    checkout: &Path,
-    model_type: &str,
-    request: &DesignRequest,
-) -> io::Result<()> {
-    let runner = checkout.join("run.py");
-    if !runner.is_file() {
-        return Err(missing_checkout(&runner));
-    }
-    // Each model type has its own checkpoint flag and file; passing the wrong pair silently
-    // produces a model that was never trained for the requested task.
-    let (checkpoint_flag, checkpoint_file) = match model_type {
-        "ligand_mpnn" => (
-            "--checkpoint_ligand_mpnn",
-            "model_params/ligandmpnn_v_32_010_25.pt",
-        ),
-        "soluble_mpnn" => (
-            "--checkpoint_soluble_mpnn",
-            "model_params/solublempnn_v_48_020.pt",
-        ),
-        _ => (
-            "--checkpoint_protein_mpnn",
-            "model_params/proteinmpnn_v_48_020.pt",
-        ),
-    };
-    let checkpoint = checkout.join(checkpoint_file);
-    if !checkpoint.is_file() {
-        return Err(missing_weights(&checkpoint, Tool::LigandMpnn));
-    }
-
-    command
-        .arg(&runner)
-        .arg("--model_type")
-        .arg(model_type)
-        .arg(checkpoint_flag)
-        .arg(&checkpoint)
-        .arg("--batch_size")
-        .arg("1")
-        .arg("--number_of_batches")
-        .arg(request.num_sequences.to_string())
-        .arg("--temperature")
-        .arg(request.temperature.to_string());
-
-    if !request.chains_to_design.is_empty() {
-        command
-            .arg("--chains_to_design")
-            .arg(request.chains_to_design.join(","));
-    }
-    if !request.fixed_residues.is_empty() {
-        // Space-separated for LigandMPNN, comma-separated for ProteinMPNN: the two repositories
-        // disagree, and mixing them up is silently accepted as "nothing is fixed".
-        command
-            .arg("--fixed_residues")
-            .arg(request.fixed_residues.join(" "));
-    }
-    Ok(())
-}
-
-fn configure_protein_mpnn(
-    command: &mut Command,
-    checkout: &Path,
-    workspace: &ToolWorkspace,
-    pdb: &str,
-    request: &DesignRequest,
-) -> io::Result<()> {
-    configure_protein_mpnn_base(command, checkout, request)?;
-
-    let chains = if request.chains_to_design.is_empty() {
-        pdb_chain_residues(pdb).into_keys().collect::<Vec<_>>()
-    } else {
-        request.chains_to_design.clone()
-    };
-    if !chains.is_empty() {
-        command.arg("--pdb_path_chains").arg(chains.join(" "));
-    }
-    configure_protein_mpnn_constraints(command, workspace, pdb, &chains, request)?;
-    Ok(())
-}
-
-fn configure_protein_mpnn_base(
+/// The runner script, its weights, and the sampling settings.
+fn add_runner_args(
     command: &mut Command,
     checkout: &Path,
     request: &DesignRequest,
@@ -553,10 +321,7 @@ fn configure_protein_mpnn_base(
         return Err(missing_checkout(&runner));
     }
 
-    let weights_dir = match request.model {
-        MpnnModel::AbMpnn => checkout.join("abmpnn_weights"),
-        _ => checkout.join("vanilla_model_weights"),
-    };
+    let weights_dir = checkout.join(request.model.weights_dir());
     // `protein_mpnn_run.py` builds the checkpoint path as
     // `f"{args.path_to_model_weights}{args.model_name}.pt"` — plain string concatenation, not a
     // path join — so the directory it is given must end in a separator or the file is never found.
@@ -564,12 +329,13 @@ fn configure_protein_mpnn_base(
     if !weights_argument.ends_with(['/', '\\']) {
         weights_argument.push(std::path::MAIN_SEPARATOR);
     }
+
     // The AbMPNN checkpoint is installed under the vanilla model's name so that this default
-    // matches for both; see the install script.
+    // matches for both; see the install recipe.
     let model_name = request.checkpoint.name();
     let checkpoint = weights_dir.join(format!("{model_name}.pt"));
     if !checkpoint.is_file() {
-        return Err(missing_weights(&checkpoint, Tool::ProteinMpnn));
+        return Err(missing_weights(&checkpoint, request.model.tool()));
     }
 
     command
@@ -588,60 +354,80 @@ fn configure_protein_mpnn_base(
         .arg(compact_letters(&request.omit_amino_acids))
         .arg("--batch_size")
         .arg("1");
-
     Ok(())
 }
 
-fn configure_protein_mpnn_jsonl(
-    command: &mut Command,
-    checkout: &Path,
-    workspace: &ToolWorkspace,
-    structure: &MpnnStructure,
-    request: &DesignRequest,
-) -> io::Result<()> {
-    configure_protein_mpnn_base(command, checkout, request)?;
-    let chains = if request.chains_to_design.is_empty() {
-        structure.chains.clone()
-    } else {
-        request.chains_to_design.clone()
-    };
-    let fixed_chains = structure
-        .chains
-        .iter()
-        .filter(|chain| !chains.contains(chain))
-        .cloned()
-        .collect::<Vec<_>>();
-    write_named_jsonl(workspace, "chain_ids.jsonl", json!([chains, fixed_chains]))?;
-    command
-        .arg("--chain_id_jsonl")
-        .arg(workspace.path("chain_ids.jsonl"));
-    configure_protein_mpnn_constraints_from_residues(
-        command,
-        workspace,
-        &structure.residues,
-        &chains,
-        request,
-    )
-}
-
-fn configure_protein_mpnn_constraints(
+/// Which chains to design, and every per-position constraint, each written as the JSONL file the
+/// runner reads it from.
+fn add_constraint_args(
     command: &mut Command,
     workspace: &ToolWorkspace,
     pdb: &str,
-    chains: &[String],
     request: &DesignRequest,
 ) -> io::Result<()> {
     let residues = pdb_chain_residues(pdb);
-    configure_protein_mpnn_constraints_from_residues(command, workspace, &residues, chains, request)
+    let chains = if request.chains_to_design.is_empty() {
+        residues.keys().cloned().collect::<Vec<_>>()
+    } else {
+        request.chains_to_design.clone()
+    };
+    if !chains.is_empty() {
+        command.arg("--pdb_path_chains").arg(chains.join(" "));
+    }
+
+    let fixed = fixed_positions(&residues, &chains, request)?;
+    if !fixed.is_empty() {
+        let path = write_named_jsonl(workspace, "fixed_positions.jsonl", json!(fixed))?;
+        command.arg("--fixed_positions_jsonl").arg(path);
+    }
+
+    let bias = parse_bias_amino_acids(&request.bias_amino_acids)?;
+    if !bias.is_empty() {
+        let path = workspace.write("bias_aa.jsonl", serde_json::to_string(&bias)? + "\n")?;
+        command.arg("--bias_AA_jsonl").arg(path);
+    }
+
+    let per_residue_bias = bias_matrix(
+        parse_json_object(
+            &request.bias_amino_acids_per_residue,
+            "per-residue amino-acid bias",
+        )?,
+        &residues,
+        &chains,
+    )?;
+    if !per_residue_bias.is_null() {
+        let path = write_named_jsonl(workspace, "bias_by_res.jsonl", per_residue_bias)?;
+        command.arg("--bias_by_res_jsonl").arg(path);
+    }
+
+    let per_residue_omit = omit_map(
+        parse_json_object(
+            &request.omit_amino_acids_per_residue,
+            "per-residue omitted amino acids",
+        )?,
+        &chains,
+    )?;
+    if !per_residue_omit.is_null() {
+        let path = write_named_jsonl(workspace, "omit_by_res.jsonl", per_residue_omit)?;
+        command.arg("--omit_AA_jsonl").arg(path);
+    }
+
+    if request.homo_oligomer && chains.len() > 1 {
+        let tied = tied_positions(&residues, &chains);
+        if !tied.is_empty() {
+            let path = write_named_jsonl(workspace, "tied_positions.jsonl", json!(tied))?;
+            command.arg("--tied_positions_jsonl").arg(path);
+        }
+    }
+    Ok(())
 }
 
-fn configure_protein_mpnn_constraints_from_residues(
-    command: &mut Command,
-    workspace: &ToolWorkspace,
+/// Explicitly fixed residues, plus everything outside the design-only lists where there are any.
+fn fixed_positions(
     residues: &BTreeMap<String, Vec<i32>>,
     chains: &[String],
     request: &DesignRequest,
-) -> io::Result<()> {
+) -> io::Result<BTreeMap<String, Vec<i32>>> {
     let designed = parse_designed_residues(&request.designed_residues)?;
     let mut fixed: BTreeMap<String, BTreeSet<i32>> = BTreeMap::new();
 
@@ -649,6 +435,7 @@ fn configure_protein_mpnn_constraints_from_residues(
         let (chain, number) = split_residue_key(residue, "fixed residue")?;
         fixed.entry(chain).or_default().insert(number);
     }
+
     if !designed.is_empty() {
         for chain in chains {
             let keep = designed.get(chain).cloned().unwrap_or_default();
@@ -661,89 +448,131 @@ fn configure_protein_mpnn_constraints_from_residues(
             );
         }
     }
-    if !fixed.is_empty() {
-        let value = fixed
-            .into_iter()
-            .map(|(chain, numbers)| (chain, numbers.into_iter().collect::<Vec<_>>()))
-            .collect::<BTreeMap<_, _>>();
-        write_named_jsonl(workspace, "fixed_positions.jsonl", json!(value))?;
-        command
-            .arg("--fixed_positions_jsonl")
-            .arg(workspace.path("fixed_positions.jsonl"));
-    }
 
-    let bias = parse_bias_amino_acids(&request.bias_amino_acids)?;
-    if !bias.is_empty() {
-        let path = workspace.path("bias_aa.jsonl");
-        fs::write(&path, serde_json::to_string(&bias)? + "\n")?;
-        command.arg("--bias_AA_jsonl").arg(path);
-    }
-
-    let per_residue_bias = protein_mpnn_bias_matrix(
-        parse_json_object(
-            &request.bias_amino_acids_per_residue,
-            "per-residue amino-acid bias",
-        )?,
-        &residues,
-        chains,
-    )?;
-    if !per_residue_bias.is_null() {
-        write_named_jsonl(workspace, "bias_by_res.jsonl", per_residue_bias)?;
-        command
-            .arg("--bias_by_res_jsonl")
-            .arg(workspace.path("bias_by_res.jsonl"));
-    }
-
-    let per_residue_omit = protein_mpnn_omit_map(
-        parse_json_object(
-            &request.omit_amino_acids_per_residue,
-            "per-residue omitted amino acids",
-        )?,
-        chains,
-    )?;
-    if !per_residue_omit.is_null() {
-        write_named_jsonl(workspace, "omit_by_res.jsonl", per_residue_omit)?;
-        command
-            .arg("--omit_AA_jsonl")
-            .arg(workspace.path("omit_by_res.jsonl"));
-    }
-
-    if request.homo_oligomer && chains.len() > 1 {
-        let shortest = chains
-            .iter()
-            .filter_map(|chain| residues.get(chain).map(Vec::len))
-            .min()
-            .unwrap_or(0);
-        let tied = (0..shortest)
-            .map(|index| {
-                chains
-                    .iter()
-                    .filter_map(|chain| {
-                        residues
-                            .get(chain)
-                            .and_then(|numbers| numbers.get(index))
-                            .map(|number| (chain.clone(), vec![*number]))
-                    })
-                    .collect::<BTreeMap<_, _>>()
-            })
-            .collect::<Vec<_>>();
-        if !tied.is_empty() {
-            write_named_jsonl(workspace, "tied_positions.jsonl", json!(tied))?;
-            command
-                .arg("--tied_positions_jsonl")
-                .arg(workspace.path("tied_positions.jsonl"));
-        }
-    }
-    Ok(())
+    Ok(fixed
+        .into_iter()
+        .map(|(chain, numbers)| (chain, numbers.into_iter().collect()))
+        .collect())
 }
 
-fn write_named_jsonl(workspace: &ToolWorkspace, filename: &str, value: Value) -> io::Result<()> {
-    let path = workspace.path(filename);
-    fs::write(
-        &path,
+/// Tie the n-th residue of every chain together, up to the shortest chain.
+fn tied_positions(
+    residues: &BTreeMap<String, Vec<i32>>,
+    chains: &[String],
+) -> Vec<BTreeMap<String, Vec<i32>>> {
+    let shortest = chains
+        .iter()
+        .filter_map(|chain| residues.get(chain).map(Vec::len))
+        .min()
+        .unwrap_or(0);
+
+    (0..shortest)
+        .map(|index| {
+            chains
+                .iter()
+                .filter_map(|chain| {
+                    residues
+                        .get(chain)
+                        .and_then(|numbers| numbers.get(index))
+                        .map(|number| (chain.clone(), vec![*number]))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Write `{"input": value}` as one JSONL line: the runner keys every constraint by input name.
+fn write_named_jsonl(
+    workspace: &ToolWorkspace,
+    filename: &str,
+    value: Value,
+) -> io::Result<PathBuf> {
+    workspace.write(
+        filename,
         serde_json::to_string(&json!({"input": value}))? + "\n",
     )
 }
+
+fn bias_matrix(
+    sparse: Map<String, Value>,
+    residues: &BTreeMap<String, Vec<i32>>,
+    chains: &[String],
+) -> io::Result<Value> {
+    if sparse.is_empty() {
+        return Ok(Value::Null);
+    }
+
+    let mut matrices = chains
+        .iter()
+        .map(|chain| {
+            let rows = residues.get(chain).map_or(0, Vec::len);
+            (chain.clone(), vec![vec![0.0_f64; ALPHABET.len()]; rows])
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for (key, biases) in sparse {
+        let (chain, number) = split_residue_key(&key, "per-residue bias key")?;
+        let row = residues
+            .get(&chain)
+            .and_then(|numbers| numbers.iter().position(|candidate| *candidate == number))
+            .ok_or_else(|| {
+                invalid_input(format!("residue {key} was not found in the structure"))
+            })?;
+        let biases = biases.as_object().ok_or_else(|| {
+            invalid_input(format!("per-residue bias for {key} must be a JSON object"))
+        })?;
+        let matrix = matrices
+            .get_mut(&chain)
+            .ok_or_else(|| invalid_input(format!("chain {chain} is not selected for design")))?;
+
+        for (letter, amount) in biases {
+            let letter = letter.to_ascii_uppercase();
+            let column = ALPHABET.find(&letter).ok_or_else(|| {
+                invalid_input(format!(
+                    "unsupported amino acid '{letter}' in bias for {key}"
+                ))
+            })?;
+            matrix[row][column] = amount
+                .as_f64()
+                .ok_or_else(|| invalid_input(format!("bias for {key}/{letter} must be numeric")))?;
+        }
+    }
+    Ok(json!(matrices))
+}
+
+fn omit_map(sparse: Map<String, Value>, chains: &[String]) -> io::Result<Value> {
+    if sparse.is_empty() {
+        return Ok(Value::Null);
+    }
+
+    let mut grouped = chains
+        .iter()
+        .map(|chain| (chain.clone(), Vec::<Value>::new()))
+        .collect::<BTreeMap<_, _>>();
+
+    for (key, letters) in sparse {
+        let (chain, number) = split_residue_key(&key, "per-residue omission key")?;
+        let letters = letters.as_str().ok_or_else(|| {
+            invalid_input(format!("omitted amino acids for {key} must be a string"))
+        })?;
+        let letters = compact_letters(letters);
+        if !letters.chars().all(|letter| letter.is_ascii_alphabetic()) {
+            return Err(invalid_input(format!(
+                "omitted amino acids for {key} must be letters"
+            )));
+        }
+
+        grouped
+            .get_mut(&chain)
+            .ok_or_else(|| invalid_input(format!("chain {chain} is not selected for design")))?
+            .push(json!([[number], letters]));
+    }
+    Ok(json!(grouped))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Input parsing
+// ---------------------------------------------------------------------------------------------
 
 fn compact_letters(value: &str) -> String {
     value
@@ -755,6 +584,7 @@ fn compact_letters(value: &str) -> String {
 
 fn parse_designed_residues(value: &str) -> io::Result<BTreeMap<String, BTreeSet<i32>>> {
     let mut result = BTreeMap::new();
+
     for line in value.lines().map(str::trim).filter(|line| !line.is_empty()) {
         let normalized = line.replace(',', " ");
         let mut parts = normalized.split_whitespace();
@@ -762,17 +592,15 @@ fn parse_designed_residues(value: &str) -> io::Result<BTreeMap<String, BTreeSet<
         let numbers = parts
             .map(|part| {
                 part.parse::<i32>().map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("designed residue '{part}' is not a residue number"),
-                    )
+                    invalid_input(format!("designed residue '{part}' is not a residue number"))
                 })
             })
             .collect::<io::Result<BTreeSet<_>>>()?;
+
         if chain.is_empty() || numbers.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "each designed-residues line must contain a chain and at least one residue number",
+            return Err(invalid_input(
+                "each designed-residues line must contain a chain and at least one residue number"
+                    .to_owned(),
             ));
         }
         result.insert(chain, numbers);
@@ -782,29 +610,25 @@ fn parse_designed_residues(value: &str) -> io::Result<BTreeMap<String, BTreeSet<
 
 fn parse_bias_amino_acids(value: &str) -> io::Result<BTreeMap<String, f64>> {
     let mut result = BTreeMap::new();
+
     for part in value
         .split(',')
         .map(str::trim)
         .filter(|part| !part.is_empty())
     {
         let (letter, amount) = part.split_once(':').ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("amino-acid bias '{part}' should look like W:3.0"),
-            )
+            invalid_input(format!("amino-acid bias '{part}' should look like W:3.0"))
         })?;
+
         let letter = letter.trim().to_ascii_uppercase();
         if letter.len() != 1 || !letter.chars().all(|c| c.is_ascii_alphabetic()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("amino-acid bias '{part}' must name one amino-acid letter"),
-            ));
+            return Err(invalid_input(format!(
+                "amino-acid bias '{part}' must name one amino-acid letter"
+            )));
         }
+
         let amount = amount.trim().parse::<f64>().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("amino-acid bias '{part}' has a non-numeric value"),
-            )
+            invalid_input(format!("amino-acid bias '{part}' has a non-numeric value"))
         })?;
         result.insert(letter, amount);
     }
@@ -815,21 +639,12 @@ fn parse_json_object(value: &str, label: &str) -> io::Result<Map<String, Value>>
     if value.trim().is_empty() {
         return Ok(Map::new());
     }
+
     serde_json::from_str::<Value>(value)
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("invalid {label}: {error}"),
-            )
-        })?
+        .map_err(|error| invalid_input(format!("invalid {label}: {error}")))?
         .as_object()
         .cloned()
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{label} must be a JSON object"),
-            )
-        })
+        .ok_or_else(|| invalid_input(format!("{label} must be a JSON object")))
 }
 
 fn split_residue_key(value: &str, label: &str) -> io::Result<(String, i32)> {
@@ -839,23 +654,20 @@ fn split_residue_key(value: &str, label: &str) -> io::Result<(String, i32)> {
         .map(|(index, _)| index)
         .unwrap_or(value.len());
     let (chain, number) = value.split_at(split);
+
+    let malformed = || invalid_input(format!("{label} '{value}' should look like A12"));
     if chain.is_empty() || !chain.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} '{value}' should look like A12"),
-        ));
+        return Err(malformed());
     }
-    let number = number.parse::<i32>().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} '{value}' should look like A12"),
-        )
-    })?;
+    let number = number.parse::<i32>().map_err(|_| malformed())?;
+
     Ok((chain.to_owned(), number))
 }
 
+/// Residue numbers per chain, in file order, from the `ATOM` records of a PDB.
 fn pdb_chain_residues(pdb: &str) -> BTreeMap<String, Vec<i32>> {
     let mut result: BTreeMap<String, Vec<i32>> = BTreeMap::new();
+
     for line in pdb.lines().filter(|line| line.starts_with("ATOM")) {
         if line.len() < 26 {
             continue;
@@ -864,6 +676,7 @@ fn pdb_chain_residues(pdb: &str) -> BTreeMap<String, Vec<i32>> {
         let Ok(number) = line[22..26].trim().parse::<i32>() else {
             continue;
         };
+
         let numbers = result.entry(chain.to_owned()).or_default();
         if numbers.last() != Some(&number) {
             numbers.push(number);
@@ -872,295 +685,11 @@ fn pdb_chain_residues(pdb: &str) -> BTreeMap<String, Vec<i32>> {
     result
 }
 
-fn protein_mpnn_bias_matrix(
-    sparse: Map<String, Value>,
-    residues: &BTreeMap<String, Vec<i32>>,
-    chains: &[String],
-) -> io::Result<Value> {
-    if sparse.is_empty() {
-        return Ok(Value::Null);
-    }
-    const ALPHABET: &str = "ACDEFGHIKLMNPQRSTVWYX";
-    let mut matrices = chains
-        .iter()
-        .map(|chain| {
-            let rows = residues.get(chain).map_or(0, Vec::len);
-            (chain.clone(), vec![vec![0.0_f64; ALPHABET.len()]; rows])
-        })
-        .collect::<BTreeMap<_, _>>();
-    for (key, biases) in sparse {
-        let (chain, number) = split_residue_key(&key, "per-residue bias key")?;
-        let row = residues
-            .get(&chain)
-            .and_then(|numbers| numbers.iter().position(|candidate| *candidate == number))
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("residue {key} was not found in the structure"),
-                )
-            })?;
-        let biases = biases.as_object().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("per-residue bias for {key} must be a JSON object"),
-            )
-        })?;
-        let matrix = matrices.get_mut(&chain).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("chain {chain} is not selected for design"),
-            )
-        })?;
-        for (letter, amount) in biases {
-            let letter = letter.to_ascii_uppercase();
-            let column = ALPHABET.find(&letter).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("unsupported amino acid '{letter}' in bias for {key}"),
-                )
-            })?;
-            matrix[row][column] = amount.as_f64().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("bias for {key}/{letter} must be numeric"),
-                )
-            })?;
-        }
-    }
-    Ok(json!(matrices))
-}
+// ---------------------------------------------------------------------------------------------
+// Output parsing
+// ---------------------------------------------------------------------------------------------
 
-fn protein_mpnn_omit_map(sparse: Map<String, Value>, chains: &[String]) -> io::Result<Value> {
-    if sparse.is_empty() {
-        return Ok(Value::Null);
-    }
-    let mut grouped = chains
-        .iter()
-        .map(|chain| (chain.clone(), Vec::<Value>::new()))
-        .collect::<BTreeMap<_, _>>();
-    for (key, letters) in sparse {
-        let (chain, number) = split_residue_key(&key, "per-residue omission key")?;
-        let letters = letters.as_str().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("omitted amino acids for {key} must be a string"),
-            )
-        })?;
-        let letters = compact_letters(letters);
-        if !letters.chars().all(|letter| letter.is_ascii_alphabetic()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("omitted amino acids for {key} must be letters"),
-            ));
-        }
-        grouped
-            .get_mut(&chain)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("chain {chain} is not selected for design"),
-                )
-            })?
-            .push(json!([[number], letters]));
-    }
-    Ok(json!(grouped))
-}
-
-fn peptide_to_mpnn_structure(mol: &MoleculePeptide) -> io::Result<MpnnStructure> {
-    let mut chains = Vec::new();
-    let mut used = BTreeSet::new();
-    for (chain_index, chain) in mol.chains.iter().enumerate() {
-        let chain_id = unique_mpnn_chain_id(&chain.id, chain_index, &mut used)?;
-        let mut residues = Vec::new();
-        for &residue_index in &chain.residues {
-            let Some(residue) = mol.residues.get(residue_index) else {
-                continue;
-            };
-            let ResidueType::AminoAcid(amino_acid) = residue.res_type else {
-                continue;
-            };
-            let mut atoms = BTreeMap::new();
-            for &atom_index in &residue.atoms {
-                let Some(atom) = mol.common.atoms.get(atom_index) else {
-                    continue;
-                };
-                let Some(name) = atom
-                    .type_in_res
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .or_else(|| atom.type_in_res_general.clone())
-                else {
-                    continue;
-                };
-                if matches!(name.to_ascii_uppercase().as_str(), "N" | "CA" | "C" | "O") {
-                    atoms.insert(
-                        name.to_ascii_uppercase(),
-                        [atom.posit.x, atom.posit.y, atom.posit.z],
-                    );
-                }
-            }
-            residues.push(MpnnResidue {
-                number: residue.serial_number as i32,
-                amino_acid: amino_acid.to_str(na_seq::AaIdent::OneLetter),
-                atoms,
-            });
-        }
-        if !residues.is_empty() {
-            chains.push((chain_id, residues));
-        }
-    }
-    build_mpnn_structure(chains)
-}
-
-fn mmcif_to_mpnn_structure(cif: &MmCif) -> io::Result<MpnnStructure> {
-    let atoms = cif
-        .atoms
-        .iter()
-        .map(|atom| (atom.serial_number, atom))
-        .collect::<BTreeMap<_, _>>();
-    let mut chains = Vec::new();
-    let mut used = BTreeSet::new();
-    for (chain_index, chain) in cif.chains.iter().enumerate() {
-        let chain_id = unique_mpnn_chain_id(&chain.id, chain_index, &mut used)?;
-        let mut chain_residues = Vec::new();
-        for residue in cif.residues.iter().filter(|residue| {
-            chain.residue_sns.contains(&residue.serial_number)
-                && residue
-                    .atom_sns
-                    .iter()
-                    .any(|serial| chain.atom_sns.contains(serial))
-        }) {
-            let ResidueType::AminoAcid(amino_acid) = residue.res_type else {
-                continue;
-            };
-            let mut backbone = BTreeMap::new();
-            for atom_sn in &residue.atom_sns {
-                let Some(atom) = atoms.get(atom_sn) else {
-                    continue;
-                };
-                let Some(name) = atom
-                    .type_in_res
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .or_else(|| atom.type_in_res_general.clone())
-                else {
-                    continue;
-                };
-                if matches!(name.to_ascii_uppercase().as_str(), "N" | "CA" | "C" | "O") {
-                    backbone.insert(
-                        name.to_ascii_uppercase(),
-                        [atom.posit.x, atom.posit.y, atom.posit.z],
-                    );
-                }
-            }
-            chain_residues.push(MpnnResidue {
-                number: residue.serial_number as i32,
-                amino_acid: amino_acid.to_str(na_seq::AaIdent::OneLetter),
-                atoms: backbone,
-            });
-        }
-        if !chain_residues.is_empty() {
-            chains.push((chain_id, chain_residues));
-        }
-    }
-    build_mpnn_structure(chains)
-}
-
-fn unique_mpnn_chain_id(
-    source_id: &str,
-    chain_index: usize,
-    used: &mut BTreeSet<String>,
-) -> io::Result<String> {
-    let preferred = chain_letter(source_id, chain_index).to_string();
-    if used.insert(preferred.clone()) {
-        return Ok(preferred);
-    }
-    for candidate in ('A'..='Z').map(|letter| letter.to_string()) {
-        if used.insert(candidate.clone()) {
-            return Ok(candidate);
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "ProteinMPNN supports at most 26 uniquely addressable chains",
-    ))
-}
-
-fn build_mpnn_structure(chains: Vec<(String, Vec<MpnnResidue>)>) -> io::Result<MpnnStructure> {
-    if chains.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the mmCIF structure contains no protein chains",
-        ));
-    }
-    let mut value = Map::new();
-    value.insert("name".to_owned(), json!("input"));
-    value.insert("num_of_chains".to_owned(), json!(chains.len()));
-    let mut full_sequence = String::new();
-    let mut residue_numbers = BTreeMap::new();
-    let mut chain_ids = Vec::new();
-
-    for (chain_id, residues) in chains {
-        let mut sequence = String::new();
-        let mut coords = Map::new();
-        for atom_name in ["N", "CA", "C", "O"] {
-            let mut atom_coords = Vec::with_capacity(residues.len());
-            for residue in &residues {
-                let coordinate = residue.atoms.get(atom_name).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!(
-                            "mmCIF chain {chain_id} residue {} is missing backbone atom {atom_name}",
-                            residue.number
-                        ),
-                    )
-                })?;
-                atom_coords.push(*coordinate);
-            }
-            coords.insert(format!("{atom_name}_chain_{chain_id}"), json!(atom_coords));
-        }
-        for residue in &residues {
-            sequence.push_str(&residue.amino_acid);
-        }
-        full_sequence.push_str(&sequence);
-        residue_numbers.insert(
-            chain_id.clone(),
-            residues.iter().map(|residue| residue.number).collect(),
-        );
-        value.insert(format!("seq_chain_{chain_id}"), json!(sequence));
-        value.insert(format!("coords_chain_{chain_id}"), Value::Object(coords));
-        chain_ids.push(chain_id);
-    }
-    value.insert("seq".to_owned(), json!(full_sequence));
-    Ok(MpnnStructure {
-        value: Value::Object(value),
-        residues: residue_numbers,
-        chains: chain_ids,
-    })
-}
-
-fn missing_checkout(path: &Path) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::NotFound,
-        format!(
-            "{} was not found; the checkout is incomplete",
-            path.display()
-        ),
-    )
-}
-
-fn missing_weights(path: &Path, tool: Tool) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::NotFound,
-        format!(
-            "model weights {} were not downloaded. Re-run: {}",
-            path.display(),
-            tool.spec().install_command()
-        ),
-    )
-}
-
-/// Both entry points write `<out_folder>/seqs/<input stem>.fa`.
+/// The runner writes `<out_folder>/seqs/<input stem>.fa`.
 fn find_output_fasta(output_dir: &Path) -> io::Result<PathBuf> {
     let seqs = output_dir.join("seqs");
     let directory = if seqs.is_dir() {
@@ -1187,12 +716,11 @@ fn find_output_fasta(output_dir: &Path) -> io::Result<PathBuf> {
         })
 }
 
-/// Parse the FASTA both repositories write.
+/// Parse the FASTA the runner writes.
 ///
 /// The first record is the input, with a header naming the source and the chains; every record
 /// after it is a design, with `T=`, `sample=`, `score=`, and `seq_recovery=` fields. Fields are
-/// read by name rather than position, since the exact set varies between the two repositories and
-/// between their versions.
+/// read by name rather than position, since the exact set varies between versions.
 fn parse_design_fasta(fasta: &str) -> DesignResult {
     let mut result = DesignResult::default();
     let mut header: Option<String> = None;
@@ -1207,8 +735,8 @@ fn parse_design_fasta(fasta: &str) -> DesignResult {
         let Some(header) = header else { return };
         let fields = header_fields(header);
 
-        // Both repositories write the native/input sequence first. Original ProteinMPNN includes
-        // a score on that record, while LigandMPNN does not, so record order is the reliable marker.
+        // The native/input sequence is written first. It carries a score too, so record order,
+        // not the presence of a score, is what marks it.
         if result.input_sequence.is_none() {
             result.input_sequence = Some(sequence_text);
             return;
@@ -1260,11 +788,31 @@ fn header_fields(header: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The chain identifiers a design request can name, as this peptide presents them.
-pub fn designable_chains(mol: &MoleculePeptide) -> Vec<String> {
-    mol.chains
-        .iter()
-        .enumerate()
-        .map(|(index, chain)| chain_letter(&chain.id, index).to_string())
-        .collect()
+// ---------------------------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------------------------
+
+fn invalid_input(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+fn missing_checkout(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "{} was not found; the checkout is incomplete",
+            path.display()
+        ),
+    )
+}
+
+fn missing_weights(path: &Path, tool: Tool) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "model weights {} were not downloaded. Re-run: {}",
+            path.display(),
+            tool.spec().install_command()
+        ),
+    )
 }

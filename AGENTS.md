@@ -6,3 +6,7 @@ functionality; clean them up after.
 ## Code format
 Add appropriate line breaks in code; I have noticed LLMs tend to not use
 line breaks, which makes it tough for me to read and edit code.
+
+
+## If on a machine without Cuda/nvidia graphics card
+Use the `--no-default-features` flag to compile without needing CUDA.
