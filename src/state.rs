@@ -995,6 +995,10 @@ pub struct SceneFlags {
     pub update_sas_mesh: bool,
     pub update_sas_coloring: bool,
     pub ss_mesh_created: bool,
+    /// Peptide currently occupying the active ribbon mesh slot.
+    pub ss_mesh_peptide: Option<usize>,
+    /// Visibility of the peptides represented by the cached ribbon meshes.
+    pub ss_mesh_visible: Vec<bool>,
     pub sas_mesh_created: bool,
     pub make_density_iso_mesh: bool,
     pub clear_density_drawing: bool,

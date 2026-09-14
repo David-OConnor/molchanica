@@ -435,7 +435,7 @@ impl MoleculeView {
 /// The view a given peptide is actually drawn with. `ui.mol_view_peptide` is a single global
 /// setting, but some views can only apply to one molecule at a time, or not at all:
 ///
-/// - Ribbon, surface and dots each render from a mesh in a shared GPU slot, which only the
+/// - Surface and dots each render from a mesh in a shared GPU slot, which only the
 ///   peptide selected for tools uses. Other open peptides fall back to atoms and bonds.
 /// - A ribbon needs a Cα trace to follow; a structure without one (e.g. a backbone-less or
 ///   otherwise non-standard file) would render as nothing at all.
@@ -445,10 +445,7 @@ impl MoleculeView {
 pub fn effective_mol_view_peptide(state: &State, mol_i: usize) -> MoleculeView {
     let view = state.ui.mol_view_peptide;
 
-    let mesh_view = matches!(
-        view,
-        MoleculeView::Ribbon | MoleculeView::Dots | MoleculeView::Surface
-    );
+    let mesh_view = matches!(view, MoleculeView::Dots | MoleculeView::Surface);
     if mesh_view && state.peptide_for_tools_i() != Some(mol_i) {
         return MoleculeView::BallAndStick;
     }

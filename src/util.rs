@@ -35,14 +35,17 @@ use mol_defs::{
 use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
-        color_alternating_contrast, color_viridis, color_viridis_float,
+        color_alternating_contrast, color_viridis, color_viridis_float, effective_mol_view_peptide,
         peptide::{draw_density_point_cloud, draw_peptide},
         ribbon_mesh::build_ribbon_mesh,
     },
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
     reflection,
-    render::{Color, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE, set_flashlight},
+    render::{
+        Color, MESH_OTHER_RIBBONS, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE,
+        set_flashlight,
+    },
     selection::Selection,
     sfc_mesh,
     state::{CamSnapshot, OperatingMode, ResColoring, State, StateUi},
@@ -732,10 +735,15 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         state.volatile.flags.ss_mesh_created = true;
         state.volatile.mol_manip.ribbon_mesh_transform = PeptideMeshTransform::default();
 
-        if let Some(mol) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-        {
+        let selected_peptide = state.peptide_for_tools_i();
+        state.volatile.flags.ss_mesh_peptide = selected_peptide;
+        state.volatile.flags.ss_mesh_visible = state
+            .peptides
+            .iter()
+            .map(|mol| mol.common.visible)
+            .collect();
+
+        if let Some(mol) = selected_peptide.and_then(|i| state.peptides.get(i)) {
             scene.meshes[MESH_SECONDARY_STRUCTURE] = build_ribbon_mesh(
                 &mol.secondary_structure,
                 &mol.common.atoms,
@@ -748,9 +756,38 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 &state.ui.selection,
                 mol.sifts_mapping.as_deref(),
             );
-            state.volatile.flags.ss_mesh_selection = state.ui.selection.clone();
-            updates.meshes = true;
         }
+        state.volatile.flags.ss_mesh_selection = state.ui.selection.clone();
+
+        let mut other_ribbons = graphics::Mesh::default();
+        for (mol_i, mol) in state.peptides.iter().enumerate() {
+            if Some(mol_i) == selected_peptide
+                || !mol.common.visible
+                || effective_mol_view_peptide(state, mol_i) != MoleculeView::Ribbon
+            {
+                continue;
+            }
+
+            let mut mesh = build_ribbon_mesh(
+                &mol.secondary_structure,
+                &mol.common.atoms,
+                &mol.common.bonds,
+                &mol.common.atom_posits,
+                &mol.residues,
+                &mol.chains,
+                state.ui.res_coloring,
+                state.ui.view_sel_level,
+                &Selection::None,
+                mol.sifts_mapping.as_deref(),
+            );
+            let vertex_offset = other_ribbons.vertices.len();
+            other_ribbons.vertices.append(&mut mesh.vertices);
+            other_ribbons
+                .indices
+                .extend(mesh.indices.into_iter().map(|index| index + vertex_offset));
+        }
+        scene.meshes[MESH_OTHER_RIBBONS] = other_ribbons;
+        updates.meshes = true;
     }
 
     if state.volatile.flags.update_sas_mesh {

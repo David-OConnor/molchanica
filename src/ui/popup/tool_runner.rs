@@ -24,6 +24,7 @@ use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::peptide::MoleculePeptide;
 use serde_json::{Value, json};
 
+use crate::ui::COLOR_ACTION;
 use crate::{
     external_tools::{
         self, RunControl, Tool,
@@ -360,10 +361,15 @@ impl ToolWindow {
 
         let mut install = false;
         let mut run = false;
+
         ui.horizontal(|ui| {
             run = ui
-                .add_enabled(!busy && spec.platform.is_supported(), Button::new("Run"))
+                .add_enabled(
+                    !busy && spec.platform.is_supported(),
+                    Button::new(RichText::new("Run").color(COLOR_ACTION)),
+                )
                 .clicked();
+
             install = ui
                 .add_enabled(
                     !busy && spec.can_install_here(),
@@ -546,7 +552,9 @@ impl ToolWindow {
                 for path in &result.files {
                     ui.horizontal(|ui| {
                         if output_category(path) == Some(DataCategory::Structure)
-                            && ui.button("Load structure").clicked()
+                            && ui
+                                .button(RichText::new("Load structure").color(COLOR_ACTION))
+                                .clicked()
                         {
                             match structure_for_loading(path, &result.directory) {
                                 Ok(path) => load = Some(path),

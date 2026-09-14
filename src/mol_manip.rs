@@ -137,7 +137,10 @@ fn update_visible_cached_peptide_mesh_entity(
 
     let mut changed = false;
     for entity in &mut scene.entities {
-        if entity.class == class as u32 {
+        if entity.class == class as u32
+            && (class != EntityClass::SecondaryStructure
+                || entity.mesh == crate::render::MESH_SECONDARY_STRUCTURE)
+        {
             entity.position = transform.translation;
             entity.orientation = transform.rotation;
             entity.pivot = None;

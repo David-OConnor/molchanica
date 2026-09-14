@@ -33,8 +33,8 @@ use crate::{
     },
     mol_manip::{ManipMode, PeptideMeshTransform},
     render::{
-        MESH_CUBE, MESH_DENSITY_SURFACE, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE,
-        MESH_SPHERE_LOWRES,
+        MESH_CUBE, MESH_DENSITY_SURFACE, MESH_OTHER_RIBBONS, MESH_PEP_SOLVENT_SURFACE,
+        MESH_SECONDARY_STRUCTURE, MESH_SPHERE_LOWRES,
     },
     selection::Selection,
     state::{OperatingMode, ResColoring, State, StateUi},
@@ -248,6 +248,7 @@ pub fn draw_secondary_structure(
     update_mesh: &mut bool,
     mesh_created: bool,
     transform: PeptideMeshTransform,
+    mesh_i: usize,
     scene: &mut Scene,
 ) {
     // If the mesh is the default cube, build it. (On demand.)
@@ -256,7 +257,7 @@ pub fn draw_secondary_structure(
     }
 
     let mut ent = Entity::new(
-        MESH_SECONDARY_STRUCTURE,
+        mesh_i,
         transform.translation,
         transform.rotation,
         1.,
@@ -385,6 +386,25 @@ pub fn filter_pep_atoms_by_dist<'a>(
 /// Refreshes entities with the model passed.
 /// Sensitive to various view configuration parameters.
 pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    if state.ui.mol_view_peptide == MoleculeView::Ribbon {
+        if state.volatile.flags.ss_mesh_peptide != state.peptide_for_tools_i() {
+            state.volatile.flags.ss_mesh_created = false;
+            state.volatile.flags.update_ss_mesh = true;
+        }
+        if state.volatile.flags.ss_mesh_dirty {
+            state.volatile.flags.update_ss_mesh = true;
+            state.volatile.flags.ss_mesh_dirty = false;
+        }
+        let visible: Vec<bool> = state
+            .peptides
+            .iter()
+            .map(|mol| mol.common.visible)
+            .collect();
+        if state.volatile.flags.ss_mesh_visible != visible {
+            state.volatile.flags.update_ss_mesh = true;
+        }
+    }
+
     scene.entities.retain(|ent| {
         ent.class != EntityClass::Protein as u32
             && ent.class != EntityClass::SaSurface as u32
@@ -402,6 +422,22 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
 
     for mol_i in 0..state.peptides.len() {
         draw_peptide_one(state, scene, mol_i);
+    }
+
+    let selected_peptide = state.peptide_for_tools_i();
+    let has_other_ribbons = state.peptides.iter().enumerate().any(|(mol_i, mol)| {
+        Some(mol_i) != selected_peptide
+            && mol.common.visible
+            && effective_mol_view_peptide(state, mol_i) == MoleculeView::Ribbon
+    });
+    if has_other_ribbons {
+        draw_secondary_structure(
+            &mut state.volatile.flags.update_ss_mesh,
+            state.volatile.flags.ss_mesh_created,
+            PeptideMeshTransform::default(),
+            MESH_OTHER_RIBBONS,
+            scene,
+        );
     }
 
     if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
@@ -443,17 +479,14 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
 
     let ui = &state.ui;
     let owns_shared_mesh = state.peptide_for_tools_i() == Some(mol_i);
-    // Ribbon, dots and solvent-surface views each render from a mesh in a shared GPU slot, so
-    // only one peptide can use them; the rest fall back to atoms and bonds.
+    // Dots and solvent-surface views still use shared mesh slots. Ribbons for other peptides
+    // are collected into a second mesh by the scene flag handler.
     let mol_view = effective_mol_view_peptide(state, mol_i);
 
     if owns_shared_mesh && mol_view == MoleculeView::Ribbon {
-        // Flush any deferred chain-visibility change into a full rebuild.
-        if state.volatile.flags.ss_mesh_dirty {
-            state.volatile.flags.update_ss_mesh = true;
-            state.volatile.flags.ss_mesh_dirty = false;
-        }
-        let transform = if state.volatile.flags.ss_mesh_created {
+        let transform = if state.volatile.flags.ss_mesh_created
+            && !state.volatile.flags.update_ss_mesh
+        {
             state.volatile.mol_manip.ribbon_mesh_transform
         } else {
             PeptideMeshTransform::default()
@@ -463,9 +496,11 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             &mut state.volatile.flags.update_ss_mesh,
             state.volatile.flags.ss_mesh_created,
             transform,
+            MESH_SECONDARY_STRUCTURE,
             scene,
         );
-
+    }
+    if mol_view == MoleculeView::Ribbon {
         entities.extend(ribbon_text_overlay_entities(mol, mol_active, ui));
     }
 
