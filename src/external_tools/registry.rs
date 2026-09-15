@@ -22,6 +22,7 @@ pub enum Tool {
     OpenDde,
     Boltz2,
     Chai1,
+    Protenix,
     EsmFold2,
     ProteinMpnn,
     LigandMpnn,
@@ -34,10 +35,11 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::OpenDde,
         Self::Boltz2,
         Self::Chai1,
+        Self::Protenix,
         Self::EsmFold2,
         Self::LigandMpnn,
         Self::ProteinMpnn,
@@ -404,6 +406,25 @@ pub static REGISTRY: &[ToolSpec] = &[
         install_hint: MANAGED_HINT,
         version_args: &["--help"],
         version_marker: "chai-lab",
+        slow_probe: true,
+    },
+    ToolSpec {
+        tool: Tool::Protenix,
+        identity: ToolIdentity::Shared("protenix"),
+        platform: PlatformSupport::LinuxOnly,
+        kind: ToolKind::VenvScript,
+        adapter: ToolAdapter::SharedAdapter,
+        executable: "protenix",
+        exe_override_env: "MOLCHANICA_PROTENIX_EXECUTABLE",
+        root_override_env: Some("MOLCHANICA_PROTENIX_VENV_DIR"),
+        bundle_root_override_env: None,
+        bundle_subdir: None,
+        colocated: false,
+        required_assets: &[],
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
+        version_args: &["--help"],
+        version_marker: "protenix",
         slow_probe: true,
     },
     ToolSpec {

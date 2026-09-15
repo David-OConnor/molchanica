@@ -64,9 +64,13 @@ impl ToolWindowKind {
     /// The tools this window offers. The first is selected when the window is opened.
     fn tools(self) -> &'static [Tool] {
         match self {
-            Self::StructurePrediction => {
-                &[Tool::OpenDde, Tool::Boltz2, Tool::Chai1, Tool::EsmFold2]
-            }
+            Self::StructurePrediction => &[
+                Tool::OpenDde,
+                Tool::Boltz2,
+                Tool::Chai1,
+                Tool::Protenix,
+                Tool::EsmFold2,
+            ],
             Self::SequenceDesign => &[Tool::ProteinMpnn, Tool::LigandMpnn],
             Self::BackboneDesign => &[Tool::RfDiffusion3],
         }
