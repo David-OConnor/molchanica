@@ -12,7 +12,7 @@ use std::{
 use adme::{DatasetTdc, infer::Infer};
 use bincode::{Decode, Encode};
 use bio_apis::amber_geostd::GeostdItem;
-use bio_files::{md_params::ForceFieldParams, mol_templates::TemplateData};
+use bio_files::{ResidueType, md_params::ForceFieldParams, mol_templates::TemplateData};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
 use dynamics::{
@@ -34,6 +34,7 @@ use mol_defs::{
     screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
     sfc_mesh::MeshColoring,
 };
+use na_seq::AaIdent;
 
 use crate::{
     cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
@@ -348,6 +349,10 @@ pub struct StateVolatile {
     pub cli_input_selected: usize,
     /// Pre-computed from the molecule
     pub aa_seq_text: String,
+    /// The residue index, in the active peptide, of each character of `aa_seq_text`. The
+    /// sequence skips non-amino-acid residues (water, ions, ligands), so a position in the text
+    /// is not a residue index; this is what maps one back to the other.
+    pub aa_seq_res_indices: Vec<usize>,
     pub aa_seq_display_cache: AaSeqDisplayCache,
     pub last_prefs_save_check: Option<Instant>,
     pub flags: SceneFlags,
@@ -384,6 +389,25 @@ impl StateVolatile {
             prefs_dir: data_root().unwrap_or_else(|| env::current_dir().unwrap()),
             ..Default::default()
         }
+    }
+
+    /// Rebuild the cached one-letter sequence and its residue-index map for `peptide`, and mark
+    /// the display cache dirty. Both are derived from the residue list in one pass, so a
+    /// character and its residue index can't drift apart.
+    pub fn set_aa_seq(&mut self, peptide: Option<&MoleculePeptide>) {
+        self.aa_seq_text.clear();
+        self.aa_seq_res_indices.clear();
+
+        if let Some(peptide) = peptide {
+            for (res_i, res) in peptide.residues.iter().enumerate() {
+                if let ResidueType::AminoAcid(aa) = res.res_type {
+                    self.aa_seq_text.push_str(&aa.to_str(AaIdent::OneLetter));
+                    self.aa_seq_res_indices.push(res_i);
+                }
+            }
+        }
+
+        self.aa_seq_display_cache.dirty = true;
     }
 
     pub fn is_playing_audio_for(&self, mol_type: MolType, i_mol: usize) -> bool {
@@ -533,22 +557,26 @@ pub struct MetadataEdit {
 /// `StateVolatile::aa_seq_text`; producers mark this cache dirty when replacing it.
 pub struct AaSeqDisplayCache {
     pub dirty: bool,
-    pub selected: Option<usize>,
+    /// Residue indices, as the selection holds them; the galley is rebuilt when they change.
+    pub selected: Vec<usize>,
     pub font_id: Option<FontId>,
     pub wrap_width: f32,
     pub pixels_per_point: f32,
     pub galley: Option<Arc<Galley>>,
+    /// Sequence position a drag-selection started at, while the drag is in progress.
+    pub drag_anchor: Option<usize>,
 }
 
 impl Default for AaSeqDisplayCache {
     fn default() -> Self {
         Self {
             dirty: true,
-            selected: None,
+            selected: Vec::new(),
             font_id: None,
             wrap_width: 0.0,
             pixels_per_point: 0.0,
             galley: None,
+            drag_anchor: None,
         }
     }
 }

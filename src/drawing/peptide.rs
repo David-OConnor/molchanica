@@ -484,13 +484,12 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
     let mol_view = effective_mol_view_peptide(state, mol_i);
 
     if owns_shared_mesh && mol_view == MoleculeView::Ribbon {
-        let transform = if state.volatile.flags.ss_mesh_created
-            && !state.volatile.flags.update_ss_mesh
-        {
-            state.volatile.mol_manip.ribbon_mesh_transform
-        } else {
-            PeptideMeshTransform::default()
-        };
+        let transform =
+            if state.volatile.flags.ss_mesh_created && !state.volatile.flags.update_ss_mesh {
+                state.volatile.mol_manip.ribbon_mesh_transform
+            } else {
+                PeptideMeshTransform::default()
+            };
 
         draw_secondary_structure(
             &mut state.volatile.flags.update_ss_mesh,

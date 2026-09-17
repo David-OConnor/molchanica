@@ -527,17 +527,7 @@ pub fn close_peptide(
     state.volatile.active_peptide = active_peptide;
     state.volatile.flags.ss_mesh_created = false;
     state.volatile.flags.sas_mesh_created = false;
-    state.volatile.aa_seq_text = state
-        .peptides
-        .last()
-        .map(|mol| {
-            mol.aa_seq
-                .iter()
-                .map(|aa| aa.to_str(na_seq::AaIdent::OneLetter))
-                .collect()
-        })
-        .unwrap_or_default();
-    state.volatile.aa_seq_display_cache.dirty = true;
+    state.volatile.set_aa_seq(state.peptides.last());
 
     state.update_save_prefs();
     engine_updates.entities = EntityUpdate::All;

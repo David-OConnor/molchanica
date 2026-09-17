@@ -29,7 +29,7 @@ use mol_defs::{
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
     screening::pharmacophore::Pharmacophore,
 };
-use na_seq::{AaIdent, Element};
+use na_seq::Element;
 use rand::RngExt;
 
 use crate::{
@@ -251,14 +251,7 @@ pub(in crate::file_io) fn load_peptide(
     updates: &mut EngineUpdates,
     draw_now: bool,
 ) -> (String, Vec3) {
-    state.volatile.aa_seq_text = String::with_capacity(mol.common.atoms.len());
-    for aa in &mol.aa_seq {
-        state
-            .volatile
-            .aa_seq_text
-            .push_str(&aa.to_str(AaIdent::OneLetter));
-    }
-    state.volatile.aa_seq_display_cache.dirty = true;
+    state.volatile.set_aa_seq(Some(&mol));
 
     state.volatile.flags.ss_mesh_created = false;
     state.volatile.flags.sas_mesh_created = false;

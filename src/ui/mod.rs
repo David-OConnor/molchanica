@@ -5,8 +5,8 @@ use std::{
 
 use bio_apis::{pdbe, rcsb};
 use egui::{
-    Button, Color32, ComboBox, CornerRadius, Event, Frame, Key, Margin, Panel, Rect, RichText,
-    Sense, Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob, vec2,
+    Color32, ComboBox, CornerRadius, Event, Frame, Key, Margin, Panel, RichText, Slider, Stroke,
+    TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolIdent, MolType};
@@ -28,15 +28,13 @@ use crate::{
     },
     cli,
     cli::autocomplete_cli,
-    drawing::{MoleculeView, color_viridis},
+    drawing::MoleculeView,
     file_io::download_mols::load_atom_coords_rcsb,
     mol_editor::enter_edit_mode,
     prefs::ControlSchemeType,
     render::set_flashlight,
     selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},
-    state::{
-        AaSeqDisplayCache, CamSnapshot, OperatingMode, ResColoring, SmilesDisplayCache, State,
-    },
+    state::{CamSnapshot, OperatingMode, ResColoring, SmilesDisplayCache, State},
     threads::{handle_thread_rx, start_session_restore},
     ui::{
         misc::section_box,
@@ -326,141 +324,6 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
             redraw.set_from_sel(&state.ui.selection);
         }
     }
-}
-
-/// Label on the button that copies the amino acid sequence to the clipboard.
-const SEQ_COPY_TEXT: &str = "Copy seq";
-/// Horizontal gap between the final residue and the copy button sharing its line.
-const SEQ_COPY_PAD: f32 = 40.;
-
-/// The display for the amino acid sequence of an opened protein.
-///
-/// The colored sequence is one cached galley instead of one widget and color calculation per
-/// residue on every frame. It is rebuilt only when its inputs actually change.
-fn add_aa_seq(
-    selection: &mut Selection,
-    seq_text: &str,
-    cache: &mut AaSeqDisplayCache,
-    ui: &mut Ui,
-    redraw: &mut bool,
-) {
-    let selected = match selection {
-        Selection::Residue(index) => Some(*index),
-        _ => None,
-    };
-    let font_id = TextStyle::Body.resolve(ui.style());
-
-    // The copy button shares the sequence's last line, so reserve its width before laying the
-    // text out; every row then breaks early enough that the button can't overrun the panel.
-    // `Ui::put` draws it at exactly this size, so size it the way the default style does: the
-    // text plus `button_padding` on each side.
-    let btn_text_size = ui
-        .fonts_mut(|fonts| {
-            fonts.layout_no_wrap(SEQ_COPY_TEXT.to_owned(), font_id.clone(), Color32::WHITE)
-        })
-        .size();
-    let btn_padding = ui.spacing().button_padding;
-    let btn_size = vec2(
-        btn_text_size.x + 2. * btn_padding.x,
-        (btn_text_size.y + 2. * btn_padding.y).max(ui.spacing().interact_size.y),
-    );
-
-    let wrap_width = (ui.available_width() - btn_size.x - SEQ_COPY_PAD).max(1.0);
-    let pixels_per_point = ui.ctx().pixels_per_point();
-    let rebuild = cache.dirty
-        || cache.selected != selected
-        || cache.font_id.as_ref() != Some(&font_id)
-        || cache.wrap_width.to_bits() != wrap_width.to_bits()
-        || cache.pixels_per_point.to_bits() != pixels_per_point.to_bits()
-        || cache.galley.is_none();
-
-    if rebuild {
-        let len = seq_text.len(); // One ASCII character per residue.
-        let mut job = LayoutJob::default();
-        job.wrap.max_width = wrap_width;
-        job.wrap.break_anywhere = true;
-
-        for (index, amino_acid) in seq_text.chars().enumerate() {
-            let color = color_viridis(index, 0, len);
-            let color = if selected == Some(index) {
-                Color32::RED
-            } else {
-                Color32::from_rgb(
-                    (color.0 * 255.0) as u8,
-                    (color.1 * 255.0) as u8,
-                    (color.2 * 255.0) as u8,
-                )
-            };
-            let mut encoded = [0; 4];
-            job.append(
-                amino_acid.encode_utf8(&mut encoded),
-                0.0,
-                TextFormat {
-                    font_id: font_id.clone(),
-                    color,
-                    ..Default::default()
-                },
-            );
-        }
-
-        cache.galley = Some(ui.fonts_mut(|fonts| fonts.layout_job(job)));
-        cache.dirty = false;
-        cache.selected = selected;
-        cache.font_id = Some(font_id);
-        cache.wrap_width = wrap_width;
-        cache.pixels_per_point = pixels_per_point;
-    }
-
-    Frame::new().show(ui, |ui| {
-        let Some(galley) = cache.galley.as_ref() else {
-            return;
-        };
-
-        // Sit the button just past the final residue, on the line it ends on. The allocation
-        // spans both, so the widgets below don't overlap the button.
-        let last_row = galley
-            .rows
-            .last()
-            .map(|row| row.rect())
-            .unwrap_or(Rect::ZERO);
-        let btn_offset = vec2(
-            last_row.right() + SEQ_COPY_PAD,
-            // Centered on the line it shares, but never above the galley: a single-row sequence
-            // is shorter than the button.
-            (last_row.center().y - btn_size.y / 2.).max(0.),
-        );
-        let size = vec2(
-            galley.size().x.max(btn_offset.x + btn_size.x),
-            galley.size().y.max(btn_offset.y + btn_size.y),
-        );
-
-        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        ui.painter()
-            .galley(rect.min, Arc::clone(galley), Color32::WHITE);
-
-        let btn_rect = Rect::from_min_size(rect.min + btn_offset, btn_size);
-        if ui
-            .put(btn_rect, Button::new(SEQ_COPY_TEXT))
-            .on_hover_text("Copy this sequence to the clipboard")
-            .clicked()
-        {
-            ui.ctx().copy_text(seq_text.to_owned());
-        }
-
-        // The allocated area covers the button too, so skip clicks landing on it; otherwise
-        // copying would also select the last residue.
-        if response.clicked()
-            && let Some(pointer) = response.interact_pointer_pos()
-            && !btn_rect.contains(pointer)
-        {
-            let residue = galley.cursor_from_pos(pointer - rect.min).index.0;
-            if residue < seq_text.len() {
-                *selection = Selection::Residue(residue);
-                *redraw = true;
-                ui.request_repaint();
-            }
-        }
-    });
 }
 
 fn view_sel_level_text(level: ViewSelLevel) -> &'static str {
@@ -1114,9 +977,10 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.add_space(ROW_SPACING / 2.);
 
         if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
-            add_aa_seq(
+            panels::pepide_aa_seq(
                 &mut state.ui.selection,
                 &state.volatile.aa_seq_text,
+                &state.volatile.aa_seq_res_indices,
                 &mut state.volatile.aa_seq_display_cache,
                 ui,
                 &mut redraw.peptide,

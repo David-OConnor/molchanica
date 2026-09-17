@@ -11,7 +11,6 @@ use mol_defs::{
     properties::mol_characterization::MolCharacterization,
     screening::pharmacophore::{Pharmacophore, PharmacophoreState},
 };
-use na_seq::AaIdent;
 
 use crate::{
     button,
@@ -542,12 +541,7 @@ fn mol_picker(
         && let Some(peptide) = state.peptides.get(peptide_i)
     {
         state.volatile.active_peptide = Some(peptide_i);
-        state.volatile.aa_seq_text = peptide
-            .aa_seq
-            .iter()
-            .map(|aa| aa.to_str(AaIdent::OneLetter))
-            .collect();
-        state.volatile.aa_seq_display_cache.dirty = true;
+        state.volatile.set_aa_seq(Some(peptide));
         state.volatile.flags.ss_mesh_created = false;
         state.volatile.flags.sas_mesh_created = false;
     }
