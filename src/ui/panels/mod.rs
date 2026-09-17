@@ -3,7 +3,10 @@ use crate::selection::Selection;
 use crate::state::AaSeqDisplayCache;
 use egui::text::LayoutJob;
 use egui::text_selection::LabelSelectionState;
-use egui::{Button, Color32, Frame, Pos2, Rect, Sense, Stroke, TextFormat, TextStyle, Ui, vec2};
+use egui::{
+    Button, Color32, Direction, Frame, Layout, Pos2, Rect, Sense, Stroke, TextFormat, TextStyle,
+    Ui, UiBuilder, Vec2, vec2,
+};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -13,10 +16,14 @@ pub mod mol_data;
 pub mod orca;
 pub mod view;
 
-/// Label on the button that copies the amino acid sequence to the clipboard.
-const SEQ_COPY_TEXT: &str = "Copy seq";
-/// Horizontal gap between the final residue and the copy button sharing its line.
+/// Label on the button that copies the whole amino acid sequence to the clipboard.
+const SEQ_COPY_ALL_TEXT: &str = "Copy all";
+/// Label on the button that copies only the selected residues.
+const SEQ_COPY_SEL_TEXT: &str = "Copy sel";
+/// Horizontal gap between the final residue and the copy buttons sharing its line.
 const SEQ_COPY_PAD: f32 = 40.;
+/// Horizontal gap between the two copy buttons.
+const SEQ_BTN_GAP: f32 = 6.;
 /// The sequence gets its own background strip, so residue colors are lifted against a known
 /// value rather than whatever the panel happens to be.
 const SEQ_BG: Color32 = Color32::from_gray(38);
@@ -113,23 +120,32 @@ pub(in crate::ui) fn pepide_aa_seq(
     };
     let font_id = TextStyle::Body.resolve(ui.style());
 
-    // The copy button shares the sequence's last line, so reserve its width before laying the
-    // text out; every row then breaks early enough that the button can't overrun the panel.
-    // `Ui::put` draws it at exactly this size, so size it the way the default style does: the
-    // text plus `button_padding` on each side.
-    let btn_text_size = ui
-        .fonts_mut(|fonts| {
-            fonts.layout_no_wrap(SEQ_COPY_TEXT.to_owned(), font_id.clone(), Color32::WHITE)
-        })
-        .size();
-
+    // The copy buttons share the sequence's last line, so reserve their width before laying
+    // the text out; every row then breaks early enough that they can't overrun the panel.
+    // `Ui::put` draws each at exactly the size given, so size them the way the default style
+    // does: the text plus `button_padding` on each side.
     let btn_padding = ui.spacing().button_padding;
-    let btn_size = vec2(
-        btn_text_size.x + 2. * btn_padding.x,
-        (btn_text_size.y + 2. * btn_padding.y).max(ui.spacing().interact_size.y),
+    let btn_size = |label: &str, ui: &Ui| -> Vec2 {
+        let text = ui
+            .fonts_mut(|fonts| {
+                fonts.layout_no_wrap(label.to_owned(), font_id.clone(), Color32::WHITE)
+            })
+            .size();
+
+        vec2(
+            text.x + 2. * btn_padding.x,
+            (text.y + 2. * btn_padding.y).max(ui.spacing().interact_size.y),
+        )
+    };
+
+    let all_size = btn_size(SEQ_COPY_ALL_TEXT, ui);
+    let sel_size = btn_size(SEQ_COPY_SEL_TEXT, ui);
+    let btns_size = vec2(
+        all_size.x + SEQ_BTN_GAP + sel_size.x,
+        all_size.y.max(sel_size.y),
     );
 
-    let wrap_width = (ui.available_width() - btn_size.x - SEQ_COPY_PAD).max(1.0);
+    let wrap_width = (ui.available_width() - btns_size.x - SEQ_COPY_PAD).max(1.0);
     let pixels_per_point = ui.ctx().pixels_per_point();
 
     let rebuild = cache.dirty
@@ -180,7 +196,7 @@ pub(in crate::ui) fn pepide_aa_seq(
 
         cache.galley = Some(ui.fonts_mut(|fonts| fonts.layout_job(job)));
         cache.dirty = false;
-        cache.selected = selected;
+        cache.selected.clone_from(&selected);
         cache.font_id = Some(font_id);
         cache.wrap_width = wrap_width;
         cache.pixels_per_point = pixels_per_point;
@@ -193,8 +209,8 @@ pub(in crate::ui) fn pepide_aa_seq(
     };
 
     Frame::new().show(ui, |ui| {
-        // Sit the button just past the final residue, on the line it ends on. The allocation
-        // spans both, so the widgets below don't overlap the button.
+        // Sit the buttons just past the final residue, on the line it ends on. The allocation
+        // spans both, so the widgets below don't overlap them.
         let last_row = galley
             .rows
             .last()
@@ -204,17 +220,17 @@ pub(in crate::ui) fn pepide_aa_seq(
             last_row.right() + SEQ_COPY_PAD,
             // Centered on the line it shares, but never above the galley: a single-row sequence
             // is shorter than the button.
-            (last_row.center().y - btn_size.y / 2.).max(0.),
+            (last_row.center().y - btns_size.y / 2.).max(0.),
         );
         let size = vec2(
-            galley.size().x.max(btn_offset.x + btn_size.x),
-            galley.size().y.max(btn_offset.y + btn_size.y),
+            galley.size().x.max(btn_offset.x + btns_size.x),
+            galley.size().y.max(btn_offset.y + btns_size.y),
         );
 
         // `click_and_drag`, so a drag across the sequence selects text the way it does in a
         // normal label; a plain click still picks a single residue.
         let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-        // Only behind the text: the copy button keeps the panel's own background.
+        // Only behind the text: the copy buttons keep the panel's own background.
         ui.painter().rect_filled(
             Rect::from_min_size(rect.min, galley.size()).expand(SEQ_BG_PAD),
             3.,
@@ -237,13 +253,48 @@ pub(in crate::ui) fn pepide_aa_seq(
             Stroke::NONE,
         );
 
-        let btn_rect = Rect::from_min_size(rect.min + btn_offset, btn_size);
+        let all_rect = Rect::from_min_size(rect.min + btn_offset, all_size);
+        let sel_rect = Rect::from_min_size(
+            rect.min + btn_offset + vec2(all_size.x + SEQ_BTN_GAP, 0.),
+            sel_size,
+        );
+
         if ui
-            .put(btn_rect, Button::new(SEQ_COPY_TEXT))
+            .put(all_rect, Button::new(SEQ_COPY_ALL_TEXT))
             .on_hover_text("Copy this sequence to the clipboard")
             .clicked()
         {
             ui.ctx().copy_text(seq_text.to_owned());
+        }
+
+        // `Ui::put`, but greyed out with nothing selected. (`put` has no enabled variant.)
+        let copy_sel = ui
+            .scope_builder(
+                UiBuilder::new()
+                    .max_rect(sel_rect)
+                    .layout(Layout::centered_and_justified(Direction::TopDown)),
+                |ui| ui.add_enabled(!selected.is_empty(), Button::new(SEQ_COPY_SEL_TEXT)),
+            )
+            .inner
+            .on_hover_text("Copy the selected residues to the clipboard")
+            .on_disabled_hover_text("Select residues first, by dragging across the sequence");
+
+        if copy_sel.clicked() {
+            // In sequence order regardless of how the residues were selected, and with any gap
+            // between selected stretches simply closed up.
+            let selected_set: HashSet<usize> = selected.iter().copied().collect();
+            let text: String = seq_text
+                .chars()
+                .enumerate()
+                .filter(|(index, _)| {
+                    res_indices
+                        .get(*index)
+                        .is_some_and(|res_i| selected_set.contains(res_i))
+                })
+                .map(|(_, amino_acid)| amino_acid)
+                .collect();
+
+            ui.ctx().copy_text(text);
         }
 
         // The sequence position under the pointer, clamped to the last residue: a pointer past
@@ -260,7 +311,8 @@ pub(in crate::ui) fn pepide_aa_seq(
         // the same stretch of protein that egui highlights in the text.
         if response.drag_started()
             && let Some(pointer) = response.interact_pointer_pos()
-            && !btn_rect.contains(pointer)
+            && !all_rect.contains(pointer)
+            && !sel_rect.contains(pointer)
         {
             cache.drag_anchor = Some(seq_pos(pointer));
         }
@@ -294,11 +346,12 @@ pub(in crate::ui) fn pepide_aa_seq(
             cache.drag_anchor = None;
         }
 
-        // The allocated area covers the button too, so skip clicks landing on it; otherwise
-        // copying would also select the last residue.
+        // The allocated area covers the buttons too, so skip clicks landing on them;
+        // otherwise copying would also select the last residue.
         if response.clicked()
             && let Some(pointer) = response.interact_pointer_pos()
-            && !btn_rect.contains(pointer)
+            && !all_rect.contains(pointer)
+            && !sel_rect.contains(pointer)
             && let Some(residue) = res_indices.get(seq_pos(pointer)).copied()
         {
             *selection = Selection::Residue(residue);
