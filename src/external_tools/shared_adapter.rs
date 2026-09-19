@@ -86,7 +86,49 @@ pub fn payload(tool: Tool, values: &HashMap<String, String>, mode: &str) -> io::
     if let Some(task) = values.get("task") {
         result.insert("task".into(), Value::String(task.clone()));
     }
+    if slug(tool) == "rfd3" {
+        if mode == "parameters" && result.get("length").and_then(Value::as_str) == Some("null") {
+            result.insert("length".into(), Value::String(String::new()));
+        }
+        for field in ["inputs", "inputs_file"] {
+            if let Some(Value::String(document)) = result.get_mut(field) {
+                normalize_rfd3_document(document)?;
+            }
+        }
+    }
     Ok(Value::Object(result))
+}
+
+fn normalize_rfd3_document(document: &mut String) -> io::Result<()> {
+    let parsed: Result<Value, _> = serde_json::from_str(document);
+    let mut parsed = match parsed {
+        Ok(value) => value,
+        Err(_) => match serde_yaml::from_str(document) {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        },
+    };
+    let Some(designs) = parsed.as_object_mut() else {
+        return Ok(());
+    };
+    let mut changed = false;
+    for design in designs.values_mut() {
+        let Some(source) = design
+            .get("input")
+            .and_then(Value::as_str)
+            .and_then(|source| source.strip_prefix("../input_pdbs/"))
+        else {
+            continue;
+        };
+        let reference = format!("bio-tools://rfd3/input_pdbs/{source}");
+        bio_tools::tool_definitions::presets::input_text("rfd3", &reference)?;
+        design["input"] = Value::String(reference);
+        changed = true;
+    }
+    if changed {
+        *document = serde_json::to_string(&parsed)?;
+    }
+    Ok(())
 }
 
 /// Run a shared-adapter tool to completion. Blocking; call it from a worker thread.

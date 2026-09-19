@@ -164,13 +164,13 @@ impl Form {
             .get("input_mode")
             .cloned()
             .unwrap_or_else(|| self.contract.default_mode());
+        self.preset = Some(index);
         if working == "upload" || shared_adapter::slug(tool) != "rfd3" {
             self.mode = self.authoritative_mode.clone();
         } else {
             self.mode = working;
             self.project_mode();
         }
-        self.preset = Some(index);
     }
 
     fn project_mode(&mut self) {
@@ -180,7 +180,8 @@ impl Form {
         }
         let result = match (self.authoritative_mode.as_str(), self.mode.as_str()) {
             ("parameters", "text") => {
-                rfd3_document(&self.contract, &mut self.values).map(|document| {
+                let preset = self.preset.and_then(|index| self.presets.get(index));
+                rfd3_document(&self.contract, &mut self.values, preset).map(|document| {
                     self.values.insert("inputs".into(), document);
                 })
             }
@@ -196,7 +197,30 @@ impl Form {
 fn rfd3_document(
     contract: &FormContract,
     values: &mut HashMap<String, String>,
+    preset: Option<&Preset>,
 ) -> Result<String, String> {
+    let name = values
+        .get("job_name")
+        .filter(|name| !name.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| "design".into());
+    let previous =
+        values
+            .get("inputs")
+            .and_then(|document| match serde_json::from_str::<Value>(document) {
+                Ok(parsed) => Some(parsed),
+                Err(_) => serde_yaml::from_str(document).ok(),
+            });
+    let explicit: Vec<String> = previous
+        .as_ref()
+        .and_then(|document| document.get(&name))
+        .and_then(Value::as_object)
+        .map(|design| design.keys().cloned().collect())
+        .unwrap_or_else(|| {
+            preset
+                .map(|preset| preset.form_values().into_keys().collect())
+                .unwrap_or_default()
+        });
     let mut design = Map::new();
     for field in &contract.fields {
         if !field
@@ -208,7 +232,11 @@ fn rfd3_document(
         }
         let owned = values.get(&field.name).cloned().unwrap_or_default();
         let value = owned.trim();
-        if value.is_empty() || (value == field.default_text() && field.name != "length") {
+        if value.is_empty()
+            || (value == field.default_text()
+                && field.name != "length"
+                && !explicit.contains(&field.name))
+        {
             continue;
         }
         let parsed = if field.name == "input" {
@@ -248,11 +276,6 @@ fn rfd3_document(
         };
         design.insert(field.name.clone(), parsed);
     }
-    let name = values
-        .get("job_name")
-        .filter(|name| !name.trim().is_empty())
-        .cloned()
-        .unwrap_or_else(|| "design".into());
     let document = json!({name: design});
     serde_json::to_string_pretty(&document).map_err(|error| error.to_string())
 }

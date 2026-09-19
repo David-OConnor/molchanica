@@ -839,16 +839,29 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                     state.ui.popup.sequence_pred = !state.ui.popup.sequence_pred;
                 }
 
+                // todo: Sort out the intent behind this "Design" button. If we don't end up
+                // todo using it in something like it's current form, remove the underlying
+                // todo code this button woujld call.
+                // if button!(
+                //     ui,
+                //     "Design",
+                //     COLOR_HIGHLIGHT,
+                //     "Design sequences for the active protein's backbone, scan every point mutation \
+                //     for stability, and annotate antibody chains."
+                // )
+                //     .clicked()
+                // {
+                //     state.ui.popup.protein_design = !state.ui.popup.protein_design;
+                // }
+
                 if button!(
                     ui,
-                    "Design",
+                    "Alignment screen",
                     COLOR_HIGHLIGHT,
-                    "Design sequences for the active protein's backbone, scan every point mutation \
-                    for stability, and annotate antibody chains."
-                )
-                    .clicked()
-                {
-                    state.ui.popup.protein_design = !state.ui.popup.protein_design;
+                    "Perform a fast small molecule alignment screening from all \
+                    files in a selected folder"
+                ).clicked() {
+                    state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
                 }
 
                 if button!(
@@ -902,12 +915,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                     if state.volatile.alignment.mols_to_align.len() < 2 {
                         state.volatile.alignment.mols_to_align = vec![0, 1];
                     }
-                }
-
-                if ui.button("Alignment screen")
-                    .on_hover_text("Perform a fast small molecule alignment screening from all \
-                    files in a selected folder").clicked() {
-                    state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
                 }
             });
         });
