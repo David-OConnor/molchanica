@@ -548,50 +548,6 @@ fn display_peptide_actions(
         };
         let res_selected = res_sel_i.and_then(|i| pep.residues.get(i));
 
-        if let Some(res) = res_selected && ui
-                .button(
-                    RichText::new(format!("Lig from {}", res.res_type))
-                        .color(COLOR_ACTION),
-                )
-                .on_hover_text(
-                    "Create a ligand from this residue on the peptide. This can be \
-                    saved to a Mol2 or SDF file, and used as a ligand. Molecular dynamics can be performed on it.",
-                )
-                .clicked()
-            {
-                // todo: I don't like this clone, but it avoids a dbl-borrow.
-                res_to_make = Some(res.clone());
-            }
-
-        // Ligands, ions, cofactors etc. that are part of the protein (and its mmCIF).
-        if let Some(res_i) = res_sel_i
-            && pep.is_ligand_res(res_i)
-        {
-            let name = pep.residues[res_i].res_type.to_string();
-
-            if button!(
-                ui,
-                format!("Detach {name}"),
-                COLOR_ACTION,
-                "Remove this residue from the protein, and its mmCIF data, and open it as a                 standalone ligand in its current position. You can then move it, and add it                 back to the protein with \"Add to protein\"; this restores its mmCIF records,                 e.g. its chemical component and entity, and its connections and binding site,                 if it's returned unmoved."
-            )
-            .clicked()
-            {
-                res_to_detach = Some(res_i);
-            }
-
-            if button!(
-                ui,
-                format!("Remove {name}"),
-                Color32::LIGHT_RED,
-                "Remove this residue from the protein, along with the records describing it in                 its mmCIF data: its entity and chemical component (if no other residue uses                 them), connections, binding sites etc."
-            )
-            .clicked()
-            {
-                res_to_remove = Some(res_i);
-            }
-        }
-
         if let Some(mol) = state.active_mol() {
             for res in &pep.het_residues {
                 // Note: This approach will fail if there are multiple hetero residues of similar len to
