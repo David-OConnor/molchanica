@@ -135,7 +135,10 @@ pub fn load_atom_coords_rcsb(
                     return;
                 }
             };
-            mol.source_cif = Some(cif_text);
+            if let Err(e) = mol.set_source_cif(cif_text) {
+                eprintln!("Problem loading mmCIF component bonds: {e}");
+                return;
+            }
 
             let (loaded_ident, centroid) = load_peptide(state, scene, mol, updates, true);
             state.update_history(&cache_path, OpenType::Peptide, Some(loaded_ident.clone()));

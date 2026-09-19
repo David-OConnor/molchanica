@@ -148,7 +148,7 @@ pub(crate) fn parse_session_history(
                     })?;
                     let mut molecule =
                         MoleculePeptide::from_mmcif(cif, ff_map, Some(path.to_owned()), ph)?;
-                    molecule.source_cif = Some(data);
+                    molecule.set_source_cif(data)?;
                     MoleculeGeneric::Peptide(molecule)
                 }
                 _ => {
@@ -443,7 +443,7 @@ impl State {
                     Some(path.to_owned()),
                     self.to_save.ph,
                 )?;
-                mol.source_cif = Some(data_str);
+                mol.set_source_cif(data_str)?;
 
                 Ok(MoleculeGeneric::Peptide(mol))
             }
