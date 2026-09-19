@@ -699,7 +699,7 @@ fn display_peptide_actions(
     }
 
     if let Some(res_i) = res_to_detach {
-        detach_het_res(state, peptide_i, res_i, scene, updates);
+        detach_het_res(state, peptide_i, res_i, true, scene, updates);
     }
 
     if let Some(res_i) = res_to_remove {
@@ -775,7 +775,7 @@ fn display_peptide_actions(
             ui,
             "Make ligs/pockets",
             COLOR_ACTION,
-            "Create ligands or pockets based on hetero residues in the protein. \
+            "Create ligands from hetero groups or pockets around protein residues. \
                 This may be used in pharmacophore creation, screening, etc. Hetero residues included in mmCIF \
                 files may represent bound ligands."
         )

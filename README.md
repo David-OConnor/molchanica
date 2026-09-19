@@ -35,14 +35,13 @@ This README is a summary. For details, see [the documentation](https://www.athan
 Setup scripts are included; these are optional. (The application can be launched directly), but are
 useful for setting up shortcuts in your OS.
 
-- On Linux distros that use Gnome (e.g. Ubuntu), run
-  `setup_molchanica.sh`, included in the zip, to create a Desktop
+- On Linux distros that use Gnome (e.g. Ubuntu), run `setup_molchanica.sh`, included in the zip, to create a Desktop
   GUI entry. (Do not run this with `sudo`.)
 - On Windows, run `setup_molchanica.ps1` to move the program to `~/AppData/Local/Programs/Molchanica`, and create a start menu shortcut. The first time you run the program, you may get the message
-  *"
-  Microsoft Defender
-  prevented an unrecognized app from starting"*. To bypass this, click *More info*, then *Run
-  Anyway*.
+  *"  Microsoft Defender prevented an unrecognized app from starting"*. To bypass this, click *More
+  info*, then *Run
+  Anyway*. A similar obstacle may be encountered on Windows: If it refuses to launch, with an error about "Smart App Control", you may disable "Smart App Control" in
+  *Windows Settings*.
 
 ![Ligand dynamics](screenshots/docked_2.png)
 
@@ -54,8 +53,8 @@ in the project directory. See notes in the
 *compiling* section below about setting up Amber parameter files,
 and either installing the CUDA toolkit, or disabling CUDA.
 
-
 ### Installing and using integrated third-party tools
+
 Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA,
 Gemmi, and ML-based protein design tools. See [the documentation](https://www.athanorlab.com/docs/third_party_tools.html)
 for details.
@@ -160,7 +159,6 @@ which may help. For example, loading molecules automatically from PubChem, drugb
 download associated ligands for a protein, automatically download molecule-specific force-field parameters, and
 other party tricks.
 
-
 ![UI image showing mol properties and a protien](/screenshots/molchanica_ui_apr_2026.png)
 
 ## Parallel computing
@@ -177,7 +175,6 @@ libraries are looked up when the program starts rather than being linked into th
 machine with no Nvidia GPU, no driver, or a driver too old for the CUDA version we build against,
 the program starts normally and reports `Cpu` as its computing device. The separate `nocuda`
 downloads are smaller, and are otherwise equivalent on such machines.
-
 
 ## Molecular dynamics
 
@@ -412,11 +409,11 @@ and displays its path. (The **Tools** panel has the equivalent button for `proce
 
 Where that folder is, per platform:
 
-| Platform | Installed with                             | Folder                                       |
-|----------|--------------------------------------------|----------------------------------------------|
-| Windows  | `setup_molchanica.ps1`                     | `C:\Users\<you>\AppData\Local\Programs\Molchanica` |
-| Linux    | `setup_molchanica.sh`                      | `~/molchanica`                               |
-| Any      | No setup script — run the binary in place  | Wherever you unzipped or built it            |
+| Platform | Installed with                            | Folder                                             |
+|----------|-------------------------------------------|----------------------------------------------------|
+| Windows  | `setup_molchanica.ps1`                    | `C:\Users\<you>\AppData\Local\Programs\Molchanica` |
+| Linux    | `setup_molchanica.sh`                     | `~/molchanica`                                     |
+| Any      | No setup script — run the binary in place | Wherever you unzipped or built it                  |
 
 Both setup scripts deliberately install somewhere you can write without administrator or root
 rights, which is what makes this possible. On Windows that means `%LOCALAPPDATA%\Programs` rather

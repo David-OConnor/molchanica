@@ -692,6 +692,8 @@ pub struct PopupState {
     pub pharmacophore_boolean: bool,
     pub pharmacophore_screening: bool,
     pub lig_pocket_creation: bool,
+    /// Include smaller disconnected components when creating or detaching a ligand.
+    pub lig_include_disconnected: bool,
     /// Adding a ligand to a protein. `Some` while that popup is open.
     pub lig_attach: Option<LigAttachUi>,
     pub parquet_db: bool,

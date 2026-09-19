@@ -82,6 +82,7 @@ pub fn detach_het_res(
     state: &mut State,
     peptide_i: usize,
     res_i: usize,
+    include_disconnected: bool,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) {
@@ -95,7 +96,7 @@ pub fn detach_het_res(
         .unwrap_or_default();
     let ident = pep.common.ident.clone();
 
-    match pep.detach_het_residue(res_i) {
+    match pep.detach_het_residue_with_fragments(res_i, include_disconnected) {
         Ok(lig) => {
             after_peptide_edit(state, peptide_i, None, scene, updates);
 

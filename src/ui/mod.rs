@@ -806,7 +806,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
                 if button!(
                     ui,
-                    "RFdiffusion3",
+                    "RFD3",
                     COLOR_HIGHLIGHT,
                     "Generate protein backbones with RFdiffusion3: unconditional, around a \
                     target, ligand, nucleic acid, or motif, or under a point group. Feed the \

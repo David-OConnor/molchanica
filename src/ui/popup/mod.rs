@@ -4,6 +4,7 @@ pub mod ff_params;
 pub mod mol_db;
 pub mod pharmacophore;
 pub mod protein_design;
+mod protein_res_management;
 pub(in crate::ui) mod rama_plot;
 pub mod recent_files;
 pub(crate) mod tool_runner;
@@ -17,24 +18,17 @@ use egui::{
 };
 use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
-use mol_defs::molecules::{
-    MolGenericRef, MolIdent, MolType,
-    common::MoleculeCommon,
-    pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
-};
+use mol_defs::molecules::{MolGenericRef, MolIdent, MolType, common::MoleculeCommon};
 use na_seq::AaIdent;
 use tool_runner::{ToolWindowKind, tool_window};
 
 use crate::{
     button, cam,
     cam::move_cam_to_mol,
-    drawing::wrappers::draw_all_pockets,
     file_io::download_mols::load_atom_coords_rcsb,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
     mol_alignment::run_alignment,
-    peptide_ligands::{attach_lig, detach_het_res, remove_het_res},
-    render::MESH_POCKET_START,
     screening::screen_by_alignment,
     selection::{Selection, ViewSelLevel},
     state::{MsaaSetting, State},
@@ -44,7 +38,7 @@ use crate::{
         panels::{md_viewer, mol_data::metadata},
         util::list_idents,
     },
-    util::{RedrawFlags, handle_err, make_lig_from_res, orbit_center},
+    util::{RedrawFlags, handle_err, orbit_center},
 };
 
 /// Where popups start, unless they override it.
@@ -177,14 +171,14 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.lig_pocket_creation {
         let open = show_popup(popup("Ligands & pockets from residues"), ui.ctx(), |ui| {
-            lig_pocket_from_het_res(state, scene, ui, updates);
+            protein_res_management::lig_pocket_from_het_res(state, scene, ui, updates);
         });
         state.ui.popup.lig_pocket_creation &= open;
     }
 
     if state.ui.popup.lig_attach.is_some() {
         let open = show_popup(popup("Add ligand to protein"), ui.ctx(), |ui| {
-            lig_attach_popup(state, scene, ui, updates);
+            protein_res_management::lig_attach_popup(state, scene, ui, updates);
         });
         if !open {
             state.ui.popup.lig_attach = None;
@@ -1096,261 +1090,4 @@ fn popup(title: &str) -> Window<'static> {
         .resizable(true)
         .collapsible(true)
         .constrain(true)
-}
-
-/// This handles creating ligands and pockets from hetero residues in protein data, and detaching or
-/// removing them. This, at least from RCSB protein files, is often associated with ligands binding
-/// to the protein.
-// todo: Move A/R
-fn lig_pocket_from_het_res(
-    state: &mut State,
-    scene: &mut Scene,
-    ui: &mut Ui,
-    updates: &mut EngineUpdates,
-) {
-    let Some(peptide_i) = state.peptide_for_tools_i() else {
-        return;
-    };
-    let mol = &state.peptides[peptide_i];
-
-    label!(
-        ui,
-        "Ligands, ions etc. that are part of this protein",
-        Color32::WHITE
-    );
-    ui.separator();
-    ui.add_space(ROW_SPACING);
-
-    // Avoids a double borrow.
-    let mut create_lig_from_res = None;
-    let mut pocket_to_add = None;
-    let mut res_to_detach = None;
-    let mut res_to_remove = None;
-    let mut close = false;
-
-    let ligand_residues = mol.ligand_residues();
-    if ligand_residues.is_empty() {
-        ui.label("None");
-    }
-
-    ScrollArea::vertical().max_height(400.).show(ui, |ui| {
-        for res_i in ligand_residues {
-            let res = &mol.residues[res_i];
-            let name = res.res_type.to_string();
-            let chain = res
-                .atoms
-                .first()
-                .and_then(|&i| mol.common.atoms[i].chain)
-                .and_then(|c| mol.chains.get(c))
-                .map(|c| c.id.as_str())
-                .unwrap_or("?");
-
-            ui.horizontal(|ui| {
-                label!(ui, name.clone(), Color32::WHITE);
-                ui.label(format!("chain {chain}, {} atoms", res.atoms.len()));
-                ui.add_space(COL_SPACING / 2.);
-
-                if ui
-                    .button(RichText::new("Make lig").color(COLOR_ACTION))
-                    .on_hover_text(
-                        "Create a ligand using molecules from this residue. It stays part of the \
-                        protein too.",
-                    )
-                    .clicked()
-                {
-                    create_lig_from_res = Some(res.clone());
-                    close = true;
-                }
-
-                if ui
-                    .button(RichText::new("Make pocket").color(COLOR_ACTION))
-                    .on_hover_text(
-                        "Create a pocket around a hetero residue included in a protein file.",
-                    )
-                    .clicked()
-                {
-                    let lig_ctr = {
-                        let mut ctr = Vec3::new_zero();
-                        for atom_i in &res.atoms {
-                            // Using local coordinates; this should be independent of the user positioning the protein.
-                            if *atom_i >= mol.common.atoms.len() {
-                                eprintln!(
-                                    "Error: Atom index out of bounds: {} > {}",
-                                    atom_i,
-                                    mol.common.atoms.len()
-                                );
-                                continue;
-                            }
-
-                            ctr += mol.common.atoms[*atom_i].posit;
-                        }
-                        ctr / res.atoms.len() as f64
-                    };
-
-                    let ident = format!("Pocket_{name}");
-                    pocket_to_add = Some(Pocket::new(
-                        mol,
-                        lig_ctr,
-                        POCKET_DIST_THRESH_DEFAULT,
-                        &ident,
-                    ));
-
-                    close = true;
-                }
-
-                if button!(
-                    ui,
-                    "Detach",
-                    COLOR_ACTION,
-                    "Remove this residue from the protein, and its mmCIF data, and open it as a \
-                    standalone ligand in its current position. You can then move it, and add it \
-                    back to the protein with \"Add to protein\"; this restores its mmCIF records."
-                )
-                .clicked()
-                {
-                    res_to_detach = Some(res_i);
-                }
-
-                if button!(
-                    ui,
-                    "Remove",
-                    Color32::LIGHT_RED,
-                    "Remove this residue from the protein, along with the records describing it \
-                    in its mmCIF data."
-                )
-                .clicked()
-                {
-                    res_to_remove = Some(res_i);
-                }
-            });
-            ui.add_space(ROW_SPACING / 2.);
-        }
-    });
-
-    if close {
-        state.ui.popup.lig_pocket_creation = false;
-    }
-
-    if let Some(mut pocket) = pocket_to_add {
-        pocket.mesh_i_rel = state.pockets.len(); // relative: 0 for first pocket, 1 for second, …
-        let target_mesh_i = MESH_POCKET_START + pocket.mesh_i_rel;
-        while scene.meshes.len() <= target_mesh_i {
-            scene.meshes.push(Default::default());
-        }
-        scene.meshes[target_mesh_i] = pocket.surface_mesh.clone();
-
-        state.pockets.push(pocket);
-        state.volatile.active_mol = Some((MolType::Pocket, state.pockets.len() - 1));
-        draw_all_pockets(state, scene, updates);
-
-        updates.meshes = true;
-    }
-
-    if let Some(res) = &create_lig_from_res {
-        make_lig_from_res(state, res, scene, updates);
-    }
-
-    if let Some(res_i) = res_to_detach {
-        detach_het_res(state, peptide_i, res_i, scene, updates);
-    }
-
-    if let Some(res_i) = res_to_remove {
-        remove_het_res(state, peptide_i, res_i, scene, updates);
-    }
-}
-
-/// Add a ligand to a protein as a hetero residue; e.g. to save them together as one mmCIF.
-fn lig_attach_popup(
-    state: &mut State,
-    scene: &mut Scene,
-    ui: &mut Ui,
-    updates: &mut EngineUpdates,
-) {
-    let Some(mut attach) = state.ui.popup.lig_attach.take() else {
-        return;
-    };
-    let Some(lig) = state.ligands.get(attach.lig_i) else {
-        return;
-    };
-    if state.peptides.is_empty() {
-        return;
-    }
-    attach.peptide_i = attach.peptide_i.min(state.peptides.len() - 1);
-
-    label!(ui, format!("Ligand: {}", lig.common.ident), Color32::WHITE);
-
-    if let Some(origin) = &lig.cif_origin {
-        let auth = origin
-            .auth_ids
-            .first()
-            .map(|(chain, seq, _)| format!(" (chain {chain} {seq})"))
-            .unwrap_or_default();
-
-        ui.label(format!("Detached from {}{auth}", origin.source_ident))
-            .on_hover_text(
-                "Adding it back restores its mmCIF records: its entity and chemical component, \
-                atom names, B-factors etc. If it's returned unmoved to the protein it came from, \
-                this also restores its connections, binding sites, and validation records.",
-            );
-    }
-    ui.add_space(ROW_SPACING);
-
-    ui.horizontal(|ui| {
-        ui.label("Protein:");
-
-        let prev = attach.peptide_i;
-        ComboBox::from_id_salt("lig_attach_peptide")
-            .selected_text(state.peptides[attach.peptide_i].common.ident.clone())
-            .show_ui(ui, |ui| {
-                for (i, pep) in state.peptides.iter().enumerate() {
-                    ui.selectable_value(&mut attach.peptide_i, i, &pep.common.ident);
-                }
-            });
-
-        if attach.peptide_i != prev {
-            attach.comp_id = state.peptides[attach.peptide_i].suggest_comp_id(lig);
-        }
-    });
-
-    ui.horizontal(|ui| {
-        ui.label("Residue name:").on_hover_text(
-            "Its chemical component ID in the mmCIF, e.g. \"ATP\": 1-5 letters and digits. \
-            Using one the protein already has makes this another copy of that component.",
-        );
-        ui.add(
-            TextEdit::singleline(&mut attach.comp_id)
-                .desired_width(50.)
-                .char_limit(5),
-        );
-    });
-
-    ui.checkbox(&mut attach.close_lig, "Close the standalone ligand")
-        .on_hover_text("Once added, it's part of the protein; this closes the separate copy.");
-
-    if state.peptides[attach.peptide_i].source_cif.is_none() {
-        ui.label(
-            RichText::new(
-                "This protein has no mmCIF data; this adds the ligand to its model only.",
-            )
-            .color(Color32::GOLD),
-        );
-    }
-    ui.add_space(ROW_SPACING);
-
-    let mut done = false;
-    if button!(
-        ui,
-        "Add",
-        COLOR_ACTION,
-        "Add the ligand to the protein, in its current position. Hydrogens are included only if \
-        the protein's mmCIF has them."
-    )
-    .clicked()
-    {
-        done = attach_lig(state, &attach, scene, updates);
-    }
-
-    if !done {
-        state.ui.popup.lig_attach = Some(attach);
-    }
 }
