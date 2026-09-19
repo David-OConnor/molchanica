@@ -45,6 +45,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 # and external tools (ProteinMPNN),
 # which exchange JSON with the processes they drive.
 serde_json = "1.0.151"
+serde_yaml = "0.9"
 flate2 = "1.1" # Preview and load compressed model outputs while preserving raw files.
 
 # We use Parquet for molecule databases, e.g. for screening, and a built-in convenience set.

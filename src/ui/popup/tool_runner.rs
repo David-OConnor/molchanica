@@ -22,9 +22,8 @@ use egui::{
 use egui_file_dialog::FileDialog;
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::peptide::MoleculePeptide;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-use crate::ui::COLOR_ACTION;
 use crate::{
     external_tools::{
         self, RunControl, Tool,
@@ -33,7 +32,7 @@ use crate::{
         tool_form::{FieldKind, FormContract, FormField, Preset},
     },
     state::State,
-    ui::util::open_dir,
+    ui::{COLOR_ACTION, util::open_dir},
     util::handle_err,
 };
 
@@ -134,6 +133,8 @@ struct Form {
     presets: Vec<Preset>,
     values: HashMap<String, String>,
     mode: String,
+    authoritative_mode: String,
+    projection_error: Option<String>,
     preset: Option<usize>,
 }
 
@@ -144,6 +145,8 @@ impl Form {
 
         Ok(Self {
             mode: contract.default_mode(),
+            authoritative_mode: contract.default_mode(),
+            projection_error: None,
             values: contract.defaults(),
             presets: Preset::load_all(slug)?,
             contract,
@@ -151,16 +154,189 @@ impl Form {
         })
     }
 
-    fn apply_preset(&mut self, index: usize) {
+    fn apply_preset(&mut self, tool: Tool, index: usize) {
+        let working = self.mode.clone();
+        self.projection_error = None;
         self.values = self.contract.defaults();
         self.values.extend(self.presets[index].form_values());
-        self.mode = self
+        self.authoritative_mode = self
             .values
             .get("input_mode")
             .cloned()
             .unwrap_or_else(|| self.contract.default_mode());
+        if working == "upload" || shared_adapter::slug(tool) != "rfd3" {
+            self.mode = self.authoritative_mode.clone();
+        } else {
+            self.mode = working;
+            self.project_mode();
+        }
         self.preset = Some(index);
     }
+
+    fn project_mode(&mut self) {
+        self.projection_error = None;
+        if self.mode == self.authoritative_mode || self.mode == "upload" {
+            return;
+        }
+        let result = match (self.authoritative_mode.as_str(), self.mode.as_str()) {
+            ("parameters", "text") => {
+                rfd3_document(&self.contract, &mut self.values).map(|document| {
+                    self.values.insert("inputs".into(), document);
+                })
+            }
+            ("text", "parameters") => rfd3_parameters(&self.contract, &mut self.values),
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            self.projection_error = Some(error);
+        }
+    }
+}
+
+fn rfd3_document(
+    contract: &FormContract,
+    values: &mut HashMap<String, String>,
+) -> Result<String, String> {
+    let mut design = Map::new();
+    for field in &contract.fields {
+        if !field
+            .input_modes
+            .split(',')
+            .any(|mode| mode == "parameters")
+        {
+            continue;
+        }
+        let owned = values.get(&field.name).cloned().unwrap_or_default();
+        let value = owned.trim();
+        if value.is_empty() || (value == field.default_text() && field.name != "length") {
+            continue;
+        }
+        let parsed = if field.name == "input" {
+            if let Some(asset) = value.strip_prefix("bio-tools://rfd3/") {
+                Value::String(format!("../{asset}"))
+            } else {
+                values.insert("spec_input_file".into(), value.to_owned());
+                Value::String("uploaded".into())
+            }
+        } else if field.name == "ori_token" && !value.starts_with('[') {
+            let coordinates: Result<Vec<f64>, _> = value
+                .split(',')
+                .map(|part| part.trim().parse::<f64>())
+                .collect();
+            let coordinates =
+                coordinates.map_err(|_| "ori_token needs three numbers".to_owned())?;
+            if coordinates.len() != 3 || coordinates.iter().any(|number| !number.is_finite()) {
+                return Err("ori_token needs three finite numbers".into());
+            }
+            json!(coordinates)
+        } else if matches!(field.kind(), FieldKind::Checkbox)
+            || matches!(field.name.as_str(), "is_non_loopy")
+        {
+            Value::Bool(matches!(value, "true" | "True" | "1" | "on"))
+        } else if field.name == "length" && value == "null" {
+            Value::Null
+        } else if matches!(field.kind(), FieldKind::Number)
+            || (field.name == "length" && value.parse::<u64>().is_ok())
+            || field.name == "dialect"
+        {
+            serde_json::from_str(value)
+                .map_err(|_| format!("{} is not a valid number", field.label))?
+        } else if value.starts_with('{') || value.starts_with('[') {
+            serde_json::from_str(value).map_err(|_| format!("{} is not valid JSON", field.label))?
+        } else {
+            Value::String(value.to_owned())
+        };
+        design.insert(field.name.clone(), parsed);
+    }
+    let name = values
+        .get("job_name")
+        .filter(|name| !name.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| "design".into());
+    let document = json!({name: design});
+    serde_json::to_string_pretty(&document).map_err(|error| error.to_string())
+}
+
+fn rfd3_parameters(
+    contract: &FormContract,
+    values: &mut HashMap<String, String>,
+) -> Result<(), String> {
+    let document = values.get("inputs").map(String::as_str).unwrap_or("");
+    let parsed: Value = match serde_json::from_str(document) {
+        Ok(parsed) => parsed,
+        Err(_) => serde_yaml::from_str(document).map_err(|error| {
+            format!("The RFDiffusion3 input is not valid JSON or YAML: {error}")
+        })?,
+    };
+    let designs = parsed
+        .as_object()
+        .ok_or("The RFDiffusion3 input must be an object of named designs")?;
+    if designs.len() != 1 {
+        return Err(
+            "Set parameters here describes one design. Keep multiple designs in the text mode."
+                .into(),
+        );
+    }
+    let (name, entry) = designs.iter().next().unwrap();
+    let entry = entry
+        .as_object()
+        .ok_or("The named design must be an object")?;
+    let fields: Vec<&FormField> = contract
+        .fields
+        .iter()
+        .filter(|field| {
+            field
+                .input_modes
+                .split(',')
+                .any(|mode| mode == "parameters")
+        })
+        .collect();
+    for key in entry.keys() {
+        if !fields.iter().any(|field| &field.name == key) {
+            return Err(format!("Set parameters here has no field for {key}"));
+        }
+    }
+    let mut updated: HashMap<String, String> = fields
+        .iter()
+        .map(|field| (field.name.clone(), field.default_text()))
+        .collect();
+    for (key, value) in entry {
+        let text = if key == "input" {
+            let source = value.as_str().ok_or("input must be a structure path")?;
+            if let Some(asset) = source.strip_prefix("../input_pdbs/") {
+                let reference = format!("bio-tools://rfd3/input_pdbs/{asset}");
+                bio_tools::tool_definitions::presets::input_text("rfd3", &reference)
+                    .map_err(|error| error.to_string())?;
+                reference
+            } else if source == "uploaded" {
+                values
+                    .get("spec_input_file")
+                    .filter(|path| !path.is_empty())
+                    .cloned()
+                    .ok_or("Choose the structure file before switching to parameters")?
+            } else if source.starts_with("bio-tools://rfd3/") {
+                bio_tools::tool_definitions::presets::input_text("rfd3", source)
+                    .map_err(|error| error.to_string())?;
+                source.to_owned()
+            } else {
+                return Err("Only a bundled example structure can be carried to parameters".into());
+            }
+        } else {
+            match value {
+                Value::Null if key == "length" => "null".into(),
+                Value::Null => String::new(),
+                Value::String(text) => text.clone(),
+                Value::Array(_) | Value::Object(_) => {
+                    serde_json::to_string_pretty(value).map_err(|error| error.to_string())?
+                }
+                _ => value.to_string(),
+            }
+        };
+        updated.insert(key.clone(), text);
+    }
+    values.extend(updated);
+    values.insert("job_name".into(), name.clone());
+    Ok(())
 }
 
 enum FileAction {
@@ -318,7 +494,7 @@ impl ToolWindow {
 
         ui.add_enabled_ui(!busy, |ui| {
             preset_ui(self.tool, form, ui);
-            mode_and_task_ui(form, ui);
+            mode_and_task_ui(self.tool, form, ui);
 
             if form.contract.structure_field(&form.mode).is_some() && !proteins.is_empty() {
                 ui.horizontal(|ui| {
@@ -358,6 +534,7 @@ impl ToolWindow {
                 Ok(path) => {
                     form.values
                         .insert(field.name.clone(), path.display().to_string());
+                    form.authoritative_mode = form.mode.clone();
                 }
                 Err(error) => self.error = Some(error.to_string()),
             }
@@ -369,7 +546,7 @@ impl ToolWindow {
         ui.horizontal(|ui| {
             run = ui
                 .add_enabled(
-                    !busy && spec.platform.is_supported(),
+                    !busy && spec.platform.is_supported() && form.projection_error.is_none(),
                     Button::new(RichText::new("Run").color(COLOR_ACTION)),
                 )
                 .clicked();
@@ -437,6 +614,7 @@ impl ToolWindow {
             Some(FileAction::Input(tool, field)) => {
                 if let Some(form) = self.forms.get_mut(&tool) {
                     form.values.insert(field, path.display().to_string());
+                    form.authoritative_mode = form.mode.clone();
                 }
             }
             Some(FileAction::Export(source)) => match fs::copy(&source, &path) {
@@ -812,7 +990,7 @@ fn preset_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
         if (chosen != form.preset || reload)
             && let Some(index) = chosen
         {
-            form.apply_preset(index);
+            form.apply_preset(tool, index);
         }
 
         if ui.button("Reset fields").clicked()
@@ -829,11 +1007,15 @@ fn preset_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
             ui.hyperlink_to("Example source", url);
         }
     }
+    if let Some(error) = &form.projection_error {
+        ui.colored_label(Color32::ORANGE, error);
+    }
 }
 
 /// The input-mode radio buttons and the task picker, for the tools that have them.
-fn mode_and_task_ui(form: &mut Form, ui: &mut Ui) {
+fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
     if let Some(modes) = &form.contract.input_modes {
+        let previous = form.mode.clone();
         ui.horizontal_wrapped(|ui| {
             ui.label(&modes.label);
             for option in &modes.options {
@@ -844,6 +1026,9 @@ fn mode_and_task_ui(form: &mut Form, ui: &mut Ui) {
                 );
             }
         });
+        if form.mode != previous && shared_adapter::slug(tool) == "rfd3" {
+            form.project_mode();
+        }
     }
 
     if !form.contract.tasks.is_empty() {
@@ -867,6 +1052,7 @@ fn mode_and_task_ui(form: &mut Form, ui: &mut Ui) {
 
 /// Every field visible in the current mode and task, under its group's heading.
 fn fields_ui(tool: Tool, form: &mut Form, pick: &mut Option<String>, ui: &mut Ui) {
+    let before = form.values.clone();
     ScrollArea::vertical()
         .id_salt("tool_form_scroll")
         .max_height(480.0)
@@ -902,6 +1088,13 @@ fn fields_ui(tool: Tool, form: &mut Form, pick: &mut Option<String>, ui: &mut Ui
                     });
             }
         });
+    let edited_input = form.contract.fields.iter().any(|field| {
+        field.input_modes == form.mode && form.values.get(&field.name) != before.get(&field.name)
+    });
+    if edited_input && shared_adapter::slug(tool) == "rfd3" {
+        form.authoritative_mode = form.mode.clone();
+        form.projection_error = None;
+    }
 }
 
 fn draw_field(

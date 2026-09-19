@@ -1,14 +1,11 @@
-use crate::drawing::color_viridis;
-use crate::selection::Selection;
-use crate::state::AaSeqDisplayCache;
-use egui::text::LayoutJob;
-use egui::text_selection::LabelSelectionState;
+use std::{collections::HashSet, sync::Arc};
+
 use egui::{
     Button, Color32, Direction, Frame, Layout, Pos2, Rect, Sense, Stroke, TextFormat, TextStyle,
-    Ui, UiBuilder, Vec2, vec2,
+    Ui, UiBuilder, Vec2, text::LayoutJob, text_selection::LabelSelectionState, vec2,
 };
-use std::collections::HashSet;
-use std::sync::Arc;
+
+use crate::{drawing::color_viridis, selection::Selection, state::AaSeqDisplayCache};
 
 pub mod md;
 pub mod md_viewer;

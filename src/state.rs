@@ -47,6 +47,7 @@ use crate::{
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     orca::StateOrca,
+    peptide_ligands::LigAttachUi,
     prefs::ToSave,
     selection::{Selection, ViewSelLevel},
     sonification::MoleculeSonification,
@@ -60,7 +61,6 @@ use crate::{
 pub struct State {
     pub ui: StateUi,
     pub volatile: StateVolatile,
-    pub cif_pdb_raw: HashMap<String, String>,
     pub peptides: Vec<MoleculePeptide>,
     pub ligands: Vec<MoleculeSmall>,
     pub nucleic_acids: Vec<MoleculeNucleicAcid>,
@@ -123,7 +123,6 @@ impl Default for State {
         Self {
             ui,
             volatile: StateVolatile::new(),
-            cif_pdb_raw: Default::default(),
             peptides: Default::default(),
             ligands: Default::default(),
             nucleic_acids: Default::default(),
@@ -693,6 +692,8 @@ pub struct PopupState {
     pub pharmacophore_boolean: bool,
     pub pharmacophore_screening: bool,
     pub lig_pocket_creation: bool,
+    /// Adding a ligand to a protein. `Some` while that popup is open.
+    pub lig_attach: Option<LigAttachUi>,
     pub parquet_db: bool,
     /// A molecule the user has asked to delete from a molecule DB, pending confirmation:
     /// (index into `parquet_dbs`, SMILES key of the row).

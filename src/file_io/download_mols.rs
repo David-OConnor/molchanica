@@ -123,7 +123,7 @@ pub fn load_atom_coords_rcsb(
                 return;
             };
 
-            let mol: MoleculePeptide = match MoleculePeptide::from_mmcif(
+            let mut mol: MoleculePeptide = match MoleculePeptide::from_mmcif(
                 cif,
                 ff_map,
                 Some(cache_path.clone()),
@@ -135,14 +135,13 @@ pub fn load_atom_coords_rcsb(
                     return;
                 }
             };
+            mol.source_cif = Some(cif_text);
 
             let (loaded_ident, centroid) = load_peptide(state, scene, mol, updates, true);
             state.update_history(&cache_path, OpenType::Peptide, Some(loaded_ident.clone()));
             if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
                 *center = centroid.into();
             }
-
-            state.cif_pdb_raw.insert(loaded_ident, cif_text);
         }
         Err(e) => {
             handle_err(

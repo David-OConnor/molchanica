@@ -61,7 +61,6 @@ const MOL_MIN_DIST_OPEN: f64 = 12.;
 pub(crate) enum SessionRestorePayload {
     Molecule {
         molecule: MoleculeGeneric,
-        raw_cif: Option<(String, String)>,
         specific_params: Option<(String, ForceFieldParams)>,
     },
     Density(DensityMap),
@@ -116,7 +115,6 @@ pub(crate) fn parse_session_history(
                 .and_then(|value| value.to_str())
                 .unwrap_or_default()
                 .to_ascii_lowercase();
-            let mut raw_cif = None;
             let mut molecule = match extension.as_str() {
                 "sdf" | "mol" => {
                     let mut molecule: MoleculeSmall = Sdf::load(path)?.try_into()?;
@@ -148,9 +146,9 @@ pub(crate) fn parse_session_history(
                     let ff_map = peptide_ff_q_map.ok_or_else(|| {
                         io::Error::other("Missing FF map when opening a protein; can't validate H")
                     })?;
-                    let molecule =
+                    let mut molecule =
                         MoleculePeptide::from_mmcif(cif, ff_map, Some(path.to_owned()), ph)?;
-                    raw_cif = Some((molecule.common.ident.clone(), data));
+                    molecule.source_cif = Some(data);
                     MoleculeGeneric::Peptide(molecule)
                 }
                 _ => {
@@ -182,7 +180,6 @@ pub(crate) fn parse_session_history(
 
             SessionRestorePayload::Molecule {
                 molecule,
-                raw_cif,
                 specific_params,
             }
         }
@@ -440,13 +437,13 @@ impl State {
                     ));
                 };
 
-                let mol = MoleculePeptide::from_mmcif(
+                let mut mol = MoleculePeptide::from_mmcif(
                     cif_data,
                     ff_map,
                     Some(path.to_owned()),
                     self.to_save.ph,
                 )?;
-                self.cif_pdb_raw.insert(mol.common.ident.clone(), data_str);
+                mol.source_cif = Some(data_str);
 
                 Ok(MoleculeGeneric::Peptide(mol))
             }
@@ -721,14 +718,15 @@ impl State {
                 //     self.to_save.last_opened = Some(path.to_owned());
                 //     self.update_save_prefs()
                 // }
-                // We don't allow editing the protein files yet, so save the active peptide's raw CIF.
+                // Save the active peptide's mmCIF: as loaded, with any ligands added or removed
+                // since.
                 let Some(mol) = self
                     .peptide_for_tools_i()
                     .and_then(|i| self.peptides.get(i))
                 else {
                     return Err(io::Error::new(ErrorKind::InvalidData, "No peptide to save"));
                 };
-                let Some(data) = self.cif_pdb_raw.get(&mol.common.ident) else {
+                let Some(data) = &mol.source_cif else {
                     return Err(io::Error::new(
                         ErrorKind::InvalidData,
                         "The active peptide has no source CIF data to save",
@@ -956,7 +954,18 @@ impl State {
         updates: &mut EngineUpdates,
         path: Option<&Path>,
     ) {
-        self.load_mol_to_state_inner(mol, scene, updates, path, true);
+        self.load_mol_to_state_inner(mol, scene, updates, path, true, false);
+    }
+
+    /// Like [`Self::load_mol_to_state`], but leaves a small molecule where it is instead of moving
+    /// it in front of the camera. E.g. for a ligand detached from a protein.
+    pub fn load_mol_to_state_in_place(
+        &mut self,
+        mol: MoleculeGeneric,
+        scene: &mut Scene,
+        updates: &mut EngineUpdates,
+    ) {
+        self.load_mol_to_state_inner(mol, scene, updates, None, true, true);
     }
 
     /// Add a molecule parsed by the startup worker without repeatedly rebuilding all render
@@ -969,7 +978,7 @@ impl State {
         updates: &mut EngineUpdates,
         path: &Path,
     ) {
-        self.load_mol_to_state_inner(mol, scene, updates, Some(path), false);
+        self.load_mol_to_state_inner(mol, scene, updates, Some(path), false, false);
     }
 
     fn load_mol_to_state_inner(
@@ -979,6 +988,7 @@ impl State {
         updates: &mut EngineUpdates,
         path: Option<&Path>,
         draw_now: bool,
+        keep_posit: bool,
     ) {
         if let Some(path) = path {
             mol.common_mut().update_path(path);
@@ -1018,7 +1028,9 @@ impl State {
                     mol.common.populate_hydrogens()
                 }
 
-                move_mol_to_cam(mol.common_mut(), &scene.camera);
+                if !keep_posit {
+                    move_mol_to_cam(mol.common_mut(), &scene.camera);
+                }
 
                 if let Some(p) = &self.ff_param_set.small_mol {
                     mol.update_ff_related(&mut self.mol_specific_params, p, false);
@@ -1047,7 +1059,7 @@ impl State {
                 let centroid = mol.common.centroid();
                 // If there is already a molecule here, offset.
                 // todo: Apply this logic to other mol types A/R
-                for mol_other in &self.ligands {
+                for mol_other in self.ligands.iter().filter(|_| !keep_posit) {
                     if (mol_other.common.centroid() - centroid).magnitude() < MOL_MIN_DIST_OPEN {
                         let mut rng = rand::rng();
                         let dir =

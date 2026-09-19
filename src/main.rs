@@ -44,6 +44,7 @@ mod mol_db;
 mod mol_editor;
 mod mol_manip;
 mod orca;
+mod peptide_ligands;
 mod properties;
 mod screening;
 mod selection;

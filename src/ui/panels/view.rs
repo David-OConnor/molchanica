@@ -65,6 +65,8 @@ pub fn view_settings(
         redraw.ligand = true;
         redraw.na = true;
         redraw.lipid = true;
+        // Ligands etc. that are part of a peptide use this view too.
+        redraw.peptide = !state.peptides.is_empty();
     }
 
     if !state.peptides.is_empty() {

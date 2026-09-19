@@ -179,14 +179,10 @@ fn apply_session_restore_item(
     match item.payload {
         SessionRestorePayload::Molecule {
             molecule,
-            raw_cif,
             specific_params,
         } => {
             if let Some((name, params)) = specific_params {
                 state.mol_specific_params.insert(name, params);
-            }
-            if let Some((ident, cif)) = raw_cif {
-                state.cif_pdb_raw.insert(ident, cif);
             }
 
             let mol_type = molecule.mol_type();

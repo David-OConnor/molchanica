@@ -402,6 +402,8 @@ fn cycle_primary_view(state: &mut State, redraw: &mut RedrawFlags, forward: bool
         redraw.ligand = true;
         redraw.na = true;
         redraw.lipid = true;
+        // Ligands etc. that are part of a peptide use this view too.
+        redraw.peptide = !state.peptides.is_empty();
     }
 }
 /// Handles keyboard input from either device, or window events.

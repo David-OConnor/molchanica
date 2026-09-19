@@ -264,7 +264,13 @@ pub fn find_sel_from_cursor_ray(
             &atoms_this[*i_atom]
         };
 
-        if (ui.visibility.hide_sidechains || matches!(ui.mol_view_peptide, MoleculeView::Backbone))
+        // Ligands etc. that are part of a peptide have the sidechain role, but are drawn per the
+        // small-molecule view, so stay selectable.
+        let lig_atom = atom.hetero && atom.role != Some(AtomRole::Water);
+
+        if !lig_atom
+            && (ui.visibility.hide_sidechains
+                || matches!(ui.mol_view_peptide, MoleculeView::Backbone))
             && let Some(role) = atom.role
             && (role == AtomRole::Sidechain || role == AtomRole::H_Sidechain)
         {
@@ -272,7 +278,7 @@ pub fn find_sel_from_cursor_ray(
         }
 
         if let Some(role) = atom.role {
-            if ui.visibility.hide_sidechains && role == AtomRole::Sidechain {
+            if !lig_atom && ui.visibility.hide_sidechains && role == AtomRole::Sidechain {
                 continue;
             }
             if role == AtomRole::Water

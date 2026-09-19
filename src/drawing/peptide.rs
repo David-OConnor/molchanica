@@ -10,7 +10,7 @@ use egui::FontFamily;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOverlay};
 use lin_alg::f32::{Quaternion, Vec3};
 use mol_defs::{
-    molecules::{AtomRole, Chain, MolGenericRef, MolType, peptide::MoleculePeptide},
+    molecules::{Atom, AtomRole, Chain, MolGenericRef, MolType, peptide::MoleculePeptide},
     reflection::DensityPt,
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
@@ -586,170 +586,167 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         }
     }
 
+    // Ligands, ions etc. that are part of the peptide are drawn using the small-molecule view,
+    // rather than the peptide one. Water keeps the peptide view.
+    let het_view = ui.mol_view.non_peptide_or_default();
+    let is_lig_atom = |atom: &Atom| atom.hetero && atom.role != Some(AtomRole::Water);
+
     // Draw atoms.
-    if matches!(
-        mol_view,
-        MoleculeView::BallAndStick | MoleculeView::SpaceFill
-    ) {
-        for (i_atom, atom) in mol.common.atoms.iter().enumerate() {
-            if atom.hetero {
-                let mut water = false;
-                if let Some(role) = atom.role {
-                    water = role == AtomRole::Water;
-                }
-                if !water && mol_view == MoleculeView::SpaceFill {
-                    // Don't draw VDW spheres for hetero atoms; draw as sticks.
-                    continue;
-                }
-            }
+    for (i_atom, atom) in mol.common.atoms.iter().enumerate() {
+        let lig_atom = is_lig_atom(atom);
+        let view = if lig_atom { het_view } else { mol_view };
 
-            let mut chain_not_sel = false;
-            for chain in &chains_invis {
-                if chain.atoms.contains(&i_atom) {
-                    chain_not_sel = true;
-                    break;
-                }
-            }
-            if chain_not_sel {
-                continue;
-            }
+        if !matches!(view, MoleculeView::BallAndStick | MoleculeView::SpaceFill) {
+            continue;
+        }
 
-            if state.ui.visibility.hide_hydrogen && atom.element == Element::Hydrogen {
-                continue;
+        let mut chain_not_sel = false;
+        for chain in &chains_invis {
+            if chain.atoms.contains(&i_atom) {
+                chain_not_sel = true;
+                break;
             }
+        }
+        if chain_not_sel {
+            continue;
+        }
 
-            if filtered_out_by_dist.contains(&i_atom) {
-                continue;
-            }
+        if state.ui.visibility.hide_hydrogen && atom.element == Element::Hydrogen {
+            continue;
+        }
 
-            if let Some(role) = atom.role {
-                if (state.ui.visibility.hide_sidechains || mol_view == MoleculeView::Backbone)
-                    && matches!(role, AtomRole::Sidechain | AtomRole::H_Sidechain)
-                {
-                    continue;
-                }
-                if (state.ui.visibility.hide_water || mol_view == MoleculeView::SpaceFill)
-                    && role == AtomRole::Water
-                {
-                    continue;
-                }
-            }
+        if filtered_out_by_dist.contains(&i_atom) {
+            continue;
+        }
 
-            if (state.ui.visibility.hide_hetero && atom.hetero)
-                || (state.ui.visibility.hide_protein && !atom.hetero)
+        if let Some(role) = atom.role {
+            // Note: Ligand atoms have the sidechain role, from their atom names.
+            if !lig_atom
+                && (state.ui.visibility.hide_sidechains || mol_view == MoleculeView::Backbone)
+                && matches!(role, AtomRole::Sidechain | AtomRole::H_Sidechain)
             {
                 continue;
             }
-
-            let atom_posit = mol.common.atom_posits[i_atom];
-
-            // todo: Use your new peptide field for filtered, instead of computing these each time.
-
-            let (mut radius, mesh) = match mol_view {
-                MoleculeView::SpaceFill => (atom.element.vdw_radius(), MESH_SPACEFILL_SPHERE),
-                _ => match atom.element {
-                    Element::Hydrogen => (BALL_STICK_RADIUS_H, MESH_BALL_STICK_SPHERE),
-                    _ => (BALL_STICK_RADIUS, MESH_BALL_STICK_SPHERE),
-                },
-            };
-
-            if let Some(role) = atom.role
+            if (state.ui.visibility.hide_water || mol_view == MoleculeView::SpaceFill)
                 && role == AtomRole::Water
             {
-                radius = BALL_RADIUS_WATER_O
+                continue;
             }
-
-            let dim_peptide = state.ui.visibility.dim_peptide && !atom.hetero;
-
-            let mut color_atom = (0., 0., 0.);
-            let mut manip_active = false;
-
-            match state.volatile.mol_manip.mode {
-                ManipMode::Move((mol_type, i)) => {
-                    if mol_type == MolType::Peptide && i == mol_i {
-                        color_atom = COLOR_MOL_MOVING;
-                        manip_active = true;
-                    }
-                }
-                ManipMode::Rotate((mol_type, i)) => {
-                    if mol_type == MolType::Peptide && i == mol_i {
-                        color_atom = COLOR_MOL_ROTATE;
-                        manip_active = true;
-                    }
-                }
-                ManipMode::None => (),
-            }
-
-            if !manip_active {
-                color_atom = atoms_bonds::atom_color(
-                    atom,
-                    0,
-                    i_atom,
-                    &mol.residues,
-                    mol.sifts_mapping.as_deref(),
-                    aa_count,
-                    mol.chains.len(),
-                    &mol.common.atoms,
-                    &mol.chains,
-                    sel,
-                    state.ui.view_sel_level,
-                    dim_peptide,
-                    state.ui.res_coloring,
-                    state.ui.atom_color_by_charge,
-                    MolType::Peptide,
-                    &None,
-                );
-            }
-
-            if atom.hetero && color_atom != COLOR_SELECTED {
-                color_atom =
-                    drawing::blend_color(color_atom, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
-            }
-
-            // todo: Come back to this.
-            // if state.volatile.md_local.mol_dynamics.is_some()
-            //     && state.ui.md.peptide_only_near_ligs
-            //     && mol.common.selected_for_md
-            //     && state
-            //         .ligands
-            //         .iter()
-            //         .filter(|l| l.common.selected_for_md)
-            //         .count()
-            //         != 0
-            //     && state
-            //         .volatile
-            //         .md_local
-            //         .viewer
-            //         .peptide_selected
-            //         .contains(&(0, i_atom))
-            // {
-            //     color_atom = blend_color(color_atom, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
-            // }
-
-            let mut entity = Entity::new(
-                mesh,
-                atom_posit.into(),
-                Quaternion::new_identity(),
-                radius,
-                color_atom,
-                ATOM_SHININESS,
-            );
-
-            // Note: We draw these on the bond entities if not in a view that shows atoms.
-            drawing::text_overlay(
-                &mut entity,
-                &mol.common.ident,
-                i_atom,
-                atom,
-                mol_active,
-                &mol.chains,
-                mol.common.atoms.len(),
-                ui,
-            );
-
-            entity.class = EntityClass::Protein as u32;
-            entities.push(entity);
         }
+
+        if (state.ui.visibility.hide_hetero && atom.hetero)
+            || (state.ui.visibility.hide_protein && !atom.hetero)
+        {
+            continue;
+        }
+
+        let atom_posit = mol.common.atom_posits[i_atom];
+
+        // todo: Use your new peptide field for filtered, instead of computing these each time.
+
+        let (mut radius, mesh) = match view {
+            MoleculeView::SpaceFill => (atom.element.vdw_radius(), MESH_SPACEFILL_SPHERE),
+            _ => match atom.element {
+                Element::Hydrogen => (BALL_STICK_RADIUS_H, MESH_BALL_STICK_SPHERE),
+                _ => (BALL_STICK_RADIUS, MESH_BALL_STICK_SPHERE),
+            },
+        };
+
+        if let Some(role) = atom.role
+            && role == AtomRole::Water
+        {
+            radius = BALL_RADIUS_WATER_O
+        }
+
+        let dim_peptide = state.ui.visibility.dim_peptide && !atom.hetero;
+
+        let mut color_atom = (0., 0., 0.);
+        let mut manip_active = false;
+
+        match state.volatile.mol_manip.mode {
+            ManipMode::Move((mol_type, i)) => {
+                if mol_type == MolType::Peptide && i == mol_i {
+                    color_atom = COLOR_MOL_MOVING;
+                    manip_active = true;
+                }
+            }
+            ManipMode::Rotate((mol_type, i)) => {
+                if mol_type == MolType::Peptide && i == mol_i {
+                    color_atom = COLOR_MOL_ROTATE;
+                    manip_active = true;
+                }
+            }
+            ManipMode::None => (),
+        }
+
+        if !manip_active {
+            color_atom = atoms_bonds::atom_color(
+                atom,
+                0,
+                i_atom,
+                &mol.residues,
+                mol.sifts_mapping.as_deref(),
+                aa_count,
+                mol.chains.len(),
+                &mol.common.atoms,
+                &mol.chains,
+                sel,
+                state.ui.view_sel_level,
+                dim_peptide,
+                state.ui.res_coloring,
+                state.ui.atom_color_by_charge,
+                MolType::Peptide,
+                &None,
+            );
+        }
+
+        if atom.hetero && color_atom != COLOR_SELECTED {
+            color_atom = drawing::blend_color(color_atom, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
+        }
+
+        // todo: Come back to this.
+        // if state.volatile.md_local.mol_dynamics.is_some()
+        //     && state.ui.md.peptide_only_near_ligs
+        //     && mol.common.selected_for_md
+        //     && state
+        //         .ligands
+        //         .iter()
+        //         .filter(|l| l.common.selected_for_md)
+        //         .count()
+        //         != 0
+        //     && state
+        //         .volatile
+        //         .md_local
+        //         .viewer
+        //         .peptide_selected
+        //         .contains(&(0, i_atom))
+        // {
+        //     color_atom = blend_color(color_atom, COLOR_MD_NEAR_MOL, BLEND_AMT_MD_NEAR_MOL);
+        // }
+
+        let mut entity = Entity::new(
+            mesh,
+            atom_posit.into(),
+            Quaternion::new_identity(),
+            radius,
+            color_atom,
+            ATOM_SHININESS,
+        );
+
+        // Note: We draw these on the bond entities if not in a view that shows atoms.
+        drawing::text_overlay(
+            &mut entity,
+            &mol.common.ident,
+            i_atom,
+            atom,
+            mol_active,
+            &mol.chains,
+            mol.common.atoms.len(),
+            ui,
+        );
+
+        entity.class = EntityClass::Protein as u32;
+        entities.push(entity);
     }
 
     // For determining inside of rings.
@@ -773,24 +770,33 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
 
     // Draw bonds.
     for (i_bond, bond) in mol.common.bonds.iter().enumerate() {
-        if mol_view == MoleculeView::Backbone && !bond.is_backbone {
-            continue;
-        }
-
         let atom_0 = &mol.common.atoms[bond.atom_0];
         let atom_1 = &mol.common.atoms[bond.atom_1];
 
-        if mol_view == MoleculeView::Ribbon && !atom_0.hetero && !atom_1.hetero {
-            continue;
+        // Bonds to ligand atoms follow the small-molecule view, as those atoms do.
+        let lig_bond = is_lig_atom(atom_0) || is_lig_atom(atom_1);
+        let view = if lig_bond { het_view } else { mol_view };
+
+        if lig_bond {
+            if view == MoleculeView::SpaceFill {
+                continue;
+            }
+        } else {
+            if mol_view == MoleculeView::Backbone && !bond.is_backbone {
+                continue;
+            }
+
+            // Don't draw bonds if on the ribbon or spacefill views, and the atoms aren't hetero.
+            if matches!(mol_view, MoleculeView::Ribbon | MoleculeView::SpaceFill)
+                && !atom_0.hetero
+                && !atom_1.hetero
+            {
+                continue;
+            }
         }
 
         let atom_0_posit = mol.common.atom_posits[bond.atom_0];
         let atom_1_posit = mol.common.atom_posits[bond.atom_1];
-
-        // Don't draw bonds if on the spacefill view, and the atoms aren't hetero.
-        if mol_view == MoleculeView::SpaceFill && !atom_0.hetero && !atom_1.hetero {
-            continue;
-        }
 
         if filtered_out_by_dist.contains(&bond.atom_0) {
             continue;
@@ -814,7 +820,8 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         }
 
         // Assuming water won't be bonded to the main molecule.
-        if (state.ui.visibility.hide_sidechains || mol_view == MoleculeView::Backbone)
+        if !lig_bond
+            && (state.ui.visibility.hide_sidechains || mol_view == MoleculeView::Backbone)
             && let Some(role_0) = atom_0.role
             && let Some(role_1) = atom_1.role
             && (role_0 == AtomRole::Sidechain || role_1 == AtomRole::Sidechain)
@@ -982,17 +989,14 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             MolType::Peptide,
             &mol.common.ident,
             false,
-            mol_view != MoleculeView::BallAndStick,
+            view != MoleculeView::BallAndStick,
             neighbor_posit,
             false,
             to_hydrogen,
         );
 
         if !ents_new.is_empty()
-            && !matches!(
-                mol_view,
-                MoleculeView::BallAndStick | MoleculeView::SpaceFill
-            )
+            && !matches!(view, MoleculeView::BallAndStick | MoleculeView::SpaceFill)
         {
             drawing::text_overlay(
                 &mut ents_new[0],

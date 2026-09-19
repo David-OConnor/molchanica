@@ -25,6 +25,7 @@ use crate::{
     },
     file_io::gemmi_path,
     label,
+    peptide_ligands::{LigAttachUi, detach_het_res, remove_het_res},
     render::MESH_POCKET_START,
     selection::{SelAtom, Selection},
     state::State,
@@ -501,6 +502,8 @@ fn display_peptide_actions(
 ) {
     // These variables prevent double borrows.
     let mut res_to_make = None;
+    let mut res_to_detach = None;
+    let mut res_to_remove = None;
     let mut move_lig_to_res = None;
     let mut move_lig_to_sel = None;
     let mut move_cam = false;
@@ -528,11 +531,8 @@ fn display_peptide_actions(
             state.ui.popup.rama_plot = !state.ui.popup.rama_plot;
         }
 
-        let res_selected = match state.ui.selection {
-            Selection::AtomPeptide(sel_i) => {
-                let atom = &pep.common.atoms[sel_i];
-                atom.residue.as_ref().map(|res_i| &pep.residues[*res_i])
-            }
+        let res_sel_i = match state.ui.selection {
+            Selection::AtomPeptide(sel_i) => pep.common.atoms.get(sel_i).and_then(|a| a.residue),
             Selection::Residue(sel_i) => {
                 if sel_i >= pep.residues.len() {
                     handle_err(
@@ -541,11 +541,12 @@ fn display_peptide_actions(
                     );
                     None
                 } else {
-                    Some(&pep.residues[sel_i])
+                    Some(sel_i)
                 }
             }
             _ => None,
         };
+        let res_selected = res_sel_i.and_then(|i| pep.residues.get(i));
 
         if let Some(res) = res_selected && ui
                 .button(
@@ -561,6 +562,35 @@ fn display_peptide_actions(
                 // todo: I don't like this clone, but it avoids a dbl-borrow.
                 res_to_make = Some(res.clone());
             }
+
+        // Ligands, ions, cofactors etc. that are part of the protein (and its mmCIF).
+        if let Some(res_i) = res_sel_i
+            && pep.is_ligand_res(res_i)
+        {
+            let name = pep.residues[res_i].res_type.to_string();
+
+            if button!(
+                ui,
+                format!("Detach {name}"),
+                COLOR_ACTION,
+                "Remove this residue from the protein, and its mmCIF data, and open it as a                 standalone ligand in its current position. You can then move it, and add it                 back to the protein with \"Add to protein\"; this restores its mmCIF records,                 e.g. its chemical component and entity, and its connections and binding site,                 if it's returned unmoved."
+            )
+            .clicked()
+            {
+                res_to_detach = Some(res_i);
+            }
+
+            if button!(
+                ui,
+                format!("Remove {name}"),
+                Color32::LIGHT_RED,
+                "Remove this residue from the protein, along with the records describing it in                 its mmCIF data: its entity and chemical component (if no other residue uses                 them), connections, binding sites etc."
+            )
+            .clicked()
+            {
+                res_to_remove = Some(res_i);
+            }
+        }
 
         if let Some(mol) = state.active_mol() {
             for res in &pep.het_residues {
@@ -666,6 +696,14 @@ fn display_peptide_actions(
 
     if let Some(density) = density_to_load {
         state.load_density(density);
+    }
+
+    if let Some(res_i) = res_to_detach {
+        detach_het_res(state, peptide_i, res_i, scene, updates);
+    }
+
+    if let Some(res_i) = res_to_remove {
+        remove_het_res(state, peptide_i, res_i, scene, updates);
     }
 
     if let Some(res) = res_to_make {
@@ -783,6 +821,18 @@ pub(in crate::ui) fn display_mol_data(
         }
 
         if active_mol_type == MolType::Ligand {
+            if !state.peptides.is_empty()
+                && button!(
+                    ui,
+                    "Add to protein",
+                    COLOR_ACTION,
+                    "Add this ligand to a protein, in its current position, as a hetero residue:                     e.g. to save them together as one mmCIF file. If it was detached from a                     protein, this restores its mmCIF records."
+                )
+                .clicked()
+            {
+                state.ui.popup.lig_attach = Some(LigAttachUi::new(state, active_mol_i));
+            }
+
             if ui
                 .button(RichText::new("Similar mols").color(COLOR_HIGHLIGHT))
                 .on_hover_text(
