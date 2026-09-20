@@ -20,6 +20,22 @@ use crate::{
     util::res_color,
 };
 
+/// The first endpoint stays visible while the user selects the second ligand.
+pub const COLOR_JOIN_ANCHOR: Color = (1.0, 0.5, 0.0);
+
+pub(super) fn is_join_anchor(
+    ui: &crate::state::StateUi,
+    mol_type: MolType,
+    mol_i: usize,
+    atom_i: usize,
+) -> bool {
+    mol_type == MolType::Ligand
+        && ui
+            .join_ligand
+            .as_ref()
+            .is_some_and(|join| join.endpoint == (mol_i, atom_i))
+}
+
 pub const BOND_RADIUS_BASE: f32 = 0.10;
 // These ratios scale the base bond radius above.
 const BOND_RADIUS_LIG_RATIO: f32 = 1.3;

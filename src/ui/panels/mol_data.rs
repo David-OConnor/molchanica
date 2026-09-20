@@ -29,11 +29,11 @@ use crate::{
     render::MESH_POCKET_START,
     selection::{SelAtom, Selection},
     state::State,
+    split_join::{JoinLigand, join_ligands, split_lig_at_bonds},
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popup},
     util,
     util::{
         handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res,
-        split_lig_at_bonds,
     },
 };
 
@@ -849,6 +849,8 @@ pub(in crate::ui) fn display_mol_data(
 
         let mut update_assoc_st = None;
         let mut split_at: Option<Vec<usize>> = None;
+        let mut join_clicked = false;
+        let mut cancel_join = false;
 
         if let Some(mol) = state.active_mol() {
             match mol {
@@ -951,6 +953,42 @@ pub(in crate::ui) fn display_mol_data(
                         state.ui.popup.show_associated_structures = true;
                     }
 
+                    if let Some(pending) = &state.ui.join_ligand {
+                        ui.label(format!(
+                            "Join: ligand {}, atom {}. Select an atom in another ligand.",
+                            pending.endpoint.0 + 1,
+                            pending.endpoint.1 + 1,
+                        ));
+                        let ready = matches!(
+                            state.ui.selection,
+                            Selection::AtomLig((i, _)) if i != pending.endpoint.0
+                        );
+                        join_clicked = ui
+                            .add_enabled(
+                                ready,
+                                egui::Button::new(RichText::new("Join ligands").color(COLOR_ACTION)),
+                            )
+                            .on_hover_text(
+                                "Optimize the single bond length and twist, keeping each ligand rigid. \
+                                No atoms or hydrogens are removed. Falls back to element-based geometry \
+                                if force-field relaxation is unavailable.",
+                            )
+                            .clicked();
+                        cancel_join = ui.button("Cancel join").clicked();
+                    } else if matches!(
+                        state.ui.selection,
+                        Selection::AtomLig((i, _)) if i == active_mol_i
+                    ) {
+                        join_clicked = button!(
+                            ui,
+                            "Join ligands",
+                            COLOR_ACTION,
+                            "Remember this atom, then click an atom in another ligand \
+                            (without Shift) to join with a single bond."
+                        )
+                        .clicked();
+                    }
+
                     // Only the active molecule's own bonds can split it.
                     let split_at_bonds = match &state.ui.selection {
                         Selection::BondLig((mol_i, bond_i)) if *mol_i == active_mol_i => {
@@ -984,6 +1022,8 @@ pub(in crate::ui) fn display_mol_data(
             }
         }
 
+        ui.add_space(COL_SPACING);
+
         if let Some(v) = update_assoc_st
             && let Some(mol) = state.active_mol_mut()
             && let MolGenericRefMut::Small(m) = mol
@@ -998,10 +1038,32 @@ pub(in crate::ui) fn display_mol_data(
             m.idents.push(MolIdent::PubChem(cid));
         }
 
+        if cancel_join {
+            state.ui.join_ligand = None;
+        } else if join_clicked
+            && let Selection::AtomLig(endpoint) = state.ui.selection
+        {
+            if let Some(pending) = state.ui.join_ligand.take() {
+                if pending.is_current(state) {
+                    join_ligands(state, pending.endpoint, endpoint, scene, updates);
+                } else {
+                    handle_err(
+                        &mut state.ui,
+                        "The first ligand changed. Select its atom and start the join again.".to_owned(),
+                    );
+                }
+            } else if let Some(lig) = state.ligands.get(endpoint.0) {
+                state.ui.join_ligand = Some(JoinLigand::new(lig, endpoint));
+            }
+        }
+
+        if cancel_join || join_clicked {
+            drawing::wrappers::draw_all_ligs(state, scene, updates);
+        }
+
         if let Some(bond_indexes) = split_at {
             split_lig_at_bonds(state, active_mol_i, &bond_indexes, scene, updates);
         }
-        ui.add_space(COL_SPACING);
     });
 }
 

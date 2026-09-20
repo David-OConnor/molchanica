@@ -27,7 +27,7 @@ use lin_alg::{
 };
 use mol_defs::{
     molecules::{
-        Atom, Bond, Chain, MolGenericRefMut, MolIdent, MolType, MoleculeGeneric, Residue, aa_color,
+        Atom, Bond, Chain, MolGenericRefMut, MolType, MoleculeGeneric, Residue, aa_color,
         peptide::MoleculePeptide, small::MoleculeSmall,
     },
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
@@ -566,6 +566,9 @@ pub fn close_mol(
     updates: &mut EngineUpdates,
 ) {
     state.volatile.mol_manip.mode = ManipMode::None;
+    if state.ui.join_ligand.take().is_some() {
+        redraw.ligand = true;
+    }
 
     let path = {
         let Some(mol) = state.get_mol(mol_type, i) else {
@@ -1098,134 +1101,6 @@ pub fn make_lig_from_res(
 
     // Make it clear that we've added the ligand by showing it, and hiding hetero (if creating from Hetero)
     state.ui.visibility.hide_ligand = false;
-}
-
-/// Break a ligand apart at one or more of its bonds, as separate molecules. The largest bonded
-/// piece stays in this molecule; each of the others becomes a new ligand, where it sits.
-///
-/// Each bond given must be a place the molecule actually comes apart: cutting a single bond of a
-/// ring leaves it joined the other way around, so a ring takes two cuts. Reports what to do if not.
-pub fn split_lig_at_bonds(
-    state: &mut State,
-    lig_i: usize,
-    bond_indexes: &[usize],
-    scene: &mut Scene,
-    engine_updates: &mut EngineUpdates,
-) {
-    // Build the new molecules up front, while the ligand still holds the atoms these indices
-    // refer to. Scoped so the error paths below can borrow `state.ui`.
-    let split = {
-        let Some(lig) = state.ligands.get(lig_i) else {
-            handle_err(
-                &mut state.ui,
-                "Error: No ligand to split at its bonds.".to_owned(),
-            );
-            return;
-        };
-
-        let ident = lig.common.name(Some(&lig.idents));
-
-        lig.common
-            .components_without_bonds(bond_indexes)
-            .and_then(|components| {
-                // The first component is the largest; it's what the original molecule keeps.
-                let fragments: Vec<_> = components[1..]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, atoms)| {
-                        let ident = format!("{} frag {}", lig.common.ident, i + 1);
-                        MoleculeSmall::from_fragment(ident, &lig.common, atoms)
-                    })
-                    .collect::<io::Result<_>>()?;
-
-                let removed: Vec<usize> = components[1..].iter().flatten().copied().collect();
-                Ok((fragments, removed))
-            })
-            .map_err(|e| format!("Unable to split {ident}: {e}"))
-    };
-
-    let (fragments, removed) = match split {
-        Ok(v) => v,
-        Err(e) => {
-            handle_err(&mut state.ui, e);
-            return;
-        }
-    };
-
-    let (ident, frag_count) = {
-        let lig = &mut state.ligands[lig_i];
-        lig.common.remove_atoms(&removed);
-
-        // Partial charges are assigned by serial number, and the removals left gaps.
-        lig.common.reassign_sns();
-
-        // Setting these to `None` on any atom triggers an FF param and partial charge rebuild;
-        // both depend on the atoms' surroundings, which just changed.
-        if let Some(atom) = lig.common.atoms.first_mut() {
-            atom.force_field_type = None;
-            atom.partial_charge = None;
-        }
-        lig.ff_params_loaded = false;
-        lig.frcmod_loaded = false;
-
-        // What's left is a different compound, so identifiers and data keyed to the whole
-        // molecule (a CID, an InChI, assay or structure hits) would now name the wrong thing.
-        // The SMILES comes back from the structure below.
-        lig.idents.clear();
-        lig.associated_structures.clear();
-        lig.therapeutic_props = None;
-
-        // Pharmacophore features point at atom indices, which have shifted. Its pocket doesn't,
-        // and owns a mesh slot, so leave that in place.
-        lig.pharmacophore.features.clear();
-        lig.pharmacophore.feature_relations.clear();
-
-        (lig.common.ident.clone(), fragments.len())
-    };
-
-    if let Some(params) = &state.ff_param_set.small_mol {
-        let lig = &mut state.ligands[lig_i];
-        lig.update_ff_related(&mut state.mol_specific_params, params, false);
-    } else {
-        handle_err(
-            &mut state.ui,
-            "Error: Unable to update the split molecule's params due to missing GAFF2.".to_owned(),
-        );
-    }
-
-    let lig = &mut state.ligands[lig_i];
-    lig.idents.push(MolIdent::Smiles(lig.common.to_smiles()));
-    lig.update_characterization();
-
-    // A simulation set up with this ligand indexes its old atoms.
-    if lig.common.selected_for_md.is_some() {
-        state.volatile.md_local.mol_dynamics = None;
-    }
-
-    // Ligand selections index into atoms and bonds that have shifted.
-    if matches!(
-        state.ui.selection,
-        Selection::AtomLig(_)
-            | Selection::AtomsLig(_)
-            | Selection::BondLig(_)
-            | Selection::BondsLig(_)
-    ) {
-        state.ui.selection = Selection::None;
-    }
-
-    for frag in fragments {
-        // In place: the point of the split is that each piece stays where it was.
-        state.load_mol_to_state_in_place(MoleculeGeneric::Small(frag), scene, engine_updates);
-    }
-
-    // Loading the fragments made the last of them active; the user was working on the original.
-    state.volatile.active_mol = Some((MolType::Ligand, lig_i));
-    state.ui.visibility.hide_ligand = false;
-
-    handle_success(
-        &mut state.ui,
-        format!("Split {frag_count} molecule[s] off of {ident}."),
-    );
 }
 
 /// This enables GPU computation if the right compiler flag is set, and there aren't

@@ -24,6 +24,7 @@ mod pocket_render;
 mod prefs;
 mod render;
 mod sfc_mesh;
+mod split_join;
 mod ui;
 mod util;
 

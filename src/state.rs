@@ -497,6 +497,8 @@ pub struct StateUi {
     /// Workaround for a bug or limitation in EGUI's `is_pointer_button_down_on`.
     pub visibility: Visibility,
     pub selection: Selection,
+    /// First atom in the two-step ligand joining workflow; never persisted.
+    pub join_ligand: Option<crate::split_join::JoinLigand>,
     pub left_click_down: bool,
     pub middle_click_down: bool,
     pub mouse_in_window: bool,

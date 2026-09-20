@@ -851,6 +851,13 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 }
             }
 
+            if mode == OperatingMode::Primary
+                && !draw_md_mols
+                && atoms_bonds::is_join_anchor(ui, mol.mol_type(), mol_i, i_atom)
+            {
+                color = atoms_bonds::COLOR_JOIN_ANCHOR;
+            }
+
             let (radius, mesh) = match ui.mol_view {
                 MoleculeView::SpaceFill => (atom.element.vdw_radius(), MESH_SPACEFILL_SPHERE),
                 _ => match atom.element {
@@ -1102,6 +1109,16 @@ pub fn draw_mol_with_pharmacophore_visibility(
 
             helper(atom_0, &mut color_0);
             helper(atom_1, &mut color_1);
+        }
+
+        // Apply after selection and molecule tinting, including stick-only views.
+        if mode == OperatingMode::Primary && !draw_md_mols {
+            if atoms_bonds::is_join_anchor(ui, mol.mol_type(), mol_i, bond.atom_0) {
+                color_0 = atoms_bonds::COLOR_JOIN_ANCHOR;
+            }
+            if atoms_bonds::is_join_anchor(ui, mol.mol_type(), mol_i, bond.atom_1) {
+                color_1 = atoms_bonds::COLOR_JOIN_ANCHOR;
+            }
         }
 
         let to_hydrogen =
