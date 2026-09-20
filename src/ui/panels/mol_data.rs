@@ -31,7 +31,10 @@ use crate::{
     state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popup},
     util,
-    util::{handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res},
+    util::{
+        handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res,
+        split_lig_at_bonds,
+    },
 };
 
 /// `posit_override` is for example, relative atom positions, such as a positioned ligand.
@@ -560,18 +563,20 @@ fn display_peptide_actions(
                     };
                     ui.add_space(COL_SPACING / 2.);
 
-                    if button!(ui, format!("Lig to {name}"), COLOR_HIGHLIGHT,
-                        "Move the ligand to be colocated with this residue. this is intended to \
-                    be used to synchronize the ligand with a pre-positioned hetero residue in the protein file, e.g. \
-                    prior to docking. In addition to moving \
-                    its center, this attempts to align each atom with its equivalent on the residue."
-
-                        )
-                            .clicked()
-                        {
-                            // todo: I don't like this clone, but it avoids a dbl-borrow.
-                            move_lig_to_res = Some(res.clone());
-                        }
+                    // todo: Rework this "Lig to [het res name]" and add back as required. (2026-09-19)
+                    //
+                    // if button!(ui, format!("Lig to {name}"), COLOR_HIGHLIGHT,
+                    //     "Move the ligand to be colocated with this residue. this is intended to \
+                    // be used to synchronize the ligand with a pre-positioned hetero residue in the protein file, e.g. \
+                    // prior to docking. In addition to moving \
+                    // its center, this attempts to align each atom with its equivalent on the residue."
+                    //
+                    //     )
+                    //         .clicked()
+                    //     {
+                    //         // todo: I don't like this clone, but it avoids a dbl-borrow.
+                    //         move_lig_to_res = Some(res.clone());
+                    //     }
                     break;
                 }
             }
@@ -604,11 +609,11 @@ fn display_peptide_actions(
     {
         if files_avail.validation_2fo_fc
             && ui
-                .button(RichText::new("Fetch elec ρ").color(COLOR_HIGHLIGHT))
-                .on_hover_text(
-                    "Load 2fo-fc electron density data from RCSB PDB. Convert to CCP4 map format and display.",
-                )
-                .clicked()
+            .button(RichText::new("Fetch elec ρ").color(COLOR_HIGHLIGHT))
+            .on_hover_text(
+                "Load 2fo-fc electron density data from RCSB PDB. Convert to CCP4 map format and display.",
+            )
+            .clicked()
         {
             match density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, gemmi_path()) {
                 Ok(density) => {
@@ -843,6 +848,7 @@ pub(in crate::ui) fn display_mol_data(
         let mut update_cid = None; // to avoid a borrow error.
 
         let mut update_assoc_st = None;
+        let mut split_at: Option<Vec<usize>> = None;
 
         if let Some(mol) = state.active_mol() {
             match mol {
@@ -923,8 +929,12 @@ pub(in crate::ui) fn display_mol_data(
                     }
 
                     if let Some(cid) = pubchem_cid
-                        && ui.button("Find assoc structs").clicked()
-                    {
+                        && button!(ui,
+                        "Find assoc structs",
+                        Color32::GRAY,
+                        "Find proteins associated with this molecule,
+                         e.g. if it's a ligand which proteins it can bind to. This notably includes PDB urls"
+                    ).clicked() {
                         if m.associated_structures.is_empty() {
                             // todo: Don't block.
                             match pubchem::load_associated_structures(cid) {
@@ -939,6 +949,30 @@ pub(in crate::ui) fn display_mol_data(
                         }
 
                         state.ui.popup.show_associated_structures = true;
+                    }
+
+                    // Only the active molecule's own bonds can split it.
+                    let split_at_bonds = match &state.ui.selection {
+                        Selection::BondLig((mol_i, bond_i)) if *mol_i == active_mol_i => {
+                            Some(vec![*bond_i])
+                        }
+                        Selection::BondsLig((mol_i, bonds_i)) if *mol_i == active_mol_i => {
+                            Some(bonds_i.clone())
+                        }
+                        _ => None
+                    };
+
+                    if let Some(bond_indexes) = split_at_bonds
+                        && button!(
+                            ui,
+                            "Split at bond[s]",
+                            COLOR_ACTION,
+                            "Splits an atom into two or more molecules. Using the selected bond[s] as a splitting point, remove one side of this molecule's\
+                            atoms and bonds, and create a new small molecule[s] of them."
+                        ).clicked()
+                    {
+                        // Deferred; splitting takes all of `state`.
+                        split_at = Some(bond_indexes);
                     }
                 }
                 MolGenericRef::Lipid(l) => {
@@ -962,6 +996,10 @@ pub(in crate::ui) fn display_mol_data(
             && let MolGenericRefMut::Small(m) = mol
         {
             m.idents.push(MolIdent::PubChem(cid));
+        }
+
+        if let Some(bond_indexes) = split_at {
+            split_lig_at_bonds(state, active_mol_i, &bond_indexes, scene, updates);
         }
         ui.add_space(COL_SPACING);
     });
