@@ -28,12 +28,13 @@ use crate::{
     peptide_ligands::{LigAttachUi, detach_het_res, remove_het_res},
     render::MESH_POCKET_START,
     selection::{SelAtom, Selection},
-    state::State,
     split_join::{JoinLigand, join_ligands, split_lig_at_bonds},
+    state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popup},
     util,
     util::{
-        handle_err, handle_success, make_egui_color, make_lig_from_res, move_mol_to_res,
+        handle_err, handle_success, make_egui_color, make_lig_3d, make_lig_from_res,
+        move_mol_to_res,
     },
 };
 
@@ -851,11 +852,15 @@ pub(in crate::ui) fn display_mol_data(
         let mut split_at: Option<Vec<usize>> = None;
         let mut join_clicked = false;
         let mut cancel_join = false;
+        let mut make_3d = false;
 
         if let Some(mol) = state.active_mol() {
             match mol {
                 MolGenericRef::Peptide(_) => {}
                 MolGenericRef::Small(m) => {
+                    // Copied now so `m` (and its borrow of `state`) ends before `state.ui` is mutated.
+                    let is_2d = m.common.is_2d;
+
                     ui.add_space(COL_SPACING);
                     if !m.ff_params_loaded {
                         ui.label(RichText::new("FF/q").color(Color32::LIGHT_RED))
@@ -1012,6 +1017,21 @@ pub(in crate::ui) fn display_mol_data(
                         // Deferred; splitting takes all of `state`.
                         split_at = Some(bond_indexes);
                     }
+
+                    if is_2d
+                        && button!(
+                            ui,
+                            "Make 3D",
+                            COLOR_ACTION,
+                            "This molecule's coordinates are flat, e.g. from a 2D-only SDF. Build 3D \
+                            geometry by minimizing its energy with the Amber force field. \
+                            Stereocenters may not match the source's."
+                        )
+                        .clicked()
+                    {
+                        // Deferred; this needs `state` mutably.
+                        make_3d = true;
+                    }
                 }
                 MolGenericRef::Lipid(l) => {
                     if ui.button("View on LMSD").clicked() {
@@ -1063,6 +1083,10 @@ pub(in crate::ui) fn display_mol_data(
 
         if let Some(bond_indexes) = split_at {
             split_lig_at_bonds(state, active_mol_i, &bond_indexes, scene, updates);
+        }
+
+        if make_3d {
+            make_lig_3d(state, active_mol_i, scene, updates);
         }
     });
 }

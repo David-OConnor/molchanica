@@ -418,6 +418,10 @@ pub fn join_ligands(
         }
     };
 
+    // Joining keeps both fragments rigid, so a flat one stays flat.
+    joined.common.is_2d =
+        state.ligands[first.0].common.is_2d || state.ligands[second.0].common.is_2d;
+
     // Parameter caches are keyed by name; the new compound needs its own entry.
     let base_ident = joined.common.ident.clone();
     let mut suffix = 2;

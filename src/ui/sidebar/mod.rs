@@ -175,12 +175,27 @@ fn mol_picker_one(
 
                 let row_h = ui.spacing().interact_size.y;
 
-                let help_text =
-                    "Make this molecule the active / selected one. Middle click to close it.";
+                const MAX_NAME_LEN: usize = 30;
+
+                let name = mol.name(idents);
+                let (name_disp, help_text) = if name.chars().count() > MAX_NAME_LEN {
+                    let truncated: String = name.chars().take(MAX_NAME_LEN - 1).collect();
+                    (
+                        format!("{truncated}…"),
+                        format!("{name}\n\nMake this molecule the active / selected one. Middle click to close it."),
+                    )
+                } else {
+                    (
+                        name.to_string(),
+                        "Make this molecule the active / selected one. Middle click to close it."
+                            .to_string(),
+                    )
+                };
+
                 let sel_btn = ui
                     .add_sized(
                         egui::vec2(ui.available_width(), row_h),
-                        egui::Button::new(RichText::new(mol.name(idents)).color(color)),
+                        egui::Button::new(RichText::new(name_disp).color(color)),
                     )
                     .on_hover_text(help_text);
 

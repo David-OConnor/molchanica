@@ -39,6 +39,7 @@ use crate::{
         color_alternating_contrast, color_viridis, color_viridis_float, effective_mol_view_peptide,
         peptide::{draw_density_point_cloud, draw_peptide},
         ribbon_mesh::build_ribbon_mesh,
+        wrappers::draw_all_ligs,
     },
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
@@ -1101,6 +1102,45 @@ pub fn make_lig_from_res(
 
     // Make it clear that we've added the ligand by showing it, and hiding hetero (if creating from Hetero)
     state.ui.visibility.hide_ligand = false;
+}
+
+/// Give a ligand with flat, 2D coordinates (e.g. from a 2D-only SDF) 3D geometry, using energy
+/// minimization. It stays where it is.
+pub fn make_lig_3d(
+    state: &mut State,
+    lig_i: usize,
+    scene: &mut Scene,
+    engine_updates: &mut EngineUpdates,
+) {
+    let Some(lig) = state.ligands.get_mut(lig_i) else {
+        handle_err(&mut state.ui, "Error: No ligand to make 3D.".to_owned());
+        return;
+    };
+
+    let specific = state.mol_specific_params.get(&lig.common.ident);
+    let result = lig.common.make_3d(&state.ff_param_set, specific);
+
+    let ident = lig.common.name(Some(&lig.idents));
+
+    if let Err(e) = result {
+        handle_err(&mut state.ui, format!("Unable to make {ident} 3D: {e}"));
+        return;
+    }
+
+    // Geometry-derived properties.
+    lig.update_characterization();
+
+    // A simulation set up with this ligand has its old positions.
+    if lig.common.selected_for_md.is_some() {
+        state.volatile.md_local.mol_dynamics = None;
+    }
+
+    draw_all_ligs(state, scene, engine_updates);
+
+    handle_success(
+        &mut state.ui,
+        format!("Made {ident} 3D. Stereocenters may not match the source's."),
+    );
 }
 
 /// This enables GPU computation if the right compiler flag is set, and there aren't

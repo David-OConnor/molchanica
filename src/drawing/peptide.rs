@@ -768,6 +768,8 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         adj
     };
 
+    let mut atoms_labeled = vec![false; mol.common.atoms.len()];
+
     // Draw bonds.
     for (i_bond, bond) in mol.common.bonds.iter().enumerate() {
         let atom_0 = &mol.common.atoms[bond.atom_0];
@@ -995,14 +997,13 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             to_hydrogen,
         );
 
-        if !ents_new.is_empty()
-            && !matches!(view, MoleculeView::BallAndStick | MoleculeView::SpaceFill)
-        {
-            drawing::text_overlay(
-                &mut ents_new[0],
+        if !matches!(view, MoleculeView::BallAndStick | MoleculeView::SpaceFill) {
+            drawing::text_overlay_bond(
+                &mut ents_new,
+                bond,
+                &mol.common.atoms,
+                &mut atoms_labeled,
                 &mol.common.ident,
-                bond.atom_0,
-                atom_0,
                 mol_active,
                 &mol.chains,
                 mol.common.bonds.len(),

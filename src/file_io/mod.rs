@@ -1015,6 +1015,9 @@ impl State {
                 load_peptide(self, scene, m, updates, draw_now)
             }
             MoleculeGeneric::Small(mut mol) => {
+                // Before adding hydrogens: they're placed in 3D, even around flat atoms.
+                mol.common.is_2d = mol.common.posits_are_2d();
+
                 if !mol
                     .common
                     .atoms

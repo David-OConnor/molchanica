@@ -13,8 +13,8 @@ use lin_alg::{
     map_linear,
 };
 use mol_defs::molecules::{
-    Atom, AtomRole, Chain, HydrogenBondTwoMols, MolGenericRef, MolType, peptide::MoleculePeptide,
-    pocket::Pocket, small::MoleculeSmall,
+    Atom, AtomRole, Bond, Chain, HydrogenBondTwoMols, MolGenericRef, MolType,
+    peptide::MoleculePeptide, pocket::Pocket, small::MoleculeSmall,
 };
 use na_seq::Element;
 
@@ -216,6 +216,40 @@ fn text_overlay(
             color,
             font_family: FontFamily::Proportional,
         });
+    }
+}
+
+/// For views that draw no atom spheres: label a bond's atoms on its entities instead. From
+/// `bond_entities`, the first entity is the cap or half nearest `atom_0`, and the second nearest
+/// `atom_1`. Most atoms are in several bonds; `labeled` gives each atom its labels only once.
+#[allow(clippy::too_many_arguments)]
+fn text_overlay_bond(
+    entities: &mut [Entity],
+    bond: &Bond,
+    atoms: &[Atom],
+    labeled: &mut [bool],
+    mol_ident: &str,
+    sel: bool,
+    chains: &[Chain],
+    atom_count: usize,
+    ui: &StateUi,
+) {
+    for (entity, i_atom) in entities.iter_mut().zip([bond.atom_0, bond.atom_1]) {
+        if labeled[i_atom] {
+            continue;
+        }
+        labeled[i_atom] = true;
+
+        text_overlay(
+            entity,
+            mol_ident,
+            i_atom,
+            &atoms[i_atom],
+            sel,
+            chains,
+            atom_count,
+            ui,
+        );
     }
 }
 
@@ -915,6 +949,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
         adj
     };
 
+    let mut atoms_labeled = vec![false; mol.common().atoms.len()];
+
     // todo: C+P from draw_molecule. With some removed, but much repeated.
     for (i_bond, bond) in mol.common().bonds.iter().enumerate() {
         let atom_0 = &mol.common().atoms[bond.atom_0];
@@ -1140,18 +1176,18 @@ pub fn draw_mol_with_pharmacophore_visibility(
         );
 
         // Draw atom-based labels on bonds if not in a view mode that shows atoms.
-        if !entities.is_empty()
-            && mode != OperatingMode::MolEditor
+        if mode != OperatingMode::MolEditor
             && !matches!(
                 ui.mol_view,
                 MoleculeView::BallAndStick | MoleculeView::SpaceFill
             )
         {
-            text_overlay(
-                &mut entities[0],
+            text_overlay_bond(
+                &mut entities,
+                bond,
+                &mol.common().atoms,
+                &mut atoms_labeled,
                 &mol.name(),
-                bond.atom_0,
-                atom_0,
                 mol_active, // todo
                 &[],
                 mol.common().bonds.len(),
