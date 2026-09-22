@@ -189,16 +189,6 @@ pub fn view_settings(
         redraw,
     );
 
-    if !state.nucleic_acids.is_empty() {
-        toggle_btn_inv(
-            &mut state.ui.visibility.hide_nucleic_acids,
-            "Nucleic acids",
-            "Show or hide nucleic acis",
-            ui,
-            redraw,
-        );
-    }
-
     if let Some(md) = &state.volatile.md_local.mol_dynamics
         && state.ui.visibility.hide_water != water_prev
     {
@@ -214,29 +204,33 @@ pub fn view_settings(
     }
 
     if !state.ligands.is_empty() {
-        let color = misc::active_color(!state.ui.visibility.hide_ligand);
-        if ui.button(RichText::new("Lig").color(color)).clicked() {
-            state.ui.visibility.hide_ligand = !state.ui.visibility.hide_ligand;
-
-            draw_all_ligs(state, scene, updates);
-            updates.lighting = true; // docking light.
-        }
+        toggle_btn_inv(
+            &mut state.ui.visibility.hide_ligand,
+            "Lig",
+            "Show or hide small molecules / ligands",
+            ui,
+            redraw,
+        );
     }
+
     if !state.nucleic_acids.is_empty() {
-        let color = active_color(!state.ui.visibility.hide_ligand);
-        if ui.button(RichText::new("NA").color(color)).clicked() {
-            state.ui.visibility.hide_ligand = !state.ui.visibility.hide_ligand;
-
-            draw_all_nucleic_acids(state, scene, updates);
-        }
+        toggle_btn_inv(
+            &mut state.ui.visibility.hide_nucleic_acids,
+            "Nucleic acids",
+            "Show or hide nucleic acids",
+            ui,
+            redraw,
+        );
     }
-    if !state.lipids.is_empty() {
-        let color = misc::active_color(!state.ui.visibility.hide_lipids);
-        if ui.button(RichText::new("Lipid").color(color)).clicked() {
-            state.ui.visibility.hide_lipids = !state.ui.visibility.hide_lipids;
 
-            draw_all_lipids(state, scene, updates);
-        }
+    if !state.lipids.is_empty() {
+        toggle_btn_inv(
+            &mut state.ui.visibility.hide_lipids,
+            "Lipid",
+            "Show or hide lipids",
+            ui,
+            redraw,
+        );
     }
 
     toggle_btn_inv(
