@@ -251,9 +251,16 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
         }
     });
     ui.label(
-        RichText::new(format!("Active protein: {}", peptide.common.ident))
-            .color(COLOR_INACTIVE)
-            .small(),
+        RichText::new(format!(
+            "Active protein: {}",
+            peptide
+                .common
+                .name
+                .as_deref()
+                .unwrap_or(&peptide.common.ident)
+        ))
+        .color(COLOR_INACTIVE)
+        .small(),
     );
     ui.separator();
 

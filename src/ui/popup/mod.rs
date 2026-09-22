@@ -36,7 +36,7 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         load_all_idents_button,
         panels::{md_viewer, mol_data::metadata},
-        util::list_idents,
+        util::{edit_mol_name, list_idents},
     },
     util::{RedrawFlags, handle_err, orbit_center},
 };
@@ -161,7 +161,7 @@ pub(in crate::ui) fn load_popups(
             popup("Metadata").max_width(METADATA_MAX_WIDTH),
             ui.ctx(),
             |ui| {
-                metadata(mol_type, i, state, ui);
+                metadata(mol_type, i, state, redraw, ui);
             },
         );
         if !open {
@@ -492,6 +492,8 @@ fn alignment_screening(state: &mut State, ui: &mut Ui) {
 /// What the metadata popup asks its caller to do, once the frame is drawn.
 pub(in crate::ui) struct MetadataPopupResult {
     pub load_all_idents: bool,
+    /// `Some(None)` clears the override and restores the generated label.
+    pub name: Option<Option<String>>,
     /// Set when the user changed a field: the molecule's metadata, rebuilt from the edit rows.
     pub metadata: Option<HashMap<String, String>>,
 }
@@ -507,6 +509,7 @@ pub(in crate::ui) fn metadata_popup(
 ) -> MetadataPopupResult {
     let mut result = MetadataPopupResult {
         load_all_idents: false,
+        name: None,
         metadata: None,
     };
 
@@ -560,17 +563,19 @@ pub(in crate::ui) fn metadata_popup(
     ScrollArea::vertical()
         .min_scrolled_height(800.0)
         .show(ui, |ui| {
+            if *editing {
+                metadata_editor(edit_rows, mol, idents, prefs_dir, &mut result, ui);
+                return;
+            }
+
             if let Some(idents_) = idents {
                 ui.add_space(ROW_SPACING);
-                list_idents(idents_, &mol.path, prefs_dir, ui);
+                result.name = list_idents(Some(&mol.name), idents_, &mol.path, prefs_dir, ui);
+            } else {
+                result.name = edit_mol_name(&mol.name, ui);
             }
 
             ui.add_space(ROW_SPACING);
-
-            if *editing {
-                metadata_editor(edit_rows, &mut result, ui);
-                return;
-            }
 
             for (k, v) in mol.metadata.iter() {
                 // Wrap long values instead of widening the popup to fit them on one line.
@@ -588,9 +593,20 @@ pub(in crate::ui) fn metadata_popup(
 /// `result.metadata` on any change, so the caller can apply it to the molecule.
 fn metadata_editor(
     edit_rows: &mut Vec<(String, String)>,
+    mol: &MoleculeCommon,
+    idents: Option<&Vec<MolIdent>>,
+    prefs_dir: &Path,
     result: &mut MetadataPopupResult,
     ui: &mut Ui,
 ) {
+    result.name = edit_mol_name(&mol.name, ui);
+    ui.add_space(ROW_SPACING);
+
+    if let Some(idents_) = idents {
+        let _ = list_idents(None, idents_, &mol.path, prefs_dir, ui);
+        ui.add_space(ROW_SPACING);
+    }
+
     let mut changed = false;
     // Applied after the loop; removing a row while iterating it would shift the rows below.
     let mut to_remove = None;

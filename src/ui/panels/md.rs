@@ -95,7 +95,12 @@ pub fn md_setup(
 
             for mol in &mut state.nucleic_acids {
                 let mut selected = mol.common.selected_for_md.is_some();
-                flag_btn(&mut selected, &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
+                flag_btn(
+                    &mut selected,
+                    mol.common.name.as_deref().unwrap_or(&mol.common.ident),
+                    "Toggle if we use this molecule for MD.",
+                    ui,
+                );
                 if selected != mol.common.selected_for_md.is_some() {
                     mol.common.selected_for_md = selected.then_some(1);
                 }

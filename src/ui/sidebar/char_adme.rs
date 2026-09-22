@@ -579,17 +579,24 @@ pub(in crate::ui) fn mol_char_disp(
     run_shrinking_box: &mut bool,
     new_crystal_mol: &mut Option<MoleculeSmall>,
     // run_water_sol_sim_layers_middle: &mut bool,
-) {
+) -> Option<Option<String>> {
     let Some(char) = &mol.characterization else {
-        return;
+        return None;
     };
 
+    let mut name_change = None;
     ScrollArea::vertical()
         .min_scrolled_height(400.0)
         .show(ui, |ui| {
             ui.add_space(ROW_SPACING);
 
-            list_idents(&mol.idents, &mol.common.path, prefs_dir, ui);
+            name_change = list_idents(
+                Some(&mol.common.name),
+                &mol.idents,
+                &mol.common.path,
+                prefs_dir,
+                ui,
+            );
 
             ui.separator();
             ui.add_space(ROW_SPACING);
@@ -617,6 +624,8 @@ pub(in crate::ui) fn mol_char_disp(
                 tox_disp(&ther.toxicity, ui);
             }
         });
+
+    name_change
 }
 
 fn tox_disp(tox: &Toxicity, ui: &mut Ui) {

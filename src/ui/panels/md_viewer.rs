@@ -521,7 +521,11 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 if button!(
                     ui,
-                    format!("{} ({} atoms)", common.ident, atom_count),
+                    format!(
+                        "{} ({} atoms)",
+                        common.name.as_deref().unwrap_or(&common.ident),
+                        atom_count
+                    ),
                     COLOR_ACTION,
                     "Add this protein to the mol set"
                 )
@@ -547,7 +551,11 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 if button!(
                     ui,
-                    format!("{} ({} atoms)", common.ident, atom_count),
+                    format!(
+                        "{} ({} atoms)",
+                        common.name.as_deref().unwrap_or(&common.ident),
+                        atom_count
+                    ),
                     COLOR_ACTION,
                     "Add this ligand to the mol set"
                 )
@@ -573,7 +581,11 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 if button!(
                     ui,
-                    format!("{} ({} atoms)", common.ident, atom_count),
+                    format!(
+                        "{} ({} atoms)",
+                        common.name.as_deref().unwrap_or(&common.ident),
+                        atom_count
+                    ),
                     COLOR_ACTION,
                     "Add this nucleic acid to the mol set"
                 )
@@ -599,7 +611,11 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 if button!(
                     ui,
-                    format!("{} ({} atoms)", common.ident, atom_count),
+                    format!(
+                        "{} ({} atoms)",
+                        common.name.as_deref().unwrap_or(&common.ident),
+                        atom_count
+                    ),
                     COLOR_ACTION,
                     "Add this lipid to the mol set"
                 )

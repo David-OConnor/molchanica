@@ -146,7 +146,7 @@ pub(in crate::ui) fn parquet_db(
                 .iter()
                 .enumerate()
                 .filter(|(_, lig)| !db.contains_mol(lig))
-                .map(|(i, lig)| (i, lig.common.name(Some(&lig.idents))))
+                .map(|(i, lig)| (i, lig.common.name(Some(&lig.idents)).into_owned()))
                 .collect(),
             _ => Vec::new(),
         };

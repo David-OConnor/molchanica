@@ -1,4 +1,18 @@
-use crate::ui::load_all_idents_button;
+use bio_apis::rhea;
+use bio_files::{FrameSlice, md_params::ForceFieldParams};
+use dynamics::{FfMolType, merge_params};
+use egui::{Color32, RichText, TextEdit, Ui};
+use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
+use lin_alg::f64::Vec3;
+use mol_defs::{
+    molecules::{
+        MolGenericRef, MolGenericRefMut, MolIdent, MolIdentType, MolType, common::MoleculeCommon,
+        nucleic_acid::NucleicAcidType, small::MoleculeSmall,
+    },
+    properties::mol_characterization::MolCharacterization,
+    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
+};
+
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -16,26 +30,10 @@ use crate::{
     state::{OperatingMode, PlayingAudio, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, highlighted_box, num_field, panels::md_viewer,
-        popup::pharmacophore,
+        COLOR_INACTIVE, ROW_SPACING, highlighted_box, load_all_idents_button, num_field,
+        panels::md_viewer, popup::pharmacophore,
     },
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
-};
-use bio_apis::rhea;
-use bio_files::{FrameSlice, md_params::ForceFieldParams};
-use dynamics::{FfMolType, merge_params};
-use egui::{Color32, RichText, TextEdit, Ui};
-use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
-use lin_alg::f64::Vec3;
-use mol_defs::molecules::MolIdentType;
-use mol_defs::molecules::small::MoleculeSmall;
-use mol_defs::{
-    molecules::{
-        MolGenericRef, MolGenericRefMut, MolIdent, MolType, common::MoleculeCommon,
-        nucleic_acid::NucleicAcidType,
-    },
-    properties::mol_characterization::MolCharacterization,
-    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
 };
 
 mod char_adme;
@@ -975,11 +973,12 @@ pub(in crate::ui) fn sidebar(
                 let mut run_water_sol_sim_layers = false;
                 let mut run_shrinking_box = false;
                 let mut new_crystal_mol = None;
+                let mut name_change = None;
 
                 if let Some(mol) = state.active_mol() {
                     match mol {
                         MolGenericRef::Small(mol) => {
-                            char_adme::mol_char_disp(
+                            name_change = char_adme::mol_char_disp(
                                 mol,
                                 &state.volatile.prefs_dir,
                                 ui,
@@ -996,6 +995,13 @@ pub(in crate::ui) fn sidebar(
                         }
                         _ => {}
                     }
+                }
+
+                if let Some(name) = name_change
+                    && let Some(mut mol) = state.active_mol_mut()
+                {
+                    mol.common_mut().name = name;
+                    redraw.ligand = true;
                 }
 
                 if let Some(mol) = new_crystal_mol {

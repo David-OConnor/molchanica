@@ -16,7 +16,6 @@ use mol_defs::molecules::{
     pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
 };
 
-use crate::ui::load_all_idents_button;
 use crate::{
     button,
     cam::move_cam_to_active_mol,
@@ -31,10 +30,12 @@ use crate::{
     selection::{SelAtom, Selection},
     split_join::{JoinLigand, join_ligands, split_lig_at_bonds},
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, popup},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, load_all_idents_button, popup,
+    },
     util,
     util::{
-        handle_err, handle_success, make_egui_color, make_lig_3d, make_lig_from_res,
+        RedrawFlags, handle_err, handle_success, make_egui_color, make_lig_3d, make_lig_from_res,
         move_mol_to_res,
     },
 };
@@ -1117,7 +1118,13 @@ pub(in crate::ui) fn display_mol_data(
 }
 
 /// Display metadata stored for a given molecule.
-pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui: &mut Ui) {
+pub(in crate::ui) fn metadata(
+    mol_type: MolType,
+    i: usize,
+    state: &mut State,
+    redraw: &mut RedrawFlags,
+    ui: &mut Ui,
+) {
     let Some(mol) = state.get_mol(mol_type, i) else {
         return;
     };
@@ -1158,6 +1165,13 @@ pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui
         mol.common_mut().metadata = metadata;
     }
 
+    if let Some(name) = result.name
+        && let Some(mut mol) = state.get_mol_mut(mol_type, i)
+    {
+        mol.common_mut().name = name;
+        redraw.set(mol_type);
+    }
+
     if result.load_all_idents
         && mol_type == MolType::Ligand
         && let Some(idents) = idents
@@ -1176,7 +1190,8 @@ pub(in crate::ui) fn metadata(mol_type: MolType, i: usize, state: &mut State, ui
 }
 
 pub(in crate::ui) fn mol_descrip(mol: &MolGenericRef, ui: &mut Ui) {
-    ui.heading(RichText::new(mol.common().ident.clone()).color(Color32::GOLD));
+    let name = mol.common().name.as_deref().unwrap_or(&mol.common().ident);
+    ui.heading(RichText::new(name).color(Color32::GOLD));
 
     ui.label(format!("{} atoms", mol.common().atoms.len()));
 

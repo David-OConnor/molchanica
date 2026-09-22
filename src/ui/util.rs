@@ -9,7 +9,7 @@ use std::{
 };
 
 use bio_apis::{chebi, pubchem::find_cids_from_search};
-use egui::{Color32, Response, RichText, Ui};
+use egui::{Color32, Response, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, FWD_VEC, Scene};
 use mol_defs::{
     molecules::{MolIdent, MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
@@ -70,13 +70,42 @@ pub(in crate::ui) fn open_dir(folder: &Path) -> io::Result<()> {
     Command::new(OPENER).arg(folder).spawn().map(|_| ())
 }
 
-/// Display small-molecule identifiers consistently wherever they are listed in the UI.
+/// Edit the optional display name. An empty field restores the generated label.
+pub(in crate::ui) fn edit_mol_name(name: &Option<String>, ui: &mut Ui) -> Option<Option<String>> {
+    let mut text = name.clone().unwrap_or_default();
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        crate::label!(ui, "Name:", Color32::GRAY);
+        let width = ui.available_width().min(180.0);
+        changed = ui
+            .add_sized(
+                [width, ui.spacing().interact_size.y],
+                TextEdit::singleline(&mut text),
+            )
+            .changed();
+    });
+
+    changed.then(|| {
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    })
+}
+
+/// Display small-molecule identifiers and, when supplied, an editable name above them.
+/// Returns only changes to the name; the caller applies them after releasing molecule borrows.
 pub(in crate::ui) fn list_idents(
+    name: Option<&Option<String>>,
     idents: &[MolIdent],
     path: &Option<PathBuf>,
     prefs_dir: &Path,
     ui: &mut Ui,
-) {
+) -> Option<Option<String>> {
+    let name_change = name.and_then(|name| edit_mol_name(name, ui));
+
     if let Some(p) = path {
         ui.horizontal_wrapped(|ui| {
             // Managed molecules were never saved to disk by the user; their cache path is an
@@ -129,6 +158,8 @@ pub(in crate::ui) fn list_idents(
             ui.label(ident_text);
         });
     }
+
+    name_change
 }
 
 /// Run this each frame, after all UI elements that affect it are rendered.
@@ -322,7 +353,10 @@ pub fn handle_redraw(
             .peptide_for_tools_i()
             .and_then(|i| state.peptides.get(i))
         {
-            set_window_title(&mol.common.ident, scene);
+            set_window_title(
+                mol.common.name.as_deref().unwrap_or(&mol.common.ident),
+                scene,
+            );
         }
 
         // For docking light, but may be overkill here.

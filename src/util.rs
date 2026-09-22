@@ -1119,7 +1119,7 @@ pub fn make_lig_3d(
     let specific = state.mol_specific_params.get(&lig.common.ident);
     let result = lig.common.make_3d(&state.ff_param_set, specific);
 
-    let ident = lig.common.name(Some(&lig.idents));
+    let ident = lig.common.name(Some(&lig.idents)).into_owned();
 
     if let Err(e) = result {
         handle_err(&mut state.ui, format!("Unable to make {ident} 3D: {e}"));

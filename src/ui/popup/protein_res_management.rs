@@ -229,7 +229,14 @@ pub(in crate::ui::popup) fn lig_attach_popup(
     }
     attach.peptide_i = attach.peptide_i.min(state.peptides.len() - 1);
 
-    label!(ui, format!("Ligand: {}", lig.common.ident), Color32::WHITE);
+    label!(
+        ui,
+        format!(
+            "Ligand: {}",
+            lig.common.name.as_deref().unwrap_or(&lig.common.ident)
+        ),
+        Color32::WHITE
+    );
 
     if let Some(origin) = &lig.cif_origin {
         let auth = origin
@@ -252,10 +259,20 @@ pub(in crate::ui::popup) fn lig_attach_popup(
 
         let prev = attach.peptide_i;
         ComboBox::from_id_salt("lig_attach_peptide")
-            .selected_text(state.peptides[attach.peptide_i].common.ident.clone())
+            .selected_text(
+                state.peptides[attach.peptide_i]
+                    .common
+                    .name
+                    .as_deref()
+                    .unwrap_or(&state.peptides[attach.peptide_i].common.ident),
+            )
             .show_ui(ui, |ui| {
                 for (i, pep) in state.peptides.iter().enumerate() {
-                    ui.selectable_value(&mut attach.peptide_i, i, &pep.common.ident);
+                    ui.selectable_value(
+                        &mut attach.peptide_i,
+                        i,
+                        pep.common.name.as_deref().unwrap_or(&pep.common.ident),
+                    );
                 }
             });
 

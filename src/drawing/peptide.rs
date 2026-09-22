@@ -199,7 +199,12 @@ fn ribbon_text_overlay_entities(
             );
 
             ent.overlay_text = Some(TextOverlay {
-                text: mol.common.ident.clone(),
+                text: mol
+                    .common
+                    .name
+                    .as_deref()
+                    .unwrap_or(&mol.common.ident)
+                    .to_owned(),
                 size: LABEL_SIZE_MOL_LARGE,
                 color,
                 font_family: FontFamily::Proportional,
@@ -736,7 +741,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         // Note: We draw these on the bond entities if not in a view that shows atoms.
         drawing::text_overlay(
             &mut entity,
-            &mol.common.ident,
+            mol.common.name.as_deref().unwrap_or(&mol.common.ident),
             i_atom,
             atom,
             mol_active,
@@ -1003,7 +1008,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 bond,
                 &mol.common.atoms,
                 &mut atoms_labeled,
-                &mol.common.ident,
+                mol.common.name.as_deref().unwrap_or(&mol.common.ident),
                 mol_active,
                 &mol.chains,
                 mol.common.bonds.len(),

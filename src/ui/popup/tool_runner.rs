@@ -525,7 +525,13 @@ impl ToolWindow {
                         .selected_text(
                             proteins
                                 .get(self.opened_protein)
-                                .map(|protein| protein.common.ident.as_str())
+                                .map(|protein| {
+                                    protein
+                                        .common
+                                        .name
+                                        .as_deref()
+                                        .unwrap_or(&protein.common.ident)
+                                })
                                 .unwrap_or("Select an opened protein"),
                         )
                         .show_ui(ui, |ui| {
@@ -533,7 +539,11 @@ impl ToolWindow {
                                 ui.selectable_value(
                                     &mut self.opened_protein,
                                     index,
-                                    &protein.common.ident,
+                                    protein
+                                        .common
+                                        .name
+                                        .as_deref()
+                                        .unwrap_or(&protein.common.ident),
                                 );
                             }
                         });
