@@ -1,17 +1,4 @@
-use bio_files::{FrameSlice, md_params::ForceFieldParams};
-use dynamics::{FfMolType, merge_params};
-use egui::{Color32, RichText, TextEdit, Ui};
-use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
-use lin_alg::f64::Vec3;
-use mol_defs::{
-    molecules::{
-        MolGenericRef, MolGenericRefMut, MolIdent, MolType, common::MoleculeCommon,
-        nucleic_acid::NucleicAcidType,
-    },
-    properties::mol_characterization::MolCharacterization,
-    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
-};
-
+use crate::ui::load_all_idents_button;
 use crate::{
     button,
     cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
@@ -33,6 +20,22 @@ use crate::{
         popup::pharmacophore,
     },
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
+};
+use bio_apis::rhea;
+use bio_files::{FrameSlice, md_params::ForceFieldParams};
+use dynamics::{FfMolType, merge_params};
+use egui::{Color32, RichText, TextEdit, Ui};
+use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
+use lin_alg::f64::Vec3;
+use mol_defs::molecules::MolIdentType;
+use mol_defs::molecules::small::MoleculeSmall;
+use mol_defs::{
+    molecules::{
+        MolGenericRef, MolGenericRefMut, MolIdent, MolType, common::MoleculeCommon,
+        nucleic_acid::NucleicAcidType,
+    },
+    properties::mol_characterization::MolCharacterization,
+    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
 };
 
 mod char_adme;
@@ -775,6 +778,71 @@ fn manip_toolbar(
     });
 }
 
+fn small_mol_aux_buttons(
+    load_all_idents: &mut bool,
+    toggle_metadata_popup: &mut bool,
+    mol: &MoleculeSmall,
+    loading_idents: bool,
+    ui: &mut Ui,
+) {
+    ui.horizontal(|ui| {
+        if load_all_idents_button(ui, loading_idents) {
+            *load_all_idents = true;
+        }
+
+        if button!(
+                    ui,
+                    "Metadata",
+                    Color32::GRAY,
+                    "Display metadata for this molecule"
+                )
+            .clicked()
+        {
+            *toggle_metadata_popup = true;
+        }
+
+
+        if button!(
+                    ui,
+                    "Reactions",
+                    Color32::GRAY,
+                    "Display Rhea (enzyme-catalogued) reactions involving this molecule; queries the Rhea API."
+                )
+            .clicked()
+        {
+            match mol.get_ident(MolIdentType::Chebi) {
+                Some(chebi_ident) => {
+                    // todo: Blocking, and displayed as a status for now.
+                    // todo: Determine how you will work this, including loading enymes and molecules
+                    // todo from this reaction, and displaying the results in a popup, the sidebar etc.
+                    // todo: Or add a new molecule data type for reactions.
+                    if let MolIdent::Chebi(id) = chebi_ident {
+                        println!("Finding reactions on Rhea...");
+                        let reactions = rhea::reactions_from_chebi_exact(*id, Some(6));
+
+                        if let Ok(r) = reactions {
+                            println!("\nReactions for CHEBI:{id}:");
+                            for r_ in r {
+                                println!("- {}", r_.format_simple())
+                            }
+                            println!("------------");
+                        } else {
+                            // handle_success(&mut state_ui, )
+                            println!("No reactions found for CHEBI:{id}");
+                        }
+                    }
+                }
+                None => {
+                    // todo: Should then queue the task at hand.
+                    // handle_success(&mut state_ui, "Missing CheBI ident; loading that. Try again once complete");
+                    println!("Missing CheBI ident; loading that. Try again once complete");
+                    *load_all_idents = true;
+                }
+            }
+        }
+    });
+}
+
 pub(in crate::ui) fn sidebar(
     state: &mut State,
     scene: &mut Scene,
@@ -881,6 +949,23 @@ pub(in crate::ui) fn sidebar(
                 mol_editor_sidebar::component_list(state, ui, &mut redraw.ligand);
             }
 
+            // These are set by the aux buttons, which always display (regardless of the
+            // Details toggle). Vars are to avoid a double borrow.
+            let mut load_all_idents = false;
+            let mut toggle_metadata_popup = false;
+
+            if !edit_mode && let Some(MolGenericRef::Small(mol)) = state.active_mol() {
+                let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
+
+                small_mol_aux_buttons(
+                    &mut load_all_idents,
+                    &mut toggle_metadata_popup,
+                    mol,
+                    loading_idents,
+                    ui,
+                );
+            }
+
             // todo: UI flag to show or hide this.
             if state.ui.ui_vis.mol_char && !edit_mode {
                 // Thse vars are all to avoid a double borrow.
@@ -890,15 +975,12 @@ pub(in crate::ui) fn sidebar(
                 let mut run_water_sol_sim_layers = false;
                 let mut run_shrinking_box = false;
                 let mut new_crystal_mol = None;
-                let mut load_all_idents = false;
-                let mut toggle_metadata_popup = false;
 
                 if let Some(mol) = state.active_mol() {
                     match mol {
                         MolGenericRef::Small(mol) => {
-                            load_all_idents = char_adme::mol_char_disp(
+                            char_adme::mol_char_disp(
                                 mol,
-                                state.volatile.thread_receivers.all_idents_avail.is_some(),
                                 &state.volatile.prefs_dir,
                                 ui,
                                 &mut run_logp_sim,
@@ -907,7 +989,6 @@ pub(in crate::ui) fn sidebar(
                                 &mut run_water_sol_sim_layers,
                                 &mut run_shrinking_box,
                                 &mut new_crystal_mol,
-                                &mut toggle_metadata_popup,
                             );
                         }
                         MolGenericRef::Peptide(mol) => {
@@ -915,29 +996,6 @@ pub(in crate::ui) fn sidebar(
                         }
                         _ => {}
                     }
-                }
-
-                if toggle_metadata_popup {
-                    state.ui.popup.metadata = match state.ui.popup.metadata {
-                        Some(_) => None,
-                        None => state.volatile.active_mol,
-                    };
-                }
-
-                if load_all_idents
-                    && let Some((MolType::Ligand, ligand_i)) = state.volatile.active_mol
-                    && let Some(mol) = state.ligands.get(ligand_i)
-                {
-                    crate::threads::start_all_idents_lookup(
-                        &mut state.volatile.thread_receivers,
-                        ligand_i,
-                        mol.common.ident.clone(),
-                        mol.idents.clone(),
-                    );
-                    handle_success(
-                        &mut state.ui,
-                        "Loading molecule identifiers from PubChem and ChEBI...".to_owned(),
-                    );
                 }
 
                 if let Some(mol) = new_crystal_mol {
@@ -964,6 +1022,29 @@ pub(in crate::ui) fn sidebar(
                     run_water_sol_sim_layers,
                     run_shrinking_box,
                     // run_water_sol_sim_layers_middle,
+                );
+            }
+
+            if toggle_metadata_popup {
+                state.ui.popup.metadata = match state.ui.popup.metadata {
+                    Some(_) => None,
+                    None => state.volatile.active_mol,
+                };
+            }
+
+            if load_all_idents
+                && let Some((MolType::Ligand, ligand_i)) = state.volatile.active_mol
+                && let Some(mol) = state.ligands.get(ligand_i)
+            {
+                crate::threads::start_all_idents_lookup(
+                    &mut state.volatile.thread_receivers,
+                    ligand_i,
+                    mol.common.ident.clone(),
+                    mol.idents.clone(),
+                );
+                handle_success(
+                    &mut state.ui,
+                    "Loading molecule identifiers from PubChem and ChEBI...".to_owned(),
                 );
             }
 

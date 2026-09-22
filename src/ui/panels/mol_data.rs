@@ -16,6 +16,7 @@ use mol_defs::molecules::{
     pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
 };
 
+use crate::ui::load_all_idents_button;
 use crate::{
     button,
     cam::move_cam_to_active_mol,
@@ -37,7 +38,6 @@ use crate::{
         move_mol_to_res,
     },
 };
-use crate::ui::load_all_idents_button;
 
 /// `posit_override` is for example, relative atom positions, such as a positioned ligand.
 fn disp_atom_data(
@@ -797,7 +797,7 @@ pub(in crate::ui) fn display_mol_data(
             }
 
             if ui
-                .button(RichText::new("Similar mols").color(COLOR_HIGHLIGHT))
+                .button(RichText::new("Similar mols"))
                 .on_hover_text(
                     "Using PubChem, find, download, and open similar molecules to this one.",
                 )

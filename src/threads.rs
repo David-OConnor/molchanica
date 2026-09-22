@@ -29,7 +29,7 @@ use crate::{
     mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
-    split_join::{SplitLookup, on_split_lookup},
+    split_join::{StructureLookup, on_structure_lookup},
     state::State,
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -59,8 +59,8 @@ pub struct ThreadReceivers {
     /// index and internal name from when the request started, so a removed/reordered ligand does
     /// not receive another molecule's result.
     pub all_idents_avail: Option<(usize, String, Receiver<IdentLookupOutcome>)>,
-    /// PubChem lookups naming the molecules a split produced; one per molecule.
-    pub split_lookups: Vec<SplitLookup>,
+    /// PubChem lookups naming molecules produced by a split or join; one per molecule.
+    pub structure_lookups: Vec<StructureLookup>,
     /// The first param is the index.
     pub therapeutic_properties_avail: Option<Receiver<(usize, TherapeuticProperties)>>,
     /// The first param is the index.
@@ -94,7 +94,7 @@ impl ThreadReceivers {
             || !self.mol_pending_data_avail.is_empty()
             || self.pubchem_properties_avail.is_some()
             || self.all_idents_avail.is_some()
-            || !self.split_lookups.is_empty()
+            || !self.structure_lookups.is_empty()
             || self.therapeutic_properties_avail.is_some()
             || self.amber_geostd_data_avail.is_some()
             || !self.sifts_mapping_avail.is_empty()
@@ -722,8 +722,8 @@ pub fn handle_thread_rx(
     }
 
     let mut pending_i = 0;
-    while pending_i < state.volatile.thread_receivers.split_lookups.len() {
-        let result = state.volatile.thread_receivers.split_lookups[pending_i]
+    while pending_i < state.volatile.thread_receivers.structure_lookups.len() {
+        let result = state.volatile.thread_receivers.structure_lookups[pending_i]
             .rx
             .try_recv();
 
@@ -732,17 +732,17 @@ pub fn handle_thread_rx(
                 let lookup = state
                     .volatile
                     .thread_receivers
-                    .split_lookups
+                    .structure_lookups
                     .swap_remove(pending_i);
 
-                on_split_lookup(state, lookup, result, redraw);
+                on_structure_lookup(state, lookup, result, redraw);
             }
             Err(TryRecvError::Empty) => pending_i += 1,
             Err(TryRecvError::Disconnected) => {
                 let lookup = state
                     .volatile
                     .thread_receivers
-                    .split_lookups
+                    .structure_lookups
                     .swap_remove(pending_i);
 
                 eprintln!(
