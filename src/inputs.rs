@@ -406,6 +406,39 @@ fn cycle_primary_view(state: &mut State, redraw: &mut RedrawFlags, forward: bool
         redraw.peptide = !state.peptides.is_empty();
     }
 }
+
+/// Tab adds a carbon atom in the molecule editor, including while the pointer is over the GUI.
+pub(crate) fn add_atom_with_tab(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    let atom_sel_i = match &state.ui.selection {
+        Selection::AtomLig((_, i)) => *i,
+        Selection::AtomsLig((_, indices)) => {
+            // todo: How should we handle multiple selected atoms?
+            indices[0]
+        }
+        _ => return,
+    };
+
+    // todo: DRY with the Add Atom button.
+    add_atom(
+        &mut state.mol_editor.mol.common,
+        &mut scene.entities,
+        atom_sel_i,
+        Carbon,
+        BondType::Single,
+        Some("c".to_owned()), // todo
+        Some(1.4),            // todo
+        None,
+        &mut state.ui,
+        updates,
+        &mut scene.input_settings.control_scheme,
+        state.volatile.mol_manip.mode,
+        &state.mol_editor.mol.components,
+    );
+    state.mol_editor.mol.update_characterization();
+
+    sync_md(state);
+}
+
 /// Handles keyboard input from either device, or window events.
 fn handle_physical_key(
     state: &mut State,
@@ -632,40 +665,6 @@ fn handle_physical_key(
                 }
                 KeyCode::ShiftLeft | KeyCode::ShiftRight => {
                     state.volatile.inputs_commanded.run = true;
-                }
-                KeyCode::Tab => {
-                    // todo: This is DRY/mostly C+P from the add atom button.
-                    if op_mode == OperatingMode::MolEditor {
-                        let (_mol_i, atom_sel_i) = match &state.ui.selection {
-                            Selection::AtomLig((mol_i, i)) => (*mol_i, *i),
-                            Selection::AtomsLig((mol_i, i)) => {
-                                // todo: How should we handle this?
-                                (*mol_i, i[0])
-                            }
-                            _ => return true,
-                        };
-
-                        // todo: DRY here in some of the params with the button
-                        add_atom(
-                            &mut state.mol_editor.mol.common,
-                            &mut scene.entities,
-                            atom_sel_i,
-                            Carbon,
-                            BondType::Single,
-                            Some("c".to_owned()), // todo
-                            Some(1.4),            // todo
-                            // Some(0.13),           // todo
-                            None,
-                            &mut state.ui,
-                            updates,
-                            &mut scene.input_settings.control_scheme,
-                            state.volatile.mol_manip.mode,
-                            &state.mol_editor.mol.components,
-                        );
-                        state.mol_editor.mol.update_characterization();
-
-                        sync_md(state);
-                    }
                 }
                 _ => (),
             }

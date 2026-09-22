@@ -77,7 +77,7 @@ pub(in crate::ui) fn edit_mol_name(name: &Option<String>, ui: &mut Ui) -> Option
 
     ui.horizontal(|ui| {
         crate::label!(ui, "Name:", Color32::GRAY);
-        let width = ui.available_width().min(180.0);
+        let width = ui.available_width().min(160.0);
         changed = ui
             .add_sized(
                 [width, ui.spacing().interact_size.y],

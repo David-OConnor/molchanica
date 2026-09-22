@@ -248,6 +248,7 @@ See below for a reference.
 
 #### Camera hotkeys
 
+- **Tab**: Outside the molecule editor, reset to the Front view of the active molecule.
 - **W**: Move forward
 - **A**: Move right
 - **A**: Move left
@@ -288,7 +289,7 @@ See below for a reference.
 
 - **Enter**: Move the camera to the selected atom, bond, or residue.
 
-- **Tab**: In the molecule editor, adds an atom.
+- **Tab**: In the molecule editor, add an atom.
 
 Note: The molecule editor has a different set of hot keys; see its tooltips for details.
 

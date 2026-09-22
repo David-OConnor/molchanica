@@ -357,17 +357,18 @@ pub fn reset_camera(
         size = 60.;
     }
 
-    let mut center = if let Some(mol) = state
-        .peptide_for_tools_i()
-        .and_then(|i| state.peptides.get(i))
-    {
-        // We cache center and size, due to the potential large number of molecules.
-        let center = mol.center.into();
-        size = mol.size;
-
-        center
-    } else if let Some(mol) = state.active_mol() {
-        mol.common().centroid().into()
+    let mut center = if let Some(mol) = state.active_mol() {
+        match mol {
+            MolGenericRef::Peptide(peptide) => {
+                // We cache center and size, due to the potential large number of atoms.
+                size = peptide.size;
+                peptide.center.into()
+            }
+            other => other.common().centroid().into(),
+        }
+    } else if let Some(peptide) = state.peptide_for_tools() {
+        size = peptide.size;
+        peptide.center.into()
     } else {
         let mut n = 0;
         let mut centroid = Vec3::new_zero();

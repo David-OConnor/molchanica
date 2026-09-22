@@ -5,10 +5,10 @@ use std::{
 
 use bio_apis::{pdbe, rcsb};
 use egui::{
-    Color32, ComboBox, CornerRadius, Event, Frame, Key, Margin, Panel, RichText, Slider, Stroke,
-    TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
+    Color32, ComboBox, CornerRadius, Event, FocusDirection, Frame, Key, Margin, Panel, RichText,
+    Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
-use graphics::{ControlScheme, EngineUpdates, Scene};
+use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
 use mol_defs::molecules::{MolGenericRef, MolIdent, MolType};
 use na_seq::Element;
 use panels::{
@@ -30,6 +30,7 @@ use crate::{
     cli::autocomplete_cli,
     drawing::MoleculeView,
     file_io::download_mols::load_atom_coords_rcsb,
+    inputs::add_atom_with_tab,
     mol_editor::enter_edit_mode,
     prefs::ControlSchemeType,
     render::set_flashlight,
@@ -169,6 +170,39 @@ pub fn handle_input(
     engine_updates: &mut EngineUpdates,
     scene: &mut Scene,
 ) {
+    // EGUI records Tab focus navigation before this handler runs. Clear it before
+    // drawing any widgets, while still handling Tab over the GUI and the scene.
+    if ui.input(|input| input.key_pressed(Key::Tab)) {
+        ui.ctx()
+            .memory_mut(|memory| memory.move_focus(FocusDirection::None));
+
+        if state.volatile.operating_mode == OperatingMode::MolEditor
+            || state.active_mol().is_some()
+        {
+            let tab_consumed = ui.input_mut(|input| {
+                let modifiers = input.modifiers;
+                input.consume_key(modifiers, Key::Tab)
+            });
+
+            if tab_consumed {
+                if state.volatile.operating_mode == OperatingMode::MolEditor {
+                    add_atom_with_tab(state, scene, engine_updates);
+                } else {
+                    cam::reset_camera(state, scene, engine_updates, FWD_VEC);
+                }
+            }
+        }
+    }
+
+    // Enter also acts as a click on focused buttons. Keep it available to text
+    // fields, which use Enter to submit commands and queries.
+    if ui.input(|input| input.key_pressed(Key::Enter)) && !ui.ctx().text_edit_focused() {
+        ui.input_mut(|input| {
+            let modifiers = input.modifiers;
+            input.consume_key(modifiers, Key::Enter);
+        });
+    }
+
     ui.ctx().input(|ip| {
         // Check for file drop
         if let Some(dropped_file) = ip.raw.dropped_files.first()
@@ -723,6 +757,8 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         state.to_save.save_flag = true;
     }
 
+    handle_input(state, ui, &mut updates, scene);
+
     // todo: Trying to set popup color; Not working
     // let mut style = (*ctx.style()).clone();
     // style.visuals.widgets.noninteractive.bg_fill = COLOR_POPUP;
@@ -739,13 +775,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     let out_main_panel = Panel::top("0").show(ui, |ui| {
         ui.spacing_mut().slider_width = 120.;
-
-        handle_input(
-            state,
-            ui,
-            &mut updates,
-            scene,
-        );
 
         if state.volatile.operating_mode == OperatingMode::MolEditor {
             mol_editor::editor(state, scene, &mut updates, redraw.ligand, ui);
