@@ -4,7 +4,6 @@
 
 use std::{
     f64::consts::TAU,
-    io,
     sync::mpsc,
     thread,
     time::{Duration, Instant},

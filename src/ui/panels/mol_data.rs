@@ -37,6 +37,7 @@ use crate::{
         move_mol_to_res,
     },
 };
+use crate::ui::load_all_idents_button;
 
 /// `posit_override` is for example, relative atom positions, such as a positioned ligand.
 fn disp_atom_data(
@@ -853,6 +854,9 @@ pub(in crate::ui) fn display_mol_data(
         let mut join_clicked = false;
         let mut cancel_join = false;
         let mut make_3d = false;
+        let mut load_all_idents = false;
+
+        let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
 
         if let Some(mol) = state.active_mol() {
             match mol {
@@ -882,7 +886,7 @@ pub(in crate::ui) fn display_mol_data(
                     for ident in &m.idents {
                         match ident {
                             MolIdent::DrugBank(id) => {
-                                if ui.button(format!("DrugBank: {id}")).clicked() {
+                                if ui.button(format!("DB: {id}")).clicked() {
                                     drugbank::open_overview(id);
                                 }
                             }
@@ -933,6 +937,11 @@ pub(in crate::ui) fn display_mol_data(
                             update_cid = Some(cid);
                             pubchem::open_overview(cid);
                         }
+                    }
+
+                    if load_all_idents_button(ui, loading_idents) {
+                        // Deferred; starting the lookup needs `state` mutably.
+                        load_all_idents = true;
                     }
 
                     if let Some(cid) = pubchem_cid
@@ -1056,6 +1065,22 @@ pub(in crate::ui) fn display_mol_data(
             && let MolGenericRefMut::Small(m) = mol
         {
             m.idents.push(MolIdent::PubChem(cid));
+        }
+
+        if load_all_idents
+            && active_mol_type == MolType::Ligand
+            && let Some(mol) = state.ligands.get(active_mol_i)
+        {
+            crate::threads::start_all_idents_lookup(
+                &mut state.volatile.thread_receivers,
+                active_mol_i,
+                mol.common.ident.clone(),
+                mol.idents.clone(),
+            );
+            handle_success(
+                &mut state.ui,
+                "Loading molecule identifiers from PubChem and ChEBI...".to_owned(),
+            );
         }
 
         if cancel_join {
