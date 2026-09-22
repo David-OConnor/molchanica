@@ -178,7 +178,6 @@ pub fn view_settings(
     }
 
     // We allow toggling water now regardless of hide hetero, as it's part of our MD sim.
-    // if !state.ui.visibility.hide_hetero {
     // Subset of hetero.
     let water_prev = state.ui.visibility.hide_water;
     toggle_btn_inv(
