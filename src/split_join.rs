@@ -1,7 +1,16 @@
 //! Split ligands into fragments, or join them with a new covalent bond.
 
-use std::{f64::consts::TAU, io};
+use std::{
+    f64::consts::TAU,
+    io, iter,
+    sync::mpsc::{self, Receiver},
+    thread,
+};
 
+use bio_apis::{
+    ReqError,
+    pubchem::{self, StructureSearchNamespace},
+};
 use bio_files::{BondType, md_params::ForceFieldParams};
 use dynamics::{
     ComputationDevice, HydrogenConstraint, MdConfig, MdOverrides, MdState, MolDynamics, SimBoxInit,
@@ -15,10 +24,22 @@ use na_seq::Element;
 use crate::{
     drawing::wrappers::{draw_all_ligs, draw_all_pockets},
     mol_manip::ManipMode,
+    prefs::OpenType,
     selection::Selection,
     state::State,
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
+
+/// A PubChem lookup for one of the molecules a split produced. Each piece is a different compound
+/// from the one split; if PubChem knows its structure, it takes that compound's CID as its name.
+pub struct SplitLookup {
+    /// The name given at the split, e.g. "3672 frag 1". Kept if the lookup doesn't resolve.
+    pub ident: String,
+    /// The molecule's SMILES, which is what we look up. Along with `ident`, this finds the
+    /// molecule again once the result is in, and won't if it has been split further since.
+    pub smiles: MolIdent,
+    pub rx: Receiver<Result<pubchem::Properties, ReqError>>,
+}
 
 /// A temporary first endpoint. The snapshot prevents an edit between clicks from silently
 /// joining a different atom. This workflow deliberately leaves Selection's format unchanged.
@@ -547,6 +568,7 @@ pub fn split_lig_at_bonds(
                     .iter()
                     .enumerate()
                     .map(|(i, atoms)| {
+                        // Kept only if PubChem can't identify it; see `start_split_lookup`.
                         let ident = format!("{} frag {}", lig.common.ident, i + 1);
                         MoleculeSmall::from_fragment(ident, &lig.common, atoms)
                     })
@@ -589,6 +611,19 @@ pub fn split_lig_at_bonds(
         lig.associated_structures.clear();
         lig.therapeutic_props = None;
 
+        // Its file holds the molecule before the split. As with joining, treat that as closed:
+        // it won't reopen next session, and caching identifiers found for what's left (see
+        // `managed_mols::update_managed_mol`) can't write over it. This also keeps the old
+        // filename out of the displayed name.
+        if let Some(path) = lig.common.path.take() {
+            for history in &mut state.to_save.open_history {
+                if history.type_ == OpenType::Ligand && history.path == path {
+                    history.last_session = false;
+                }
+            }
+        }
+        lig.common.filename.clear();
+
         // Pharmacophore features point at atom indices, which have shifted. Its pocket doesn't,
         // and owns a mesh slot, so leave that in place.
         lig.pharmacophore.features.clear();
@@ -627,6 +662,7 @@ pub fn split_lig_at_bonds(
         state.ui.selection = Selection::None;
     }
 
+    let first_frag_i = state.ligands.len();
     for frag in fragments {
         // In place: the point of the split is that each piece stays where it was.
         state.load_mol_to_state_in_place(MoleculeGeneric::Small(frag), scene, engine_updates);
@@ -636,8 +672,119 @@ pub fn split_lig_at_bonds(
     state.volatile.active_mol = Some((MolType::Ligand, lig_i));
     state.ui.visibility.hide_ligand = false;
 
+    // Name what's left, and each piece split off, for the compound it actually is.
+    let mut renamed = false;
+    for i in iter::once(lig_i).chain(first_frag_i..state.ligands.len()) {
+        renamed |= start_split_lookup(state, i);
+    }
+    // Atom labels include the name.
+    if renamed {
+        draw_all_ligs(state, scene, engine_updates);
+    }
+
     handle_success(
         &mut state.ui,
         format!("Split {frag_count} molecule[s] off of {ident}."),
     );
+}
+
+/// Look up a molecule from a split on PubChem, by its SMILES, to name it. Resolves at once if our
+/// local cache of PubChem properties has the structure; otherwise, the lookup runs in the
+/// background and `on_split_lookup` applies it. Returns true if the molecule was renamed here.
+fn start_split_lookup(state: &mut State, lig_i: usize) -> bool {
+    let Some(lig) = state.ligands.get(lig_i) else {
+        return false;
+    };
+
+    let Some(smiles) = lig
+        .idents
+        .iter()
+        .find(|ident| matches!(ident, MolIdent::Smiles(_)))
+        .cloned()
+    else {
+        return false;
+    };
+
+    if let Some(props) = state.to_save.pubchem_properties_map.get(&smiles).cloned() {
+        return name_split_mol(state, lig_i, &props);
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let query = smiles.ident_inner();
+
+    thread::spawn(move || {
+        let _ = tx.send(pubchem::properties(StructureSearchNamespace::Smiles, &query));
+    });
+
+    state.volatile.thread_receivers.split_lookups.push(SplitLookup {
+        ident: lig.common.ident.clone(),
+        smiles,
+        rx,
+    });
+
+    false
+}
+
+/// Apply a finished PubChem lookup for a molecule from a split. If PubChem doesn't know the
+/// structure, the molecule keeps the name it was given at the split.
+pub fn on_split_lookup(
+    state: &mut State,
+    lookup: SplitLookup,
+    result: Result<pubchem::Properties, ReqError>,
+    redraw: &mut RedrawFlags,
+) {
+    let props = match result {
+        // PubChem answers a structure it doesn't have with CID 0.
+        Ok(props) if props.cid != 0 => props,
+        Ok(_) => {
+            println!("No PubChem compound matches {}", lookup.ident);
+            return;
+        }
+        Err(e) => {
+            eprintln!("Unable to find {} on PubChem: {e:?}", lookup.ident);
+            return;
+        }
+    };
+
+    // Cached as a load's PubChem lookup would, so this structure resolves at once from now on.
+    state
+        .to_save
+        .pubchem_properties_map
+        .insert(lookup.smiles.clone(), props.clone());
+    state.to_save.save_flag = true;
+
+    // It may have been closed, or split further, while we waited.
+    let Some(lig_i) = state.ligands.iter().position(|lig| {
+        lig.common.ident == lookup.ident && lig.idents.contains(&lookup.smiles)
+    }) else {
+        return;
+    };
+
+    if name_split_mol(state, lig_i, &props) {
+        redraw.set(MolType::Ligand);
+    }
+}
+
+/// Name a molecule from a split for the PubChem compound it is: its CID, as for one loaded from
+/// PubChem, along with the compound's title and other identifiers. Returns true if renamed.
+fn name_split_mol(state: &mut State, lig_i: usize, props: &pubchem::Properties) -> bool {
+    let lig = &mut state.ligands[lig_i];
+    let ident = props.cid.to_string();
+
+    lig.update_idents_and_char_from_pubchem(props);
+
+    if lig.common.ident == ident {
+        return false;
+    }
+    lig.common.ident = ident;
+
+    // Molecule-specific params are keyed by name: use any we hold for this compound, or build
+    // them under the new name. (The ones under the old name may be for the molecule before the
+    // split.)
+    lig.frcmod_loaded = false;
+    if let Some(params) = &state.ff_param_set.small_mol {
+        lig.update_ff_related(&mut state.mol_specific_params, params, false);
+    }
+
+    true
 }
