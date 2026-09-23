@@ -1,17 +1,13 @@
 use egui::Ui;
 use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
 use lin_alg::f32::{Quaternion, Vec3};
-use mol_defs::molecules::{
-    MolGenericRef, MolType, common::MoleculeCommon, lipid::MoleculeLipid,
-    nucleic_acid::MoleculeNucleicAcid, peptide::MoleculePeptide, pocket::Pocket,
-    small::MoleculeSmall,
-};
+use mol_defs::molecules::{MolGenericRef, MolType, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
-    selection::{SelAtom, Selection},
-    state::{State, StateUi},
+    selection::Selection,
+    state::State,
 };
 
 // This control the clip planes in the camera frustum.
@@ -61,146 +57,66 @@ pub fn set_fog_dist(cam: &mut Camera, dist: u16, half_depth: u16) {
     let (fog_start, fog_end) = if dist == FOG_DIST_MAX {
         (0., 0.) // No fog will render.
     } else {
-        let val = dist;
-        calc_fog_dists(val, half_depth)
+        calc_fog_dists(dist, half_depth)
     };
 
     cam.fog_start = fog_start;
     cam.fog_end = fog_end;
 }
 
-/// Returns `(nearest, farthest)` distances (from the camera) for in-view atoms of a molecule.
-/// Returns `None` if no atoms are in the camera FOV.
-fn find_mol_dist_range_inner(mol: MolGenericRef<'_>, cam: &Camera) -> Option<(f32, f32)> {
+/// Returns the distance range of positions in the camera FOV, or `None` if none are visible.
+fn visible_dist_range(positions: impl Iterator<Item = Vec3>, cam: &Camera) -> Option<(f32, f32)> {
     let mut nearest = f32::INFINITY;
     let mut farthest = f32::NEG_INFINITY;
 
-    if !mol.common().visible {
-        return None;
-    }
-
-    for posit_f64 in &mol.common().atom_posits {
-        let posit: Vec3 = (*posit_f64).into();
+    for posit in positions {
         if cam.in_view(posit).0 {
             let d = (cam.position - posit).magnitude();
-            if d < nearest {
-                nearest = d;
-            }
-            if d > farthest {
-                farthest = d;
-            }
+            nearest = nearest.min(d);
+            farthest = farthest.max(d);
         }
     }
 
-    if nearest != f32::INFINITY {
-        Some((nearest, farthest))
-    } else {
-        None
-    }
+    (nearest != f32::INFINITY).then_some((nearest, farthest))
 }
 
 /// Sets fog to be a linear ramp between the closest atom visible, and the farthest.
 /// `fog_start` is placed at the nearest visible atom; `fog_end` at the farthest.
 /// If nothing is in view, the fog values are left unchanged.
 pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
-    let mut nearest = f32::INFINITY;
-    let mut farthest = f32::NEG_INFINITY;
-
-    let mut update = |range: Option<(f32, f32)>| {
-        if let Some((n, f)) = range {
-            if n < nearest {
-                nearest = n;
-            }
-            if f > farthest {
-                farthest = f;
-            }
-        }
-    };
-
-    let viewer = &state.volatile.md_local.viewer;
-
+    // MD uses manual fog. This function is also called directly by the input handler.
     if state.volatile.md_local.draw_md_mols {
-        // for mol in &viewer.mols {
-
-        // todo: Come back to this!
-        // update(find_mol_dist_range_inner(MolGenericRef::Small(mol.mol), cam));
-        // }
-
-        //
-        // for mol in &viewer.peptides {
-        //     update(find_mol_dist_range_inner(MolGenericRef::Peptide(mol), cam));
-        // }
-        //
-        // for mol in &viewer.small {
-        //     update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
-        // }
-        //
-        // for mol in &viewer.nucleic_acids {
-        //     update(find_mol_dist_range_inner(
-        //         MolGenericRef::NucleicAcid(mol),
-        //         cam,
-        //     ));
-        // }
-        // for mol in &viewer.lipids {
-        //     update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
-        // }
-    } else {
-        // For the peptide use the same sparse sampling used in `find_nearest_mol_dist_to_cam`
-        // (every 20th carbon) so large proteins don't stall the update. This produces good-enough results,
-        // and is faster. We handle peptides as a special case, as they're likely to be much larger than
-        // small molecules. todo: Consider this for lipids and NAs etc A/R.
-        for pep in &state.peptides {
-            if !pep.common.visible {
-                continue;
-            }
-            let mut pep_nearest = f32::INFINITY;
-            let mut pep_farthest = f32::NEG_INFINITY;
-
-            for (i, _atom) in pep
-                .common
-                .atoms
-                .iter()
-                .filter(|a| a.element == Element::Carbon)
-                .enumerate()
-            {
-                if !i.is_multiple_of(PEP_FOG_FAR_RATIO) {
-                    continue;
-                }
-
-                let posit: Vec3 = pep.common.atom_posits[i].into();
-
-                if cam.in_view(posit).0 {
-                    let d = (cam.position - posit).magnitude();
-
-                    if d < pep_nearest {
-                        pep_nearest = d;
-                    }
-                    if d > pep_farthest {
-                        pep_farthest = d;
-                    }
-                }
-            }
-
-            if pep_nearest != f32::INFINITY {
-                update(Some((pep_nearest, pep_farthest)));
-            }
-        }
-
-        for mol in &state.ligands {
-            update(find_mol_dist_range_inner(MolGenericRef::Small(mol), cam));
-        }
-        for mol in &state.nucleic_acids {
-            update(find_mol_dist_range_inner(
-                MolGenericRef::NucleicAcid(mol),
-                cam,
-            ));
-        }
-        for mol in &state.lipids {
-            update(find_mol_dist_range_inner(MolGenericRef::Lipid(mol), cam));
-        }
+        return;
     }
 
-    if nearest != f32::INFINITY {
+    // Sample every 20th carbon per peptide. Pair atoms with their positions before filtering
+    // so the carbon ordinal is never mistaken for an index into all atom positions.
+    let peptide_positions = state
+        .peptides
+        .iter()
+        .filter(|p| p.common.visible)
+        .flat_map(|p| {
+            p.common
+                .atoms
+                .iter()
+                .zip(&p.common.atom_posits)
+                .filter(|(atom, _)| atom.element == Element::Carbon)
+                .step_by(PEP_FOG_FAR_RATIO)
+                .map(|(_, posit)| (*posit).into())
+        });
+
+    let other_positions = state
+        .ligands
+        .iter()
+        .map(|m| &m.common)
+        .chain(state.nucleic_acids.iter().map(|m| &m.common))
+        .chain(state.lipids.iter().map(|m| &m.common))
+        .filter(|m| m.visible)
+        .flat_map(|m| m.atom_posits.iter().map(|p| (*p).into()));
+
+    if let Some((nearest, farthest)) =
+        visible_dist_range(peptide_positions.chain(other_positions), cam)
+    {
         cam.fog_start = nearest;
         cam.fog_end = farthest;
     }
@@ -215,97 +131,94 @@ pub fn cam_reset_controls(
 ) {
     ui.label("Cam:");
 
-    // Preset buttons
-    if ui
-        .button("Front")
-        .on_hover_text("Reset the camera to look at the \"front\" of the molecule. (Y axis)")
-        .clicked()
-    {
-        reset_camera(state, scene, update, FWD_VEC);
-        *changed = true;
+    for (label, axis, direction) in [
+        ("Front", "Y", FWD_VEC),
+        ("Top", "Z", -UP_VEC),
+        ("Left", "X", RIGHT_VEC),
+    ] {
+        if ui
+            .button(label)
+            .on_hover_text(format!(
+                "Reset the camera to look at the \"{}\" of the molecule. ({axis} axis)",
+                label.to_lowercase(),
+            ))
+            .clicked()
+        {
+            reset_camera(state, scene, update, direction);
+            *changed = true;
+        }
     }
+}
 
-    if ui
-        .button("Top")
-        .on_hover_text("Reset the camera to look at the \"top\" of the molecule. (Z axis)")
-        .clicked()
-    {
-        reset_camera(state, scene, update, -UP_VEC);
-        *changed = true;
-    }
+/// Owned camera framing data lets callers finish borrowing the molecule before updating state.
+pub struct MolCameraTarget {
+    molecule: (MolType, usize),
+    center: Vec3,
+    distance: f32,
+}
 
-    if ui
-        .button("Left")
-        .on_hover_text("Reset the camera to look at the \"left\" of the molecule. (X axis)")
-        .clicked()
-    {
-        reset_camera(state, scene, update, RIGHT_VEC);
-        *changed = true;
+impl MolCameraTarget {
+    pub fn new(mol: &MoleculeCommon, molecule: (MolType, usize)) -> Self {
+        Self {
+            molecule,
+            center: mol.centroid().into(),
+            // A rough framing heuristic; a future version could incorporate the FOV.
+            distance: (mol.atoms.len() as f32).cbrt() * 7.5,
+        }
     }
 }
 
 pub fn move_cam_to_mol(
-    mol: &MoleculeCommon,
-    mol_type: MolType,
-    mol_i: usize,
+    target: MolCameraTarget,
     cam_snapshot: &mut Option<usize>,
     scene: &mut Scene,
     orbit_center: &mut Option<(MolType, usize)>,
     look_to_beyond: lin_alg::f64::Vec3,
     engine_updates: &mut EngineUpdates,
 ) {
-    let mol_pos: Vec3 = mol.centroid().into();
-    let ctr: Vec3 = look_to_beyond.into();
-
-    // A crude heuristic, but seems to work well. Could also incorporate the camera FOV;
-    // we have that available here.
-    let dist = (mol.atoms.len() as f32).cbrt() * 7.5;
-
-    cam_look_at_outside(&mut scene.camera, mol_pos, ctr, dist);
+    cam_look_at_outside(
+        &mut scene.camera,
+        target.center,
+        look_to_beyond.into(),
+        target.distance,
+    );
 
     engine_updates.camera = true;
 
     set_flashlight(scene);
     engine_updates.lighting = true;
 
-    *orbit_center = Some((mol_type, mol_i));
+    *orbit_center = Some(target.molecule);
     if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
-        *center = mol.centroid().into();
+        *center = target.center;
     }
 
     *cam_snapshot = None;
 }
 
-// There are borrow-error reasons we have this separate wrapper, to prevent a double-borrow on state.
 pub fn move_cam_to_active_mol(
     state: &mut State,
     scene: &mut Scene,
     look_to_beyond: lin_alg::f64::Vec3,
     engine_updates: &mut EngineUpdates,
 ) {
-    // This avoids a double borrow.
-    let mut cam_ss = state.ui.cam_snapshot;
-
-    let mut oc_copy = state.volatile.orbit_center;
-    let Some(mol) = &mut state.active_mol() else {
+    let Some(molecule) = state.volatile.active_mol else {
         return;
     };
+    let Some(mol) = state.active_mol() else {
+        return;
+    };
+    let target = MolCameraTarget::new(mol.common(), molecule);
 
     move_cam_to_mol(
-        mol.common(),
-        mol.mol_type(),
-        state.volatile.active_mol.unwrap().1,
-        &mut cam_ss,
+        target,
+        &mut state.ui.cam_snapshot,
         scene,
-        &mut oc_copy,
+        &mut state.volatile.orbit_center,
         look_to_beyond,
         engine_updates,
     );
     set_fog(state, &mut scene.camera);
-
-    state.ui.cam_snapshot = cam_ss;
-
-    state.volatile.orbit_center = oc_copy;
 }
 
 const MOVE_TO_TARGET_DIST: f32 = 15.;
@@ -316,119 +229,103 @@ pub const MOVE_TO_CAM_DIST: f32 = 20.;
 pub fn cam_look_at(cam: &mut Camera, target: lin_alg::f64::Vec3) {
     let tgt: Vec3 = target.into();
     let diff = tgt - cam.position;
-    let dir = diff.to_normalized();
-    let dist = diff.magnitude();
 
-    // Rotate the camera to look at the target.
+    // Apply a relative rotation to preserve the camera's existing roll. If already at the
+    // target, back away along the current viewing direction instead of normalizing zero.
     let cam_looking_at = cam.orientation.rotate_vec(FWD_VEC);
+    let dir = direction_or(diff, cam_looking_at);
     let rotator = Quaternion::from_unit_vecs(cam_looking_at, dir);
 
     cam.orientation = rotator * cam.orientation;
 
-    // Slide along the path between cam and target until close to it.
-    let move_dist = dist - MOVE_TO_TARGET_DIST;
-    cam.position += dir * move_dist;
+    cam.position = tgt - dir * MOVE_TO_TARGET_DIST;
+}
+
+fn direction_or(vector: Vec3, fallback: Vec3) -> Vec3 {
+    if vector.magnitude() > f32::EPSILON {
+        vector.to_normalized()
+    } else {
+        fallback
+    }
+}
+
+/// Place the camera a fixed distance behind a target, with an absolute viewing direction.
+/// `direction` must be a unit vector.
+fn place_camera(cam: &mut Camera, target: Vec3, direction: Vec3, distance: f32) {
+    cam.position = target - direction * distance;
+    cam.orientation = Quaternion::from_unit_vecs(FWD_VEC, direction);
 }
 
 pub fn cam_look_at_outside(cam: &mut Camera, target: Vec3, alignment: Vec3, dist: f32) {
-    // Note: This is similar to `cam_look_at`, but we don't call that, as we're positioning
-    // with an absolute orientation in mind, vice `cam_look_at`'s use of current cam LOS.
-
-    // Look from the outside in, so our view is unobstructed by the protein. Do this after
-    // the camera is positioned.
-    let look_vec = (target - alignment).to_normalized();
-
-    cam.position = target + look_vec * dist;
-    cam.orientation = Quaternion::from_unit_vecs(FWD_VEC, -look_vec);
+    // Look from the outside toward the alignment point, through the target.
+    let direction = direction_or(alignment - target, FWD_VEC);
+    place_camera(cam, target, direction, dist);
 }
 
-/// Resets the camera so that it's generally looking at most of the molecules. Its behavior depends
-/// on the size and positions of open molecules. Used by various view preset buttons, and at init.
+fn mean_position(positions: impl Iterator<Item = Vec3>) -> Vec3 {
+    let mut sum = Vec3::new_zero();
+    let mut count = 0;
+
+    for position in positions {
+        sum += position;
+        count += 1;
+    }
+
+    if count == 0 { sum } else { sum / count as f32 }
+}
+
+/// Determine the center and size used by view presets, retaining cached peptide framing.
+fn reset_frame(state: &State) -> (Vec3, f32) {
+    let md = &state.volatile.md_local;
+    let default_size = if md.draw_md_mols { 60. } else { 8. };
+    let mol = state
+        .active_mol()
+        .or_else(|| state.peptide_for_tools().map(MolGenericRef::Peptide));
+
+    let (mut center, size) = if let Some(mol) = mol {
+        match mol {
+            MolGenericRef::Peptide(p) => (p.center.into(), p.size),
+            other => (other.common().centroid().into(), default_size),
+        }
+    } else {
+        let mols = state
+            .ligands
+            .iter()
+            .take(10)
+            .map(|m| &m.common)
+            .chain(state.lipids.iter().take(10).map(|m| &m.common))
+            .chain(state.nucleic_acids.iter().take(10).map(|m| &m.common));
+
+        (
+            mean_position(mols.map(|m| m.centroid().into())),
+            default_size,
+        )
+    };
+
+    if md.draw_md_mols {
+        // Sample the first frame; snapshot atom positions exclude water fields.
+        center = md
+            .viewer
+            .snapshots
+            .first()
+            .map_or(Vec3::new_zero(), |snapshot| {
+                mean_position(snapshot.atom_posits.iter().step_by(10).copied())
+            });
+    }
+
+    (center, size)
+}
+
+/// Reset the view using the active molecule, a peptide, or a sample of open molecules.
+/// `look_vec` is the unit viewing direction used by the preset buttons and at initialization.
 pub fn reset_camera(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
-    look_vec: Vec3, // unit vector the cam is pointing to.
+    look_vec: Vec3,
 ) {
-    let mut size = 8.; // E.g. for small organic molecules.
-
-    // This is a rough way to do it.
-    if state.volatile.md_local.draw_md_mols {
-        size = 60.;
-    }
-
-    let mut center = if let Some(mol) = state.active_mol() {
-        match mol {
-            MolGenericRef::Peptide(peptide) => {
-                // We cache center and size, due to the potential large number of atoms.
-                size = peptide.size;
-                peptide.center.into()
-            }
-            other => other.common().centroid().into(),
-        }
-    } else if let Some(peptide) = state.peptide_for_tools() {
-        size = peptide.size;
-        peptide.center.into()
-    } else {
-        let mut n = 0;
-        let mut centroid = Vec3::new_zero();
-
-        for mol in &state.ligands[0..10.min(state.ligands.len())] {
-            let c: Vec3 = mol.common.centroid().into();
-            centroid += c;
-            n += 1;
-        }
-
-        for mol in &state.lipids[0..10.min(state.lipids.len())] {
-            let c: Vec3 = mol.common.centroid().into();
-            centroid += c;
-            n += 1;
-        }
-
-        for mol in &state.nucleic_acids[0..10.min(state.lipids.len())] {
-            let c: Vec3 = mol.common.centroid().into();
-            centroid += c;
-            n += 1;
-        }
-
-        if n != 0 {
-            centroid /= n as f32;
-        }
-
-        updates.camera = true;
-
-        centroid
-    };
-
-    if state.volatile.md_local.draw_md_mols {
-        // In lieu of having easy access to a sim box, we compute a sampled average.
-        let mut c = Vec3::new_zero();
-
-        if !state.volatile.md_local.viewer.snapshots.is_empty() {
-            const SKIP: usize = 10;
-
-            let mut count = 0;
-            // note: Does not include water fields in snapshots.
-            for at in state.volatile.md_local.viewer.snapshots[0]
-                .atom_posits
-                .iter()
-                .skip(SKIP)
-            {
-                c = c + *at;
-                count += 1;
-            }
-
-            if count != 0 {
-                c /= count as f32;
-            }
-        }
-        center = c;
-    }
-
-    let dist_fm_center = size + CAM_INIT_OFFSET;
-
-    scene.camera.position = center - look_vec * dist_fm_center;
-    scene.camera.orientation = Quaternion::from_unit_vecs(FWD_VEC, look_vec);
+    let (center, size) = reset_frame(state);
+    place_camera(&mut scene.camera, center, look_vec, size + CAM_INIT_OFFSET);
 
     set_static_light(scene, center, size);
     set_flashlight(scene);
@@ -436,85 +333,25 @@ pub fn reset_camera(
     updates.camera = true;
     updates.lighting = true;
 
-    set_fog(state, &mut scene.camera);
-
-    // todo: A/R.
     state.ui.view_depth = (VIEW_DEPTH_NEAR_MIN, FOG_DIST_DEFAULT);
+    set_fog(state, &mut scene.camera);
 }
 
 /// Move the camera to the selected atom or residue. If there is none, but there
 /// is an active molecule, move the camera to that.
-pub fn move_cam_to_sel(
-    state_ui: &mut StateUi,
-    peptides: &[MoleculePeptide],
-    peptide_i: Option<usize>,
-    ligs: &[MoleculeSmall],
-    nucleic_acids: &[MoleculeNucleicAcid],
-    lipids: &[MoleculeLipid],
-    pockets: &[Pocket],
-    cam: &mut Camera,
-    updates: &mut EngineUpdates,
-) {
-    let mut selection_found = true;
+pub fn move_cam_to_sel(state: &mut State, cam: &mut Camera, updates: &mut EngineUpdates) {
+    let target = if state.ui.selection == Selection::None {
+        state.active_mol().map(|mol| mol.common().centroid())
+    } else {
+        state.selected_target()
+    };
+    let Some(target) = target else {
+        return;
+    };
 
-    match &state_ui.selection {
-        Selection::AtomPeptide(_i_atom) => {
-            let Some(mol) = peptide_i
-                .and_then(|i| peptides.get(i))
-                .or_else(|| peptides.first())
-            else {
-                return;
-            };
-            let atom_sel = mol.get_sel_atom(&state_ui.selection);
-
-            if let Some(atom) = atom_sel {
-                cam_look_at(cam, atom.posit);
-            }
-        }
-        Selection::AtomLig((i_mol, i_atom)) => {
-            if *i_mol >= ligs.len() || *i_atom >= ligs[*i_mol].common.atom_posits.len() {
-                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
-                return;
-            }
-            cam_look_at(cam, ligs[*i_mol].common.atom_posits[*i_atom]);
-        }
-        Selection::AtomNucleicAcid((i_mol, i_atom)) => {
-            if *i_mol >= nucleic_acids.len()
-                || *i_atom >= nucleic_acids[*i_mol].common.atom_posits.len()
-            {
-                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
-                return;
-            }
-            cam_look_at(cam, nucleic_acids[*i_mol].common.atom_posits[*i_atom]);
-        }
-        Selection::AtomLipid((i_mol, i_atom)) => {
-            if *i_mol >= lipids.len() || *i_atom >= lipids[*i_mol].common.atom_posits.len() {
-                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
-                return;
-            }
-            cam_look_at(cam, lipids[*i_mol].common.atom_posits[*i_atom]);
-        }
-        Selection::AtomPocket((i_mol, i_atom)) => {
-            if *i_mol >= pockets.len() || *i_atom >= pockets[*i_mol].common.atom_posits.len() {
-                eprintln!("Error: Sel atom index out of bounds when moving cam to sel");
-                return;
-            }
-            cam_look_at(cam, pockets[*i_mol].common.atom_posits[*i_atom]);
-        }
-        _ => {
-            selection_found = false;
-        }
-    }
-
-    if !selection_found {
-        // // todo: Get working; need to get active mol.
-        // if let Some(mol) = state.active_mol() {
-        //     cam_look_at(cam, mol.common().centroid());
-        // }
-    }
-
+    cam_look_at(cam, target);
     updates.camera = true;
-    state_ui.cam_snapshot = None;
+    state.ui.cam_snapshot = None;
 }
 
 pub fn move_mol_to_cam(mol: &mut MoleculeCommon, cam: &Camera) {

@@ -1488,6 +1488,35 @@ pub fn select_from_search(state: &mut State) -> bool {
     false
 }
 
+impl State {
+    /// Resolve an atom or residue selection to a camera target. For multiple peptide atoms or
+    /// residues, use the first selected item. Invalid and unsupported selections have no target.
+    pub fn selected_target(&self) -> Option<lin_alg::f64::Vec3> {
+        let (mol_type, (mol_i, atom_i)) = match &self.ui.selection {
+            Selection::AtomPeptide(_)
+            | Selection::AtomsPeptide(_)
+            | Selection::Residue(_)
+            | Selection::Residues(_) => {
+                return self
+                    .peptide_for_tools()?
+                    .get_sel_atom(&self.ui.selection)
+                    .map(|atom| atom.posit);
+            }
+            Selection::AtomLig(indices) => (MolType::Ligand, *indices),
+            Selection::AtomNucleicAcid(indices) => (MolType::NucleicAcid, *indices),
+            Selection::AtomLipid(indices) => (MolType::Lipid, *indices),
+            Selection::AtomPocket(indices) => (MolType::Pocket, *indices),
+            _ => return None,
+        };
+
+        self.get_mol(mol_type, mol_i)?
+            .common()
+            .atom_posits
+            .get(atom_i)
+            .copied()
+    }
+}
+
 /// Resolving a selection to a specific atom. `MoleculePeptide` is defined in `mol_defs`, which has
 /// no notion of what the user has selected, so this hangs off an extension trait here.
 pub trait SelAtom {
@@ -1501,10 +1530,8 @@ impl SelAtom for MoleculePeptide {
         match sel {
             Selection::AtomPeptide(i) => self.common.atoms.get(*i),
             Selection::Residue(i) => self.get_res_sel_atom(*i),
-            Selection::AtomsPeptide(is) => {
-                // todo temp?
-                self.common.atoms.get(is[0])
-            }
+            Selection::AtomsPeptide(is) => self.common.atoms.get(*is.first()?),
+            Selection::Residues(is) => self.get_res_sel_atom(*is.first()?),
             Selection::None => None,
             _ => None, // Bonds
         }

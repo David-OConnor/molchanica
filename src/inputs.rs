@@ -526,20 +526,7 @@ fn handle_physical_key(
                     redraw.set_all();
                 }
                 KeyCode::Enter => {
-                    move_cam_to_sel(
-                        &mut state.ui,
-                        &state.peptides,
-                        state
-                            .volatile
-                            .active_mol
-                            .and_then(|(t, i)| (t == MolType::Peptide).then_some(i)),
-                        &state.ligands,
-                        &state.nucleic_acids,
-                        &state.lipids,
-                        &state.pockets,
-                        &mut scene.camera,
-                        updates,
-                    );
+                    move_cam_to_sel(state, &mut scene.camera, updates);
                 }
                 KeyCode::BracketLeft => match op_mode {
                     OperatingMode::Primary => {

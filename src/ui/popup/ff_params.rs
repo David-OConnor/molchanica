@@ -11,9 +11,9 @@ use egui::{Color32, Label, RichText, ScrollArea, TextEdit, Ui};
 use na_seq::AminoAcidGeneral;
 
 use crate::{
-    button, label,
+    label,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
+    ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING, misc::selector_option},
 };
 
 /// Height of a table cell; matches EGUI's default `interact_size.y`. Rows must be exactly this
@@ -753,13 +753,10 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
                 continue;
             }
 
-            let color = if st.cat == cat {
-                COLOR_ACTIVE
-            } else {
-                COLOR_INACTIVE
-            };
-
-            if button!(ui, cat.name(), color, cat.hover()).clicked() {
+            if selector_option(ui, st.cat == cat, cat.name())
+                .on_hover_text(cat.hover())
+                .clicked()
+            {
                 st.cat = cat;
                 st.cell_edit = None;
             }
@@ -792,13 +789,10 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
             // Sub-selection: which field of the `ForceFieldParams`.
             ui.horizontal_wrapped(|ui| {
                 for kind in KINDS {
-                    let color = if st.kind == kind {
-                        COLOR_ACTIVE
-                    } else {
-                        COLOR_INACTIVE
-                    };
-
-                    if button!(ui, kind.name(), color, kind.hover()).clicked() {
+                    if selector_option(ui, st.kind == kind, kind.name())
+                        .on_hover_text(kind.hover())
+                        .clicked()
+                    {
                         st.kind = kind;
                         st.cell_edit = None;
                     }
@@ -818,19 +812,9 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
             // Sub-selection: internal residues, or one of the terminus variants.
             ui.horizontal_wrapped(|ui| {
                 for sel in PROT_MAPS {
-                    let color = if st.prot_map == sel {
-                        COLOR_ACTIVE
-                    } else {
-                        COLOR_INACTIVE
-                    };
-
-                    if button!(
-                        ui,
-                        sel.name(),
-                        color,
-                        "Select this charge map to view and edit."
-                    )
-                    .clicked()
+                    if selector_option(ui, st.prot_map == sel, sel.name())
+                        .on_hover_text("Select this charge map to view and edit.")
+                        .clicked()
                     {
                         st.prot_map = sel;
                         st.cell_edit = None;

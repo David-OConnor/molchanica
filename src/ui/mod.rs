@@ -9,7 +9,7 @@ use egui::{
     Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
-use mol_defs::molecules::{MolGenericRef, MolIdent, MolType};
+use mol_defs::molecules::{MolGenericRef, MolIdent};
 use na_seq::Element;
 use panels::{
     md::md_setup,
@@ -176,8 +176,7 @@ pub fn handle_input(
         ui.ctx()
             .memory_mut(|memory| memory.move_focus(FocusDirection::None));
 
-        if state.volatile.operating_mode == OperatingMode::MolEditor
-            || state.active_mol().is_some()
+        if state.volatile.operating_mode == OperatingMode::MolEditor || state.active_mol().is_some()
         {
             let tab_consumed = ui.input_mut(|input| {
                 let modifiers = input.modifiers;
@@ -1194,26 +1193,35 @@ pub(crate) fn cam_controls(
     ui.add_space(COL_SPACING);
 
     let free_active = scene.input_settings.control_scheme == ControlScheme::FreeCamera;
-    let arc_active = scene.input_settings.control_scheme != ControlScheme::FreeCamera;
+    let arc_active = !free_active;
 
-    if ui
-        .button(RichText::new("Free").color(misc::active_color_sel(free_active)))
-        .on_hover_text("Set the camera is a first-person mode, where your controls move its position. Similar to video games.")
-        .clicked()
-    {
-        scene.input_settings.control_scheme = ControlScheme::FreeCamera;
-        state.to_save.control_scheme = ControlSchemeType::Free;
-    }
+    let scheme_current = if free_active {
+        ControlSchemeType::Free
+    } else {
+        ControlSchemeType::Arc
+    };
 
-    if ui
-        .button(RichText::new("Arc").color(misc::active_color_sel(arc_active)))
-        .on_hover_text("Set the camera to orbit around a point: Either the center of the molecule, or the selection.")
-        .clicked()
-    {
-        let center = orbit_center(state);
+    let scheme_opts = [
+        (
+            ControlSchemeType::Free,
+            "Free",
+            "Set the camera is a first-person mode, where your controls move its position. Similar to video games.",
+        ),
+        (
+            ControlSchemeType::Arc,
+            "Arc",
+            "Set the camera to orbit around a point: Either the center of the molecule, or the selection.",
+        ),
+    ];
 
-        scene.input_settings.control_scheme = ControlScheme::Arc { center };
-        state.to_save.control_scheme = ControlSchemeType::Arc;
+    if let Some(scheme) = misc::selector(ui, scheme_current, &scheme_opts) {
+        scene.input_settings.control_scheme = match scheme {
+            ControlSchemeType::Free => ControlScheme::FreeCamera,
+            ControlSchemeType::Arc => ControlScheme::Arc {
+                center: orbit_center(state),
+            },
+        };
+        state.to_save.control_scheme = scheme;
     }
 
     if arc_active
@@ -1234,28 +1242,15 @@ pub(crate) fn cam_controls(
 
     ui.add_space(COL_SPACING);
 
-    if state.ui.selection != Selection::None
+    if (state.ui.selection != Selection::None || state.active_mol().is_some())
         && ui
             .button(RichText::new("Cam to sel").color(COLOR_HIGHLIGHT))
             .on_hover_text(
-                "(Hotkey: Enter) Move camera near the selected atom or residue, looking at it.",
+                "(Hotkey: Enter) Look at the selected atom or residue, or the active molecule if nothing is selected.",
             )
             .clicked()
     {
-        move_cam_to_sel(
-            &mut state.ui,
-            &state.peptides,
-            state
-                .volatile
-                .active_mol
-                .and_then(|(t, i)| (t == MolType::Peptide).then_some(i)),
-            &state.ligands,
-            &state.nucleic_acids,
-            &state.lipids,
-            &state.pockets,
-            &mut scene.camera,
-            engine_updates,
-        );
+        move_cam_to_sel(state, &mut scene.camera, engine_updates);
     }
 
     // if state.volatile.active_mol.is_some() {

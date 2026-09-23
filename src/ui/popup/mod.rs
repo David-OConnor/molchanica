@@ -25,7 +25,7 @@ use tool_runner::{ToolWindowKind, tool_window};
 
 use crate::{
     button, cam,
-    cam::move_cam_to_mol,
+    cam::{MolCameraTarget, move_cam_to_mol},
     file_io::download_mols::load_atom_coords_rcsb,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
@@ -1025,9 +1025,7 @@ fn alignment(
 
         let i_mol = state.volatile.alignment.mols_to_align[0];
         move_cam_to_mol(
-            &state.ligands[i_mol].common,
-            MolType::Ligand,
-            i_mol,
+            MolCameraTarget::new(&state.ligands[i_mol].common, (MolType::Ligand, i_mol)),
             &mut state.ui.cam_snapshot,
             scene,
             &mut state.volatile.orbit_center,

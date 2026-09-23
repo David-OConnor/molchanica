@@ -38,7 +38,7 @@ use crate::{
     },
     state::State,
     therapeutic_misc::ddg::{self, DdgScan},
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
+    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, misc::selector_option},
 };
 
 /// How many rows of each result table to show before the user has to export.
@@ -239,13 +239,7 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
 
     ui.horizontal(|ui| {
         for tab in DesignTab::ALL {
-            let selected = design_ui.tab == tab;
-            let text = RichText::new(tab.label()).color(if selected {
-                COLOR_HIGHLIGHT
-            } else {
-                COLOR_INACTIVE
-            });
-            if ui.selectable_label(selected, text).clicked() {
+            if selector_option(ui, design_ui.tab == tab, tab.label()).clicked() {
                 design_ui.tab = tab;
             }
         }

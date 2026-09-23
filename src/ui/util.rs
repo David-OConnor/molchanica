@@ -770,9 +770,7 @@ fn load_chebi_id(
 ) {
     let result = load_sdf_chebi(id)
         .map_err(|error| format!("Error loading SDF file: {error:?}"))
-        .and_then(|downloaded| {
-            open_chebi_download(state, scene, redraw, updates, id, downloaded)
-        });
+        .and_then(|downloaded| open_chebi_download(state, scene, redraw, updates, id, downloaded));
     if let Err(error) = result {
         handle_err(&mut state.ui, error);
     }
@@ -803,7 +801,9 @@ pub(in crate::ui) fn open_chebi_download(
     redraw.ligand = true;
     handle_success(
         &mut state.ui,
-        format!("Loaded CHEBI:{id} from ChEBI (over the internet). Note that ChEBI structures are 2D."),
+        format!(
+            "Loaded CHEBI:{id} from ChEBI (over the internet). Note that ChEBI structures are 2D."
+        ),
     );
     Ok(())
 }

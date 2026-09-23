@@ -25,7 +25,7 @@ use na_seq::{
 
 use crate::{
     cam,
-    cam::move_cam_to_mol,
+    cam::{MolCameraTarget, move_cam_to_mol},
     drawing::{
         EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
         atoms_bonds::{
@@ -555,9 +555,7 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engine
     {
         // This handles cam posit and orbit center.
         move_cam_to_mol(
-            &mol.common,
-            MolType::Ligand,
-            i,
+            MolCameraTarget::new(&mol.common, (MolType::Ligand, i)),
             &mut None,
             scene,
             &mut state.volatile.active_mol,

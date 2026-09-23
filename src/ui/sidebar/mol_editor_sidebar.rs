@@ -8,7 +8,10 @@ use crate::{
     pocket_render::PocketRender,
     selection::Selection,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, popup::pharmacophore},
+    ui::{
+        COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, misc::selector_option,
+        popup::pharmacophore,
+    },
 };
 
 pub(in crate::ui) fn pocket_list(
@@ -23,20 +26,12 @@ pub(in crate::ui) fn pocket_list(
     for (mol_i, pocket) in state.pockets.iter_mut().enumerate() {
         let selected = state.mol_editor.pocket_i_in_state == Some(mol_i);
 
-        let color = if selected {
-            COLOR_ACTIVE
-        } else {
-            COLOR_INACTIVE
-        };
-
-        if button!(
-            ui,
-            &pocket.common.ident,
-            color,
-            "Display this pocket, and optionally use it as part of \
-                        a pharmacophore, e.g. its excluded volume."
-        )
-        .clicked()
+        if selector_option(ui, selected, &pocket.common.ident)
+            .on_hover_text(
+                "Display this pocket, and optionally use it as part of \
+                a pharmacophore, e.g. its excluded volume.",
+            )
+            .clicked()
         {
             scene
                 .entities

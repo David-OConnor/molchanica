@@ -14,7 +14,7 @@ use mol_defs::{
 
 use crate::{
     button,
-    cam::{move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
+    cam::{MolCameraTarget, move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
     file_io::save_mol,
     label,
     md::{
@@ -83,7 +83,6 @@ fn mol_picker_one(
     recenter_orbit: &mut bool,
     close: &mut Option<(MolType, usize)>,
     cam_snapshot: &mut Option<usize>,
-    pep_center: Vec3,
     reset_fog: &mut bool,
     mol_audio_playing: &Option<PlayingAudio>,
     audio_action: &mut Option<AudioAction>,
@@ -150,24 +149,19 @@ fn mol_picker_one(
 
                 if ui
                     .button(RichText::new("Cam"))
-                    .on_hover_text("Move camera near active molecule, looking at it.")
+                    .on_hover_text("Move camera near near this molecule, looking at it.")
                     .clicked()
                 {
-                    let beyond = if mol_type == MolType::Peptide {
-                        Vec3::new_zero()
-                    } else {
-                        pep_center
-                    };
+                    let molecule_center: Vec3 = mol.centroid().into();
+                    let forward: Vec3 = FWD_VEC.into();
+                    let look_to_beyond = molecule_center + forward;
 
-                    // Setting mol center to 0 if no mol.
                     move_cam_to_mol(
-                        mol,
-                        mol_type,
-                        i_mol,
+                        MolCameraTarget::new(mol, (mol_type, i_mol)),
                         cam_snapshot,
                         scene,
                         orbit_center,
-                        beyond,
+                        look_to_beyond,
                         engine_updates,
                     );
                     *reset_fog = true;
@@ -233,29 +227,29 @@ fn mol_picker_one(
         {
             pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_state, ui);
         }
-
-        let playing_this_mol = mol_audio_playing
-            .as_ref()
-            .is_some_and(|audio| audio.is_for(mol_type, i_mol));
-
-        let (text, color, hover_text) = if playing_this_mol {
-            ("Pause", COLOR_ACTIVE, "Stop sonifying this molecule.")
-        } else {
-            (
-                "Play",
-                COLOR_ACTION,
-                "Sonify this molecule using its force-field bond-stretching parameters.",
-            )
-        };
-
-        if mol_type != MolType::Pocket
-            && ui
-                .button(RichText::new(text).color(color))
-                .on_hover_text(hover_text)
-                .clicked()
-        {
-            *audio_action = Some(AudioAction::Toggle(mol_type, i_mol));
-        }
+        //
+        // let playing_this_mol = mol_audio_playing
+        //     .as_ref()
+        //     .is_some_and(|audio| audio.is_for(mol_type, i_mol));
+        //
+        // let (text, color, hover_text) = if playing_this_mol {
+        //     ("Pause", COLOR_ACTIVE, "Stop sonifying this molecule.")
+        // } else {
+        //     (
+        //         "Play",
+        //         COLOR_ACTION,
+        //         "Sonify this molecule using its force-field bond-stretching parameters.",
+        //     )
+        // };
+        //
+        // if mol_type != MolType::Pocket
+        //     && ui
+        //         .button(RichText::new(text).color(color))
+        //         .on_hover_text(hover_text)
+        //         .clicked()
+        // {
+        //     *audio_action = Some(AudioAction::Toggle(mol_type, i_mol));
+        // }
 
         ui.separator();
     });
@@ -385,12 +379,6 @@ fn mol_picker(
     let mut recenter_orbit = false;
     let mut close = None; // Avoids borrow error.
 
-    // Avoids a double borrow. Non-peptide camera rows use the current peptide as context.
-    let pep_center = state
-        .peptide_for_tools()
-        .map(|mol| mol.center)
-        .unwrap_or_else(Vec3::new_zero);
-
     let mut reset_fog = false;
     let mut audio_action = None;
 
@@ -413,7 +401,6 @@ fn mol_picker(
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
-            pep_center,
             &mut reset_fog,
             &state.volatile.playing_audio,
             &mut audio_action,
@@ -439,7 +426,6 @@ fn mol_picker(
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
-            pep_center,
             &mut reset_fog,
             &state.volatile.playing_audio,
             &mut audio_action,
@@ -465,7 +451,6 @@ fn mol_picker(
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
-            pep_center,
             &mut reset_fog,
             &state.volatile.playing_audio,
             &mut audio_action,
@@ -492,7 +477,6 @@ fn mol_picker(
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
-            pep_center,
             &mut reset_fog,
             &state.volatile.playing_audio,
             &mut audio_action,
@@ -519,7 +503,6 @@ fn mol_picker(
             &mut recenter_orbit,
             &mut close,
             &mut state.ui.cam_snapshot,
-            pep_center,
             &mut reset_fog,
             &state.volatile.playing_audio,
             &mut audio_action,
@@ -775,7 +758,7 @@ fn manip_toolbar(
     });
 }
 
-fn small_mol_aux_buttons(
+fn mol_specific_aux_btns(
     load_all_idents: &mut bool,
     toggle_metadata_popup: &mut bool,
     show_reactions: &mut bool,
@@ -793,7 +776,7 @@ fn small_mol_aux_buttons(
             Color32::GRAY,
             "Display metadata for this molecule"
         )
-        .clicked()
+            .clicked()
         {
             *toggle_metadata_popup = true;
         }
@@ -804,7 +787,7 @@ fn small_mol_aux_buttons(
             Color32::GRAY,
             "Display Rhea (enzyme-catalogued) reactions involving this molecule; queries the Rhea API."
         )
-        .clicked()
+            .clicked()
         {
             *show_reactions = true;
         }
@@ -923,10 +906,10 @@ pub(in crate::ui) fn sidebar(
             let mut toggle_metadata_popup = false;
             let mut show_reactions = false;
 
-            if !edit_mode && let Some(MolGenericRef::Small(_)) = state.active_mol() {
-                let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
+            let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
 
-                small_mol_aux_buttons(
+            if state.volatile.active_mol.is_some() {
+                mol_specific_aux_btns(
                     &mut load_all_idents,
                     &mut toggle_metadata_popup,
                     &mut show_reactions,
@@ -961,13 +944,11 @@ pub(in crate::ui) fn sidebar(
                                 &mut new_crystal_mol,
                             );
                         }
-                        MolGenericRef::Peptide(_) => {
-                            char_adme::peptide_data_buttons(
-                                ui,
-                                &mut toggle_metadata_popup,
-                                &mut show_reactions,
-                            )
-                        }
+                        MolGenericRef::Peptide(_) => char_adme::peptide_data_buttons(
+                            ui,
+                            &mut toggle_metadata_popup,
+                            &mut show_reactions,
+                        ),
                         _ => {}
                     }
                 }

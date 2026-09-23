@@ -10,7 +10,7 @@ use graphics::{EngineUpdates, Scene};
 use crate::{
     reactions::{Entry, Query, ReactionsState},
     state::State,
-    ui::{COLOR_HIGHLIGHT, util::open_chebi_download},
+    ui::{misc::selector, util::open_chebi_download},
     util::{RedrawFlags, handle_err},
 };
 
@@ -44,17 +44,24 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
     ui.heading(&state.title);
     ui.horizontal_wrapped(|ui| {
         ui.label("Click a molecule to:");
-        for (download, label) in [
-            (false, "Open ChEBI molecule page in browser"),
-            (true, "Download and open in Molchanica"),
-        ] {
-            let mut text = RichText::new(label);
-            if state.download_on_click == download {
-                text = text.color(COLOR_HIGHLIGHT);
-            }
-            if ui.button(text).clicked() {
-                state.download_on_click = download;
-            }
+
+        if let Some(download) = selector(
+            ui,
+            state.download_on_click,
+            &[
+                (
+                    false,
+                    "Open ChEBI molecule page in browser",
+                    "Clicking a molecule opens its ChEBI page in your web browser.",
+                ),
+                (
+                    true,
+                    "Download and open in Molchanica",
+                    "Clicking a molecule downloads it from ChEBI, and opens it in Molchanica.",
+                ),
+            ],
+        ) {
+            state.download_on_click = download;
         }
     });
     if !state.downloads.is_empty() {

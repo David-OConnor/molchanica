@@ -32,7 +32,7 @@ use crate::{
         tool_form::{FieldKind, FormContract, FormField, Preset},
     },
     state::State,
-    ui::{COLOR_ACTION, util::open_dir},
+    ui::{COLOR_ACTION, misc::selector_option, util::open_dir},
     util::handle_err,
 };
 
@@ -1052,11 +1052,15 @@ fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.label(&modes.label);
             for option in &modes.options {
-                ui.radio_value(
-                    &mut form.mode,
-                    option.value.clone(),
+                if selector_option(
+                    ui,
+                    form.mode == option.value,
                     option.label.replace("Upload", "Choose file:"),
-                );
+                )
+                .clicked()
+                {
+                    form.mode = option.value.clone();
+                }
             }
         });
         if form.mode != previous && shared_adapter::slug(tool) == "rfd3" {

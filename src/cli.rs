@@ -19,10 +19,10 @@ use na_seq::{AminoAcid, Element};
 use regex::Regex;
 
 use crate::{
-    cam::{cam_look_at, reset_camera},
+    cam::{move_cam_to_sel, reset_camera},
     file_io::download_mols,
     render::set_flashlight,
-    selection::{SelAtom, Selection},
+    selection::Selection,
     state::State,
     util,
 };
@@ -319,18 +319,7 @@ pub fn handle_cmd(
     }
 
     if let Some(_caps) = re_orient.captures(&input) {
-        if let Some(mol) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-        {
-            let atom_sel = mol.get_sel_atom(&state.ui.selection);
-
-            if let Some(atom) = atom_sel {
-                cam_look_at(&mut scene.camera, atom.posit);
-                updates.camera = true;
-                state.ui.cam_snapshot = None;
-            }
-        }
+        move_cam_to_sel(state, &mut scene.camera, updates);
 
         return Ok("Complete".to_owned());
     }

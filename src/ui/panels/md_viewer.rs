@@ -11,8 +11,8 @@ use crate::{
     md::{viewer, viewer::ViewerMolecule},
     state::State,
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        highlighted_box, num_field,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, ROW_SPACING, highlighted_box,
+        misc::selector_option, num_field,
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -352,8 +352,10 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
             let active = Some(i) == state.ui.md.set_editor_active_set;
-            let color = if active { COLOR_ACTIVE } else { COLOR_INACTIVE };
-            if button!(ui, &set.name, color, "Select this set to edit.").clicked() {
+            if selector_option(ui, active, &set.name)
+                .on_hover_text("Select this set to edit.")
+                .clicked()
+            {
                 state.ui.md.set_editor_active_set = if active { None } else { Some(i) };
             }
         }
