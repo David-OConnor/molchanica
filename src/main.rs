@@ -47,6 +47,7 @@ mod mol_manip;
 mod orca;
 mod peptide_ligands;
 mod properties;
+mod reactions;
 mod screening;
 mod selection;
 mod sonification;

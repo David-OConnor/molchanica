@@ -26,7 +26,8 @@ use crate::{
     external_tools::home_directory,
     file_io::{
         download_mols::{
-            load_atom_coords_rcsb, load_sdf_chebi, load_sdf_drugbank, load_sdf_pubchem,
+            DownloadedSmallMol, load_atom_coords_rcsb, load_sdf_chebi, load_sdf_drugbank,
+            load_sdf_pubchem,
         },
         managed_mols::{self, ManagedMolProvider},
         save_mol_set_as_gro,
@@ -767,38 +768,44 @@ fn load_chebi_id(
     updates: &mut EngineUpdates,
     id: u32,
 ) {
-    match load_sdf_chebi(id) {
-        Ok(downloaded) => {
-            let key = id.to_string();
-            // Cache the molecule rather than the file ChEBI served: that file has no data fields,
-            // so it can't carry the accession we just attached, and the accession must survive a
-            // restart. `to_sdf` writes our identifier metadata.
-            let cache_result = managed_mols::store_sdf(
-                &state.volatile.prefs_dir,
-                ManagedMolProvider::Chebi,
-                &key,
-                &key,
-                &downloaded.mol.to_sdf(),
-            );
-            let Some(cache_path) = report_cache_result(state, cache_result) else {
-                return;
-            };
-            open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
-            redraw.ligand = true;
-
-            handle_success(
-                &mut state.ui,
-                format!(
-                    "Loaded CHEBI:{id} from ChEBI (over the internet). Note that ChEBI structures \
-                     are 2D."
-                ),
-            );
-        }
-        Err(e) => {
-            let msg = format!("Error loading SDF file: {e:?}");
-            handle_err(&mut state.ui, msg);
-        }
+    let result = load_sdf_chebi(id)
+        .map_err(|error| format!("Error loading SDF file: {error:?}"))
+        .and_then(|downloaded| {
+            open_chebi_download(state, scene, redraw, updates, id, downloaded)
+        });
+    if let Err(error) = result {
+        handle_err(&mut state.ui, error);
     }
+}
+
+/// Apply an already-downloaded ChEBI structure on the UI thread. Shared with the Rhea popup's
+/// background downloads so identifiers, managed files, history, and rendering stay consistent.
+pub(in crate::ui) fn open_chebi_download(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+    id: u32,
+    downloaded: DownloadedSmallMol,
+) -> Result<(), String> {
+    let key = id.to_string();
+    // ChEBI's original file has no data fields; our SDF preserves the accession across restarts.
+    let cache_path = managed_mols::store_sdf(
+        &state.volatile.prefs_dir,
+        ManagedMolProvider::Chebi,
+        &key,
+        &key,
+        &downloaded.mol.to_sdf(),
+    )
+    .map_err(|error| format!("Downloaded CHEBI:{id}, but could not cache it: {error}"))?;
+
+    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
+    redraw.ligand = true;
+    handle_success(
+        &mut state.ui,
+        format!("Loaded CHEBI:{id} from ChEBI (over the internet). Note that ChEBI structures are 2D."),
+    );
+    Ok(())
 }
 
 /// Handles a general query, which could be a name, identifier etc. Attempts to query

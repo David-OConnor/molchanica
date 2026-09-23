@@ -6,6 +6,7 @@ pub mod pharmacophore;
 pub mod protein_design;
 mod protein_res_management;
 pub(in crate::ui) mod rama_plot;
+pub mod reactions;
 pub mod recent_files;
 pub(crate) mod tool_runner;
 
@@ -77,6 +78,23 @@ pub(in crate::ui) fn load_popups(
     reset_cam: &mut bool,
     updates: &mut EngineUpdates,
 ) {
+    reactions::poll_downloads(state, scene, redraw, updates);
+    if crate::reactions::poll(state) {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    if state.ui.popup.reactions {
+        let open = show_popup(
+            popup("Rhea reactions")
+                .default_width(760.0)
+                .default_height(800.0)
+                .max_height(1_600.0),
+            ui.ctx(),
+            |ui| reactions::reactions_window(&mut state.ui.reactions, ui),
+        );
+        state.ui.popup.reactions &= open;
+    }
+
     if state.ui.popup.show_get_geostd {
         let open = show_popup(popup("Load force-field parameters"), ui.ctx(), |ui| {
             get_geostd(state, scene, updates, ui);

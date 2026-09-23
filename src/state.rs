@@ -469,6 +469,7 @@ impl PlayingAudio {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
+    pub reactions: crate::reactions::ReactionsState,
     /// View mode for proteins/peptides.
     pub mol_view_peptide: MoleculeView,
     /// View mode for everything other than proteins/peptides.
@@ -677,6 +678,7 @@ pub struct MolDbTableView {
 /// Defines which UI popups are displayed.
 #[derive(Default, Debug)]
 pub struct PopupState {
+    pub reactions: bool,
     pub show_get_geostd: bool,
     pub show_associated_structures: bool,
     pub show_settings: bool,

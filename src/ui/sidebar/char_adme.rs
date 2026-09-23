@@ -1,11 +1,10 @@
 use std::path::Path;
 
 use adme::{Adme, Toxicity};
-use bio_apis::{pdbe, rhea};
 use egui::{Color32, ScrollArea, Ui};
 use lin_alg::f64::Vec3;
 use mol_defs::{
-    molecules::{MolIdent, peptide::MoleculePeptide, small::MoleculeSmall},
+    molecules::{MolIdent, small::MoleculeSmall},
     properties::mol_characterization::MolCharacterization,
 };
 
@@ -16,16 +15,12 @@ use crate::{
     ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING, util::list_idents},
 };
 
-/// Protein counterpart to the small-molecule metadata/reaction controls below. Rhea indexes
-/// proteins by UniProt accession, so use an already-loaded SIFTS mapping when available and query
-/// PDBe for that mapping on demand otherwise.
+/// Protein counterpart to the small-molecule metadata/reaction controls below.
 pub(in crate::ui) fn peptide_data_buttons(
-    mol: &MoleculePeptide,
     ui: &mut Ui,
     toggle_metadata_popup: &mut bool,
+    show_reactions: &mut bool,
 ) {
-    let mut find_rhea_reactions = false;
-
     ui.horizontal(|ui| {
         if button!(
             ui,
@@ -42,60 +37,13 @@ pub(in crate::ui) fn peptide_data_buttons(
             ui,
             "Rhea Reactions",
             Color32::GRAY,
-            "Display Rhea reactions annotated to this protein through its UniProt mapping. Queries the Rhea and, when needed, PDBe APIs."
+            "Display Rhea reactions annotated to this protein through its UniProt mapping."
         )
         .clicked()
         {
-            find_rhea_reactions = true;
+            *show_reactions = true;
         }
     });
-
-    if !find_rhea_reactions {
-        return;
-    }
-
-    let mut accessions = if let Some(mappings) = &mol.sifts_mapping {
-        mappings
-            .iter()
-            .map(|mapping| mapping.accession.clone())
-            .collect::<Vec<_>>()
-    } else {
-        match pdbe::load_uniprot_mappings(&mol.common.ident) {
-            Ok(mappings) => mappings
-                .into_iter()
-                .map(|mapping| mapping.accession)
-                .collect(),
-            Err(e) => {
-                println!(
-                    "Unable to load a UniProt mapping for {}: {e:?}",
-                    mol.common.ident
-                );
-                Vec::new()
-            }
-        }
-    };
-    accessions.sort();
-    accessions.dedup();
-
-    if accessions.is_empty() {
-        println!("No UniProt mappings found for {}", mol.common.ident);
-        return;
-    }
-
-    for accession in accessions {
-        println!("Finding Rhea reactions for UniProt {accession}...");
-        match rhea::reactions_from_uniprot(&accession, Some(6)) {
-            Ok(reactions) if !reactions.is_empty() => {
-                println!("\nReactions for UniProt {accession}:");
-                for reaction in reactions {
-                    println!("- {}", reaction.format_simple());
-                }
-                println!("------------");
-            }
-            Ok(_) => println!("No reactions found for UniProt {accession}"),
-            Err(e) => println!("Unable to load Rhea reactions for UniProt {accession}: {e:?}"),
-        }
-    }
 }
 
 fn char_basics(
