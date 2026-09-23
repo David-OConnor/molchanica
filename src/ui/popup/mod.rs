@@ -19,7 +19,7 @@ use egui::{
 };
 use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
-use mol_defs::molecules::{MolGenericRef, MolIdent, MolType, common::MoleculeCommon};
+use mol_defs::molecules::{MolGenericRef, MolType, common::MoleculeCommon};
 use na_seq::AaIdent;
 use tool_runner::{ToolWindowKind, tool_window};
 
@@ -37,7 +37,7 @@ use crate::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         load_all_idents_button,
         panels::{md_viewer, mol_data::metadata},
-        util::{edit_mol_name, list_idents},
+        util::{Idents, edit_mol_name, list_idents},
     },
     util::{RedrawFlags, handle_err, orbit_center},
 };
@@ -49,10 +49,16 @@ const POPUP_POS: Pos2 = Pos2::new(300., 300.);
 /// width instead of letting the popup grow to the width of the application window.
 const METADATA_MAX_WIDTH: f32 = 600.;
 
+/// Initial width of the metadata popup. (egui's default for resizable windows is 320.)
+const METADATA_INIT_WIDTH: f32 = 450.;
+
 /// Widths of the metadata editor's key and value text boxes. They must sum to less than
 /// `METADATA_MAX_WIDTH`, leaving room for the row's delete button.
 const KEY_EDIT_WIDTH: f32 = 160.;
 const VAL_EDIT_WIDTH: f32 = 340.;
+
+/// Initial width of the force-field parameter editor.
+const FF_PARAMS_WIDTH: f32 = 550.;
 
 /// Show one popup window, returning whether it should stay open.
 ///
@@ -176,7 +182,9 @@ pub(in crate::ui) fn load_popups(
 
     if let Some((mol_type, i)) = state.ui.popup.metadata {
         let open = show_popup(
-            popup("Metadata").max_width(METADATA_MAX_WIDTH),
+            popup("Metadata")
+                .default_width(METADATA_INIT_WIDTH)
+                .max_width(METADATA_MAX_WIDTH),
             ui.ctx(),
             |ui| {
                 metadata(mol_type, i, state, redraw, ui);
@@ -222,7 +230,9 @@ pub(in crate::ui) fn load_popups(
         let pos = Pos2::new(POPUP_POS.x + dx, POPUP_POS.y + dy);
 
         let open = show_popup(
-            popup("Force-field parameter editor").default_pos(pos),
+            popup("Force-field parameter editor")
+                .default_pos(pos)
+                .default_width(FF_PARAMS_WIDTH),
             ui.ctx(),
             |ui| {
                 ff_params::ff_param_editor(state, ui);
@@ -520,7 +530,7 @@ pub(in crate::ui) fn metadata_popup(
     editing: &mut bool,
     edit_rows: &mut Vec<(String, String)>,
     mol: &MoleculeCommon,
-    idents: Option<&Vec<MolIdent>>,
+    idents: Option<Idents>,
     loading_idents: bool,
     prefs_dir: &Path,
     ui: &mut Ui,
@@ -534,7 +544,7 @@ pub(in crate::ui) fn metadata_popup(
     // Everything here is left-aligned and wrapping: a right-aligned or non-wrapping row would
     // stretch the popup to the width available to it, instead of to the width its content needs.
     ui.horizontal_wrapped(|ui| {
-        let name = mol.name(idents);
+        let name = mol.name(idents.and_then(Idents::small));
         ui.heading(RichText::new(format!("Metadata for {name}")).color(Color32::WHITE));
 
         ui.add_space(COL_SPACING);
@@ -571,9 +581,9 @@ pub(in crate::ui) fn metadata_popup(
 
         ui.add_space(COL_SPACING);
 
-        // Only small molecules have `MolIdent`s. Other molecule types still use this popup for
-        // their general metadata, but must not offer the online small-molecule lookup.
-        if idents.is_some() && load_all_idents_button(ui, loading_idents) {
+        // The online identifier lookup is for small molecules. Other molecule types still use
+        // this popup for their general metadata and identifiers, but must not offer it.
+        if matches!(idents, Some(Idents::Small(_))) && load_all_idents_button(ui, loading_idents) {
             result.load_all_idents = true;
         }
     });
@@ -612,7 +622,7 @@ pub(in crate::ui) fn metadata_popup(
 fn metadata_editor(
     edit_rows: &mut Vec<(String, String)>,
     mol: &MoleculeCommon,
-    idents: Option<&Vec<MolIdent>>,
+    idents: Option<Idents>,
     prefs_dir: &Path,
     result: &mut MetadataPopupResult,
     ui: &mut Ui,

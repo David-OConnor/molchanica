@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use bio_apis::{chebi, drugbank, lmsd, pdbe, pubchem, rcsb};
+use bio_apis::{bmrb, chebi, drugbank, emdb, lmsd, pdbe, pubchem, rcsb, uniprot};
 use bio_files::{
     DensityMap, ResidueType, density_from_2fo_fc_rcsb_gemmi, md_params::ForceFieldParams,
 };
@@ -11,7 +11,8 @@ use egui::{Color32, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
-    Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, Residue, aa_color,
+    Atom, Bond, MolGenericRef, MolGenericRefMut, MolIdent, MolType, PeptideIdent, Residue,
+    aa_color,
     nucleic_acid::NucleicAcidType,
     pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
 };
@@ -32,6 +33,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, load_all_idents_button, popup,
+        util::Idents,
     },
     util,
     util::{
@@ -518,14 +520,32 @@ fn display_peptide_actions(
         //     *close = true;
         // }
 
-        if pep.common.ident.len() <= 5 {
-            // todo: You likely need a better approach.
+        for ident in &pep.idents {
+            // EMDB and AlphaFold DB accessions carry their own prefixes, so need no label.
+            let (text, db) = match ident {
+                PeptideIdent::Rcsb(id) => (format!("RCSB: {id}"), "RCSB PDB"),
+                PeptideIdent::Pdbe(id) => (format!("PDBe: {id}"), "PDBe"),
+                PeptideIdent::Uniprot(id) => (format!("UniProt: {id}"), "UniProt"),
+                PeptideIdent::AlphaFoldDb(id) => (id.clone(), "AlphaFold DB"),
+                PeptideIdent::Emdb(id) => (id.clone(), "EMDB"),
+                PeptideIdent::Bmrb(id) => (format!("BMRB: {id}"), "BMRB"),
+            };
+
             if ui
-                .button("RCSB")
-                .on_hover_text("Open a web browser to the RCSB PDB page for this molecule.")
+                .button(text)
+                .on_hover_text(format!(
+                    "Open a web browser to the {db} page for this entry."
+                ))
                 .clicked()
             {
-                rcsb::open_overview(&pep.common.ident);
+                match ident {
+                    PeptideIdent::Rcsb(id) => rcsb::open_overview(id),
+                    PeptideIdent::Pdbe(id) => pdbe::open_entry(id),
+                    PeptideIdent::Uniprot(id) => uniprot::open_overview(id),
+                    PeptideIdent::AlphaFoldDb(id) => uniprot::open_alphafold_view(id),
+                    PeptideIdent::Emdb(id) => emdb::open_overview(id),
+                    PeptideIdent::Bmrb(id) => bmrb::open_overview(id),
+                }
             }
         }
 
@@ -1137,6 +1157,11 @@ pub(in crate::ui) fn metadata(
     } else {
         None
     };
+    let peptide_idents: Option<Vec<PeptideIdent>> = if let MolGenericRef::Peptide(m) = mol {
+        Some(m.idents.clone())
+    } else {
+        None
+    };
 
     let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
     // Cloned to avoid holding a borrow of `state` alongside the mutable one below.
@@ -1152,7 +1177,10 @@ pub(in crate::ui) fn metadata(
         &mut state.ui.editing_metadata,
         &mut state.ui.metadata_edit.rows,
         &common,
-        idents.as_ref(),
+        idents
+            .as_ref()
+            .map(Idents::Small)
+            .or(peptide_idents.as_ref().map(Idents::Peptide)),
         loading_idents,
         &prefs_dir,
         ui,

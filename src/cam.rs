@@ -173,13 +173,13 @@ pub fn move_cam_to_mol(
     cam_snapshot: &mut Option<usize>,
     scene: &mut Scene,
     orbit_center: &mut Option<(MolType, usize)>,
-    look_to_beyond: lin_alg::f64::Vec3,
+    alignment: lin_alg::f64::Vec3,
     engine_updates: &mut EngineUpdates,
 ) {
     cam_look_at_outside(
         &mut scene.camera,
         target.center,
-        look_to_beyond.into(),
+        alignment.into(),
         target.distance,
     );
 
@@ -199,7 +199,7 @@ pub fn move_cam_to_mol(
 pub fn move_cam_to_active_mol(
     state: &mut State,
     scene: &mut Scene,
-    look_to_beyond: lin_alg::f64::Vec3,
+    alignment: lin_alg::f64::Vec3,
     engine_updates: &mut EngineUpdates,
 ) {
     let Some(molecule) = state.volatile.active_mol else {
@@ -215,7 +215,7 @@ pub fn move_cam_to_active_mol(
         &mut state.ui.cam_snapshot,
         scene,
         &mut state.volatile.orbit_center,
-        look_to_beyond,
+        alignment,
         engine_updates,
     );
     set_fog(state, &mut scene.camera);

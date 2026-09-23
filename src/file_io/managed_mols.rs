@@ -20,6 +20,8 @@ const MANIFEST_FILE: &str = "manifest.json";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ManagedMolProvider {
     Rcsb,
+    Pdbe,
+    AlphaFold,
     Pubchem,
     Drugbank,
     Chebi,
@@ -32,6 +34,8 @@ impl ManagedMolProvider {
     fn as_str(self) -> &'static str {
         match self {
             Self::Rcsb => "rcsb",
+            Self::Pdbe => "pdbe",
+            Self::AlphaFold => "alphafold",
             Self::Pubchem => "pubchem",
             Self::Drugbank => "drugbank",
             Self::Chebi => "chebi",

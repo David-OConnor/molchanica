@@ -12,39 +12,11 @@ use crate::{
     button,
     crystal::CrystalCell,
     label,
-    ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING, util::list_idents},
+    ui::{
+        COL_SPACING, COLOR_ACTION, ROW_SPACING,
+        util::{Idents, list_idents},
+    },
 };
-
-/// Protein counterpart to the small-molecule metadata/reaction controls below.
-pub(in crate::ui) fn peptide_data_buttons(
-    ui: &mut Ui,
-    toggle_metadata_popup: &mut bool,
-    show_reactions: &mut bool,
-) {
-    ui.horizontal(|ui| {
-        if button!(
-            ui,
-            "Metadata",
-            Color32::GRAY,
-            "Display metadata for this protein"
-        )
-        .clicked()
-        {
-            *toggle_metadata_popup = true;
-        }
-
-        if button!(
-            ui,
-            "Rhea Reactions",
-            Color32::GRAY,
-            "Display Rhea reactions annotated to this protein through its UniProt mapping."
-        )
-        .clicked()
-        {
-            *show_reactions = true;
-        }
-    });
-}
 
 fn char_basics(
     char: &MolCharacterization,
@@ -540,7 +512,7 @@ pub(in crate::ui) fn mol_char_disp(
 
             name_change = list_idents(
                 Some(&mol.common.name),
-                &mol.idents,
+                Idents::Small(&mol.idents),
                 &mol.common.path,
                 prefs_dir,
                 ui,

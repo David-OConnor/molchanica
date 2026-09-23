@@ -32,7 +32,11 @@ use crate::{
         tool_form::{FieldKind, FormContract, FormField, Preset},
     },
     state::State,
-    ui::{COLOR_ACTION, misc::selector_option, util::open_dir},
+    ui::{
+        COLOR_ACTION,
+        misc::{selector_box, selector_option},
+        util::open_dir,
+    },
     util::handle_err,
 };
 
@@ -490,7 +494,7 @@ impl ToolWindow {
 
         let spec = self.tool.spec();
         ui.hyperlink_to("Tool documentation", spec.url());
-        if !spec.platform.is_supported() {
+        if !spec.is_supported() {
             ui.colored_label(
                 Color32::ORANGE,
                 "This tool requires Linux. Inputs and results can still be viewed here.",
@@ -579,7 +583,7 @@ impl ToolWindow {
         ui.horizontal(|ui| {
             run = ui
                 .add_enabled(
-                    !busy && spec.platform.is_supported() && form.projection_error.is_none(),
+                    !busy && spec.is_supported() && form.projection_error.is_none(),
                     Button::new(RichText::new("Run").color(COLOR_ACTION)),
                 )
                 .clicked();
@@ -1051,17 +1055,19 @@ fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
         let previous = form.mode.clone();
         ui.horizontal_wrapped(|ui| {
             ui.label(&modes.label);
-            for option in &modes.options {
-                if selector_option(
-                    ui,
-                    form.mode == option.value,
-                    option.label.replace("Upload", "Choose file:"),
-                )
-                .clicked()
-                {
-                    form.mode = option.value.clone();
+            selector_box().show(ui, |ui| {
+                for option in &modes.options {
+                    if selector_option(
+                        ui,
+                        form.mode == option.value,
+                        option.label.replace("Upload", "Choose file:"),
+                    )
+                    .clicked()
+                    {
+                        form.mode = option.value.clone();
+                    }
                 }
-            }
+            });
         });
         if form.mode != previous && shared_adapter::slug(tool) == "rfd3" {
             form.project_mode();

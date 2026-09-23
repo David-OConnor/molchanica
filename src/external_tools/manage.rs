@@ -17,7 +17,7 @@ use super::{
 /// This blocks and is therefore intended to be called from a worker thread.
 pub fn install(tool: Tool) -> io::Result<()> {
     let spec = tool.spec();
-    if !spec.platform.is_supported() {
+    if !spec.is_supported() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!("{} is available on Linux only", spec.name()),

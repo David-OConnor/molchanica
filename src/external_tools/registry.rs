@@ -91,29 +91,6 @@ pub enum ToolAdapter {
     External,
 }
 
-/// Operating systems on which an upstream tool can run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PlatformSupport {
-    All,
-    LinuxOnly,
-}
-
-impl PlatformSupport {
-    pub fn is_supported(self) -> bool {
-        match self {
-            Self::All => true,
-            Self::LinuxOnly => cfg!(target_os = "linux"),
-        }
-    }
-
-    pub fn label(self) -> Option<&'static str> {
-        match self {
-            Self::All => None,
-            Self::LinuxOnly => Some("Linux only"),
-        }
-    }
-}
-
 /// A file that must exist before a tool can actually do anything — typically model weights, which
 /// are downloaded separately from the code and are the usual reason an "installed" tool fails on
 /// first use.
@@ -174,8 +151,6 @@ pub struct ToolSpec {
     pub tool: Tool,
     /// Name, slug, summary, home page, and licence, sourced from `bio_tools` wherever it has them.
     pub identity: ToolIdentity,
-    /// Upstream platform support, independent of whether Molchanica can install the tool.
-    pub platform: PlatformSupport,
     pub kind: ToolKind,
     pub adapter: ToolAdapter,
     /// Base name of the console script or binary, without any platform suffix.
@@ -320,12 +295,33 @@ impl ToolSpec {
         data_root().map(|root| root.join("process_executables").join(subdir))
     }
 
+    /// Whether this tool can run on the platform Molchanica is running on.
+    ///
+    /// Not a field: for everything Molchanica installs, this is exactly the question
+    /// `bio_tools` already answers with [`InstallableTool::is_supported`] -- whether upstream
+    /// publishes the wheels and binaries the recipe needs here -- and duplicating the answer in
+    /// the table only creates somewhere for the two to disagree. A tool the user installs
+    /// themselves (GROMACS, ORCA, Gemmi) is never gated: `bio_tools` may well have no recipe for
+    /// this platform while the vendor ships a perfectly good build of it.
+    pub fn is_supported(&self) -> bool {
+        match self.recipe() {
+            Some(recipe) if self.molchanica_managed => recipe.is_supported(),
+            _ => true,
+        }
+    }
+
+    /// The badge shown beside an unavailable tool. `bio_tools` excludes a recipe only where
+    /// upstream publishes for Linux alone, so that is what being unsupported means.
+    pub fn platform_label(&self) -> Option<&'static str> {
+        (!self.is_supported()).then_some("Linux only")
+    }
+
     /// User-facing instruction for installing this tool.
     pub fn install_command(&self) -> String {
         if !self.molchanica_managed {
             return self.install_hint.to_owned();
         }
-        if !self.platform.is_supported() {
+        if !self.is_supported() {
             return format!("{} is available on Linux only.", self.name());
         }
         format!(
@@ -336,7 +332,7 @@ impl ToolSpec {
     }
 
     pub fn can_install_here(&self) -> bool {
-        self.molchanica_managed && self.platform.is_supported()
+        self.molchanica_managed && self.is_supported()
     }
 }
 
@@ -351,7 +347,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::OpenDde,
         identity: ToolIdentity::Shared("opendde"),
-        platform: PlatformSupport::All,
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "opendde",
@@ -372,7 +367,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::Boltz2,
         identity: ToolIdentity::Shared("boltz2"),
-        platform: PlatformSupport::All,
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "boltz",
@@ -392,7 +386,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::Chai1,
         identity: ToolIdentity::Shared("chai1"),
-        platform: PlatformSupport::LinuxOnly,
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "chai-lab",
@@ -411,7 +404,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::Protenix,
         identity: ToolIdentity::Shared("protenix"),
-        platform: PlatformSupport::LinuxOnly,
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "protenix",
@@ -430,7 +422,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::EsmFold2,
         identity: ToolIdentity::Shared("esmfold2"),
-        platform: PlatformSupport::LinuxOnly,
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "esm-fold",
@@ -452,7 +443,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::LigandMpnn,
         identity: ToolIdentity::Shared("ligandmpnn"),
-        platform: PlatformSupport::All,
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
@@ -481,7 +471,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::ProteinMpnn,
         identity: ToolIdentity::Shared("proteinmpnn"),
-        platform: PlatformSupport::All,
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
@@ -509,10 +498,13 @@ pub static REGISTRY: &[ToolSpec] = &[
     // RFdiffusion3 is the only RFdiffusion generation Molchanica supports: 1 and 2 are gone from
     // `bio_tools`, and their Hydra-override command line has nothing in common with RFD3's JSON
     // `InputSpecification`.
+    //
+    // Windows runs it too. `rc-foundry` is a pure-Python wheel and `rc-foundry[rfd3]` resolves to
+    // the same packages on both platforms, so the recipe in `bio_tools` installs and runs here;
+    // see the notes on its catalog entry, `tool_definitions/rfdiffusion3.rs`.
     ToolSpec {
         tool: Tool::RfDiffusion3,
         identity: ToolIdentity::Shared("rfd3"),
-        platform: PlatformSupport::LinuxOnly,
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "rfd3",
@@ -537,7 +529,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::Gromacs,
         identity: ToolIdentity::Shared("gromacs"),
-        platform: PlatformSupport::All,
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "gmx",
@@ -557,7 +548,6 @@ pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::Orca,
         identity: ToolIdentity::Shared("orca"),
-        platform: PlatformSupport::All,
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "orca",
@@ -588,7 +578,6 @@ pub static REGISTRY: &[ToolSpec] = &[
             license: License::Other,
             license_details: "MPL 2.0. Commercial use permitted.",
         },
-        platform: PlatformSupport::All,
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "gemmi",
@@ -606,3 +595,42 @@ pub static REGISTRY: &[ToolSpec] = &[
         slow_probe: false,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gated() -> Vec<&'static str> {
+        Tool::ALL
+            .iter()
+            .map(|tool| tool.spec())
+            .filter(|spec| !spec.is_supported())
+            .map(ToolSpec::name)
+            .collect()
+    }
+
+    /// Platform support is no longer a field: [`ToolSpec::is_supported`] asks `bio_tools` whether
+    /// the recipe it would install has wheels here. This pins the answer, so that a recipe gaining
+    /// or losing a platform upstream shows up as a failure here rather than as a tool quietly
+    /// appearing or vanishing from the Tools panel.
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn only_the_linux_only_recipes_are_gated() {
+        assert_eq!(gated(), ["Chai-1", "Protenix-v2", "ESMFold 2"]);
+    }
+
+    /// The tools the user installs themselves are never gated, whatever `bio_tools` says about a
+    /// recipe for them: GROMACS and ORCA ship vendor builds for every platform Molchanica runs on.
+    #[test]
+    fn user_supplied_tools_are_never_gated() {
+        for tool in [Tool::Gromacs, Tool::Orca, Tool::Gemmi] {
+            assert!(tool.spec().is_supported(), "{tool} should never be gated");
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn nothing_is_gated_on_linux() {
+        assert_eq!(gated(), Vec::<&str>::new());
+    }
+}

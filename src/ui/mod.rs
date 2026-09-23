@@ -1412,13 +1412,15 @@ fn query_input(
         COLOR_INACTIVE
     };
 
-    let query_help =
-        "Download and view a molecule from RCSB PDB, PubChem, DrugBank, ChEBI, or Amber Geostd";
+    let query_help = "Download and view a molecule from databases including RCSB PDB, PDBe, \
+        PubChem, DrugBank, ChEBI, UniProt, AlphaFold DB, etc. Prefix with `pdbe:` or `chebi:` to \
+        query only that database.";
     ui.label(RichText::new("Query:").color(color_open_tools))
         .on_hover_text(query_help);
 
     let mut input_trimmed = std::mem::take(&mut state.ui.db_input_trimmed);
     let mut input_lowercase = std::mem::take(&mut state.ui.db_input_lowercase);
+
     let edit_resp = ui
         .add(TextEdit::singleline(&mut state.ui.db_input).desired_width(180.))
         .on_hover_text(query_help);

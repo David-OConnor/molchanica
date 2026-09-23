@@ -12,7 +12,8 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, ROW_SPACING, highlighted_box,
-        misc::selector_option, num_field,
+        misc::{selector_box, selector_option},
+        num_field,
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -350,15 +351,17 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     }
 
     ui.horizontal(|ui| {
-        for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
-            let active = Some(i) == state.ui.md.set_editor_active_set;
-            if selector_option(ui, active, &set.name)
-                .on_hover_text("Select this set to edit.")
-                .clicked()
-            {
-                state.ui.md.set_editor_active_set = if active { None } else { Some(i) };
+        selector_box().show(ui, |ui| {
+            for (i, set) in state.volatile.md_local.viewer.mol_sets.iter().enumerate() {
+                let active = Some(i) == state.ui.md.set_editor_active_set;
+                if selector_option(ui, active, &set.name)
+                    .on_hover_text("Select this set to edit.")
+                    .clicked()
+                {
+                    state.ui.md.set_editor_active_set = if active { None } else { Some(i) };
+                }
             }
-        }
+        });
     });
 
     let Some(set_i) = state.ui.md.set_editor_active_set else {
@@ -752,17 +755,6 @@ pub(in crate::ui) fn viewer_mol_set(
     ).clicked() {
             state.ui.popup.md_mol_set_editor = !state.ui.popup.md_mol_set_editor;
         }
-
-        if button!(
-            ui,
-            "FF params",
-            COLOR_HIGHLIGHT,
-            "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
-            gaff2, amino19, and lipid21."
-        ).clicked() {
-            state.ui.popup.ff_params = !state.ui.popup.ff_params;
-        }
-
     });
 
     if empty {

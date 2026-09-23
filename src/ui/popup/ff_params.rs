@@ -13,7 +13,10 @@ use na_seq::AminoAcidGeneral;
 use crate::{
     label,
     state::State,
-    ui::{COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING, misc::selector_option},
+    ui::{
+        COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING,
+        misc::{selector_box, selector_option},
+    },
 };
 
 /// Height of a table cell; matches EGUI's default `interact_size.y`. Rows must be exactly this
@@ -747,20 +750,22 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
 
     // Top level: which field of the param set to view.
     ui.horizontal_wrapped(|ui| {
-        for cat in CATS {
-            if !cat.present(params) {
-                label_cell(ui, cat.name(), W_RES, Color32::DARK_GRAY);
-                continue;
-            }
+        selector_box().show(ui, |ui| {
+            for cat in CATS {
+                if !cat.present(params) {
+                    label_cell(ui, cat.name(), W_RES, Color32::DARK_GRAY);
+                    continue;
+                }
 
-            if selector_option(ui, st.cat == cat, cat.name())
-                .on_hover_text(cat.hover())
-                .clicked()
-            {
-                st.cat = cat;
-                st.cell_edit = None;
+                if selector_option(ui, st.cat == cat, cat.name())
+                    .on_hover_text(cat.hover())
+                    .clicked()
+                {
+                    st.cat = cat;
+                    st.cell_edit = None;
+                }
             }
-        }
+        });
     });
 
     ui.add_space(ROW_SPACING);
@@ -788,15 +793,17 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
 
             // Sub-selection: which field of the `ForceFieldParams`.
             ui.horizontal_wrapped(|ui| {
-                for kind in KINDS {
-                    if selector_option(ui, st.kind == kind, kind.name())
-                        .on_hover_text(kind.hover())
-                        .clicked()
-                    {
-                        st.kind = kind;
-                        st.cell_edit = None;
+                selector_box().show(ui, |ui| {
+                    for kind in KINDS {
+                        if selector_option(ui, st.kind == kind, kind.name())
+                            .on_hover_text(kind.hover())
+                            .clicked()
+                        {
+                            st.kind = kind;
+                            st.cell_edit = None;
+                        }
                     }
-                }
+                });
             });
 
             ui.add_space(ROW_SPACING);
@@ -811,15 +818,17 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
 
             // Sub-selection: internal residues, or one of the terminus variants.
             ui.horizontal_wrapped(|ui| {
-                for sel in PROT_MAPS {
-                    if selector_option(ui, st.prot_map == sel, sel.name())
-                        .on_hover_text("Select this charge map to view and edit.")
-                        .clicked()
-                    {
-                        st.prot_map = sel;
-                        st.cell_edit = None;
+                selector_box().show(ui, |ui| {
+                    for sel in PROT_MAPS {
+                        if selector_option(ui, st.prot_map == sel, sel.name())
+                            .on_hover_text("Select this charge map to view and edit.")
+                            .clicked()
+                        {
+                            st.prot_map = sel;
+                            st.cell_edit = None;
+                        }
                     }
-                }
+                });
             });
 
             ui.add_space(ROW_SPACING);

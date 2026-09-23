@@ -3,9 +3,9 @@
 use std::time::Instant;
 
 use bio_apis::{
-    ReqError, amber_geostd, chebi, drugbank,
+    ReqError, amber_geostd, chebi, drugbank, pdbe,
     pubchem::{self, StructureSearchNamespace},
-    rcsb,
+    rcsb, uniprot,
 };
 use bio_files::{MmCif, Mol2, Sdf, md_params::ForceFieldParams};
 use graphics::{ControlScheme, EngineUpdates, Scene};
@@ -26,9 +26,45 @@ use crate::{
     util::handle_err,
 };
 
-/// Download mmCIF file from the RSCB, parse into a struct.
-pub fn load_cif_rcsb(ident: &str) -> Result<(MmCif, String), ReqError> {
-    let cif_text = rcsb::load_cif(ident)?;
+/// Where a protein's mmCIF file is downloaded from.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CifSource {
+    Rcsb,
+    /// Serves the same entries as RCSB, by the same PDB ID.
+    Pdbe,
+    /// Predicted structures, by UniProt accession.
+    AlphaFold,
+}
+
+impl CifSource {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rcsb => "RCSB",
+            Self::Pdbe => "PDBe",
+            Self::AlphaFold => "AlphaFold DB",
+        }
+    }
+
+    fn provider(self) -> ManagedMolProvider {
+        match self {
+            Self::Rcsb => ManagedMolProvider::Rcsb,
+            Self::Pdbe => ManagedMolProvider::Pdbe,
+            Self::AlphaFold => ManagedMolProvider::AlphaFold,
+        }
+    }
+
+    fn download(self, ident: &str) -> Result<String, ReqError> {
+        match self {
+            Self::Rcsb => rcsb::load_cif(ident),
+            Self::Pdbe => pdbe::load_cif(ident),
+            Self::AlphaFold => uniprot::load_alphafold_cif(ident),
+        }
+    }
+}
+
+/// Download an mmCIF file, and parse it into a struct.
+pub fn load_cif(source: CifSource, ident: &str) -> Result<(MmCif, String), ReqError> {
+    let cif_text = source.download(ident)?;
 
     let mmcif = MmCif::new(&cif_text).map_err(|e| {
         eprintln!("Error parsing mmCIF file: {e}");
@@ -74,6 +110,21 @@ pub fn load_sdf_chebi(id: u32) -> Result<DownloadedSmallMol, ReqError> {
     Ok(DownloadedSmallMol { mol, source_text })
 }
 
+/// Download a chemical component, e.g. a ligand like `ATP`, from PDBe as SDF. This is the "ideal"
+/// 3D conformer, with hydrogens.
+///
+/// PDBe's file has no data fields, so the component ID is attached as an ident here.
+pub fn load_sdf_pdbe(ident: &str) -> Result<DownloadedSmallMol, ReqError> {
+    let ident = ident.trim().to_uppercase();
+
+    let source_text = pdbe::load_sdf(&ident)?;
+    let sdf = Sdf::new(&source_text).map_err(ReqError::from)?;
+    let mut mol: MoleculeSmall = sdf.try_into().map_err(ReqError::from)?;
+    mol.idents.push(MolIdent::PdbeAmber(ident));
+
+    Ok(DownloadedSmallMol { mol, source_text })
+}
+
 pub fn load_atom_coords_rcsb(
     ident: &str,
     state: &mut State,
@@ -82,10 +133,34 @@ pub fn load_atom_coords_rcsb(
     redraw: &mut bool,
     reset_cam: &mut bool,
 ) {
-    println!("Loading atom data from RCSB...");
+    load_atom_coords(
+        CifSource::Rcsb,
+        ident,
+        state,
+        scene,
+        updates,
+        redraw,
+        reset_cam,
+    );
+}
+
+/// Download a protein's mmCIF file, and open it. `ident` is a PDB ID for RCSB and PDBe, and a
+/// UniProt accession for AlphaFold DB. Returns `true` if the protein loaded; errors are reported to
+/// the UI here.
+pub fn load_atom_coords(
+    source: CifSource,
+    ident: &str,
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut bool,
+    reset_cam: &mut bool,
+) -> bool {
+    let source_name = source.name();
+    println!("Loading atom data from {source_name}...");
     let start = Instant::now();
 
-    match load_cif_rcsb(ident) {
+    match load_cif(source, ident) {
         Ok((cif, cif_text)) => {
             // Key the cache on the entry ID the file itself reports, not on the query text: RCSB
             // serves the same structure for the bare 4-character ident and the 12-character
@@ -98,7 +173,7 @@ pub fn load_atom_coords_rcsb(
 
             let cache_path = match managed_mols::store_text(
                 &state.volatile.prefs_dir,
-                ManagedMolProvider::Rcsb,
+                source.provider(),
                 cache_key,
                 ident,
                 "cif",
@@ -110,7 +185,7 @@ pub fn load_atom_coords_rcsb(
                         &mut state.ui,
                         format!("Downloaded {ident} but could not cache it: {error}"),
                     );
-                    return;
+                    return false;
                 }
             };
 
@@ -120,7 +195,7 @@ pub fn load_atom_coords_rcsb(
                     "Unable to find the peptide FF Q map in parameters; can't load the molecule"
                         .to_owned(),
                 );
-                return;
+                return false;
             };
 
             let mut mol: MoleculePeptide = match MoleculePeptide::from_mmcif(
@@ -132,12 +207,12 @@ pub fn load_atom_coords_rcsb(
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("Problem parsing mmCif data into molecule: {e:?}");
-                    return;
+                    return false;
                 }
             };
             if let Err(e) = mol.set_source_cif(cif_text) {
                 eprintln!("Problem loading mmCIF component bonds: {e}");
-                return;
+                return false;
             }
 
             let (loaded_ident, centroid) = load_peptide(state, scene, mol, updates, true);
@@ -149,14 +224,14 @@ pub fn load_atom_coords_rcsb(
         Err(e) => {
             handle_err(
                 &mut state.ui,
-                format!("Problem loading molecule from CIF: {e:?}"),
+                format!("Problem loading {ident} from {source_name}: {e:?}"),
             );
-            return;
+            return false;
         }
     }
 
     let elapsed = start.elapsed().as_millis();
-    println!("Protein loading from RCSB complete in {elapsed:.1}ms");
+    println!("Protein loading from {source_name} complete in {elapsed:.1}ms");
 
     state.update_from_prefs();
     state.update_save_prefs();
@@ -173,6 +248,11 @@ pub fn load_atom_coords_rcsb(
     set_flashlight(scene);
     updates.lighting = true;
 
+    // Predicted structures have no RCSB entry to fetch data for.
+    if source == CifSource::AlphaFold {
+        return true;
+    }
+
     // todo: async
     // Only after updating from prefs (to prevent unecesasary loading) do we update data avail.
     let mut pending_data = None;
@@ -188,6 +268,8 @@ pub fn load_atom_coords_rcsb(
             .mol_pending_data_avail
             .push((peptide_i, rx));
     }
+
+    true
 }
 
 // todo: DIff between this and the non-2 variant?

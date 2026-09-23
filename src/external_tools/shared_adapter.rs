@@ -140,7 +140,7 @@ pub fn run(tool: Tool, payload: Value, control: &RunControl) -> io::Result<Adapt
             format!("{} is not run through the bio_tools adapters", spec.name()),
         ));
     }
-    if !spec.platform.is_supported() {
+    if !spec.is_supported() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!("{} requires Linux", spec.name()),
@@ -248,10 +248,7 @@ fn coordinator_command() -> io::Result<Command> {
     let mut command = Command::new(uv);
     command
         .args(["run", "--no-project"])
-        // The adapters `import bio_tools`: the Python bindings for the same crate this binary
-        // links, published as `athanor_bio_tools`. Pinned at or above the version whose catalog
-        // and `CommandSpec` APIs the embedded adapters expect.
-        .args(["--with", "athanor_bio_tools>=0.1.3"])
+        .args(["--with", &python_bindings_requirement()])
         .args(["--with", "pyyaml"])
         .args(["--python", "3.12"])
         .args(["python", "-c"])
@@ -261,6 +258,25 @@ fn coordinator_command() -> io::Result<Command> {
         )
         .arg(package);
     Ok(command)
+}
+
+/// The adapters `import bio_tools`: the Python bindings (`athanor_bio_tools`) for the same crate
+/// this binary links, and embeds the adapters from.
+///
+/// `bio_tools` is a path dependency, so the adapters can be newer than any published bindings.
+/// When its source tree is present, build the bindings from it; uv rebuilds them when the crate's
+/// sources change (`cache-keys` in its `python/pyproject.toml`). Otherwise, fall back to PyPI, pinned
+/// at or above the version whose APIs the embedded adapters expect.
+fn python_bindings_requirement() -> String {
+    let local = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("bio_tools")
+        .join("python");
+
+    match local.join("pyproject.toml").is_file() {
+        true => local.to_string_lossy().into_owned(),
+        false => "athanor_bio_tools>=0.1.3".to_owned(),
+    }
 }
 
 /// `<process_executables>/results/<slug>/<timestamp>-<pid>`, created fresh.

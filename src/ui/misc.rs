@@ -4,6 +4,9 @@ use egui::{
     Color32, CornerRadius, CursorIcon, Frame, Label, Margin, Response, RichText, Sense, Stroke, Ui,
 };
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
+/// Unselected options of a selector; a slight orange hue distinguishes them from plain labels.
+const COLOR_SELECTOR_UNSEL: Color32 = Color32::from_rgb(210, 175, 140);
+const COLOR_SELECTOR_BOX: Color32 = Color32::from_rgb(110, 95, 80);
 
 use crate::{
     ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE},
@@ -69,14 +72,29 @@ pub fn section_box() -> Frame {
         .outer_margin(Margin::symmetric(0, 0))
 }
 
-/// One option of a selector between mutually-exclusive, named options. Displayed as plain text,
-/// highlighted and underlined when selected, so it's visually distinct from action buttons.
+/// A box around a group of `selector_option`s, e.g.
+/// `selector_box().show(ui, |ui| { /* selector_option calls */ });`
+pub fn selector_box() -> Frame {
+    Frame::new()
+        .stroke(Stroke::new(1.0, COLOR_SELECTOR_BOX))
+        .corner_radius(CornerRadius::same(3))
+        .inner_margin(Margin {
+            left: 5,
+            right: 5,
+            top: 1,
+            bottom: 3,
+        })
+}
+
+/// One option of a selector between mutually-exclusive, named options. Displayed as text:
+/// highlighted and underlined when selected, and slightly orange otherwise, so it's visually
+/// distinct from action buttons and labels. Group these in a `selector_box`.
 /// Chain `.on_hover_text()` and `.clicked()` on the result, as with a button.
 pub fn selector_option(ui: &mut Ui, selected: bool, label: impl Into<String>) -> Response {
     let color = if selected {
         COLOR_ACTIVE_RADIO
     } else {
-        COLOR_INACTIVE
+        COLOR_SELECTOR_UNSEL
     };
 
     let resp = ui
@@ -91,7 +109,7 @@ pub fn selector_option(ui: &mut Ui, selected: bool, label: impl Into<String>) ->
             .hline(rect.x_range(), y, Stroke::new(2.0, COLOR_ACTIVE_RADIO));
     } else if resp.hovered() {
         ui.painter()
-            .hline(rect.x_range(), y, Stroke::new(1.0, COLOR_INACTIVE));
+            .hline(rect.x_range(), y, Stroke::new(1.0, COLOR_SELECTOR_UNSEL));
     }
 
     resp
@@ -106,15 +124,17 @@ pub fn selector<T: PartialEq + Copy>(
 ) -> Option<T> {
     let mut result = None;
 
-    for (val, label, tooltip) in options {
-        if selector_option(ui, *val == current, *label)
-            .on_hover_text(*tooltip)
-            .clicked()
-            && *val != current
-        {
-            result = Some(*val);
+    selector_box().show(ui, |ui| {
+        for (val, label, tooltip) in options {
+            if selector_option(ui, *val == current, *label)
+                .on_hover_text(*tooltip)
+                .clicked()
+                && *val != current
+            {
+                result = Some(*val);
+            }
         }
-    }
+    });
 
     result
 }

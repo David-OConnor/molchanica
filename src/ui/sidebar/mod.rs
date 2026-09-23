@@ -30,7 +30,9 @@ use crate::{
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, highlighted_box, load_all_idents_button, num_field,
-        panels::md_viewer, popup::pharmacophore,
+        panels::md_viewer,
+        popup::pharmacophore,
+        util::{Idents, list_idents},
     },
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
@@ -154,14 +156,14 @@ fn mol_picker_one(
                 {
                     let molecule_center: Vec3 = mol.centroid().into();
                     let forward: Vec3 = FWD_VEC.into();
-                    let look_to_beyond = molecule_center + forward;
+                    let alignment = molecule_center + forward;
 
                     move_cam_to_mol(
                         MolCameraTarget::new(mol, (mol_type, i_mol)),
                         cam_snapshot,
                         scene,
                         orbit_center,
-                        look_to_beyond,
+                        alignment,
                         engine_updates,
                     );
                     *reset_fog = true;
@@ -759,6 +761,7 @@ fn manip_toolbar(
 }
 
 fn mol_specific_aux_btns(
+    mol_type: MolType,
     load_all_idents: &mut bool,
     toggle_metadata_popup: &mut bool,
     show_reactions: &mut bool,
@@ -766,7 +769,8 @@ fn mol_specific_aux_btns(
     ui: &mut Ui,
 ) {
     ui.horizontal(|ui| {
-        if load_all_idents_button(ui, loading_idents) {
+        // The online identifier lookup is for small molecules only.
+        if mol_type == MolType::Ligand && load_all_idents_button(ui, loading_idents) {
             *load_all_idents = true;
         }
 
@@ -781,14 +785,13 @@ fn mol_specific_aux_btns(
             *toggle_metadata_popup = true;
         }
 
-        if button!(
-            ui,
-            "Reactions",
-            Color32::GRAY,
+        let reactions_help = if mol_type == MolType::Peptide {
+            "Display Rhea reactions annotated to this protein through its UniProt mapping."
+        } else {
             "Display Rhea (enzyme-catalogued) reactions involving this molecule; queries the Rhea API."
-        )
-            .clicked()
-        {
+        };
+
+        if button!(ui, "Reactions", Color32::GRAY, reactions_help).clicked() {
             *show_reactions = true;
         }
     });
@@ -908,8 +911,9 @@ pub(in crate::ui) fn sidebar(
 
             let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
 
-            if state.volatile.active_mol.is_some() {
+            if let Some((mol_type, _)) = state.volatile.active_mol {
                 mol_specific_aux_btns(
+                    mol_type,
                     &mut load_all_idents,
                     &mut toggle_metadata_popup,
                     &mut show_reactions,
@@ -944,11 +948,16 @@ pub(in crate::ui) fn sidebar(
                                 &mut new_crystal_mol,
                             );
                         }
-                        MolGenericRef::Peptide(_) => char_adme::peptide_data_buttons(
-                            ui,
-                            &mut toggle_metadata_popup,
-                            &mut show_reactions,
-                        ),
+                        MolGenericRef::Peptide(mol) => {
+                            ui.add_space(ROW_SPACING);
+                            name_change = list_idents(
+                                Some(&mol.common.name),
+                                Idents::Peptide(&mol.idents),
+                                &mol.common.path,
+                                &state.volatile.prefs_dir,
+                                ui,
+                            );
+                        }
                         _ => {}
                     }
                 }
@@ -957,7 +966,7 @@ pub(in crate::ui) fn sidebar(
                     && let Some(mut mol) = state.active_mol_mut()
                 {
                     mol.common_mut().name = name;
-                    redraw.ligand = true;
+                    redraw.set(mol.mol_type());
                 }
 
                 if let Some(mol) = new_crystal_mol {

@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Display,
     fs::File,
     io,
     io::Write,
@@ -8,11 +9,14 @@ use std::{
     slice,
 };
 
-use bio_apis::{chebi, pubchem::find_cids_from_search};
+use bio_apis::{chebi, pubchem::find_cids_from_search, uniprot};
 use egui::{Color32, Response, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, FWD_VEC, Scene};
 use mol_defs::{
-    molecules::{MolIdent, MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall},
+    molecules::{
+        MolIdent, MolType, MoleculeGeneric, PeptideIdent, common::MoleculeCommon,
+        small::MoleculeSmall,
+    },
     smiles::is_smiles,
 };
 
@@ -26,8 +30,8 @@ use crate::{
     external_tools::home_directory,
     file_io::{
         download_mols::{
-            DownloadedSmallMol, load_atom_coords_rcsb, load_sdf_chebi, load_sdf_drugbank,
-            load_sdf_pubchem,
+            CifSource, DownloadedSmallMol, load_atom_coords, load_atom_coords_rcsb, load_sdf_chebi,
+            load_sdf_drugbank, load_sdf_pdbe, load_sdf_pubchem,
         },
         managed_mols::{self, ManagedMolProvider},
         save_mol_set_as_gro,
@@ -96,11 +100,28 @@ pub(in crate::ui) fn edit_mol_name(name: &Option<String>, ui: &mut Ui) -> Option
     })
 }
 
-/// Display small-molecule identifiers and, when supplied, an editable name above them.
+/// A molecule's identifiers, for display: small molecules and proteins each have their own kind.
+#[derive(Clone, Copy)]
+pub(in crate::ui) enum Idents<'a> {
+    Small(&'a Vec<MolIdent>),
+    Peptide(&'a Vec<PeptideIdent>),
+}
+
+impl<'a> Idents<'a> {
+    /// E.g. for `MoleculeCommon::name`, which draws on small-molecule identifiers.
+    pub fn small(self) -> Option<&'a Vec<MolIdent>> {
+        match self {
+            Self::Small(idents) => Some(idents),
+            Self::Peptide(_) => None,
+        }
+    }
+}
+
+/// Display a molecule's identifiers and, when supplied, an editable name above them.
 /// Returns only changes to the name; the caller applies them after releasing molecule borrows.
 pub(in crate::ui) fn list_idents(
     name: Option<&Option<String>>,
-    idents: &[MolIdent],
+    idents: Idents,
     path: &Option<PathBuf>,
     prefs_dir: &Path,
     ui: &mut Ui,
@@ -139,28 +160,42 @@ pub(in crate::ui) fn list_idents(
         });
     }
 
-    for ident in idents {
-        // Wrap long identifiers instead of expanding the containing panel.
-        ui.horizontal_wrapped(|ui| {
-            crate::label!(ui, format!("{}:", ident.ident_type()), Color32::GRAY);
-
-            let mut ident_text = RichText::new(ident.ident_inner()).color(Color32::WHITE);
-
-            if matches!(
-                ident,
-                MolIdent::InchIKey(_)
-                    | MolIdent::InchI(_)
-                    | MolIdent::Smiles(_)
-                    | MolIdent::IupacName(_)
-            ) {
-                ident_text = ident_text.font(egui::FontId::proportional(10.0));
+    match idents {
+        Idents::Small(idents) => {
+            for ident in idents {
+                let long = matches!(
+                    ident,
+                    MolIdent::InchIKey(_)
+                        | MolIdent::InchI(_)
+                        | MolIdent::Smiles(_)
+                        | MolIdent::IupacName(_)
+                );
+                ident_row(ident.ident_type(), ident.ident_inner(), long, ui);
             }
-
-            ui.label(ident_text);
-        });
+        }
+        Idents::Peptide(idents) => {
+            for ident in idents {
+                ident_row(ident.ident_type(), ident.ident_inner(), false, ui);
+            }
+        }
     }
 
     name_change
+}
+
+/// One identifier, labeled with its type. `long` ones, e.g. SMILES, are drawn in a smaller font.
+fn ident_row(ident_type: impl Display, ident: String, long: bool, ui: &mut Ui) {
+    // Wrap long identifiers instead of expanding the containing panel.
+    ui.horizontal_wrapped(|ui| {
+        crate::label!(ui, format!("{ident_type}:"), Color32::GRAY);
+
+        let mut ident_text = RichText::new(ident).color(Color32::WHITE);
+        if long {
+            ident_text = ident_text.font(egui::FontId::proportional(10.0));
+        }
+
+        ui.label(ident_text);
+    });
 }
 
 /// Run this each frame, after all UI elements that affect it are rendered.
@@ -695,6 +730,12 @@ enum EnterTarget {
     PubchemCid,
     /// A `chebi:`-prefixed accession, which no other lookup competes for.
     ChebiId,
+    /// A `pdbe:`-prefixed PDB ID, e.g. `pdbe:1crn`.
+    PdbeStructure,
+    /// A `pdbe:`-prefixed chemical component ID, e.g. `pdbe:ATP`.
+    PdbeLigand,
+    /// A UniProtKB accession, e.g. `P09838`, optionally `uniprot:`-prefixed.
+    Uniprot,
     Rcsb,
     Geostd,
     DrugBank,
@@ -706,6 +747,16 @@ enum EnterTarget {
 /// the lowercased query.
 const CHEBI_PREFIX: &str = "chebi:";
 
+/// Prefix that pins a query to PDBe alone: a structure for a PDB ID, e.g. `pdbe:1crn`, and a chemical
+/// component otherwise, e.g. `pdbe:ATP`. Matched case-insensitively, against the lowercased query.
+const PDBE_PREFIX: &str = "pdbe:";
+
+/// Whether a query's text, less any `pdbe:` prefix, is a PDB ID rather than a chemical component ID:
+/// the bare 4-character form, or the 12-character `pdb_`-prefixed one.
+fn is_pdb_id(inp_l: &str) -> bool {
+    inp_l.len() == 4 || inp_l.starts_with("pdb_")
+}
+
 /// Decide which lookup Enter activates, mirroring the order the buttons are drawn in below. This is
 /// resolved once, ahead of drawing, so the highlighted button and the one Enter actually loads can't
 /// disagree.
@@ -713,6 +764,18 @@ fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
     // An explicitly prefixed ChEBI accession names its database, so nothing else can claim it.
     if inp_l.starts_with(CHEBI_PREFIX) {
         return EnterTarget::ChebiId;
+    }
+
+    if let Some(id) = inp_l.strip_prefix(PDBE_PREFIX) {
+        return match is_pdb_id(id.trim()) {
+            true => EnterTarget::PdbeStructure,
+            false => EnterTarget::PdbeLigand,
+        };
+    }
+
+    // UniProt accessions have a fixed format that no other lookup's idents share.
+    if uniprot::is_accession(inp) {
+        return EnterTarget::Uniprot;
     }
 
     // A numeric query is a PubChem CID, and takes Enter even when it also looks like an RCSB ident
@@ -724,7 +787,7 @@ fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
 
     // An RCSB ident, in either the bare 4-character form or the 12-character `pdb_`-prefixed one.
     // Both belong to RCSB, so nothing below can claim them.
-    if inp.len() == 4 || inp_l.starts_with("pdb_") {
+    if is_pdb_id(inp_l) {
         return EnterTarget::Rcsb;
     }
 
@@ -808,6 +871,123 @@ pub(in crate::ui) fn open_chebi_download(
     Ok(())
 }
 
+/// Download and open a chemical component, e.g. a ligand like `ATP`, from PDBe.
+fn load_pdbe_ligand(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+    ident: &str,
+) {
+    let ident = ident.trim().to_uppercase();
+
+    let downloaded = match load_sdf_pdbe(&ident) {
+        Ok(d) => d,
+        Err(e) => {
+            handle_err(
+                &mut state.ui,
+                format!("Error loading chemical component {ident} from PDBe: {e:?}"),
+            );
+            return;
+        }
+    };
+
+    // Store our own SDF rather than PDBe's: theirs has no data fields, and ours preserves the
+    // component ID across restarts.
+    let cache_result = managed_mols::store_sdf(
+        &state.volatile.prefs_dir,
+        ManagedMolProvider::Pdbe,
+        &ident,
+        &ident,
+        &downloaded.mol.to_sdf(),
+    );
+    let Some(cache_path) = report_cache_result(state, cache_result) else {
+        return;
+    };
+
+    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
+    redraw.ligand = true;
+
+    handle_success(
+        &mut state.ui,
+        format!("Loaded chemical component {ident} from PDBe (over the internet)"),
+    );
+}
+
+/// Download and open a protein structure by UniProt accession. This is a 2-hop lookup: PDBe ranks
+/// the protein's experimental structures by sequence coverage, then resolution, and we download the
+/// best from RCSB. For a protein with no experimental structure, we load its AlphaFold DB prediction.
+fn load_uniprot(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    reset_cam: &mut bool,
+    updates: &mut EngineUpdates,
+    inp: &str,
+) {
+    let accession = uniprot::parse_accession(inp);
+
+    let pdb_ids = match uniprot::best_pdb_ids(&accession) {
+        Ok(ids) => ids,
+        Err(e) => {
+            handle_err(
+                &mut state.ui,
+                format!(
+                    "Error finding structures of UniProt {accession}. Is the accession correct? {e:?}"
+                ),
+            );
+            return;
+        }
+    };
+
+    let Some(pdb_id) = pdb_ids.first() else {
+        let loaded = load_atom_coords(
+            CifSource::AlphaFold,
+            &accession,
+            state,
+            scene,
+            updates,
+            &mut redraw.peptide,
+            reset_cam,
+        );
+
+        if loaded {
+            state.ui.db_input = String::new();
+            handle_success(
+                &mut state.ui,
+                format!(
+                    "UniProt {accession} has no experimental structures; loaded its predicted \
+                     structure from AlphaFold DB (over the internet)"
+                ),
+            );
+        }
+        return;
+    };
+
+    let loaded = load_atom_coords(
+        CifSource::Rcsb,
+        pdb_id,
+        state,
+        scene,
+        updates,
+        &mut redraw.peptide,
+        reset_cam,
+    );
+
+    if loaded {
+        state.ui.db_input = String::new();
+        handle_success(
+            &mut state.ui,
+            format!(
+                "Loaded {}, the best of {} experimental structures of UniProt {accession} by \
+                 sequence coverage and resolution, from RCSB (over the internet)",
+                pdb_id.to_uppercase(),
+                pdb_ids.len(),
+            ),
+        );
+    }
+}
+
 /// Handles a general query, which could be a name, identifier etc. Attempts to query
 /// the correct database based on the  text.
 ///
@@ -876,6 +1056,78 @@ pub(in crate::ui) fn load_mol_from_query(
         return;
     }
 
+    // A `pdbe:`-prefixed ident, e.g. `pdbe:1crn` or `pdbe:ATP`. Like `chebi:`, this names one
+    // database, so nothing further down is offered for it.
+    if let Some(id) = inp_l.strip_prefix(PDBE_PREFIX) {
+        let id = id.trim();
+        if id.is_empty() {
+            return;
+        }
+
+        if is_pdb_id(id) {
+            let is_tgt = enter_tgt == EnterTarget::PdbeStructure;
+            if query_btn(ui, "Load PDBe", is_tgt).clicked() || (enter_pressed && is_tgt) {
+                let loaded = load_atom_coords(
+                    CifSource::Pdbe,
+                    id,
+                    state,
+                    scene,
+                    updates,
+                    &mut redraw.peptide,
+                    reset_cam,
+                );
+                if loaded {
+                    state.ui.db_input = String::new();
+                }
+            }
+        } else {
+            let is_tgt = enter_tgt == EnterTarget::PdbeLigand;
+            if query_btn(ui, "Load PDBe", is_tgt).clicked() || (enter_pressed && is_tgt) {
+                load_pdbe_ligand(state, scene, redraw, updates, id);
+            }
+        }
+
+        return;
+    }
+
+    // A UniProtKB accession, e.g. `P09838`. UniProt has no structures itself, so we load the best
+    // experimental one from the PDB, or AlphaFold DB's prediction on request.
+    if uniprot::is_accession(inp) {
+        let is_tgt = enter_tgt == EnterTarget::Uniprot;
+        let button_clicked = query_btn(ui, "Load UniProt", is_tgt)
+            .on_hover_text(
+                "Load the best experimental structure of this protein from the PDB, ranked by \
+                 sequence coverage, then resolution. Loads the AlphaFold DB prediction if there \
+                 are none.",
+            )
+            .clicked();
+
+        if button_clicked || (enter_pressed && is_tgt) {
+            load_uniprot(state, scene, redraw, reset_cam, updates, inp);
+        }
+
+        if query_btn(ui, "Load AlphaFold", false)
+            .on_hover_text("Load the predicted structure of this protein from AlphaFold DB.")
+            .clicked()
+        {
+            let accession = uniprot::parse_accession(inp);
+            let loaded = load_atom_coords(
+                CifSource::AlphaFold,
+                &accession,
+                state,
+                scene,
+                updates,
+                &mut redraw.peptide,
+                reset_cam,
+            );
+            if loaded {
+                state.ui.db_input = String::new();
+            }
+        }
+
+        return;
+    }
+
     // PubChem CID. Don't return early here; continue to allow for other
     if let Ok(cid) = inp.parse::<u32>() {
         let is_tgt = enter_tgt == EnterTarget::PubchemCid;
@@ -914,7 +1166,7 @@ pub(in crate::ui) fn load_mol_from_query(
         }
     }
 
-    if inp.len() == 4 || inp_l.starts_with("pdb_") {
+    if is_pdb_id(inp_l) {
         // Both ident forms load: the bare 4-character one, and the 12-character `pdb_`-prefixed one
         // RCSB has moved to. `files.rcsb.org` accepts either.
         let is_tgt = enter_tgt == EnterTarget::Rcsb;
@@ -924,6 +1176,22 @@ pub(in crate::ui) fn load_mol_from_query(
 
             state.ui.db_input = String::new();
             return;
+        }
+
+        // The same entry, from PDBe's mirror of the archive. RCSB owns Enter.
+        if query_btn(ui, "Load PDBe", false).clicked() {
+            let loaded = load_atom_coords(
+                CifSource::Pdbe,
+                inp_l,
+                state,
+                scene,
+                updates,
+                &mut redraw.peptide,
+                reset_cam,
+            );
+            if loaded {
+                state.ui.db_input = String::new();
+            }
         }
 
         return;
@@ -937,6 +1205,16 @@ pub(in crate::ui) fn load_mol_from_query(
             state.load_geostd_mol_data(inp_l, true, true, updates, scene);
 
             state.ui.db_input = String::new();
+            return;
+        }
+
+        // A chemical component from PDBe, e.g. `ATP`. These share their IDs with Geostd, which owns
+        // Enter as it also provides force field parameters; PDBe covers components Geostd doesn't.
+        if query_btn(ui, "Load PDBe", false)
+            .on_hover_text("Load this chemical component (e.g. a ligand) from PDBe.")
+            .clicked()
+        {
+            load_pdbe_ligand(state, scene, redraw, updates, inp);
         }
 
         return;

@@ -38,7 +38,10 @@ use crate::{
     },
     state::State,
     therapeutic_misc::ddg::{self, DdgScan},
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, misc::selector_option},
+    ui::{
+        COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        misc::{selector_box, selector_option},
+    },
 };
 
 /// How many rows of each result table to show before the user has to export.
@@ -238,11 +241,13 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
     design_ui.antibody.poll();
 
     ui.horizontal(|ui| {
-        for tab in DesignTab::ALL {
-            if selector_option(ui, design_ui.tab == tab, tab.label()).clicked() {
-                design_ui.tab = tab;
+        selector_box().show(ui, |ui| {
+            for tab in DesignTab::ALL {
+                if selector_option(ui, design_ui.tab == tab, tab.label()).clicked() {
+                    design_ui.tab = tab;
+                }
             }
-        }
+        });
     });
     ui.label(
         RichText::new(format!(

@@ -331,7 +331,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                                 .monospace(),
                         );
                         ui.label(RichText::new(spec.name()).strong());
-                        if let Some(label) = spec.platform.label() {
+                        if let Some(label) = spec.platform_label() {
                             ui.label(RichText::new(label).color(Color32::LIGHT_BLUE).small());
                         }
                         ui.spinner();
@@ -350,7 +350,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             .monospace(),
                     );
                     ui.label(RichText::new(spec.name()).strong());
-                    if let Some(label) = spec.platform.label() {
+                    if let Some(label) = spec.platform_label() {
                         ui.label(
                             RichText::new(label).color(Color32::LIGHT_BLUE).small(),
                         );
@@ -475,7 +475,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             );
                         }
                         CheckResult::CantFind => {
-                            if !spec.platform.is_supported() {
+                            if !spec.is_supported() {
                                 ui.label(
                                     RichText::new(
                                         "Linux only — installation is unavailable on this platform.",

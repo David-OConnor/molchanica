@@ -9,7 +9,8 @@ use crate::{
     selection::Selection,
     state::State,
     ui::{
-        COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING, misc::selector_option,
+        COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
+        misc::{selector_box, selector_option},
         popup::pharmacophore,
     },
 };
@@ -23,55 +24,57 @@ pub(in crate::ui) fn pocket_list(
     ui.label("Pockets");
     ui.separator();
 
-    for (mol_i, pocket) in state.pockets.iter_mut().enumerate() {
-        let selected = state.mol_editor.pocket_i_in_state == Some(mol_i);
+    selector_box().show(ui, |ui| {
+        for (mol_i, pocket) in state.pockets.iter_mut().enumerate() {
+            let selected = state.mol_editor.pocket_i_in_state == Some(mol_i);
 
-        if selector_option(ui, selected, &pocket.common.ident)
-            .on_hover_text(
-                "Display this pocket, and optionally use it as part of \
-                a pharmacophore, e.g. its excluded volume.",
-            )
-            .clicked()
-        {
-            scene
-                .entities
-                .retain(|e| e.class != EntityClass::Pocket as u32);
-
-            state.mol_editor.update_h_bonds();
-            // Not sure why updating the pocket alone isn't working; entityupdate::All
-            // is working though.
-            updates.meshes = true;
-            updates.entities = EntityUpdate::All;
-
-            if selected {
-                state.mol_editor.mol.pharmacophore.pocket = None;
-                state.mol_editor.pocket_i_in_state = None;
-            } else {
-                pocket.common.center_local_posits_around_origin();
-                pocket.common.reset_posits();
-
-                pocket.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
-
-                state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
-                state.mol_editor.pocket_i_in_state = Some(mol_i);
-
+            if selector_option(ui, selected, &pocket.common.ident)
+                .on_hover_text(
+                    "Display this pocket, and optionally use it as part of \
+                    a pharmacophore, e.g. its excluded volume.",
+                )
+                .clicked()
+            {
                 scene
                     .entities
                     .retain(|e| e.class != EntityClass::Pocket as u32);
 
-                scene.entities.extend(draw_pocket(
-                    pocket,
-                    &state.mol_editor.h_bonds,
-                    &state.mol_editor.mol.common.atom_posits,
-                    &state.ui.visibility,
-                    &state.ui.selection,
-                    &state.volatile.mol_manip.mode,
-                ));
-
+                state.mol_editor.update_h_bonds();
+                // Not sure why updating the pocket alone isn't working; entityupdate::All
+                // is working though.
                 updates.meshes = true;
+                updates.entities = EntityUpdate::All;
+
+                if selected {
+                    state.mol_editor.mol.pharmacophore.pocket = None;
+                    state.mol_editor.pocket_i_in_state = None;
+                } else {
+                    pocket.common.center_local_posits_around_origin();
+                    pocket.common.reset_posits();
+
+                    pocket.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
+
+                    state.mol_editor.mol.pharmacophore.pocket = Some(pocket.clone());
+                    state.mol_editor.pocket_i_in_state = Some(mol_i);
+
+                    scene
+                        .entities
+                        .retain(|e| e.class != EntityClass::Pocket as u32);
+
+                    scene.entities.extend(draw_pocket(
+                        pocket,
+                        &state.mol_editor.h_bonds,
+                        &state.mol_editor.mol.common.atom_posits,
+                        &state.ui.visibility,
+                        &state.ui.selection,
+                        &state.volatile.mol_manip.mode,
+                    ));
+
+                    updates.meshes = true;
+                }
             }
         }
-    }
+    });
 }
 
 pub(in crate::ui) fn pharmacophore_list(state: &mut State, ui: &mut Ui) {
