@@ -5,12 +5,14 @@
 //! Note: It may be possible/desirable to consolidate the draw function with the other types, e.g. in the
 //! `atoms_bonds` module.
 
+use std::collections::HashMap;
+
 use bio_files::{BondType, ResidueType};
 use egui::FontFamily;
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOverlay};
 use lin_alg::f32::{Quaternion, Vec3};
 use mol_defs::{
-    molecules::{Atom, AtomRole, Chain, MolGenericRef, MolType, peptide::MoleculePeptide},
+    molecules::{Atom, AtomRole, Chain, MolType, peptide::MoleculePeptide},
     reflection::DensityPt,
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
@@ -37,7 +39,7 @@ use crate::{
         MESH_SECONDARY_STRUCTURE, MESH_SPHERE_LOWRES,
     },
     selection::Selection,
-    state::{OperatingMode, ResColoring, State, StateUi},
+    state::{DistFilter, OperatingMode, ResColoring, State, StateUi},
     util::{aromatic_ring_centroid, clear_mol_entity_indices, find_neighbor_posit, orbit_center},
 };
 
@@ -273,119 +275,208 @@ pub fn draw_secondary_structure(
     scene.entities.push(ent);
 }
 
-// todo: Move this A/R. Util? Molecule? Method on peptide?
-/// Filter by distance to various items. Has some computational complexity.
-/// Indexes in the result are filtered out. So, an empty Vec means no restrictions.
-// pub fn filter_pep_atoms_by_dist(mol: &MoleculeCommon, ui: &StateUi, lig: Option<&MoleculeCommon>) -> Vec<usize> {
-// pub fn filter_pep_atoms_by_dist<'a>(mol: &MoleculeCommon, ui: &StateUi, active_mol: Option<MolGenericRef<'a>>) -> Vec<usize> {
-pub fn filter_pep_atoms_by_dist<'a>(
-    pep: &MoleculePeptide,
-    ui: &StateUi,
-    active_mol: Option<MolGenericRef<'a>>,
-    mol_active: bool,
-) -> Vec<usize> {
-    let mut result = Vec::new();
+/// For the surface filter, the distance threshold is scaled by this to get a depth below the surface,
+/// in Å. Depths of interest are much shallower than distances for the selection and ligand filters:
+/// For typical proteins, ~half of atoms are exposed, and nearly all are within 6Å of the surface.
+pub const SFC_DIST_SCALE: f32 = 0.1;
+/// Grid spacing of the surface filter's SAS mesh, in Å. Higher is faster, but cruder.
+const SFC_MESH_PRECISION: f32 = 2.;
 
-    let mol = &pep.common;
+/// Buckets points into cubic cells, for quickly checking if a point is near any of them.
+struct PointGrid {
+    cell_size: f32,
+    cells: HashMap<(i32, i32, i32), Vec<Vec3>>,
+}
 
-    // Speed up computations by using magnitude squared.
-    let nearby_dist_thresh_sq = ui.nearby_dist_thresh.pow(2) as f32;
+impl PointGrid {
+    /// `cell_size` must be at least the largest distance passed to `any_within`.
+    fn new(pts: &[Vec3], cell_size: f32) -> Self {
+        let mut result = Self {
+            cell_size: cell_size.max(1.),
+            cells: HashMap::new(),
+        };
 
-    // todo: Experimenting. I'm not sure why we need this, but the results don't filter enough otherwise.
-    let nearby_dist_thresh_sfc_sq = (ui.nearby_dist_thresh / 2).pow(2) as f32;
+        for pt in pts {
+            let key = result.key(*pt);
+            result.cells.entry(key).or_default().push(*pt);
+        }
 
-    if !ui.show_near_lig_only && !ui.show_near_sel_only && !ui.show_near_sfc_only {
-        return Vec::new();
+        result
     }
 
-    let sfc_pts = if ui.show_near_sfc_only {
-        // Higher means faster, but cruder.
-        const NEAR_SFC_MESH_PRECISION: f32 = 5.;
+    fn key(&self, pt: Vec3) -> (i32, i32, i32) {
+        (
+            (pt.x / self.cell_size).floor() as i32,
+            (pt.y / self.cell_size).floor() as i32,
+            (pt.z / self.cell_size).floor() as i32,
+        )
+    }
 
-        let atoms: Vec<(Vec3, _)> = mol
-            .atoms
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| !a.hetero)
-            .map(|(i, a)| (mol.atom_posits[i].into(), a.element.vdw_radius()))
-            .collect();
+    /// If any point is within `dist` of `pt`.
+    fn any_within(&self, pt: Vec3, dist: f32) -> bool {
+        let dist_sq = dist.powi(2);
+        let (x, y, z) = self.key(pt);
 
-        // todo: DOn't create this each drawing! Cache the atoms near the sfc pre-computed.
-        let mesh = make_sas_mesh(&atoms, SOLVENT_RAD, NEAR_SFC_MESH_PRECISION);
-        mesh.vertices
-            .iter()
-            .map(|v| Vec3::from_slice(&v.position).unwrap())
-            .collect()
-    } else {
-        Vec::new()
-    };
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let Some(cell) = self.cells.get(&(x + dx, y + dy, z + dz)) else {
+                        continue;
+                    };
 
-    // An optimization: Measure dist^2 once per residue, instead of per atom. This, for better or worse,
-    // shows complete residues only.
-    if ui.show_near_sfc_only {
-        for res in &pep.residues {
-            if res.atoms.is_empty() {
-                break;
-            }
-
-            // Arbitrary; pick two atoms on either SN end for variety. If either is close to the surface,
-            // pass all atoms in the residue.
-            let res_atom_0 = &res.atoms[0];
-            let res_atom_1 = res.atoms.last().unwrap_or(&res.atoms[0]);
-
-            let p_atom_0: Vec3 = mol.atom_posits[*res_atom_0].into();
-            let p_atom_1: Vec3 = mol.atom_posits[*res_atom_1].into();
-
-            // Check if near any surface point.
-            let mut passed = false;
-            for pt in &sfc_pts {
-                for posit in [p_atom_0, p_atom_1] {
-                    if (*pt - posit).magnitude_squared() < nearby_dist_thresh_sfc_sq {
-                        passed = true;
-                        break;
+                    if cell.iter().any(|p| (*p - pt).magnitude_squared() < dist_sq) {
+                        return true;
                     }
                 }
             }
-
-            if !passed {
-                for i_atom in &res.atoms {
-                    result.push(*i_atom);
-                }
-                continue;
-            }
         }
+
+        false
+    }
+}
+
+/// Positions of the selected atoms, of any molecule type. For bonds, this is both of their atoms;
+/// for residues, all of their atoms.
+fn sel_posits(state: &State) -> Vec<Vec3> {
+    // Peptide selections are of this one.
+    let pep_i = state.peptide_for_tools_i();
+
+    let res_atoms = |res_is: &[usize]| -> Vec<usize> {
+        let Some(pep) = pep_i.and_then(|i| state.peptides.get(i)) else {
+            return Vec::new();
+        };
+
+        res_is
+            .iter()
+            .filter_map(|i| pep.residues.get(*i))
+            .flat_map(|res| res.atoms.iter().copied())
+            .collect()
+    };
+
+    let none = Vec::new;
+
+    // Molecule type, molecule index, atom indices, bond indices.
+    let (mol_type, mol_i, atoms, bonds) = match &state.ui.selection {
+        Selection::AtomPeptide(i) => (MolType::Peptide, pep_i, vec![*i], none()),
+        Selection::AtomsPeptide(is) => (MolType::Peptide, pep_i, is.clone(), none()),
+        Selection::BondPeptide(i) => (MolType::Peptide, pep_i, none(), vec![*i]),
+        Selection::Residue(i) => (MolType::Peptide, pep_i, res_atoms(&[*i]), none()),
+        Selection::Residues(is) => (MolType::Peptide, pep_i, res_atoms(is), none()),
+
+        Selection::AtomLig((m, i)) => (MolType::Ligand, Some(*m), vec![*i], none()),
+        Selection::AtomsLig((m, is)) => (MolType::Ligand, Some(*m), is.clone(), none()),
+        Selection::BondLig((m, i)) => (MolType::Ligand, Some(*m), none(), vec![*i]),
+        Selection::BondsLig((m, is)) => (MolType::Ligand, Some(*m), none(), is.clone()),
+
+        Selection::AtomNucleicAcid((m, i)) => (MolType::NucleicAcid, Some(*m), vec![*i], none()),
+        Selection::BondNucleicAcid((m, i)) => (MolType::NucleicAcid, Some(*m), none(), vec![*i]),
+
+        Selection::AtomLipid((m, i)) => (MolType::Lipid, Some(*m), vec![*i], none()),
+        Selection::BondLipid((m, i)) => (MolType::Lipid, Some(*m), none(), vec![*i]),
+
+        Selection::AtomPocket((m, i)) => (MolType::Pocket, Some(*m), vec![*i], none()),
+        Selection::BondPocket((m, i)) => (MolType::Pocket, Some(*m), none(), vec![*i]),
+
+        Selection::None | Selection::ComponentEditor(_) => return Vec::new(),
+    };
+
+    let Some(mol) = mol_i.and_then(|i| state.get_mol(mol_type, i)) else {
+        return Vec::new();
+    };
+    let common = mol.common();
+
+    let bond_atoms = bonds
+        .iter()
+        .filter_map(|i| common.bonds.get(*i))
+        .flat_map(|b| [b.atom_0, b.atom_1]);
+
+    atoms
+        .into_iter()
+        .chain(bond_atoms)
+        .filter_map(|i| common.atom_posits.get(i))
+        .map(|p| (*p).into())
+        .collect()
+}
+
+/// Hides each atom not within `thresh` of any of `targets`. If there are no targets, hides nothing.
+fn hide_far_from(posits: &[Vec3], targets: &[Vec3], thresh: f32) -> Vec<bool> {
+    if targets.is_empty() {
+        return vec![false; posits.len()];
     }
 
-    for (i_atom, _atom) in mol.atoms.iter().enumerate() {
-        let posit = mol.atom_posits[i_atom];
+    let grid = PointGrid::new(targets, thresh);
 
-        if ui.show_near_sel_only
-            && mol_active
-            && let Selection::AtomPeptide(i_sel) = &ui.selection
-        {
-            // todo: This will fail after moves and dynamics. You must pick the selected atom
-            // todo posit correctly!
+    posits
+        .iter()
+        .map(|p| !grid.any_within(*p, thresh))
+        .collect()
+}
 
-            if (posit - mol.atom_posits[*i_sel]).magnitude_squared() as f32 > nearby_dist_thresh_sq
-            {
-                result.push(i_atom);
-                continue;
-            }
+/// Hides protein atoms deeper than `thresh` below the protein's surface. We measure depth as an atom's
+/// distance to the solvent-accessible surface mesh, less its VdW radius and the probe radius;
+/// exposed atoms have a depth near 0. Hetero atoms, e.g. ligands and water, aren't hidden.
+fn hide_far_from_sfc(pep: &MoleculePeptide, posits: &[Vec3], thresh: f32) -> Vec<bool> {
+    let mol = &pep.common;
+
+    let atoms: Vec<(Vec3, f32)> = mol
+        .atoms
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !a.hetero)
+        .map(|(i, a)| (posits[i], a.element.vdw_radius()))
+        .collect();
+
+    // todo: Don't create this each drawing! Cache the atoms near the sfc pre-computed.
+    let mesh = make_sas_mesh(&atoms, SOLVENT_RAD, SFC_MESH_PRECISION);
+
+    let sfc_pts: Vec<Vec3> = mesh
+        .vertices
+        .iter()
+        .map(|v| Vec3::from_slice(&v.position).unwrap())
+        .collect();
+
+    let vdw_max = mol
+        .atoms
+        .iter()
+        .map(|a| a.element.vdw_radius())
+        .fold(0., f32::max);
+
+    let grid = PointGrid::new(&sfc_pts, thresh + SOLVENT_RAD + vdw_max);
+
+    mol.atoms
+        .iter()
+        .enumerate()
+        .map(|(i, atom)| {
+            let dist = thresh + SOLVENT_RAD + atom.element.vdw_radius();
+            !atom.hetero && !grid.any_within(posits[i], dist)
+        })
+        .collect()
+}
+
+// todo: Move this A/R. Util? Molecule? Method on peptide?
+/// Filter by distance to the selection, active ligand, or protein surface; see `StateUi::dist_filter`.
+/// Returns a flag for each of the peptide's atoms; `true` means it's filtered out.
+pub fn filter_pep_atoms_by_dist(state: &State, pep: &MoleculePeptide) -> Vec<bool> {
+    let posits: Vec<Vec3> = pep.common.atom_posits.iter().map(|p| (*p).into()).collect();
+    let thresh = state.ui.nearby_dist_thresh as f32;
+
+    match state.ui.dist_filter {
+        DistFilter::None => vec![false; posits.len()],
+        DistFilter::NearSel => hide_far_from(&posits, &sel_posits(state), thresh),
+        DistFilter::NearLig => {
+            // Don't treat the protein itself as the ligand; e.g. after clicking one of its atoms.
+            let lig_posits: Vec<Vec3> = match state.volatile.active_mol {
+                Some((mol_type, i)) if mol_type != MolType::Peptide => state
+                    .get_mol(mol_type, i)
+                    .map(|m| m.common().atom_posits.iter().map(|p| (*p).into()).collect())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+
+            hide_far_from(&posits, &lig_posits, thresh)
         }
-
-        if ui.show_near_lig_only
-            && let Some(ref lig) = active_mol
-        {
-            let atom_sel = lig.common().atom_posits[0]; // todo: Centroid?
-
-            if (posit - atom_sel).magnitude_squared() as f32 > nearby_dist_thresh_sq {
-                result.push(i_atom);
-                continue;
-            }
-        }
+        DistFilter::NearSfc => hide_far_from_sfc(pep, &posits, thresh * SFC_DIST_SCALE),
     }
-
-    result
 }
 
 /// Refreshes entities with the model passed.
@@ -469,8 +560,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         return;
     }
 
-    let filtered_out_by_dist =
-        filter_pep_atoms_by_dist(mol, &state.ui, state.active_mol(), mol_active);
+    let filtered_out_by_dist = filter_pep_atoms_by_dist(state, mol);
 
     let start_i = scene.entities.len();
     let mut entities = Vec::new();
@@ -620,7 +710,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             continue;
         }
 
-        if filtered_out_by_dist.contains(&i_atom) {
+        if filtered_out_by_dist[i_atom] {
             continue;
         }
 
@@ -805,7 +895,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         let atom_0_posit = mol.common.atom_posits[bond.atom_0];
         let atom_1_posit = mol.common.atom_posits[bond.atom_1];
 
-        if filtered_out_by_dist.contains(&bond.atom_0) {
+        if filtered_out_by_dist[bond.atom_0] {
             continue;
         }
 
@@ -1042,7 +1132,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             // todo: Should we pre-filter these atoms-to-disp by index? Would be faster, but
             // todo I don't wish to expend the effort on that here.
 
-            if filtered_out_by_dist.contains(&bond.donor) {
+            if filtered_out_by_dist.get(bond.donor) == Some(&true) {
                 continue;
             }
 

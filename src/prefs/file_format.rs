@@ -47,8 +47,8 @@ use crate::{
     },
     selection::{Selection, ViewSelLevel},
     state::{
-        CamSnapshot, LabelVis, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, UiVisibility,
-        Visibility,
+        CamSnapshot, DistFilter, LabelVis, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring,
+        UiVisibility, Visibility,
     },
 };
 
@@ -189,6 +189,25 @@ impl MsaaSetting {
             1 => Self::None,
             4 => Self::Four,
             _ => Self::default(),
+        }
+    }
+}
+
+impl PrefsByte for DistFilter {
+    fn to_u8(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::NearSel => 1,
+            Self::NearLig => 2,
+            Self::NearSfc => 3,
+        }
+    }
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::NearSel,
+            2 => Self::NearLig,
+            3 => Self::NearSfc,
+            _ => Self::None,
         }
     }
 }
@@ -1158,8 +1177,9 @@ impl UiPrefs {
         let uvis = self.ui_visibility.to_bytes();
         out.extend_from_slice(&(uvis.len() as u32).to_le_bytes());
         out.extend_from_slice(&uvis);
-        out.push(self.near_sel_only as u8);
-        out.push(self.near_lig_only as u8);
+        out.push(self.dist_filter.to_u8());
+        // Formerly the "near lig only" flag; kept so the layout matches older files.
+        out.push(0);
         out.extend_from_slice(&self.nearby_dist_thresh.to_le_bytes());
         out.push(self.mol_view_peptide.to_u8());
         out
@@ -1191,10 +1211,14 @@ impl UiPrefs {
         i += 4;
         let ui_visibility = UiVisibility::from_bytes(&data[i..i + len])?;
         i += len;
-        let near_sel_only = data[i] != 0;
-        i += 1;
-        let near_lig_only = data[i] != 0;
-        i += 1;
+        // Older files store "near sel only" and "near lig only" bools in these two bytes. The first
+        // maps directly to `DistFilter::NearSel`; newer files always write 0 to the second.
+        let dist_filter = if data[i] == 0 && data[i + 1] != 0 {
+            DistFilter::NearLig
+        } else {
+            DistFilter::from_u8(data[i])
+        };
+        i += 2;
         let nearby_dist_thresh = parse_le!(data, u16, i..i + 2);
         i += 2;
         let mol_view_peptide = if i < data.len() {
@@ -1210,8 +1234,7 @@ impl UiPrefs {
             view_sel_level,
             visibility,
             ui_visibility,
-            near_sel_only,
-            near_lig_only,
+            dist_filter,
             nearby_dist_thresh,
         })
     }

@@ -34,8 +34,8 @@ use crate::{
     md::MdBackend,
     selection::{Selection, ViewSelLevel},
     state::{
-        CamSnapshot, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, State, UiVisibility,
-        Visibility,
+        CamSnapshot, DistFilter, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, State,
+        UiVisibility, Visibility,
     },
 };
 
@@ -248,8 +248,7 @@ pub struct UiPrefs {
     pub view_sel_level: ViewSelLevel,
     pub visibility: Visibility,
     pub ui_visibility: UiVisibility,
-    pub near_sel_only: bool,
-    pub near_lig_only: bool,
+    pub dist_filter: DistFilter,
     pub nearby_dist_thresh: u16,
 }
 
@@ -261,9 +260,9 @@ impl Default for UiPrefs {
             mol_view: MoleculeView::DEFAULT_NON_PEPTIDE,
             mol_view_peptide: MoleculeView::default(),
             view_sel_level: Default::default(),
-            near_sel_only: Default::default(),
-            near_lig_only: Default::default(),
-            nearby_dist_thresh: Default::default(),
+            dist_filter: Default::default(),
+            // Matches the `State` default. (0 would hide everything once a filter is set)
+            nearby_dist_thresh: 15,
             visibility: Default::default(),
             ui_visibility: Default::default(),
         }
@@ -595,8 +594,7 @@ impl State {
         self.to_save.ui_prefs.mol_view = self.ui.mol_view.non_peptide_or_default();
         self.to_save.ui_prefs.mol_view_peptide = self.ui.mol_view_peptide;
         self.to_save.ui_prefs.view_sel_level = self.ui.view_sel_level;
-        self.to_save.ui_prefs.near_sel_only = self.ui.show_near_sel_only;
-        self.to_save.ui_prefs.near_lig_only = self.ui.show_near_lig_only;
+        self.to_save.ui_prefs.dist_filter = self.ui.dist_filter;
         self.to_save.ui_prefs.nearby_dist_thresh = self.ui.nearby_dist_thresh;
         self.to_save.ui_prefs.visibility = self.ui.visibility.clone();
         self.to_save.ui_prefs.ui_visibility = self.ui.ui_vis.clone();
@@ -643,8 +641,7 @@ impl State {
         self.ui.mol_view = self.to_save.ui_prefs.mol_view.non_peptide_or_default();
         self.ui.mol_view_peptide = self.to_save.ui_prefs.mol_view_peptide;
         self.ui.view_sel_level = self.to_save.ui_prefs.view_sel_level;
-        self.ui.show_near_sel_only = self.to_save.ui_prefs.near_sel_only;
-        self.ui.show_near_lig_only = self.to_save.ui_prefs.near_lig_only;
+        self.ui.dist_filter = self.to_save.ui_prefs.dist_filter;
         self.ui.nearby_dist_thresh = self.to_save.ui_prefs.nearby_dist_thresh;
         self.ui.visibility = self.to_save.ui_prefs.visibility.clone();
         self.ui.ui_vis = self.to_save.ui_prefs.ui_visibility.clone();

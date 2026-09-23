@@ -28,14 +28,14 @@ use crate::{
     },
     cli,
     cli::autocomplete_cli,
-    drawing::MoleculeView,
+    drawing::{MoleculeView, peptide::SFC_DIST_SCALE},
     file_io::download_mols::load_atom_coords_rcsb,
     inputs::add_atom_with_tab,
     mol_editor::enter_edit_mode,
     prefs::ControlSchemeType,
     render::set_flashlight,
     selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},
-    state::{CamSnapshot, OperatingMode, ResColoring, SmilesDisplayCache, State},
+    state::{CamSnapshot, DistFilter, OperatingMode, ResColoring, SmilesDisplayCache, State},
     threads::{handle_thread_rx, start_session_restore},
     ui::{
         misc::section_box,
@@ -439,7 +439,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                             if i >= mol.residues.len() {
                                 handle_err(&mut state.ui, "Residue bounds problem".to_string());
                                 Selection::None
-                            } else if mol.residues[i].atoms.len() <= 2 {
+                            } else if mol.residues[i].atoms.len() >= 2 {
                                 Selection::AtomPeptide(mol.residues[i].atoms[1])
                             } else {
                                 Selection::None
@@ -626,47 +626,33 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
         section_box().show(ui, |ui| {
             view_sel_selector(state, redraw, ui, true);
 
-            let help = "Hide all protein atoms not near the selected atom or bond";
-            ui.label("Near sel:").on_hover_text(help);
-            if ui
-                .checkbox(&mut state.ui.show_near_sel_only, "")
-                .on_hover_text(help)
-                .changed()
-            {
-                *redraw = true;
+            let dist_filter_opts = [
+                (
+                    DistFilter::None,
+                    "All",
+                    "Show all protein atoms, regardless of distance.",
+                ),
+                (
+                    DistFilter::NearSel,
+                    "Near sel",
+                    "Hide all protein atoms not near the selected atom(s), bond(s), or residue(s).",
+                ),
+                (
+                    DistFilter::NearLig,
+                    "Near lig",
+                    "Hide all protein atoms not near the ligand (Active non-protein molecule).",
+                ),
+                (
+                    DistFilter::NearSfc,
+                    "Near sfc",
+                    "Hide all protein atoms not near the surface of the protein. May assist \
+                    in visualizing interaction sites in some visualization modes, e.g. sticks or \
+                    ball and stick.",
+                ),
+            ];
 
-                // todo: For now, only allow one of near sel/lig
-                if state.ui.show_near_sel_only {
-                    state.ui.show_near_lig_only = false
-                }
-            }
-
-            if state.active_mol().is_some() {
-                let help = "Hide all protein atoms not near the ligand (Active small molecule)";
-                ui.label("Near lig:").on_hover_text(help);
-                if ui
-                    .checkbox(&mut state.ui.show_near_lig_only, "")
-                    .on_hover_text(help)
-                    .changed()
-                {
-                    *redraw = true;
-
-                    // todo: For now, only allow one of near sel/lig
-                    if state.ui.show_near_lig_only {
-                        state.ui.show_near_sel_only = false
-                    }
-                }
-            }
-
-            // todo: Slider for how near the sfc?
-            let help = "Hide all protein atoms not near the surface of the protein. May assist \
-            in visualizing interaction sites in some visualization modes, e.g. sticks or ball and stick.";
-            ui.label("Near sfc:").on_hover_text(help);
-            if ui
-                .checkbox(&mut state.ui.show_near_sfc_only, "")
-                .on_hover_text(help)
-                .changed()
-            {
+            if let Some(filter) = misc::selector(ui, state.ui.dist_filter, &dist_filter_opts) {
+                state.ui.dist_filter = filter;
                 *redraw = true;
             }
 
@@ -696,15 +682,30 @@ fn selection_section(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                 }
             }
 
-            if state.ui.show_near_sel_only || state.ui.show_near_lig_only || state.ui.show_near_sfc_only {
-                ui.label("Dist:");
+            if state.ui.dist_filter != DistFilter::None {
                 let dist_prev = state.ui.nearby_dist_thresh;
                 ui.spacing_mut().slider_width = 160.;
 
-                ui.add(Slider::new(
+                let slider = Slider::new(
                     &mut state.ui.nearby_dist_thresh,
                     NEARBY_THRESH_MIN..=NEARBY_THRESH_MAX,
-                ));
+                );
+
+                if state.ui.dist_filter == DistFilter::NearSfc {
+                    // The same value, displayed as the depth below the surface it maps to.
+                    let scale = SFC_DIST_SCALE as f64;
+
+                    ui.label("Depth:")
+                        .on_hover_text("Hide protein atoms deeper than this below the surface, in Å.");
+                    ui.add(
+                        slider
+                            .custom_formatter(move |v, _| format!("{:.1}", v * scale))
+                            .custom_parser(move |s| s.parse::<f64>().ok().map(|v| v / scale)),
+                    );
+                } else {
+                    ui.label("Dist:");
+                    ui.add(slider);
+                }
 
                 if state.ui.nearby_dist_thresh != dist_prev {
                     *redraw = true;

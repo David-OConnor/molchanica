@@ -483,12 +483,9 @@ pub struct StateUi {
     pub smiles_display_cache: SmilesDisplayCache,
     pub cam_snapshot_name: String,
     pub atom_res_search: String,
-    /// To selection.
-    pub show_near_sel_only: bool,
-    pub show_near_lig_only: bool,
-    /// Protein atoms near its surface; hide internal ones.
-    pub show_near_sfc_only: bool,
-    /// Angstrom. For selections, or ligand.
+    /// Hide protein atoms that aren't near the selection, ligand, or protein surface.
+    pub dist_filter: DistFilter,
+    /// Angstrom. Used by `dist_filter`.
     pub nearby_dist_thresh: u16,
     pub view_depth: (u16, u16), // angstrom. min, max.
     pub cam_snapshot: Option<usize>,
@@ -914,6 +911,19 @@ impl MsaaSetting {
         }
         .to_owned()
     }
+}
+
+/// Hides protein atoms based on their distance to something.
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub enum DistFilter {
+    #[default]
+    None,
+    /// Show only atoms near the selected atom(s), bond(s), or residue(s).
+    NearSel,
+    /// Show only atoms near the active (non-protein) molecule, e.g. a ligand.
+    NearLig,
+    /// Show only atoms near the protein's surface; hide internal ones.
+    NearSfc,
 }
 
 #[derive(Clone, Copy, PartialEq, Default, Debug, Encode, Decode)]
