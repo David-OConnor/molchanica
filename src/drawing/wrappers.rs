@@ -66,6 +66,7 @@ fn helper_b(
             ent.scale_partial = entities[i].scale_partial;
             ent.color = entities[i].color;
             ent.overlay_text = entities[i].overlay_text.clone();
+            ent.outline = entities[i].outline;
         }
         updates.entities.push_class(class);
     } else {
@@ -483,6 +484,7 @@ fn update_inplace_inner_part2(
         ent.scale = ents_updated[i].scale;
         ent.scale_partial = ents_updated[i].scale_partial;
         ent.color = ents_updated[i].color;
+        ent.outline = ents_updated[i].outline;
     }
 }
 

@@ -564,103 +564,101 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
 }
 
 fn protein_view_options(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
-    if state.peptides.is_empty() {
-        return;
-    }
-
     // todo: DRY with view.
     ui.horizontal_wrapped(|ui| {
-        section_box().show(ui, |ui| {
-            view_sel_selector(state, redraw, ui, true);
+        if !state.peptides.is_empty() {
+            section_box().show(ui, |ui| {
+                view_sel_selector(state, redraw, ui, true);
 
-            let dist_filter_opts = [
-                (
-                    DistFilter::None,
-                    "All",
-                    "Show all protein atoms, regardless of distance.",
-                ),
-                (
-                    DistFilter::NearSel,
-                    "Near sel",
-                    "Hide all protein atoms not near the selected atom(s), bond(s), or residue(s).",
-                ),
-                (
-                    DistFilter::NearLig,
-                    "Near lig",
-                    "Hide all protein atoms not near the ligand (Active non-protein molecule).",
-                ),
-                (
-                    DistFilter::NearSfc,
-                    "Near sfc",
-                    "Hide all protein atoms not near the surface of the protein. May assist \
+                let dist_filter_opts = [
+                    (
+                        DistFilter::None,
+                        "All",
+                        "Show all protein atoms, regardless of distance.",
+                    ),
+                    (
+                        DistFilter::NearSel,
+                        "Near sel",
+                        "Hide all protein atoms not near the selected atom(s), bond(s), or residue(s).",
+                    ),
+                    (
+                        DistFilter::NearLig,
+                        "Near lig",
+                        "Hide all protein atoms not near the ligand (Active non-protein molecule).",
+                    ),
+                    (
+                        DistFilter::NearSfc,
+                        "Near sfc",
+                        "Hide all protein atoms not near the surface of the protein. May assist \
                     in visualizing interaction sites in some visualization modes, e.g. sticks or \
                     ball and stick.",
-                ),
-            ];
+                    ),
+                ];
 
-            if let Some(filter) = misc::selector(ui, state.ui.dist_filter, &dist_filter_opts) {
-                state.ui.dist_filter = filter;
-                *redraw = true;
-            }
+                if let Some(filter) = misc::selector(ui, state.ui.dist_filter, &dist_filter_opts) {
+                    state.ui.dist_filter = filter;
+                    *redraw = true;
+                }
 
-            ui.label("pH:");
-            if ui
-                .add_sized(
-                    [34., Ui::available_height(ui)],
-                    TextEdit::singleline(&mut state.ui.ph_input),
-                )
-                .changed()
-                && let Ok(v) = &mut state.ui.ph_input.parse::<f32>()
-            {
-                state.to_save.ph = *v;
+                ui.label("pH:");
+                if ui
+                    .add_sized(
+                        [34., Ui::available_height(ui)],
+                        TextEdit::singleline(&mut state.ui.ph_input),
+                    )
+                    .changed()
+                    && let Ok(v) = &mut state.ui.ph_input.parse::<f32>()
+                {
+                    state.to_save.ph = *v;
 
-                // pH is global, so keep every open peptide in sync.
-                let mut hydrogen_err = None;
-                if let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
-                    for mol in &mut state.peptides {
-                        if let Err(e) = mol.reassign_hydrogens(state.to_save.ph, ff_map) {
-                            hydrogen_err = Some(format!("Error reassigning hydrogens: {e:?}"));
-                            break;
+                    // pH is global, so keep every open peptide in sync.
+                    let mut hydrogen_err = None;
+                    if let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
+                        for mol in &mut state.peptides {
+                            if let Err(e) = mol.reassign_hydrogens(state.to_save.ph, ff_map) {
+                                hydrogen_err = Some(format!("Error reassigning hydrogens: {e:?}"));
+                                break;
+                            }
+                            *redraw = true;
                         }
+                    }
+                    if let Some(msg) = hydrogen_err {
+                        handle_err(&mut state.ui, msg);
+                    }
+                }
+
+                if state.ui.dist_filter != DistFilter::None {
+                    let dist_prev = state.ui.nearby_dist_thresh;
+                    ui.spacing_mut().slider_width = 160.;
+
+                    let slider = Slider::new(
+                        &mut state.ui.nearby_dist_thresh,
+                        NEARBY_THRESH_MIN..=NEARBY_THRESH_MAX,
+                    );
+
+                    if state.ui.dist_filter == DistFilter::NearSfc {
+                        // The same value, displayed as the depth below the surface it maps to.
+                        let scale = SFC_DIST_SCALE as f64;
+
+                        ui.label("Depth:").on_hover_text(
+                            "Hide protein atoms deeper than this below the surface, in Å.",
+                        );
+                        ui.add(
+                            slider
+                                .custom_formatter(move |v, _| format!("{:.1}", v * scale))
+                                .custom_parser(move |s| s.parse::<f64>().ok().map(|v| v / scale)),
+                        );
+                    } else {
+                        ui.label("Dist:");
+                        ui.add(slider);
+                    }
+
+                    if state.ui.nearby_dist_thresh != dist_prev {
                         *redraw = true;
                     }
                 }
-                if let Some(msg) = hydrogen_err {
-                    handle_err(&mut state.ui, msg);
-                }
-            }
-
-            if state.ui.dist_filter != DistFilter::None {
-                let dist_prev = state.ui.nearby_dist_thresh;
-                ui.spacing_mut().slider_width = 160.;
-
-                let slider = Slider::new(
-                    &mut state.ui.nearby_dist_thresh,
-                    NEARBY_THRESH_MIN..=NEARBY_THRESH_MAX,
-                );
-
-                if state.ui.dist_filter == DistFilter::NearSfc {
-                    // The same value, displayed as the depth below the surface it maps to.
-                    let scale = SFC_DIST_SCALE as f64;
-
-                    ui.label("Depth:").on_hover_text(
-                        "Hide protein atoms deeper than this below the surface, in Å.",
-                    );
-                    ui.add(
-                        slider
-                            .custom_formatter(move |v, _| format!("{:.1}", v * scale))
-                            .custom_parser(move |s| s.parse::<f64>().ok().map(|v| v / scale)),
-                    );
-                } else {
-                    ui.label("Dist:");
-                    ui.add(slider);
-                }
-
-                if state.ui.nearby_dist_thresh != dist_prev {
-                    *redraw = true;
-                }
-            }
-        });
+            });
+        }
 
         if state.ui.selection != Selection::None {
             section_box().show(ui, |ui| {

@@ -357,6 +357,8 @@ pub struct StateVolatile {
     pub flags: SceneFlags,
     pub active_mol: Option<(MolType, usize)>,
     /// Most recently active peptide, retained while another molecule type is active.
+    /// todo: This concept of Active Peptide separate from `active_mol` may be removed
+    /// in the future, and I'm not sure what it's used for (2026-09-23).
     pub active_peptide: Option<usize>,
     pub mol_manip: MolManip,
     /// For restoring after temprarily disabling mouse look.

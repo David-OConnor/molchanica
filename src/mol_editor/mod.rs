@@ -857,6 +857,7 @@ pub(super) fn build_dynamics(
         static_: false,
         bonded_only: false,
         mol_specific_params: Some(editor.md.mol_specific_params.clone()),
+        explicit_params: None,
     }];
 
     let cfg = MdConfig {

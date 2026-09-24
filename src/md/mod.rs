@@ -1117,6 +1117,7 @@ pub(crate) fn setup_mols_dyn(
                 static_: static_peptide,
                 bonded_only: false,
                 mol_specific_params: None,
+                explicit_params: None,
             };
             add_copies(&mut res, &mol, copies, box_dims);
             continue;
@@ -1148,6 +1149,7 @@ pub(crate) fn setup_mols_dyn(
             static_: false,
             bonded_only: false,
             mol_specific_params: msp,
+            explicit_params: None,
         };
 
         add_copies(&mut res, &mol, copies, box_dims);

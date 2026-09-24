@@ -6,7 +6,7 @@ use std::{fmt, fmt::Display, io, io::ErrorKind, str::FromStr, sync::OnceLock};
 use bincode::{Decode, Encode};
 use bio_files::BondType;
 use egui::{Color32, FontFamily};
-use graphics::{EngineUpdates, Entity, Scene, TextOverlay, UP_VEC};
+use graphics::{EngineUpdates, Entity, Outline, Scene, TextOverlay, UP_VEC};
 use lin_alg::{
     f32::{Quaternion, Vec3},
     f64::Vec3 as Vec3F64,
@@ -56,6 +56,12 @@ pub const COLOR_AA_NON_RESIDUE: Color = (0., 0.8, 1.0);
 pub const COLOR_AA_NON_RESIDUE_EGUI: Color32 = Color32::from_rgb(0, 204, 255);
 
 pub const COLOR_SELECTED: Color = (1., 0., 0.);
+
+/// Drawn around the silhouette of the active small molecule.
+const OUTLINE_ACTIVE_MOL: Outline = Outline {
+    color: (0.2, 0.55, 1.),
+    thickness: 3.,
+};
 
 const COLOR_WATER_BOND: Color = (0.5, 0.5, 0.8);
 
@@ -771,6 +777,14 @@ pub fn draw_mol_with_pharmacophore_visibility(
 
     let compact_md_solvent_style = use_md_compact_solvent_style(draw_md_mols, &mol.common().ident);
 
+    // Highlight the active small molecule by outlining its atoms and bonds.
+    // todo: Other molecule types A/R.
+    let outline = if mol_active && mol.mol_type() == MolType::Ligand {
+        Some(OUTLINE_ACTIVE_MOL)
+    } else {
+        None
+    };
+
     // todo: You have problems with transparent objects like the view cube in conjunction
     // todo with the transparent surface; workaround to not draw the cube here.
     if ui.show_docking_tools && ui.mol_view != MoleculeView::Surface {
@@ -931,6 +945,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
             }
 
             entity.class = mol.mol_type().entity_type() as u32;
+            entity.outline = outline;
             result.push(entity);
         }
     }
@@ -1174,6 +1189,10 @@ pub fn draw_mol_with_pharmacophore_visibility(
             mol_active,
             to_hydrogen,
         );
+
+        for ent in &mut entities {
+            ent.outline = outline;
+        }
 
         // Draw atom-based labels on bonds if not in a view mode that shows atoms.
         if mode != OperatingMode::MolEditor

@@ -216,6 +216,7 @@ fn solute_template(
         static_: false,
         bonded_only: false,
         mol_specific_params: Some(ff_params),
+        explicit_params: None,
     })
 }
 
