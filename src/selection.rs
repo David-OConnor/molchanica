@@ -531,10 +531,15 @@ pub fn find_sel_from_cursor_ray(
                         Selection::AtomPeptide(nearest.atom_i)
                     }
                 }
-                MolType::Ligand => Selection::AtomLig(indices),
-                MolType::NucleicAcid => Selection::AtomNucleicAcid(indices),
-                MolType::Lipid => Selection::AtomLipid(indices),
-                MolType::Pocket => Selection::AtomPocket(indices),
+                // Residue selection only applies to peptides. For all other molecule types,
+                // preserve the atom-versus-bond result from the corresponding picking pass.
+                MolType::Ligand | MolType::NucleicAcid | MolType::Lipid | MolType::Pocket => {
+                    if bond_mode {
+                        Selection::from_bond(nearest.mol_type, indices.0, indices.1)
+                    } else {
+                        Selection::from_atom(nearest.mol_type, indices.0, indices.1)
+                    }
+                }
                 MolType::Water => unreachable!(),
             }
         }
@@ -1194,6 +1199,8 @@ fn ray_metrics(ray_origin: Vec3F32, ray_dir: Vec3F32, posit: Vec3F32) -> (f32, f
     (dist_to_ray, t)
 }
 
+/// This is primarily for use with proteins, and generally not for
+/// small molecules. It it likely relevant for nucleic acids and lipids.
 #[derive(Clone, Copy, PartialEq, Debug, Default, Encode, Decode)]
 pub enum ViewSelLevel {
     #[default]

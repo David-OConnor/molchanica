@@ -1139,9 +1139,16 @@ impl MdPrefs {
         let mut i = 0;
         let len = parse_le!(data, u32, i..i + 4) as usize;
         i += 4;
-        let config = bincode::decode_from_slice(&data[i..i + len], bincode::config::standard())
-            .unwrap()
-            .0;
+        // The saved config won't decode if `MdConfig`'s fields have changed since it was saved; use
+        // the default in that case, instead of losing the rest of the prefs.
+        let config =
+            match bincode::decode_from_slice(&data[i..i + len], bincode::config::standard()) {
+                Ok((config, read)) if read == len => config,
+                _ => {
+                    eprintln!("Unable to load the saved MD config; using the default.");
+                    Default::default()
+                }
+            };
         i += len;
         let num_steps = parse_le!(data, u32, i..i + 4);
         i += 4;
