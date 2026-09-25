@@ -37,7 +37,6 @@ use mol_defs::{
 use na_seq::AaIdent;
 
 use crate::{
-    cam::{FOG_DIST_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     drawing::MoleculeView,
     external_tools::data_root,
     file_io::FileDialogs,
@@ -48,7 +47,7 @@ use crate::{
     mol_manip::MolManip,
     orca::StateOrca,
     peptide_ligands::LigAttachUi,
-    prefs::ToSave,
+    prefs::{DepthMode, ToSave},
     selection::{Selection, ViewSelLevel},
     sonification::MoleculeSonification,
     threads::ThreadReceivers,
@@ -112,7 +111,6 @@ impl Default for State {
     fn default() -> Self {
         // Many other UI defaults are loaded after the initial prefs load in `main`.
         let ui = StateUi {
-            view_depth: (VIEW_DEPTH_NEAR_MIN, FOG_DIST_DEFAULT),
             nearby_dist_thresh: 15,
             density_iso_level: 1.8,
             mol_view_peptide: MoleculeView::default(),
@@ -364,7 +362,7 @@ pub struct StateVolatile {
     /// For restoring after temprarily disabling mouse look.
     pub control_scheme_prev: ControlScheme,
     pub orbit_center_prev: Option<(MolType, usize)>,
-    pub auto_fog_prev: bool,
+    pub depth_mode_prev: DepthMode,
     /// Ctrl, alt, shift etc.
     pub key_modifiers: Modifiers,
     pub operating_mode: OperatingMode,
@@ -489,7 +487,6 @@ pub struct StateUi {
     pub dist_filter: DistFilter,
     /// Angstrom. Used by `dist_filter`.
     pub nearby_dist_thresh: u16,
-    pub view_depth: (u16, u16), // angstrom. min, max.
     pub cam_snapshot: Option<usize>,
     pub dt_render: f32, // Seconds
     // For selecting residues from the GUI.

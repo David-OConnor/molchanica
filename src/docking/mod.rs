@@ -191,6 +191,7 @@ fn build_dynamics_docking(
         bonded_only: false,
         mol_specific_params: Some(msp.clone()),
         explicit_params: None,
+        residues: None,
     });
 
     // todo: Let's try: Use all protein atoms, but make all but the ones near the docking site
@@ -231,6 +232,7 @@ fn build_dynamics_docking(
         bonded_only: false,
         mol_specific_params: None,
         explicit_params: None,
+        residues: None,
     });
 
     println!("Initializing docking MD state...");

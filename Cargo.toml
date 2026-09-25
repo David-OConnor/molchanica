@@ -65,7 +65,7 @@ bytes = "1.12.1"
 # (An earlier note here said loading couldn't find the GPU on Ubuntu. `libcuda.so.1` -- the name
 # the driver actually installs -- is in cudarc's candidate list, so if that recurs, check what
 # `ldconfig -p | grep libcuda` reports on the affected machine before reaching for linking again.)
-cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
+cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
 
 rodio = "0.22.2"  # For sonification of bonds etc.
 webbrowser = "1.2.4"  # For opening links, e.g. from the About popup.

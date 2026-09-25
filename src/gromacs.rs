@@ -362,6 +362,7 @@ pub fn build_molecule_inputs(
                     bonded_only: false,
                     mol_specific_params: None,
                     explicit_params: None,
+                    residues: None,
                 },
                 if peptide_i == 0 {
                     "PEP".to_string()
@@ -388,6 +389,7 @@ pub fn build_molecule_inputs(
                     bonded_only: false,
                     mol_specific_params: ff_params,
                     explicit_params: None,
+                    residues: None,
                 },
                 name,
                 HashSet::new(),

@@ -466,10 +466,12 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
 
     state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
     state.volatile.orbit_center_prev = state.volatile.orbit_center;
-    state.volatile.auto_fog_prev = state.to_save.auto_fog;
+    state.volatile.depth_mode_prev = state.to_save.depth_mode;
 
     // For now at least, disable auto fog when in editing mode.
-    state.to_save.auto_fog = false;
+    if state.to_save.depth_mode == crate::prefs::DepthMode::Auto {
+        state.to_save.depth_mode = crate::prefs::DepthMode::Disabled;
+    }
 
     cam::set_fog(state, &mut scene.camera);
 
@@ -567,7 +569,7 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engine
         state.volatile.orbit_center = state.volatile.orbit_center_prev;
     }
 
-    state.to_save.auto_fog = state.volatile.auto_fog_prev;
+    state.to_save.depth_mode = state.volatile.depth_mode_prev;
     cam::set_fog(state, &mut scene.camera);
 
     state.mol_editor.md.md = None;
@@ -858,6 +860,7 @@ pub(super) fn build_dynamics(
         bonded_only: false,
         mol_specific_params: Some(editor.md.mol_specific_params.clone()),
         explicit_params: None,
+        residues: None,
     }];
 
     let cfg = MdConfig {

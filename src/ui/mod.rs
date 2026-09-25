@@ -23,8 +23,8 @@ use popup::load_popups;
 use crate::{
     button, cam,
     cam::{
-        FOG_DIST_MAX, FOG_DIST_MIN, RENDER_DIST_NEAR, VIEW_DEPTH_NEAR_MAX, VIEW_DEPTH_NEAR_MIN,
-        move_cam_to_sel, set_fog,
+        FOG_DIST_MAX, FOG_DIST_MIN, VIEW_DEPTH_NEAR_MAX, VIEW_DEPTH_NEAR_MIN, move_cam_to_sel,
+        set_fog,
     },
     cli,
     cli::autocomplete_cli,
@@ -32,7 +32,7 @@ use crate::{
     file_io::download_mols::load_atom_coords_rcsb,
     inputs::add_atom_with_tab,
     mol_editor::enter_edit_mode,
-    prefs::ControlSchemeType,
+    prefs::{ControlSchemeType, DepthMode},
     render::set_flashlight,
     selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},
     state::{CamSnapshot, DistFilter, OperatingMode, ResColoring, SmilesDisplayCache, State},
@@ -1133,8 +1133,6 @@ pub(crate) fn cam_controls(
 
     let mut changed = false;
 
-    // let cam = &mut scene.camera;
-
     cam::cam_reset_controls(state, scene, ui, engine_updates, &mut changed);
 
     ui.add_space(COL_SPACING);
@@ -1200,64 +1198,57 @@ pub(crate) fn cam_controls(
         move_cam_to_sel(state, &mut scene.camera, engine_updates);
     }
 
-    // if state.volatile.active_mol.is_some() {
-    //     if ui
-    //         .button(RichText::new("Cam to mol").color(COLOR_HIGHLIGHT))
-    //         .on_hover_text("Move camera near active molecule, looking at it.")
-    //         .clicked()
-    //     {
-    //         let pep_center = match &state.peptide {
-    //             Some(mol) => mol.center,
-    //             None => lin_alg::f64::Vec3::new_zero(),
-    //         };
-    //         // Setting mol center to 0 if no mol.
-    //         move_cam_to_active_mol(state, scene, pep_center, engine_updates)
-    //     }
-    // }
-
     ui.add_space(COL_SPACING);
+    ui.label("Depth:");
+    let depth_mode = state.to_save.depth_mode;
+    let depth_options = [
+        (
+            DepthMode::Disabled,
+            "Disabled",
+            "Show objects at any depth without distance fading.",
+        ),
+        (
+            DepthMode::Auto,
+            "Auto",
+            "Automatically adjust the far distance based on visible molecules.",
+        ),
+        (
+            DepthMode::Manual((VIEW_DEPTH_NEAR_MIN, cam::VIEW_DEPTH_DEFAULT)),
+            "Manual",
+            "Set the near clip plane and far fade distance yourself.",
+        ),
+    ];
 
-    ui.spacing_mut().slider_width = 60.;
-
-    let hover_text = "Don't render objects closer to the camera than this distance, in Å.";
-    ui.label("Depth. Near(×10):").on_hover_text(hover_text);
-
-    ui.add(Slider::new(
-        &mut state.ui.view_depth.0,
-        VIEW_DEPTH_NEAR_MIN..=VIEW_DEPTH_NEAR_MAX,
-    ))
-    .on_hover_text(hover_text);
-
-    let hover_text = "(Hotkey: Ctrl + scroll) Fade distant objects. This may make it easier to see objects near the camera.";
-    ui.label("Far:").on_hover_text(hover_text);
-
-    let depth_prev = state.ui.view_depth;
-    ui.add(Slider::new(
-        &mut state.ui.view_depth.1,
-        FOG_DIST_MIN..=FOG_DIST_MAX,
-    ))
-    .on_hover_text(hover_text);
-
-    if state.ui.view_depth != depth_prev {
-        // Interpret the slider being at min or max position to mean (effectively) unlimited.
-
-        scene.camera.near = if state.ui.view_depth.0 == VIEW_DEPTH_NEAR_MIN {
-            RENDER_DIST_NEAR
-        } else {
-            state.ui.view_depth.0 as f32 / 10.
-        };
-        // todo: Only if near changed.
-        scene.camera.update_proj_mat();
-
+    // A manual mode's values vary, so compare by variant rather than by full value.
+    let selected = match depth_mode {
+        DepthMode::Manual(_) => depth_options[2].0,
+        mode => mode,
+    };
+    if let Some(mode) = misc::selector(ui, selected, &depth_options) {
+        state.to_save.select_depth_mode(mode);
         changed = true;
     }
 
-    ui.label("Auto depth").on_hover_text(
-        "Automatically adjust the far distance based on the camera's distance \
-        from the nearest atoms. Consider setting this as a default in most cases.",
-    );
-    if ui.checkbox(&mut state.to_save.auto_fog, "").changed() {
-        set_fog(state, &mut scene.camera);
+    if let DepthMode::Manual(depth) = &mut state.to_save.depth_mode {
+        ui.spacing_mut().slider_width = 60.;
+        let depth_prev = *depth;
+
+        let near_help = "Don't render objects closer to the camera than this distance, in Å.";
+        ui.label("Near(×10):").on_hover_text(near_help);
+        ui.add(Slider::new(
+            &mut depth.0,
+            VIEW_DEPTH_NEAR_MIN..=VIEW_DEPTH_NEAR_MAX,
+        ))
+        .on_hover_text(near_help);
+
+        let far_help = "(Hotkey: Ctrl + scroll) Fade distant objects. This may make it easier to see objects near the camera.";
+        ui.label("Far:").on_hover_text(far_help);
+        ui.add(Slider::new(&mut depth.1, FOG_DIST_MIN..=FOG_DIST_MAX))
+            .on_hover_text(far_help);
+
+        if *depth != depth_prev {
+            changed = true;
+        }
     }
 
     if changed {

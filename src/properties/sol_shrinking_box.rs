@@ -439,6 +439,7 @@ fn solute_template(
         bonded_only: false,
         mol_specific_params: Some(ff_params),
         explicit_params: None,
+        residues: None,
     })
 }
 

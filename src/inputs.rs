@@ -13,12 +13,13 @@ use na_seq::Element::Carbon;
 
 use crate::{
     cam,
-    cam::{FOG_DIST_MIN, FOG_HALF_DEPTH_DEFAULT, move_cam_to_sel, set_fog_dist},
+    cam::{FOG_DIST_MAX, FOG_DIST_MIN, move_cam_to_sel},
     drawing::{EntityClass, draw_pocket, peptide, wrappers},
     mol_editor,
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
     mol_manip::{ManipMode, set_manip},
+    prefs::DepthMode,
     render::set_flashlight,
     selection,
     selection::{Selection, cycle_selected},
@@ -752,18 +753,12 @@ fn handle_scroll(
     }
 
     if state.volatile.key_modifiers.state().control_key() {
-        state.ui.view_depth.1 = (state.ui.view_depth.1 as i16 + (scroll * 5.) as i16) as u16;
-
-        // Overflowed from subtraction.
-        if state.ui.view_depth.1 > 2_000 {
-            state.ui.view_depth.1 = FOG_DIST_MIN;
+        if let DepthMode::Manual((_, far)) = &mut state.to_save.depth_mode {
+            *far = (*far as i32 + (scroll * 5.) as i32)
+                .clamp(FOG_DIST_MIN as i32, FOG_DIST_MAX as i32) as u16;
+            cam::set_fog(state, &mut scene.camera);
+            updates.camera = true;
         }
-
-        set_fog_dist(
-            &mut scene.camera,
-            state.ui.view_depth.1,
-            FOG_HALF_DEPTH_DEFAULT,
-        );
 
         // Counteract the engine's default free look behavior. This is indirect, but good
         // enough for now.
@@ -905,18 +900,17 @@ fn post_event_cleanup(
 
         // Update fog dynamically as the camera moves, on a ratio for performance.
         // find_nearest_mol_dist_to_cam already subsamples the protein, so this is cheap.
-        if state.to_save.auto_fog {
+        if state.to_save.depth_mode == DepthMode::Auto {
             static mut I_FOG: u32 = 0;
             const FOG_RATIO: u32 = 6;
 
             unsafe {
                 I_FOG += 1;
-                if state.to_save.auto_fog
-                    && (I_FOG.is_multiple_of(FOG_RATIO)
-                        || state.volatile.inputs_commanded.scroll_down
-                        || state.volatile.inputs_commanded.scroll_up)
+                if I_FOG.is_multiple_of(FOG_RATIO)
+                    || state.volatile.inputs_commanded.scroll_down
+                    || state.volatile.inputs_commanded.scroll_up
                 {
-                    cam::set_fog_dists_by_near_and_far_mols(state, &mut scene.camera);
+                    cam::set_fog(state, &mut scene.camera);
                     updates.camera = true;
                 }
             }

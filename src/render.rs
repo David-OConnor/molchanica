@@ -10,7 +10,8 @@ use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
     cam::{
-        FOG_DIST_DEFAULT, FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, calc_fog_dists,
+        FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, VIEW_DEPTH_DEFAULT,
+        calc_fog_dists,
     },
     drawing::atoms_bonds::BOND_RADIUS_BASE,
     inputs,
@@ -96,7 +97,7 @@ pub fn render(state: State) {
     let white = [1., 1., 1., 0.5];
     let pink = [1., 0., 1., 1.];
 
-    let (fog_start, fog_end) = calc_fog_dists(FOG_DIST_DEFAULT, FOG_HALF_DEPTH_DEFAULT);
+    let (fog_start, fog_end) = calc_fog_dists(VIEW_DEPTH_DEFAULT, FOG_HALF_DEPTH_DEFAULT);
 
     let mut camera = Camera {
         fov_y: TAU / 8.,

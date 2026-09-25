@@ -5,6 +5,7 @@ use mol_defs::molecules::{MolGenericRef, MolType, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
+    prefs::DepthMode,
     render::{CAM_INIT_OFFSET, set_flashlight, set_static_light},
     selection::Selection,
     state::State,
@@ -23,7 +24,7 @@ pub const VIEW_DEPTH_NEAR_MAX: u16 = 300;
 pub const FOG_HALF_DEPTH_DEFAULT: u16 = 45;
 
 // The range to start fading distance objects, and when the fade is complete.
-pub const FOG_DIST_DEFAULT: u16 = 120;
+pub const VIEW_DEPTH_DEFAULT: u16 = 120;
 
 // Affects the user-setting far property.
 // Sets the fog center point in its fade.
@@ -32,13 +33,24 @@ pub const FOG_DIST_MAX: u16 = 120;
 
 const PEP_FOG_FAR_RATIO: usize = 20;
 
-/// A wrapper which sets fog using either a manual, or automatic technique based on
-/// configuration.
+/// Apply the selected depth mode to the near clip plane and distant-object fade.
 pub fn set_fog(state: &State, cam: &mut Camera) {
-    if state.to_save.auto_fog && !state.volatile.md_local.draw_md_mols {
-        set_fog_dists_by_near_and_far_mols(state, cam);
-    } else {
-        set_fog_dist(cam, state.ui.view_depth.1, FOG_HALF_DEPTH_DEFAULT);
+    let near = match state.to_save.depth_mode {
+        DepthMode::Manual((near, _)) if near != VIEW_DEPTH_NEAR_MIN => near as f32 / 10.,
+        _ => RENDER_DIST_NEAR,
+    };
+    if cam.near != near {
+        cam.near = near;
+        cam.update_proj_mat();
+    }
+
+    match state.to_save.depth_mode {
+        DepthMode::Disabled => set_fog_dist(cam, FOG_DIST_MAX, FOG_HALF_DEPTH_DEFAULT),
+        DepthMode::Auto if !state.volatile.md_local.draw_md_mols => {
+            set_fog_dists_by_near_and_far_mols(state, cam);
+        }
+        DepthMode::Auto => set_fog_dist(cam, VIEW_DEPTH_DEFAULT, FOG_HALF_DEPTH_DEFAULT),
+        DepthMode::Manual((_, far)) => set_fog_dist(cam, far, FOG_HALF_DEPTH_DEFAULT),
     }
 }
 
@@ -333,7 +345,9 @@ pub fn reset_camera(
     updates.camera = true;
     updates.lighting = true;
 
-    state.ui.view_depth = (VIEW_DEPTH_NEAR_MIN, FOG_DIST_DEFAULT);
+    if let DepthMode::Manual(depth) = &mut state.to_save.depth_mode {
+        *depth = (VIEW_DEPTH_NEAR_MIN, VIEW_DEPTH_DEFAULT);
+    }
     set_fog(state, &mut scene.camera);
 }
 

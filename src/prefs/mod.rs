@@ -28,6 +28,7 @@ use mol_defs::{
 };
 
 use crate::{
+    cam::{VIEW_DEPTH_DEFAULT, VIEW_DEPTH_NEAR_MIN},
     docking::DockingSite,
     drawing::MoleculeView,
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
@@ -296,7 +297,9 @@ pub struct ToSave {
     pub lipid: LipidUi,
     pub nucleic_acid: NucleicAcidUi,
     pub mesh_coloring: MeshColoring,
-    pub auto_fog: bool,
+    pub depth_mode: DepthMode,
+    /// Last manual values to restore after selecting Auto or Disabled.
+    manual_depth_cache: (u16, u16),
 }
 
 impl Default for ToSave {
@@ -317,9 +320,40 @@ impl Default for ToSave {
             lipid: Default::default(),
             nucleic_acid: Default::default(),
             mesh_coloring: Default::default(),
-            auto_fog: false,
+            depth_mode: DepthMode::default(),
+            manual_depth_cache: (VIEW_DEPTH_NEAR_MIN, VIEW_DEPTH_DEFAULT),
         }
     }
+}
+
+impl ToSave {
+    pub fn select_depth_mode(&mut self, mode: DepthMode) {
+        if let DepthMode::Manual(depth) = self.depth_mode {
+            self.manual_depth_cache = depth;
+        }
+
+        self.depth_mode = match mode {
+            DepthMode::Manual(_) => DepthMode::Manual(self.manual_depth_cache),
+            mode => mode,
+        };
+    }
+
+    fn manual_depth(&self) -> (u16, u16) {
+        match self.depth_mode {
+            DepthMode::Manual(depth) => depth,
+            _ => self.manual_depth_cache,
+        }
+    }
+}
+
+/// Camera clipping and distance fading. Manual distances are in tenths of an Å
+/// for the near plane and Å for the far fade center.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DepthMode {
+    #[default]
+    Disabled,
+    Auto,
+    Manual((u16, u16)),
 }
 
 /// Generally, data here only applies if a protein is present.

@@ -42,8 +42,8 @@ use crate::{
     drawing::MoleculeView,
     md::MdBackend,
     prefs::{
-        ControlSchemeType, ControlSettings, Graphics, MdPrefs, OpenHistory, OpenType, PerMolToSave,
-        ToSave, UiPrefs,
+        ControlSchemeType, ControlSettings, DepthMode, Graphics, MdPrefs, OpenHistory, OpenType,
+        PerMolToSave, ToSave, UiPrefs,
     },
     selection::{Selection, ViewSelLevel},
     state::{
@@ -1312,7 +1312,14 @@ impl ToSave {
             out.extend_from_slice(&self.sa_surface_precision.to_le_bytes());
             out.extend_from_slice(&self.ph.to_le_bytes());
             out.push(self.mesh_coloring.to_u8());
-            out.push(self.auto_fog as u8);
+            out.push(match self.depth_mode {
+                DepthMode::Disabled => 2,
+                DepthMode::Auto => 1,
+                DepthMode::Manual(_) => 3,
+            });
+            let (near, far) = self.manual_depth();
+            out.extend_from_slice(&near.to_le_bytes());
+            out.extend_from_slice(&far.to_le_bytes());
             packets.push((PacketType::Misc, out));
         }
 
@@ -1446,7 +1453,24 @@ impl ToSave {
                     j += 4;
                     to_save.mesh_coloring = MeshColoring::from_u8(payload[j]);
                     j += 1;
-                    to_save.auto_fog = payload[j] != 0;
+                    // Older files only saved the mode, or saved values for Manual.
+                    // New files include the manual values for every mode.
+                    let manual_depth = if payload.len() >= j + 5 {
+                        (
+                            parse_le!(payload, u16, j + 1..j + 3),
+                            parse_le!(payload, u16, j + 3..j + 5),
+                        )
+                    } else {
+                        to_save.manual_depth_cache
+                    };
+                    to_save.manual_depth_cache = manual_depth;
+                    to_save.depth_mode = match payload[j] {
+                        0 => DepthMode::default(),
+                        1 => DepthMode::Auto,
+                        2 => DepthMode::Disabled,
+                        3 if payload.len() >= j + 5 => DepthMode::Manual(manual_depth),
+                        _ => DepthMode::default(),
+                    };
                 }
             }
         }

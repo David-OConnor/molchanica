@@ -50,17 +50,17 @@ const COLOR_MOL_ROTATE: Color = (0.65, 1., 0.65);
 const COLOR_MD_NEAR_MOL: Color = (0.0, 0., 1.); // Blended into
 const BLEND_AMT_MD_NEAR_MOL: f32 = 0.5; // A higher value means it's closer to the special color.
 
-// i.e a flexible bond.
-// const LIGAND_COLOR_FLEX: Color = (1., 1., 0.);
 pub const COLOR_AA_NON_RESIDUE: Color = (0., 0.8, 1.0);
 pub const COLOR_AA_NON_RESIDUE_EGUI: Color32 = Color32::from_rgb(0, 204, 255);
 
 pub const COLOR_SELECTED: Color = (1., 0., 0.);
 
 /// Drawn around the silhouette of the active small molecule.
+/// We have this set up to be similar to `COLOR_SELECTED`, which highlights
+/// atoms, bonds, and residues.
 const OUTLINE_ACTIVE_MOL: Outline = Outline {
-    color: (0.2, 0.55, 1.),
-    thickness: 3.,
+    color: (0.6, 0.05, 0.05),
+    thickness: 1.0,
 };
 
 const COLOR_WATER_BOND: Color = (0.5, 0.5, 0.8);
