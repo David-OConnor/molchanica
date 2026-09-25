@@ -267,7 +267,6 @@ pub(in crate::ui) fn selected_data_mol_editor(state: &State, selection: &Selecti
 /// Display text of the selected atom or residue.
 pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        // ui.horizontal_wrapped(|ui| {
         match selection {
             Selection::AtomPeptide(sel_i) => {
                 let Some(mol) = state
