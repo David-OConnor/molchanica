@@ -885,6 +885,7 @@ pub(in crate::ui) fn sidebar(
             // todo: Function or macro to reduce this DRY.
 
             if edit_mode {
+                mol_editor_sidebar::db_info(state, ui);
                 mol_editor_sidebar::pocket_list(state, scene, updates, ui);
             } else {
                 mol_picker(state, scene, ui, redraw, updates);

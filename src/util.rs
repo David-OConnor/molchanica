@@ -1104,7 +1104,7 @@ pub fn make_lig_from_res(
 }
 
 /// Give a ligand with flat, 2D coordinates (e.g. from a 2D-only SDF) 3D geometry, using energy
-/// minimization. It stays where it is.
+/// minimization.
 pub fn make_lig_3d(
     state: &mut State,
     lig_i: usize,

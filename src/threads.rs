@@ -27,6 +27,7 @@ use crate::{
     file_io::{SessionRestoreItem, SessionRestorePayload, managed_mols, parse_session_history},
     gromacs::on_gromacs_md_complete,
     mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
+    mol_editor,
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
     split_join::{StructureLookup, on_structure_lookup},
@@ -61,6 +62,9 @@ pub struct ThreadReceivers {
     pub all_idents_avail: Option<(usize, String, Receiver<IdentLookupOutcome>)>,
     /// PubChem lookups naming molecules produced by a split or join; one per molecule.
     pub structure_lookups: Vec<StructureLookup>,
+    /// The molecule editor's "Check DBs" PubChem lookup. Carries the SMILES looked up, so a
+    /// result for a structure that has since been edited isn't applied.
+    pub editor_db_check: Option<(String, Receiver<Result<pubchem::Properties, ReqError>>)>,
     /// The first param is the index.
     pub therapeutic_properties_avail: Option<Receiver<(usize, TherapeuticProperties)>>,
     /// The first param is the index.
@@ -95,6 +99,7 @@ impl ThreadReceivers {
             || self.pubchem_properties_avail.is_some()
             || self.all_idents_avail.is_some()
             || !self.structure_lookups.is_empty()
+            || self.editor_db_check.is_some()
             || self.therapeutic_properties_avail.is_some()
             || self.amber_geostd_data_avail.is_some()
             || !self.sifts_mapping_avail.is_empty()
@@ -751,6 +756,26 @@ pub fn handle_thread_rx(
                 );
             }
         }
+    }
+
+    let editor_db_check = state
+        .volatile
+        .thread_receivers
+        .editor_db_check
+        .as_ref()
+        .map(|(_, rx)| rx.try_recv());
+    match editor_db_check {
+        Some(Ok(result)) => {
+            if let Some((smiles, _)) = state.volatile.thread_receivers.editor_db_check.take() {
+                mol_editor::on_db_check(state, smiles, result);
+            }
+        }
+        Some(Err(TryRecvError::Disconnected)) => {
+            if let Some((smiles, _)) = state.volatile.thread_receivers.editor_db_check.take() {
+                mol_editor::on_db_check(state, smiles, Err(ReqError::Http));
+            }
+        }
+        Some(Err(TryRecvError::Empty)) | None => {}
     }
 
     let mut prefs_dirty = false;

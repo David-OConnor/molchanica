@@ -1,10 +1,13 @@
-use egui::{Color32, Ui};
+use bio_apis::pubchem;
+use egui::{Color32, FontId, RichText, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
+use mol_defs::molecules::MolIdent;
 
 use crate::{
     button,
     drawing::{EntityClass, draw_pocket},
     label,
+    mol_editor::DbCheck,
     pocket_render::PocketRender,
     selection::Selection,
     state::State,
@@ -14,6 +17,84 @@ use crate::{
         popup::pharmacophore,
     },
 };
+
+/// The editor molecule's SMILES, and its PubChem CID if it was loaded with one, or "Check DBs"
+/// found one. These are for its current structure.
+pub(in crate::ui) fn db_info(state: &State, ui: &mut Ui) {
+    let editor = &state.mol_editor;
+
+    let mut cid = None;
+    let mut title = None;
+    for ident in &editor.mol.idents {
+        match ident {
+            MolIdent::PubChem(v) => cid = Some(*v),
+            MolIdent::PubchemTitle(v) if !v.is_empty() => title = Some(v),
+            _ => (),
+        }
+    }
+
+    ui.label("Identifiers");
+    ui.separator();
+
+    ui.horizontal_wrapped(|ui| {
+        label!(ui, "SMILES:", Color32::GRAY);
+
+        let smiles = if editor.smiles.is_empty() {
+            "—"
+        } else {
+            &editor.smiles
+        };
+        // Wrap long SMILES instead of widening the sidebar.
+        ui.label(
+            RichText::new(smiles)
+                .color(Color32::WHITE)
+                .font(FontId::proportional(10.)),
+        );
+    });
+
+    ui.horizontal_wrapped(|ui| {
+        label!(ui, "CID:", Color32::GRAY);
+
+        if let Some(cid) = cid {
+            label!(ui, cid.to_string(), Color32::WHITE);
+
+            if ui
+                .button("PubChem")
+                .on_hover_text("Open this compound's PubChem page in your web browser.")
+                .clicked()
+            {
+                pubchem::open_overview(cid);
+            }
+        } else {
+            let (text, help) = match editor.db_check {
+                None => (
+                    "Not checked",
+                    "Click \"Check DBs\" to look up this molecule on PubChem.",
+                ),
+                Some(DbCheck::Pending) => ("Checking...", "Looking up this molecule on PubChem."),
+                Some(DbCheck::NotFound) | Some(DbCheck::Found) => (
+                    "Not in PubChem",
+                    "PubChem has no compound with this structure.",
+                ),
+                Some(DbCheck::Failed) => (
+                    "Lookup failed",
+                    "Unable to look up this molecule on PubChem, e.g. from a network problem.",
+                ),
+            };
+
+            label!(ui, text, Color32::WHITE).on_hover_text(help);
+        }
+    });
+
+    if let Some(title) = title {
+        ui.horizontal_wrapped(|ui| {
+            label!(ui, "Name:", Color32::GRAY);
+            label!(ui, title, Color32::WHITE);
+        });
+    }
+
+    ui.add_space(ROW_SPACING);
+}
 
 pub(in crate::ui) fn pocket_list(
     state: &mut State,

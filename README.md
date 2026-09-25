@@ -279,7 +279,7 @@ See below for a reference.
 - **R**: Rotate a molecule with the mouse and scroll wheel
 
 - **Enter**: Move the camera to the selected atom or residue.
-- **Esc**: Clear selection, molecule manipulation modes etc.
+- **Esc**: Exit move/rotate mode if in one. Otherwise, clear the selection (keeping the molecule active); if nothing is selected, deactivate the active molecule.
 
 - **Ctrl + scroll**: Change the fog distance. (hide distant atoms)
 

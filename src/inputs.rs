@@ -518,9 +518,11 @@ fn handle_physical_key(
                             state.volatile.mol_manip.mode,
                             updates,
                         );
-                    } else if state.volatile.operating_mode != OperatingMode::Primary {
-                        // Unselect everything.
+                    } else if state.ui.selection != Selection::None {
+                        // First press: clear the selection, but keep the molecule active.
                         state.ui.selection = Selection::None;
+                    } else {
+                        // No selection: deactivate the molecule.
                         state.volatile.active_mol = None;
                     }
 

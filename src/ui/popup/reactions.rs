@@ -11,7 +11,7 @@ use crate::{
     reactions::{Entry, Query, ReactionsState},
     state::State,
     ui::{misc::selector, util::open_chebi_download},
-    util::{RedrawFlags, handle_err},
+    util::{RedrawFlags, handle_err, make_lig_3d},
 };
 
 const PER_PAGE: usize = 4;
@@ -24,9 +24,23 @@ pub(super) fn poll_downloads(
     updates: &mut EngineUpdates,
 ) {
     for (id, result) in state.ui.reactions.take_downloads() {
+        // Opening a ChEBI molecule appends it to the ligand list. Keep its index so the
+        // conversion below targets the molecule from this download, regardless of selection.
+        let downloaded_lig_i = state.ligands.len();
         let result = result.and_then(|downloaded| {
             open_chebi_download(state, scene, redraw, updates, id, downloaded)
         });
+
+        if result.is_ok()
+            && state
+                .ligands
+                .get(downloaded_lig_i)
+                .is_some_and(|lig| lig.common.is_2d)
+        {
+            // We make 3D because most (or all?) of the ChEBI molecules we load from this
+            // are 2d, with incorrect proportions and bond lengths.
+            make_lig_3d(state, downloaded_lig_i, scene, updates);
+        }
         match result {
             Ok(()) => {
                 state.ui.reactions.download_message =
@@ -73,13 +87,16 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
             }
         });
     }
+
     if let Some(message) = &state.download_message {
         ui.label(message);
     }
+
     if let Some(error) = &state.download_error {
         ui.colored_label(Color32::LIGHT_RED, error);
         ui.label("Click the molecule again to retry.");
     }
+
     let Some(query) = state.selected.clone() else {
         if let Some(message) = &state.message {
             ui.colored_label(Color32::LIGHT_RED, message);
@@ -99,6 +116,7 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
         Entry::Ready(results) => &results.query,
         _ => &query,
     };
+
     ui.horizontal_wrapped(|ui| {
         if matches!(displayed_query, Query::Pdb(_)) {
             ui.label("Resolving the protein's UniProt mapping…");
@@ -118,6 +136,7 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
 
     let mut retry = false;
     let mut clicked_participant = None;
+
     match entry {
         Entry::Loading(_) => {
             ui.horizontal(|ui| {
@@ -193,9 +212,11 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
         state.page = 0;
         ui.ctx().request_repaint();
     }
+
     if let Some(id) = clicked_participant {
         if state.download_on_click {
             state.download(id);
+
             ui.ctx().request_repaint();
         } else {
             chebi::open_overview(id);
@@ -238,11 +259,13 @@ fn reaction_card(
                     clicked,
                     &mut columns[0],
                 );
+
                 columns[1].vertical_centered(|ui| {
                     ui.add_space(18.0);
                     ui.label(RichText::new("=").size(28.0));
                     ui.weak("Direction unspecified");
                 });
+
                 side(
                     right,
                     &reaction.products,
@@ -291,6 +314,7 @@ fn side(
                         } else {
                             "Open ChEBI molecule page in browser"
                         };
+
                         if ui
                             .add_enabled(
                                 !loading,

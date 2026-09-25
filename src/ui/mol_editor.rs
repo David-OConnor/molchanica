@@ -2,7 +2,7 @@ use bio_files::BondType;
 use dynamics::Solvent;
 use egui::{Color32, ComboBox, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
-use mol_defs::molecules::{Bond, MolIdent, MolType, small::MoleculeSmall};
+use mol_defs::molecules::{Bond, MolType, small::MoleculeSmall};
 use na_seq::{
     Element,
     Element::{Carbon, Chlorine, Hydrogen, Nitrogen, Oxygen, Phosphorus, Sulfur},
@@ -39,8 +39,7 @@ use crate::{
     },
     util::{RedrawFlags, handle_err},
 };
-// todo: Check DBs (with a button maybe?) to see if the molecule exists in a DB already, or if
-// todo a similar one does.
+// todo: Have "Check DBs" also check if a similar molecule exists in a DB.
 
 // todo: Use what you like from [Maestro's](https://www.youtube.com/watch?v=JpOOI5qyTXU&list=PL3dxdlKx_PccSO0YWKJqUx6lfQRyvyyG0&index=6)
 
@@ -292,6 +291,13 @@ pub(in crate::ui) fn editor(
             .on_hover_text("View and edit metadata for this molecule. This will be stored in the file when saved.")
             .clicked() {}
 
+        if ui.button("Check DBs")
+            .on_hover_text("Look up this molecule, as it currently is, on PubChem by its SMILES. \
+            The result displays in the sidebar.")
+            .clicked() {
+            mol_editor::check_dbs(state);
+        }
+
         ui.add_space(COL_SPACING);
         if ui
             .button(RichText::new("Save"))
@@ -384,15 +390,7 @@ pub(in crate::ui) fn editor(
             .on_hover_text("Exit the molecule editor, and load the edited molecule.")
             .clicked()
         {
-            state.mol_editor.mol.common.reassign_sns();
-            state.mol_editor.mol.update_characterization();
-
-            // Load the edited molecule back into the state.
-            state.ligands.push(
-                state.mol_editor.mol.clone()
-            );
-
-            exit_edit_mode(state, scene, updates);
+            mol_editor::exit_and_add(state, scene, updates);
         }
 
         if let Some(mol_i) = state.mol_editor.mol_i_in_state && mol_i < state.ligands.len() && ui
@@ -400,25 +398,7 @@ pub(in crate::ui) fn editor(
             .on_hover_text("Exit the molecule editor, and update the loaded molecule with changes made.")
             .clicked()
         {
-            state.mol_editor.mol.common.reassign_sns();
-            // Load the edited molecule back into the state.
-            state.ligands[mol_i].common.atoms = state.mol_editor.mol.common.atoms.clone();
-            state.ligands[mol_i].common.bonds = state.mol_editor.mol.common.bonds.clone();
-            state.ligands[mol_i].pharmacophore = state.mol_editor.mol.pharmacophore.clone();
-
-            state.ligands[mol_i].common.build_adjacency_list();
-            state.ligands[mol_i].common.reset_posits();
-
-            state.ligands[mol_i].update_characterization();
-
-            // We've reset the positions, so reset the camera. And update the prev,
-            // so exiting doesn't override it.
-            // move_cam_to_active_mol(state, scene, Vec3::new_zero(), updates);
-            // state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
-            // state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
-
-
-            exit_edit_mode(state, scene, updates);
+            mol_editor::exit_and_update(state, scene, updates, mol_i);
         }
 
         if ui
@@ -519,13 +499,6 @@ pub(in crate::ui) fn editor(
     });
 
     ui.horizontal(|ui| {
-        for ident in &state.mol_editor.mol.idents {
-            if let MolIdent::Smiles(smiles) = ident {
-                ui.label(RichText::new(smiles));
-                break;
-            }
-        }
-
         if state.mol_editor.md.md.is_some() {
             section_box().show(ui, |ui| {
                 ui.label("MD speed:");

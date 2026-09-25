@@ -40,7 +40,8 @@ pub const BOND_RADIUS_BASE: f32 = 0.10;
 // These ratios scale the base bond radius above.
 const BOND_RADIUS_LIG_RATIO: f32 = 1.3;
 // Of bond radius.
-const BOND_RADIUS_LIG_RATIO_SEL: f32 = 1.6;
+// const BOND_RADIUS_LIG_RATIO_SEL: f32 = 1.6;
+const BOND_RADIUS_LIG_RATIO_SEL: f32 = 1.3; // Currently the same as not-selected.
 // Of bond radius.
 const BOND_RADIUS_RATIO_H: f32 = 0.5;
 // Of bond radius. Covalent to H.

@@ -2,7 +2,7 @@
 
 use std::{
     f64::consts::TAU,
-    io, iter,
+    io, iter, mem,
     sync::mpsc::{self, Receiver},
     thread,
 };
@@ -26,18 +26,21 @@ use crate::{
     mol_manip::ManipMode,
     prefs::OpenType,
     selection::Selection,
-    state::State,
+    state::{OperatingMode, State},
     util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
 };
 
-/// A PubChem lookup for a molecule produced by splitting or joining. If PubChem knows its
-/// structure, the molecule takes that compound's CID as its name.
+/// A PubChem lookup for a molecule produced by splitting or joining, or by the molecule editor.
+/// If PubChem knows its structure, the molecule takes that compound's CID as its name.
 pub struct StructureLookup {
     /// The provisional name given by the edit. Kept if the lookup doesn't resolve.
     pub ident: String,
     /// The molecule's SMILES, which is what we look up. Along with `ident`, this finds the
     /// molecule again once the result is in, and won't if it has changed since.
     pub smiles: MolIdent,
+    /// If set, and the lookup resolves, the molecule's display name is this, followed by the name
+    /// it would have if loaded from PubChem. E.g. "Editor | 1123 | Taurine".
+    pub name_prefix: Option<String>,
     pub rx: Receiver<Result<pubchem::Properties, ReqError>>,
 }
 
@@ -520,7 +523,7 @@ pub fn join_ligands(
         *center = orbit_center(state);
     }
     // The joined structure has its own SMILES and may resolve to a known compound.
-    start_structure_lookup(state, joined_i);
+    start_structure_lookup(state, joined_i, None);
     state.update_save_prefs();
     draw_all_pockets(state, scene, updates);
     draw_all_ligs(state, scene, updates);
@@ -678,7 +681,7 @@ pub fn split_lig_at_bonds(
     // Name what's left, and each piece split off, for the compound it actually is.
     let mut renamed = false;
     for i in iter::once(lig_i).chain(first_frag_i..state.ligands.len()) {
-        renamed |= start_structure_lookup(state, i);
+        renamed |= start_structure_lookup(state, i, None);
     }
     // Atom labels include the name.
     if renamed {
@@ -691,10 +694,15 @@ pub fn split_lig_at_bonds(
     );
 }
 
-/// Look up a newly split or joined molecule on PubChem by its SMILES. Resolves at once if our
-/// local cache has the structure; otherwise, the lookup runs in the background and
+/// Look up a newly split, joined, or edited molecule on PubChem by its SMILES. Resolves at once if
+/// our local cache has the structure; otherwise, the lookup runs in the background and
 /// `on_structure_lookup` applies it. Returns true if the molecule was renamed here.
-fn start_structure_lookup(state: &mut State, lig_i: usize) -> bool {
+/// See `StructureLookup::name_prefix` for `name_prefix`.
+pub(crate) fn start_structure_lookup(
+    state: &mut State,
+    lig_i: usize,
+    name_prefix: Option<&str>,
+) -> bool {
     let Some(lig) = state.ligands.get(lig_i) else {
         return false;
     };
@@ -710,7 +718,7 @@ fn start_structure_lookup(state: &mut State, lig_i: usize) -> bool {
 
     if let Some(props) = state.to_save.pubchem_properties_map.get(&smiles).cloned() {
         if props.cid != 0 {
-            return name_structure_mol(state, lig_i, &props);
+            return name_structure_mol(state, lig_i, &props, name_prefix);
         }
         return false;
     }
@@ -732,6 +740,7 @@ fn start_structure_lookup(state: &mut State, lig_i: usize) -> bool {
         .push(StructureLookup {
             ident: lig.common.ident.clone(),
             smiles,
+            name_prefix: name_prefix.map(str::to_owned),
             rx,
         });
 
@@ -775,14 +784,22 @@ pub fn on_structure_lookup(
         return;
     };
 
-    if name_structure_mol(state, lig_i, &props) {
+    // In the molecule editor, ligands aren't drawn; they will be on exiting it.
+    if name_structure_mol(state, lig_i, &props, lookup.name_prefix.as_deref())
+        && state.volatile.operating_mode == OperatingMode::Primary
+    {
         redraw.set(MolType::Ligand);
     }
 }
 
 /// Name an edited molecule for the PubChem compound it is: its CID, as for one loaded from
 /// PubChem, along with the compound's title and other identifiers. Returns true if renamed.
-fn name_structure_mol(state: &mut State, lig_i: usize, props: &pubchem::Properties) -> bool {
+fn name_structure_mol(
+    state: &mut State,
+    lig_i: usize,
+    props: &pubchem::Properties,
+    name_prefix: Option<&str>,
+) -> bool {
     let lig = &mut state.ligands[lig_i];
     let ident = props.cid.to_string();
 
@@ -791,7 +808,16 @@ fn name_structure_mol(state: &mut State, lig_i: usize, props: &pubchem::Properti
     if lig.common.ident == ident {
         return false;
     }
-    lig.common.ident = ident;
+    let ident_prev = mem::replace(&mut lig.common.ident, ident);
+
+    // Replace the display name only if it's the provisional one; not one the user set meanwhile.
+    if let Some(prefix) = name_prefix
+        && lig.common.name.as_deref().is_none_or(|n| n == ident_prev)
+    {
+        lig.common.name = None;
+        let name = format!("{prefix} | {}", lig.common.name(Some(&lig.idents)));
+        lig.common.name = Some(name);
+    }
 
     // Molecule-specific params are keyed by name: use any we hold for this compound, or build
     // them under the new name. (The ones under the old name may be for the molecule before the
