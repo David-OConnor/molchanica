@@ -539,6 +539,11 @@ fn mol_picker(
     // todo: AAs here too?
 
     // Peptide-relative UI state follows whichever peptide was selected in the picker.
+    if recenter_orbit {
+        state.volatile.active_seq = None;
+        state.ui.seq_selection.clear();
+    }
+
     if recenter_orbit
         && let Some((MolType::Peptide, peptide_i)) = state.volatile.active_mol
         && let Some(peptide) = state.peptides.get(peptide_i)
@@ -672,11 +677,12 @@ fn seq_picker(state: &mut State, ui: &mut Ui) {
     }
 
     if let Some(i) = toggle_active {
-        state.volatile.active_seq = if state.volatile.active_seq == Some(i) {
+        let next = if state.volatile.active_seq == Some(i) {
             None
         } else {
             Some(i)
         };
+        state.select_sequence(next);
     }
 
     if let Some(i) = toggle_metadata {

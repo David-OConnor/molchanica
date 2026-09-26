@@ -898,6 +898,8 @@ pub(crate) fn handle_selection_attempt(
             state.volatile.set_aa_seq(state.peptides.get(peptide_i));
         }
         state.volatile.active_mol = Some(mol);
+        state.volatile.active_seq = None;
+        state.ui.seq_selection.clear();
     }
 
     let selection = if dist_atoms < dist_bonds {
@@ -1308,6 +1310,24 @@ fn cycle_atom_bond(state: &State, mol: &MoleculeCommon, dir: isize) -> Selection
 /// Cycles to the next atom, bond, or residue in the current molecule. Its specific behavior
 /// depends on the current selection, and the selection mode.
 pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
+    if let Some(i) = state.volatile.active_seq {
+        let Some(seq) = state.sequences.get(i) else {
+            return;
+        };
+        if seq.data.is_empty() {
+            state.ui.seq_selection.clear();
+            return;
+        }
+
+        let next = match state.ui.seq_selection.first().copied() {
+            Some(pos) if reverse => pos.saturating_sub(1),
+            Some(pos) => (pos + 1).min(seq.data.len() - 1),
+            None => 0,
+        };
+        state.ui.seq_selection = vec![next];
+        return;
+    }
+
     let Some(mol) = state.active_mol() else {
         return;
     };
@@ -1403,6 +1423,38 @@ pub fn select_from_search(state: &mut State, advance: bool) -> bool {
     let query = state.ui.atom_res_search.trim().to_lowercase();
     if query.is_empty() {
         return false;
+    }
+
+    if state.volatile.active_seq.is_some() {
+        let seq_text = &state.volatile.seq_text;
+        let hits: Vec<usize> =
+            if let Ok(pos) = query.strip_prefix('#').unwrap_or(&query).parse::<usize>() {
+                pos.checked_sub(1)
+                    .filter(|&i| i < seq_text.len())
+                    .into_iter()
+                    .collect()
+            } else {
+                seq_text
+                    .match_indices(&query.to_ascii_uppercase())
+                    .map(|(i, _)| i)
+                    .collect()
+            };
+        if hits.is_empty() {
+            return false;
+        }
+
+        let hit_i = state
+            .ui
+            .seq_selection
+            .first()
+            .and_then(|selected| hits.iter().position(|i| i == selected));
+        let hit_i = match hit_i {
+            Some(i) if advance => (i + 1) % hits.len(),
+            Some(i) => i,
+            None => 0,
+        };
+        state.ui.seq_selection = vec![hits[hit_i]];
+        return true;
     }
 
     let (hits, preferred) = search_hits(state, &query);

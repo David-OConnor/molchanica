@@ -1,12 +1,16 @@
 use std::{collections::HashSet, sync::Arc};
 
 use egui::{
-    Button, Color32, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, Sense, Stroke,
+    Button, Color32, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, Sense, Stroke, TextEdit,
     TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
     text_selection::LabelSelectionState, vec2,
 };
 
-use crate::{drawing::color_viridis, selection::Selection, state::AaSeqDisplayCache};
+use crate::{
+    drawing::color_viridis,
+    selection::Selection,
+    state::{AaSeqDisplayCache, State},
+};
 
 pub mod md;
 pub mod md_viewer;
@@ -210,28 +214,23 @@ fn seq_num_labels(
     labels
 }
 
-/// The display for the amino acid sequence of an opened protein.
+/// The display for an amino-acid or nucleotide sequence.
 ///
 /// The colored sequence is one cached galley instead of one widget and color calculation per
 /// residue on every frame. It is rebuilt only when its inputs actually change.
 ///
-/// `res_indices` maps each position in `seq_text` to its residue index in the peptide, and
-/// `res_sns` to its residue serial number. Rows are interleaved with residue numbers, which are
-/// painted separately from the sequence; they aren't selectable, and aren't copied with it.
-pub(in crate::ui) fn pepide_aa_seq(
-    selection: &mut Selection,
+/// `res_indices` maps each letter to its selected residue index (or the same position for a
+/// standalone sequence), and `res_sns` to its displayed number. Rows are interleaved with
+/// residue numbers, which aren't selectable or copied with the sequence.
+pub(in crate::ui) fn sequence_display(
+    selection: &mut Vec<usize>,
     seq_text: &str,
     res_indices: &[usize],
     res_sns: &[u32],
     cache: &mut AaSeqDisplayCache,
     ui: &mut Ui,
-    redraw: &mut bool,
 ) {
-    let selected: Vec<usize> = match selection {
-        Selection::Residue(index) => vec![*index],
-        Selection::Residues(indices) => indices.clone(),
-        _ => Vec::new(),
-    };
+    let selected = selection.clone();
     let font_id = TextStyle::Body.resolve(ui.style());
 
     // The copy buttons share the sequence's last line, so reserve their width before laying
@@ -276,7 +275,7 @@ pub(in crate::ui) fn pepide_aa_seq(
         job.wrap.max_width = wrap_width;
         job.wrap.break_anywhere = true;
 
-        for (index, amino_acid) in seq_text.chars().enumerate() {
+        for (index, residue) in seq_text.chars().enumerate() {
             let is_selected = res_indices
                 .get(index)
                 .is_some_and(|res_i| selected_set.contains(res_i));
@@ -296,7 +295,7 @@ pub(in crate::ui) fn pepide_aa_seq(
             };
             let mut encoded = [0; 4];
             job.append(
-                amino_acid.encode_utf8(&mut encoded),
+                residue.encode_utf8(&mut encoded),
                 0.0,
                 TextFormat {
                     font_id: font_id.clone(),
@@ -419,7 +418,7 @@ pub(in crate::ui) fn pepide_aa_seq(
                         .get(*index)
                         .is_some_and(|res_i| selected_set.contains(res_i))
                 })
-                .map(|(_, amino_acid)| amino_acid)
+                .map(|(_, residue)| residue)
                 .collect();
 
             ui.ctx().copy_text(text);
@@ -463,15 +462,8 @@ pub(in crate::ui) fn pepide_aa_seq(
                 .map(<[usize]>::to_vec)
                 .unwrap_or_default();
 
-            let new = match residues.len() {
-                0 => Selection::None,
-                1 => Selection::Residue(residues[0]),
-                _ => Selection::Residues(residues),
-            };
-
-            if *selection != new {
-                *selection = new;
-                *redraw = true;
+            if *selection != residues {
+                *selection = residues;
                 ui.request_repaint();
             }
         }
@@ -488,9 +480,98 @@ pub(in crate::ui) fn pepide_aa_seq(
             && !sel_rect.contains(pointer)
             && let Some(residue) = res_indices.get(seq_pos(pointer)).copied()
         {
-            *selection = Selection::Residue(residue);
-            *redraw = true;
+            *selection = vec![residue];
             ui.request_repaint();
         }
     });
+}
+
+/// Connect the shared sequence renderer to peptide residue selection and 3D redraws.
+pub(in crate::ui) fn peptide_aa_seq(
+    selection: &mut Selection,
+    seq_text: &str,
+    res_indices: &[usize],
+    res_sns: &[u32],
+    cache: &mut AaSeqDisplayCache,
+    ui: &mut Ui,
+    redraw: &mut bool,
+) {
+    let mut selected = match selection {
+        Selection::Residue(index) => vec![*index],
+        Selection::Residues(indices) => indices.clone(),
+        _ => Vec::new(),
+    };
+    let prev = selected.clone();
+
+    sequence_display(&mut selected, seq_text, res_indices, res_sns, cache, ui);
+
+    if selected != prev {
+        *selection = match selected.len() {
+            0 => Selection::None,
+            1 => Selection::Residue(selected[0]),
+            _ => Selection::Residues(selected),
+        };
+        *redraw = true;
+    }
+}
+
+/// Active standalone sequence, with an editor separate from peptide residue tools.
+pub(in crate::ui) fn standalone_sequence(state: &mut State, i: usize, ui: &mut Ui) {
+    let Some(seq) = state.sequences.get(i) else {
+        return;
+    };
+
+    let name = seq.display_name().to_owned();
+    let seq_type = seq.seq_type();
+    let has_features = !seq.features.is_empty();
+    ui.horizontal(|ui| {
+        ui.label(format!("{name} ({seq_type})"));
+
+        if state.ui.sequence_edit.target != Some(i) && ui.button("Edit sequence").clicked() {
+            state.ui.sequence_edit.target = Some(i);
+            state.ui.sequence_edit.text = seq.data.to_letters();
+            state.ui.sequence_edit.error = None;
+        }
+    });
+
+    if state.ui.sequence_edit.target == Some(i) {
+        if has_features {
+            ui.small("Changing the sequence length clears its positional features.");
+        }
+        ui.add(
+            TextEdit::multiline(&mut state.ui.sequence_edit.text)
+                .desired_width(f32::INFINITY)
+                .desired_rows(6),
+        );
+
+        ui.horizontal(|ui| {
+            if ui
+                .button("Apply changes")
+                .on_hover_text("Update the open sequence. Use Save in the sidebar to write a file.")
+                .clicked()
+            {
+                let text = state.ui.sequence_edit.text.clone();
+                match state.edit_sequence(i, &text) {
+                    Ok(()) => state.ui.sequence_edit = Default::default(),
+                    Err(error) => state.ui.sequence_edit.error = Some(error),
+                }
+            }
+            if ui.button("Cancel").clicked() {
+                state.ui.sequence_edit = Default::default();
+            }
+        });
+
+        if let Some(error) = &state.ui.sequence_edit.error {
+            ui.colored_label(Color32::LIGHT_RED, error);
+        }
+    } else {
+        sequence_display(
+            &mut state.ui.seq_selection,
+            &state.volatile.seq_text,
+            &state.volatile.seq_positions,
+            &state.volatile.seq_numbers,
+            &mut state.volatile.seq_display_cache,
+            ui,
+        );
+    }
 }

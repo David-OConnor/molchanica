@@ -1220,6 +1220,8 @@ fn reset_metadata_edit_on_change(state: &mut State, target: MetadataTarget) {
     if state.ui.metadata_edit.target != Some(target) {
         state.ui.metadata_edit.target = Some(target);
         state.ui.metadata_edit.rows.clear();
+        state.ui.metadata_edit.sequence_text.clear();
+        state.ui.metadata_edit.sequence_error = None;
         state.ui.editing_metadata = false;
     }
 }
@@ -1235,6 +1237,8 @@ pub(in crate::ui) fn seq_metadata(i: usize, state: &mut State, ui: &mut Ui) {
     let display_name = seq.display_name().to_owned();
     let metadata = seq.metadata.clone();
     let path = seq.path.clone();
+    let letters = seq.data.to_letters();
+    let has_features = !seq.features.is_empty();
     let summary = format!(
         "{} · {} {}",
         seq.seq_type(),
@@ -1244,9 +1248,42 @@ pub(in crate::ui) fn seq_metadata(i: usize, state: &mut State, ui: &mut Ui) {
 
     reset_metadata_edit_on_change(state, MetadataTarget::Seq(i));
 
+    if !state.ui.editing_metadata {
+        state.ui.metadata_edit.sequence_text.clone_from(&letters);
+        state.ui.metadata_edit.sequence_error = None;
+    }
+
     label!(ui, summary, Color32::GRAY);
     if let Some(p) = &path {
         label!(ui, p.display().to_string(), Color32::GRAY);
+    }
+
+    ui.label("Sequence:");
+    if state.ui.editing_metadata {
+        if has_features {
+            ui.small("Changing the sequence length clears its positional features.");
+        }
+        ui.add(
+            egui::TextEdit::multiline(&mut state.ui.metadata_edit.sequence_text)
+                .desired_width(450.)
+                .desired_rows(5),
+        );
+        if ui
+            .button("Apply changes")
+            .on_hover_text("Update the open sequence. Use Save in the sidebar to write a file.")
+            .clicked()
+        {
+            let text = state.ui.metadata_edit.sequence_text.clone();
+            match state.edit_sequence(i, &text) {
+                Ok(()) => state.ui.metadata_edit.sequence_error = None,
+                Err(error) => state.ui.metadata_edit.sequence_error = Some(error),
+            }
+        }
+        if let Some(error) = &state.ui.metadata_edit.sequence_error {
+            ui.colored_label(Color32::LIGHT_RED, error);
+        }
+    } else {
+        ui.label(letters);
     }
 
     let prefs_dir = state.volatile.prefs_dir.clone();

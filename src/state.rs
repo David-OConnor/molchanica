@@ -499,6 +499,13 @@ pub struct StateVolatile {
     /// The residue serial number of each character of `aa_seq_text`; used to label the sequence.
     pub aa_seq_res_sns: Vec<u32>,
     pub aa_seq_display_cache: AaSeqDisplayCache,
+    /// Cached letters and positions for the selected standalone sequence.
+    pub seq_text: String,
+    pub seq_positions: Vec<usize>,
+    pub seq_numbers: Vec<u32>,
+    pub seq_display_cache: AaSeqDisplayCache,
+    /// The 3D selection cleared when a standalone sequence became active.
+    pub pending_selection_redraw: Option<Selection>,
     pub last_prefs_save_check: Option<Instant>,
     pub flags: SceneFlags,
     pub active_mol: Option<(MolType, usize)>,
@@ -562,6 +569,17 @@ impl StateVolatile {
         }
 
         self.aa_seq_display_cache.dirty = true;
+    }
+
+    pub fn set_seq_display(&mut self, sequence: Option<&Sequence>) {
+        self.seq_text = sequence
+            .map(|seq| seq.data.to_letters())
+            .unwrap_or_default();
+        self.seq_positions = (0..self.seq_text.len()).collect();
+        self.seq_numbers = (1..=self.seq_text.len())
+            .map(|number| number as u32)
+            .collect();
+        self.seq_display_cache.dirty = true;
     }
 
     pub fn is_playing_audio_for(&self, mol_type: MolType, i_mol: usize) -> bool {
@@ -695,6 +713,16 @@ pub struct StateUi {
     pub pharmacaphore_type: PharmacophoreFeatType,
     pub editing_metadata: bool,
     pub metadata_edit: MetadataEdit,
+    /// Zero-based positions selected in the active standalone sequence.
+    pub seq_selection: Vec<usize>,
+    pub sequence_edit: SequenceEdit,
+}
+
+#[derive(Default)]
+pub struct SequenceEdit {
+    pub target: Option<usize>,
+    pub text: String,
+    pub error: Option<String>,
 }
 
 /// What the metadata popup shows, and edits.
@@ -714,10 +742,12 @@ pub struct MetadataEdit {
     /// popup moves to a different one, so edits can't be applied to the wrong one.
     pub target: Option<MetadataTarget>,
     pub rows: Vec<(String, String)>,
+    pub sequence_text: String,
+    pub sequence_error: Option<String>,
 }
 
-/// Cached egui layout for the amino-acid sequence. The sequence itself remains in
-/// `StateVolatile::aa_seq_text`; producers mark this cache dirty when replacing it.
+/// Cached egui layout for a peptide or standalone sequence. Its letters remain in
+/// `StateVolatile`; producers mark this cache dirty when replacing them.
 pub struct AaSeqDisplayCache {
     pub dirty: bool,
     /// Residue indices, as the selection holds them; the galley is rebuilt when they change.

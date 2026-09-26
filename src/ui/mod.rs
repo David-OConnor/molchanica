@@ -380,13 +380,22 @@ fn draw_cli(
 /// parts of the molecule from residue name, amino acid number, or atom/residue serial number. (View select mode
 /// determines which number is searched for.)
 fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags, ui: &mut Ui) {
-    let (btn_text_p, btn_text_n) = match state.ui.view_sel_level {
-        ViewSelLevel::Atom => ("Prev atom", "Next atom"),
-        ViewSelLevel::Residue => ("Prev AA", "Next AA"),
-        ViewSelLevel::Bond => ("Prev bond", "Next bond"),
+    let active_seq = state
+        .volatile
+        .active_seq
+        .filter(|&i| i < state.sequences.len());
+    let (btn_text_p, btn_text_n) = if active_seq.is_some() {
+        ("Prev residue", "Next residue")
+    } else {
+        match state.ui.view_sel_level {
+            ViewSelLevel::Atom => ("Prev atom", "Next atom"),
+            ViewSelLevel::Residue => ("Prev AA", "Next AA"),
+            ViewSelLevel::Bond => ("Prev bond", "Next bond"),
+        }
     };
 
-    let help_txt = "Search in the active molecule by atom serial number, residue serial number, \
+    let help_txt = "Search in the active molecule or sequence by position or residue letter; \
+    for molecules, search by atom serial number, residue serial number, \
     amino acid identifier, hetero residue name, etc. Press Enter to go to the next match, e.g. the \
     same residue number in another chain.";
 
@@ -433,7 +442,7 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
         }
     }
 
-    if state.active_mol().is_some() {
+    if state.active_mol().is_some() || active_seq.is_some() {
         if ui
             .button(btn_text_p)
             .on_hover_text("(Hotkey: Left arrow). Change the selection")
@@ -794,6 +803,11 @@ fn input_may_change_prefs(ui: &Ui) -> bool {
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUpdates {
     let mut updates = EngineUpdates::default();
+    // Some molecule-opening paths set `active_mol` directly. Keep the two pickers exclusive.
+    if state.volatile.active_mol.is_some() && state.volatile.active_seq.is_some() {
+        state.volatile.active_seq = None;
+        state.ui.seq_selection.clear();
+    }
     if input_may_change_prefs(ui) {
         state.to_save.save_flag = true;
     }
@@ -1057,8 +1071,10 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
         ui.add_space(ROW_SPACING / 2.);
 
-        if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
-            panels::pepide_aa_seq(
+        if let Some(seq_i) = state.volatile.active_seq {
+            panels::standalone_sequence(state, seq_i, ui);
+        } else if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
+            panels::peptide_aa_seq(
                 &mut state.ui.selection,
                 &state.volatile.aa_seq_text,
                 &state.volatile.aa_seq_res_indices,
@@ -1119,6 +1135,10 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     // todo: Experimenting
     updates.ui_reserved_px.1 = out_main_panel.response.rect.height();
+
+    if let Some(selection) = state.volatile.pending_selection_redraw.take() {
+        redraw.set_from_sel(&selection);
+    }
 
     // todo: Appropriate place for this?
     if state.volatile.inputs_commanded.inputs_present() {

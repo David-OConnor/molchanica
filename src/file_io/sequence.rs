@@ -8,7 +8,7 @@
 use std::{io, io::ErrorKind, path::Path};
 
 use bio_files::{fasta::Fasta, genbank::GenBank, import_ab1, snapgene::SnapGene};
-use na_seq::Sequence;
+use na_seq::{Sequence, SequenceData};
 
 use crate::{
     prefs::OpenType,
@@ -173,6 +173,49 @@ fn history_ident(records: &[Sequence]) -> Option<String> {
 }
 
 impl State {
+    /// Make a sequence the active item for sequence navigation and display.
+    pub fn select_sequence(&mut self, i: Option<usize>) {
+        self.volatile.active_seq = i.filter(|&i| i < self.sequences.len());
+        if self.volatile.active_seq.is_some() {
+            self.volatile.active_mol = None;
+            if self.ui.selection != crate::selection::Selection::None {
+                self.volatile.pending_selection_redraw = Some(self.ui.selection.clone());
+            }
+            self.ui.selection = crate::selection::Selection::None;
+        }
+        self.ui.seq_selection.clear();
+        self.ui.atom_res_search_miss = false;
+        self.volatile
+            .set_seq_display(self.volatile.active_seq.and_then(|i| self.sequences.get(i)));
+    }
+
+    /// Replace the residue data while retaining the record's name and metadata.
+    pub fn edit_sequence(&mut self, i: usize, text: &str) -> Result<(), String> {
+        let seq = self
+            .sequences
+            .get_mut(i)
+            .ok_or_else(|| "Sequence is no longer open".to_owned())?;
+        let (data, skipped) = SequenceData::from_letters(text, seq.seq_type());
+        if skipped != 0 {
+            return Err(format!(
+                "{skipped} residue letter(s) cannot be represented as {}",
+                seq.seq_type()
+            ));
+        }
+
+        if data.len() != seq.data.len() {
+            // Feature ranges refer to residue positions and become stale after a length change.
+            seq.features.clear();
+        }
+        seq.data = data;
+
+        if self.volatile.active_seq == Some(i) {
+            self.ui.seq_selection.retain(|&pos| pos < seq.data.len());
+            self.volatile.set_seq_display(Some(seq));
+        }
+        Ok(())
+    }
+
     /// Open every sequence in a file, e.g. FASTA or GenBank, adding them to state and the open
     /// history. Reports the result to the user.
     pub fn open_sequences(&mut self, path: &Path) -> io::Result<()> {
@@ -181,8 +224,9 @@ impl State {
         let count = loaded.records.len();
         let ident = history_ident(&loaded.records);
 
-        self.volatile.active_seq = Some(self.sequences.len());
+        let active_i = self.sequences.len();
         self.sequences.extend(loaded.records);
+        self.select_sequence(Some(active_i));
 
         self.update_history(path, OpenType::Sequence, ident);
         self.update_save_prefs();
@@ -262,6 +306,15 @@ impl State {
 
         shift(&mut self.volatile.active_seq);
         shift(&mut self.volatile.dialogs.save_seq_i);
+
+        if self.volatile.active_seq.is_none() {
+            self.ui.seq_selection.clear();
+            self.volatile.set_seq_display(None);
+        }
+
+        if matches!(self.ui.sequence_edit.target, Some(j) if j >= i) {
+            self.ui.sequence_edit = Default::default();
+        }
 
         if let Some(MetadataTarget::Seq(j)) = self.ui.popup.metadata {
             let mut sel = Some(j);
