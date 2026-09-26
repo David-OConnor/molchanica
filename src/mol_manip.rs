@@ -398,10 +398,15 @@ pub fn handle_mol_manip_in_plane(
                         .to_normalized();
                     let up = scene.camera.orientation.rotate_vec(UP_VEC).to_normalized();
 
+                    // The sign keeps horizontal drags intuitive if the view is mirrored.
+                    let x_sign = scene.camera.screen_x_sign();
+
                     let rot_x =
                         Quaternion::from_axis_angle(right, -delta.1 as f32 * SENS_MOL_ROT_MOUSE);
-                    let rot_y =
-                        Quaternion::from_axis_angle(up, -delta.0 as f32 * SENS_MOL_ROT_MOUSE);
+                    let rot_y = Quaternion::from_axis_angle(
+                        up,
+                        -delta.0 as f32 * SENS_MOL_ROT_MOUSE * x_sign,
+                    );
 
                     let rot = rot_y * rot_x; // Note: Can swap the order for a slightly different effect.
                     let pivot = mol.centroid().into();
@@ -440,12 +445,16 @@ pub fn handle_mol_manip_in_plane(
                             .to_normalized();
                         let up = scene.camera.orientation.rotate_vec(UP_VEC).to_normalized();
 
+                        let x_sign = scene.camera.screen_x_sign();
+
                         let rot_x = Quaternion::from_axis_angle(
                             right,
                             -delta.1 as f32 * SENS_MOL_ROT_MOUSE,
                         );
-                        let rot_y =
-                            Quaternion::from_axis_angle(up, -delta.0 as f32 * SENS_MOL_ROT_MOUSE);
+                        let rot_y = Quaternion::from_axis_angle(
+                            up,
+                            -delta.0 as f32 * SENS_MOL_ROT_MOUSE * x_sign,
+                        );
 
                         let rot = rot_y * rot_x;
 
@@ -707,7 +716,11 @@ pub fn handle_mol_manip_in_out(
 
             let fwd = scene.camera.orientation.rotate_vec(FWD_VEC).to_normalized();
 
-            let rot = Quaternion::from_axis_angle(fwd, scroll * SENS_MOL_ROT_SCROLL);
+            // Roll direction on screen flips if the view is mirrored; the sign compensates.
+            let rot = Quaternion::from_axis_angle(
+                fwd,
+                scroll * SENS_MOL_ROT_SCROLL * scene.camera.screen_x_sign(),
+            );
             let pivot = mol.centroid().into();
             mol.rotate(rot.into(), None);
             state.volatile.mol_manip.apply_gizmo_rotation(rot);

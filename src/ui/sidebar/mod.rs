@@ -1,7 +1,7 @@
 use bio_files::{FrameSlice, md_params::ForceFieldParams};
 use dynamics::{FfMolType, merge_params};
 use egui::{Color32, RichText, TextEdit, Ui};
-use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::{
     molecules::{
@@ -14,7 +14,9 @@ use mol_defs::{
 
 use crate::{
     button,
-    cam::{MolCameraTarget, move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog},
+    cam::{
+        MolCameraTarget, VIEW_DIR_FRONT, move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog,
+    },
     file_io::save_mol,
     label,
     md::{
@@ -155,7 +157,7 @@ fn mol_picker_one(
                     .clicked()
                 {
                     let molecule_center: Vec3 = mol.centroid().into();
-                    let forward: Vec3 = FWD_VEC.into();
+                    let forward: Vec3 = VIEW_DIR_FRONT.into();
                     let alignment = molecule_center + forward;
 
                     move_cam_to_mol(
@@ -1256,7 +1258,7 @@ fn traj_items(
     // We have this as the function calls in this branch which call state have a borrow
     // error otherwise; the flag setting is convenience.
     if snaps_loaded {
-        reset_camera(state, scene, updates, FWD_VEC);
+        reset_camera(state, scene, updates, VIEW_DIR_FRONT);
         viewer::draw_mols(state, scene, updates);
 
         redraw.set_all();

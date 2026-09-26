@@ -70,8 +70,9 @@ pub fn event_dev_handler(
             if state_.ui.middle_click_down {
                 // The same movement sensitivity scaler we use for the (1x effective multiplier)
                 // on keyboard movement seems to work well enough here.
+                // Camera-local X points left on screen if the view is mirrored.
                 let mut movement_vec = Vec3::new(
-                    delta.0 as f32 * MOVEMENT_SENS * dt,
+                    delta.0 as f32 * MOVEMENT_SENS * dt * scene.camera.screen_x_sign(),
                     -delta.1 as f32 * MOVEMENT_SENS * dt,
                     0.,
                 );

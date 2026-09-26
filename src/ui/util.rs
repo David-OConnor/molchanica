@@ -11,7 +11,7 @@ use std::{
 
 use bio_apis::{chebi, pubchem::find_cids_from_search, uniprot};
 use egui::{Color32, Response, RichText, TextEdit, Ui};
-use graphics::{EngineUpdates, FWD_VEC, Scene};
+use graphics::{EngineUpdates, Scene};
 use mol_defs::{
     molecules::{
         MolIdent, MolType, MoleculeGeneric, PeptideIdent, common::MoleculeCommon,
@@ -21,7 +21,7 @@ use mol_defs::{
 };
 
 use crate::{
-    cam::reset_camera,
+    cam::{VIEW_DIR_FRONT, reset_camera},
     drawing::{
         MoleculeView,
         peptide::draw_peptide,
@@ -82,7 +82,7 @@ pub(in crate::ui) fn edit_mol_name(name: &Option<String>, ui: &mut Ui) -> Option
 
     ui.horizontal(|ui| {
         crate::label!(ui, "Name:", Color32::GRAY);
-        let width = ui.available_width().min(160.0);
+        let width = ui.available_width().min(200.0);
         changed = ui
             .add_sized(
                 [width, ui.spacing().interact_size.y],
@@ -431,7 +431,7 @@ pub fn handle_redraw(
 
     // Perform cleanup.
     if reset_cam {
-        reset_camera(state, scene, updates, FWD_VEC);
+        reset_camera(state, scene, updates, VIEW_DIR_FRONT);
     }
 
     *redraw = Default::default();
@@ -544,7 +544,7 @@ pub(crate) fn finish_session_restore(
 
     reset_orbit_center(state, scene);
 
-    reset_camera(state, scene, updates, FWD_VEC);
+    reset_camera(state, scene, updates, VIEW_DIR_FRONT);
 
     draw_peptide(state, scene, updates);
     draw_all_ligs(state, scene, updates);

@@ -1,8 +1,9 @@
 use std::{collections::HashSet, sync::Arc};
 
 use egui::{
-    Button, Color32, Direction, Frame, Layout, Pos2, Rect, Sense, Stroke, TextFormat, TextStyle,
-    Ui, UiBuilder, Vec2, text::LayoutJob, text_selection::LabelSelectionState, vec2,
+    Button, Color32, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, Sense, Stroke,
+    TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
+    text_selection::LabelSelectionState, vec2,
 };
 
 use crate::{drawing::color_viridis, selection::Selection, state::AaSeqDisplayCache};
@@ -36,6 +37,17 @@ const SEQ_LETTER_SPACING: f32 = 1.2;
 /// Faux-bold: egui's default fonts ship no bold face and aren't variable, so the glyphs are
 /// painted a second time, offset by this many points, to thicken the strokes.
 const SEQ_BOLD_OFFSET: f32 = 0.6;
+/// Residues whose serial number is a multiple of this get a number label above them.
+const SEQ_NUM_INTERVAL: u32 = 10;
+/// Size of the residue number labels, relative to the sequence's font.
+const SEQ_NUM_SCALE: f32 = 0.72;
+/// Muted, so the numbers read as a ruler rather than competing with the residue colors.
+const SEQ_NUM_COLOR: Color32 = Color32::from_gray(145);
+/// Space above each band of residue numbers, separating it from the sequence row above.
+const SEQ_NUM_BAND_PAD: f32 = 2.;
+/// Minimum horizontal space between two number labels on a row. A label that would crowd the
+/// one before it (e.g. after a gap in the numbering) is skipped.
+const SEQ_NUM_GAP: f32 = 6.;
 
 /// WCAG relative luminance of an sRGB triple in `[0, 1]`.
 fn luminance(color: (f32, f32, f32)) -> f32 {
@@ -96,16 +108,121 @@ fn lift_contrast(color: (f32, f32, f32)) -> (f32, f32, f32) {
     blend(hi)
 }
 
+/// Open a gap of `band` points above each row of the sequence galley, to hold that row's residue
+/// numbers. Only whole rows move, so the text, its per-residue backgrounds, and egui's
+/// text-selection highlight are drawn exactly as before, and the numbers never become part of
+/// the text.
+fn space_seq_rows(galley: &mut Arc<Galley>, band: f32) {
+    // The galley is shared with egui's layout cache; this modifies a copy.
+    let galley = Arc::make_mut(galley);
+
+    let mut y = 0.;
+    let mut rect = Rect::ZERO;
+    let mut mesh_bounds = Rect::NOTHING;
+
+    for placed_row in &mut galley.rows {
+        y += band;
+        placed_row.pos.y = y;
+        y += placed_row.row.size.y;
+
+        rect |= placed_row.rect();
+        mesh_bounds |= placed_row
+            .row
+            .visuals
+            .mesh_bounds
+            .translate(placed_row.pos.to_vec2());
+    }
+
+    // `rect` starts at the origin, so it includes the first row's band.
+    galley.rect = rect;
+    galley.mesh_bounds = mesh_bounds;
+}
+
+/// Residue number labels for the sequence, positioned relative to `galley` after
+/// `space_seq_rows`. Labeled are the first residue, each one after a break in the numbering
+/// (e.g. a new chain, or unresolved residues), and every `SEQ_NUM_INTERVAL`th. Each sits
+/// directly above its residue, left-aligned with it.
+fn seq_num_labels(
+    galley: &Galley,
+    res_sns: &[u32],
+    font_id: &FontId,
+    ui: &Ui,
+) -> Vec<(Pos2, Arc<Galley>)> {
+    let mut labels = Vec::new();
+    let mut row_start = 0;
+
+    // Insertion codes repeat a number; that isn't a break.
+    let is_break = |i: usize, sn: u32| match i.checked_sub(1).and_then(|prev| res_sns.get(prev)) {
+        Some(&prev_sn) => sn != prev_sn && prev_sn.checked_add(1) != Some(sn),
+        None => true,
+    };
+
+    ui.fonts_mut(|fonts| {
+        for placed_row in &galley.rows {
+            // Horizontal extents of the labels placed on this row so far.
+            let mut placed: Vec<(f32, f32)> = Vec::new();
+
+            // Breaks first, so a regular label beside one can't crowd it out: unlike the
+            // regular ones, a reader can't work them out by counting.
+            for breaks_pass in [true, false] {
+                for (col, glyph) in placed_row.row.glyphs.iter().enumerate() {
+                    let i = row_start + col;
+                    let Some(&sn) = res_sns.get(i) else {
+                        continue;
+                    };
+
+                    let wanted = if breaks_pass {
+                        is_break(i, sn)
+                    } else {
+                        !is_break(i, sn) && sn % SEQ_NUM_INTERVAL == 0
+                    };
+                    if !wanted {
+                        continue;
+                    }
+
+                    let label =
+                        fonts.layout_no_wrap(sn.to_string(), font_id.clone(), SEQ_NUM_COLOR);
+                    let width = label.size().x;
+
+                    // Kept within the sequence's width, so a label near the end of a row can't
+                    // overrun the panel.
+                    let x = (placed_row.pos.x + glyph.pos.x)
+                        .min(galley.rect.right() - width)
+                        .max(0.);
+
+                    let crowded = placed.iter().any(|&(left, right)| {
+                        x < right + SEQ_NUM_GAP && left < x + width + SEQ_NUM_GAP
+                    });
+                    if crowded {
+                        continue;
+                    }
+                    placed.push((x, x + width));
+
+                    let y = placed_row.min_y() - label.size().y;
+                    labels.push((pos2(x, y), label));
+                }
+            }
+
+            row_start += placed_row.row.glyphs.len();
+        }
+    });
+
+    labels
+}
+
 /// The display for the amino acid sequence of an opened protein.
 ///
 /// The colored sequence is one cached galley instead of one widget and color calculation per
 /// residue on every frame. It is rebuilt only when its inputs actually change.
 ///
-/// `res_indices` maps each position in `seq_text` to its residue index in the peptide.
+/// `res_indices` maps each position in `seq_text` to its residue index in the peptide, and
+/// `res_sns` to its residue serial number. Rows are interleaved with residue numbers, which are
+/// painted separately from the sequence; they aren't selectable, and aren't copied with it.
 pub(in crate::ui) fn pepide_aa_seq(
     selection: &mut Selection,
     seq_text: &str,
     res_indices: &[usize],
+    res_sns: &[u32],
     cache: &mut AaSeqDisplayCache,
     ui: &mut Ui,
     redraw: &mut bool,
@@ -191,7 +308,17 @@ pub(in crate::ui) fn pepide_aa_seq(
             );
         }
 
-        cache.galley = Some(ui.fonts_mut(|fonts| fonts.layout_job(job)));
+        let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+
+        let num_font = FontId::new(font_id.size * SEQ_NUM_SCALE, font_id.family.clone());
+        let num_height = ui.fonts_mut(|fonts| fonts.row_height(&num_font));
+        // Whole pixels, so the rows below stay pixel-aligned and crisp.
+        let band = ((num_height + SEQ_NUM_BAND_PAD) * pixels_per_point).round() / pixels_per_point;
+
+        space_seq_rows(&mut galley, band);
+        cache.num_labels = seq_num_labels(&galley, res_sns, &num_font, ui);
+
+        cache.galley = Some(galley);
         cache.dirty = false;
         cache.selected.clone_from(&selected);
         cache.font_id = Some(font_id);
@@ -233,6 +360,10 @@ pub(in crate::ui) fn pepide_aa_seq(
             3.,
             SEQ_BG,
         );
+        for (pos, label) in &cache.num_labels {
+            ui.painter()
+                .galley(rect.min + pos.to_vec2(), Arc::clone(label), SEQ_NUM_COLOR);
+        }
         // Faux-bold, under the real glyphs; see `SEQ_BOLD_OFFSET`.
         ui.painter().galley(
             rect.min + vec2(SEQ_BOLD_OFFSET, 0.),
@@ -295,10 +426,16 @@ pub(in crate::ui) fn pepide_aa_seq(
         }
 
         // The sequence position under the pointer, clamped to the last residue: a pointer past
-        // the end of a row resolves to one index beyond it.
+        // the end of a row resolves to one index beyond it. A pointer over a row's residue
+        // numbers counts as over that row, below them, instead of whichever row is closest.
         let seq_pos = |pointer: Pos2| {
+            let mut pos = pointer - rect.min;
+            if let Some(row) = galley.rows.iter().find(|row| pos.y < row.max_y()) {
+                pos.y = pos.y.max(row.min_y());
+            }
+
             galley
-                .cursor_from_pos(pointer - rect.min)
+                .cursor_from_pos(pos)
                 .index
                 .0
                 .min(res_indices.len().saturating_sub(1))

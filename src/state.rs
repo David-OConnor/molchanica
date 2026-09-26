@@ -19,7 +19,7 @@ use dynamics::{
     ComputationDevice, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig, PRESSURE_DEFAULT, SimBoxInit,
     TAU_PRESSURE_DEFAULT, TAU_TEMP_DEFAULT, params::FfParamSet,
 };
-use egui::{FontId, Galley};
+use egui::{FontId, Galley, Pos2};
 use graphics::{Camera, ControlScheme, GraphicsSettings, InputsCommanded, event::Modifiers};
 use lin_alg::f32::{Quaternion, Vec3};
 use mol_defs::{
@@ -350,6 +350,8 @@ pub struct StateVolatile {
     /// sequence skips non-amino-acid residues (water, ions, ligands), so a position in the text
     /// is not a residue index; this is what maps one back to the other.
     pub aa_seq_res_indices: Vec<usize>,
+    /// The residue serial number of each character of `aa_seq_text`; used to label the sequence.
+    pub aa_seq_res_sns: Vec<u32>,
     pub aa_seq_display_cache: AaSeqDisplayCache,
     pub last_prefs_save_check: Option<Instant>,
     pub flags: SceneFlags,
@@ -396,12 +398,14 @@ impl StateVolatile {
     pub fn set_aa_seq(&mut self, peptide: Option<&MoleculePeptide>) {
         self.aa_seq_text.clear();
         self.aa_seq_res_indices.clear();
+        self.aa_seq_res_sns.clear();
 
         if let Some(peptide) = peptide {
             for (res_i, res) in peptide.residues.iter().enumerate() {
                 if let ResidueType::AminoAcid(aa) = res.res_type {
                     self.aa_seq_text.push_str(&aa.to_str(AaIdent::OneLetter));
                     self.aa_seq_res_indices.push(res_i);
+                    self.aa_seq_res_sns.push(res.serial_number);
                 }
             }
         }
@@ -483,6 +487,8 @@ pub struct StateUi {
     pub smiles_display_cache: SmilesDisplayCache,
     pub cam_snapshot_name: String,
     pub atom_res_search: String,
+    /// `atom_res_search` matches nothing in the active molecule; shown by coloring the query.
+    pub atom_res_search_miss: bool,
     /// Hide protein atoms that aren't near the selection, ligand, or protein surface.
     pub dist_filter: DistFilter,
     /// Angstrom. Used by `dist_filter`.
@@ -561,6 +567,9 @@ pub struct AaSeqDisplayCache {
     pub wrap_width: f32,
     pub pixels_per_point: f32,
     pub galley: Option<Arc<Galley>>,
+    /// Residue number labels, positioned relative to `galley`, in the gaps above its rows.
+    /// Painted separately, so they're neither selectable nor copied with the sequence.
+    pub num_labels: Vec<(Pos2, Arc<Galley>)>,
     /// Sequence position a drag-selection started at, while the drag is in progress.
     pub drag_anchor: Option<usize>,
 }
@@ -574,6 +583,7 @@ impl Default for AaSeqDisplayCache {
             wrap_width: 0.0,
             pixels_per_point: 0.0,
             galley: None,
+            num_labels: Vec::new(),
             drag_anchor: None,
         }
     }

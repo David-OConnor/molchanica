@@ -4,7 +4,7 @@ use std::f32::consts::TAU;
 
 use egui::{Align2, FontFamily};
 use graphics::{
-    FWD_VEC, OverlayAnchor, OverlayColor, OverlayPrimitive, OverlayStroke, RIGHT_VEC, Scene,
+    Camera, FWD_VEC, OverlayAnchor, OverlayColor, OverlayPrimitive, OverlayStroke, RIGHT_VEC, Scene,
     UP_VEC, VectorOverlay,
 };
 use lin_alg::f32::{Quaternion, Vec3};
@@ -25,15 +25,19 @@ const MUTED_COLOR: OverlayColor = (170, 180, 195, 100);
 struct AxisProjection {
     label: &'static str,
     color: OverlayColor,
-    /// Unit axis in camera/view coordinates.
+    /// Unit axis in screen-aligned view coordinates; see `world_to_view`.
     view: Vec3,
 }
 
-fn project_axes(
-    camera_orientation: Quaternion,
-    frame_orientation: Quaternion,
-) -> [AxisProjection; 3] {
-    let world_to_view = camera_orientation.inverse();
+/// Rotate a world-space direction into screen-aligned view coordinates: +X right, +Y up,
+/// and +Z into the screen. This accounts for the camera's handedness, which may mirror X.
+fn world_to_view(camera: &Camera, dir: Vec3) -> Vec3 {
+    let mut result = camera.orientation.inverse().rotate_vec(dir);
+    result.x *= camera.screen_x_sign();
+    result
+}
+
+fn project_axes(camera: &Camera, frame_orientation: Quaternion) -> [AxisProjection; 3] {
     [
         ("X", X_COLOR, RIGHT_VEC),
         ("Y", Y_COLOR, UP_VEC),
@@ -42,7 +46,7 @@ fn project_axes(
     .map(|(label, color, axis)| AxisProjection {
         label,
         color,
-        view: world_to_view.rotate_vec(frame_orientation.rotate_vec(axis)),
+        view: world_to_view(camera, frame_orientation.rotate_vec(axis)),
     })
 }
 
@@ -139,7 +143,7 @@ fn camera_overlay(scene: &Scene) -> VectorOverlay {
     });
 
     // Far-pointing axes first and near-pointing axes last makes crossings read as a tiny 3D frame.
-    let mut axes = project_axes(scene.camera.orientation, Quaternion::new_identity());
+    let mut axes = project_axes(&scene.camera, Quaternion::new_identity());
     axes.sort_by(|a, b| b.view.z.total_cmp(&a.view.z));
     for axis in axes {
         add_axis(&mut overlay.primitives, axis, RADIUS, false);
@@ -159,13 +163,12 @@ fn camera_overlay(scene: &Scene) -> VectorOverlay {
 
 fn add_rotation_rings(
     primitives: &mut Vec<OverlayPrimitive>,
-    camera_orientation: Quaternion,
+    camera: &Camera,
     frame_orientation: Quaternion,
 ) {
     const RADIUS: f32 = 43.;
     const SEGMENTS: usize = 48;
 
-    let world_to_view = camera_orientation.inverse();
     let rings = [
         (X_COLOR, UP_VEC, FWD_VEC),
         (Y_COLOR, FWD_VEC, RIGHT_VEC),
@@ -180,8 +183,8 @@ fn add_rotation_rings(
             let angle_b = TAU * (i + 1) as f32 / SEGMENTS as f32;
             let local_a = a * angle_a.cos() + b * angle_a.sin();
             let local_b = a * angle_b.cos() + b * angle_b.sin();
-            let view_a = world_to_view.rotate_vec(frame_orientation.rotate_vec(local_a));
-            let view_b = world_to_view.rotate_vec(frame_orientation.rotate_vec(local_b));
+            let view_a = world_to_view(camera, frame_orientation.rotate_vec(local_a));
+            let view_b = world_to_view(camera, frame_orientation.rotate_vec(local_b));
             let is_front = (view_a.z + view_b.z) * 0.5 < 0.;
             let alpha = if is_front { 225 } else { 65 };
             let segment = OverlayPrimitive::Line {
@@ -265,14 +268,10 @@ fn molecule_overlay(state: &State, scene: &Scene) -> Option<VectorOverlay> {
     });
 
     if rotating {
-        add_rotation_rings(
-            &mut overlay.primitives,
-            scene.camera.orientation,
-            orientation,
-        );
+        add_rotation_rings(&mut overlay.primitives, &scene.camera, orientation);
     }
 
-    let mut axes = project_axes(scene.camera.orientation, orientation);
+    let mut axes = project_axes(&scene.camera, orientation);
     axes.sort_by(|a, b| b.view.z.total_cmp(&a.view.z));
     for axis in axes {
         add_axis(

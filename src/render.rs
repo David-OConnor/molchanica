@@ -3,15 +3,15 @@
 use std::f32::consts::TAU;
 
 use graphics::{
-    Camera, EngineUpdates, InputSettings, Lighting, Mesh, PointLight, RIGHT_VEC, Scene,
+    Camera, EngineUpdates, Handedness, InputSettings, Lighting, Mesh, PointLight, Scene,
     ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings,
 };
-use lin_alg::f32::{Quaternion, Vec3};
+use lin_alg::f32::Vec3;
 
 use crate::{
     cam::{
         FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, VIEW_DEPTH_DEFAULT,
-        calc_fog_dists,
+        calc_fog_dists, front_orientation,
     },
     drawing::atoms_bonds::BOND_RADIUS_BASE,
     inputs,
@@ -101,11 +101,13 @@ pub fn render(state: State) {
 
     let mut camera = Camera {
         fov_y: TAU / 8.,
-        position: Vec3::new(0., 0., -60.),
+        position: Vec3::new(0., 0., 60.),
         far: RENDER_DIST_FAR,
         near: RENDER_DIST_NEAR,
-        // orientation: Quaternion::from_axis_angle(Vec3::new(1., 0., 0.), TAU / 16.),
-        orientation: Quaternion::from_axis_angle(RIGHT_VEC, 0.),
+        // Molecular coordinates are right-handed; displaying them as left-handed mirrors
+        // them, e.g. making alpha helices left-handed.
+        handedness: Handedness::Right,
+        orientation: front_orientation(),
         // These control how aggressive the fog is in fading objects to the background.
         // fog_power: higher = steeper curve, more abrupt cutoff.
         // fog_density: lower = objects remain dim-but-visible rather than fully hidden.

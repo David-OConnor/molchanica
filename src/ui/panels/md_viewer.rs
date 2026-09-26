@@ -1,12 +1,12 @@
 use dynamics::snapshot::Snapshot;
 use egui::{Color32, RichText, ScrollArea, Slider, TextEdit, Ui};
-use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
+use graphics::{EngineUpdates, EntityUpdate, Scene};
 use mol_defs::molecules::{Atom, MolType, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
     button,
-    cam::reset_camera,
+    cam::{VIEW_DIR_FRONT, reset_camera},
     label,
     md::{viewer, viewer::ViewerMolecule},
     state::State,
@@ -905,7 +905,7 @@ pub(in crate::ui) fn viewer_mol_set(
                         handle_err(&mut state.ui, "Error changing snaps".to_string());
                     }
 
-                    reset_camera(state, scene, updates, FWD_VEC);
+                    reset_camera(state, scene, updates, VIEW_DIR_FRONT);
                     viewer::draw_mols(state, scene, updates);
                 }
             }

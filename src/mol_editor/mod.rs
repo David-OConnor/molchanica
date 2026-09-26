@@ -39,6 +39,7 @@ use na_seq::{
     Element::{Carbon, Hydrogen},
 };
 
+use crate::drawing::LABEL_COLOR_ATOM;
 use crate::{
     cam,
     cam::{MolCameraTarget, move_cam_to_mol},
@@ -56,10 +57,7 @@ use crate::{
     selection::{Selection, ViewSelLevel},
     split_join::start_structure_lookup,
     state::{OperatingMode, State, StateUi},
-    ui::{
-        mol_editor::{ATOM_SN_LABEL_COLOR, ATOM_SN_LABEL_SIZE},
-        util::handle_redraw,
-    },
+    ui::{mol_editor::ATOM_SN_LABEL_SIZE, util::handle_redraw},
     util::{RedrawFlags, aromatic_ring_centroid, find_neighbor_posit, handle_err},
 };
 
@@ -160,7 +158,7 @@ pub fn atom_sn_label(atom: &Atom) -> TextOverlay {
     TextOverlay {
         text: atom.serial_number.to_string(),
         size: ATOM_SN_LABEL_SIZE,
-        color: ATOM_SN_LABEL_COLOR,
+        color: LABEL_COLOR_ATOM,
         font_family: FontFamily::Proportional,
     }
 }
@@ -652,8 +650,9 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
     };
 
     state.volatile.primary_mode_cam = scene.camera.clone();
-    scene.camera.position = Vec3F32::new(0., 0., -INIT_CAM_DIST);
-    scene.camera.orientation = QuaternionF32::new_identity();
+    // Look down -Z, so 2D layouts in the XY plane display with +X right, and +Y up.
+    scene.camera.position = Vec3F32::new(0., 0., INIT_CAM_DIST);
+    scene.camera.orientation = cam::front_orientation();
 
     scene.entities.clear();
 

@@ -1393,106 +1393,168 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
 
 /// Select an atom or residue by serial number. Or select a residue by AA name.
 /// Return true if selected something.
-pub fn select_from_search(state: &mut State) -> bool {
-    let query = &state.ui.atom_res_search.to_lowercase();
-
-    let Some(mol) = &state.active_mol() else {
+/// Depending on context, can search for residues, atoms, or other
+/// parts of the molecule from residue name, amino acid number, or atom/residue serial number. (View select mode
+/// determines which number is searched for.)
+///
+/// A query can match more than one thing: e.g. a residue number in each chain, or each bond of an
+/// atom. If `advance`, and the selection is already one of the matches, move to the next one.
+pub fn select_from_search(state: &mut State, advance: bool) -> bool {
+    let query = state.ui.atom_res_search.trim().to_lowercase();
+    if query.is_empty() {
         return false;
+    }
+
+    let (hits, preferred) = search_hits(state, &query);
+    if hits.is_empty() {
+        return false;
+    }
+
+    let hit_i = match hits.iter().position(|hit| *hit == state.ui.selection) {
+        Some(i) if advance => (i + 1) % hits.len(),
+        Some(i) => i,
+        None => preferred,
     };
 
-    let mol_type = mol.mol_type();
-    let mol_i = state.volatile.active_mol.unwrap().1;
+    state.ui.selection = hits[hit_i].clone();
+    true
+}
 
-    // If 1 or 3 letters and alphanumeric, see if the query is an AA ident. Then
-    // select all residues with this AA.
-    let query_len = query.len();
-    if (query_len == 1 || query_len == 3)
-        && let Some(pep) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-        && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
+/// Everything in the active molecule matching a (trimmed, lowercase) search query, in the order
+/// they are cycled through, and the index of the one to select first.
+fn search_hits(state: &State, query: &str) -> (Vec<Selection>, usize) {
+    let none = (Vec::new(), 0);
+
+    let Some((mol_type, mol_i)) = state.volatile.active_mol else {
+        return none;
+    };
+    let Some(mol) = state.get_mol(mol_type, mol_i) else {
+        return none;
+    };
+    let mol = mol.common();
+
+    let pep = if mol_type == MolType::Peptide {
+        state.peptides.get(mol_i)
+    } else {
+        None
+    };
+
+    // A number is a serial number; the view/select level determines of what. Match it exactly:
+    // "335" must not stop at residue 3 or 33.
+    if let Ok(sn) = query.strip_prefix('#').unwrap_or(query).parse::<u32>() {
+        let mut hits = Vec::new();
+        let mut preferred = 0;
+
+        let atom_hits = |hits: &mut Vec<Selection>| {
+            for (i, atom) in mol.atoms.iter().enumerate() {
+                if atom.serial_number == sn {
+                    hits.push(Selection::from_atom(mol_type, mol_i, i));
+                }
+            }
+        };
+
+        match state.ui.view_sel_level {
+            ViewSelLevel::Atom => atom_hits(&mut hits),
+            ViewSelLevel::Residue => match pep {
+                Some(pep) => {
+                    for (i, res) in pep.residues.iter().enumerate() {
+                        if res.serial_number == sn {
+                            hits.push(Selection::Residue(i));
+                        }
+                    }
+
+                    // Residue serial numbers are only unique within a chain. Start on the chain
+                    // the selection is already on.
+                    if let Some(chain) = selected_chain(pep, &state.ui.selection) {
+                        preferred = hits
+                            .iter()
+                            .position(|hit| match hit {
+                                Selection::Residue(i) => res_chain(pep, *i) == Some(chain),
+                                _ => false,
+                            })
+                            .unwrap_or(0);
+                    }
+                }
+                // Non-peptide molecules have no residues; fall back to atoms.
+                None => atom_hits(&mut hits),
+            },
+            ViewSelLevel::Bond => {
+                for (i, bond) in mol.bonds.iter().enumerate() {
+                    if bond.atom_0_sn == sn || bond.atom_1_sn == sn {
+                        hits.push(Selection::from_bond(mol_type, mol_i, i));
+                    }
+                }
+            }
+        }
+
+        if !hits.is_empty() {
+            return (hits, preferred);
+        }
+    }
+
+    // The rest are residue names, which only peptides have.
+    let Some(pep) = pep else {
+        return none;
+    };
+
+    // A 1 or 3-letter AA ident: select all residues of that AA, together.
+    if (query.len() == 1 || query.len() == 3)
         && let Ok(aa) = AminoAcid::from_str(query)
     {
-        let mut res_sns = Vec::new();
-        for (i, res) in pep.residues.iter().enumerate() {
-            if let ResidueType::AminoAcid(aa_) = res.res_type
-                && aa_ == aa
-            {
-                res_sns.push(i);
-            }
-        }
+        let residues: Vec<_> = pep
+            .residues
+            .iter()
+            .enumerate()
+            .filter(|(_, res)| matches!(res.res_type, ResidueType::AminoAcid(aa_) if aa_ == aa))
+            .map(|(i, _)| i)
+            .collect();
 
-        state.ui.selection = Selection::Residues(res_sns);
-        return true;
+        if residues.is_empty() {
+            return none;
+        }
+        return (vec![Selection::Residues(residues)], 0);
     }
 
-    // Match against a hetero residue name. We have outside of the view/select level branches,
-    // so you don't have to be in residue mode as a result.
-    if query_len >= 3
-        && let Some(pep) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-        && state.volatile.active_mol.as_ref().unwrap().0 == MolType::Peptide
-    {
-        for (i, res) in pep.residues.iter().enumerate() {
-            match &res.res_type {
-                // AA name searches are handled above.
-                ResidueType::AminoAcid(_) => (),
-                ResidueType::Water => {}
-                ResidueType::Other(name) => {
-                    if name.to_lowercase().contains(query) {
-                        state.ui.selection = Selection::Residue(i);
-                        return true;
-                    }
-                }
-            }
-        }
+    // A hetero residue name, e.g. a ligand, or an ion such as "ZN" or "CL". Prefer exact name
+    // matches, so "CL" doesn't land on e.g. "CLR" first. This is independent of the view/select
+    // level, so you don't have to be in residue mode to use it.
+    let hetero_hits = |matches: &dyn Fn(&str) -> bool| -> Vec<Selection> {
+        pep.residues
+            .iter()
+            .enumerate()
+            .filter(|(_, res)| match &res.res_type {
+                ResidueType::Other(name) => matches(&name.to_lowercase()),
+                _ => false,
+            })
+            .map(|(i, _)| Selection::Residue(i))
+            .collect()
+    };
+
+    let mut hits = hetero_hits(&|name| name == query);
+
+    // Substring matches only for text: A numeric query that didn't match a serial number above
+    // would otherwise jump to any ligand with those digits in its name.
+    if hits.is_empty() && query.len() >= 2 && query.parse::<u32>().is_err() {
+        hits = hetero_hits(&|name| name.contains(query));
     }
 
-    match state.ui.view_sel_level {
-        ViewSelLevel::Atom => {
-            for (i, atom) in mol.common().atoms.iter().enumerate() {
-                if query == &atom.serial_number.to_string() {
-                    state.ui.selection = Selection::from_atom(mol_type, mol_i, i);
-                    return true;
-                }
-            }
-        }
-        ViewSelLevel::Residue => {
-            if state.volatile.active_mol.as_ref().unwrap().0 != MolType::Peptide {
-                // todo: C+P from atom section above
-                for (i, atom) in mol.common().atoms.iter().enumerate() {
-                    if query == &atom.serial_number.to_string() {
-                        state.ui.selection = Selection::from_atom(mol_type, mol_i, i);
-                        return true;
-                    }
-                }
-            }
+    (hits, 0)
+}
 
-            let Some(pep) = state
-                .peptide_for_tools_i()
-                .and_then(|i| state.peptides.get(i))
-            else {
-                return false;
-            };
+/// The index of the chain a peptide residue is on, from its atoms.
+fn res_chain(pep: &MoleculePeptide, res_i: usize) -> Option<usize> {
+    let atom_i = *pep.residues.get(res_i)?.atoms.first()?;
+    pep.common.atoms.get(atom_i)?.chain
+}
 
-            for (i, res) in pep.residues.iter().enumerate() {
-                if query.contains(&res.serial_number.to_string()) {
-                    state.ui.selection = Selection::Residue(i);
-                    return true;
-                }
-            }
-        }
-        ViewSelLevel::Bond => {
-            for (i, bond) in mol.common().bonds.iter().enumerate() {
-                if query == &bond.atom_0_sn.to_string() || query == &bond.atom_1_sn.to_string() {
-                    state.ui.selection = Selection::from_bond(mol_type, mol_i, i);
-                    return true;
-                }
-            }
-        }
+/// The index of the chain the current peptide selection is on, if any.
+fn selected_chain(pep: &MoleculePeptide, sel: &Selection) -> Option<usize> {
+    match sel {
+        Selection::Residue(i) => res_chain(pep, *i),
+        Selection::Residues(is) => res_chain(pep, *is.first()?),
+        Selection::AtomPeptide(i) => pep.common.atoms.get(*i)?.chain,
+        _ => None,
     }
-    false
 }
 
 impl State {

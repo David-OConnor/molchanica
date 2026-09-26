@@ -19,7 +19,7 @@ use na_seq::{AminoAcid, Element};
 use regex::Regex;
 
 use crate::{
-    cam::{move_cam_to_sel, reset_camera},
+    cam::{VIEW_DIR_FRONT, move_cam_to_sel, reset_camera},
     file_io::download_mols,
     render::set_flashlight,
     selection::Selection,
@@ -325,7 +325,7 @@ pub fn handle_cmd(
     }
 
     if re_reset.captures(&input).is_some() {
-        reset_camera(state, scene, updates, FWD_VEC);
+        reset_camera(state, scene, updates, VIEW_DIR_FRONT);
         return Ok("Complete".to_owned());
     }
 

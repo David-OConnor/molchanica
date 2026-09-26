@@ -14,14 +14,14 @@ use dynamics::{
     ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
     SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
 };
-use graphics::{EngineUpdates, Entity, FWD_VEC, Scene};
+use graphics::{EngineUpdates, Entity, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
 use mol_defs::molecules::{Atom, Bond, common::MoleculeCommon, nucleic_acid::NucleicAcidType};
 use rand::RngExt;
 use viewer::SnapshotViewer;
 
 use crate::{
-    cam::{move_cam_to_active_mol, reset_camera},
+    cam::{VIEW_DIR_FRONT, move_cam_to_active_mol, reset_camera},
     file_io::save_mol_set_as_gro,
     gromacs,
     md::trajectory::{TrajFormat, Trajectory},
@@ -163,7 +163,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         md.viewer.mol_set_active = Some(md.viewer.mol_sets.len() - 1);
     }
 
-    reset_camera(state, scene, updates, FWD_VEC);
+    reset_camera(state, scene, updates, VIEW_DIR_FRONT);
     viewer::draw_mols(state, scene, updates);
     handle_success(&mut state.ui, "MD complete".to_string());
 }

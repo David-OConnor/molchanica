@@ -8,7 +8,7 @@ use egui::{
     Color32, ComboBox, CornerRadius, Event, FocusDirection, Frame, Key, Margin, Panel, RichText,
     Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
-use graphics::{ControlScheme, EngineUpdates, FWD_VEC, Scene};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolIdent};
 use na_seq::Element;
 use panels::{
@@ -187,7 +187,7 @@ pub fn handle_input(
                 if state.volatile.operating_mode == OperatingMode::MolEditor {
                     add_atom_with_tab(state, scene, engine_updates);
                 } else {
-                    cam::reset_camera(state, scene, engine_updates, FWD_VEC);
+                    cam::reset_camera(state, scene, engine_updates, cam::VIEW_DIR_FRONT);
                 }
             }
         }
@@ -315,6 +315,9 @@ fn draw_cli(
     });
 }
 
+/// UI widget for searching. Depending on context, can search for residues, atoms, or other
+/// parts of the molecule from residue name, amino acid number, or atom/residue serial number. (View select mode
+/// determines which number is searched for.)
 fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags, ui: &mut Ui) {
     let (btn_text_p, btn_text_n) = match state.ui.view_sel_level {
         ViewSelLevel::Atom => ("Prev atom", "Next atom"),
@@ -323,17 +326,49 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
     };
 
     let help_txt = "Search in the active molecule by atom serial number, residue serial number, \
-    amino acid identifier, hetero residue name, etc.";
+    amino acid identifier, hetero residue name, etc. Press Enter to go to the next match, e.g. the \
+    same residue number in another chain.";
 
-    ui.label("Find").on_hover_text(help_txt);
-    if ui
-        .add(TextEdit::singleline(&mut state.ui.atom_res_search).desired_width(60.))
-        .on_hover_text(help_txt)
-        .changed()
-    {
-        let updated = select_from_search(state);
-        if updated && let Some((mol_type, _)) = &state.volatile.active_mol {
-            redraw.set(*mol_type);
+    let text_color = state.ui.atom_res_search_miss.then_some(COLOR_OUT_ERROR);
+
+    ui.label("Find:").on_hover_text(help_txt);
+    let search_resp = ui
+        .add(
+            TextEdit::singleline(&mut state.ui.atom_res_search)
+                .desired_width(60.)
+                .text_color_opt(text_color),
+        )
+        .on_hover_text(help_txt);
+
+    let enter_pressed = search_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+
+    if search_resp.changed() || enter_pressed {
+        let sel_prev = state.ui.selection.clone();
+
+        let found = select_from_search(state, enter_pressed);
+        let miss = !found && !state.ui.atom_res_search.trim().is_empty();
+
+        if miss != state.ui.atom_res_search_miss {
+            state.ui.atom_res_search_miss = miss;
+            // The text color is applied when the field is drawn; show the change right away.
+            ui.ctx().request_repaint();
+        }
+
+        if state.ui.selection != sel_prev {
+            // The previous selection may be on a different molecule type; clear its highlight too.
+            redraw.set_from_sel(&sel_prev);
+            redraw.set_from_sel(&state.ui.selection);
+
+            if state.volatile.operating_mode == OperatingMode::Primary
+                && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
+            {
+                *center = orbit_center(state);
+            }
+        }
+
+        // Enter surrenders focus by default; keep it, so repeated presses cycle through matches.
+        if enter_pressed {
+            search_resp.request_focus();
         }
     }
 
@@ -966,6 +1001,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 &mut state.ui.selection,
                 &state.volatile.aa_seq_text,
                 &state.volatile.aa_seq_res_indices,
+                &state.volatile.aa_seq_res_sns,
                 &mut state.volatile.aa_seq_display_cache,
                 ui,
                 &mut redraw.peptide,

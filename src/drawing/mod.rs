@@ -72,7 +72,10 @@ const LABEL_SIZE_ATOM: f32 = 16.;
 const LABEL_SIZE_CHAIN: f32 = 30.;
 const LABEL_SIZE_MOL: f32 = 18.;
 const LABEL_SIZE_MOL_LARGE: f32 = 40.;
-const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (255, 60, 160, 255);
+
+pub const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (255, 60, 160, 255);
+// pub const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (40, 220, 255, 255);
+
 const LABEL_COLOR_CHAIN: (u8, u8, u8, u8) = (200, 100, 160, 255);
 // const LABEL_COLOR_ATOM_SEL: (u8, u8, u8, u8) = (255, 20, 20, 255);
 const LABEL_COLOR_MOL: (u8, u8, u8, u8) = (255, 120, 150, 255);

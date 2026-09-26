@@ -1,3 +1,5 @@
+use std::f32::consts::TAU;
+
 use egui::Ui;
 use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
 use lin_alg::f32::{Quaternion, Vec3};
@@ -32,6 +34,21 @@ pub const FOG_DIST_MIN: u16 = 1;
 pub const FOG_DIST_MAX: u16 = 120;
 
 const PEP_FOG_FAR_RATIO: usize = 20;
+
+/// The default viewing direction: looking down -Z, with +X right and +Y up. Our coordinates are
+/// right-handed, as in PDB, mmCIF, SDF etc, so +Z points toward the viewer. This matches the
+/// default view in PyMOL, Chimera etc.
+pub const VIEW_DIR_FRONT: Vec3 = Vec3 {
+    x: 0.,
+    y: 0.,
+    z: -1.,
+};
+
+/// The camera orientation that looks along `VIEW_DIR_FRONT`.
+pub fn front_orientation() -> Quaternion {
+    // Camera-local +Z is forward; turn it around the up axis.
+    Quaternion::from_axis_angle(UP_VEC, TAU / 2.)
+}
 
 /// Apply the selected depth mode to the near clip plane and distant-object fade.
 pub fn set_fog(state: &State, cam: &mut Camera) {
@@ -144,7 +161,7 @@ pub fn cam_reset_controls(
     ui.label("Cam:");
 
     for (label, axis, direction) in [
-        ("Front", "Y", FWD_VEC),
+        ("Front", "Y", VIEW_DIR_FRONT),
         ("Top", "Z", -UP_VEC),
         ("Left", "X", RIGHT_VEC),
     ] {
@@ -265,12 +282,15 @@ fn direction_or(vector: Vec3, fallback: Vec3) -> Vec3 {
 /// `direction` must be a unit vector.
 fn place_camera(cam: &mut Camera, target: Vec3, direction: Vec3, distance: f32) {
     cam.position = target - direction * distance;
-    cam.orientation = Quaternion::from_unit_vecs(FWD_VEC, direction);
+
+    // Rotate from the front view along the shortest arc. This keeps +X right, or +Y up
+    // when possible, e.g. for the preset views.
+    cam.orientation = Quaternion::from_unit_vecs(VIEW_DIR_FRONT, direction) * front_orientation();
 }
 
 pub fn cam_look_at_outside(cam: &mut Camera, target: Vec3, alignment: Vec3, dist: f32) {
     // Look from the outside toward the alignment point, through the target.
-    let direction = direction_or(alignment - target, FWD_VEC);
+    let direction = direction_or(alignment - target, VIEW_DIR_FRONT);
     place_camera(cam, target, direction, dist);
 }
 
