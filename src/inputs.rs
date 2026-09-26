@@ -438,6 +438,18 @@ pub(crate) fn add_atom_with_tab(state: &mut State, scene: &mut Scene, updates: &
     state.mol_editor.mol.update_characterization();
 
     sync_md(state);
+
+    // `add_atom` draws only the new atoms, but `sync_md` may reassign serial numbers, and the atom
+    // labels need to reflect that.
+    if state.mol_editor.show_atom_sns {
+        mol_editor::redraw(
+            &mut scene.entities,
+            &state.mol_editor,
+            &state.ui,
+            state.volatile.mol_manip.mode,
+            updates,
+        );
+    }
 }
 
 /// Handles keyboard input from either device, or window events.

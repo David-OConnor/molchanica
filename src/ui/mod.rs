@@ -52,7 +52,7 @@ use crate::{
 };
 
 pub mod misc;
-mod mol_editor;
+pub mod mol_editor;
 mod mol_type_tools;
 mod panels;
 pub mod popup;

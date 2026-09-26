@@ -23,6 +23,7 @@ use na_seq::Element;
 
 use crate::{
     drawing::wrappers::{draw_all_ligs, draw_all_pockets},
+    file_io::managed_mols,
     mol_manip::ManipMode,
     prefs::OpenType,
     selection::Selection,
@@ -784,10 +785,27 @@ pub fn on_structure_lookup(
         return;
     };
 
+    let renamed = name_structure_mol(state, lig_i, &props, lookup.name_prefix.as_deref());
+
+    // A molecule from the editor is kept in a managed file (see `managed_mols::store_edited`);
+    // update it with the identifiers and name we just found.
+    let lig = &state.ligands[lig_i];
+    match managed_mols::update_managed_mol(&state.volatile.prefs_dir, lig) {
+        Ok(true) => {
+            if let Some(path) = &lig.common.path {
+                for history in &mut state.to_save.open_history {
+                    if history.path == *path {
+                        history.ident = Some(lig.common.ident.clone());
+                    }
+                }
+            }
+        }
+        Ok(false) => (),
+        Err(e) => eprintln!("Unable to update the stored copy of {}: {e}", lookup.ident),
+    }
+
     // In the molecule editor, ligands aren't drawn; they will be on exiting it.
-    if name_structure_mol(state, lig_i, &props, lookup.name_prefix.as_deref())
-        && state.volatile.operating_mode == OperatingMode::Primary
-    {
+    if renamed && state.volatile.operating_mode == OperatingMode::Primary {
         redraw.set(MolType::Ligand);
     }
 }

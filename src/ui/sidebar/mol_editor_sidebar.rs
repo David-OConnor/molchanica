@@ -7,6 +7,7 @@ use crate::{
     button,
     drawing::{EntityClass, draw_pocket},
     label,
+    mol_editor,
     mol_editor::DbCheck,
     pocket_render::PocketRender,
     selection::Selection,
@@ -158,12 +159,16 @@ pub(in crate::ui) fn pocket_list(
     });
 }
 
-pub(in crate::ui) fn pharmacophore_list(state: &mut State, ui: &mut Ui) {
+pub(in crate::ui) fn pharmacophore_list(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+) {
     // todo: Make this work eventually when out of hte mol editor.
 
     ui.add_space(ROW_SPACING);
 
-    // todo: Hmm. Need to redraw.
     let mut redraw_mol_editor = false;
 
     // The visibility flag goes in directly: `pharmacophore_list` clears it when its Close button
@@ -175,6 +180,17 @@ pub(in crate::ui) fn pharmacophore_list(state: &mut State, ui: &mut Ui) {
         ui,
         &mut redraw_mol_editor,
     );
+
+    // E.g. a feature was removed; update its 3D indicators.
+    if redraw_mol_editor {
+        mol_editor::redraw(
+            &mut scene.entities,
+            &state.mol_editor,
+            &state.ui,
+            state.volatile.mol_manip.mode,
+            updates,
+        );
+    }
 }
 
 /// e.g. functional groups, rings, etc.

@@ -889,15 +889,14 @@ pub(in crate::ui) fn sidebar(
                 mol_editor_sidebar::pocket_list(state, scene, updates, ui);
             } else {
                 mol_picker(state, scene, ui, redraw, updates);
+                traj_items(state, scene, updates, ui, redraw);
+                md_viewer::viewer_mol_set(state, scene, updates, ui, redraw);
             }
-
-            traj_items(state, scene, updates, ui, redraw);
-            md_viewer::viewer_mol_set(state, scene, updates, ui, redraw);
 
             ui.add_space(ROW_SPACING);
 
             if state.ui.ui_vis.pharmacophore_list && edit_mode {
-                mol_editor_sidebar::pharmacophore_list(state, ui);
+                mol_editor_sidebar::pharmacophore_list(state, scene, updates, ui);
             }
 
             if edit_mode {

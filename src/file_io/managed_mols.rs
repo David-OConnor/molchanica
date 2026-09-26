@@ -11,7 +11,8 @@ use std::{
 };
 
 use bio_files::{Sdf, SdfFormat};
-use mol_defs::molecules::small::MoleculeSmall;
+use chrono::Utc;
+use mol_defs::molecules::{MolIdent, small::MoleculeSmall};
 use serde::{Deserialize, Serialize};
 
 const MANAGED_MOLS_DIR: &str = "managed_molecules";
@@ -28,6 +29,8 @@ pub(crate) enum ManagedMolProvider {
     Geostd,
     Smiles,
     BuiltIn,
+    /// Made or changed in the molecule editor.
+    Editor,
 }
 
 impl ManagedMolProvider {
@@ -42,6 +45,7 @@ impl ManagedMolProvider {
             Self::Geostd => "geostd",
             Self::Smiles => "smiles",
             Self::BuiltIn => "built-in",
+            Self::Editor => "editor",
         }
     }
 }
@@ -55,6 +59,10 @@ pub(crate) struct ManagedMolManifest {
     pub pubchem_cid: Option<u32>,
     pub frcmod_file: Option<String>,
     pub lib_file: Option<String>,
+    /// A display name the file formats don't hold, e.g. "Editor | 1123 | Taurine" for a molecule
+    /// from the editor. Applied to the molecule on load.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 pub(crate) fn managed_mols_dir(prefs_dir: &Path) -> PathBuf {
@@ -191,6 +199,7 @@ pub(crate) fn store_text(
             pubchem_cid: None,
             frcmod_file: None,
             lib_file: None,
+            name: None,
         },
     )?;
 
@@ -216,6 +225,7 @@ pub(crate) fn store_sdf(
             pubchem_cid: None,
             frcmod_file: None,
             lib_file: None,
+            name: None,
         },
     )?;
 
@@ -264,6 +274,73 @@ pub(crate) fn store_geostd(
             pubchem_cid,
             frcmod_file,
             lib_file,
+            name: None,
+        },
+    )?;
+
+    Ok(main_path)
+}
+
+/// Store a molecule made or changed in the molecule editor, so it reopens next session, and is in
+/// the recent-files list, without the user saving it. Unlike a download, it has no natural key;
+/// each gets its own entry, keyed by when it was stored.
+///
+/// `path_prev` is the file the molecule was loaded into the editor from, if any. If that's an
+/// editor entry, we rewrite it in place rather than add another: it holds an earlier version of
+/// this molecule. Any other file is left alone.
+pub(crate) fn store_edited(
+    prefs_dir: &Path,
+    mol: &MoleculeSmall,
+    path_prev: Option<&Path>,
+) -> io::Result<PathBuf> {
+    let provider = ManagedMolProvider::Editor;
+
+    let prev_entry = path_prev
+        .filter(|path| is_provider_path(prefs_dir, path, provider))
+        .and_then(|path| {
+            let entry_dir = managed_entry_dir(prefs_dir, path)?;
+            let main_file = path.file_name()?.to_str()?.to_owned();
+            Some((entry_dir, path.to_owned(), main_file))
+        });
+
+    let (entry_dir, main_path, main_file) = match prev_entry {
+        Some(entry) => entry,
+        None => {
+            let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
+
+            let mut key = stamp.clone();
+            let mut i = 1;
+            while entry_paths(prefs_dir, provider, &key, "sdf").0.exists() {
+                key = format!("{stamp}-{i}");
+                i += 1;
+            }
+
+            entry_paths(prefs_dir, provider, &key, "sdf")
+        }
+    };
+
+    // There's no query that produced this molecule; its structure is the closest equivalent.
+    let query = mol
+        .idents
+        .iter()
+        .find_map(|ident| match ident {
+            MolIdent::Smiles(smiles) => Some(smiles.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let sdf = mol.to_sdf();
+    write_atomically(&main_path, |path| sdf.save(path, SdfFormat::V2000))?;
+    write_manifest(
+        &entry_dir,
+        &ManagedMolManifest {
+            provider: provider.as_str().to_owned(),
+            query,
+            main_file,
+            pubchem_cid: None,
+            frcmod_file: None,
+            lib_file: None,
+            name: mol.common.name.clone(),
         },
     )?;
 
@@ -300,11 +377,34 @@ pub(crate) fn update_managed_mol(prefs_dir: &Path, mol: &MoleculeSmall) -> io::R
         _ => return Ok(false),
     }
 
+    // The display name isn't in the file formats; keep it in the manifest. E.g. an edited
+    // molecule's, once PubChem identifies it.
+    if let Some(mut manifest) = read_manifest(prefs_dir, path)?
+        && manifest.name != mol.common.name
+        && let Some(entry_dir) = managed_entry_dir(prefs_dir, path)
+    {
+        manifest.name = mol.common.name.clone();
+        write_manifest(&entry_dir, &manifest)?;
+    }
+
     Ok(true)
 }
 
 pub(crate) fn is_managed_path(prefs_dir: &Path, path: &Path) -> bool {
     managed_entry_dir(prefs_dir, path).is_some()
+}
+
+/// Whether `path` is a managed file stored for `provider`.
+fn is_provider_path(prefs_dir: &Path, path: &Path, provider: ManagedMolProvider) -> bool {
+    let prefix = format!("{}-", provider.as_str());
+
+    managed_entry_dir(prefs_dir, path)
+        .and_then(|dir| {
+            dir.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with(&prefix))
+        })
+        .unwrap_or(false)
 }
 
 fn is_single_filename(value: &str) -> bool {

@@ -173,6 +173,9 @@ pub(crate) fn parse_session_history(
                     molecule.idents.push(MolIdent::PubChem(cid));
                 }
             }
+            if let Some(name) = manifest.as_ref().and_then(|m| m.name.clone()) {
+                molecule.common_mut().name = Some(name);
+            }
             molecule
                 .common_mut()
                 .metadata
@@ -468,6 +471,9 @@ impl State {
                     {
                         mol.idents.push(MolIdent::PubChem(cid));
                     }
+                }
+                if let Some(name) = managed_manifest.as_ref().and_then(|m| m.name.clone()) {
+                    mol_gen.common_mut().name = Some(name);
                 }
 
                 mol_gen
@@ -917,6 +923,10 @@ impl State {
                 if first_i.is_none() {
                     item.last_session = true;
                     item.timestamp = Utc::now();
+                    // The file may hold a different molecule now, e.g. one rewritten by the editor.
+                    if ident.is_some() {
+                        item.ident = ident.clone();
+                    }
                     first_i = Some(i);
                 }
                 to_delete.push(i);

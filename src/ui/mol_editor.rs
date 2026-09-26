@@ -51,6 +51,12 @@ const DT_MAX: f32 = 0.0001; // No more than 0.002 for stability. currently 0.5fs
 // a noticeable lag.
 const MAX_RELAX_ITERS: usize = 300;
 
+// Atom serial number labels, drawn over each atom when "Atom #" is enabled. Cyan: distinct from the
+// (pink) pharmacophore feature numbering, and from the element, pocket, and H bond colors.
+pub const ATOM_SN_LABEL_COLOR: (u8, u8, u8, u8) = (40, 220, 255, 255);
+// Font size. (`TextOverlay` has no separate stroke weight; this is what controls thickness.)
+pub const ATOM_SN_LABEL_SIZE: f32 = 16.;
+
 fn change_el_button(
     sel: &Selection,
     el: Element,
@@ -189,12 +195,11 @@ pub(in crate::ui) fn editor(
             }
         });
 
-        let mut redraw_ = Default::default(); // todo: Fix!
+        let mut redraw_ = RedrawFlags::default();
 
         section_box().show(ui, |ui| {
             ui.label("Vis:");
 
-            // todo: Sort out the redraw flags here now that you changed the API!
             misc::toggle_btn_inv(
                 &mut state.ui.visibility.hide_hydrogen,
                 "H",
@@ -215,6 +220,23 @@ pub(in crate::ui) fn editor(
                 &mut state.ui.visibility.hide_h_bonds,
                 "H bonds",
                 "Show or hide hydrogen bonds. For example, between a pocket and the molecule being edited.",
+                ui,
+                &mut redraw_,
+            );
+
+            // Not inverted: this flag is "show", unlike the "hide" flags above.
+            misc::toggle_btn(
+                &mut state.mol_editor.show_pharmacophore_renders,
+                "Pharm",
+                "Show or hide the molecule's 3D pharmacophore feature indicators.",
+                ui,
+                &mut redraw_,
+            );
+
+            misc::toggle_btn(
+                &mut state.mol_editor.show_atom_sns,
+                "Atom #",
+                "Show or hide atom serial number text overlays.",
                 ui,
                 &mut redraw_,
             );
@@ -270,6 +292,11 @@ pub(in crate::ui) fn editor(
                 }
             }
         });
+
+        // The editor has a single redraw path; any flag set by the toggles above triggers it.
+        if redraw_.ligand || redraw_.pocket {
+            redraw = true;
+        }
 
         if ui.button(RichText::new("Clear all").color(Color32::LIGHT_RED))
             .on_hover_text("Delete all atoms; start fresh")
@@ -458,19 +485,6 @@ pub(in crate::ui) fn editor(
 
     ui.horizontal(|ui| {
         pharmacophore_edit_tools(state, scene, ui, updates, &mut redraw);
-
-        ui.add_space(COL_SPACING);
-
-        let color = active_color(state.mol_editor.show_pharmacophore_renders);
-        if ui
-            .button(RichText::new("Show ph 3D").color(color))
-            .on_hover_text("Show or hide the molecule's 3D pharmacophore feature indicators.")
-            .clicked()
-        {
-            state.mol_editor.show_pharmacophore_renders =
-                !state.mol_editor.show_pharmacophore_renders;
-            redraw = true;
-        }
 
         ui.add_space(COL_SPACING);
 
@@ -800,6 +814,12 @@ fn edit_tools(
                     state.mol_editor.mol.update_characterization();
                 }
                 rebuild_md = true;
+
+                // `add_atom` draws only the new atoms, but rebuilding MD may reassign serial
+                // numbers, and the atom labels need to reflect that.
+                if state.mol_editor.show_atom_sns {
+                    *redraw = true;
+                }
             }
 
             if ui

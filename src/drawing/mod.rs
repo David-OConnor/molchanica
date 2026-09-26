@@ -28,6 +28,7 @@ use crate::{
         },
         viridis_lut::VIRIDIS,
     },
+    mol_editor,
     mol_manip::ManipMode,
     prefs::OpenType,
     render::{
@@ -746,11 +747,14 @@ pub fn draw_mol(
         num_mols,
         draw_md_mols,
         show_pharmacophore,
+        false,
     )
 }
 
 /// Draw a molecule with an explicit override for its pharmacophore feature renders.
 /// The molecule editor uses this instead of the global visibility preference.
+/// `editor_atom_sns` labels atoms with their serial numbers in the molecule editor, which
+/// doesn't use the primary mode's label settings.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_mol_with_pharmacophore_visibility(
     mol: MolGenericRef,
@@ -762,6 +766,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
     num_mols: usize,
     draw_md_mols: bool,
     show_pharmacophore: bool,
+    editor_atom_sns: bool,
 ) -> Vec<Entity> {
     let mut result = Vec::new();
 
@@ -942,6 +947,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     mol.common().atoms.len(),
                     ui,
                 );
+            } else if editor_atom_sns {
+                entity.overlay_text = Some(mol_editor::atom_sn_label(atom));
             }
 
             entity.class = mol.mol_type().entity_type() as u32;
@@ -1195,23 +1202,35 @@ pub fn draw_mol_with_pharmacophore_visibility(
         }
 
         // Draw atom-based labels on bonds if not in a view mode that shows atoms.
-        if mode != OperatingMode::MolEditor
-            && !matches!(
-                ui.mol_view,
-                MoleculeView::BallAndStick | MoleculeView::SpaceFill
-            )
-        {
-            text_overlay_bond(
-                &mut entities,
-                bond,
-                &mol.common().atoms,
-                &mut atoms_labeled,
-                &mol.name(),
-                mol_active, // todo
-                &[],
-                mol.common().bonds.len(),
-                ui,
-            );
+        if !matches!(
+            ui.mol_view,
+            MoleculeView::BallAndStick | MoleculeView::SpaceFill
+        ) {
+            if mode != OperatingMode::MolEditor {
+                text_overlay_bond(
+                    &mut entities,
+                    bond,
+                    &mol.common().atoms,
+                    &mut atoms_labeled,
+                    &mol.name(),
+                    mol_active, // todo
+                    &[],
+                    mol.common().bonds.len(),
+                    ui,
+                );
+            } else if editor_atom_sns {
+                // As in `text_overlay_bond`: the first entity is nearest `atom_0`, and the second
+                // nearest `atom_1`.
+                for (entity, i_atom) in entities.iter_mut().zip([bond.atom_0, bond.atom_1]) {
+                    if atoms_labeled[i_atom] {
+                        continue;
+                    }
+                    atoms_labeled[i_atom] = true;
+
+                    entity.overlay_text =
+                        Some(mol_editor::atom_sn_label(&mol.common().atoms[i_atom]));
+                }
+            }
         }
 
         if let MolGenericRef::Small(m) = &mol

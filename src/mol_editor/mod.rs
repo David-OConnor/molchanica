@@ -2,7 +2,13 @@ pub mod add_atoms;
 pub mod templates;
 
 use std::{
-    collections::HashMap, io, io::ErrorKind, path::Path, sync::mpsc, thread, time::Instant,
+    collections::HashMap,
+    io,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    thread,
+    time::Instant,
 };
 
 use bio_apis::{
@@ -14,7 +20,8 @@ use dynamics::{
     ComputationDevice, FfMolType, HydrogenConstraint, Integrator, MdConfig, MdOverrides, MdState,
     MolDynamics, ParamError, Solvent, TAU_TEMP_DEFAULT, params::FfParamSet, snapshot::Snapshot,
 };
-use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
+use egui::FontFamily;
+use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOverlay};
 use lin_alg::{
     f32::{Quaternion as QuaternionF32, Vec3 as Vec3F32},
     f64::Vec3,
@@ -23,8 +30,8 @@ use mol_defs::{
     bond_inference::create_hydrogen_bonds_two_mols,
     mol_components::MolComponents,
     molecules::{
-        Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolIdent, MolType,
-        common::MoleculeCommon, small::MoleculeSmall,
+        Atom, Bond, HydrogenBondTwoMols, MolGenericRef, MolIdent, MolType, common::MoleculeCommon,
+        small::MoleculeSmall,
     },
 };
 use na_seq::{
@@ -42,14 +49,18 @@ use crate::{
         },
         draw_mol_with_pharmacophore_visibility, draw_pocket,
     },
+    file_io::managed_mols,
     mol_manip::ManipMode,
     prefs::OpenType,
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
     split_join::start_structure_lookup,
     state::{OperatingMode, State, StateUi},
-    ui::util::handle_redraw,
-    util::{RedrawFlags, aromatic_ring_centroid, find_neighbor_posit},
+    ui::{
+        mol_editor::{ATOM_SN_LABEL_COLOR, ATOM_SN_LABEL_SIZE},
+        util::handle_redraw,
+    },
+    util::{RedrawFlags, aromatic_ring_centroid, find_neighbor_posit, handle_err},
 };
 
 pub const INIT_CAM_DIST: f32 = 20.;
@@ -97,7 +108,6 @@ impl Default for MdEditor {
     }
 }
 
-#[derive(Default)]
 /// For editing small organic molecules.
 pub struct MolEditorState {
     pub mol: MoleculeSmall,
@@ -114,6 +124,8 @@ pub struct MolEditorState {
     pub rotatable_bonds: Vec<usize>,
     pub selected_comp: Option<usize>,
     pub show_pharmacophore_renders: bool,
+    // todo: Separate `visibility` substruct like we have in `StateUi` ?
+    pub show_atom_sns: bool,
     /// Our SMILES for the molecule's current structure. Kept up to date by `refresh_smiles`.
     pub smiles: String,
     /// Where the "Check DBs" PubChem lookup stands for the molecule's current structure. `None`
@@ -121,6 +133,36 @@ pub struct MolEditorState {
     pub db_check: Option<DbCheck>,
     /// For naming molecules added from the editor, e.g. "Editor 0", "Editor 1".
     pub next_name_i: usize,
+}
+
+impl Default for MolEditorState {
+    fn default() -> Self {
+        Self {
+            mol: Default::default(),
+            h_bonds: Default::default(),
+            mol_i_in_state: Default::default(),
+            pocket_i_in_state: Default::default(),
+            md: Default::default(),
+            rotatable_bonds: Default::default(),
+            selected_comp: Default::default(),
+            show_pharmacophore_renders: Default::default(),
+            show_atom_sns: true,
+            smiles: Default::default(),
+            db_check: Default::default(),
+            next_name_i: Default::default(),
+        }
+    }
+}
+
+/// The editor's atom serial number label. This is independent of `LabelVis::atom_sn`, and colored
+/// differently from the pharmacophore feature numbering, so the two aren't confused.
+pub fn atom_sn_label(atom: &Atom) -> TextOverlay {
+    TextOverlay {
+        text: atom.serial_number.to_string(),
+        size: ATOM_SN_LABEL_SIZE,
+        color: ATOM_SN_LABEL_COLOR,
+        font_family: FontFamily::Proportional,
+    }
 }
 
 /// The outcome of looking up the editor's molecule in PubChem by its SMILES.
@@ -704,6 +746,7 @@ pub fn redraw(
         1,
         false,
         editor.show_pharmacophore_renders,
+        editor.show_atom_sns,
     ));
 
     if let Some(p) = &editor.mol.pharmacophore.pocket {
@@ -1017,7 +1060,9 @@ pub fn exit_and_add(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     let mol = state.mol_editor.to_new_mol();
     state.ligands.push(mol);
 
-    name_edited_mol(state, state.ligands.len() - 1);
+    let lig_i = state.ligands.len() - 1;
+    name_edited_mol(state, lig_i);
+    store_edited_mol(state, lig_i, None);
 
     exit_edit_mode(state, scene, updates);
 }
@@ -1048,7 +1093,8 @@ pub fn exit_and_update(
 
     lig.update_characterization();
 
-    name_edited_mol(state, lig_i);
+    let path_prev = name_edited_mol(state, lig_i);
+    store_edited_mol(state, lig_i, path_prev.as_deref());
 
     // We've reset the positions, so reset the camera. And update the prev,
     // so exiting doesn't override it.
@@ -1064,12 +1110,12 @@ pub fn exit_and_update(
 /// would name the wrong thing, so replace them: Our SMILES, and a provisional name, e.g. "Editor 0".
 /// Then look up the structure on PubChem: If it has the compound, its CID and other identifiers
 /// come in, and the name becomes e.g. "Editor | 1123 | Taurine".
-fn name_edited_mol(state: &mut State, lig_i: usize) {
+///
+/// Returns the file the molecule was loaded from, if any.
+fn name_edited_mol(state: &mut State, lig_i: usize) -> Option<PathBuf> {
     let ident = next_editor_ident(state);
 
-    let Some(lig) = state.ligands.get_mut(lig_i) else {
-        return;
-    };
+    let lig = state.ligands.get_mut(lig_i)?;
 
     lig.common.build_adjacency_list();
     let smiles = lig.common.to_smiles();
@@ -1086,9 +1132,10 @@ fn name_edited_mol(state: &mut State, lig_i: usize) {
     // Its file, if any, holds the molecule before the edit. As with splitting and joining, treat
     // that as closed: It won't reopen next session in place of this one, and caching identifiers
     // found for this one (see `managed_mols::update_managed_mol`) can't write over it.
-    if let Some(path) = lig.common.path.take() {
+    let path_prev = lig.common.path.take();
+    if let Some(path) = &path_prev {
         for history in &mut state.to_save.open_history {
-            if history.type_ == OpenType::Ligand && history.path == path {
+            if history.type_ == OpenType::Ligand && history.path == *path {
                 history.last_session = false;
             }
         }
@@ -1107,6 +1154,31 @@ fn name_edited_mol(state: &mut State, lig_i: usize) {
     }
 
     start_structure_lookup(state, lig_i, Some(EDITOR_NAME_PREFIX));
+
+    path_prev
+}
+
+/// Keep a molecule from the editor in an application-managed file, and add it to the open
+/// history. It then reopens next session, and is in the recent-files list, even if the user never
+/// saves it. `path_prev` is the file it was loaded from, if any; see `managed_mols::store_edited`.
+fn store_edited_mol(state: &mut State, lig_i: usize, path_prev: Option<&Path>) {
+    let Some(lig) = state.ligands.get_mut(lig_i) else {
+        return;
+    };
+
+    match managed_mols::store_edited(&state.volatile.prefs_dir, lig, path_prev) {
+        Ok(path) => {
+            lig.common.update_path(&path);
+            let ident = lig.common.ident.clone();
+
+            state.update_history(&path, OpenType::Ligand, Some(ident));
+            state.update_save_prefs();
+        }
+        Err(e) => handle_err(
+            &mut state.ui,
+            format!("Unable to keep the edited molecule for the next session: {e}"),
+        ),
+    }
 }
 
 /// A name for a molecule from the editor, e.g. "Editor 0", not used by another.
