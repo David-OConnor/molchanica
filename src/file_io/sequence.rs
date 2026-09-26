@@ -1,13 +1,13 @@
-//! Opening and saving sequences: DNA, RNA, and protein. FASTA and GenBank can be opened and
-//! saved; AB1 (Sanger traces) only opened, for their base calls. The formats themselves are
-//! handled by `bio_files`.
+//! Opening and saving sequences: DNA, RNA, and protein. FASTA, GenBank, and SnapGene (DNA only)
+//! can be opened and saved; AB1 (Sanger traces) only opened, for their base calls. The formats
+//! themselves are handled by `bio_files`.
 //!
 //! Unlike molecules, sequences aren't rendered; they're listed in the sidebar, and managed through
 //! the open history like other files.
 
 use std::{io, io::ErrorKind, path::Path};
 
-use bio_files::{fasta::Fasta, genbank::GenBank, import_ab1};
+use bio_files::{fasta::Fasta, genbank::GenBank, import_ab1, snapgene::SnapGene};
 use na_seq::Sequence;
 
 use crate::{
@@ -20,6 +20,8 @@ const FASTA_EXTS: [&str; 9] = [
     "fasta", "fa", "fas", "fna", "faa", "ffn", "frn", "fsa", "mpfa",
 ];
 const GENBANK_EXTS: [&str; 5] = ["gb", "gbk", "gbff", "genbank", "gpff"];
+/// DNA files only.
+const SNAPGENE_EXTS: [&str; 1] = ["dna"];
 /// Read-only.
 const AB1_EXTS: [&str; 2] = ["ab1", "abi"];
 
@@ -28,6 +30,7 @@ pub fn seq_exts_open() -> Vec<&'static str> {
     FASTA_EXTS
         .iter()
         .chain(GENBANK_EXTS.iter())
+        .chain(SNAPGENE_EXTS.iter())
         .chain(AB1_EXTS.iter())
         .copied()
         .collect()
@@ -42,7 +45,10 @@ fn extension(path: &Path) -> String {
 
 /// True if `ext` (lower case, without the dot) is a sequence format we can open.
 pub fn is_seq_ext(ext: &str) -> bool {
-    FASTA_EXTS.contains(&ext) || GENBANK_EXTS.contains(&ext) || AB1_EXTS.contains(&ext)
+    FASTA_EXTS.contains(&ext)
+        || GENBANK_EXTS.contains(&ext)
+        || SNAPGENE_EXTS.contains(&ext)
+        || AB1_EXTS.contains(&ext)
 }
 
 pub struct SeqsLoaded {
@@ -61,8 +67,14 @@ pub fn load_sequences(path: &Path) -> io::Result<SeqsLoaded> {
         let fasta = Fasta::load(path)?;
         (fasta.records, fasta.skipped_residues)
     } else if GENBANK_EXTS.contains(&ext.as_str()) {
+        // References and comments aren't kept, for now.
         let gb = GenBank::load(path)?;
-        (gb.records, gb.skipped_residues)
+        let records = gb.records.into_iter().map(|r| r.seq).collect();
+        (records, gb.skipped_residues)
+    } else if SNAPGENE_EXTS.contains(&ext.as_str()) {
+        // Primers aren't kept, for now.
+        let sg = SnapGene::load(path)?;
+        (vec![sg.seq], sg.skipped_residues)
     } else if AB1_EXTS.contains(&ext.as_str()) {
         let records = import_ab1(path)?
             .iter()
@@ -93,27 +105,33 @@ pub fn load_sequences(path: &Path) -> io::Result<SeqsLoaded> {
     })
 }
 
-/// Save one sequence, in the format given by the path's extension: FASTA or GenBank.
+/// Save one sequence, in the format given by the path's extension: FASTA, GenBank, or SnapGene.
 pub fn save_sequence(seq: &Sequence, path: &Path) -> io::Result<()> {
     let ext = extension(path);
-    let records = vec![seq.clone()];
 
     if FASTA_EXTS.contains(&ext.as_str()) {
         Fasta {
-            records,
+            records: vec![seq.clone()],
             ..Default::default()
         }
         .save(path)
     } else if GENBANK_EXTS.contains(&ext.as_str()) {
         GenBank {
-            records,
+            records: vec![seq.clone().into()],
             ..Default::default()
+        }
+        .save(path)
+    } else if SNAPGENE_EXTS.contains(&ext.as_str()) {
+        SnapGene {
+            seq: seq.clone(),
+            primers: Vec::new(),
+            skipped_residues: 0,
         }
         .save(path)
     } else {
         Err(io::Error::new(
             ErrorKind::InvalidData,
-            "Sequences can be saved as FASTA or GenBank files",
+            "Sequences can be saved as FASTA, GenBank, or SnapGene files",
         ))
     }
 }

@@ -618,7 +618,7 @@ fn seq_picker(state: &mut State, ui: &mut Ui) {
                         ui,
                         "Save",
                         COLOR_INACTIVE,
-                        "Save this sequence to a FASTA or GenBank file."
+                        "Save this sequence to a FASTA, GenBank, or SnapGene (DNA only) file."
                     )
                     .clicked()
                     {

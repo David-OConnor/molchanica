@@ -1378,7 +1378,7 @@ pub struct FileDialogs {
     pub save_gro: FileDialog,
     /// Index of the mol set queued for GRO export.
     pub save_gro_mol_set_i: Option<usize>,
-    /// Save a sequence as FASTA or GenBank.
+    /// Save a sequence as FASTA, GenBank, or SnapGene.
     pub save_seq: FileDialog,
     /// Index into `State::sequences` of the sequence queued for saving.
     pub save_seq_i: Option<usize>,
@@ -1412,7 +1412,10 @@ impl Default for FileDialogs {
             .add_file_filter_extensions("PMP (Pharmacophore)", vec!["pmp"])
             .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
             .add_file_filter_extensions("MDP (MD params)", vec!["mdp"])
-            .add_file_filter_extensions("Sequence (FASTA, GenBank, AB1)", sequence::seq_exts_open())
+            .add_file_filter_extensions(
+                "Sequence (FASTA, GenBank, SnapGene, AB1)",
+                sequence::seq_exts_open(),
+            )
             //
             .add_save_extension("Protein (CIF)", "cif")
             .add_save_extension("Mol2", "mol2")
@@ -1474,7 +1477,8 @@ impl Default for FileDialogs {
 
         let cfg_save_seq = FileDialogConfig::default()
             .add_save_extension("FASTA", "fasta")
-            .add_save_extension("GenBank", "gb");
+            .add_save_extension("GenBank", "gb")
+            .add_save_extension("SnapGene (DNA)", "dna");
         let save_seq = FileDialog::with_config(cfg_save_seq).default_save_extension("FASTA");
 
         Self {
