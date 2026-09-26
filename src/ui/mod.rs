@@ -1052,6 +1052,10 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
         chain_selector(state, &mut redraw.peptide, ui);
 
+        if state.ui.ui_vis.aa_selection {
+            panels::aa_selection::aa_selection(state, &mut redraw.peptide, ui);
+        }
+
         mol_type_toolbars(state, scene, &mut updates, ui);
 
         if state.ui.ui_vis.dynamics {
@@ -1074,8 +1078,15 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         if let Some(seq_i) = state.volatile.active_seq {
             panels::standalone_sequence(state, seq_i, ui);
         } else if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
+            let peptide_name = state
+                .volatile
+                .active_peptide
+                .and_then(|i| state.peptides.get(i))
+                .map(|mol| mol.common.name(None));
+
             panels::peptide_aa_seq(
                 &mut state.ui.selection,
+                peptide_name.as_deref(),
                 &state.volatile.aa_seq_text,
                 &state.volatile.aa_seq_res_indices,
                 &state.volatile.aa_seq_res_sns,

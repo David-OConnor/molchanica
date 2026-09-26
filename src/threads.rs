@@ -882,6 +882,9 @@ pub fn handle_thread_rx(
         apply_mesh_colors(&mut scene.meshes[MESH_PEP_SOLVENT_SURFACE], &colors);
         updates.meshes = true;
         state.volatile.thread_receivers.peptide_mesh_coloring = None;
+        if state.ui.mol_view_peptide == crate::drawing::MoleculeView::Dots {
+            crate::drawing::peptide::draw_peptide(state, scene, updates);
+        }
     }
 
     if let Some(rx) = &mut state.volatile.thread_receivers.ph_screening {

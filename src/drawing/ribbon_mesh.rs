@@ -287,6 +287,7 @@ fn build_segment_mesh(
     res_coloring: ResColoring,
     view_sel_level: ViewSelLevel,
     selection: &Selection,
+    residue_colors: &[Option<(f32, f32, f32)>],
     sifts: Option<&[SiftsUniprotMapping]>,
     chain_count: usize,
     chains: &[Chain],
@@ -391,6 +392,10 @@ fn build_segment_mesh(
                 (COLOR_SELECTED.2 * 255.0) as u8,
                 255,
             ));
+        }
+
+        if let Some(Some((r, g, b))) = residue_colors.get(res_i) {
+            return Some(((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8, 255));
         }
 
         // Atom / Bond view level: color by element or partial charge, same as non-ribbon mode.
@@ -749,6 +754,7 @@ pub fn build_ribbon_mesh(
     res_coloring: ResColoring,
     view_sel_level: ViewSelLevel,
     selection: &Selection,
+    residue_colors: &[Option<(f32, f32, f32)>],
     sifts: Option<&[SiftsUniprotMapping]>,
 ) -> Mesh {
     let mut vertices = Vec::new();
@@ -815,6 +821,7 @@ pub fn build_ribbon_mesh(
             res_coloring,
             view_sel_level,
             selection,
+            residue_colors,
             sifts,
             chain_count,
             chains,
@@ -870,6 +877,7 @@ pub fn build_ribbon_mesh(
                 res_coloring,
                 view_sel_level,
                 selection,
+                residue_colors,
                 sifts,
                 chain_count,
                 chains,

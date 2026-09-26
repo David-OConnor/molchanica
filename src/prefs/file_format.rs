@@ -427,6 +427,7 @@ impl LabelVis {
             self.atom_detailed as u8,
             self.bond as u8,
             self.chain as u8,
+            self.residue_letter as u8,
         ]
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -437,6 +438,7 @@ impl LabelVis {
             atom_detailed: data[3] != 0,
             bond: data[4] != 0,
             chain: data[5] != 0,
+            residue_letter: data.get(6).is_some_and(|v| *v != 0),
         })
     }
 }
@@ -501,6 +503,7 @@ impl UiVisibility {
             self.mol_char as u8,
             self.pharmacophore_list as u8,
             self.sidebar as u8,
+            self.aa_selection as u8,
         ]
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -517,6 +520,7 @@ impl UiVisibility {
             pharmacophore_list: data[9] != 0,
             // Absent from prefs written before the sidebar could be hidden; show it in that case.
             sidebar: data.get(10).is_none_or(|v| *v != 0),
+            aa_selection: data.get(11).is_some_and(|v| *v != 0),
         })
     }
 }

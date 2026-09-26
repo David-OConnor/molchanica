@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
 use egui::{
-    Button, Color32, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, Sense, Stroke, TextEdit,
-    TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
+    Button, Color32, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, RichText, Sense, Stroke,
+    TextEdit, TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
     text_selection::LabelSelectionState, vec2,
 };
 
@@ -12,6 +12,7 @@ use crate::{
     state::{AaSeqDisplayCache, State},
 };
 
+pub(super) mod aa_selection;
 pub mod md;
 pub mod md_viewer;
 pub mod mol_data;
@@ -489,6 +490,7 @@ pub(in crate::ui) fn sequence_display(
 /// Connect the shared sequence renderer to peptide residue selection and 3D redraws.
 pub(in crate::ui) fn peptide_aa_seq(
     selection: &mut Selection,
+    name: Option<&str>,
     seq_text: &str,
     res_indices: &[usize],
     res_sns: &[u32],
@@ -502,6 +504,10 @@ pub(in crate::ui) fn peptide_aa_seq(
         _ => Vec::new(),
     };
     let prev = selected.clone();
+
+    if let Some(name) = name {
+        ui.label(RichText::new(name).color(Color32::WHITE));
+    }
 
     sequence_display(&mut selected, seq_text, res_indices, res_sns, cache, ui);
 
@@ -525,7 +531,7 @@ pub(in crate::ui) fn standalone_sequence(state: &mut State, i: usize, ui: &mut U
     let seq_type = seq.seq_type();
     let has_features = !seq.features.is_empty();
     ui.horizontal(|ui| {
-        ui.label(format!("{name} ({seq_type})"));
+        ui.label(RichText::new(format!("{name} ({seq_type})")).color(Color32::WHITE));
 
         if state.ui.sequence_edit.target != Some(i) && ui.button("Edit sequence").clicked() {
             state.ui.sequence_edit.target = Some(i);

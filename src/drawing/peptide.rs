@@ -16,7 +16,7 @@ use mol_defs::{
     reflection::DensityPt,
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
-use na_seq::Element;
+use na_seq::{AaIdent, Element};
 
 use crate::{
     drawing,
@@ -132,7 +132,10 @@ fn draw_dots(
             transform.transform_point(position),
             Quaternion::new_identity(),
             SIZE_SFC_DOT,
-            COLOR_SFC_DOT,
+            vertex
+                .color
+                .map(|(r, g, b, _)| (r as f32 / 255., g as f32 / 255., b as f32 / 255.))
+                .unwrap_or(COLOR_SFC_DOT),
             ATOM_SHININESS,
         );
         entity.class = EntityClass::SaSurfaceDots as u32;
@@ -245,6 +248,79 @@ fn ribbon_text_overlay_entities(
             ent.class = EntityClass::Protein as u32;
             result.push(ent);
         }
+    }
+
+    result
+}
+
+/// Independent label anchors avoid overwriting atom, chain, or molecule labels and work
+/// even when no atom spheres are drawn. N, CA, C, and O define the backbone centroid.
+fn residue_text_overlay_entities(
+    mol: &MoleculePeptide,
+    ui: &StateUi,
+    filtered_out: &[bool],
+) -> Vec<Entity> {
+    let mut result = Vec::new();
+
+    for residue in &mol.residues {
+        let ResidueType::AminoAcid(aa) = residue.res_type else {
+            continue;
+        };
+        let mut center = Vec3::new_zero();
+        let mut count = 0;
+        let mut visible = false;
+
+        for &i in &residue.atoms {
+            let Some(atom) = mol.common.atoms.get(i) else {
+                continue;
+            };
+            if !matches!(
+                atom.role,
+                Some(
+                    AtomRole::N_Backbone
+                        | AtomRole::C_Alpha
+                        | AtomRole::C_Prime
+                        | AtomRole::O_Backbone
+                )
+            ) {
+                continue;
+            }
+            if atom
+                .chain
+                .and_then(|c| mol.chains.get(c))
+                .is_some_and(|c| !c.visible)
+                || (atom.hetero && ui.visibility.hide_hetero)
+            {
+                continue;
+            }
+            if let Some(&position) = mol.common.atom_posits.get(i) {
+                center += Vec3::from(position);
+                count += 1;
+                visible |= filtered_out.get(i) != Some(&true);
+            }
+        }
+
+        if count == 0 || !visible {
+            continue;
+        }
+
+        let mut entity = Entity::new(
+            MESH_CUBE,
+            center / count as f32,
+            Quaternion::new_identity(),
+            0.001,
+            (0., 0., 0.),
+            ATOM_SHININESS,
+        );
+        entity.overlay_text = Some(TextOverlay {
+            text: aa.to_str(AaIdent::OneLetter),
+            size: drawing::LABEL_SIZE_ATOM,
+            color: LABEL_COLOR_ATOM,
+            font_family: FontFamily::Monospace,
+        });
+        entity.opacity = 0.;
+        entity.class = EntityClass::Protein as u32;
+        result.push(entity);
     }
 
     result
@@ -573,6 +649,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         .count();
 
     let ui = &state.ui;
+    let residue_colors = ui.aa_selection.residue_colors(mol);
     let owns_shared_mesh = state.peptide_for_tools_i() == Some(mol_i);
     // Dots and solvent-surface views still use shared mesh slots. Ribbons for other peptides
     // are collected into a second mesh by the scene flag handler.
@@ -797,6 +874,17 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
 
         if atom.hetero && color_atom != COLOR_SELECTED {
             color_atom = drawing::blend_color(color_atom, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
+        }
+
+        if !manip_active
+            && color_atom != COLOR_SELECTED
+            && let Some(color) = atom
+                .residue
+                .and_then(|r| residue_colors.get(r))
+                .copied()
+                .flatten()
+        {
+            color_atom = color;
         }
 
         // todo: Come back to this.
@@ -1043,6 +1131,20 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             color_1 = drawing::blend_color(color_1, COLOR_HETERO_RES, BLEND_AMT_HETERO_RES);
         }
 
+        if !manip_active {
+            for (atom, color) in [(atom_0, &mut color_0), (atom_1, &mut color_1)] {
+                if *color != COLOR_SELECTED
+                    && let Some(highlight) = atom
+                        .residue
+                        .and_then(|r| residue_colors.get(r))
+                        .copied()
+                        .flatten()
+                {
+                    *color = highlight;
+                }
+            }
+        }
+
         if state.volatile.md_local.mol_dynamics.is_some()
             && state.ui.md.peptide_only_near_ligs
             && mol.common.selected_for_md.is_some()
@@ -1167,6 +1269,14 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 false,
             ));
         }
+    }
+
+    if ui.visibility.labels.residue_letter && !ui.visibility.hide_protein {
+        entities.extend(residue_text_overlay_entities(
+            mol,
+            ui,
+            &filtered_out_by_dist,
+        ));
     }
 
     scene.entities.extend(entities);

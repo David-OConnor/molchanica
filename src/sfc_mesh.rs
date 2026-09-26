@@ -56,7 +56,18 @@ pub fn get_mesh_colors(
     coloring: MeshColoring,
     engine_updates: &mut EngineUpdates,
 ) -> Option<MeshColors> {
-    if coloring == MeshColoring::Solid {
+    get_mesh_colors_with_residues(mesh, mol, coloring, &[], engine_updates)
+}
+
+/// Protein highlights override the ordinary surface scheme, including solid coloring.
+pub fn get_mesh_colors_with_residues(
+    mesh: &Mesh,
+    mol: &MoleculeCommon,
+    coloring: MeshColoring,
+    residue_colors: &[Option<(f32, f32, f32)>],
+    engine_updates: &mut EngineUpdates,
+) -> Option<MeshColors> {
+    if coloring == MeshColoring::Solid && residue_colors.is_empty() {
         return None;
     }
 
@@ -124,6 +135,15 @@ pub fn get_mesh_colors(
             if let Some(i) = closest_atom {
                 let atom = &mol.atoms[i];
 
+                if let Some(Some((r, g, b))) = atom.residue.and_then(|r| residue_colors.get(r)) {
+                    return Some((
+                        (r * 255.) as u8,
+                        (g * 255.) as u8,
+                        (b * 255.) as u8,
+                        opacity,
+                    ));
+                }
+
                 let (r, g, b, a) = match coloring {
                     MeshColoring::Element => {
                         let (r, g, b) = atom.element.color();
@@ -143,7 +163,7 @@ pub fn get_mesh_colors(
                             color_viridis_float(lipo, LIPOPHILICITY_MIN, LIPOPHILICITY_MAX);
                         (r, g, b, opacity)
                     }
-                    MeshColoring::Solid => unreachable!(),
+                    MeshColoring::Solid => return None,
                 };
 
                 Some(((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8, a))

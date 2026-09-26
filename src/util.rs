@@ -748,6 +748,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &state.ui.selection,
+                &state.ui.aa_selection.residue_colors(mol),
                 mol.sifts_mapping.as_deref(),
             );
         }
@@ -772,6 +773,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &Selection::None,
+                &state.ui.aa_selection.residue_colors(mol),
                 mol.sifts_mapping.as_deref(),
             );
             let vertex_offset = other_ribbons.vertices.len();
@@ -841,13 +843,15 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                     let mesh_for_thread = scene.meshes[MESH_PEP_SOLVENT_SURFACE].clone();
                     let mol_for_thread = mol.common.clone();
                     let coloring = state.ui.mesh_coloring;
+                    let residue_colors = state.ui.aa_selection.residue_colors(mol);
 
                     thread::spawn(move || {
                         let mut updates = EngineUpdates::default();
-                        let colors = sfc_mesh::get_mesh_colors(
+                        let colors = sfc_mesh::get_mesh_colors_with_residues(
                             &mesh_for_thread,
                             &mol_for_thread,
                             coloring,
+                            &residue_colors,
                             &mut updates,
                         );
                         let _ = tx.send(colors);
@@ -885,11 +889,17 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         );
         let mol_for_thread = mol.common.clone();
         let coloring = state.ui.mesh_coloring;
+        let residue_colors = state.ui.aa_selection.residue_colors(mol);
 
         thread::spawn(move || {
             let mut eu = EngineUpdates::default();
-            let colors =
-                sfc_mesh::get_mesh_colors(&mesh_for_thread, &mol_for_thread, coloring, &mut eu);
+            let colors = sfc_mesh::get_mesh_colors_with_residues(
+                &mesh_for_thread,
+                &mol_for_thread,
+                coloring,
+                &residue_colors,
+                &mut eu,
+            );
             let _ = tx.send(colors);
         });
 

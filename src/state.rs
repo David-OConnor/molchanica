@@ -1,7 +1,7 @@
 //! Contains the most important application state structs.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
@@ -14,7 +14,9 @@ use bincode::{Decode, Encode};
 use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{ResidueType, md_params::ForceFieldParams, mol_templates::TemplateData};
 use chrono::{DateTime, Utc};
-#[cfg(feature = "cuda")]
+#[cfg(
+    feature = "cuda"
+)]
 use cudarc::driver::CudaFunction;
 use dynamics::{
     ComputationDevice, Integrator, LANGEVIN_GAMMA_DEFAULT, MdConfig, PRESSURE_DEFAULT, SimBoxInit,
@@ -35,7 +37,7 @@ use mol_defs::{
     screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
     sfc_mesh::MeshColoring,
 };
-use na_seq::{AaIdent, Sequence};
+use na_seq::{AaIdent, AminoAcid, Sequence};
 
 use crate::{
     drawing::MoleculeView,
@@ -76,7 +78,9 @@ pub struct State {
     pub to_save: ToSave,
     pub dev: ComputationDevice,
     /// This is None if Computation Device is CPU.
-    #[cfg(feature = "cuda")]
+    #[cfg(
+        feature = "cuda"
+    )]
     pub kernel_reflections: Option<CudaFunction>,
     // todo: Combine these params in a single struct.
     pub ff_param_set: FfParamSet,
@@ -134,7 +138,9 @@ impl Default for State {
             cam_snapshots: Default::default(),
             to_save: Default::default(),
             dev: Default::default(),
-            #[cfg(feature = "cuda")]
+            #[cfg(
+                feature = "cuda"
+            )]
             kernel_reflections: None,
             ff_param_set: Default::default(),
             mol_specific_params: Default::default(),
@@ -325,7 +331,11 @@ impl State {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq
+)]
 pub enum ComputationType {
     /// Or uninstall. For third party tools.
     Install,
@@ -355,7 +365,9 @@ impl Display for ComputationType {
 
 /// Represents an ongoing computation; one which can run for a long time. (Seconds, minutes, or longer).
 /// For example: MD, ML etc. Used to maintain status of background processes.
-#[derive(Clone)]
+#[derive(
+    Clone
+)]
 pub struct Computation {
     /// Identifies this computation for its guard, which removes it when dropped.
     id: u64,
@@ -394,7 +406,9 @@ impl Display for Computation {
     }
 }
 
-#[derive(Default)]
+#[derive(
+    Default
+)]
 struct ComputationsInner {
     items: Vec<Computation>,
     next_id: u64,
@@ -408,7 +422,10 @@ struct ComputationsInner {
 ///
 /// Shared with those worker threads, hence the mutex. It's only held briefly, to add, remove, or
 /// copy the list for display.
-#[derive(Clone, Default)]
+#[derive(
+    Clone,
+    Default
+)]
 pub struct Computations {
     inner: Arc<Mutex<ComputationsInner>>,
 }
@@ -469,7 +486,9 @@ impl Drop for ComputationGuard {
 }
 
 /// Temporary, and generated state.
-#[derive(Default)]
+#[derive(
+    Default
+)]
 pub struct StateVolatile {
     pub dialogs: FileDialogs,
     pub thread_receivers: ThreadReceivers,
@@ -608,7 +627,12 @@ impl StateVolatile {
 /// Which molecule database the UI is acting on. The ones embedded in the binary live in
 /// `State::hmdb_mol_db` and `State::chebi_mol_db`, and the rest, which the user opened, in
 /// `StateVolatile::parquet_dbs`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq
+)]
 pub enum DbSel {
     /// `State::hmdb_mol_db`; read-only.
     Hmdb,
@@ -638,9 +662,37 @@ impl PlayingAudio {
     }
 }
 
+/// Holds data related to filters, selections, etc used to help with amino acid-specific
+/// visualizations.
+#[derive(Clone, PartialEq)]
+pub struct AaSelection {
+    pub enabled: bool,
+    pub amino_acids: HashSet<AminoAcid>,
+    /// Helix, sheet, and coil/unassigned, respectively. Combined with AA types using AND.
+    pub secondary: [bool; 3],
+    pub color_by_aa: bool,
+    pub highlight_color: [f32; 3],
+    pub neutral_color: [f32; 3],
+}
+
+impl Default for AaSelection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            amino_acids: crate::drawing::aa_highlight::AMINO_ACIDS.into_iter().collect(),
+            secondary: [true; 3],
+            color_by_aa: true,
+            highlight_color: [1., 0.65, 0.1],
+            neutral_color: [0.22, 0.22, 0.22],
+        }
+    }
+}
+
 // todo: UI state structs in their own module?
 /// Ui text fields and similar.
-#[derive(Default)]
+#[derive(
+    Default
+)]
 pub struct StateUi {
     pub reactions: crate::reactions::ReactionsState,
     /// View mode for proteins/peptides.
@@ -716,9 +768,12 @@ pub struct StateUi {
     /// Zero-based positions selected in the active standalone sequence.
     pub seq_selection: Vec<usize>,
     pub sequence_edit: SequenceEdit,
+    pub aa_selection: AaSelection,
 }
 
-#[derive(Default)]
+#[derive(
+    Default
+)]
 pub struct SequenceEdit {
     pub target: Option<usize>,
     pub text: String,
@@ -726,7 +781,12 @@ pub struct SequenceEdit {
 }
 
 /// What the metadata popup shows, and edits.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq
+)]
 pub enum MetadataTarget {
     Mol(MolType, usize),
     /// An index into `State::sequences`.
@@ -736,7 +796,9 @@ pub enum MetadataTarget {
 /// Rows shown by the metadata editor, populated from the molecule when editing is enabled.
 /// A `Vec` instead of the molecule's `HashMap`: rows need a stable order between frames, and
 /// may transiently hold blank or duplicate keys while the user types them.
-#[derive(Default)]
+#[derive(
+    Default
+)]
 pub struct MetadataEdit {
     /// The molecule or sequence these rows were loaded from. Rows are discarded when the metadata
     /// popup moves to a different one, so edits can't be applied to the wrong one.
@@ -779,7 +841,9 @@ impl Default for AaSeqDisplayCache {
 }
 
 /// Cached egui layout for the active molecule's SMILES string.
-#[derive(Default)]
+#[derive(
+    Default
+)]
 pub struct SmilesDisplayCache {
     pub source: String,
     pub font_id: Option<FontId>,
@@ -787,8 +851,15 @@ pub struct SmilesDisplayCache {
     pub galley: Option<Arc<Galley>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Encode,
+    Decode
+)]
 pub struct LabelVis {
+    pub residue_letter: bool,
     pub mol: bool,
     pub atom_sn: bool,
     pub atom_q: bool,
@@ -800,6 +871,7 @@ pub struct LabelVis {
 impl Default for LabelVis {
     fn default() -> Self {
         Self {
+            residue_letter: false,
             mol: true,
             atom_sn: false,
             atom_q: false,
@@ -810,7 +882,13 @@ impl Default for LabelVis {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Encode,
+    Decode
+)]
 pub struct Visibility {
     pub hide_sidechains: bool,
     pub hide_water: bool,
@@ -858,7 +936,10 @@ impl Default for Visibility {
 /// frame. Collecting, sorting, and filtering the whole index each frame makes the popup hang, so
 /// the result is cached here and rebuilt only when an input changes: the selected DB, its molecule
 /// count (an add or delete), or the search text.
-#[derive(Default, Debug)]
+#[derive(
+    Default,
+    Debug
+)]
 pub struct MolDbTableView {
     /// The DB this view was built for; `None` until the first build, forcing an initial rebuild.
     pub db_sel: Option<DbSel>,
@@ -871,7 +952,10 @@ pub struct MolDbTableView {
 }
 
 /// Defines which UI popups are displayed.
-#[derive(Default, Debug)]
+#[derive(
+    Default,
+    Debug
+)]
 pub struct PopupState {
     pub reactions: bool,
     pub show_get_geostd: bool,
@@ -922,7 +1006,12 @@ pub struct PopupState {
     pub about_folder_error: Option<String>,
 }
 
-#[derive(Clone, PartialEq, Encode, Decode)]
+#[derive(
+    Clone,
+    PartialEq,
+    Encode,
+    Decode
+)]
 pub struct LipidUi {
     /// For the combo box. Stays at 0 if none loaded.
     pub lipid_to_add: usize,
@@ -940,7 +1029,12 @@ impl Default for LipidUi {
     }
 }
 
-#[derive(Clone, PartialEq, Encode, Decode)]
+#[derive(
+    Clone,
+    PartialEq,
+    Encode,
+    Decode
+)]
 pub struct NucleicAcidUi {
     pub seq_to_create: String,
     pub na_type: NucleicAcidType,
@@ -1081,7 +1175,13 @@ impl StateUiMd {
 }
 
 // todo: Rename A/R
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Default,
+    Debug
+)]
 pub enum OperatingMode {
     #[default]
     Primary,
@@ -1091,8 +1191,18 @@ pub enum OperatingMode {
     ProteinEditor,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Encode, Decode)]
+#[repr(
+    u8
+)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Encode,
+    Decode
+)]
 pub enum MsaaSetting {
     None = 1,
     // Two = 2, // todo: Not supported on this depth texture, but we could switch to a different one.
@@ -1107,12 +1217,18 @@ impl MsaaSetting {
             // Self::Two => "2×",
             Self::Four => "4×",
         }
-        .to_owned()
+            .to_owned()
     }
 }
 
 /// Hides protein atoms based on their distance to something.
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Default,
+    Debug
+)]
 pub enum DistFilter {
     #[default]
     None,
@@ -1124,7 +1240,15 @@ pub enum DistFilter {
     NearSfc,
 }
 
-#[derive(Clone, Copy, PartialEq, Default, Debug, Encode, Decode)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Default,
+    Debug,
+    Encode,
+    Decode
+)]
 pub enum ResColoring {
     /// A unique color per amino acid, to quickly differentiate them.
     AminoAcid,
@@ -1152,7 +1276,13 @@ impl Display for ResColoring {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Encode,
+    Decode
+)]
 /// For showing and hiding UI sections.
 pub struct UiVisibility {
     pub aa_seq: bool,
@@ -1168,6 +1298,7 @@ pub struct UiVisibility {
     pub pharmacophore_list: bool,
     /// The left-side panel. When hidden, a narrow strip with a button to re-show it remains.
     pub sidebar: bool,
+    pub aa_selection: bool,
 }
 
 impl Default for UiVisibility {
@@ -1185,11 +1316,18 @@ impl Default for UiVisibility {
             mol_char: true, // todo: For now.
             pharmacophore_list: false,
             sidebar: true,
+            aa_selection: false,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Encode,
+    Decode
+)]
 pub struct CamSnapshot {
     // We don't use camera directly, so we don't have to store the projection matrix, and so we can impl
     // Encode/Decode
@@ -1210,7 +1348,9 @@ impl CamSnapshot {
     }
 }
 
-#[derive(Default)]
+#[derive(
+    Default
+)]
 /// Molecule templates for building-block molecules.
 pub struct Templates {
     /// Common lipid types, e.g. as derived from Amber's `lipids21.lib`, but perhaps not exclusively.
@@ -1225,7 +1365,9 @@ pub struct Templates {
 }
 
 /// Flags to accomplish things that must be done somewhere with access to `Scene`.
-#[derive(Default)]
+#[derive(
+    Default
+)]
 pub struct SceneFlags {
     /// Secondary structure
     pub update_ss_mesh: bool,

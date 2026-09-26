@@ -264,6 +264,13 @@ pub fn view_settings(
             ui,
             redraw,
         );
+        toggle_btn(
+            &mut state.ui.visibility.labels.residue_letter,
+            "Lbl AA",
+            "Show or hide one-letter amino-acid labels at each residue's backbone center",
+            ui,
+            redraw,
+        );
     }
 
     let num_pharm = state
@@ -406,6 +413,9 @@ pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
 
     let tooltip = "Show or hide the molecular dynamics section of the UI.";
     vis_helper(&mut state.ui.ui_vis.dynamics, "MD", tooltip, ui);
+
+    let tooltip = "Show or hide the AA selection section of the UI";
+    vis_helper(&mut state.ui.ui_vis.aa_selection, "AA Sel", tooltip, ui);
 
     // todo: Do we want this button available if ORCA is not on the PATH? Maybe check at runtime,
     // todo or check when clicking this button. Not sure yet.

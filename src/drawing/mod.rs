@@ -43,6 +43,7 @@ use crate::{
 pub mod atoms_bonds;
 pub mod peptide;
 pub mod ribbon_mesh;
+pub mod aa_highlight;
 mod viridis_lut;
 pub mod wrappers;
 
