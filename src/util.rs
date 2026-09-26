@@ -782,6 +782,26 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         }
         scene.meshes[MESH_OTHER_RIBBONS] = other_ribbons;
         updates.meshes = true;
+
+        // The rebuilt mesh is already in current world coordinates. An entity drawn before this
+        // rebuild (e.g. by a selection click's peptide redraw) still carries the accumulated
+        // manipulation transform; reset it, or that transform is applied a second time.
+        let mut entity_changed = false;
+        for entity in &mut scene.entities {
+            if entity.class == EntityClass::SecondaryStructure as u32
+                && entity.mesh == MESH_SECONDARY_STRUCTURE
+            {
+                entity.position = Vec3F32::new_zero();
+                entity.orientation = lin_alg::f32::Quaternion::new_identity();
+                entity.pivot = None;
+                entity_changed = true;
+            }
+        }
+        if entity_changed {
+            updates
+                .entities
+                .push_class(EntityClass::SecondaryStructure as u32);
+        }
     }
 
     if state.volatile.flags.update_sas_mesh {
