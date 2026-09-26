@@ -36,7 +36,7 @@ use crate::{
         Tool,
         mpnn::{self, DesignRequest, DesignResult, MpnnModel, designable_chains},
     },
-    state::State,
+    state::{ComputationGuard, ComputationType, Computations, State},
     therapeutic_misc::ddg::{self, DdgScan},
     ui::{
         COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
@@ -100,9 +100,11 @@ impl<T: Send + 'static> Job<T> {
         self.receiver.is_some()
     }
 
+    /// `computation` is released when the work finishes.
     fn start(
         &mut self,
         context: &egui::Context,
+        computation: ComputationGuard,
         work: impl FnOnce() -> Result<T, String> + Send + 'static,
     ) {
         if self.is_running() {
@@ -115,7 +117,10 @@ impl<T: Send + 'static> Job<T> {
 
         let context = context.clone();
         thread::spawn(move || {
-            let _ = tx.send(work());
+            let result = work();
+            drop(computation);
+
+            let _ = tx.send(result);
             context.request_repaint();
         });
     }
@@ -235,6 +240,8 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
         return;
     };
 
+    let computations = &state.volatile.ongoing_computations;
+
     let design_ui = &mut state.ui.protein_design;
     design_ui.design.poll();
     design_ui.stability.poll();
@@ -264,9 +271,9 @@ pub fn protein_design_window(state: &mut State, ui: &mut Ui) {
     ui.separator();
 
     match design_ui.tab {
-        DesignTab::Sequences => sequences_tab(design_ui, &peptide, &context, ui),
-        DesignTab::Stability => stability_tab(design_ui, &peptide, &context, ui),
-        DesignTab::Antibody => antibody_tab(design_ui, &peptide, &context, ui),
+        DesignTab::Sequences => sequences_tab(design_ui, &peptide, &context, computations, ui),
+        DesignTab::Stability => stability_tab(design_ui, &peptide, &context, computations, ui),
+        DesignTab::Antibody => antibody_tab(design_ui, &peptide, &context, computations, ui),
     }
 }
 
@@ -278,6 +285,7 @@ fn sequences_tab(
     design_ui: &mut ProteinDesignUi,
     peptide: &MoleculePeptide,
     context: &egui::Context,
+    computations: &Computations,
     ui: &mut Ui,
 ) {
     let running = design_ui.design.is_running();
@@ -339,9 +347,15 @@ fn sequences_tab(
             .add(Button::new(RichText::new("Design").color(COLOR_ACTION)))
             .clicked()
         {
+            let computation = computations.start(
+                ComputationType::MachineLearning,
+                tool.spec().name(),
+                Some("sequence design".to_owned()),
+            );
+
             let peptide = peptide.clone();
             let request = design_ui.design_request();
-            design_ui.design.start(context, move || {
+            design_ui.design.start(context, computation, move || {
                 mpnn::design(&peptide, &request).map_err(|error| error.to_string())
             });
         }
@@ -421,6 +435,7 @@ fn stability_tab(
     design_ui: &mut ProteinDesignUi,
     peptide: &MoleculePeptide,
     context: &egui::Context,
+    computations: &Computations,
     ui: &mut Ui,
 ) {
     ui.label(
@@ -448,8 +463,14 @@ fn stability_tab(
             .add(Button::new(RichText::new("Run scan").color(COLOR_ACTION)))
             .clicked()
         {
+            let computation = computations.start(
+                ComputationType::MachineLearning,
+                "ΔΔG scan",
+                Some("stability".to_owned()),
+            );
+
             let peptide = peptide.clone();
-            design_ui.stability.start(context, move || {
+            design_ui.stability.start(context, computation, move || {
                 // Weights are loaded per run rather than cached: a scan takes seconds, the load
                 // is milliseconds, and caching would mean a re-converted checkpoint is ignored
                 // until restart.
@@ -528,6 +549,7 @@ fn antibody_tab(
     design_ui: &mut ProteinDesignUi,
     peptide: &MoleculePeptide,
     context: &egui::Context,
+    computations: &Computations,
     ui: &mut Ui,
 ) {
     let running = design_ui.antibody.is_running();
@@ -568,9 +590,12 @@ fn antibody_tab(
             .add(Button::new(RichText::new("Annotate").color(COLOR_ACTION)))
             .clicked()
         {
+            let computation =
+                computations.start(ComputationType::Other, "Antibody annotation", None);
+
             let peptide = peptide.clone();
             let scheme = design_ui.scheme;
-            design_ui.antibody.start(context, move || {
+            design_ui.antibody.start(context, computation, move || {
                 Ok(antibody::annotate_antibody(&peptide, scheme))
             });
         }

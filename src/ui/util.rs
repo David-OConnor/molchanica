@@ -216,6 +216,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.parquet_mol_file.update(ctx);
     state.volatile.dialogs.save_md.update(ctx);
     state.volatile.dialogs.save_gro.update(ctx);
+    state.volatile.dialogs.save_seq.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {
@@ -361,6 +362,13 @@ pub fn update_file_dialogs(
                 }
             }
         }
+    }
+
+    if let Some(path) = state.volatile.dialogs.save_seq.take_picked()
+        && let Some(i) = state.volatile.dialogs.save_seq_i.take()
+        && let Err(e) = state.save_sequence(i, &path)
+    {
+        handle_err(&mut state.ui, format!("Error saving the sequence: {e}"));
     }
 
     Ok(())

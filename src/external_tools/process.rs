@@ -126,12 +126,12 @@ impl RunControl {
         self.cancel_requested.store(true, Ordering::Release);
     }
 
-    pub fn is_cancel_requested(&self) -> bool {
+    pub fn is_abort_requested(&self) -> bool {
         self.cancel_requested.load(Ordering::Acquire)
     }
 
     fn check_cancelled(&self, tool: Tool) -> io::Result<()> {
-        if self.is_cancel_requested() {
+        if self.is_abort_requested() {
             Err(cancelled(tool))
         } else {
             Ok(())
@@ -208,7 +208,7 @@ pub fn run_tool(
             captured.forward(&chunk);
         }
 
-        if control.is_some_and(RunControl::is_cancel_requested) {
+        if control.is_some_and(RunControl::is_abort_requested) {
             terminate_child(&mut child)?;
             let _ = child.wait();
             join_output_readers(readers, name)?;

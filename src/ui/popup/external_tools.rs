@@ -12,6 +12,7 @@ use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::{
     external_tools::{self, CheckResult, Tool, ToolCheckUpdate, ToolStatus},
+    state::{ComputationType, Computations},
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, util::open_dir},
 };
 
@@ -109,7 +110,7 @@ impl ExternalToolsUi {
 
     /// Start one installer on a worker thread. Installers can download large model environments,
     /// so they must never block egui's render thread.
-    fn start_install(&mut self, tool: Tool, context: &egui::Context) {
+    fn start_install(&mut self, tool: Tool, context: &egui::Context, computations: &Computations) {
         if self.is_busy() || !tool.spec().can_install_here() {
             return;
         }
@@ -121,9 +122,17 @@ impl ExternalToolsUi {
         self.confirm_uninstall = None;
         self.uninstall_results.remove(&tool);
 
+        let computation = computations.start(
+            ComputationType::Install,
+            tool.spec().name(),
+            Some("installing".to_owned()),
+        );
+
         let context = context.clone();
         thread::spawn(move || {
             let result = external_tools::install(tool).map_err(|error| error.to_string());
+            drop(computation);
+
             let _ = tx.send(result);
             context.request_repaint();
         });
@@ -151,7 +160,12 @@ impl ExternalToolsUi {
         true
     }
 
-    fn start_uninstall(&mut self, tool: Tool, context: &egui::Context) {
+    fn start_uninstall(
+        &mut self,
+        tool: Tool,
+        context: &egui::Context,
+        computations: &Computations,
+    ) {
         let has_managed_files =
             matches!(self.disk_usage.get(&tool), Some(Ok(Some(_))) | Some(Err(_)));
         if self.is_busy() || !tool.spec().molchanica_managed || !has_managed_files {
@@ -164,9 +178,17 @@ impl ExternalToolsUi {
         self.install_results.remove(&tool);
         self.uninstall_results.remove(&tool);
 
+        let computation = computations.start(
+            ComputationType::Install,
+            tool.spec().name(),
+            Some("uninstalling".to_owned()),
+        );
+
         let context = context.clone();
         thread::spawn(move || {
             let result = external_tools::uninstall(tool).map_err(|error| error.to_string());
+            drop(computation);
+
             let _ = tx.send(result);
             context.request_repaint();
         });
@@ -243,6 +265,7 @@ fn open_install_folder() -> io::Result<()> {
 
 pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let context = ui.ctx().clone();
+    let computations = &state.volatile.ongoing_computations;
     let tools = &mut state.ui.external_tools;
     tools.poll();
 
@@ -444,7 +467,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             .on_hover_text(uninstall_hint);
                         if response.clicked() {
                             if confirming {
-                                tools.start_uninstall(status.tool, &context);
+                                tools.start_uninstall(status.tool, &context, computations);
                             } else {
                                 tools.confirm_uninstall = Some(status.tool);
                             }
@@ -497,7 +520,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                                             spec.install_hint.to_owned()
                                         });
                                     if response.clicked() {
-                                        tools.start_install(status.tool, &context);
+                                        tools.start_install(status.tool, &context, computations);
                                     }
                                     if installing == Some(status.tool) {
                                         ui.spinner();

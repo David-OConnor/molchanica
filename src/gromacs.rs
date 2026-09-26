@@ -46,7 +46,7 @@ use crate::{
         STATIC_ATOM_DIST_THRESH, add_copies, filter_peptide_atoms, get_mols_sel_for_md,
         trajectory::Trajectory,
     },
-    state::State,
+    state::{ComputationType, State},
     util::{handle_err, handle_success},
 };
 
@@ -605,9 +605,18 @@ pub fn launch_md(state: &mut State) {
 
     let (tx, rx) = mpsc::channel();
 
+    let computation = state.volatile.ongoing_computations.start(
+        ComputationType::MolecularDynamics,
+        "GROMACS",
+        Some(format!("{} steps", state.to_save.md.num_steps)),
+    );
+
     thread::spawn(move || {
         let start = Instant::now();
-        match input.run() {
+        let result = input.run();
+        drop(computation);
+
+        match result {
             Ok(out) => {
                 let elapsed = start.elapsed().as_millis();
                 // let _ = tx.send((out, mol_start_indices, elapsed));

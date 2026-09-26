@@ -5,7 +5,7 @@ use std::{
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Instant,
 };
 
@@ -13,6 +13,7 @@ use adme::{DatasetTdc, infer::Infer};
 use bincode::{Decode, Encode};
 use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{ResidueType, md_params::ForceFieldParams, mol_templates::TemplateData};
+use chrono::{DateTime, Utc};
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
 use dynamics::{
@@ -34,7 +35,7 @@ use mol_defs::{
     screening::pharmacophore::{PharmacophoreFeatType, PharmacophoreState},
     sfc_mesh::MeshColoring,
 };
-use na_seq::AaIdent;
+use na_seq::{AaIdent, Sequence};
 
 use crate::{
     drawing::MoleculeView,
@@ -68,6 +69,7 @@ pub struct State {
     // of their small-molecule-based state approach.
     // pub pharmacophores: Vec<Pharmacophore>,
     pub pockets: Vec<Pocket>,
+    pub sequences: Vec<Sequence>,
     pub trajectories: Vec<Trajectory>,
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
@@ -127,6 +129,7 @@ impl Default for State {
             lipids: Default::default(),
             // pharmacophores: Default::default(),
             pockets: Default::default(),
+            sequences: Default::default(),
             trajectories: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),
@@ -322,6 +325,149 @@ impl State {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ComputationType {
+    /// Or uninstall. For third party tools.
+    Install,
+    /// E.g. *Dynamic*, *GROMACS*, *ORCA*.
+    MolecularDynamics,
+    /// Structure prediction, sequence prediction, backbone generation, etc.
+    /// Generally from a third-aprty tool.
+    MachineLearning,
+    /// Quantum chemistry, e.g. ORCA single points, geometry optimization, and charges.
+    QuantumMechanics,
+    Other,
+}
+
+impl Display for ComputationType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::Install => "[un]Install",
+            Self::MolecularDynamics => "MD",
+            Self::MachineLearning => "ML",
+            Self::QuantumMechanics => "QM",
+            Self::Other => "Other",
+        };
+
+        write!(f, "{v}")
+    }
+}
+
+/// Represents an ongoing computation; one which can run for a long time. (Seconds, minutes, or longer).
+/// For example: MD, ML etc. Used to maintain status of background processes.
+#[derive(Clone)]
+pub struct Computation {
+    /// Identifies this computation for its guard, which removes it when dropped.
+    id: u64,
+    pub comp_type: ComputationType,
+    pub tool_name: String,
+    pub description: Option<String>,
+    pub start: DateTime<Utc>,
+    // todo: End and result, if required later.
+}
+
+impl Computation {
+    /// Time since the computation started, e.g. "12s", "3m 04s", or "1h 02m".
+    pub fn elapsed_str(&self) -> String {
+        let secs = (Utc::now() - self.start).num_seconds().max(0);
+
+        if secs < 60 {
+            format!("{secs}s")
+        } else if secs < 3_600 {
+            format!("{}m {:02}s", secs / 60, secs % 60)
+        } else {
+            format!("{}h {:02}m", secs / 3_600, (secs % 3_600) / 60)
+        }
+    }
+}
+
+impl Display for Computation {
+    /// Terse, e.g. "ML: Boltz-2 (3m 12s)", or "MD: GROMACS, 5 mols (12s)".
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.comp_type, self.tool_name)?;
+
+        if let Some(descrip) = &self.description {
+            write!(f, ", {descrip}")?;
+        }
+
+        write!(f, " ({})", self.elapsed_str())
+    }
+}
+
+#[derive(Default)]
+struct ComputationsInner {
+    items: Vec<Computation>,
+    next_id: u64,
+}
+
+/// The computations currently running. A computation is added by [`Self::start`], and removed when
+/// the returned [`ComputationGuard`] drops. The guard is generally moved into the worker thread
+/// doing the computation, so the entry is removed when that thread ends however it ends: with a
+/// result, with an error, or by panicking. This doesn't depend on a UI window being open to poll
+/// for the result.
+///
+/// Shared with those worker threads, hence the mutex. It's only held briefly, to add, remove, or
+/// copy the list for display.
+#[derive(Clone, Default)]
+pub struct Computations {
+    inner: Arc<Mutex<ComputationsInner>>,
+}
+
+impl Computations {
+    fn lock(&self) -> MutexGuard<'_, ComputationsInner> {
+        // A poisoned lock only means a thread panicked while holding it; the list itself is still
+        // usable, and a status indicator must not take the UI down with it.
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Register a computation. Keep the guard alive for as long as the computation runs.
+    #[must_use = "The computation is removed as soon as its guard drops"]
+    pub fn start(
+        &self,
+        comp_type: ComputationType,
+        tool_name: impl Into<String>,
+        description: Option<String>,
+    ) -> ComputationGuard {
+        let mut inner = self.lock();
+
+        let id = inner.next_id;
+        inner.next_id += 1;
+
+        inner.items.push(Computation {
+            id,
+            comp_type,
+            tool_name: tool_name.into(),
+            description,
+            start: Utc::now(),
+        });
+
+        ComputationGuard {
+            computations: self.clone(),
+            id,
+        }
+    }
+
+    /// A copy of the current list, in the order started.
+    pub fn list(&self) -> Vec<Computation> {
+        self.lock().items.clone()
+    }
+}
+
+/// Removes its computation from [`Computations`] when dropped.
+pub struct ComputationGuard {
+    computations: Computations,
+    id: u64,
+}
+
+impl Drop for ComputationGuard {
+    fn drop(&mut self) {
+        self.computations
+            .lock()
+            .items
+            .retain(|comp| comp.id != self.id);
+    }
+}
+
 /// Temporary, and generated state.
 #[derive(Default)]
 pub struct StateVolatile {
@@ -380,6 +526,11 @@ pub struct StateVolatile {
     pub parquet_db_active: Option<DbSel>,
     /// Playback handle for the molecule currently being sonified, if any.
     pub playing_audio: Option<PlayingAudio>,
+    /// Long-running computations in progress, e.g. MD, ML inference, and tool installs. Displayed
+    /// as a status indicator.
+    pub ongoing_computations: Computations,
+    /// The selected sequence, as an index into `State::sequences`.
+    pub active_seq: Option<usize>,
 }
 
 impl StateVolatile {
@@ -546,14 +697,22 @@ pub struct StateUi {
     pub metadata_edit: MetadataEdit,
 }
 
+/// What the metadata popup shows, and edits.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MetadataTarget {
+    Mol(MolType, usize),
+    /// An index into `State::sequences`.
+    Seq(usize),
+}
+
 /// Rows shown by the metadata editor, populated from the molecule when editing is enabled.
 /// A `Vec` instead of the molecule's `HashMap`: rows need a stable order between frames, and
 /// may transiently hold blank or duplicate keys while the user types them.
 #[derive(Default)]
 pub struct MetadataEdit {
-    /// The molecule these rows were loaded from. Rows are discarded when the metadata popup
-    /// moves to a different molecule, so edits can't be applied to the wrong one.
-    pub mol: Option<(MolType, usize)>,
+    /// The molecule or sequence these rows were loaded from. Rows are discarded when the metadata
+    /// popup moves to a different one, so edits can't be applied to the wrong one.
+    pub target: Option<MetadataTarget>,
     pub rows: Vec<(String, String)>,
 }
 
@@ -696,7 +855,7 @@ pub struct PopupState {
     pub recent_files_page: usize,
     /// Filename filter text for the recent-files popup.
     pub recent_files_filter: String,
-    pub metadata: Option<(MolType, usize)>,
+    pub metadata: Option<MetadataTarget>,
     pub alignment: bool,
     pub alignment_screening: bool,
     pub pharmacophore_boolean: bool,

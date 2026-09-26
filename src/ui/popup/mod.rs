@@ -10,7 +10,11 @@ pub mod reactions;
 pub mod recent_files;
 pub(crate) mod tool_runner;
 
-use std::{collections::HashMap, ops::RangeInclusive, path::Path};
+use std::{
+    collections::HashMap,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+};
 
 use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
@@ -32,11 +36,14 @@ use crate::{
     mol_alignment::run_alignment,
     screening::screen_by_alignment,
     selection::{Selection, ViewSelLevel},
-    state::{MsaaSetting, State},
+    state::{MetadataTarget, MsaaSetting, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         load_all_idents_button,
-        panels::{md_viewer, mol_data::metadata},
+        panels::{
+            md_viewer,
+            mol_data::{metadata, seq_metadata},
+        },
         util::{Idents, edit_mol_name, list_idents},
     },
     util::{RedrawFlags, handle_err, orbit_center},
@@ -180,14 +187,15 @@ pub(in crate::ui) fn load_popups(
         state.ui.popup.pharmacophore_screening &= open;
     }
 
-    if let Some((mol_type, i)) = state.ui.popup.metadata {
+    if let Some(target) = state.ui.popup.metadata {
         let open = show_popup(
             popup("Metadata")
                 .default_width(METADATA_INIT_WIDTH)
                 .max_width(METADATA_MAX_WIDTH),
             ui.ctx(),
-            |ui| {
-                metadata(mol_type, i, state, redraw, ui);
+            |ui| match target {
+                MetadataTarget::Mol(mol_type, i) => metadata(mol_type, i, state, redraw, ui),
+                MetadataTarget::Seq(i) => seq_metadata(i, state, ui),
             },
         );
         if !open {
@@ -526,10 +534,32 @@ pub(in crate::ui) struct MetadataPopupResult {
     pub metadata: Option<HashMap<String, String>>,
 }
 
+/// What the metadata popup displays and edits: the parts of a molecule, or of a sequence, that
+/// it needs.
+pub(in crate::ui) struct MetadataSource<'a> {
+    /// For the heading.
+    pub display_name: &'a str,
+    /// The user-editable name. `None` if not set.
+    pub name: &'a Option<String>,
+    pub metadata: &'a HashMap<String, String>,
+    pub path: &'a Option<PathBuf>,
+}
+
+impl<'a> MetadataSource<'a> {
+    pub fn from_mol(mol: &'a MoleculeCommon, display_name: &'a str) -> Self {
+        Self {
+            display_name,
+            name: &mol.name,
+            metadata: &mol.metadata,
+            path: &mol.path,
+        }
+    }
+}
+
 pub(in crate::ui) fn metadata_popup(
     editing: &mut bool,
     edit_rows: &mut Vec<(String, String)>,
-    mol: &MoleculeCommon,
+    src: MetadataSource,
     idents: Option<Idents>,
     loading_idents: bool,
     prefs_dir: &Path,
@@ -544,8 +574,9 @@ pub(in crate::ui) fn metadata_popup(
     // Everything here is left-aligned and wrapping: a right-aligned or non-wrapping row would
     // stretch the popup to the width available to it, instead of to the width its content needs.
     ui.horizontal_wrapped(|ui| {
-        let name = mol.name(idents.and_then(Idents::small));
-        ui.heading(RichText::new(format!("Metadata for {name}")).color(Color32::WHITE));
+        ui.heading(
+            RichText::new(format!("Metadata for {}", src.display_name)).color(Color32::WHITE),
+        );
 
         ui.add_space(COL_SPACING);
 
@@ -568,7 +599,7 @@ pub(in crate::ui) fn metadata_popup(
             if *editing {
                 // Sorted: a `HashMap`'s iteration order is arbitrary, and rows that jumped around
                 // between frames would be unusable to edit.
-                *edit_rows = mol
+                *edit_rows = src
                     .metadata
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -592,20 +623,20 @@ pub(in crate::ui) fn metadata_popup(
         .min_scrolled_height(800.0)
         .show(ui, |ui| {
             if *editing {
-                metadata_editor(edit_rows, mol, idents, prefs_dir, &mut result, ui);
+                metadata_editor(edit_rows, &src, idents, prefs_dir, &mut result, ui);
                 return;
             }
 
             if let Some(idents_) = idents {
                 ui.add_space(ROW_SPACING);
-                result.name = list_idents(Some(&mol.name), idents_, &mol.path, prefs_dir, ui);
+                result.name = list_idents(Some(src.name), idents_, src.path, prefs_dir, ui);
             } else {
-                result.name = edit_mol_name(&mol.name, ui);
+                result.name = edit_mol_name(src.name, ui);
             }
 
             ui.add_space(ROW_SPACING);
 
-            for (k, v) in mol.metadata.iter() {
+            for (k, v) in src.metadata.iter() {
                 // Wrap long values instead of widening the popup to fit them on one line.
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("{k}: ")));
@@ -621,17 +652,17 @@ pub(in crate::ui) fn metadata_popup(
 /// `result.metadata` on any change, so the caller can apply it to the molecule.
 fn metadata_editor(
     edit_rows: &mut Vec<(String, String)>,
-    mol: &MoleculeCommon,
+    src: &MetadataSource,
     idents: Option<Idents>,
     prefs_dir: &Path,
     result: &mut MetadataPopupResult,
     ui: &mut Ui,
 ) {
-    result.name = edit_mol_name(&mol.name, ui);
+    result.name = edit_mol_name(src.name, ui);
     ui.add_space(ROW_SPACING);
 
     if let Some(idents_) = idents {
-        let _ = list_idents(None, idents_, &mol.path, prefs_dir, ui);
+        let _ = list_idents(None, idents_, src.path, prefs_dir, ui);
         ui.add_space(ROW_SPACING);
     }
 

@@ -29,7 +29,7 @@ use mol_defs::{
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
     screening::pharmacophore::Pharmacophore,
 };
-use na_seq::Element;
+use na_seq::{Element, Sequence};
 use rand::RngExt;
 
 use crate::{
@@ -52,6 +52,7 @@ use crate::{
 
 pub mod download_mols;
 pub(crate) mod managed_mols;
+pub mod sequence;
 
 // When opening molecules deconflict; don't allow a mol to be closer than this to another.
 const MOL_MIN_DIST_OPEN: f64 = 12.;
@@ -70,6 +71,8 @@ pub(crate) enum SessionRestorePayload {
     ParquetDb(ParquetMolDb),
     MdMols(SnapshotViewer),
     MdParams,
+    /// Every sequence in one file.
+    Sequences(Vec<Sequence>),
 }
 
 pub(crate) struct SessionRestoreItem {
@@ -238,6 +241,9 @@ pub(crate) fn parse_session_history(
             viewer.load_gro(path)?;
             SessionRestorePayload::MdMols(viewer)
         }
+        OpenType::Sequence => {
+            SessionRestorePayload::Sequences(sequence::load_sequences(path)?.records)
+        }
     };
 
     Ok(SessionRestoreItem { history, payload })
@@ -308,13 +314,20 @@ impl State {
         scene: &mut Scene,
         engine_updates: &mut EngineUpdates,
     ) -> io::Result<()> {
-        match path
+        let ext = path
             .extension()
             .unwrap_or_default()
             .to_ascii_lowercase()
             .to_str()
             .unwrap_or_default()
-        {
+            .to_owned();
+
+        // Reports its own result, including any residues it couldn't represent.
+        if sequence::is_seq_ext(&ext) {
+            return self.open_sequences(path);
+        }
+
+        match ext.as_str() {
             // The cif branch here also handles 2fo-fc mmCIF files.
             // Note: `mol` is ChEBI's SDF; same or similar in most or all cases?
             "sdf" | "mol" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" => {
@@ -1365,20 +1378,24 @@ pub struct FileDialogs {
     pub save_gro: FileDialog,
     /// Index of the mol set queued for GRO export.
     pub save_gro_mol_set_i: Option<usize>,
+    /// Save a sequence as FASTA or GenBank.
+    pub save_seq: FileDialog,
+    /// Index into `State::sequences` of the sequence queued for saving.
+    pub save_seq_i: Option<usize>,
 }
 
 impl Default for FileDialogs {
     fn default() -> Self {
         let parquet_descrip = "Parquet mol DB".to_owned();
 
+        let mut exts_all = vec![
+            "cif", "mol", "mol2", "sdf", "xyz", "pdbqt", "gro", "map", "mtz", "frcmod", "dat",
+            "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
+        ];
+        exts_all.extend(sequence::seq_exts_open());
+
         let cfg_all = FileDialogConfig::default()
-            .add_file_filter_extensions(
-                "All",
-                vec![
-                    "cif", "mol", "mol2", "sdf", "xyz", "pdbqt", "gro", "map", "mtz", "frcmod",
-                    "dat", "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
-                ],
-            )
+            .add_file_filter_extensions("All", exts_all)
             .add_file_filter_extensions(
                 "Molecule (small)",
                 vec!["mol", "mol2", "sdf", "xyz", "pdbqt", "prmtop"],
@@ -1395,6 +1412,7 @@ impl Default for FileDialogs {
             .add_file_filter_extensions("PMP (Pharmacophore)", vec!["pmp"])
             .add_file_filter_extensions(&parquet_descrip, vec!["parquet"])
             .add_file_filter_extensions("MDP (MD params)", vec!["mdp"])
+            .add_file_filter_extensions("Sequence (FASTA, GenBank, AB1)", sequence::seq_exts_open())
             //
             .add_save_extension("Protein (CIF)", "cif")
             .add_save_extension("Mol2", "mol2")
@@ -1454,6 +1472,11 @@ impl Default for FileDialogs {
         let cfg_save_gro = FileDialogConfig::default().add_save_extension("GRO", "gro");
         let save_gro = FileDialog::with_config(cfg_save_gro).default_save_extension("GRO");
 
+        let cfg_save_seq = FileDialogConfig::default()
+            .add_save_extension("FASTA", "fasta")
+            .add_save_extension("GenBank", "gb");
+        let save_seq = FileDialog::with_config(cfg_save_seq).default_save_extension("FASTA");
+
         Self {
             load,
             save,
@@ -1465,6 +1488,8 @@ impl Default for FileDialogs {
             save_md,
             save_gro,
             save_gro_mol_set_i: None,
+            save_seq,
+            save_seq_i: None,
         }
     }
 }

@@ -25,6 +25,7 @@ use rayon::prelude::*;
 use crate::{
     mol_alignment::{RING_ALIGN_ROT_COUNT_QUICK, make_initial_alignment},
     mol_db::{DbSource, ParquetMolDb},
+    state::ComputationGuard,
 };
 
 // We load molecules from disk in batches, to prevent using too much memory. We use
@@ -239,12 +240,14 @@ pub trait PharmacophoreScreen {
         db_source: &DbSource,
         thresh: f32,
         ph_screening_in_progress: &mut bool,
+        computation: ComputationGuard,
     ) -> Receiver<Vec<PhScreeningScore>>;
 }
 
 impl PharmacophoreScreen for Pharmacophore {
     /// Spawn a background thread that screens all molecules in the given Parquet DB against this
-    /// pharmacophore, sending results through the returned channel when complete.
+    /// pharmacophore, sending results through the returned channel when complete. `computation` is
+    /// released when the thread ends.
     ///
     /// All molecules are loaded from the DB, characterization is computed in place, then
     /// Rayon parallelises scoring.  Results arrive as a single `Vec<PhScreeningScore>` message.
@@ -256,6 +259,7 @@ impl PharmacophoreScreen for Pharmacophore {
         db_source: &DbSource,
         thresh: f32,
         ph_screening_in_progress: &mut bool,
+        computation: ComputationGuard,
     ) -> Receiver<Vec<PhScreeningScore>> {
         println!("Pharmacophore screening started");
 
@@ -269,6 +273,9 @@ impl PharmacophoreScreen for Pharmacophore {
         let (tx, rx) = mpsc::channel();
 
         thread::spawn(move || {
+            // Released when this thread ends, including on the early returns below.
+            let _computation = computation;
+
             let db = match ParquetMolDb::open_source(db_source.clone()) {
                 Ok(d) => d,
                 Err(e) => {

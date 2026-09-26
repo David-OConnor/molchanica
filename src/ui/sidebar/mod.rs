@@ -17,7 +17,7 @@ use crate::{
     cam::{
         MolCameraTarget, VIEW_DIR_FRONT, move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog,
     },
-    file_io::save_mol,
+    file_io::{save_mol, sequence::save_seq_dialog},
     label,
     md::{
         trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj},
@@ -28,7 +28,7 @@ use crate::{
     pocket_render::PocketRender,
     properties::{crystal, logp, sol_shrinking_box, water_sol, water_sol_mix},
     sonification,
-    state::{OperatingMode, PlayingAudio, PopupState, State},
+    state::{MetadataTarget, OperatingMode, PlayingAudio, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
         COLOR_INACTIVE, ROW_SPACING, highlighted_box, load_all_idents_button, num_field,
@@ -64,6 +64,19 @@ fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
         && let Ok(parsed) = copies_str.parse::<usize>()
     {
         *copies = parsed.max(1);
+    }
+}
+
+/// For a molecule or sequence row's select button: the name, truncated if long, and its hover
+/// text. When truncated, the hover text starts with the full name.
+fn picker_name(name: &str, help: &str) -> (String, String) {
+    const MAX_NAME_LEN: usize = 30;
+
+    if name.chars().count() > MAX_NAME_LEN {
+        let truncated: String = name.chars().take(MAX_NAME_LEN - 1).collect();
+        (format!("{truncated}…"), format!("{name}\n\n{help}"))
+    } else {
+        (name.to_owned(), help.to_owned())
     }
 }
 
@@ -173,22 +186,10 @@ fn mol_picker_one(
 
                 let row_h = ui.spacing().interact_size.y;
 
-                const MAX_NAME_LEN: usize = 30;
-
-                let name = mol.name(idents);
-                let (name_disp, help_text) = if name.chars().count() > MAX_NAME_LEN {
-                    let truncated: String = name.chars().take(MAX_NAME_LEN - 1).collect();
-                    (
-                        format!("{truncated}…"),
-                        format!("{name}\n\nMake this molecule the active / selected one. Middle click to close it."),
-                    )
-                } else {
-                    (
-                        name.to_string(),
-                        "Make this molecule the active / selected one. Middle click to close it."
-                            .to_string(),
-                    )
-                };
+                let (name_disp, help_text) = picker_name(
+                    &mol.name(idents),
+                    "Make this molecule the active / selected one. Middle click to close it.",
+                );
 
                 let sel_btn = ui
                     .add_sized(
@@ -566,6 +567,137 @@ fn mol_picker(
     }
 }
 
+/// Select, close, and save opened sequences. Like the molecule rows, but sequences aren't
+/// rendered, so there are no visibility, camera, or MD controls.
+fn seq_picker(state: &mut State, ui: &mut Ui) {
+    // Applied after the loop; avoids borrow errors, and index shifts while iterating.
+    let mut close = None;
+    let mut save = None;
+    let mut toggle_metadata = None;
+    let mut toggle_active = None;
+
+    for (i, seq) in state.sequences.iter().enumerate() {
+        let active = state.volatile.active_seq == Some(i);
+
+        let color = if active {
+            COLOR_ACTIVE_RADIO
+        } else {
+            COLOR_INACTIVE
+        };
+
+        highlighted_box(active, Color32::from_rgb(40, 45, 60)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(COL_SPACING / 2.);
+                    if ui
+                        .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                        .on_hover_text("Close this sequence.")
+                        .clicked()
+                    {
+                        close = Some(i);
+                    }
+
+                    let color_meta = if state.ui.popup.metadata == Some(MetadataTarget::Seq(i)) {
+                        COLOR_ACTIVE
+                    } else {
+                        COLOR_INACTIVE
+                    };
+
+                    if button!(
+                        ui,
+                        "Meta",
+                        color_meta,
+                        "Display and edit this sequence's metadata."
+                    )
+                    .clicked()
+                    {
+                        toggle_metadata = Some(i);
+                    }
+
+                    if button!(
+                        ui,
+                        "Save",
+                        COLOR_INACTIVE,
+                        "Save this sequence to a FASTA or GenBank file."
+                    )
+                    .clicked()
+                    {
+                        save = Some(i);
+                    }
+
+                    let row_h = ui.spacing().interact_size.y;
+
+                    let (name_disp, help_text) = picker_name(
+                        seq.display_name(),
+                        "Make this sequence the active / selected one. Middle click to close it.",
+                    );
+
+                    let sel_btn = ui
+                        .add_sized(
+                            egui::vec2(ui.available_width(), row_h),
+                            egui::Button::new(RichText::new(name_disp).color(color)),
+                        )
+                        .on_hover_text(help_text);
+
+                    if sel_btn.clicked() {
+                        toggle_active = Some(i);
+                    }
+
+                    if sel_btn.middle_clicked() {
+                        close = Some(i);
+                    }
+                });
+            });
+
+            let color_details = if active {
+                Color32::WHITE
+            } else {
+                Color32::GRAY
+            };
+
+            let details = format!(
+                "{} · {} {}",
+                seq.seq_type(),
+                seq.data.len(),
+                seq.seq_type().residue_unit()
+            );
+
+            let resp = label!(ui, details, color_details);
+            if let Some(descrip) = seq.description() {
+                resp.on_hover_text(descrip);
+            }
+
+            ui.separator();
+        });
+    }
+
+    if let Some(i) = toggle_active {
+        state.volatile.active_seq = if state.volatile.active_seq == Some(i) {
+            None
+        } else {
+            Some(i)
+        };
+    }
+
+    if let Some(i) = toggle_metadata {
+        let target = MetadataTarget::Seq(i);
+
+        state.ui.popup.metadata = if state.ui.popup.metadata == Some(target) {
+            None
+        } else {
+            Some(target)
+        };
+    }
+
+    if let Some(i) = save {
+        save_seq_dialog(state, i);
+    }
+
+    if let Some(i) = close {
+        state.close_sequence(i);
+    }
+}
+
 fn open_tools(state: &mut State, ui: &mut Ui) {
     let color_open_tools = if state.peptides.is_empty() && state.ligands.is_empty() {
         COLOR_ACTION
@@ -891,6 +1023,7 @@ pub(in crate::ui) fn sidebar(
                 mol_editor_sidebar::pocket_list(state, scene, updates, ui);
             } else {
                 mol_picker(state, scene, ui, redraw, updates);
+                seq_picker(state, ui);
                 traj_items(state, scene, updates, ui, redraw);
                 md_viewer::viewer_mol_set(state, scene, updates, ui, redraw);
             }
@@ -1005,7 +1138,10 @@ pub(in crate::ui) fn sidebar(
             if toggle_metadata_popup {
                 state.ui.popup.metadata = match state.ui.popup.metadata {
                     Some(_) => None,
-                    None => state.volatile.active_mol,
+                    None => state
+                        .volatile
+                        .active_mol
+                        .map(|(mol_type, i)| MetadataTarget::Mol(mol_type, i)),
                 };
             }
 

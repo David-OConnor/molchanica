@@ -4,9 +4,10 @@ use std::{
 };
 
 use bio_apis::{pdbe, rcsb};
+use chrono::Local;
 use egui::{
     Color32, ComboBox, CornerRadius, Event, FocusDirection, Frame, Key, Margin, Panel, RichText,
-    Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
+    Sense, Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolIdent};
@@ -31,6 +32,7 @@ use crate::{
     drawing::{MoleculeView, peptide::SFC_DIST_SCALE},
     file_io::download_mols::load_atom_coords_rcsb,
     inputs::add_atom_with_tab,
+    label,
     mol_editor::enter_edit_mode,
     prefs::{ControlSchemeType, DepthMode},
     render::set_flashlight,
@@ -76,6 +78,9 @@ pub(in crate::ui) const _COLOR_ATTENTION: Color32 = Color32::ORANGE;
 
 // Creation, simulation runs etc.
 pub(in crate::ui) const COLOR_ACTION: Color32 = Color32::GOLD;
+
+/// The status light, and text, while background computations are running. Amber.
+const COLOR_COMPUTING: Color32 = Color32::from_rgb(255, 176, 0);
 
 /// Shared trigger for the small-molecule identifier lookup. The lookup itself and its receiver
 /// are shared in `threads`; this keeps its two UI entry points consistent as well.
@@ -212,6 +217,60 @@ pub fn handle_input(
     });
 }
 
+/// A status light for long-running background computations, e.g. MD, ML inference, or tool
+/// installs: grey if none are running. Otherwise amber, followed by a terse description of each.
+/// Hover for details.
+fn computation_status(state: &State, ui: &mut Ui) {
+    let comps = state.volatile.ongoing_computations.list();
+
+    let color = if comps.is_empty() {
+        COLOR_INACTIVE
+    } else {
+        COLOR_COMPUTING
+    };
+
+    let diameter = ui.spacing().interact_size.y * 0.6;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(diameter, diameter), Sense::hover());
+    let painter = ui.painter();
+
+    painter.circle_filled(rect.center(), diameter / 2., color);
+    if !comps.is_empty() {
+        // A faint halo, so it reads as a light that's on.
+        painter.circle_stroke(
+            rect.center(),
+            diameter / 2. + 2.,
+            Stroke::new(2., color.gamma_multiply(0.35)),
+        );
+    }
+
+    if comps.is_empty() {
+        resp.on_hover_text("No background computations are running.");
+        return;
+    }
+
+    let hover = comps
+        .iter()
+        .map(|c| {
+            let start = c.start.with_timezone(&Local).format("%H:%M:%S");
+            format!("{c}. Started at {start}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let text = comps
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    let resp = resp.union(label!(ui, text, COLOR_COMPUTING));
+    resp.on_hover_text(format!("Running in the background:\n{hover}"));
+
+    // Keeps the elapsed times current. This also clears the light shortly after a computation
+    // finishes: its worker thread doesn't request a repaint when its entry is removed.
+    ui.ctx().request_repaint_after(Duration::from_secs(1));
+}
+
 fn get_snap_name(snap: Option<usize>, snaps: &[CamSnapshot]) -> &str {
     snap.and_then(|i| snaps.get(i))
         .map_or("None", |snapshot| snapshot.name.as_str())
@@ -250,6 +309,8 @@ fn draw_cli(
             // todo: Validate input and color-code?
         }
 
+        ui.add_space(COL_SPACING / 2.);
+        computation_status(state, ui);
         ui.add_space(COL_SPACING / 2.);
 
         let button_clicked = ui.button(RichText::new("Submit")).clicked();
@@ -983,7 +1044,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             md_setup(state, scene, &mut updates, ui, &mut redraw);
         }
         if state.ui.ui_vis.orca {
-            orca_input(state, &mut redraw.ligand, ui);
+            orca_input(state, ui);
         }
 
         // if state.ui.show_docking_tools {

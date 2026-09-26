@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use bio_files::orca::{
-    GeomOptThresh, Keyword, OrcaInput, OrcaOutput, Task,
+    GeomOptThresh, Keyword, OrcaInput, Task,
     basis_sets::BasisSetCategory,
     dynamics::{Dynamics, Thermostat},
     method::Method,
@@ -14,7 +14,6 @@ use crate::{
     orca::TaskType,
     state::State,
     ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, misc},
-    util::{handle_err, handle_success},
 };
 
 fn keyword_toggle(
@@ -43,7 +42,7 @@ fn keyword_toggle(
     }
 }
 
-pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
+pub(in crate::ui) fn orca_input(state: &mut State, ui: &mut Ui) {
     let orca_available = external_tools::is_installed(Tool::Orca);
     misc::section_box().show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -246,10 +245,16 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
                 //
                 //     ui.add_space(COL_SPACING);
 
-                if orca_available && ui
+                let running = state.volatile.thread_receivers.orca_run.is_some();
+
+                if running {
+                    ui.spinner();
+                    label!(ui, "Running…", COLOR_ACTION);
+                } else if orca_available && ui
                         .button(RichText::new("Run").color(COLOR_ACTION))
                         .on_hover_text(
-                            "Run ORCA using the settings here, on the active molecule.",
+                            "Run ORCA using the settings here, on the active molecule. Runs in the \
+                            background; the result is applied to this molecule when it finishes.",
                         )
                         .clicked()
                     {
@@ -283,85 +288,7 @@ pub(in crate::ui) fn orca_input(state: &mut State, redraw: &mut bool, ui: &mut U
 
                 // todo: "TightSCF" keyword when generating MBIS charges?
 
-                match state.orca.input.run() {
-                    Ok(out) => {
-                        let Some(mut mol) = state.active_mol_mut() else {
-                            return;
-                        };
-
-                        // This should correspond to the task.
-                        match out {
-                            OrcaOutput::Text(t) => {
-                                println!("ORCA run complete. Output: \n\n{t}");
-
-                                handle_success(&mut state.ui, "ORCA run complete".to_owned());
-                            }
-                            OrcaOutput::Charges(o) => {
-                                // println!("Charge output: {:?}", o);
-                                // println!("Orca raw output text: \n\n{:?}\n\n\n\n", o.text);
-
-                                println!("\n------\nORCA charge generation complete.\n\n Charge:");
-                                for charge in &o.charges {
-                                    println!("-{charge:?}");
-                                }
-
-                                println!("\n\nDipole:");
-                                for charge in &o.dipole {
-                                    println!("-{charge:?}");
-                                }
-
-                                println!("\n\nQuadrupole:");
-                                for charge in &o.quadrupole {
-                                    println!("-{charge:?}");
-                                }
-
-                                println!("\n\nOctopole:");
-                                for charge in &o.octopole {
-                                    println!("-{charge:?}");
-                                }
-
-                                println!("\n-------\n");
-
-
-                                // handle_success(&mut state.ui, format!("MBIS charges assigned for {}", mol.common().ident));
-
-                                if o.charges.len() != mol.common().atoms.len() {
-                                    // todo: Borrow mut error.
-                                    // handle_err(&mut state.ui, "Mismatch in len on MBIS charges".to_string());
-                                    eprintln!("Mismatch in atom count on MBIS charges.");
-                                } else {
-                                    for (i, q) in o.charges.into_iter().enumerate() {
-                                        mol.common_mut().atoms[i].partial_charge = Some(q.charge as f32);
-                                    }
-                                }
-                                // Maybe only required if in color-by-charge mode.
-                                *redraw = true;
-                            }
-                            OrcaOutput::Dynamics(o) => {
-                                println!("\n\nMD Trajectory: \n\n{:?}", o.trajectory);
-                                orca::update_snapshots(state, o);
-                            }
-                            OrcaOutput::Geometry(p) => {
-                                if p.posits.len() != mol.common().atoms.len() {
-                                    eprintln!("Error: mismatch in len on atom count on geometry optimization.")
-                                } else {
-                                    for (i, posit) in p.posits.iter().enumerate() {
-                                        mol.common_mut().atom_posits[i] = *posit;
-                                    }
-                                }
-
-                                println!("Updated Atom positions from ORCA:");
-                                for (i, p) in p.posits.into_iter().enumerate() {
-                                    println!("{}: {p}", i + 1);
-                                }
-                                *redraw = true;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        handle_err(&mut state.ui, format!("Problem running ORCA: {e:?}"));
-                    }
-                }
+                orca::launch(state);
             }
         });
     });

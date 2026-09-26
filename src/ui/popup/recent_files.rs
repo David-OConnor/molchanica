@@ -43,6 +43,7 @@ fn type_descrip_plural(type_: OpenType) -> &'static str {
         OpenType::MdParams => "MD param files",
         OpenType::ParquetDb => "molecule DBs",
         OpenType::MdMols => "MD mol files",
+        OpenType::Sequence => "sequence files",
     }
 }
 

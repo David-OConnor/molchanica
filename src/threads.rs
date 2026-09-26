@@ -27,7 +27,8 @@ use crate::{
     file_io::{SessionRestoreItem, SessionRestorePayload, managed_mols, parse_session_history},
     gromacs::on_gromacs_md_complete,
     mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
-    mol_editor,
+    mol_editor, orca,
+    orca::OrcaRun,
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
     split_join::{StructureLookup, on_structure_lookup},
@@ -78,6 +79,8 @@ pub struct ThreadReceivers {
     /// GROMACS MD run. Carries `(out, mol_start_indices, elapsed_ms)`.
     // pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<usize>, u128)>>,
     pub gromacs_md_avail: Option<Receiver<(GromacsOutput, u128)>>,
+    /// An ORCA run, e.g. geometry optimization or charges; see `orca::launch`.
+    pub orca_run: Option<OrcaRun>,
 }
 
 pub struct SessionRestoreReceiver {
@@ -106,6 +109,7 @@ impl ThreadReceivers {
             || self.peptide_mesh_coloring.is_some()
             || self.ph_screening.is_some()
             || self.gromacs_md_avail.is_some()
+            || self.orca_run.is_some()
     }
 }
 
@@ -237,6 +241,7 @@ fn apply_session_restore_item(
         }
         SessionRestorePayload::MdMols(viewer) => state.volatile.md_local.viewer = viewer,
         SessionRestorePayload::MdParams => {}
+        SessionRestorePayload::Sequences(seqs) => state.sequences.extend(seqs),
     }
 }
 
@@ -908,5 +913,28 @@ pub fn handle_thread_rx(
         // crate::gromacs::on_gromacs_md_complete(state, &out, mol_start_indices, elapsed_ms);
         on_gromacs_md_complete(state, &out, elapsed_ms);
         state.volatile.md_local.gromacs_output = Some(out);
+    }
+
+    let orca_result = state
+        .volatile
+        .thread_receivers
+        .orca_run
+        .as_ref()
+        .map(OrcaRun::try_recv);
+
+    match orca_result {
+        Some(Ok(result)) => {
+            if let Some(run) = state.volatile.thread_receivers.orca_run.take() {
+                orca::on_run_complete(state, run, result, redraw);
+            }
+        }
+        Some(Err(TryRecvError::Disconnected)) => {
+            state.volatile.thread_receivers.orca_run = None;
+            handle_err(
+                &mut state.ui,
+                "The ORCA run stopped without returning a result".to_owned(),
+            );
+        }
+        Some(Err(TryRecvError::Empty)) | None => {}
     }
 }

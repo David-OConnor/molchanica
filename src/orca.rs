@@ -2,14 +2,199 @@
 //!
 //! [ORCA recommendations for methods, basis fns etc](https://www.faccts.de/docs/orca/6.1/manual/contents/quickstartguide/recommendations.html)
 
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    io,
+    sync::{mpsc, mpsc::Receiver},
+    thread,
+};
 
 use bio_files::orca::{
-    GeomOptThresh, OrcaInput, basis_sets::BasisSetCategory, dynamics::DynamicsOutput,
+    GeomOptThresh, OrcaInput, OrcaOutput, basis_sets::BasisSetCategory, dynamics::DynamicsOutput,
 };
 use dynamics::snapshot::Snapshot;
+use mol_defs::molecules::MolType;
 
-use crate::state::State;
+use crate::{
+    state::{ComputationType, State},
+    util::{RedrawFlags, handle_err, handle_success},
+};
+
+/// An ORCA run in progress on a worker thread, and the molecule to apply its result to.
+pub struct OrcaRun {
+    rx: Receiver<io::Result<OrcaOutput>>,
+    mol_type: MolType,
+    mol_i: usize,
+    /// Confirms the molecule at `mol_i` is still the one the run was for, e.g. if molecules were
+    /// closed in the meantime.
+    ident: String,
+}
+
+impl OrcaRun {
+    pub fn try_recv(&self) -> Result<io::Result<OrcaOutput>, mpsc::TryRecvError> {
+        self.rx.try_recv()
+    }
+}
+
+/// Run ORCA with `state.orca.input` on the active molecule, on a worker thread. ORCA runs can take
+/// minutes or more. The result is applied by [`on_run_complete`].
+pub fn launch(state: &mut State) {
+    let Some((mol_type, mol_i)) = state.volatile.active_mol else {
+        return;
+    };
+    let Some(mol) = state.get_mol(mol_type, mol_i) else {
+        return;
+    };
+    let ident = mol.common().ident.clone();
+
+    let task_type = state.orca.task_type;
+    let comp_type = match task_type {
+        TaskType::MolDynamics => ComputationType::MolecularDynamics,
+        _ => ComputationType::QuantumMechanics,
+    };
+
+    let computation = state.volatile.ongoing_computations.start(
+        comp_type,
+        "ORCA",
+        Some(format!("{task_type} of {ident}")),
+    );
+
+    let input = state.orca.input.clone();
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = input.run();
+        drop(computation);
+
+        let _ = tx.send(result);
+    });
+
+    state.volatile.thread_receivers.orca_run = Some(OrcaRun {
+        rx,
+        mol_type,
+        mol_i,
+        ident,
+    });
+}
+
+/// Apply the result of an ORCA run started by [`launch`].
+pub fn on_run_complete(
+    state: &mut State,
+    run: OrcaRun,
+    result: io::Result<OrcaOutput>,
+    redraw: &mut RedrawFlags,
+) {
+    let out = match result {
+        Ok(out) => out,
+        Err(e) => {
+            handle_err(&mut state.ui, format!("Problem running ORCA: {e:?}"));
+            return;
+        }
+    };
+
+    // Set when the output needs to be applied to the molecule the run was for.
+    let mut atom_count_expected = None;
+
+    // This should correspond to the task.
+    match &out {
+        OrcaOutput::Text(t) => {
+            println!("ORCA run complete. Output: \n\n{t}");
+
+            handle_success(&mut state.ui, "ORCA run complete".to_owned());
+            return;
+        }
+        OrcaOutput::Dynamics(o) => {
+            println!("\n\nMD Trajectory: \n\n{:?}", o.trajectory);
+        }
+        OrcaOutput::Charges(o) => {
+            // println!("Charge output: {:?}", o);
+            // println!("Orca raw output text: \n\n{:?}\n\n\n\n", o.text);
+
+            println!("\n------\nORCA charge generation complete.\n\n Charge:");
+            for charge in &o.charges {
+                println!("-{charge:?}");
+            }
+
+            println!("\n\nDipole:");
+            for charge in &o.dipole {
+                println!("-{charge:?}");
+            }
+
+            println!("\n\nQuadrupole:");
+            for charge in &o.quadrupole {
+                println!("-{charge:?}");
+            }
+
+            println!("\n\nOctopole:");
+            for charge in &o.octopole {
+                println!("-{charge:?}");
+            }
+
+            println!("\n-------\n");
+
+            atom_count_expected = Some(o.charges.len());
+        }
+        OrcaOutput::Geometry(p) => {
+            println!("Updated Atom positions from ORCA:");
+            for (i, p) in p.posits.iter().enumerate() {
+                println!("{}: {p}", i + 1);
+            }
+
+            atom_count_expected = Some(p.posits.len());
+        }
+    }
+
+    if let OrcaOutput::Dynamics(o) = out {
+        update_snapshots(state, o);
+        handle_success(&mut state.ui, "ORCA MD run complete".to_owned());
+        return;
+    }
+
+    let Some(mut mol) = state
+        .get_mol_mut(run.mol_type, run.mol_i)
+        .filter(|m| m.common().ident == run.ident)
+    else {
+        handle_err(
+            &mut state.ui,
+            format!(
+                "{} was closed before its ORCA run completed; the result wasn't applied.",
+                run.ident
+            ),
+        );
+        return;
+    };
+
+    if atom_count_expected != Some(mol.common().atoms.len()) {
+        handle_err(
+            &mut state.ui,
+            format!(
+                "The ORCA result's atom count doesn't match {}'s; it wasn't applied.",
+                run.ident
+            ),
+        );
+        return;
+    }
+
+    let msg = match out {
+        OrcaOutput::Charges(o) => {
+            for (i, q) in o.charges.into_iter().enumerate() {
+                mol.common_mut().atoms[i].partial_charge = Some(q.charge as f32);
+            }
+            format!("MBIS charges assigned for {}", run.ident)
+        }
+        OrcaOutput::Geometry(p) => {
+            for (i, posit) in p.posits.into_iter().enumerate() {
+                mol.common_mut().atom_posits[i] = posit;
+            }
+            format!("Geometry optimized for {}", run.ident)
+        }
+        OrcaOutput::Text(_) | OrcaOutput::Dynamics(_) => unreachable!(),
+    };
+
+    // For charges, maybe only required if in color-by-charge mode.
+    redraw.set(run.mol_type);
+    handle_success(&mut state.ui, msg);
+}
 
 #[derive(Default)]
 // todo: Some of this is UI state; move to a place that makes sense A/R.

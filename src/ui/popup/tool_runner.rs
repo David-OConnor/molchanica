@@ -31,7 +31,7 @@ use crate::{
         shared_adapter::{self, AdapterResult},
         tool_form::{FieldKind, FormContract, FormField, Preset},
     },
-    state::State,
+    state::{ComputationGuard, ComputationType, Computations, State},
     ui::{
         COLOR_ACTION,
         misc::{selector_box, selector_option},
@@ -61,6 +61,15 @@ impl ToolWindowKind {
             Self::StructurePrediction => "Structure prediction and co-folding",
             Self::SequenceDesign => "Sequence design and scoring",
             Self::BackboneDesign => "RFdiffusion3 backbone generation",
+        }
+    }
+
+    /// What a run does, for the computation status display.
+    fn activity(self) -> &'static str {
+        match self {
+            Self::StructurePrediction => "structure prediction",
+            Self::SequenceDesign => "sequence design",
+            Self::BackboneDesign => "backbone generation",
         }
     }
 
@@ -114,9 +123,11 @@ pub(in crate::ui) fn tool_window(
 
     ui.heading(kind.heading());
 
+    let computations = &state.volatile.ongoing_computations;
+
     let load = ui
         .push_id(kind.heading(), |ui| {
-            window.draw(kind.tools(), &state.peptides, ui)
+            window.draw(kind, &state.peptides, computations, ui)
         })
         .inner;
 
@@ -449,11 +460,13 @@ impl ToolWindow {
         self.installing = false;
     }
 
-    /// Start a job on a worker thread, reporting through [`Self::poll`].
+    /// Start a job on a worker thread, reporting through [`Self::poll`]. `computation` is released
+    /// when the job finishes.
     fn start_job(
         &mut self,
         ui: &Ui,
         installing: bool,
+        computation: ComputationGuard,
         job: impl FnOnce() -> JobResult + Send + 'static,
     ) {
         let (sender, receiver) = mpsc::channel();
@@ -466,7 +479,10 @@ impl ToolWindow {
         self.message = None;
 
         thread::spawn(move || {
-            let _ = sender.send(job());
+            let result = job();
+            drop(computation);
+
+            let _ = sender.send(result);
             context.request_repaint();
         });
     }
@@ -474,10 +490,13 @@ impl ToolWindow {
     /// Draw the window. Returns a result file the user asked to load as a structure.
     fn draw(
         &mut self,
-        tools: &[Tool],
+        kind: ToolWindowKind,
         proteins: &[MoleculePeptide],
+        computations: &Computations,
         ui: &mut Ui,
     ) -> Option<PathBuf> {
+        let tools = kind.tools();
+
         self.poll();
         self.handle_picked_file(ui);
 
@@ -609,7 +628,13 @@ impl ToolWindow {
         let payload = run.then(|| shared_adapter::payload(tool, &form.values, &form.mode));
 
         if install {
-            self.start_job(ui, true, move || {
+            let computation = computations.start(
+                ComputationType::Install,
+                spec.name(),
+                Some("installing".to_owned()),
+            );
+
+            self.start_job(ui, true, computation, move || {
                 JobResult::Install(external_tools::install(tool).map_err(|error| error.to_string()))
             });
         }
@@ -618,9 +643,15 @@ impl ToolWindow {
             match payload {
                 Err(error) => self.error = Some(error.to_string()),
                 Ok(payload) => {
+                    let computation = computations.start(
+                        ComputationType::MachineLearning,
+                        spec.name(),
+                        Some(kind.activity().to_owned()),
+                    );
+
                     let control = RunControl::default();
                     self.control = Some(control.clone());
-                    self.start_job(ui, false, move || {
+                    self.start_job(ui, false, computation, move || {
                         JobResult::Run(
                             shared_adapter::run(tool, payload, &control)
                                 .map_err(|error| error.to_string()),
@@ -703,12 +734,12 @@ impl ToolWindow {
 
             if let Some(control) = &self.control {
                 if ui
-                    .add_enabled(!control.is_cancel_requested(), Button::new("Cancel run"))
+                    .add_enabled(!control.is_abort_requested(), Button::new("Abort run"))
                     .clicked()
                 {
                     control.cancel();
                 }
-                if control.is_cancel_requested() {
+                if control.is_abort_requested() {
                     ui.label("Stopping…");
                 }
             }

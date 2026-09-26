@@ -17,7 +17,7 @@ use crate::{
     mol_manip::ManipMode,
     screening::PharmacophoreScreen,
     selection::Selection,
-    state::{PopupState, State},
+    state::{ComputationType, PopupState, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
         popup::mol_db::db_selector, util::color_egui_from_f32,
@@ -592,10 +592,17 @@ pub(in crate::ui) fn pharmacophore_screen(
     )
     .clicked()
     {
+        let computation = state.volatile.ongoing_computations.start(
+            ComputationType::Other,
+            "Pharmacophore screening",
+            Some(db_source.name()),
+        );
+
         let rx = state.ligands[ph_i].pharmacophore.screen_ligs(
             &db_source,
             PHARMACOPHORE_SCREENING_THRESH_DEFAULT,
             &mut state.pharmacophore.screening_in_progress,
+            computation,
         );
         state.volatile.thread_receivers.ph_screening = Some(rx);
     }

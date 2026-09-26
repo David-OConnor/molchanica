@@ -175,7 +175,7 @@ pub fn run(tool: Tool, payload: Value, control: &RunControl) -> io::Result<Adapt
     }
 
     let execution = run_tool(&mut command, tool, "the bio_tools adapter", Some(control));
-    if control.is_cancel_requested() {
+    if control.is_abort_requested() {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "Run cancelled"));
     }
 

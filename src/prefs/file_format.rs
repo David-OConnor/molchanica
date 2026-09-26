@@ -380,6 +380,7 @@ impl OpenType {
             Self::MdParams => 8,
             Self::ParquetDb => 9,
             Self::MdMols => 10,
+            Self::Sequence => 11,
         }
     }
     pub(crate) fn from_u8(v: u8) -> Self {
@@ -394,6 +395,7 @@ impl OpenType {
             8 => Self::MdParams,
             9 => Self::ParquetDb,
             10 => Self::MdMols,
+            11 => Self::Sequence,
             _ => Self::Peptide,
         }
     }

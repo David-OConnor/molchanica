@@ -25,7 +25,7 @@ use crate::{
     file_io::save_mol_set_as_gro,
     gromacs,
     md::trajectory::{TrajFormat, Trajectory},
-    state::State,
+    state::{ComputationGuard, ComputationType, State},
     util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
 };
 
@@ -53,6 +53,9 @@ pub struct MdStateLocal {
     /// This flag lets us defer launch by a frame, so we can display a flag.
     pub launching: bool,
     pub running: bool,
+    /// Held while `running`, for the computation status display. This MD runs a few steps each
+    /// frame on the UI thread, instead of on a worker thread that could hold it.
+    pub computation: Option<ComputationGuard>,
     pub start: Option<Instant>,
     /// Cached so we don't compute each UI paint. Picoseconds.
     pub run_time: f32,
@@ -112,6 +115,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     // };
 
     md.running = false;
+    md.computation = None;
     md.start = None;
     md.draw_md_mols = true;
 
@@ -962,6 +966,13 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
             if run {
                 state.volatile.md_local.start = Some(Instant::now());
                 state.volatile.md_local.running = true;
+
+                state.volatile.md_local.computation =
+                    Some(state.volatile.ongoing_computations.start(
+                        ComputationType::MolecularDynamics,
+                        "Dynamics",
+                        Some(format!("{} steps", state.to_save.md.num_steps)),
+                    ));
             }
         }
         Err(e) => handle_err(&mut state.ui, e.descrip),

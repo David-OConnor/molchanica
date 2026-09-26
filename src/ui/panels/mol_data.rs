@@ -30,10 +30,10 @@ use crate::{
     render::MESH_POCKET_START,
     selection::{SelAtom, Selection},
     split_join::{JoinLigand, join_ligands, split_lig_at_bonds},
-    state::State,
+    state::{MetadataTarget, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, MAX_TITLE_LEN, load_all_idents_button, popup,
-        util::Idents,
+        popup::MetadataSource, util::Idents,
     },
     util,
     util::{
@@ -1166,16 +1166,14 @@ pub(in crate::ui) fn metadata(
     // Cloned to avoid holding a borrow of `state` alongside the mutable one below.
     let prefs_dir = state.volatile.prefs_dir.clone();
     // Edit rows belong to the molecule they were loaded from; another one starts fresh.
-    if state.ui.metadata_edit.mol != Some((mol_type, i)) {
-        state.ui.metadata_edit.mol = Some((mol_type, i));
-        state.ui.metadata_edit.rows.clear();
-        state.ui.editing_metadata = false;
-    }
+    reset_metadata_edit_on_change(state, MetadataTarget::Mol(mol_type, i));
+
+    let display_name = common.name(idents.as_ref()).to_string();
 
     let result = popup::metadata_popup(
         &mut state.ui.editing_metadata,
         &mut state.ui.metadata_edit.rows,
-        &common,
+        MetadataSource::from_mol(&common, &display_name),
         idents
             .as_ref()
             .map(Idents::Small)
@@ -1213,6 +1211,72 @@ pub(in crate::ui) fn metadata(
             &mut state.ui,
             "Loading molecule identifiers from PubChem and ChEBI...".to_owned(),
         );
+    }
+}
+
+/// Edit rows belong to the molecule or sequence they were loaded from; switching to another one
+/// discards them.
+fn reset_metadata_edit_on_change(state: &mut State, target: MetadataTarget) {
+    if state.ui.metadata_edit.target != Some(target) {
+        state.ui.metadata_edit.target = Some(target);
+        state.ui.metadata_edit.rows.clear();
+        state.ui.editing_metadata = false;
+    }
+}
+
+/// The metadata popup's contents for a sequence. Shares the molecule popup's display and editor.
+pub(in crate::ui) fn seq_metadata(i: usize, state: &mut State, ui: &mut Ui) {
+    let Some(seq) = state.sequences.get(i) else {
+        return;
+    };
+
+    // Cloned, as with molecules, so we can borrow `state` mutably for the edit state below.
+    let name = (!seq.name.is_empty()).then(|| seq.name.clone());
+    let display_name = seq.display_name().to_owned();
+    let metadata = seq.metadata.clone();
+    let path = seq.path.clone();
+    let summary = format!(
+        "{} · {} {}",
+        seq.seq_type(),
+        seq.data.len(),
+        seq.seq_type().residue_unit()
+    );
+
+    reset_metadata_edit_on_change(state, MetadataTarget::Seq(i));
+
+    label!(ui, summary, Color32::GRAY);
+    if let Some(p) = &path {
+        label!(ui, p.display().to_string(), Color32::GRAY);
+    }
+
+    let prefs_dir = state.volatile.prefs_dir.clone();
+
+    let result = popup::metadata_popup(
+        &mut state.ui.editing_metadata,
+        &mut state.ui.metadata_edit.rows,
+        MetadataSource {
+            display_name: &display_name,
+            name: &name,
+            metadata: &metadata,
+            path: &path,
+        },
+        None,
+        false,
+        &prefs_dir,
+        ui,
+    );
+
+    let Some(seq) = state.sequences.get_mut(i) else {
+        return;
+    };
+
+    if let Some(metadata) = result.metadata {
+        seq.metadata = metadata;
+    }
+
+    // A sequence's name isn't an override of a generated one; clearing it leaves it empty.
+    if let Some(name) = result.name {
+        seq.name = name.unwrap_or_default();
     }
 }
 
