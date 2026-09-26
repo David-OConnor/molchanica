@@ -39,12 +39,11 @@ use na_seq::{
     Element::{Carbon, Hydrogen},
 };
 
-use crate::drawing::LABEL_COLOR_ATOM;
 use crate::{
     cam,
     cam::{MolCameraTarget, move_cam_to_mol},
     drawing::{
-        EntityClass, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
+        EntityClass, LABEL_COLOR_ATOM, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
         atoms_bonds::{
             ATOM_SHININESS, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H, atom_color, bond_entities,
         },

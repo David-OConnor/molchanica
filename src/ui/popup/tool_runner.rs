@@ -19,9 +19,10 @@ use bio_tools::tool_definitions::catalog::DataCategory;
 use egui::{
     Button, CollapsingHeader, Color32, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui,
 };
-use egui_file_dialog::FileDialog;
+use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::peptide::MoleculePeptide;
+use na_seq::{SeqType, Sequence};
 use serde_json::{Map, Value, json};
 
 use crate::{
@@ -31,6 +32,7 @@ use crate::{
         shared_adapter::{self, AdapterResult},
         tool_form::{FieldKind, FormContract, FormField, Preset},
     },
+    file_io::sequence::{load_sequences, seq_exts_open},
     state::{ComputationGuard, ComputationType, Computations, State},
     ui::{
         COLOR_ACTION,
@@ -127,7 +129,7 @@ pub(in crate::ui) fn tool_window(
 
     let load = ui
         .push_id(kind.heading(), |ui| {
-            window.draw(kind, &state.peptides, computations, ui)
+            window.draw(kind, &state.peptides, &state.sequences, computations, ui)
         })
         .inner;
 
@@ -207,6 +209,266 @@ impl Form {
             self.projection_error = Some(error);
         }
     }
+
+    fn insert_sequence(
+        &mut self,
+        tool: Tool,
+        target: &SequenceTarget,
+        sequence: &Sequence,
+    ) -> Result<(), String> {
+        let field = match target {
+            SequenceTarget::Molecule(_) => "sequence_molecules",
+            SequenceTarget::Document { field, .. } => field,
+        };
+        let current = self
+            .values
+            .get(field)
+            .ok_or_else(|| format!("No {field} input is available"))?;
+        let updated = replace_sequence_input(tool, target, current, sequence)?;
+        self.values.insert(field.to_owned(), updated);
+        self.authoritative_mode = self.mode.clone();
+        Ok(())
+    }
+}
+
+fn sequence_type_label(sequence: &Sequence) -> &'static str {
+    match sequence.seq_type() {
+        SeqType::AminoAcid => "protein",
+        SeqType::Dna => "dna",
+        SeqType::Rna => "rna",
+    }
+}
+
+fn replace_sequence_input(
+    tool: Tool,
+    target: &SequenceTarget,
+    current: &str,
+    sequence: &Sequence,
+) -> Result<String, String> {
+    let kind = sequence_type_label(sequence);
+    let letters = sequence.data.to_letters();
+
+    match target {
+        SequenceTarget::Molecule(index) => {
+            let mut boxes: Vec<Value> = serde_json::from_str(current)
+                .map_err(|error| format!("Molecule input is invalid JSON: {error}"))?;
+            let molecule = boxes
+                .get_mut(*index)
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| format!("Molecule {} is missing", index + 1))?;
+            molecule.insert("type".into(), json!(kind));
+            molecule.insert("sequence".into(), json!(letters));
+            molecule.remove("ligand");
+            molecule.remove("ion");
+            serde_json::to_string(&boxes).map_err(|error| error.to_string())
+        }
+        SequenceTarget::Document {
+            field,
+            job: _,
+            entity,
+        } if field == "input_fasta" => replace_fasta_record(current, *entity, kind, &letters),
+        SequenceTarget::Document {
+            field,
+            job: _,
+            entity,
+        } if field == "yaml_spec" => {
+            let mut document: Value = serde_yaml::from_str(current)
+                .map_err(|error| format!("YAML input is invalid: {error}"))?;
+            let item = document
+                .get_mut("sequences")
+                .and_then(Value::as_array_mut)
+                .and_then(|items| items.get_mut(*entity))
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| format!("Molecule {} is missing in the YAML", entity + 1))?;
+            let old_kind = ["protein", "dna", "rna", "ligand"]
+                .into_iter()
+                .find(|old_kind| item.contains_key(*old_kind));
+            let old = old_kind.and_then(|old_kind| item.remove(old_kind));
+            let mut details = if old_kind == Some(kind) {
+                old.unwrap_or_else(|| json!({}))
+            } else {
+                let id = old.as_ref().and_then(|old| old.get("id")).cloned();
+                let mut details = json!({});
+                if let Some(id) = id {
+                    details["id"] = id;
+                }
+                details
+            };
+            details["sequence"] = json!(letters);
+            item.insert(kind.into(), details);
+            serde_yaml::to_string(&document).map_err(|error| error.to_string())
+        }
+        SequenceTarget::Document { field, job, entity } if field == "input_json" => {
+            let mut document: Value = serde_json::from_str(current)
+                .map_err(|error| format!("JSON input is invalid: {error}"))?;
+            let entries = if matches!(tool, Tool::OpenDde | Tool::Protenix) {
+                let job_index = job.ok_or("Job is missing")?;
+                document
+                    .as_array_mut()
+                    .and_then(|jobs| jobs.get_mut(job_index))
+                    .and_then(|job| job.get_mut("sequences"))
+                    .and_then(Value::as_array_mut)
+            } else {
+                document.get_mut("sequences").and_then(Value::as_array_mut)
+            }
+            .ok_or_else(|| "The JSON has no sequences list".to_owned())?;
+            let item = entries
+                .get_mut(*entity)
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| format!("Molecule {} is missing in the JSON", entity + 1))?;
+
+            if matches!(tool, Tool::OpenDde | Tool::Protenix) {
+                let chain_key = match kind {
+                    "protein" => "proteinChain",
+                    "dna" => "dnaSequence",
+                    _ => "rnaSequence",
+                };
+                let old_key = [
+                    "proteinChain",
+                    "dnaSequence",
+                    "rnaSequence",
+                    "ligand",
+                    "ion",
+                ]
+                .into_iter()
+                .find(|old_key| item.contains_key(*old_key));
+                let old = old_key.and_then(|old_key| item.remove(old_key));
+                let mut details = if old_key == Some(chain_key) {
+                    old.unwrap_or_else(|| json!({}))
+                } else {
+                    let mut details = json!({});
+                    for key in ["id", "count"] {
+                        if let Some(value) = old.as_ref().and_then(|old| old.get(key)) {
+                            details[key] = value.clone();
+                        }
+                    }
+                    details
+                };
+                details["sequence"] = json!(letters);
+                item.insert(chain_key.into(), details);
+            } else {
+                item.insert("type".into(), json!(kind));
+                item.insert("sequence".into(), json!(letters));
+                item.remove("smiles");
+                item.remove("ccd");
+            }
+            serde_json::to_string_pretty(&document).map_err(|error| error.to_string())
+        }
+        SequenceTarget::Document { .. } => Err("Unsupported sequence input document".into()),
+    }
+}
+
+/// Byte offsets of each FASTA record's header and sequence body.
+fn fasta_record_spans(text: &str) -> Vec<(usize, usize, usize)> {
+    let mut headers = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with('>') {
+            headers.push((offset, offset + line.len()));
+        }
+        offset += line.len();
+    }
+
+    headers
+        .iter()
+        .enumerate()
+        .map(|(i, &(start, body_start))| {
+            let body_end = headers
+                .get(i + 1)
+                .map(|&(next, _)| next)
+                .unwrap_or(text.len());
+            (start, body_start, body_end)
+        })
+        .collect()
+}
+
+fn replace_fasta_record(
+    current: &str,
+    entity: usize,
+    kind: &str,
+    letters: &str,
+) -> Result<String, String> {
+    let spans = fasta_record_spans(current);
+    let &(start, body_start, body_end) = spans
+        .get(entity)
+        .ok_or_else(|| format!("Molecule {} is missing in the FASTA", entity + 1))?;
+    let header = current[start..body_start].trim_end_matches(['\r', '\n']);
+    let suffix = header.split_once('|').map(|(_, suffix)| suffix);
+    let line_ending = if current[start..body_start].ends_with("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let header = match suffix {
+        Some(suffix) => format!(">{kind}|{suffix}"),
+        None => format!(">{kind}"),
+    };
+    Ok(format!(
+        "{}{}{}{}{}{}",
+        &current[..start],
+        header,
+        line_ending,
+        letters,
+        line_ending,
+        &current[body_end..]
+    ))
+}
+
+fn document_sequence_targets(
+    tool: Tool,
+    field: &str,
+    current: &str,
+) -> Result<Vec<(String, SequenceTarget)>, String> {
+    let target = |job, entity| SequenceTarget::Document {
+        field: field.to_owned(),
+        job,
+        entity,
+    };
+
+    if field == "input_fasta" && tool == Tool::Chai1 {
+        return Ok(fasta_record_spans(current)
+            .into_iter()
+            .enumerate()
+            .map(|(entity, _)| (format!("Molecule {}", entity + 1), target(None, entity)))
+            .collect());
+    }
+
+    let document: Value = if field == "yaml_spec" && tool == Tool::Boltz2 {
+        serde_yaml::from_str(current).map_err(|error| format!("Invalid YAML: {error}"))?
+    } else if field == "input_json"
+        && matches!(tool, Tool::OpenDde | Tool::Protenix | Tool::EsmFold2)
+    {
+        serde_json::from_str(current).map_err(|error| format!("Invalid JSON: {error}"))?
+    } else {
+        return Ok(Vec::new());
+    };
+
+    let mut targets = Vec::new();
+    if matches!(tool, Tool::OpenDde | Tool::Protenix) {
+        let jobs = document
+            .as_array()
+            .ok_or("Expected a list of prediction jobs")?;
+        for (job_index, job) in jobs.iter().enumerate() {
+            let Some(entries) = job.get("sequences").and_then(Value::as_array) else {
+                continue;
+            };
+            for entity in 0..entries.len() {
+                targets.push((
+                    format!("Job {} · Molecule {}", job_index + 1, entity + 1),
+                    target(Some(job_index), entity),
+                ));
+            }
+        }
+    } else {
+        let entries = document
+            .get("sequences")
+            .and_then(Value::as_array)
+            .ok_or("Expected a sequences list")?;
+        for entity in 0..entries.len() {
+            targets.push((format!("Molecule {}", entity + 1), target(None, entity)));
+        }
+    }
+    Ok(targets)
 }
 
 fn rfd3_document(
@@ -383,6 +645,16 @@ enum FileAction {
     LoadRun(Tool),
 }
 
+#[derive(Clone)]
+enum SequenceTarget {
+    Molecule(usize),
+    Document {
+        field: String,
+        job: Option<usize>,
+        entity: usize,
+    },
+}
+
 enum JobResult {
     Run(Result<AdapterResult, String>),
     Install(Result<(), String>),
@@ -404,6 +676,8 @@ pub(crate) struct ToolWindow {
     preview: Option<String>,
     dialog: FileDialog,
     file_action: Option<FileAction>,
+    sequence_dialog: FileDialog,
+    sequence_file_target: Option<(Tool, SequenceTarget)>,
     opened_protein: usize,
 }
 
@@ -424,6 +698,12 @@ impl ToolWindow {
             preview: None,
             dialog: FileDialog::new(),
             file_action: None,
+            sequence_dialog: FileDialog::with_config(
+                FileDialogConfig::default()
+                    .add_file_filter_extensions("Sequence files", seq_exts_open()),
+            )
+            .default_file_filter("Sequence files"),
+            sequence_file_target: None,
             opened_protein: 0,
         }
     }
@@ -492,6 +772,7 @@ impl ToolWindow {
         &mut self,
         kind: ToolWindowKind,
         proteins: &[MoleculePeptide],
+        sequences: &[Sequence],
         computations: &Computations,
         ui: &mut Ui,
     ) -> Option<PathBuf> {
@@ -499,6 +780,7 @@ impl ToolWindow {
 
         self.poll();
         self.handle_picked_file(ui);
+        self.handle_picked_sequence_file(ui);
 
         let busy = self.receiver.is_some();
         ui.add_enabled_ui(!busy, |ui| {
@@ -535,6 +817,8 @@ impl ToolWindow {
         self.progress_ui(ui);
 
         let mut pick = None;
+        let mut pick_sequence = None;
+        let mut use_sequence = None;
         let mut use_protein = false;
         let form = self.forms.get_mut(&self.tool).unwrap();
 
@@ -574,8 +858,31 @@ impl ToolWindow {
                 });
             }
 
-            fields_ui(self.tool, form, &mut pick, ui);
+            fields_ui(
+                self.tool,
+                kind,
+                form,
+                sequences,
+                &mut pick,
+                &mut pick_sequence,
+                &mut use_sequence,
+                ui,
+            );
         });
+
+        if let Some((target, index)) = use_sequence
+            && let Some(sequence) = sequences.get(index)
+        {
+            match form.insert_sequence(self.tool, &target, sequence) {
+                Ok(()) => self.error = None,
+                Err(error) => self.error = Some(error),
+            }
+        }
+
+        if let Some(target) = pick_sequence {
+            self.sequence_file_target = Some((self.tool, target));
+            self.sequence_dialog.pick_file();
+        }
 
         if let Some(field) = pick {
             self.file_action = Some(FileAction::Input(self.tool, field));
@@ -709,6 +1016,48 @@ impl ToolWindow {
                 }
             }
             None => {}
+        }
+    }
+
+    fn handle_picked_sequence_file(&mut self, ui: &Ui) {
+        self.sequence_dialog.update(ui.ctx());
+        let Some(path) = self.sequence_dialog.take_picked() else {
+            return;
+        };
+        let Some((tool, target)) = self.sequence_file_target.take() else {
+            return;
+        };
+
+        let loaded = match load_sequences(&path) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                self.error = Some(format!("Could not open sequence file: {error}"));
+                return;
+            }
+        };
+        let Some(sequence) = loaded.records.first() else {
+            return;
+        };
+        let Some(form) = self.forms.get_mut(&tool) else {
+            return;
+        };
+
+        match form.insert_sequence(tool, &target, sequence) {
+            Ok(()) => {
+                self.error = None;
+                let mut message = format!("Loaded {} into the input.", sequence.display_name());
+                if loaded.records.len() > 1 {
+                    message.push_str(" Used the first record in the file.");
+                }
+                if loaded.skipped_residues > 0 {
+                    message.push_str(&format!(
+                        " {} unsupported residue letter(s) were omitted.",
+                        loaded.skipped_residues
+                    ));
+                }
+                self.message = Some(message);
+            }
+            Err(error) => self.error = Some(error),
         }
     }
 
@@ -1125,7 +1474,16 @@ fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
 }
 
 /// Every field visible in the current mode and task, under its group's heading.
-fn fields_ui(tool: Tool, form: &mut Form, pick: &mut Option<String>, ui: &mut Ui) {
+fn fields_ui(
+    tool: Tool,
+    window_kind: ToolWindowKind,
+    form: &mut Form,
+    sequences: &[Sequence],
+    pick: &mut Option<String>,
+    pick_sequence: &mut Option<SequenceTarget>,
+    use_sequence: &mut Option<(SequenceTarget, usize)>,
+    ui: &mut Ui,
+) {
     let before = form.values.clone();
     ScrollArea::vertical()
         .id_salt("tool_form_scroll")
@@ -1156,7 +1514,17 @@ fn fields_ui(tool: Tool, form: &mut Form, pick: &mut Option<String>, ui: &mut Ui
                                 continue;
                             }
                             ui.push_id(&field.name, |ui| {
-                                draw_field(field, &mut form.values, pick, ui);
+                                draw_field(
+                                    tool,
+                                    window_kind,
+                                    field,
+                                    &mut form.values,
+                                    sequences,
+                                    pick,
+                                    pick_sequence,
+                                    use_sequence,
+                                    ui,
+                                );
                             });
                         }
                     });
@@ -1172,9 +1540,14 @@ fn fields_ui(tool: Tool, form: &mut Form, pick: &mut Option<String>, ui: &mut Ui
 }
 
 fn draw_field(
+    tool: Tool,
+    window_kind: ToolWindowKind,
     field: &FormField,
     values: &mut HashMap<String, String>,
+    sequences: &[Sequence],
     pick: &mut Option<String>,
+    pick_sequence: &mut Option<SequenceTarget>,
+    use_sequence: &mut Option<(SequenceTarget, usize)>,
     ui: &mut Ui,
 ) {
     if field.managed_by_runner {
@@ -1215,6 +1588,27 @@ fn draw_field(
         }
         FieldKind::TextArea => {
             ui.label(&label);
+            if window_kind == ToolWindowKind::StructurePrediction {
+                match document_sequence_targets(tool, &field.name, value) {
+                    Ok(targets) => {
+                        for (name, target) in targets {
+                            ui.push_id(&name, |ui| {
+                                ui.label(&name);
+                                sequence_input_controls(
+                                    sequences,
+                                    &target,
+                                    pick_sequence,
+                                    use_sequence,
+                                    ui,
+                                );
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        ui.colored_label(Color32::LIGHT_RED, error);
+                    }
+                }
+            }
             ui.add(
                 TextEdit::multiline(value)
                     .desired_rows(field.rows.unwrap_or(3).clamp(2, 12))
@@ -1223,7 +1617,15 @@ fn draw_field(
         }
         FieldKind::Molecules => {
             ui.label(&label);
-            molecules(field, value, ui);
+            molecules(
+                field,
+                value,
+                sequences,
+                window_kind == ToolWindowKind::StructurePrediction,
+                pick_sequence,
+                use_sequence,
+                ui,
+            );
             ui.label(&field.help)
         }
         FieldKind::File => {
@@ -1272,13 +1674,61 @@ fn value_to_hint(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+fn sequence_input_controls(
+    sequences: &[Sequence],
+    target: &SequenceTarget,
+    pick_sequence: &mut Option<SequenceTarget>,
+    use_sequence: &mut Option<(SequenceTarget, usize)>,
+    ui: &mut Ui,
+) {
+    ui.horizontal_wrapped(|ui| {
+        if !sequences.is_empty() {
+            ui.label("Load an opened seq:");
+            for (index, sequence) in sequences.iter().enumerate() {
+                if ui
+                    .button(sequence.display_name())
+                    .on_hover_text(format!("Use this {} sequence", sequence.seq_type()))
+                    .clicked()
+                {
+                    *use_sequence = Some((target.clone(), index));
+                }
+            }
+        }
+        if ui.button("Upload sequence file…").clicked() {
+            *pick_sequence = Some(target.clone());
+        }
+    });
+}
+
 /// The molecule builder: one box per entity, over the JSON list the field holds.
-fn molecules(field: &FormField, text: &mut String, ui: &mut Ui) {
+fn molecules(
+    field: &FormField,
+    text: &mut String,
+    sequences: &[Sequence],
+    enable_sequence_input: bool,
+    pick_sequence: &mut Option<SequenceTarget>,
+    use_sequence: &mut Option<(SequenceTarget, usize)>,
+    ui: &mut Ui,
+) {
     let editor_id = ui.id().with("molecule_json_editor");
     let mut raw = ui.data_mut(|data| data.get_temp::<bool>(editor_id).unwrap_or(false));
     ui.checkbox(&mut raw, "Edit molecules as JSON");
     ui.data_mut(|data| data.insert_temp(editor_id, raw));
     if raw {
+        if enable_sequence_input && let Ok(boxes) = serde_json::from_str::<Vec<Value>>(text) {
+            for index in 0..boxes.len() {
+                ui.push_id(index, |ui| {
+                    ui.label(format!("Molecule {}", index + 1));
+                    sequence_input_controls(
+                        sequences,
+                        &SequenceTarget::Molecule(index),
+                        pick_sequence,
+                        use_sequence,
+                        ui,
+                    );
+                });
+            }
+        }
         ui.add(
             TextEdit::multiline(text)
                 .desired_rows(10)
@@ -1311,7 +1761,18 @@ fn molecules(field: &FormField, text: &mut String, ui: &mut Ui) {
     for (index, molecule) in boxes.iter_mut().enumerate() {
         ui.push_id(index, |ui| {
             ui.group(|ui| {
-                molecule_ui(field, &features, index, molecule, &mut remove, ui);
+                molecule_ui(
+                    field,
+                    &features,
+                    index,
+                    molecule,
+                    &mut remove,
+                    sequences,
+                    enable_sequence_input,
+                    pick_sequence,
+                    use_sequence,
+                    ui,
+                );
             });
         });
     }
@@ -1333,6 +1794,10 @@ fn molecule_ui(
     index: usize,
     molecule: &mut Value,
     remove: &mut Option<usize>,
+    sequences: &[Sequence],
+    enable_sequence_input: bool,
+    pick_sequence: &mut Option<SequenceTarget>,
+    use_sequence: &mut Option<(SequenceTarget, usize)>,
     ui: &mut Ui,
 ) {
     ui.horizontal(|ui| {
@@ -1376,6 +1841,15 @@ fn molecule_ui(
         .changed();
     if edited {
         molecule[key] = json!(sequence);
+    }
+    if enable_sequence_input {
+        sequence_input_controls(
+            sequences,
+            &SequenceTarget::Molecule(index),
+            pick_sequence,
+            use_sequence,
+            ui,
+        );
     }
 
     if features.contains(&"id") {

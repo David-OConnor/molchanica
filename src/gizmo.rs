@@ -4,8 +4,8 @@ use std::f32::consts::TAU;
 
 use egui::{Align2, FontFamily};
 use graphics::{
-    Camera, FWD_VEC, OverlayAnchor, OverlayColor, OverlayPrimitive, OverlayStroke, RIGHT_VEC, Scene,
-    UP_VEC, VectorOverlay,
+    Camera, FWD_VEC, OverlayAnchor, OverlayColor, OverlayPrimitive, OverlayStroke, RIGHT_VEC,
+    Scene, UP_VEC, VectorOverlay,
 };
 use lin_alg::f32::{Quaternion, Vec3};
 use mol_defs::molecules::MolType;

@@ -995,20 +995,28 @@ pub(in crate::ui) fn sidebar(
                     open_tools(state, ui);
                 }
 
-                let mut mol_to_save = None; // avoids dbl-borrow.
-                if let Some(mol) = state.active_mol()
+                let active_seq = state
+                    .volatile
+                    .active_seq
+                    .filter(|&i| i < state.sequences.len());
+                if (state.active_mol().is_some() || active_seq.is_some())
                     && ui
                         .button(RichText::new("Save"))
-                        .on_hover_text("Save the active molecule to a file.")
+                        .on_hover_text("Save the active molecule or sequence to a file.")
                         .clicked()
                 {
-                    mol_to_save = Some((mol.common().clone(), mol.mol_type()));
-                }
-
-                if let Some((mol, mol_type)) = mol_to_save
-                    && save_mol(&mol, mol_type, &mut state.volatile.dialogs.save).is_err()
-                {
-                    handle_err(&mut state.ui, "Problem saving this file".to_owned());
+                    if let Some(i) = active_seq {
+                        save_seq_dialog(state, i);
+                    } else if let Some(mol) = state.active_mol() {
+                        // The dialog needs a mutable borrow of state below.
+                        let common = mol.common().clone();
+                        let mol_type = mol.mol_type();
+                        if let Err(error) =
+                            save_mol(&common, mol_type, &mut state.volatile.dialogs.save)
+                        {
+                            handle_err(&mut state.ui, format!("Problem saving this file: {error}"));
+                        }
+                    }
                 }
             });
 

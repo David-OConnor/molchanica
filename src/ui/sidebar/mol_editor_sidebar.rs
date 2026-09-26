@@ -6,8 +6,7 @@ use mol_defs::molecules::MolIdent;
 use crate::{
     button,
     drawing::{EntityClass, draw_pocket},
-    label,
-    mol_editor,
+    label, mol_editor,
     mol_editor::DbCheck,
     pocket_render::PocketRender,
     selection::Selection,
