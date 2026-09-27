@@ -1,10 +1,13 @@
 //! Paginated reaction cards shared by the ligand and protein sidebars.
 
 use bio_apis::{
-    chebi,
+    chebi, pubchem,
     rhea::{Reaction, ReactionSide},
 };
-use egui::{Align, Button, Color32, Frame, Layout, RichText, ScrollArea, Ui};
+use egui::{
+    Align, Align2, Button, Color32, FontId, Frame, Layout, RichText, ScrollArea, Sense, TextStyle,
+    Ui, pos2, vec2,
+};
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
@@ -15,6 +18,8 @@ use crate::{
 };
 
 const PER_PAGE: usize = 4;
+/// Width of the column holding a "+" between participants.
+const PLUS_WIDTH: f32 = 14.0;
 
 /// Finish imports even when the user has closed the popup or changed the selected molecule.
 pub(super) fn poll_downloads(
@@ -61,10 +66,22 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
     if state.pubchem_cid.is_some() || has_chebi_id {
         ui.horizontal_wrapped(|ui| {
             if let Some(cid) = state.pubchem_cid {
-                ui.colored_label(Color32::WHITE, format!("CID: {cid}"));
+                if ui
+                    .button(RichText::new(format!("CID: {cid}")).color(Color32::WHITE))
+                    .on_hover_text("Open this molecule's PubChem page in your web browser")
+                    .clicked()
+                {
+                    pubchem::open_overview(cid);
+                }
             }
             if let Some(Query::Chebi(id)) = &state.selected {
-                ui.colored_label(Color32::WHITE, format!("CHEBI:{id}"));
+                if ui
+                    .button(RichText::new(format!("CHEBI:{id}")).color(Color32::WHITE))
+                    .on_hover_text("Open this molecule's ChEBI page in your web browser")
+                    .clicked()
+                {
+                    chebi::open_overview(*id);
+                }
             }
         });
     }
@@ -280,9 +297,11 @@ fn reaction_card(
             let available_for_sides = ui.available_width() - equals_width - 2.0 * spacing;
             let side_width = (available_for_sides / 2.0).max(0.0);
 
-            ui.horizontal(|ui| {
+            // Top-aligned, unlike `ui.horizontal`: that centers each column on the height of the
+            // columns before it, which pushed the "=" and right side below the left side.
+            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
                 ui.allocate_ui_with_layout(
-                    egui::vec2(side_width, 0.0),
+                    vec2(side_width, 0.0),
                     Layout::top_down(Align::Min),
                     |ui| {
                         ui.set_max_width(side_width);
@@ -299,18 +318,28 @@ fn reaction_card(
                     },
                 );
 
-                ui.allocate_ui_with_layout(
-                    egui::vec2(equals_width, 0.0),
-                    Layout::top_down(Align::Center),
-                    |ui| {
-                        ui.add_space(18.0);
-                        ui.label(RichText::new("=").size(28.0))
-                            .on_hover_text("Direction unspecified");
-                    },
+                // Line up with the molecule names, below each side's label.
+                let label_height =
+                    ui.text_style_height(&TextStyle::Small) + ui.spacing().item_spacing.y;
+                let name_height = name_row_height(ui);
+                let (rect, response) = ui.allocate_exact_size(
+                    vec2(equals_width, label_height + name_height),
+                    Sense::hover(),
                 );
+                ui.painter().text(
+                    pos2(
+                        rect.center().x,
+                        rect.min.y + label_height + name_height / 2.0,
+                    ),
+                    Align2::CENTER_CENTER,
+                    "=",
+                    FontId::proportional(28.0),
+                    ui.visuals().text_color(),
+                );
+                response.on_hover_text("Direction unspecified");
 
                 ui.allocate_ui_with_layout(
-                    egui::vec2(side_width, 0.0),
+                    vec2(side_width, 0.0),
                     Layout::top_down(Align::Min),
                     |ui| {
                         ui.set_max_width(side_width);
@@ -346,65 +375,42 @@ fn side(
     ui: &mut Ui,
 ) {
     ui.label(RichText::new(label).small().color(color));
+
+    let names: Vec<&str> = equation.split(" + ").collect();
+    let spacing = ui.spacing().item_spacing.x;
     let molecule_width = ui.available_width().min(crate::mol_diagrams::DIAGRAM_WIDTH);
 
-    // Top-align the participant slots. `horizontal_wrapped` centers vertically, so each taller
-    // slot (button + diagram) shifts the row's centerline, and the next slot lands lower.
-    let row_layout = Layout::left_to_right(Align::Min).with_main_wrap(true);
-    ui.with_layout(row_layout, |ui| {
-        for (index, participant) in equation.split(" + ").enumerate() {
-            if index > 0 {
-                ui.label(RichText::new("+").color(color));
-            }
-            ui.allocate_ui_with_layout(
-                egui::vec2(molecule_width, 0.0),
-                Layout::top_down(Align::Min),
-                |ui| {
-                    ui.set_width(molecule_width);
+    // Wrap manually, so each row of names sits on its own row of diagrams. Count a "+" column
+    // with every molecule; this may fit one fewer on the first row, but never overflows.
+    let column_width = molecule_width + PLUS_WIDTH + 2.0 * spacing;
+    let per_row = (((ui.available_width() + spacing) / column_width) as usize).max(1);
+
+    // `Align::Min`: a vertically-centered row staggers entries of different heights.
+    let row_layout = Layout::left_to_right(Align::Min);
+
+    for (row, row_names) in names.chunks(per_row).enumerate() {
+        let first = row * per_row;
+
+        // Names. A wrapped name makes the whole row taller, keeping the diagrams level.
+        ui.with_layout(row_layout, |ui| {
+            for (index, &participant) in row_names.iter().enumerate() {
+                let index = first + index;
+                if index > 0 {
+                    let (rect, _) = ui
+                        .allocate_exact_size(vec2(PLUS_WIDTH, name_row_height(ui)), Sense::hover());
+                    ui.painter().text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        "+",
+                        TextStyle::Button.resolve(ui.style()),
+                        color,
+                    );
+                }
+
+                cell(ui, molecule_width, |ui| {
                     // The filtered ChEBI-only list cannot be zipped with names: generic
                     // RHEA-COMP participants would shift every subsequent link.
-                    let id = participant_chebi_id(participants, equation, index);
-                    let queried = matches!(
-                        (state.selected.as_ref(), id),
-                        (Some(Query::Chebi(query_id)), Some(id)) if *query_id == id
-                    );
-                    if let Some(id) = id {
-                        let loading = state.participant_action == ParticipantAction::Download
-                            && state.downloads.contains_key(&id);
-                        let action = match state.participant_action {
-                            ParticipantAction::OpenChebiPage => {
-                                "Open ChEBI molecule page in browser"
-                            }
-                            ParticipantAction::Download => "Download and open in Molchanica",
-                            ParticipantAction::OpenRheaPage => "Open Rhea page for this molecule",
-                        };
-                        let fill = if queried {
-                            Color32::from_rgb(90, 105, 35)
-                        } else {
-                            color.gamma_multiply(0.12)
-                        };
-                        let text_color = if queried { Color32::WHITE } else { color };
-                        let button =
-                            Button::new(RichText::new(participant).strong().color(text_color))
-                                .fill(fill)
-                                .frame(true)
-                                .wrap_mode(egui::TextWrapMode::Wrap);
-
-                        if ui
-                            .add_enabled(!loading, button)
-                            .on_hover_text(format!("CHEBI:{id} — {action}"))
-                            .clicked()
-                        {
-                            let name = participants
-                                .participant_names
-                                .get(index)
-                                .cloned()
-                                .unwrap_or_else(|| participant.to_owned());
-                            *clicked = Some((id, name));
-                        }
-                        let retry = state.diagrams.show(id, ui);
-                        diagram_requests.push((id, retry));
-                    } else {
+                    let Some(id) = participant_chebi_id(participants, equation, index) else {
                         Frame::new()
                             .fill(color.gamma_multiply(0.12))
                             .corner_radius(4)
@@ -417,12 +423,79 @@ fn side(
                                     "Rhea does not provide a ChEBI ID for this participant.",
                                 );
                             });
+                        return;
+                    };
+
+                    let queried = matches!(
+                        state.selected.as_ref(),
+                        Some(Query::Chebi(query_id)) if *query_id == id
+                    );
+                    let loading = state.participant_action == ParticipantAction::Download
+                        && state.downloads.contains_key(&id);
+                    let action = match state.participant_action {
+                        ParticipantAction::OpenChebiPage => "Open ChEBI molecule page in browser",
+                        ParticipantAction::Download => "Download and open in Molchanica",
+                        ParticipantAction::OpenRheaPage => "Open Rhea page for this molecule",
+                    };
+                    let fill = if queried {
+                        Color32::from_rgb(90, 105, 35)
+                    } else {
+                        color.gamma_multiply(0.12)
+                    };
+                    let text_color = if queried { Color32::WHITE } else { color };
+                    let button = Button::new(RichText::new(participant).strong().color(text_color))
+                        .fill(fill)
+                        .frame(true)
+                        .wrap_mode(egui::TextWrapMode::Wrap);
+
+                    if ui
+                        .add_enabled(!loading, button)
+                        .on_hover_text(format!("CHEBI:{id} — {action}"))
+                        .clicked()
+                    {
+                        let name = participants
+                            .participant_names
+                            .get(index)
+                            .cloned()
+                            .unwrap_or_else(|| participant.to_owned());
+                        *clicked = Some((id, name));
+                    }
+                });
+            }
+        });
+
+        // Diagrams, in the same column positions as the names above.
+        ui.with_layout(row_layout, |ui| {
+            for index in first..first + row_names.len() {
+                if index > 0 {
+                    ui.allocate_exact_size(vec2(PLUS_WIDTH, 0.0), Sense::hover());
+                }
+
+                cell(ui, molecule_width, |ui| {
+                    if let Some(id) = participant_chebi_id(participants, equation, index) {
+                        let retry = state.diagrams.show(id, ui);
+                        diagram_requests.push((id, retry));
+                    } else {
                         ui.weak("No 2D structure: no ChEBI ID supplied.");
                     }
-                },
-            );
-        }
+                });
+            }
+        });
+    }
+}
+
+/// A fixed-width, top-aligned column entry, so names and diagrams share column positions.
+fn cell(ui: &mut Ui, width: f32, add_contents: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(width);
+        add_contents(ui);
     });
+}
+
+/// Height of a single-line molecule button; "+" and "=" are centered on it.
+fn name_row_height(ui: &Ui) -> f32 {
+    let text = ui.text_style_height(&TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+    text.max(ui.spacing().interact_size.y)
 }
 
 fn participant_chebi_id(side: &ReactionSide, equation: &str, index: usize) -> Option<u32> {

@@ -85,8 +85,8 @@ pub mod pdb_write;
 
 pub use manage::{install, uninstall};
 pub use paths::{
-    bundle_root, data_root, find_executable, find_rdkit_python, home_directory, migrate_legacy_data,
-    process_executables_dir,
+    bundle_root, data_root, find_executable, find_rdkit_python, home_directory,
+    migrate_legacy_data, process_executables_dir,
 };
 pub use process::{RunControl, ToolWorkspace, run_tool};
 pub use registry::{Tool, ToolAdapter};
