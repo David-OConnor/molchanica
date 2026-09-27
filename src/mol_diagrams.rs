@@ -20,8 +20,8 @@ use egui::{Color32, ColorImage, Context, TextureHandle, TextureOptions, Ui, vec2
 
 use crate::external_tools::{Tool, find_executable, find_rdkit_python};
 
-pub const DIAGRAM_WIDTH: f32 = 150.0;
-const DIAGRAM_HEIGHT: f32 = 90.0;
+pub const DIAGRAM_WIDTH: f32 = 75.0;
+const DIAGRAM_HEIGHT: f32 = 45.0;
 const MAX_DOWNLOADS: usize = 4;
 const CACHE_CAPACITY: usize = 128;
 
@@ -277,8 +277,8 @@ fn render_svg(svg: &[u8], foreground: Color32) -> Result<ColorImage, String> {
     egui_extras::image::load_svg_bytes_with_size(
         styled.as_bytes(),
         egui::load::SizeHint::Size {
-            width: 300,
-            height: 180,
+            width: (2.0 * DIAGRAM_WIDTH) as u32,
+            height: (2.0 * DIAGRAM_HEIGHT) as u32,
             maintain_aspect_ratio: true,
         },
         &Default::default(),

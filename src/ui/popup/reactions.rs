@@ -347,7 +347,11 @@ fn side(
 ) {
     ui.label(RichText::new(label).small().color(color));
     let molecule_width = ui.available_width().min(crate::mol_diagrams::DIAGRAM_WIDTH);
-    ui.horizontal_wrapped(|ui| {
+
+    // Top-align the participant slots. `horizontal_wrapped` centers vertically, so each taller
+    // slot (button + diagram) shifts the row's centerline, and the next slot lands lower.
+    let row_layout = Layout::left_to_right(Align::Min).with_main_wrap(true);
+    ui.with_layout(row_layout, |ui| {
         for (index, participant) in equation.split(" + ").enumerate() {
             if index > 0 {
                 ui.label(RichText::new("+").color(color));

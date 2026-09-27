@@ -23,15 +23,25 @@ pub fn find_rdkit_python() -> io::Result<PathBuf> {
     }
 
     SYSTEM_RDKIT.get_or_init(|| {
-        ["python", "python3"]
-            .into_iter()
-            .filter_map(find_on_path)
-            .find(|python| {
-                let probe = bio_tools::run::CommandSpec::new(python.as_os_str())
-                    .args(["-I", "-c", bio_tools::rdkit::PROBE])
-                    .timeout(std::time::Duration::from_secs(10));
-                bio_tools::run::run(&probe).is_ok()
-            })
+        let mut candidates = Vec::new();
+        for directory in env::split_paths(&env::var_os("PATH").unwrap_or_default()) {
+            for name in ["python", "python3"] {
+                if let Some(python) = executable_in(&directory, name)
+                    && !candidates.contains(&python)
+                {
+                    // Do not canonicalize: resolving a venv's symlink can select the base
+                    // interpreter and lose the environment containing RDKit.
+                    candidates.push(python);
+                }
+            }
+        }
+
+        candidates.into_iter().find(|python| {
+            let probe = bio_tools::run::CommandSpec::new(python.as_os_str())
+                .args(["-E", "-c", bio_tools::rdkit::PROBE])
+                .timeout(std::time::Duration::from_secs(10));
+            bio_tools::run::run(&probe).is_ok_and(|output| output.stdout_lossy().contains("RDKit"))
+        })
     });
     find_executable(Tool::RdKit)
 }

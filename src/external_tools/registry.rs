@@ -359,7 +359,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         required_assets: &[],
         molchanica_managed: true,
         install_hint: "Install RDKit from Tools, or set RDKIT_PYTHON to a Python interpreter with RDKit installed.",
-        version_args: &["-I", "-c", bio_tools::rdkit::PROBE],
+        version_args: &["-E", "-c", bio_tools::rdkit::PROBE],
         version_marker: "RDKit",
         slow_probe: true,
     },
