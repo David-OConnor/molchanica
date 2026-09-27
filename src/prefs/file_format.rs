@@ -1064,9 +1064,10 @@ impl Graphics {
             }
             None => out.push(0),
         }
-        // Appended after the fields above shipped, so it must stay last: `from_bytes`
-        // treats its absence as "prefs written before this setting existed".
+        // These were appended after the fields above shipped, so they must stay last, in this
+        // order: `from_bytes` treats their absence as "prefs written before this setting existed".
         out.extend_from_slice(&self.ssao_radius.to_le_bytes());
+        out.push(self.msaa_user_set as u8);
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1101,13 +1102,19 @@ impl Graphics {
         // Absent in prefs files written before this setting was added; fall back to the
         // engine default rather than failing to load them.
         let ssao_radius = if i + 4 <= data.len() {
-            parse_le!(data, f32, i..i + 4)
+            let v = parse_le!(data, f32, i..i + 4);
+            i += 4;
+            v
         } else {
             GraphicsSettings::default().ssao_radius
         };
+        // Absent in older prefs files: treat their MSAA value as the default, not a user choice,
+        // so it can follow the GPU.
+        let msaa_user_set = i < data.len() && data[i] != 0;
 
         Ok(Self {
             msaa,
+            msaa_user_set,
             ambient_occlusion,
             ssao_radius,
             edge_cueing,

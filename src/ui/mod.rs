@@ -13,7 +13,6 @@ use graphics::{ControlScheme, EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolIdent};
 use na_seq::Element;
 use panels::{
-    aa_seq,
     md::md_setup,
     mol_data,
     mol_data::display_mol_data,
@@ -43,6 +42,7 @@ use crate::{
     ui::{
         misc::section_box,
         mol_type_tools::mol_type_toolbars,
+        panels::aa_seq,
         sidebar::sidebar,
         util::{
             QUERY_ENTER_LEN_MIN, chain_selector, color_egui_from_f32, handle_redraw,

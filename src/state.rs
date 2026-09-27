@@ -479,6 +479,8 @@ pub struct StateVolatile {
     /// Session restoration starts after egui has produced its first frame, instead of delaying
     /// creation of the native window and graphics surface.
     pub session_restore_started: bool,
+    /// Set once the MSAA default has been matched to the GPU; see `render::apply_msaa_gpu_default`.
+    pub msaa_gpu_default_applied: bool,
     /// We Use this to keep track of key press state for the camera movement, so we can continuously
     /// update the flashlight when moving.
     pub inputs_commanded: InputsCommanded,

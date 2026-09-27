@@ -81,6 +81,7 @@ pub enum ParticipantAction {
 /// Queries, including empty results, survive closing the popup and switching molecules.
 #[derive(Default)]
 pub struct ReactionsState {
+    pub diagrams: crate::mol_diagrams::DiagramCache,
     pub participant_action: ParticipantAction,
     pub download_message: Option<String>,
     pub download_error: Option<String>,

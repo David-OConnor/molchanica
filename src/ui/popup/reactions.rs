@@ -55,15 +55,16 @@ pub(super) fn poll_downloads(
 }
 
 pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
-    ui.heading(RichText::new(format!("Name: {}", state.title)).color(Color32::WHITE));
+    state.diagrams.poll(ui.ctx());
+    ui.heading(RichText::new(&state.title).color(Color32::WHITE));
     let has_chebi_id = matches!(state.selected.as_ref(), Some(Query::Chebi(_)));
     if state.pubchem_cid.is_some() || has_chebi_id {
         ui.horizontal_wrapped(|ui| {
             if let Some(cid) = state.pubchem_cid {
-                ui.colored_label(Color32::WHITE, format!("PubChem CID: {cid}"));
+                ui.colored_label(Color32::WHITE, format!("CID: {cid}"));
             }
             if let Some(Query::Chebi(id)) = &state.selected {
-                ui.colored_label(Color32::WHITE, format!("ChEBI ID: CHEBI:{id}"));
+                ui.colored_label(Color32::WHITE, format!("CHEBI:{id}"));
             }
         });
     }
@@ -152,6 +153,7 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
 
     let mut retry = false;
     let mut clicked_participant = None;
+    let mut diagram_requests = Vec::new();
 
     match entry {
         Entry::Loading(_) => {
@@ -214,13 +216,21 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
                             .skip(state.page * PER_PAGE)
                             .take(PER_PAGE)
                         {
-                            reaction_card(reaction, state, &mut clicked_participant, ui);
+                            reaction_card(
+                                reaction,
+                                state,
+                                &mut clicked_participant,
+                                &mut diagram_requests,
+                                ui,
+                            );
                             ui.add_space(8.0);
                         }
                     });
             }
         }
     }
+
+    state.diagrams.request(&diagram_requests, ui.ctx());
 
     if retry {
         state.cache.remove(&query);
@@ -243,6 +253,7 @@ fn reaction_card(
     reaction: &Reaction,
     state: &ReactionsState,
     clicked: &mut Option<(u32, String)>,
+    diagram_requests: &mut Vec<(u32, bool)>,
     ui: &mut Ui,
 ) {
     Frame::group(ui.style()).show(ui, |ui| {
@@ -282,6 +293,7 @@ fn reaction_card(
                             Color32::from_rgb(125, 195, 230),
                             state,
                             clicked,
+                            diagram_requests,
                             ui,
                         );
                     },
@@ -309,6 +321,7 @@ fn reaction_card(
                             Color32::from_rgb(150, 215, 170),
                             state,
                             clicked,
+                            diagram_requests,
                             ui,
                         );
                     },
@@ -329,64 +342,81 @@ fn side(
     color: Color32,
     state: &ReactionsState,
     clicked: &mut Option<(u32, String)>,
+    diagram_requests: &mut Vec<(u32, bool)>,
     ui: &mut Ui,
 ) {
     ui.label(RichText::new(label).small().color(color));
+    let molecule_width = ui.available_width().min(crate::mol_diagrams::DIAGRAM_WIDTH);
     ui.horizontal_wrapped(|ui| {
         for (index, participant) in equation.split(" + ").enumerate() {
             if index > 0 {
                 ui.label(RichText::new("+").color(color));
             }
-            // The filtered ChEBI-only list cannot be zipped with names: generic
-            // RHEA-COMP participants would shift every subsequent link.
-            let id = participant_chebi_id(participants, equation, index);
-            let queried = matches!(
-                (state.selected.as_ref(), id),
-                (Some(Query::Chebi(query_id)), Some(id)) if *query_id == id
-            );
-            if let Some(id) = id {
-                let loading = state.participant_action == ParticipantAction::Download
-                    && state.downloads.contains_key(&id);
-                let action = match state.participant_action {
-                    ParticipantAction::OpenChebiPage => "Open ChEBI molecule page in browser",
-                    ParticipantAction::Download => "Download and open in Molchanica",
-                    ParticipantAction::OpenRheaPage => "Open Rhea page for this molecule",
-                };
-                let fill = if queried {
-                    Color32::from_rgb(90, 105, 35)
-                } else {
-                    color.gamma_multiply(0.12)
-                };
-                let text_color = if queried { Color32::WHITE } else { color };
-                let button = Button::new(RichText::new(participant).strong().color(text_color))
-                    .fill(fill)
-                    .frame(true)
-                    .wrap_mode(egui::TextWrapMode::Extend);
+            ui.allocate_ui_with_layout(
+                egui::vec2(molecule_width, 0.0),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ui.set_width(molecule_width);
+                    // The filtered ChEBI-only list cannot be zipped with names: generic
+                    // RHEA-COMP participants would shift every subsequent link.
+                    let id = participant_chebi_id(participants, equation, index);
+                    let queried = matches!(
+                        (state.selected.as_ref(), id),
+                        (Some(Query::Chebi(query_id)), Some(id)) if *query_id == id
+                    );
+                    if let Some(id) = id {
+                        let loading = state.participant_action == ParticipantAction::Download
+                            && state.downloads.contains_key(&id);
+                        let action = match state.participant_action {
+                            ParticipantAction::OpenChebiPage => {
+                                "Open ChEBI molecule page in browser"
+                            }
+                            ParticipantAction::Download => "Download and open in Molchanica",
+                            ParticipantAction::OpenRheaPage => "Open Rhea page for this molecule",
+                        };
+                        let fill = if queried {
+                            Color32::from_rgb(90, 105, 35)
+                        } else {
+                            color.gamma_multiply(0.12)
+                        };
+                        let text_color = if queried { Color32::WHITE } else { color };
+                        let button =
+                            Button::new(RichText::new(participant).strong().color(text_color))
+                                .fill(fill)
+                                .frame(true)
+                                .wrap_mode(egui::TextWrapMode::Wrap);
 
-                if ui
-                    .add_enabled(!loading, button)
-                    .on_hover_text(format!("CHEBI:{id} — {action}"))
-                    .clicked()
-                {
-                    let name = participants
-                        .participant_names
-                        .get(index)
-                        .cloned()
-                        .unwrap_or_else(|| participant.to_owned());
-                    *clicked = Some((id, name));
-                }
-            } else {
-                Frame::new()
-                    .fill(color.gamma_multiply(0.12))
-                    .corner_radius(4)
-                    .inner_margin(5)
-                    .show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(participant).strong()).wrap())
-                            .on_hover_text(
-                                "Rhea does not provide a ChEBI ID for this participant.",
-                            );
-                    });
-            }
+                        if ui
+                            .add_enabled(!loading, button)
+                            .on_hover_text(format!("CHEBI:{id} — {action}"))
+                            .clicked()
+                        {
+                            let name = participants
+                                .participant_names
+                                .get(index)
+                                .cloned()
+                                .unwrap_or_else(|| participant.to_owned());
+                            *clicked = Some((id, name));
+                        }
+                        let retry = state.diagrams.show(id, ui);
+                        diagram_requests.push((id, retry));
+                    } else {
+                        Frame::new()
+                            .fill(color.gamma_multiply(0.12))
+                            .corner_radius(4)
+                            .inner_margin(5)
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(RichText::new(participant).strong()).wrap(),
+                                )
+                                .on_hover_text(
+                                    "Rhea does not provide a ChEBI ID for this participant.",
+                                );
+                            });
+                        ui.weak("No 2D structure: no ChEBI ID supplied.");
+                    }
+                },
+            );
         }
     });
 }

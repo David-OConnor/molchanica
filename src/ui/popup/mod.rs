@@ -780,6 +780,8 @@ fn graphics_settings(
         });
 
     if state.to_save.graphics.msaa != msaa_prev {
+        // An explicit choice; stop following the GPU-based default.
+        state.to_save.graphics.msaa_user_set = true;
         changed = true;
         save = true;
     }

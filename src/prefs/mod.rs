@@ -156,6 +156,9 @@ impl ControlSchemeType {
 #[derive(Clone, PartialEq)]
 pub struct Graphics {
     pub msaa: MsaaSetting,
+    /// Set once the user picks an MSAA setting. Until then, `msaa` follows the GPU: none on
+    /// integrated GPUs, whose render targets live in system RAM. See `render::apply_msaa_gpu_default`.
+    pub msaa_user_set: bool,
     pub ambient_occlusion: AmbientOcclusion,
     /// World-space radius of the ambient-occlusion sample hemisphere, in Å. Larger values
     /// shade broader hollows; smaller ones pick out only tight crevices.
@@ -168,6 +171,7 @@ impl Default for Graphics {
     fn default() -> Self {
         Self {
             msaa: Default::default(),
+            msaa_user_set: false,
             ambient_occlusion: Default::default(),
             // The `graphics` radius default is for unit-scale objects. Here, we
             // use a larger scale. We use something that wouldn't be appropriate for realistic scenes

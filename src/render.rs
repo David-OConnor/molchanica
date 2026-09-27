@@ -3,8 +3,8 @@
 use std::f32::consts::TAU;
 
 use graphics::{
-    Camera, EngineUpdates, Handedness, InputSettings, Lighting, Mesh, PointLight, Scene,
-    ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings,
+    Camera, DeviceType, EngineUpdates, Handedness, InputSettings, Lighting, Mesh, PointLight,
+    Scene, ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings,
 };
 use lin_alg::f32::Vec3;
 
@@ -16,7 +16,7 @@ use crate::{
     drawing::atoms_bonds::BOND_RADIUS_BASE,
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
-    state::State,
+    state::{MsaaSetting, State},
     ui::ui_handler,
 };
 
@@ -86,10 +86,57 @@ pub fn set_static_light(scene: &mut Scene, center: Vec3, size: f32) {
         center + Vec3::new(40., size + OUTSIDE_LIGHTING_OFFSET, 0.);
 }
 
+/// Match the MSAA default to the GPU, unless the user has chosen a setting. Integrated GPUs have
+/// no VRAM: 4× MSAA's colour and depth targets live in system RAM, costing ~260 MB at 4K. So
+/// we default to none on them, and 4× on others.
+///
+/// Runs once, on the first frame: the engine selects the adapter after we've handed it the
+/// initial settings.
+fn apply_msaa_gpu_default(state: &mut State, scene: &Scene, updates: &mut EngineUpdates) {
+    if state.volatile.msaa_gpu_default_applied {
+        return;
+    }
+
+    let Some(adapter) = &scene.adapter_info else {
+        return;
+    };
+
+    state.volatile.msaa_gpu_default_applied = true;
+
+    if state.to_save.graphics.msaa_user_set {
+        return;
+    }
+
+    let msaa = if adapter.device_type == DeviceType::IntegratedGpu {
+        MsaaSetting::None
+    } else {
+        MsaaSetting::default()
+    };
+
+    if msaa == state.to_save.graphics.msaa {
+        return;
+    }
+
+    println!(
+        "Setting MSAA to {} for GPU {} ({:?})",
+        msaa.to_str(),
+        adapter.name,
+        adapter.device_type
+    );
+
+    state.to_save.graphics.msaa = msaa;
+    state.graphics_settings = state.to_save.graphics.to_engine();
+    updates.graphics_settings = Some(state.graphics_settings.clone());
+}
+
 /// Used by `Grpahics` as part of its cycle to get updates from the application.
-/// This runs each frame. Currently, no updates.
-fn render_handler(_state: &mut State, _scene: &mut Scene, _dt: f32) -> EngineUpdates {
-    EngineUpdates::default()
+/// This runs each frame.
+fn render_handler(state: &mut State, scene: &mut Scene, _dt: f32) -> EngineUpdates {
+    let mut updates = EngineUpdates::default();
+
+    apply_msaa_gpu_default(state, scene, &mut updates);
+
+    updates
 }
 
 /// Entry point to our render and event loop.

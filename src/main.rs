@@ -42,6 +42,7 @@ mod lod_generalization;
 mod md;
 mod mol_alignment;
 mod mol_db;
+mod mol_diagrams;
 mod mol_editor;
 mod mol_manip;
 mod orca;

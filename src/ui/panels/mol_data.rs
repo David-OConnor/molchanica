@@ -869,7 +869,6 @@ pub(in crate::ui) fn display_mol_data(
 
         let mut update_cid = None; // to avoid a borrow error.
 
-        let mut update_assoc_st = None;
         let mut split_at: Option<Vec<usize>> = None;
         let mut join_clicked = false;
         let mut cancel_join = false;
@@ -964,29 +963,6 @@ pub(in crate::ui) fn display_mol_data(
                         load_all_idents = true;
                     }
 
-                    if let Some(cid) = pubchem_cid
-                        && button!(ui,
-                        "Find assoc structs",
-                        Color32::GRAY,
-                        "Find proteins associated with this molecule,
-                         e.g. if it's a ligand which proteins it can bind to. This notably includes PDB urls"
-                    ).clicked() {
-                        if m.associated_structures.is_empty() {
-                            // todo: Don't block.
-                            match pubchem::load_associated_structures(cid) {
-                                Ok(data) => {
-                                    update_assoc_st = Some(data); // Prevents a borrow problem.
-                                }
-                                Err(_) => handle_err(
-                                    &mut state.ui,
-                                    "Unable to find structures for this ligand".to_owned(),
-                                ),
-                            }
-                        }
-
-                        state.ui.popup.show_associated_structures = true;
-                    }
-
                     if let Some(pending) = &state.ui.join_ligand {
                         ui.label(format!(
                             "Join: ligand {}, atom {}. Select an atom in another ligand.",
@@ -1072,13 +1048,6 @@ pub(in crate::ui) fn display_mol_data(
         }
 
         ui.add_space(COL_SPACING);
-
-        if let Some(v) = update_assoc_st
-            && let Some(mol) = state.active_mol_mut()
-            && let MolGenericRefMut::Small(m) = mol
-        {
-            m.associated_structures = v;
-        }
 
         if let Some(mol) = state.active_mol_mut()
             && let Some(cid) = update_cid

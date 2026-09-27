@@ -1,3 +1,4 @@
+use bio_apis::pubchem;
 use bio_files::{FrameSlice, md_params::ForceFieldParams};
 use dynamics::{FfMolType, merge_params};
 use egui::{Color32, RichText, TextEdit, Ui};
@@ -900,11 +901,14 @@ fn manip_toolbar(
     });
 }
 
+/// Per-molecule functionality, lookups, popups etc.
 fn mol_specific_aux_btns(
     mol_type: MolType,
     load_all_idents: &mut bool,
     toggle_metadata_popup: &mut bool,
     show_reactions: &mut bool,
+    find_assoc_structs: &mut Option<u32>,
+    pubchem_cid: Option<u32>,
     loading_idents: bool,
     ui: &mut Ui,
 ) {
@@ -933,6 +937,18 @@ fn mol_specific_aux_btns(
 
         if button!(ui, "Reactions", Color32::GRAY, reactions_help).clicked() {
             *show_reactions = true;
+        }
+
+        if let Some(cid) = pubchem_cid
+            && button!(
+                ui,
+                "Associated",
+                Color32::GRAY,
+                "Find proteins associated with this molecule, e.g. if it's a ligand which                 proteins it can bind to. This notably includes PDB urls"
+            )
+            .clicked()
+        {
+            *find_assoc_structs = Some(cid);
         }
     });
 }
@@ -1057,8 +1073,17 @@ pub(in crate::ui) fn sidebar(
             let mut load_all_idents = false;
             let mut toggle_metadata_popup = false;
             let mut show_reactions = false;
+            let mut find_assoc_structs = None; // PubChem CID to look up.
 
             let loading_idents = state.volatile.thread_receivers.all_idents_avail.is_some();
+
+            let pubchem_cid = match state.active_mol() {
+                Some(MolGenericRef::Small(m)) => m.idents.iter().find_map(|ident| match ident {
+                    MolIdent::PubChem(cid) => Some(*cid),
+                    _ => None,
+                }),
+                _ => None,
+            };
 
             if let Some((mol_type, _)) = state.volatile.active_mol {
                 mol_specific_aux_btns(
@@ -1066,6 +1091,8 @@ pub(in crate::ui) fn sidebar(
                     &mut load_all_idents,
                     &mut toggle_metadata_popup,
                     &mut show_reactions,
+                    &mut find_assoc_structs,
+                    pubchem_cid,
                     loading_idents,
                     ui,
                 );
@@ -1155,6 +1182,30 @@ pub(in crate::ui) fn sidebar(
 
             if show_reactions {
                 crate::reactions::open_for_active(state);
+            }
+
+            if let Some(cid) = find_assoc_structs {
+                let already_loaded = match state.active_mol() {
+                    Some(MolGenericRef::Small(m)) => !m.associated_structures.is_empty(),
+                    _ => false,
+                };
+
+                if !already_loaded {
+                    // todo: Don't block.
+                    match pubchem::load_associated_structures(cid) {
+                        Ok(data) => {
+                            if let Some(MolGenericRefMut::Small(m)) = state.active_mol_mut() {
+                                m.associated_structures = data;
+                            }
+                        }
+                        Err(_) => handle_err(
+                            &mut state.ui,
+                            "Unable to find structures for this ligand".to_owned(),
+                        ),
+                    }
+                }
+
+                state.ui.popup.show_associated_structures = true;
             }
 
             if toggle_metadata_popup {
