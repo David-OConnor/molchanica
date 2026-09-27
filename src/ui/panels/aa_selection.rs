@@ -119,13 +119,13 @@ pub(in crate::ui) fn aa_selection(state: &mut State, redraw: &mut bool, ui: &mut
         });
 
         ui.horizontal_wrapped(|ui| {
-            for label in ["All AAs", "No AAs", "Invert AAs"] {
+            for label in ["All", "None", "Invert"] {
                 if ui.button(label).clicked() {
                     settings.amino_acids = AMINO_ACIDS
                         .into_iter()
                         .filter(|aa| {
-                            label == "All AAs"
-                                || (label == "Invert AAs" && !settings.amino_acids.contains(aa))
+                            label == "All"
+                                || (label == "Invert" && !settings.amino_acids.contains(aa))
                         })
                         .collect();
                     settings.enabled = true;
