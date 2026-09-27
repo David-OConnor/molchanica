@@ -828,7 +828,7 @@ fn manip_toolbar(
                 redraw.set(active_mol_type);
             }
 
-            let color_details = if state.ui.ui_vis.mol_char {
+            let color_details = if state.ui.ui_vis.sidebar_mol_details {
                 COLOR_ACTIVE
             } else {
                 COLOR_INACTIVE
@@ -839,7 +839,7 @@ fn manip_toolbar(
                 color_details,
                 "Toggle the details display of the active molecule."
             ).clicked() {
-                state.ui.ui_vis.mol_char = !state.ui.ui_vis.mol_char;
+                state.ui.ui_vis.sidebar_mol_details = !state.ui.ui_vis.sidebar_mol_details;
             }
         }
 
@@ -1071,51 +1071,59 @@ pub(in crate::ui) fn sidebar(
                 );
             }
 
-            // todo: UI flag to show or hide this.
-            if state.ui.ui_vis.mol_char && !edit_mode {
-                // Thse vars are all to avoid a double borrow.
-                let mut run_logp_sim = false;
-                let mut run_crystal_sim = false;
-                let mut run_water_sol_sim_mix = false;
-                let mut run_water_sol_sim_layers = false;
-                let mut run_shrinking_box = false;
-                let mut new_crystal_mol = None;
-                let mut name_change = None;
-
-                if let Some(mol) = state.active_mol() {
-                    match mol {
-                        MolGenericRef::Small(mol) => {
-                            name_change = char_adme::mol_char_disp(
-                                mol,
-                                &state.volatile.prefs_dir,
-                                ui,
-                                &mut run_logp_sim,
-                                &mut run_crystal_sim,
-                                &mut run_water_sol_sim_mix,
-                                &mut run_water_sol_sim_layers,
-                                &mut run_shrinking_box,
-                                &mut new_crystal_mol,
-                            );
-                        }
-                        MolGenericRef::Peptide(mol) => {
-                            ui.add_space(ROW_SPACING);
-                            name_change = list_idents(
-                                Some(&mol.common.name),
-                                Idents::Peptide(&mol.idents),
-                                &mol.common.path,
-                                &state.volatile.prefs_dir,
-                                ui,
-                            );
-                        }
-                        _ => {}
+            if !edit_mode {
+                let name_change = match state.active_mol() {
+                    Some(MolGenericRef::Small(mol)) => {
+                        ui.add_space(ROW_SPACING);
+                        list_idents(
+                            Some(&mol.common.name),
+                            Idents::Small(&mol.idents),
+                            &mol.common.path,
+                            &state.volatile.prefs_dir,
+                            ui,
+                        )
                     }
-                }
+                    Some(MolGenericRef::Peptide(mol)) => {
+                        ui.add_space(ROW_SPACING);
+                        list_idents(
+                            Some(&mol.common.name),
+                            Idents::Peptide(&mol.idents),
+                            &mol.common.path,
+                            &state.volatile.prefs_dir,
+                            ui,
+                        )
+                    }
+                    _ => None,
+                };
 
                 if let Some(name) = name_change
                     && let Some(mut mol) = state.active_mol_mut()
                 {
                     mol.common_mut().name = name;
                     redraw.set(mol.mol_type());
+                }
+            }
+
+            if state.ui.ui_vis.sidebar_mol_details && !edit_mode {
+                // These vars are all to avoid a double borrow.
+                let mut run_logp_sim = false;
+                let mut run_crystal_sim = false;
+                let mut run_water_sol_sim_mix = false;
+                let mut run_water_sol_sim_layers = false;
+                let mut run_shrinking_box = false;
+                let mut new_crystal_mol = None;
+
+                if let Some(MolGenericRef::Small(mol)) = state.active_mol() {
+                    char_adme::mol_char_disp(
+                        mol,
+                        ui,
+                        &mut run_logp_sim,
+                        &mut run_crystal_sim,
+                        &mut run_water_sol_sim_mix,
+                        &mut run_water_sol_sim_layers,
+                        &mut run_shrinking_box,
+                        &mut new_crystal_mol,
+                    );
                 }
 
                 if let Some(mol) = new_crystal_mol {

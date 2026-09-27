@@ -4,11 +4,11 @@ use bio_apis::{
     chebi,
     rhea::{Reaction, ReactionSide},
 };
-use egui::{Button, Color32, Frame, RichText, ScrollArea, Ui};
+use egui::{Align, Button, Color32, Frame, Layout, RichText, ScrollArea, Ui};
 use graphics::{EngineUpdates, Scene};
 
 use crate::{
-    reactions::{Entry, Query, ReactionsState},
+    reactions::{Entry, ParticipantAction, Query, ReactionsState},
     state::State,
     ui::{misc::selector, util::open_chebi_download},
     util::{RedrawFlags, handle_err, make_lig_3d},
@@ -55,27 +55,43 @@ pub(super) fn poll_downloads(
 }
 
 pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
-    ui.heading(&state.title);
+    ui.heading(RichText::new(format!("Name: {}", state.title)).color(Color32::WHITE));
+    let has_chebi_id = matches!(state.selected.as_ref(), Some(Query::Chebi(_)));
+    if state.pubchem_cid.is_some() || has_chebi_id {
+        ui.horizontal_wrapped(|ui| {
+            if let Some(cid) = state.pubchem_cid {
+                ui.colored_label(Color32::WHITE, format!("PubChem CID: {cid}"));
+            }
+            if let Some(Query::Chebi(id)) = &state.selected {
+                ui.colored_label(Color32::WHITE, format!("ChEBI ID: CHEBI:{id}"));
+            }
+        });
+    }
     ui.horizontal_wrapped(|ui| {
         ui.label("Click a molecule to:");
 
-        if let Some(download) = selector(
+        if let Some(action) = selector(
             ui,
-            state.download_on_click,
+            state.participant_action,
             &[
                 (
-                    false,
+                    ParticipantAction::OpenChebiPage,
                     "Open ChEBI molecule page in browser",
                     "Clicking a molecule opens its ChEBI page in your web browser.",
                 ),
                 (
-                    true,
+                    ParticipantAction::Download,
                     "Download and open in Molchanica",
                     "Clicking a molecule downloads it from ChEBI, and opens it in Molchanica.",
                 ),
+                (
+                    ParticipantAction::OpenRheaPage,
+                    "Open Rhea page for this molecule",
+                    "Clicking a molecule shows its Rhea reactions in this window.",
+                ),
             ],
         ) {
-            state.download_on_click = download;
+            state.participant_action = action;
         }
     });
     if !state.downloads.is_empty() {
@@ -213,21 +229,20 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
         ui.ctx().request_repaint();
     }
 
-    if let Some(id) = clicked_participant {
-        if state.download_on_click {
-            state.download(id);
-
-            ui.ctx().request_repaint();
-        } else {
-            chebi::open_overview(id);
+    if let Some((id, name)) = clicked_participant {
+        match state.participant_action {
+            ParticipantAction::OpenChebiPage => chebi::open_overview(id),
+            ParticipantAction::Download => state.download(id),
+            ParticipantAction::OpenRheaPage => state.show_chebi_participant(id, name),
         }
+        ui.ctx().request_repaint();
     }
 }
 
 fn reaction_card(
     reaction: &Reaction,
     state: &ReactionsState,
-    clicked: &mut Option<u32>,
+    clicked: &mut Option<(u32, String)>,
     ui: &mut Ui,
 ) {
     Frame::group(ui.style()).show(ui, |ui| {
@@ -249,31 +264,54 @@ fn reaction_card(
         // stoichiometric coefficients stay attached to their participants. Master reactions have
         // undefined direction, so '=' is more accurate than implying a one-way or reversible arrow.
         if let Some((left, right)) = reaction.equation.split_once(" = ") {
-            ui.columns(3, |columns| {
-                side(
-                    left,
-                    &reaction.reactants,
-                    "Left side",
-                    Color32::from_rgb(125, 195, 230),
-                    state,
-                    clicked,
-                    &mut columns[0],
+            let equals_width = 36.0;
+            let spacing = ui.spacing().item_spacing.x;
+            let available_for_sides = ui.available_width() - equals_width - 2.0 * spacing;
+            let side_width = (available_for_sides / 2.0).max(0.0);
+
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(side_width, 0.0),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.set_max_width(side_width);
+                        side(
+                            left,
+                            &reaction.reactants,
+                            "Left side",
+                            Color32::from_rgb(125, 195, 230),
+                            state,
+                            clicked,
+                            ui,
+                        );
+                    },
                 );
 
-                columns[1].vertical_centered(|ui| {
-                    ui.add_space(18.0);
-                    ui.label(RichText::new("=").size(28.0));
-                    ui.weak("Direction unspecified");
-                });
+                ui.allocate_ui_with_layout(
+                    egui::vec2(equals_width, 0.0),
+                    Layout::top_down(Align::Center),
+                    |ui| {
+                        ui.add_space(18.0);
+                        ui.label(RichText::new("=").size(28.0))
+                            .on_hover_text("Direction unspecified");
+                    },
+                );
 
-                side(
-                    right,
-                    &reaction.products,
-                    "Right side",
-                    Color32::from_rgb(150, 215, 170),
-                    state,
-                    clicked,
-                    &mut columns[2],
+                ui.allocate_ui_with_layout(
+                    egui::vec2(side_width, 0.0),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.set_max_width(side_width);
+                        side(
+                            right,
+                            &reaction.products,
+                            "Right side",
+                            Color32::from_rgb(150, 215, 170),
+                            state,
+                            clicked,
+                            ui,
+                        );
+                    },
                 );
             });
         }
@@ -290,7 +328,7 @@ fn side(
     label: &str,
     color: Color32,
     state: &ReactionsState,
-    clicked: &mut Option<u32>,
+    clicked: &mut Option<(u32, String)>,
     ui: &mut Ui,
 ) {
     ui.label(RichText::new(label).small().color(color));
@@ -299,39 +337,56 @@ fn side(
             if index > 0 {
                 ui.label(RichText::new("+").color(color));
             }
-            Frame::new()
-                .fill(color.gamma_multiply(0.12))
-                .corner_radius(4)
-                .inner_margin(5)
-                .show(ui, |ui| {
-                    // The filtered ChEBI-only list cannot be zipped with names: generic
-                    // RHEA-COMP participants would shift every subsequent link.
-                    let id = participant_chebi_id(participants, equation, index);
-                    if let Some(id) = id {
-                        let loading = state.download_on_click && state.downloads.contains_key(&id);
-                        let action = if state.download_on_click {
-                            "Download and open in Molchanica"
-                        } else {
-                            "Open ChEBI molecule page in browser"
-                        };
+            // The filtered ChEBI-only list cannot be zipped with names: generic
+            // RHEA-COMP participants would shift every subsequent link.
+            let id = participant_chebi_id(participants, equation, index);
+            let queried = matches!(
+                (state.selected.as_ref(), id),
+                (Some(Query::Chebi(query_id)), Some(id)) if *query_id == id
+            );
+            if let Some(id) = id {
+                let loading = state.participant_action == ParticipantAction::Download
+                    && state.downloads.contains_key(&id);
+                let action = match state.participant_action {
+                    ParticipantAction::OpenChebiPage => "Open ChEBI molecule page in browser",
+                    ParticipantAction::Download => "Download and open in Molchanica",
+                    ParticipantAction::OpenRheaPage => "Open Rhea page for this molecule",
+                };
+                let fill = if queried {
+                    Color32::from_rgb(90, 105, 35)
+                } else {
+                    color.gamma_multiply(0.12)
+                };
+                let text_color = if queried { Color32::WHITE } else { color };
+                let button = Button::new(RichText::new(participant).strong().color(text_color))
+                    .fill(fill)
+                    .frame(true)
+                    .wrap_mode(egui::TextWrapMode::Extend);
 
-                        if ui
-                            .add_enabled(
-                                !loading,
-                                egui::Link::new(RichText::new(participant).strong()),
-                            )
-                            .on_hover_text(format!("CHEBI:{id} — {action}"))
-                            .clicked()
-                        {
-                            *clicked = Some(id);
-                        }
-                    } else {
+                if ui
+                    .add_enabled(!loading, button)
+                    .on_hover_text(format!("CHEBI:{id} — {action}"))
+                    .clicked()
+                {
+                    let name = participants
+                        .participant_names
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| participant.to_owned());
+                    *clicked = Some((id, name));
+                }
+            } else {
+                Frame::new()
+                    .fill(color.gamma_multiply(0.12))
+                    .corner_radius(4)
+                    .inner_margin(5)
+                    .show(ui, |ui| {
                         ui.add(egui::Label::new(RichText::new(participant).strong()).wrap())
                             .on_hover_text(
                                 "Rhea does not provide a ChEBI ID for this participant.",
                             );
-                    }
-                });
+                    });
+            }
         }
     });
 }

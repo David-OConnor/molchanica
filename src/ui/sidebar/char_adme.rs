@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use adme::{Adme, Toxicity};
 use egui::{Color32, ScrollArea, Ui};
 use lin_alg::f64::Vec3;
@@ -12,10 +10,7 @@ use crate::{
     button,
     crystal::CrystalCell,
     label,
-    ui::{
-        COL_SPACING, COLOR_ACTION, ROW_SPACING,
-        util::{Idents, list_idents},
-    },
+    ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
 };
 
 fn char_basics(
@@ -490,7 +485,6 @@ fn char_item(ui: &mut Ui, items: &[(&str, &str, &str)]) {
 
 pub(in crate::ui) fn mol_char_disp(
     mol: &MoleculeSmall,
-    prefs_dir: &Path,
     ui: &mut Ui,
     run_logp_sim: &mut bool,
     run_crystal_sim: &mut bool,
@@ -499,25 +493,15 @@ pub(in crate::ui) fn mol_char_disp(
     run_shrinking_box: &mut bool,
     new_crystal_mol: &mut Option<MoleculeSmall>,
     // run_water_sol_sim_layers_middle: &mut bool,
-) -> Option<Option<String>> {
+) {
     let Some(char) = &mol.characterization else {
-        return None;
+        return;
     };
 
-    let mut name_change = None;
     ScrollArea::vertical()
         .min_scrolled_height(400.0)
         .show(ui, |ui| {
             ui.add_space(ROW_SPACING);
-
-            name_change = list_idents(
-                Some(&mol.common.name),
-                Idents::Small(&mol.idents),
-                &mol.common.path,
-                prefs_dir,
-                ui,
-            );
-
             ui.separator();
             ui.add_space(ROW_SPACING);
 
@@ -544,8 +528,6 @@ pub(in crate::ui) fn mol_char_disp(
                 tox_disp(&ther.toxicity, ui);
             }
         });
-
-    name_change
 }
 
 fn tox_disp(tox: &Toxicity, ui: &mut Ui) {

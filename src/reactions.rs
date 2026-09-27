@@ -69,16 +69,24 @@ struct PendingLigand {
     started: bool,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum ParticipantAction {
+    #[default]
+    OpenChebiPage,
+    Download,
+    OpenRheaPage,
+}
+
 /// Kept outside MoleculeSmall so cached API responses do not alter saved molecule formats.
 /// Queries, including empty results, survive closing the popup and switching molecules.
 #[derive(Default)]
 pub struct ReactionsState {
-    /// False opens the participant's ChEBI page; true imports its structure.
-    pub download_on_click: bool,
+    pub participant_action: ParticipantAction,
     pub download_message: Option<String>,
     pub download_error: Option<String>,
     pub downloads: HashMap<u32, Receiver<Result<DownloadedSmallMol, String>>>,
     pub title: String,
+    pub pubchem_cid: Option<u32>,
     pub selected: Option<Query>,
     pub cache: HashMap<Query, Entry>,
     pub page: usize,
@@ -136,6 +144,16 @@ impl ReactionsState {
         self.load(query.clone());
         self.selected = Some(query);
         self.message = None;
+    }
+
+    pub fn show_chebi_participant(&mut self, id: u32, name: String) {
+        self.title = name;
+        self.pubchem_cid = None;
+        self.page = 0;
+        self.pending_ligand = None;
+        self.download_message = None;
+        self.download_error = None;
+        self.select(Query::Chebi(id));
     }
 
     pub fn poll(&mut self) -> bool {
@@ -208,7 +226,14 @@ pub fn open_for_active(state: &mut State) {
     let Some(mol) = state.active_mol() else {
         return;
     };
-    let title = mol.common().name(None).into_owned();
+    let title = mol.name().into_owned();
+    let pubchem_cid = match mol {
+        MolGenericRef::Small(mol) => match mol.get_ident(MolIdentType::PubChem) {
+            Some(MolIdent::PubChem(cid)) => Some(*cid),
+            _ => None,
+        },
+        _ => None,
+    };
     let (query, pending_ligand) = match mol {
         MolGenericRef::Small(mol) => match mol.get_ident(MolIdentType::Chebi) {
             Some(MolIdent::Chebi(id)) => (Some(Query::Chebi(*id)), None),
@@ -242,6 +267,7 @@ pub fn open_for_active(state: &mut State) {
 
     let reactions = &mut state.ui.reactions;
     reactions.title = title;
+    reactions.pubchem_cid = pubchem_cid;
     reactions.page = 0;
     reactions.message = None;
     reactions.selected = None;
@@ -268,6 +294,11 @@ pub fn poll(state: &mut State) -> bool {
         state.ui.reactions.message =
             Some("The molecule was removed before its identifiers loaded.".to_owned());
         return loading;
+    };
+
+    state.ui.reactions.pubchem_cid = match mol.get_ident(MolIdentType::PubChem) {
+        Some(MolIdent::PubChem(cid)) => Some(*cid),
+        _ => None,
     };
 
     if let Some(MolIdent::Chebi(id)) = mol.get_ident(MolIdentType::Chebi) {

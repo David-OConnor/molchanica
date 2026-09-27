@@ -13,6 +13,7 @@ use graphics::{ControlScheme, EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolIdent};
 use na_seq::Element;
 use panels::{
+    aa_seq,
     md::md_setup,
     mol_data,
     mol_data::display_mol_data,
@@ -1076,7 +1077,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.add_space(ROW_SPACING / 2.);
 
         if let Some(seq_i) = state.volatile.active_seq {
-            panels::standalone_sequence(state, seq_i, ui);
+            aa_seq::standalone_sequence(state, seq_i, ui);
         } else if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
             let peptide_name = state
                 .volatile
@@ -1084,7 +1085,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 .and_then(|i| state.peptides.get(i))
                 .map(|mol| mol.common.name(None));
 
-            panels::peptide_aa_seq(
+            aa_seq::peptide_aa_seq(
                 &mut state.ui.selection,
                 peptide_name.as_deref(),
                 &state.volatile.aa_seq_text,

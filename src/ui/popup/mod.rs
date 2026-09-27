@@ -99,7 +99,8 @@ pub(in crate::ui) fn load_popups(
     if state.ui.popup.reactions {
         let open = show_popup(
             popup("Rhea reactions")
-                .default_width(760.0)
+                .default_width(920.0)
+                .min_width(840.0)
                 .default_height(800.0)
                 .max_height(1_600.0),
             ui.ctx(),

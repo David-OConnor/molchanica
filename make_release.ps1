@@ -60,3 +60,27 @@ Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mp
 $zip2 = "molchanica_${version}_win_nocuda.zip"
 if (Test-Path $zip2) { Remove-Item $zip2 -Force }
 Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mpnnConvert -DestinationPath $zip2 -Force
+
+# Build and package the Linux release too, in the Ubuntu 22.04 WSL instance. 22.04 specifically,
+# since it sets the glibc version the Linux binary requires; building on a newer Ubuntu would
+# produce a binary that refuses to start on older distros.
+$wslDistro = "Ubuntu-22.04"
+# `wsl -l` writes UTF-16, which PowerShell reads with embedded nulls; strip them before comparing.
+$wslDistros = (wsl.exe -l -q) | ForEach-Object { ($_ -replace "`0", "").Trim() } | Where-Object { $_ }
+if ($wslDistros -notcontains $wslDistro) {
+    throw "The WSL instance '$wslDistro' was not found, so the Linux release was not built. It must be Ubuntu 22.04. Installed instances: $($wslDistros -join ', ')"
+}
+
+# `--exec` skips the distro's shell, so os-release is read as-is and parsed here.
+$wslOsRelease = wsl.exe -d $wslDistro --exec cat /etc/os-release
+$wslVersion = $wslOsRelease | Select-String -Pattern '^VERSION_ID="?([^"]+)"?' |
+    ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1
+if ($LASTEXITCODE -ne 0 -or $wslVersion -ne "22.04") {
+    throw "The WSL instance '$wslDistro' is not Ubuntu 22.04 (VERSION_ID: '$wslVersion'), so the Linux release was not built."
+}
+
+# A login shell, so ~/.profile puts cargo on the PATH.
+wsl.exe -d $wslDistro --cd $PSScriptRoot -- bash -l ./make_release.sh
+if ($LASTEXITCODE -ne 0) {
+    throw "make_release.sh failed in WSL ($wslDistro) with exit code $LASTEXITCODE."
+}

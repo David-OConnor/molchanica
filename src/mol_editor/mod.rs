@@ -593,7 +593,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
     state.mol_editor.md.md = None;
     state.ui.view_sel_level = ViewSelLevel::Atom;
 
-    state.ui.ui_vis.mol_char = false;
+    state.ui.ui_vis.sidebar_mol_details = false;
     state.ui.ui_vis.pharmacophore_list = true;
 
     state.volatile.control_scheme_prev = scene.input_settings.control_scheme;

@@ -500,7 +500,7 @@ impl UiVisibility {
             self.amino_acids as u8,
             self.dynamics as u8,
             self.orca as u8,
-            self.mol_char as u8,
+            self.sidebar_mol_details as u8,
             self.pharmacophore_list as u8,
             self.sidebar as u8,
             self.aa_selection as u8,
@@ -516,7 +516,7 @@ impl UiVisibility {
             amino_acids: data[5] != 0,
             dynamics: data[6] != 0,
             orca: data[7] != 0,
-            mol_char: data[8] != 0,
+            sidebar_mol_details: data[8] != 0,
             pharmacophore_list: data[9] != 0,
             // Absent from prefs written before the sidebar could be hidden; show it in that case.
             sidebar: data.get(10).is_none_or(|v| *v != 0),

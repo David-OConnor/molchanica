@@ -23,7 +23,9 @@ use lin_alg::f64::Vec3;
 use mol_defs::{
     molecules::{
         MolGeneric, MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        POCKET_METADATA_KEY, common::MoleculeCommon, peptide::MoleculePeptide,
+        POCKET_METADATA_KEY,
+        common::{MoleculeCommon, bonds_avail},
+        peptide::MoleculePeptide,
         small::MoleculeSmall,
     },
     reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
@@ -1041,12 +1043,20 @@ impl State {
                 // Before adding hydrogens: they're placed in 3D, even around flat atoms.
                 mol.common.is_2d = mol.common.posits_are_2d();
 
-                if !mol
+                // Some 2D Molfiles include only stereochemical hydrogens. GAFF2 typing
+                // needs the remaining H atoms too, or e.g. an alkene CH looks like c1.
+                let has_hydrogens = mol
                     .common
                     .atoms
                     .iter()
-                    .any(|a| a.element == Element::Hydrogen)
-                {
+                    .any(|a| a.element == Element::Hydrogen);
+                // Use carbon as the signal for partial hydrogenation: neutral-valence
+                // deficits on heteroatoms alone can instead represent charged centres.
+                let missing_carbon_h = mol.common.atoms.iter().enumerate().any(|(i, a)| {
+                    a.element == Element::Carbon && bonds_avail(i, &mol.common, a.element) > 0
+                });
+
+                if !has_hydrogens || missing_carbon_h {
                     println!(
                         "Small molecule {} missing hydrogens; adding.",
                         mol.common.ident

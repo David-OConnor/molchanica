@@ -10,7 +10,7 @@ use crate::{
         aa_highlight::{AMINO_ACIDS, secondary_classes},
     },
     state::{AaSelection, State},
-    ui::misc::section_box,
+    ui::{COL_SPACING, misc::section_box},
     util::make_egui_color,
 };
 
@@ -85,7 +85,22 @@ pub(in crate::ui) fn aa_selection(state: &mut State, redraw: &mut bool, ui: &mut
         });
 
         ui.horizontal_wrapped(|ui| {
+            for label in ["All", "None", "Invert"] {
+                if ui.button(label).clicked() {
+                    settings.amino_acids = AMINO_ACIDS
+                        .into_iter()
+                        .filter(|aa| {
+                            label == "All"
+                                || (label == "Invert" && !settings.amino_acids.contains(aa))
+                        })
+                        .collect();
+                    settings.enabled = true;
+                }
+            }
+
+            ui.add_space(COL_SPACING);
             ui.label("Types:");
+
             for (label, group) in [
                 ("Hydrophobic / nonpolar", Group::Hydrophobic),
                 ("Hydrophilic / polar", Group::Hydrophilic),
@@ -116,22 +131,6 @@ pub(in crate::ui) fn aa_selection(state: &mut State, redraw: &mut bool, ui: &mut
                     settings.enabled = true;
                 }
             }
-        });
-
-        ui.horizontal_wrapped(|ui| {
-            for label in ["All", "None", "Invert"] {
-                if ui.button(label).clicked() {
-                    settings.amino_acids = AMINO_ACIDS
-                        .into_iter()
-                        .filter(|aa| {
-                            label == "All"
-                                || (label == "Invert" && !settings.amino_acids.contains(aa))
-                        })
-                        .collect();
-                    settings.enabled = true;
-                }
-            }
-            ui.label("Colors apply to all proteins; counts show the active protein (all chains).");
         });
 
         ui.horizontal_wrapped(|ui| {
