@@ -84,6 +84,7 @@ impl ToolWindowKind {
                 Tool::Chai1,
                 Tool::Protenix,
                 Tool::EsmFold2,
+                Tool::AlphaFold3,
             ],
             Self::SequenceDesign => &[Tool::ProteinMpnn, Tool::LigandMpnn],
             Self::BackboneDesign => &[Tool::RfDiffusion3],
@@ -280,22 +281,7 @@ fn replace_sequence_input(
                 .and_then(|items| items.get_mut(*entity))
                 .and_then(Value::as_object_mut)
                 .ok_or_else(|| format!("Molecule {} is missing in the YAML", entity + 1))?;
-            let old_kind = ["protein", "dna", "rna", "ligand"]
-                .into_iter()
-                .find(|old_kind| item.contains_key(*old_kind));
-            let old = old_kind.and_then(|old_kind| item.remove(old_kind));
-            let mut details = if old_kind == Some(kind) {
-                old.unwrap_or_else(|| json!({}))
-            } else {
-                let id = old.as_ref().and_then(|old| old.get("id")).cloned();
-                let mut details = json!({});
-                if let Some(id) = id {
-                    details["id"] = id;
-                }
-                details
-            };
-            details["sequence"] = json!(letters);
-            item.insert(kind.into(), details);
+            replace_keyed_entity(item, kind, &letters);
             serde_yaml::to_string(&document).map_err(|error| error.to_string())
         }
         SequenceTarget::Document { field, job, entity } if field == "input_json" => {
@@ -346,6 +332,8 @@ fn replace_sequence_input(
                 };
                 details["sequence"] = json!(letters);
                 item.insert(chain_key.into(), details);
+            } else if tool == Tool::AlphaFold3 {
+                replace_keyed_entity(item, kind, &letters);
             } else {
                 item.insert("type".into(), json!(kind));
                 item.insert("sequence".into(), json!(letters));
@@ -356,6 +344,28 @@ fn replace_sequence_input(
         }
         SequenceTarget::Document { .. } => Err("Unsupported sequence input document".into()),
     }
+}
+
+/// Put `letters` in a sequence entry keyed by its entity type, as Boltz's YAML and AlphaFold 3's
+/// JSON write them (`{"protein": {"id": "A", "sequence": ...}}`). An entry of the same type keeps
+/// its other details; one of another type keeps only its ID.
+fn replace_keyed_entity(item: &mut Map<String, Value>, kind: &str, letters: &str) {
+    let old_kind = ["protein", "dna", "rna", "ligand"]
+        .into_iter()
+        .find(|old_kind| item.contains_key(*old_kind));
+    let old = old_kind.and_then(|old_kind| item.remove(old_kind));
+    let mut details = if old_kind == Some(kind) {
+        old.unwrap_or_else(|| json!({}))
+    } else {
+        let id = old.as_ref().and_then(|old| old.get("id")).cloned();
+        let mut details = json!({});
+        if let Some(id) = id {
+            details["id"] = id;
+        }
+        details
+    };
+    details["sequence"] = json!(letters);
+    item.insert(kind.into(), details);
 }
 
 /// Byte offsets of each FASTA record's header and sequence body.
@@ -436,7 +446,10 @@ fn document_sequence_targets(
     let document: Value = if field == "yaml_spec" && tool == Tool::Boltz2 {
         serde_yaml::from_str(current).map_err(|error| format!("Invalid YAML: {error}"))?
     } else if field == "input_json"
-        && matches!(tool, Tool::OpenDde | Tool::Protenix | Tool::EsmFold2)
+        && matches!(
+            tool,
+            Tool::OpenDde | Tool::Protenix | Tool::EsmFold2 | Tool::AlphaFold3
+        )
     {
         serde_json::from_str(current).map_err(|error| format!("Invalid JSON: {error}"))?
     } else {

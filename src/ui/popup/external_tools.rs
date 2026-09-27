@@ -269,11 +269,18 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let tools = &mut state.ui.external_tools;
     tools.poll();
 
+    let changing_rdkit = matches!(tools.install_pending, Some((Tool::RdKit, _)))
+        || matches!(tools.uninstall_pending, Some((Tool::RdKit, _)));
     let install_finished = tools.poll_install();
     let uninstall_finished = tools.poll_uninstall();
 
     if install_finished || uninstall_finished {
         tools.start_probe();
+        if changing_rdkit {
+            // A Python executable can exist before pip finishes. Revisit any diagrams that
+            // fell back to ChEBI during installation, including reinstalls at the same path.
+            state.ui.reactions.diagrams = Default::default();
+        }
     }
 
     if !tools.probed_once {

@@ -1,25 +1,27 @@
 //! Skeletal molecule diagrams for the reaction viewer.
 //!
-//! ChEBI's public compound/structure endpoint supplies RDKit-generated SVGs, including
-//! outlined atom labels and stereochemical bonds. Reusing these avoids a local chemistry
-//! runtime and preserves the structure associated with the button's exact ChEBI ID.
-//! API: https://www.ebi.ac.uk/chebi/backend/api/docs/
+//! Prefer the local RDKit installation configured in Tools. Reaction participants only carry
+//! ChEBI IDs, so this route still fetches SMILES via bio_apis before drawing locally.
+//! Without a working RDKit installation, bio_apis::chebi supplies ChEBI's remote SVG.
 //!
 //! SVG is the interchange format; resvg rasterizes it off the UI thread at double the
-//! display resolution. egui owns the resulting textures. This module deliberately takes
-//! ChEBI IDs rather than SMILES: it displays existing depictions, not arbitrary molecules.
+//! display resolution. egui owns the resulting textures. HTTP belongs in bio_apis;
+//! the local depiction implementation belongs in bio_tools::rdkit.
 
 use std::{
     collections::HashMap,
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
     time::Duration,
 };
 
-use egui::{ColorImage, Context, TextureHandle, TextureOptions, Ui, vec2};
+use egui::{Color32, ColorImage, Context, TextureHandle, TextureOptions, Ui, vec2};
 
-pub const DIAGRAM_WIDTH: f32 = 300.0;
-const DIAGRAM_HEIGHT: f32 = 180.0;
+use crate::external_tools::{Tool, find_executable, find_rdkit_python};
+
+pub const DIAGRAM_WIDTH: f32 = 150.0;
+const DIAGRAM_HEIGHT: f32 = 90.0;
 const MAX_DOWNLOADS: usize = 4;
 const CACHE_CAPACITY: usize = 128;
 
@@ -41,6 +43,8 @@ struct CachedDiagram {
 pub struct DiagramCache {
     entries: HashMap<u32, CachedDiagram>,
     generation: u64,
+    rdkit_python: Option<PathBuf>,
+    foreground: Option<Color32>,
 }
 
 impl DiagramCache {
@@ -79,7 +83,7 @@ impl DiagramCache {
             match self.entries.get(&id).map(|cached| &cached.entry) {
                 Some(Entry::Ready(texture)) => {
                     ui.add(egui::Image::new(texture).fit_to_exact_size(size))
-                        .on_hover_text(format!("2D structure from ChEBI — CHEBI:{id}"));
+                        .on_hover_text(format!("2D structure for CHEBI:{id}"));
                 }
                 Some(Entry::Unavailable) => {
                     ui.weak("No 2D structure available from ChEBI.");
@@ -106,6 +110,14 @@ impl DiagramCache {
     /// Called after drawing so pagination and retries apply to the page actually on screen.
     /// Unstarted requests are not queued: switching pages gives the new page priority.
     pub fn request(&mut self, participants: &[(u32, bool)], ctx: &Context) {
+        let rdkit_python = find_executable(Tool::RdKit).ok();
+        let foreground = ctx.global_style().visuals.strong_text_color();
+        if rdkit_python != self.rdkit_python || self.foreground != Some(foreground) {
+            // Installing/uninstalling RDKit in Tools changes the backend without a restart.
+            self.entries.clear();
+            self.rdkit_python = rdkit_python;
+            self.foreground = Some(foreground);
+        }
         self.generation += 1;
 
         // Mark all displayed entries before eviction, including ones later in the list.
@@ -154,8 +166,10 @@ impl DiagramCache {
 
             let (tx, rx) = mpsc::channel();
             let ctx = ctx.clone();
+            let rdkit_python = self.rdkit_python.clone();
             thread::spawn(move || {
-                let _ = tx.send(load_chebi_diagram(id));
+                let python = rdkit_python.or_else(|| find_rdkit_python().ok());
+                let _ = tx.send(load_chebi_diagram(id, python.as_deref(), foreground));
                 ctx.request_repaint();
             });
             self.entries.insert(
@@ -175,42 +189,99 @@ impl DiagramCache {
     }
 }
 
-/// Fetch and render the SVG in a worker. ChEBI returns 404 for entities without structures.
-fn load_chebi_diagram(id: u32) -> Result<Option<ColorImage>, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
-        .build()
-        .into();
-    let url = format!(
-        "https://www.ebi.ac.uk/chebi/backend/api/public/compound/{id}/structure/?width=300&height=180"
-    );
-
-    let mut response = match agent.get(&url).call() {
-        Ok(response) => response,
-        Err(ureq::Error::StatusCode(404)) => return Ok(None),
-        Err(error) => return Err(format!("CHEBI:{id}: {error}")),
-    };
-    let svg = response
-        .body_mut()
-        .with_config()
-        .limit(2 * 1024 * 1024)
-        .read_to_vec()
-        .map_err(|error| format!("CHEBI:{id}: {error}"))?;
-
-    if svg.iter().all(u8::is_ascii_whitespace) {
-        return Ok(None);
+/// Choose the depiction backend and rasterize in a worker. Failures of a configured local
+/// installation are logged before falling back, so a broken environment doesn't hide diagrams.
+fn load_chebi_diagram(
+    id: u32,
+    rdkit_python: Option<&Path>,
+    foreground: Color32,
+) -> Result<Option<ColorImage>, String> {
+    if let Some(python) = rdkit_python {
+        match load_local_diagram(id, python, foreground) {
+            Ok(Some(image)) => {
+                println!(
+                    "Molecule diagram CHEBI:{id}: built locally with RDKit ({})",
+                    python.display()
+                );
+                return Ok(Some(image));
+            }
+            Ok(None) => {
+                println!(
+                    "Molecule diagram CHEBI:{id}: local RDKit selected, but ChEBI has no SMILES"
+                );
+                // ChEBI may still have a drawable Molfile for a generic structure.
+            }
+            Err(error) => {
+                println!(
+                    "Molecule diagram CHEBI:{id}: local RDKit failed; using remote ChEBI diagram: {error}"
+                );
+            }
+        }
     }
 
-    // The server outlines text, so fonts and a system font scan are unnecessary.
+    println!("Molecule diagram CHEBI:{id}: calling remote ChEBI diagram endpoint");
+    let Some(svg) = bio_apis::chebi::load_diagram(id, 300, 180)
+        .map_err(|error| format!("CHEBI:{id}: {error:?}"))?
+    else {
+        return Ok(None);
+    };
+    render_svg(&svg, foreground).map(Some)
+}
+
+fn load_local_diagram(
+    id: u32,
+    python: &Path,
+    foreground: Color32,
+) -> Result<Option<ColorImage>, String> {
+    println!(
+        "Molecule diagram CHEBI:{id}: fetching ChEBI SMILES for local RDKit (not a diagram request)"
+    );
+    let compound = bio_apis::chebi::load_compound(id)
+        .map_err(|error| format!("Unable to load CHEBI:{id} SMILES: {error:?}"))?;
+    let Some(smiles) = compound
+        .default_structure
+        .and_then(|structure| structure.smiles)
+    else {
+        return Ok(None);
+    };
+    let svg = bio_tools::rdkit::depict_smiles(python, &smiles, 300, 180)
+        .map_err(|error| error.to_string())?;
+    render_svg(&svg, foreground).map(Some)
+}
+
+fn render_svg(svg: &[u8], foreground: Color32) -> Result<ColorImage, String> {
+    // RDKit SVGs (local and ChEBI) use hex paints in inline styles and attributes.
+    // Remove the white paint and recolor the remaining bonds/outlined labels. Applying this
+    // before rasterization preserves antialiasing against the actual panel background.
+    static PAINT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let paint = PAINT.get_or_init(|| {
+        regex::Regex::new(r##"(?i)\b(fill|stroke)(\s*[:=]\s*['"]?)(#[0-9a-f]{6})\b"##).unwrap()
+    });
+    let svg = std::str::from_utf8(svg).map_err(|error| error.to_string())?;
+    let color = format!(
+        "#{:02X}{:02X}{:02X}",
+        foreground.r(),
+        foreground.g(),
+        foreground.b()
+    );
+    let styled = paint.replace_all(svg, |captures: &regex::Captures<'_>| {
+        let replacement = if captures[3].eq_ignore_ascii_case("#FFFFFF") {
+            "none"
+        } else {
+            &color
+        };
+        format!("{}{}{replacement}", &captures[1], &captures[2])
+    });
+
+    // Both backends outline text, so fonts and a system font scan are unnecessary.
     egui_extras::image::load_svg_bytes_with_size(
-        &svg,
+        styled.as_bytes(),
         egui::load::SizeHint::Size {
-            width: 600,
-            height: 360,
+            width: 300,
+            height: 180,
             maintain_aspect_ratio: true,
         },
         &Default::default(),
     )
-    .map(Some)
-    .map_err(|error| format!("Unable to render CHEBI:{id}: {error}"))
+    .map_err(|error| format!("Unable to render molecule SVG: {error}"))
 }

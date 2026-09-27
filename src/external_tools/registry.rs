@@ -19,11 +19,13 @@ use super::paths::{data_root, managed_venv_dir};
 /// status panel and be resolvable through [`find_executable`](super::find_executable).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Tool {
+    RdKit,
     OpenDde,
     Boltz2,
     Chai1,
     Protenix,
     EsmFold2,
+    AlphaFold3,
     ProteinMpnn,
     LigandMpnn,
     RfDiffusion3,
@@ -35,15 +37,17 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 13] = [
         Self::OpenDde,
         Self::Boltz2,
         Self::Chai1,
         Self::Protenix,
         Self::EsmFold2,
+        Self::AlphaFold3,
         Self::LigandMpnn,
         Self::ProteinMpnn,
         Self::RfDiffusion3,
+        Self::RdKit,
         Self::Gromacs,
         Self::Orca,
         Self::Gemmi,
@@ -341,6 +345,24 @@ const MANAGED_HINT: &str = "Install from Molchanica's Tools panel.";
 
 /// The single description of every tool. See the module docs for how it is used.
 pub static REGISTRY: &[ToolSpec] = &[
+    ToolSpec {
+        tool: Tool::RdKit,
+        identity: ToolIdentity::Shared("rdkit"),
+        kind: ToolKind::VenvPython,
+        adapter: ToolAdapter::External,
+        executable: "python",
+        exe_override_env: "RDKIT_PYTHON",
+        root_override_env: Some("MOLCHANICA_RDKIT_ROOT"),
+        bundle_root_override_env: None,
+        bundle_subdir: None,
+        colocated: false,
+        required_assets: &[],
+        molchanica_managed: true,
+        install_hint: "Install RDKit from Tools, or set RDKIT_PYTHON to a Python interpreter with RDKit installed.",
+        version_args: &["-I", "-c", bio_tools::rdkit::PROBE],
+        version_marker: "RDKit",
+        slow_probe: true,
+    },
     // ---------------------------------------------------------------------------------------------
     // Structure prediction, run through bio_tools' shared adapter
     // ---------------------------------------------------------------------------------------------
@@ -436,6 +458,37 @@ pub static REGISTRY: &[ToolSpec] = &[
         version_args: &["--help"],
         version_marker: "esm-fold",
         slow_probe: true,
+    },
+    // AlphaFold 3's code is installed by `bio_tools`, but its model parameters are Google's, under
+    // non-commercial terms; `bio_tools` fetches them only when ALPHAFOLD3_ACCEPT_WEIGHTS_TERMS is
+    // set, so the parameters are a required asset the user may have to place themselves. Runs
+    // take their MSAs from the ColabFold server, so the genetic databases are not required.
+    ToolSpec {
+        tool: Tool::AlphaFold3,
+        identity: ToolIdentity::Shared("alphafold3"),
+        kind: ToolKind::VenvPython,
+        adapter: ToolAdapter::SharedAdapter,
+        executable: "python",
+        exe_override_env: "MOLCHANICA_ALPHAFOLD3_PYTHON",
+        root_override_env: Some("MOLCHANICA_ALPHAFOLD3_VENV_DIR"),
+        bundle_root_override_env: Some("MOLCHANICA_ALPHAFOLD3_ROOT"),
+        bundle_subdir: Some("alphafold3"),
+        colocated: false,
+        required_assets: &[
+            RequiredAsset {
+                relative_path: "source/run_alphafold.py",
+                description: "the AlphaFold 3 checkout",
+            },
+            RequiredAsset {
+                relative_path: "models/af3.bin.zst",
+                description: "the AlphaFold 3 model parameters (Google's af3.bin.zst, from                               https://storage.googleapis.com/alphafold3/af3.bin.zst under the                               AlphaFold 3 Model Parameters Terms of Use)",
+            },
+        ],
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
+        version_args: &["--version"],
+        version_marker: "Python 3",
+        slow_probe: false,
     },
     // ---------------------------------------------------------------------------------------------
     // Sequence and backbone design, run through bio_tools' shared adapter
@@ -616,7 +669,10 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "linux"))]
     fn only_the_linux_only_recipes_are_gated() {
-        assert_eq!(gated(), ["Chai-1", "Protenix-v2", "ESMFold 2"]);
+        assert_eq!(
+            gated(),
+            ["Chai-1", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+        );
     }
 
     /// The tools the user installs themselves are never gated, whatever `bio_tools` says about a

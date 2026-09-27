@@ -10,6 +10,32 @@ use std::{
 
 use super::registry::{Tool, ToolKind, ToolSpec};
 
+static SYSTEM_RDKIT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// RDKit is a small CPU library, so an existing system installation is also usable.
+/// Probe it once per session, off the UI thread. Managed installs and explicit overrides win.
+pub fn find_rdkit_python() -> io::Result<PathBuf> {
+    if let Ok(python) = find_executable(Tool::RdKit) {
+        return Ok(python);
+    }
+    if env::var_os("RDKIT_PYTHON").is_some() || env::var_os("MOLCHANICA_RDKIT_ROOT").is_some() {
+        return find_executable(Tool::RdKit);
+    }
+
+    SYSTEM_RDKIT.get_or_init(|| {
+        ["python", "python3"]
+            .into_iter()
+            .filter_map(find_on_path)
+            .find(|python| {
+                let probe = bio_tools::run::CommandSpec::new(python.as_os_str())
+                    .args(["-I", "-c", bio_tools::rdkit::PROBE])
+                    .timeout(std::time::Duration::from_secs(10));
+                bio_tools::run::run(&probe).is_ok()
+            })
+    });
+    find_executable(Tool::RdKit)
+}
+
 /// The single directory Molchanica keeps everything it writes in.
 ///
 /// The preferences file, `managed_molecules/`, `gpu_cache/`, `process_executables/`, and
@@ -210,7 +236,9 @@ pub fn home_directory() -> Option<PathBuf> {
 /// Resolve a tool to an absolute path, or explain what to do about it.
 ///
 /// The override environment variable always wins, then the Molchanica-managed location. Native
-/// executables may additionally fall back to `PATH`; Python tools never do. A user who ran our
+/// executables may additionally fall back to `PATH`; Python tools use managed environments.
+/// RDKit alone may reuse a system interpreter already verified by `find_rdkit_python`.
+/// A user who ran our
 /// installer must get the uv-managed interpreter we built rather than an unrelated `pip install`.
 pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
     let spec = tool.spec();
@@ -242,6 +270,18 @@ pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
             .and_then(|root| executable_in(&venv_bin(&root), "python")),
         ToolKind::Executable => find_native_executable(spec),
     };
+
+    let found = found.or_else(|| {
+        if tool == Tool::RdKit && env::var_os("MOLCHANICA_RDKIT_ROOT").is_none() {
+            SYSTEM_RDKIT
+                .get()
+                .cloned()
+                .flatten()
+                .filter(|python| python.is_file())
+        } else {
+            None
+        }
+    });
 
     found.ok_or_else(|| {
         io::Error::new(

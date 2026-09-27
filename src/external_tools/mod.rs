@@ -23,9 +23,9 @@
 //!
 //! How a tool is driven is set by its [`ToolAdapter`]:
 //!
-//! - **Shared adapter** (OpenDDE, Boltz-2, Chai-1, ESMFold 2, ProteinMPNN, LigandMPNN,
-//!   RFdiffusion3): inputs, validation, and command lines all belong to `bio_tools`' Python
-//!   adapters. [`tool_form`] loads the form contract and presets `bio_tools` publishes, and
+//! - **Shared adapter** (OpenDDE, Boltz-2, Chai-1, Protenix, ESMFold 2, AlphaFold 3, ProteinMPNN,
+//!   LigandMPNN, RFdiffusion3): inputs, validation, and command lines all belong to `bio_tools`'
+//!   Python adapters. [`tool_form`] loads the form contract and presets `bio_tools` publishes, and
 //!   [`shared_adapter`] runs a submitted form. One form, runner, and result browser
 //!   (`ui::popup::tool_runner`) serves all of them, so there is no per-tool code for these here.
 //! - **External** (GROMACS, ORCA, Gemmi): driven from elsewhere in Molchanica; this module only
@@ -58,6 +58,7 @@
 //!             proteinmpnn/         whose newest wheel is cp312.
 //!             rfd3/
 //!         LigandMPNN/              a checkout plus its downloaded model weights
+//!         alphafold3/              source/ checkout, models/ for the user's af3.bin.zst
 //!         ProteinMPNN/
 //!         results/<slug>/          every shared-adapter run, kept: inputs, logs, and outputs
 //!         desktop_inputs/          structures written from opened molecules for those runs
@@ -84,7 +85,7 @@ pub mod pdb_write;
 
 pub use manage::{install, uninstall};
 pub use paths::{
-    bundle_root, data_root, find_executable, home_directory, migrate_legacy_data,
+    bundle_root, data_root, find_executable, find_rdkit_python, home_directory, migrate_legacy_data,
     process_executables_dir,
 };
 pub use process::{RunControl, ToolWorkspace, run_tool};

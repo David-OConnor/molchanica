@@ -115,6 +115,10 @@ pub fn is_installed(tool: Tool) -> bool {
 
 /// Probe one tool. Runs a subprocess, so keep it off the UI thread.
 pub fn check(tool: Tool) -> ToolStatus {
+    if tool == Tool::RdKit {
+        // This method already runs off-thread; discovery verifies system RDKit before reuse.
+        let _ = super::paths::find_rdkit_python();
+    }
     let spec = tool.spec();
 
     let executable = match find_executable(tool) {
