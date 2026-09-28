@@ -523,8 +523,8 @@ pub struct StateVolatile {
     /// Ctrl, alt, shift etc.
     pub key_modifiers: Modifiers,
     pub operating_mode: OperatingMode,
-    /// Allows restoring after entering the mol edit mode.
-    pub primary_mode_cam: Camera,
+    /// Saved on entering the mol editor, and restored on exiting it.
+    pub primary_mode_cam: Option<PrimaryModeCam>,
     pub md_local: MdStateLocal,
     pub orbit_center: Option<(MolType, usize)>,
     pub alignment: StateAlignment,
@@ -1220,6 +1220,28 @@ impl Default for UiVisibility {
             pharmacophore_list: false,
             sidebar: true,
             aa_selection: false,
+        }
+    }
+}
+
+/// The primary-mode camera, saved on entering the mol editor, and restored on exiting it. We don't
+/// store the whole `Camera`: Its aspect ratio and projection matrix may be stale by the time we exit,
+/// e.g. from a window resize.
+#[derive(Clone, Debug)]
+pub struct PrimaryModeCam {
+    pub position: Vec3,
+    pub orientation: Quaternion,
+    /// Separate from `StateVolatile::control_scheme_prev`, which molecule manipulation in the
+    /// editor overwrites.
+    pub control_scheme: ControlScheme,
+}
+
+impl PrimaryModeCam {
+    pub fn new(cam: &Camera, control_scheme: ControlScheme) -> Self {
+        Self {
+            position: cam.position,
+            orientation: cam.orientation,
+            control_scheme,
         }
     }
 }

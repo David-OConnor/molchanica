@@ -21,7 +21,7 @@ use dynamics::{
     MolDynamics, ParamError, Solvent, TAU_TEMP_DEFAULT, params::FfParamSet, snapshot::Snapshot,
 };
 use egui::FontFamily;
-use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOverlay};
+use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, FWD_VEC, Scene, TextOverlay};
 use lin_alg::{
     f32::{Quaternion as QuaternionF32, Vec3 as Vec3F32},
     f64::Vec3,
@@ -41,7 +41,7 @@ use na_seq::{
 
 use crate::{
     cam,
-    cam::{MolCameraTarget, move_cam_to_mol},
+    cam::MOVE_TO_CAM_DIST,
     drawing::{
         EntityClass, LABEL_COLOR_ATOM, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MoleculeView,
         atoms_bonds::{
@@ -55,7 +55,7 @@ use crate::{
     render::{set_flashlight, set_static_light},
     selection::{Selection, ViewSelLevel},
     split_join::start_structure_lookup,
-    state::{OperatingMode, State, StateUi},
+    state::{OperatingMode, PrimaryModeCam, State, StateUi},
     ui::{mol_editor::ATOM_SN_LABEL_SIZE, util::handle_redraw},
     util::{RedrawFlags, aromatic_ring_centroid, find_neighbor_posit, handle_err},
 };
@@ -596,7 +596,15 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
     state.ui.ui_vis.sidebar_mol_details = false;
     state.ui.ui_vis.pharmacophore_list = true;
 
-    state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
+    // Save the camera, to restore on exit. If a molecule manipulation is in progress, the mouse
+    // controls are temporarily disabled; save the scheme the manipulation would restore.
+    let control_scheme = if matches!(state.volatile.mol_manip.mode, ManipMode::None) {
+        scene.input_settings.control_scheme
+    } else {
+        state.volatile.control_scheme_prev
+    };
+    state.volatile.primary_mode_cam = Some(PrimaryModeCam::new(&scene.camera, control_scheme));
+
     state.volatile.orbit_center_prev = state.volatile.orbit_center;
     state.volatile.depth_mode_prev = state.to_save.depth_mode;
 
@@ -648,7 +656,6 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
         Selection::AtomLig((0, 0))
     };
 
-    state.volatile.primary_mode_cam = scene.camera.clone();
     // Look down -Z, so 2D layouts in the XY plane display with +X right, and +Y up.
     scene.camera.position = Vec3F32::new(0., 0., INIT_CAM_DIST);
     scene.camera.orientation = cam::front_orientation();
@@ -684,25 +691,14 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
 pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     state.volatile.operating_mode = OperatingMode::Primary;
 
-    scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
-
-    // Update the orbit center
-    if let Some(i) = state.mol_editor.mol_i_in_state
-        && let Some(mol) = &state.ligands.get(i)
-    {
-        // This handles cam posit and orbit center.
-        move_cam_to_mol(
-            MolCameraTarget::new(&mol.common, (MolType::Ligand, i)),
-            &mut None,
-            scene,
-            &mut state.volatile.active_mol,
-            Vec3::new_zero(),
-            updates,
-        );
-    } else {
-        scene.camera = state.volatile.primary_mode_cam.clone();
-        state.volatile.orbit_center = state.volatile.orbit_center_prev;
+    // Restore the camera to how it was prior to entering the editor.
+    if let Some(cam) = state.volatile.primary_mode_cam.take() {
+        scene.camera.position = cam.position;
+        scene.camera.orientation = cam.orientation;
+        scene.input_settings.control_scheme = cam.control_scheme;
     }
+    state.volatile.orbit_center = state.volatile.orbit_center_prev;
+    updates.camera = true;
 
     state.to_save.depth_mode = state.volatile.depth_mode_prev;
     cam::set_fog(state, &mut scene.camera);
@@ -1062,6 +1058,13 @@ pub fn exit_and_add(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     name_edited_mol(state, lig_i);
     store_edited_mol(state, lig_i, None);
 
+    // The editor centers the molecule at the origin, which may be out of view of the camera we
+    // restore on exit. Place it in front of that camera, as when opening a molecule.
+    if let Some(cam) = &state.volatile.primary_mode_cam {
+        let posit = cam.position + cam.orientation.rotate_vec(FWD_VEC) * MOVE_TO_CAM_DIST;
+        state.ligands[lig_i].common.move_to(posit.into());
+    }
+
     exit_edit_mode(state, scene, updates);
 }
 
@@ -1079,6 +1082,9 @@ pub fn exit_and_update(
         return;
     };
 
+    // The editor centers the molecule at the origin; we move it back to here.
+    let centroid_prev = lig.common.centroid();
+
     // Load the edited molecule back into the state.
     lig.common.atoms = editor.mol.common.atoms.clone();
     lig.common.bonds = editor.mol.common.bonds.clone();
@@ -1094,11 +1100,11 @@ pub fn exit_and_update(
     let path_prev = name_edited_mol(state, lig_i);
     store_edited_mol(state, lig_i, path_prev.as_deref());
 
-    // We've reset the positions, so reset the camera. And update the prev,
-    // so exiting doesn't override it.
-    // move_cam_to_active_mol(state, scene, Vec3::new_zero(), updates);
-    // state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
-    // state.volatile.orbit_center_prev = state.volatile.orbit_center.clone();
+    // Keep it where it was prior to editing, e.g. relative to other molecules, and to the camera
+    // we restore on exit.
+    if let Some(lig) = state.ligands.get_mut(lig_i) {
+        lig.common.move_to(centroid_prev);
+    }
 
     exit_edit_mode(state, scene, updates);
 }
