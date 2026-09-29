@@ -3,7 +3,9 @@
 use std::time::Instant;
 
 use bio_apis::{
-    ReqError, amber_geostd, chebi, drugbank, pdbe,
+    ReqError, amber_geostd,
+    amber_geostd::GeostdData,
+    chebi, drugbank, pdbe,
     pubchem::{self, StructureSearchNamespace},
     rcsb, uniprot,
 };
@@ -156,11 +158,29 @@ pub fn load_atom_coords(
     redraw: &mut bool,
     reset_cam: &mut bool,
 ) -> bool {
+    let result = load_cif(source, ident);
+    open_atom_coords(
+        source, ident, result, state, scene, updates, redraw, reset_cam,
+    )
+}
+
+/// Apply a downloaded structure on the UI thread. The query bar downloads and parses it in a
+/// worker, then uses this path for the same cache, molecule, and rendering updates.
+pub fn open_atom_coords(
+    source: CifSource,
+    ident: &str,
+    result: Result<(MmCif, String), ReqError>,
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut bool,
+    reset_cam: &mut bool,
+) -> bool {
     let source_name = source.name();
     println!("Loading atom data from {source_name}...");
     let start = Instant::now();
 
-    match load_cif(source, ident) {
+    match result {
         Ok((cif, cif_text)) => {
             // Key the cache on the entry ID the file itself reports, not on the query text: RCSB
             // serves the same structure for the bare 4-character ident and the 12-character
@@ -281,7 +301,29 @@ pub fn load_geostd2(
     load_frcmod: bool,
     engine_updates: &mut EngineUpdates,
 ) {
-    match amber_geostd::load_mol_files(ident) {
+    let result = amber_geostd::load_mol_files(ident);
+    open_geostd2(
+        state,
+        scene,
+        ident,
+        load_mol2,
+        load_frcmod,
+        engine_updates,
+        result,
+    );
+}
+
+/// Apply GeoStd data already fetched by a worker on the UI thread.
+pub fn open_geostd2(
+    state: &mut State,
+    scene: &mut Scene,
+    ident: &str,
+    load_mol2: bool,
+    load_frcmod: bool,
+    engine_updates: &mut EngineUpdates,
+    result: Result<GeostdData, ReqError>,
+) {
+    match result {
         Ok(data) => {
             let cache_path = if load_mol2 {
                 match managed_mols::store_geostd(

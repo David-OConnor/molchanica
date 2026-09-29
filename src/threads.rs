@@ -33,6 +33,7 @@ use crate::{
     sfc_mesh::apply_mesh_colors,
     split_join::{StructureLookup, on_structure_lookup},
     state::State,
+    ui::{QueryResult, apply_query_result},
     util::{RedrawFlags, handle_err, handle_success},
 };
 
@@ -41,6 +42,8 @@ use crate::{
 #[allow(clippy::type_complexity)]
 #[derive(Default)]
 pub struct ThreadReceivers {
+    /// Result of the query bar's current molecule lookup.
+    pub query: Option<Receiver<QueryResult>>,
     /// Built-in molecule databases are decoded only if their popup is opened.
     pub builtin_mol_dbs: Option<Receiver<BuiltinMolDbResult>>,
     /// Previous-session files are parsed serially on one worker and applied one at a time on the
@@ -96,7 +99,8 @@ pub struct SessionRestoreFailure {
 impl ThreadReceivers {
     /// True while any background worker still needs periodic non-blocking polling.
     pub fn has_pending(&self) -> bool {
-        self.builtin_mol_dbs.is_some()
+        self.query.is_some()
+            || self.builtin_mol_dbs.is_some()
             || self.session_restore.is_some()
             || !self.mol_pending_data_avail.is_empty()
             || self.pubchem_properties_avail.is_some()
@@ -544,8 +548,30 @@ pub fn handle_thread_rx(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
+    reset_cam: &mut bool,
     updates: &mut EngineUpdates,
 ) {
+    let query_result = state
+        .volatile
+        .thread_receivers
+        .query
+        .as_ref()
+        .map(Receiver::try_recv);
+    match query_result {
+        Some(Ok(result)) => {
+            state.volatile.thread_receivers.query = None;
+            apply_query_result(state, scene, redraw, reset_cam, updates, result);
+        }
+        Some(Err(TryRecvError::Disconnected)) => {
+            state.volatile.thread_receivers.query = None;
+            handle_err(
+                &mut state.ui,
+                "Molecule query worker stopped unexpectedly".to_owned(),
+            );
+        }
+        Some(Err(TryRecvError::Empty)) | None => {}
+    }
+
     let builtin_db_result = state
         .volatile
         .thread_receivers

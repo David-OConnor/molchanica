@@ -7,9 +7,12 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     slice,
+    sync::mpsc,
+    thread,
 };
 
-use bio_apis::{chebi, pubchem::find_cids_from_search, uniprot};
+use bio_apis::{amber_geostd, chebi, pubchem::find_cids_from_search, uniprot};
+use bio_files::MmCif;
 use egui::{Color32, Response, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
@@ -30,8 +33,8 @@ use crate::{
     external_tools::home_directory,
     file_io::{
         download_mols::{
-            CifSource, DownloadedSmallMol, load_atom_coords, load_atom_coords_rcsb, load_sdf_chebi,
-            load_sdf_drugbank, load_sdf_pdbe, load_sdf_pubchem,
+            CifSource, DownloadedSmallMol, load_cif, load_sdf_chebi, load_sdf_drugbank,
+            load_sdf_pdbe, load_sdf_pubchem, open_atom_coords, open_geostd2,
         },
         managed_mols::{self, ManagedMolProvider},
         save_mol_set_as_gro,
@@ -829,24 +832,6 @@ fn query_btn(ui: &mut Ui, text: &str, is_enter_target: bool) -> Response {
     })
 }
 
-/// Download and open a molecule from ChEBI, by numeric accession. Shared by the bare-number query,
-/// where ChEBI is the alternative to PubChem, and the `chebi:`-prefixed one, where it's the only
-/// database consulted.
-fn load_chebi_id(
-    state: &mut State,
-    scene: &mut Scene,
-    redraw: &mut RedrawFlags,
-    updates: &mut EngineUpdates,
-    id: u32,
-) {
-    let result = load_sdf_chebi(id)
-        .map_err(|error| format!("Error loading SDF file: {error:?}"))
-        .and_then(|downloaded| open_chebi_download(state, scene, redraw, updates, id, downloaded));
-    if let Err(error) = result {
-        handle_err(&mut state.ui, error);
-    }
-}
-
 /// Apply an already-downloaded ChEBI structure on the UI thread. Shared with the Rhea popup's
 /// background downloads so identifiers, managed files, history, and rendering stay consistent.
 pub(in crate::ui) fn open_chebi_download(
@@ -879,120 +864,313 @@ pub(in crate::ui) fn open_chebi_download(
     Ok(())
 }
 
-/// Download and open a chemical component, e.g. a ligand like `ATP`, from PDBe.
-fn load_pdbe_ligand(
-    state: &mut State,
-    scene: &mut Scene,
-    redraw: &mut RedrawFlags,
-    updates: &mut EngineUpdates,
-    ident: &str,
-) {
-    let ident = ident.trim().to_uppercase();
-
-    let downloaded = match load_sdf_pdbe(&ident) {
-        Ok(d) => d,
-        Err(e) => {
-            handle_err(
-                &mut state.ui,
-                format!("Error loading chemical component {ident} from PDBe: {e:?}"),
-            );
-            return;
-        }
-    };
-
-    // Store our own SDF rather than PDBe's: theirs has no data fields, and ours preserves the
-    // component ID across restarts.
-    let cache_result = managed_mols::store_sdf(
-        &state.volatile.prefs_dir,
-        ManagedMolProvider::Pdbe,
-        &ident,
-        &ident,
-        &downloaded.mol.to_sdf(),
-    );
-    let Some(cache_path) = report_cache_result(state, cache_result) else {
-        return;
-    };
-
-    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
-    redraw.ligand = true;
-
-    handle_success(
-        &mut state.ui,
-        format!("Loaded chemical component {ident} from PDBe (over the internet)"),
-    );
+enum QueryRequest {
+    Protein(CifSource, String),
+    Uniprot(String),
+    PubchemCid(u32),
+    PubchemSearch(String),
+    Chebi(u32),
+    PdbeLigand(String),
+    Drugbank(String),
+    Geostd(String),
+    Smiles(String),
 }
 
-/// Download and open a protein structure by UniProt accession. This is a 2-hop lookup: PDBe ranks
-/// the protein's experimental structures by sequence coverage, then resolution, and we download the
-/// best from RCSB. For a protein with no experimental structure, we load its AlphaFold DB prediction.
-fn load_uniprot(
+pub(crate) enum QueryResult {
+    Protein {
+        source: CifSource,
+        ident: String,
+        cif: MmCif,
+        cif_text: String,
+        message: Option<String>,
+    },
+    Small {
+        downloaded: DownloadedSmallMol,
+        provider: ManagedMolProvider,
+        key: String,
+        query: String,
+        message: String,
+        canonical_sdf: bool,
+    },
+    Geostd {
+        ident: String,
+        data: amber_geostd::GeostdData,
+    },
+    Smiles {
+        input: String,
+        mol: MoleculeSmall,
+    },
+    NoResults,
+    Error(String),
+}
+
+fn start_query(state: &mut State, request: QueryRequest) {
+    if state.volatile.thread_receivers.query.is_some() {
+        return;
+    }
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(run_query(request));
+    });
+    state.volatile.thread_receivers.query = Some(rx);
+}
+
+fn run_query(request: QueryRequest) -> QueryResult {
+    match request {
+        QueryRequest::Protein(source, ident) => protein_query(source, ident, None),
+        QueryRequest::Uniprot(input) => {
+            let accession = uniprot::parse_accession(&input);
+            let pdb_ids = match uniprot::best_pdb_ids(&accession) {
+                Ok(ids) => ids,
+                Err(error) => {
+                    return QueryResult::Error(format!(
+                        "Error finding structures of UniProt {accession}. Is the accession correct? \
+                         {error:?}"
+                    ));
+                }
+            };
+
+            if let Some(pdb_id) = pdb_ids.first() {
+                protein_query(
+                    CifSource::Rcsb,
+                    pdb_id.clone(),
+                    Some(format!(
+                        "Loaded {}, the best of {} experimental structures of UniProt \
+                         {accession} by sequence coverage and resolution, from RCSB \
+                         (over the internet)",
+                        pdb_id.to_uppercase(),
+                        pdb_ids.len(),
+                    )),
+                )
+            } else {
+                protein_query(
+                    CifSource::AlphaFold,
+                    accession.clone(),
+                    Some(format!(
+                        "UniProt {accession} has no experimental structures; loaded its predicted \
+                         structure from AlphaFold DB (over the internet)"
+                    )),
+                )
+            }
+        }
+        QueryRequest::PubchemCid(cid) => pubchem_query(cid, cid.to_string(), None),
+        QueryRequest::PubchemSearch(input) => {
+            let cids = match find_cids_from_search(&input, false) {
+                Ok(cids) => cids,
+                Err(error) => {
+                    return QueryResult::Error(format!(
+                        "Error finding a mol from Pubchem {error:?}"
+                    ));
+                }
+            };
+            let Some(&cid) = cids.first() else {
+                return QueryResult::NoResults;
+            };
+            let cids_str = cids
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            pubchem_query(
+                cid,
+                input,
+                Some(format!(
+                    "Found the following Pubchem CIDs: {cids_str}. Loaded {cid} from \
+                     PubChem (over the internet)"
+                )),
+            )
+        }
+        QueryRequest::Chebi(id) => match load_sdf_chebi(id) {
+            Ok(downloaded) => QueryResult::Small {
+                downloaded,
+                provider: ManagedMolProvider::Chebi,
+                key: id.to_string(),
+                query: id.to_string(),
+                message: format!(
+                    "Loaded CHEBI:{id} from ChEBI (over the internet). Note that ChEBI \
+                     structures are 2D."
+                ),
+                canonical_sdf: true,
+            },
+            Err(error) => QueryResult::Error(format!("Error loading SDF file: {error:?}")),
+        },
+        QueryRequest::PdbeLigand(ident) => {
+            let ident = ident.trim().to_uppercase();
+            match load_sdf_pdbe(&ident) {
+                Ok(downloaded) => QueryResult::Small {
+                    downloaded,
+                    provider: ManagedMolProvider::Pdbe,
+                    key: ident.clone(),
+                    query: ident.clone(),
+                    message: format!(
+                        "Loaded chemical component {ident} from PDBe (over the internet)"
+                    ),
+                    canonical_sdf: true,
+                },
+                Err(error) => QueryResult::Error(format!(
+                    "Error loading chemical component {ident} from PDBe: {error:?}"
+                )),
+            }
+        }
+        QueryRequest::Drugbank(ident) => match load_sdf_drugbank(&ident) {
+            Ok(downloaded) => QueryResult::Small {
+                downloaded,
+                provider: ManagedMolProvider::Drugbank,
+                key: ident.clone(),
+                query: ident.clone(),
+                message: format!("Loaded {ident} from DrugBank (over the internet)"),
+                canonical_sdf: false,
+            },
+            Err(error) => QueryResult::Error(format!("Error loading SDF file: {error:?}")),
+        },
+        QueryRequest::Geostd(ident) => match amber_geostd::load_mol_files(&ident) {
+            Ok(data) => QueryResult::Geostd { ident, data },
+            Err(error) => {
+                QueryResult::Error(format!("Unable to load Amber Geostd data: {error:?}"))
+            }
+        },
+        QueryRequest::Smiles(input) => {
+            let common = match MoleculeCommon::from_smiles(&input) {
+                Ok(common) => common,
+                Err(error) => {
+                    return QueryResult::Error(format!(
+                        "Error loading a molecule from SMILES: {error:?}"
+                    ));
+                }
+            };
+            let smiles_start: String = input.chars().take(5).collect();
+            let mol = MoleculeSmall::new(
+                format!("From SMILES {smiles_start}"),
+                common.atoms,
+                common.bonds,
+                HashMap::new(),
+                None,
+            );
+            QueryResult::Smiles { input, mol }
+        }
+    }
+}
+
+fn protein_query(source: CifSource, ident: String, message: Option<String>) -> QueryResult {
+    match load_cif(source, &ident) {
+        Ok((cif, cif_text)) => QueryResult::Protein {
+            source,
+            ident,
+            cif,
+            cif_text,
+            message,
+        },
+        Err(error) => QueryResult::Error(format!(
+            "Problem loading {ident} from {}: {error:?}",
+            source.name(),
+        )),
+    }
+}
+
+fn pubchem_query(cid: u32, query: String, message: Option<String>) -> QueryResult {
+    match load_sdf_pubchem(cid) {
+        Ok(downloaded) => QueryResult::Small {
+            downloaded,
+            provider: ManagedMolProvider::Pubchem,
+            key: cid.to_string(),
+            query,
+            message: message
+                .unwrap_or_else(|| format!("Loaded CID {cid} from PubChem (over the internet)")),
+            canonical_sdf: false,
+        },
+        Err(error) => QueryResult::Error(format!("Error loading SDF file: {error:?}")),
+    }
+}
+
+/// Finish a query on the UI thread, after the worker has sent its downloaded data.
+pub(crate) fn apply_query_result(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
     reset_cam: &mut bool,
     updates: &mut EngineUpdates,
-    inp: &str,
+    result: QueryResult,
 ) {
-    let accession = uniprot::parse_accession(inp);
-
-    let pdb_ids = match uniprot::best_pdb_ids(&accession) {
-        Ok(ids) => ids,
-        Err(e) => {
-            handle_err(
-                &mut state.ui,
-                format!(
-                    "Error finding structures of UniProt {accession}. Is the accession correct? {e:?}"
-                ),
-            );
-            return;
+    match result {
+        QueryResult::Protein {
+            source,
+            ident,
+            cif,
+            cif_text,
+            message,
+        } => {
+            if open_atom_coords(
+                source,
+                &ident,
+                Ok((cif, cif_text)),
+                state,
+                scene,
+                updates,
+                &mut redraw.peptide,
+                reset_cam,
+            ) {
+                state.ui.db_input.clear();
+                if let Some(message) = message {
+                    handle_success(&mut state.ui, message);
+                }
+            }
         }
-    };
-
-    let Some(pdb_id) = pdb_ids.first() else {
-        let loaded = load_atom_coords(
-            CifSource::AlphaFold,
-            &accession,
-            state,
-            scene,
-            updates,
-            &mut redraw.peptide,
-            reset_cam,
-        );
-
-        if loaded {
-            state.ui.db_input = String::new();
+        QueryResult::Small {
+            downloaded,
+            provider,
+            key,
+            query,
+            message,
+            canonical_sdf,
+        } => {
+            let cache_path = if canonical_sdf {
+                report_cache_result(
+                    state,
+                    managed_mols::store_sdf(
+                        &state.volatile.prefs_dir,
+                        provider,
+                        &key,
+                        &query,
+                        &downloaded.mol.to_sdf(),
+                    ),
+                )
+            } else {
+                cache_sdf_source(state, provider, &key, &query, &downloaded.source_text)
+            };
+            let Some(cache_path) = cache_path else {
+                return;
+            };
+            open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
+            redraw.ligand = true;
+            handle_success(&mut state.ui, message);
+        }
+        QueryResult::Geostd { ident, data } => {
+            open_geostd2(state, scene, &ident, true, true, updates, Ok(data));
+            state.ui.db_input.clear();
+        }
+        QueryResult::Smiles { input, mol } => {
+            let cache_result = managed_mols::store_sdf(
+                &state.volatile.prefs_dir,
+                ManagedMolProvider::Smiles,
+                &managed_mols::text_key(&input),
+                &input,
+                &mol.to_sdf(),
+            );
+            let Some(cache_path) = report_cache_result(state, cache_result) else {
+                return;
+            };
+            open_lig_from_input(state, mol, Some(&cache_path), scene, updates);
+            redraw.ligand = true;
             handle_success(
                 &mut state.ui,
-                format!(
-                    "UniProt {accession} has no experimental structures; loaded its predicted \
-                     structure from AlphaFold DB (over the internet)"
-                ),
+                "Built this molecule from the SMILES entered; no database".to_owned(),
             );
         }
-        return;
-    };
-
-    let loaded = load_atom_coords(
-        CifSource::Rcsb,
-        pdb_id,
-        state,
-        scene,
-        updates,
-        &mut redraw.peptide,
-        reset_cam,
-    );
-
-    if loaded {
-        state.ui.db_input = String::new();
-        handle_success(
-            &mut state.ui,
-            format!(
-                "Loaded {}, the best of {} experimental structures of UniProt {accession} by \
-                 sequence coverage and resolution, from RCSB (over the internet)",
-                pdb_id.to_uppercase(),
-                pdb_ids.len(),
-            ),
-        );
+        QueryResult::NoResults => {
+            handle_success(&mut state.ui, "No results found on Pubchem".to_owned());
+        }
+        QueryResult::Error(error) => handle_err(&mut state.ui, error),
     }
 }
 
@@ -1002,10 +1180,6 @@ fn load_uniprot(
 /// inp is trimmed and case-preserving; inp_l is its ASCII-lowercase form.
 pub(in crate::ui) fn load_mol_from_query(
     state: &mut State,
-    scene: &mut Scene,
-    redraw: &mut RedrawFlags,
-    reset_cam: &mut bool,
-    updates: &mut EngineUpdates,
     ui: &mut Ui,
     inp: &str,
     inp_l: &str,
@@ -1053,7 +1227,7 @@ pub(in crate::ui) fn load_mol_from_query(
 
         if button_clicked || (enter_pressed && is_tgt) {
             match chebi::parse_id(inp_l) {
-                Ok(id) => load_chebi_id(state, scene, redraw, updates, id),
+                Ok(id) => start_query(state, QueryRequest::Chebi(id)),
                 Err(e) => handle_err(
                     &mut state.ui,
                     format!("{inp} is not a valid ChEBI accession: {e:?}"),
@@ -1075,23 +1249,12 @@ pub(in crate::ui) fn load_mol_from_query(
         if is_pdb_id(id) {
             let is_tgt = enter_tgt == EnterTarget::PdbeStructure;
             if query_btn(ui, "Load PDBe", is_tgt).clicked() || (enter_pressed && is_tgt) {
-                let loaded = load_atom_coords(
-                    CifSource::Pdbe,
-                    id,
-                    state,
-                    scene,
-                    updates,
-                    &mut redraw.peptide,
-                    reset_cam,
-                );
-                if loaded {
-                    state.ui.db_input = String::new();
-                }
+                start_query(state, QueryRequest::Protein(CifSource::Pdbe, id.to_owned()));
             }
         } else {
             let is_tgt = enter_tgt == EnterTarget::PdbeLigand;
             if query_btn(ui, "Load PDBe", is_tgt).clicked() || (enter_pressed && is_tgt) {
-                load_pdbe_ligand(state, scene, redraw, updates, id);
+                start_query(state, QueryRequest::PdbeLigand(id.to_owned()));
             }
         }
 
@@ -1111,26 +1274,17 @@ pub(in crate::ui) fn load_mol_from_query(
             .clicked();
 
         if button_clicked || (enter_pressed && is_tgt) {
-            load_uniprot(state, scene, redraw, reset_cam, updates, inp);
+            start_query(state, QueryRequest::Uniprot(inp.to_owned()));
         }
 
         if query_btn(ui, "Load AlphaFold", false)
             .on_hover_text("Load the predicted structure of this protein from AlphaFold DB.")
             .clicked()
         {
-            let accession = uniprot::parse_accession(inp);
-            let loaded = load_atom_coords(
-                CifSource::AlphaFold,
-                &accession,
+            start_query(
                 state,
-                scene,
-                updates,
-                &mut redraw.peptide,
-                reset_cam,
+                QueryRequest::Protein(CifSource::AlphaFold, uniprot::parse_accession(inp)),
             );
-            if loaded {
-                state.ui.db_input = String::new();
-            }
         }
 
         return;
@@ -1140,37 +1294,13 @@ pub(in crate::ui) fn load_mol_from_query(
     if let Ok(cid) = inp.parse::<u32>() {
         let is_tgt = enter_tgt == EnterTarget::PubchemCid;
         if query_btn(ui, "Load PubChem", is_tgt).clicked() || (enter_pressed && is_tgt) {
-            match load_sdf_pubchem(cid) {
-                Ok(downloaded) => {
-                    let cid_key = cid.to_string();
-                    let Some(cache_path) = cache_sdf_source(
-                        state,
-                        ManagedMolProvider::Pubchem,
-                        &cid_key,
-                        &cid_key,
-                        &downloaded.source_text,
-                    ) else {
-                        return;
-                    };
-                    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
-                    redraw.ligand = true;
-
-                    handle_success(
-                        &mut state.ui,
-                        format!("Loaded CID {cid} from PubChem (over the internet)"),
-                    );
-                }
-                Err(e) => {
-                    let msg = format!("Error loading SDF file: {e:?}");
-                    handle_err(&mut state.ui, msg);
-                }
-            }
+            start_query(state, QueryRequest::PubchemCid(cid));
         }
 
         // A bare number is also a ChEBI accession. PubChem owns Enter, being the larger database;
         // ChEBI is one click away, or unambiguous with a `chebi:` prefix.
         if query_btn(ui, "Load ChEBI", false).clicked() {
-            load_chebi_id(state, scene, redraw, updates, cid);
+            start_query(state, QueryRequest::Chebi(cid));
         }
     }
 
@@ -1180,26 +1310,19 @@ pub(in crate::ui) fn load_mol_from_query(
         let is_tgt = enter_tgt == EnterTarget::Rcsb;
         let button_clicked = query_btn(ui, "Load RCSB", is_tgt).clicked();
         if button_clicked || (enter_pressed && is_tgt) {
-            load_atom_coords_rcsb(inp_l, state, scene, updates, &mut redraw.peptide, reset_cam);
-
-            state.ui.db_input = String::new();
+            start_query(
+                state,
+                QueryRequest::Protein(CifSource::Rcsb, inp_l.to_owned()),
+            );
             return;
         }
 
         // The same entry, from PDBe's mirror of the archive. RCSB owns Enter.
         if query_btn(ui, "Load PDBe", false).clicked() {
-            let loaded = load_atom_coords(
-                CifSource::Pdbe,
-                inp_l,
+            start_query(
                 state,
-                scene,
-                updates,
-                &mut redraw.peptide,
-                reset_cam,
+                QueryRequest::Protein(CifSource::Pdbe, inp_l.to_owned()),
             );
-            if loaded {
-                state.ui.db_input = String::new();
-            }
         }
 
         return;
@@ -1210,9 +1333,7 @@ pub(in crate::ui) fn load_mol_from_query(
         let button_clicked = query_btn(ui, "Load Geostd", is_tgt).clicked();
 
         if button_clicked || (enter_pressed && is_tgt) {
-            state.load_geostd_mol_data(inp_l, true, true, updates, scene);
-
-            state.ui.db_input = String::new();
+            start_query(state, QueryRequest::Geostd(inp_l.to_owned()));
             return;
         }
 
@@ -1222,7 +1343,7 @@ pub(in crate::ui) fn load_mol_from_query(
             .on_hover_text("Load this chemical component (e.g. a ligand) from PDBe.")
             .clicked()
         {
-            load_pdbe_ligand(state, scene, redraw, updates, inp);
+            start_query(state, QueryRequest::PdbeLigand(inp.to_owned()));
         }
 
         return;
@@ -1233,76 +1354,19 @@ pub(in crate::ui) fn load_mol_from_query(
         let button_clicked = query_btn(ui, "Load DrugBank", is_tgt).clicked();
 
         if button_clicked || (enter_pressed && is_tgt) {
-            match load_sdf_drugbank(inp_l) {
-                Ok(downloaded) => {
-                    let Some(cache_path) = cache_sdf_source(
-                        state,
-                        ManagedMolProvider::Drugbank,
-                        inp_l,
-                        inp_l,
-                        &downloaded.source_text,
-                    ) else {
-                        return;
-                    };
-                    open_lig_from_input(state, downloaded.mol, Some(&cache_path), scene, updates);
-                    redraw.ligand = true;
-
-                    handle_success(
-                        &mut state.ui,
-                        format!("Loaded {inp_l} from DrugBank (over the internet)"),
-                    );
-                }
-                Err(e) => {
-                    let msg = format!("Error loading SDF file: {e:?}");
-                    handle_err(&mut state.ui, msg);
-                }
-            }
+            start_query(state, QueryRequest::Drugbank(inp_l.to_owned()));
         }
 
         return;
     }
 
-    // I believe this is cheap enough to run here (continuously)
+    // Recognizing SMILES is cheap enough to do while drawing the input; building the molecule
+    // happens only after submission, on the worker.
     if is_smiles(inp) {
         let is_tgt = enter_tgt == EnterTarget::Smiles;
         let button_clicked = query_btn(ui, "Load from SMILES", is_tgt).clicked();
-        // Attempt ot infer if this is SMILES.
         if (enter_pressed && is_tgt) || button_clicked {
-            match MoleculeCommon::from_smiles(inp) {
-                Ok(m) => {
-                    let smiles_start: String = inp.chars().take(5).collect();
-
-                    let mol = MoleculeSmall::new(
-                        format!("From SMILES {}", smiles_start),
-                        m.atoms,
-                        m.bonds,
-                        HashMap::new(),
-                        None,
-                    );
-
-                    let cache_result = managed_mols::store_sdf(
-                        &state.volatile.prefs_dir,
-                        ManagedMolProvider::Smiles,
-                        &managed_mols::text_key(inp),
-                        inp,
-                        &mol.to_sdf(),
-                    );
-                    let Some(cache_path) = report_cache_result(state, cache_result) else {
-                        return;
-                    };
-                    open_lig_from_input(state, mol, Some(&cache_path), scene, updates);
-                    redraw.ligand = true;
-
-                    handle_success(
-                        &mut state.ui,
-                        String::from("Built this molecule from the SMILES entered; no database"),
-                    );
-                }
-                Err(e) => {
-                    let msg = format!("Error loading a molecule from SMILES: {e:?}");
-                    handle_err(&mut state.ui, msg);
-                }
-            }
+            start_query(state, QueryRequest::Smiles(inp.to_owned()));
         }
         return;
     }
@@ -1312,60 +1376,7 @@ pub(in crate::ui) fn load_mol_from_query(
         let is_tgt = enter_tgt == EnterTarget::PubchemSearch;
         let button_clicked = query_btn(ui, "Search PubChem", is_tgt).clicked();
         if button_clicked || (enter_pressed && is_tgt) {
-            let cids = find_cids_from_search(inp, false);
-
-            match cids {
-                Ok(c) => {
-                    if c.is_empty() {
-                        handle_success(&mut state.ui, "No results found on Pubchem".to_owned());
-                    } else {
-                        // todo: DRY with the other pubchem branch above.
-                        match load_sdf_pubchem(c[0]) {
-                            Ok(downloaded) => {
-                                let cid_key = c[0].to_string();
-                                let Some(cache_path) = cache_sdf_source(
-                                    state,
-                                    ManagedMolProvider::Pubchem,
-                                    &cid_key,
-                                    inp,
-                                    &downloaded.source_text,
-                                ) else {
-                                    return;
-                                };
-                                open_lig_from_input(
-                                    state,
-                                    downloaded.mol,
-                                    Some(&cache_path),
-                                    scene,
-                                    updates,
-                                );
-                                redraw.ligand = true;
-                                // reset_cam = true;
-
-                                let cids_str =
-                                    c.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
-
-                                handle_success(
-                                    &mut state.ui,
-                                    format!(
-                                        "Found the following Pubchem CIDs: {cids_str}. Loaded {} \
-                                         from PubChem (over the internet)",
-                                        c[0]
-                                    ),
-                                );
-                            }
-                            Err(e) => {
-                                let msg = format!("Error loading SDF file: {e:?}");
-                                handle_err(&mut state.ui, msg);
-                            }
-                        }
-                    }
-                }
-                Err(e) => handle_err(
-                    &mut state.ui,
-                    format!("Error finding a mol from Pubchem {:?}", e),
-                ),
-            }
+            start_query(state, QueryRequest::PubchemSearch(inp.to_owned()));
         }
     }
 }

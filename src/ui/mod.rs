@@ -61,6 +61,7 @@ mod panels;
 pub mod popup;
 mod sidebar;
 pub mod util;
+pub(crate) use util::{QueryResult, apply_query_result};
 
 pub(in crate::ui) const ROW_SPACING: f32 = 10.;
 pub(in crate::ui) const COL_SPACING: f32 = 30.;
@@ -1159,7 +1160,11 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     }
 
     handle_scene_flags(state, scene, &mut updates);
-    handle_thread_rx(state, scene, &mut redraw, &mut updates);
+    let query_was_pending = state.volatile.thread_receivers.query.is_some();
+    handle_thread_rx(state, scene, &mut redraw, &mut reset_cam, &mut updates);
+    if query_was_pending && state.volatile.thread_receivers.query.is_none() {
+        ui.request_repaint();
+    }
     start_session_restore(state);
     if state.volatile.thread_receivers.has_pending() {
         ui.request_repaint_after(Duration::from_millis(50));
@@ -1491,9 +1496,17 @@ fn query_input(
     let mut input_trimmed = std::mem::take(&mut state.ui.db_input_trimmed);
     let mut input_lowercase = std::mem::take(&mut state.ui.db_input_lowercase);
 
+    let query_loading = state.volatile.thread_receivers.query.is_some();
     let edit_resp = ui
-        .add(TextEdit::singleline(&mut state.ui.db_input).desired_width(180.))
+        .add_enabled(
+            !query_loading,
+            TextEdit::singleline(&mut state.ui.db_input).desired_width(180.),
+        )
         .on_hover_text(query_help);
+
+    if query_loading {
+        ui.spinner().on_hover_text("Loading molecule...");
+    }
 
     if edit_resp.changed() {
         input_trimmed.clear();
@@ -1510,17 +1523,9 @@ fn query_input(
             && edit_resp.lost_focus()
             && ui.input(|i| i.key_pressed(Key::Enter));
 
-        load_mol_from_query(
-            state,
-            scene,
-            redraw,
-            reset_cam,
-            updates,
-            ui,
-            &input_trimmed,
-            &input_lowercase,
-            enter_pressed,
-        );
+        ui.add_enabled_ui(!query_loading, |ui| {
+            load_mol_from_query(state, ui, &input_trimmed, &input_lowercase, enter_pressed);
+        });
     }
 
     if state.ui.db_input.is_empty() {
