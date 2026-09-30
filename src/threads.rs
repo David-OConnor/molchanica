@@ -213,15 +213,10 @@ fn apply_session_restore_item(
             };
             state.restore_mol_to_state(molecule, scene, updates, &history.path);
 
-            if let Some(position) = history.position {
-                if mol_type == MolType::Peptide {
-                    if let Some(peptide) = state.peptides.get_mut(mol_i) {
-                        peptide.common.move_to(position);
-                        peptide.center = position;
-                    }
-                } else if let Some(mut molecule) = state.get_mol_mut(mol_type, mol_i) {
-                    molecule.common_mut().move_to(position);
-                }
+            if let Some(position) = history.position
+                && let Some(mut molecule) = state.get_mol_mut(mol_type, mol_i)
+            {
+                molecule.common_mut().move_to(position);
             }
         }
         SessionRestorePayload::Density(density) => state.load_density(density),

@@ -265,7 +265,7 @@ pub(in crate::file_io) fn load_peptide(
     state.volatile.flags.sas_mesh_created = false;
     state.volatile.flags.clear_density_drawing = true;
 
-    let centroid = mol.center;
+    let centroid = mol.common.centroid();
     let ident = mol.common.ident.clone();
     let peptide_i = state.peptides.len();
     state.peptides.push(mol);

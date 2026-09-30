@@ -55,8 +55,14 @@ pub fn slug(tool: Tool) -> &'static str {
 /// Build the payload the adapter receives from the form's values.
 ///
 /// Only fields that apply in `mode` are sent. File widgets hold local paths, but the adapters
-/// accept file contents, as the web form uploads them, so those are read here.
-pub fn payload(tool: Tool, values: &HashMap<String, String>, mode: &str) -> io::Result<Value> {
+/// accept file contents, as the web form uploads them, so those are read here. `file_contents`
+/// supplies inputs already in memory, such as an opened protein, without writing them to disk.
+pub fn payload(
+    tool: Tool,
+    values: &HashMap<String, String>,
+    mode: &str,
+    file_contents: &HashMap<String, String>,
+) -> io::Result<Value> {
     let contract = FormContract::load(slug(tool)).map_err(io::Error::other)?;
     let mut result = Map::new();
     let task = values.get("task").map(String::as_str).unwrap_or("");
@@ -65,18 +71,23 @@ pub fn payload(tool: Tool, values: &HashMap<String, String>, mode: &str) -> io::
         if field.managed_by_runner || !field.applies_to(mode) || !field.applies_to_task(task) {
             continue;
         }
-        let Some(value) = values.get(&field.name) else {
-            continue;
-        };
+        let value = if let Some(contents) = file_contents.get(&field.name) {
+            contents.clone()
+        } else {
+            let Some(value) = values.get(&field.name) else {
+                continue;
+            };
 
-        let mut value = value.clone();
-        if field.kind() == FieldKind::File
-            && !value.trim().is_empty()
-            && !value.starts_with(BUNDLED_PREFIX)
-        {
-            value = fs::read_to_string(value.trim())
-                .map_err(|error| io::Error::other(format!("{}: {error}", field.label)))?;
-        }
+            let mut value = value.clone();
+            if field.kind() == FieldKind::File
+                && !value.trim().is_empty()
+                && !value.starts_with(BUNDLED_PREFIX)
+            {
+                value = fs::read_to_string(value.trim())
+                    .map_err(|error| io::Error::other(format!("{}: {error}", field.label)))?;
+            }
+            value
+        };
         result.insert(field.name.clone(), Value::String(value));
     }
 

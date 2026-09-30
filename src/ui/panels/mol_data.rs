@@ -701,7 +701,7 @@ fn display_peptide_actions(
             && i < state.ligands.len()
         {
             let pep = &state.peptides[peptide_i];
-            let center = pep.center;
+            let center = pep.common.centroid();
             let mol = &mut state.ligands[i];
             move_mol_to_res(&mut MolGenericRefMut::Small(mol), pep, &res);
             move_cam_to_active_mol(state, scene, center, updates);
@@ -717,7 +717,7 @@ fn display_peptide_actions(
         let center = state
             .peptides
             .get(peptide_i)
-            .map(|mol| mol.center)
+            .map(|mol| mol.common.centroid())
             .unwrap_or_else(Vec3::new_zero);
         move_cam_to_active_mol(state, scene, center, updates);
 
@@ -730,7 +730,7 @@ fn display_peptide_actions(
         let center = state
             .peptides
             .get(peptide_i)
-            .map(|mol| mol.center)
+            .map(|mol| mol.common.centroid())
             .unwrap_or_else(Vec3::new_zero);
 
         move_cam_to_active_mol(state, scene, center, updates);

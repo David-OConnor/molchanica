@@ -508,20 +508,11 @@ pub(crate) fn finish_session_restore(
         }
     }
 
-    if !state.peptides.is_empty() {
+    if let Some(pep) = state.peptide_for_tools() {
         set_static_light(
             scene,
-            state
-                .peptide_for_tools_i()
-                .and_then(|i| state.peptides.get(i))
-                .unwrap()
-                .center
-                .into(),
-            state
-                .peptide_for_tools_i()
-                .and_then(|i| state.peptides.get(i))
-                .unwrap()
-                .size,
+            pep.common.centroid().into(),
+            pep.common.bounding_radius() as f32,
         );
     } else if !state.ligands.is_empty() {
         let lig = &state.ligands[0];

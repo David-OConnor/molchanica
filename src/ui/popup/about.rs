@@ -16,6 +16,7 @@ use crate::{
 
 const REPO_URL: &str = "https://github.com/David-OConnor/molchanica";
 const HOME_URL: &str = "https://www.athanorlab.com/molchanica";
+pub(in crate::ui) const DOCS_URL: &str = "https://www.athanorlab.com/docs/index.html";
 
 /// A text hyperlink: blue and underlined, and opens the user's browser when clicked. This is the
 /// same mechanism we use for the external database links, e.g. `pubchem::open_overview`.
@@ -65,6 +66,11 @@ pub(in crate::ui::popup) fn about_window(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label("Home page:");
         link(ui, HOME_URL, HOME_URL);
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Documentation:");
+        link(ui, DOCS_URL, DOCS_URL);
     });
 
     ui.horizontal(|ui| {

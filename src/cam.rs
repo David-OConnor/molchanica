@@ -306,7 +306,7 @@ fn mean_position(positions: impl Iterator<Item = Vec3>) -> Vec3 {
     if count == 0 { sum } else { sum / count as f32 }
 }
 
-/// Determine the center and size used by view presets, retaining cached peptide framing.
+/// Determine the center and size used by view presets. Peptides are framed by their bounding radius.
 fn reset_frame(state: &State) -> (Vec3, f32) {
     let md = &state.volatile.md_local;
     let default_size = if md.draw_md_mols { 60. } else { 8. };
@@ -316,7 +316,10 @@ fn reset_frame(state: &State) -> (Vec3, f32) {
 
     let (mut center, size) = if let Some(mol) = mol {
         match mol {
-            MolGenericRef::Peptide(p) => (p.center.into(), p.size),
+            MolGenericRef::Peptide(p) => (
+                p.common.centroid().into(),
+                p.common.bounding_radius() as f32,
+            ),
             other => (other.common().centroid().into(), default_size),
         }
     } else {

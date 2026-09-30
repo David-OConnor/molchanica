@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use bio_tools::tool_definitions::catalog::DataCategory;
@@ -35,7 +35,7 @@ use crate::{
     file_io::sequence::{load_sequences, seq_exts_open},
     state::{ComputationGuard, ComputationType, Computations, State},
     ui::{
-        COLOR_ACTION,
+        COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING,
         misc::{selector_box, selector_option},
         util::open_dir,
     },
@@ -154,6 +154,7 @@ struct Form {
     authoritative_mode: String,
     projection_error: Option<String>,
     preset: Option<usize>,
+    opened_protein: Option<usize>,
 }
 
 impl Form {
@@ -169,12 +170,14 @@ impl Form {
             presets: Preset::load_all(slug)?,
             contract,
             preset: None,
+            opened_protein: None,
         })
     }
 
     fn apply_preset(&mut self, tool: Tool, index: usize) {
         let working = self.mode.clone();
         self.projection_error = None;
+        self.opened_protein = None;
         self.values = self.contract.defaults();
         self.values.extend(self.presets[index].form_values());
         self.authoritative_mode = self
@@ -229,6 +232,23 @@ impl Form {
         self.values.insert(field.to_owned(), updated);
         self.authoritative_mode = self.mode.clone();
         Ok(())
+    }
+
+    /// Prepare the selected structure only when Run is clicked. The shared adapter accepts
+    /// its contents directly, so an opened molecule never needs an intermediate file here.
+    fn run_payload(&self, tool: Tool, proteins: &[MoleculePeptide]) -> io::Result<Value> {
+        let mut file_contents = HashMap::new();
+        if let Some(index) = self.opened_protein
+            && let Some(field) = self.contract.structure_field(&self.mode)
+        {
+            let protein = proteins.get(index).ok_or_else(|| {
+                io::Error::other("The selected opened protein is no longer available.")
+            })?;
+            let pdb = peptide_to_pdb(protein, &PdbWriteOptions::with_ligand_context())?;
+            file_contents.insert(field.name.clone(), pdb);
+        }
+
+        shared_adapter::payload(tool, &self.values, &self.mode, &file_contents)
     }
 }
 
@@ -691,7 +711,6 @@ pub(crate) struct ToolWindow {
     file_action: Option<FileAction>,
     sequence_dialog: FileDialog,
     sequence_file_target: Option<(Tool, SequenceTarget)>,
-    opened_protein: usize,
 }
 
 impl ToolWindow {
@@ -717,7 +736,6 @@ impl ToolWindow {
             )
             .default_file_filter("Sequence files"),
             sequence_file_target: None,
-            opened_protein: 0,
         }
     }
 
@@ -832,49 +850,49 @@ impl ToolWindow {
         let mut pick = None;
         let mut pick_sequence = None;
         let mut use_sequence = None;
-        let mut use_protein = false;
+        let mut use_protein = None;
         let form = self.forms.get_mut(&self.tool).unwrap();
 
         ui.add_enabled_ui(!busy, |ui| {
             preset_ui(self.tool, form, ui);
             mode_and_task_ui(self.tool, form, ui);
+            ui.add_space(ROW_SPACING);
 
             if form.contract.structure_field(&form.mode).is_some() && !proteins.is_empty() {
-                ui.horizontal(|ui| {
-                    ComboBox::from_id_salt("tool_open_protein")
-                        .selected_text(
-                            proteins
-                                .get(self.opened_protein)
-                                .map(|protein| {
-                                    protein
-                                        .common
-                                        .name
-                                        .as_deref()
-                                        .unwrap_or(&protein.common.ident)
-                                })
-                                .unwrap_or("Select an opened protein"),
-                        )
-                        .show_ui(ui, |ui| {
-                            for (index, protein) in proteins.iter().enumerate() {
-                                ui.selectable_value(
-                                    &mut self.opened_protein,
-                                    index,
-                                    protein
-                                        .common
-                                        .name
-                                        .as_deref()
-                                        .unwrap_or(&protein.common.ident),
-                                );
-                            }
-                        });
-                    use_protein = ui.button("Use opened structure").clicked();
+                ui.label("Choose an opened protein");
+                ui.horizontal_wrapped(|ui| {
+                    for (index, protein) in proteins.iter().enumerate() {
+                        let name = protein
+                            .common
+                            .name
+                            .as_deref()
+                            .unwrap_or(&protein.common.ident);
+                        let mut text = RichText::new(name);
+                        if form.opened_protein == Some(index) {
+                            text = text.color(COLOR_HIGHLIGHT);
+                        }
+
+                        if ui.button(text).clicked() {
+                            use_protein = Some(index);
+                        }
+                    }
                 });
+                ui.add_space(ROW_SPACING);
+            }
+
+            if let Some(index) = use_protein
+                && let Some(field) = form.contract.structure_field(&form.mode)
+            {
+                form.values.insert(field.name.clone(), String::new());
+                form.authoritative_mode = form.mode.clone();
+                form.opened_protein = Some(index);
             }
 
             fields_ui(
                 self.tool,
                 kind,
                 form,
+                proteins,
                 sequences,
                 &mut pick,
                 &mut pick_sequence,
@@ -902,37 +920,30 @@ impl ToolWindow {
             self.dialog.pick_file();
         }
 
-        if use_protein
-            && let Some(protein) = proteins.get(self.opened_protein)
-            && let Some(field) = form.contract.structure_field(&form.mode)
-        {
-            match write_opened_structure(protein) {
-                Ok(path) => {
-                    form.values
-                        .insert(field.name.clone(), path.display().to_string());
-                    form.authoritative_mode = form.mode.clone();
-                }
-                Err(error) => self.error = Some(error.to_string()),
-            }
+        if use_protein.is_some() {
+            self.error = None;
         }
 
         let mut install = false;
         let mut run = false;
+        let installed = external_tools::is_installed(self.tool);
 
         ui.horizontal(|ui| {
-            run = ui
-                .add_enabled(
-                    !busy && spec.is_supported() && form.projection_error.is_none(),
-                    Button::new(RichText::new("Run").color(COLOR_ACTION)),
-                )
-                .clicked();
-
-            install = ui
-                .add_enabled(
-                    !busy && spec.can_install_here(),
-                    Button::new("Install / repair tool"),
-                )
-                .clicked();
+            if installed {
+                run = ui
+                    .add_enabled(
+                        !busy && spec.is_supported() && form.projection_error.is_none(),
+                        Button::new(RichText::new("Run").color(COLOR_ACTION)),
+                    )
+                    .clicked();
+            } else {
+                install = ui
+                    .add_enabled(
+                        !busy && spec.can_install_here(),
+                        Button::new(RichText::new("Install / repair tool").color(COLOR_ACTION)),
+                    )
+                    .clicked();
+            }
             ui.label(RichText::new("Raw outputs are saved locally.").small());
             if ui
                 .button("Open saved run…")
@@ -945,7 +956,7 @@ impl ToolWindow {
         });
 
         let tool = self.tool;
-        let payload = run.then(|| shared_adapter::payload(tool, &form.values, &form.mode));
+        let payload = run.then(|| form.run_payload(tool, proteins));
 
         if install {
             let computation = computations.start(
@@ -1001,6 +1012,13 @@ impl ToolWindow {
         match self.file_action.take() {
             Some(FileAction::Input(tool, field)) => {
                 if let Some(form) = self.forms.get_mut(&tool) {
+                    if form
+                        .contract
+                        .structure_field(&form.mode)
+                        .is_some_and(|structure| structure.name == field)
+                    {
+                        form.opened_protein = None;
+                    }
                     form.values.insert(field, path.display().to_string());
                     form.authoritative_mode = form.mode.clone();
                 }
@@ -1376,23 +1394,6 @@ fn sequence_results_ui(fasta: &str, ui: &mut Ui) {
     }
 }
 
-/// Write an opened protein to `process_executables/desktop_inputs`, for a form's structure field.
-fn write_opened_structure(protein: &MoleculePeptide) -> io::Result<PathBuf> {
-    let pdb = peptide_to_pdb(protein, &PdbWriteOptions::with_ligand_context())?;
-
-    let directory = external_tools::process_executables_dir()?.join("desktop_inputs");
-    fs::create_dir_all(&directory)?;
-
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let path = directory.join(format!("opened-{}-{stamp}.pdb", std::process::id()));
-
-    fs::write(&path, pdb)?;
-    Ok(path)
-}
-
 // ---------------------------------------------------------------------------------------------
 // Form widgets
 // ---------------------------------------------------------------------------------------------
@@ -1469,20 +1470,23 @@ fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
 
     if !form.contract.tasks.is_empty() {
         let task = form.values.entry("task".into()).or_default();
-        ComboBox::from_id_salt("tool_task")
-            .selected_text(
-                form.contract
-                    .tasks
-                    .iter()
-                    .find(|option| &option.value == task)
-                    .map(|option| option.label.as_str())
-                    .unwrap_or(task),
-            )
-            .show_ui(ui, |ui| {
-                for option in &form.contract.tasks {
-                    ui.selectable_value(task, option.value.clone(), &option.label);
-                }
-            });
+        ui.horizontal(|ui| {
+            ui.label("Task: ");
+            ComboBox::from_id_salt("tool_task")
+                .selected_text(
+                    form.contract
+                        .tasks
+                        .iter()
+                        .find(|option| &option.value == task)
+                        .map(|option| option.label.as_str())
+                        .unwrap_or(task),
+                )
+                .show_ui(ui, |ui| {
+                    for option in &form.contract.tasks {
+                        ui.selectable_value(task, option.value.clone(), &option.label);
+                    }
+                });
+        });
     }
 }
 
@@ -1491,6 +1495,7 @@ fn fields_ui(
     tool: Tool,
     window_kind: ToolWindowKind,
     form: &mut Form,
+    proteins: &[MoleculePeptide],
     sequences: &[Sequence],
     pick: &mut Option<String>,
     pick_sequence: &mut Option<SequenceTarget>,
@@ -1498,6 +1503,12 @@ fn fields_ui(
     ui: &mut Ui,
 ) {
     let before = form.values.clone();
+    let opened_protein = form.opened_protein.and_then(|index| proteins.get(index));
+    let structure_field = form
+        .contract
+        .structure_field(&form.mode)
+        .map(|field| field.name.as_str());
+
     ScrollArea::vertical()
         .id_salt("tool_form_scroll")
         .max_height(480.0)
@@ -1532,6 +1543,8 @@ fn fields_ui(
                                     window_kind,
                                     field,
                                     &mut form.values,
+                                    opened_protein
+                                        .filter(|_| structure_field == Some(field.name.as_str())),
                                     sequences,
                                     pick,
                                     pick_sequence,
@@ -1543,6 +1556,11 @@ fn fields_ui(
                     });
             }
         });
+    if let Some(field) = form.contract.structure_field(&form.mode)
+        && form.values.get(&field.name) != before.get(&field.name)
+    {
+        form.opened_protein = None;
+    }
     let edited_input = form.contract.fields.iter().any(|field| {
         field.input_modes == form.mode && form.values.get(&field.name) != before.get(&field.name)
     });
@@ -1557,6 +1575,7 @@ fn draw_field(
     window_kind: ToolWindowKind,
     field: &FormField,
     values: &mut HashMap<String, String>,
+    opened_protein: Option<&MoleculePeptide>,
     sequences: &[Sequence],
     pick: &mut Option<String>,
     pick_sequence: &mut Option<SequenceTarget>,
@@ -1642,14 +1661,49 @@ fn draw_field(
             ui.label(&field.help)
         }
         FieldKind::File => {
-            ui.horizontal(|ui| {
-                ui.label(&label);
-                ui.add(TextEdit::singleline(value).desired_width(300.0));
-                if ui.button("Choose…").on_hover_text(&field.accept).clicked() {
-                    *pick = Some(field.name.clone());
-                }
-            })
-            .response
+            let structure = field
+                .accepted_extensions()
+                .iter()
+                .any(|extension| extension.eq_ignore_ascii_case("pdb"));
+
+            if structure {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(&label);
+                        if ui.button("Choose…").on_hover_text(&field.accept).clicked() {
+                            *pick = Some(field.name.clone());
+                        }
+                    });
+                    if let Some(protein) = opened_protein {
+                        let name = protein
+                            .common
+                            .name
+                            .as_deref()
+                            .unwrap_or(&protein.common.ident);
+                        ui.colored_label(Color32::WHITE, format!("Opened protein: {name}"));
+                    } else {
+                        if let Some(name) = Path::new(value.trim()).file_name() {
+                            ui.colored_label(Color32::WHITE, name.to_string_lossy());
+                        }
+                        ui.add(
+                            TextEdit::multiline(value)
+                                .desired_rows(2)
+                                .desired_width(f32::INFINITY)
+                                .return_key(None),
+                        );
+                    }
+                })
+                .response
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(&label);
+                    ui.add(TextEdit::singleline(value).desired_width(300.0));
+                    if ui.button("Choose…").on_hover_text(&field.accept).clicked() {
+                        *pick = Some(field.name.clone());
+                    }
+                })
+                .response
+            }
         }
         FieldKind::Number | FieldKind::Text | FieldKind::Other => {
             let width = if field.kind() == FieldKind::Number {

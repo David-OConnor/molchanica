@@ -101,28 +101,6 @@ impl RedrawFlags {
     }
 }
 
-pub fn mol_center_size(atoms: &[Atom]) -> (Vec3, f32) {
-    let mut sum = Vec3::new_zero();
-    let mut max_dim = 0.;
-
-    for atom in atoms {
-        sum += atom.posit;
-
-        // Cheaper than calculating magnitude.
-        if atom.posit.x.abs() > max_dim {
-            max_dim = atom.posit.x.abs();
-        }
-        if atom.posit.y.abs() > max_dim {
-            max_dim = atom.posit.y.abs();
-        }
-        if atom.posit.z.abs() > max_dim {
-            max_dim = atom.posit.z.abs();
-        }
-    }
-
-    (sum / (atoms.len() as f64), max_dim as f32)
-}
-
 /// Saves dirty preferences when their timer expires. A delay is returned only while a save is
 /// pending, so an otherwise idle application does not wake just to discover that nothing changed.
 pub fn check_prefs_save(state: &mut State) -> Option<Duration> {
@@ -197,9 +175,9 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 if let Some(mol) = state
                     .peptide_for_tools_i()
                     .and_then(|i| state.peptides.get(i))
-                    && let Some(a) = mol.common.atoms.get(*i)
+                    && let Some(p) = mol.common.atom_posits.get(*i)
                 {
-                    return a.posit.into();
+                    return (*p).into();
                 }
             }
             Selection::AtomLig((i_mol, i_atom)) => {
@@ -220,8 +198,8 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
 
                 let mut ctr = ZERO;
                 for i in is_atom {
-                    if let Some(a) = mol.common.atoms.get(*i) {
-                        let p: Vec3F32 = a.posit.into();
+                    if let Some(p) = mol.common.atom_posits.get(*i) {
+                        let p: Vec3F32 = (*p).into();
                         ctr += p
                     }
                 }
@@ -261,11 +239,11 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 {
                     match mol.residues.get(*i) {
                         Some(res) => {
-                            match mol.common.atoms.get(match res.atoms.first() {
+                            match mol.common.atom_posits.get(match res.atoms.first() {
                                 Some(a) => *a, // todo: What?
                                 None => return ZERO,
                             }) {
-                                Some(a) => return a.posit.into(),
+                                Some(p) => return (*p).into(),
                                 None => return ZERO,
                             }
                         }
@@ -282,11 +260,11 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     // DRY with single Residue branch.
                     match mol.residues.get(idxs[0]) {
                         Some(res) => {
-                            match mol.common.atoms.get(match res.atoms.first() {
+                            match mol.common.atom_posits.get(match res.atoms.first() {
                                 Some(a) => *a, // todo: What?
                                 None => return ZERO,
                             }) {
-                                Some(a) => return a.posit.into(),
+                                Some(p) => return (*p).into(),
                                 None => return ZERO,
                             }
                         }
@@ -301,8 +279,8 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                 {
                     let mut ctr = ZERO;
                     for i in is {
-                        if let Some(a) = mol.common.atoms.get(*i) {
-                            let p: Vec3F32 = a.posit.into();
+                        if let Some(p) = mol.common.atom_posits.get(*i) {
+                            let p: Vec3F32 = (*p).into();
                             ctr += p;
                         }
                     }
@@ -375,36 +353,20 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
                     / 2.)
                     .into();
             }
-            Selection::ComponentEditor(_) => {}
-            Selection::None => {
-                if let Some(mol) = state
-                    .peptide_for_tools_i()
-                    .and_then(|i| state.peptides.get(i))
-                {
-                    return mol.center.into();
-                }
-            }
+            // Fall through to the orbit molecule's centroid.
+            Selection::ComponentEditor(_) | Selection::None => {}
         }
-        // Orbit around the selected molecule's centroid. Failing that, the origin.
-    } else {
-        let Some((mol_type, i)) = &state.volatile.orbit_center else {
-            return ZERO;
-        };
-
-        return match state.get_mol(*mol_type, *i) {
-            Some(m) => {
-                // Use the cached one for peptide; cheaper.
-                if *mol_type == MolType::Peptide {
-                    state.peptides[*i].center.into()
-                } else {
-                    m.common().centroid().into()
-                }
-            }
-            None => lin_alg::f32::Vec3::new_zero(),
-        };
     }
 
-    ZERO
+    // Orbit around the selected molecule's centroid. Failing that, the origin.
+    let Some((mol_type, i)) = &state.volatile.orbit_center else {
+        return ZERO;
+    };
+
+    match state.get_mol(*mol_type, *i) {
+        Some(m) => m.common().centroid().into(),
+        None => ZERO,
+    }
 }
 
 /// A helper fn. Maps from a global index, to a local atom from a subset.

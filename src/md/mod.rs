@@ -1219,7 +1219,7 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
     let center = state
         .peptide_for_tools_i()
         .and_then(|i| state.peptides.get(i))
-        .map(|mol| mol.center)
+        .map(|mol| mol.common.centroid())
         .unwrap_or_else(Vec3::new_zero);
     // todo: Set a loading indicator, and trigger the build next GUI frame.
     move_cam_to_active_mol(state, scene, center, updates);

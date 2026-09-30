@@ -293,7 +293,7 @@ pub fn handle_cmd(
 
         let amt = amt * TAU / 360.;
 
-        arc_rotation(&mut scene.camera, axis, amt, mol.center.into());
+        arc_rotation(&mut scene.camera, axis, amt, mol.common.centroid().into());
 
         updates.camera = true;
 

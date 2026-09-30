@@ -61,6 +61,7 @@ mod panels;
 pub mod popup;
 mod sidebar;
 pub mod util;
+use crate::ui::popup::about::DOCS_URL;
 pub(crate) use util::{QueryResult, apply_query_result};
 
 pub(in crate::ui) const ROW_SPACING: f32 = 10.;
@@ -974,7 +975,22 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                     state.ui.popup.about = !state.ui.popup.about;
                 }
 
-                ui.add_space(COL_SPACING * 2.);
+                if button!(
+                    ui,
+                    "Docs",
+                    COLOR_HIGHLIGHT,
+                    "Open a web browser to the Molchanica documentation."
+                )
+                    .clicked()
+                {
+                    if let Err(e) = webbrowser::open(DOCS_URL){
+                        eprintln!("Failed to open the web browser: {:?}", e);
+                    }
+                    state.ui.popup.about = !state.ui.popup.about;
+                }
+
+
+                    ui.add_space(COL_SPACING * 2.);
                 query_input(state, scene, ui, &mut redraw, &mut updates, &mut reset_cam);
             });
         });

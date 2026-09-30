@@ -61,7 +61,6 @@
 //!         alphafold3/              source/ checkout, models/ for the user's af3.bin.zst
 //!         ProteinMPNN/
 //!         results/<slug>/          every shared-adapter run, kept: inputs, logs, and outputs
-//!         desktop_inputs/          structures written from opened molecules for those runs
 //!     datasets/                    PDBbind and similar, when used
 //! ```
 //!
