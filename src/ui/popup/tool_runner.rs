@@ -35,7 +35,7 @@ use crate::{
     file_io::sequence::{load_sequences, seq_exts_open},
     state::{ComputationGuard, ComputationType, Computations, State},
     ui::{
-        COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING,
+        COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING,
         misc::{selector_box, selector_option},
         util::open_dir,
     },
@@ -814,18 +814,28 @@ impl ToolWindow {
         self.handle_picked_sequence_file(ui);
 
         let busy = self.receiver.is_some();
-        ui.add_enabled_ui(!busy, |ui| {
-            ComboBox::from_id_salt("scientific_tool")
-                .selected_text(self.tool.spec().name())
-                .show_ui(ui, |ui| {
-                    for tool in tools {
-                        ui.selectable_value(&mut self.tool, *tool, tool.spec().name());
-                    }
-                });
-        });
 
         let spec = self.tool.spec();
-        ui.hyperlink_to("Tool documentation", spec.url());
+
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                ComboBox::from_id_salt("scientific_tool")
+                    .selected_text(self.tool.spec().name())
+                    .show_ui(ui, |ui| {
+                        for tool in tools {
+                            ui.selectable_value(&mut self.tool, *tool, tool.spec().name());
+                        }
+                    });
+            });
+
+            ui.add_space(COL_SPACING);
+
+            for (label, url) in spec.links() {
+                ui.hyperlink_to(label, url);
+                ui.add_space(COL_SPACING / 2.);
+            }
+        });
+
         if !spec.is_supported() {
             ui.colored_label(
                 Color32::ORANGE,

@@ -256,6 +256,38 @@ impl ToolSpec {
         }
     }
 
+    /// Official links in display order, as `(label, url)`. Only links the tool has are included.
+    pub fn links(&self) -> Vec<(&'static str, &'static str)> {
+        match self.identity {
+            ToolIdentity::Shared(_) => {
+                let Some(entry) = self.catalog() else {
+                    return Vec::new();
+                };
+                let spec = &entry.spec;
+
+                [
+                    ("Docs", spec.docs_url),
+                    ("Input parameters", spec.input_params_url),
+                    ("Examples", spec.examples_url),
+                    ("Paper", spec.paper_url),
+                    ("Home page", spec.home_url),
+                    ("Source", spec.repo_url),
+                    ("License", spec.license.official_url().or(spec.license_url)),
+                ]
+                .into_iter()
+                .filter_map(|(label, url)| url.map(|url| (label, url)))
+                .collect()
+            }
+            ToolIdentity::Local { url, license, .. } => {
+                let mut result = vec![("Home page", url)];
+                if let Some(license_url) = license.official_url() {
+                    result.push(("License", license_url));
+                }
+                result
+            }
+        }
+    }
+
     /// The licence's short label, e.g. `MIT`.
     pub fn license(&self) -> License {
         match self.identity {
