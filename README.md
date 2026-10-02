@@ -69,18 +69,9 @@ commercial use requiring a subscription.
 
 ### Protein design
 
-The **Design** button opens sequence design, stability scanning, and antibody annotation for the
-protein currently open:
-
-- **Design sequences** proposes sequences that would fold into the backbone on screen, using
-  LigandMPNN, ProteinMPNN, or the antibody-tuned AbMPNN weights. You can restrict it to particular
-  chains and hold chosen residues fixed — enough to redesign CDRs while keeping a framework, or to
-  resurface a protein while preserving a catalytic site.
-- **Stability scan** scores all twenty substitutions at every position in one pass, ranking the
-  most stabilizing mutations and the positions the structure tolerates least. This runs natively;
-  it needs the ProteinMPNN weights installed but no Python at run time.
-- **Antibody** identifies heavy and light chains, delineates CDRs from sequence-position
-  approximations, and flags developability motifs.
+- **Backbone design** using RFDiffusion3
+- **Structure prediction** using OpenDDE, Boltz-2, Chai-1, and EsmFold2
+- **Sequence prediction** using ProteinMPNN and LigandMPNN
 
 ## Functionality
 
@@ -279,7 +270,9 @@ See below for a reference.
 - **R**: Rotate a molecule with the mouse and scroll wheel
 
 - **Enter**: Move the camera to the selected atom or residue.
-- **Esc**: Exit move/rotate mode if in one. Otherwise, clear the selection (keeping the molecule active); if nothing is selected, deactivate the active molecule.
+-
+
+**Esc**: Exit move/rotate mode if in one. Otherwise, clear the selection (keeping the molecule active); if nothing is selected, deactivate the active molecule.
 
 - **Ctrl + scroll**: Change the fog distance. (hide distant atoms)
 
