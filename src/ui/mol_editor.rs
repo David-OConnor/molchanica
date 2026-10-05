@@ -1150,6 +1150,8 @@ fn template_section(
 
         add_t(Template::Cooh, "−COOH", "carboxylic acid functional group");
 
+        add_t(Template::Acetyl, "−COCH₃", "acetyl functional group");
+
         add_t(Template::Amide, "−NH₂", "amide functional group");
 
         add_t(Template::AromaticRing, "Ar", "benzene/aromatic ring");

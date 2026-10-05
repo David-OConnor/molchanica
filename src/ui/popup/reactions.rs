@@ -435,7 +435,7 @@ fn side(
                     let action = match state.participant_action {
                         ParticipantAction::OpenChebiPage => "Open ChEBI molecule page in browser",
                         ParticipantAction::Download => "Download and open in Molchanica",
-                        ParticipantAction::OpenRheaPage => "Open Rhea page for this molecule",
+                        ParticipantAction::OpenRheaPage => "Open reaction",
                     };
                     let fill = if queried {
                         Color32::from_rgb(90, 105, 35)

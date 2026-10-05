@@ -17,6 +17,8 @@ const BOND_LEN_AROMATIC: f64 = 1.39;
 pub enum Template {
     /// Carboxylic acid
     Cooh,
+    /// −C(=O)CH₃
+    Acetyl,
     Amide,
     AromaticRing,
     /// 6 Carbon atoms single-bonded.
@@ -36,6 +38,7 @@ impl Template {
     ) -> (Vec<Atom>, Vec<Bond>) {
         match self {
             Self::Cooh => cooh_group(anchors[0], r_aligners[0], start_sn, start_i),
+            Self::Acetyl => acetyl_group(anchors[0], r_aligners[0], start_sn, start_i),
             Self::Amide => amide_group(anchors[0], r_aligners[0], start_sn, start_i),
             Self::AromaticRing | Self::Cyclohexane | Self::PentaRing => ring(
                 self, anchor_is, anchor_sns, anchors, r_aligners, start_sn, start_i,
@@ -61,10 +64,49 @@ fn cooh_group(
     start_sn: u32,
     start_i: usize,
 ) -> (Vec<Atom>, Vec<Bond>) {
-    // Atom 0 is must be the 0 vec. (Or we will have to offset everything until it is)
     const LEN_HYDROXYL: f64 = 1.362;
+    carbonyl_group(
+        anchor,
+        aligner,
+        start_sn,
+        start_i,
+        (Oxygen, "oh", LEN_HYDROXYL),
+    )
+}
+
+/// See comments on `cooh_group`. The methyl carbon takes the hydroxyl's place.
+/// Ref example: Acetone
+fn acetyl_group(
+    anchor: Vec3,
+    aligner: Vec3,
+    start_sn: u32,
+    start_i: usize,
+) -> (Vec<Atom>, Vec<Bond>) {
+    const LEN_METHYL: f64 = 1.507;
+    carbonyl_group(
+        anchor,
+        aligner,
+        start_sn,
+        start_i,
+        (Carbon, "c3", LEN_METHYL),
+    )
+}
+
+/// A trigonal carbonyl carbon at the anchor, double-bonded to an O, and single-bonded to
+/// `substituent`: (element, force field type, bond length). The third trigonal position points
+/// towards the aligner.
+fn carbonyl_group(
+    anchor: Vec3,
+    aligner: Vec3,
+    start_sn: u32,
+    start_i: usize,
+    substituent: (Element, &str, f64),
+) -> (Vec<Atom>, Vec<Bond>) {
+    let (sub_el, sub_ff, sub_len) = substituent;
+
+    // Atom 0 is must be the 0 vec. (Or we will have to offset everything until it is)
     const LEN_CARBONYL: f64 = 1.227;
-    let mut posits = vec![Vec3::new_zero(), Vec3::new(LEN_HYDROXYL, 0., 0.)];
+    let mut posits = vec![Vec3::new_zero(), Vec3::new(sub_len, 0., 0.)];
 
     let rot_hydr = Quaternion::from_axis_angle(Z_VEC, TAU / 3.);
     posits.push(rot_hydr.rotate_vec(posits[1]).to_normalized() * LEN_CARBONYL);
@@ -84,8 +126,8 @@ fn cooh_group(
         .map(|p| rotator.rotate_vec(*p) + anchor)
         .collect();
 
-    const ELEMENTS: [Element; 3] = [Carbon, Oxygen, Oxygen];
-    const FF_TYPES: [&str; 3] = ["c", "oh", "o"];
+    let elements = [Carbon, sub_el, Oxygen];
+    let ff_types = ["c", sub_ff, "o"];
 
     let mut atoms = Vec::with_capacity(3);
     let mut bonds = Vec::with_capacity(2);
@@ -96,8 +138,8 @@ fn cooh_group(
         atoms.push(Atom {
             serial_number,
             posit,
-            element: ELEMENTS[i],
-            force_field_type: Some(String::from(FF_TYPES[i])),
+            element: elements[i],
+            force_field_type: Some(String::from(ff_types[i])),
             ..Default::default()
         })
     }
