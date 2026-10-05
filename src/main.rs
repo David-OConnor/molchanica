@@ -29,6 +29,7 @@ mod ui;
 mod util;
 
 mod cli;
+mod rdkit_smiles;
 mod reflection;
 
 pub mod antibody;

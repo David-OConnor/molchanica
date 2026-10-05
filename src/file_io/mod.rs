@@ -1,14 +1,19 @@
 use std::{
+    collections::HashMap,
     env, fs,
     fs::File,
     io,
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{
+        OnceLock,
+        mpsc::{self, Receiver},
+    },
+    thread,
     time::Instant,
 };
 
-use adme::spawn_therapeutic_inference;
+use adme::{DatasetTdc, TherapeuticProperties, infer::Infer, infer_therapeutic_props};
 use bio_files::{
     DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz,
     gromacs::gro::{AtomGro, Gro},
@@ -58,6 +63,59 @@ pub mod sequence;
 
 // When opening molecules deconflict; don't allow a mol to be closer than this to another.
 const MOL_MIN_DIST_OPEN: f64 = 12.;
+
+/// Prepare one molecule once before running the bundled ADME models. The ADME crate repairs
+/// missing or untrusted 3D geometry with RDKit; doing that here makes the backend choice visible
+/// and prevents every model from repeating the same preparation.
+fn spawn_therapeutic_inference(
+    mol: &MoleculeSmall,
+    models: &mut HashMap<DatasetTdc, Infer>,
+    ff_params: &ForceFieldParams,
+    therapeutic_properties_avail: &mut Option<Receiver<(usize, TherapeuticProperties)>>,
+    mol_i: usize,
+) {
+    let (tx, rx) = mpsc::channel();
+    let mol_for_thread = mol.clone();
+    let ff_params_for_thread = ff_params.clone();
+    let mut models_for_thread = std::mem::take(models);
+
+    thread::spawn(move || {
+        let prepared = adme::geometry::prepare_molecule(&mol_for_thread, &ff_params_for_thread);
+        let mol_for_inference = match &prepared {
+            Ok(std::borrow::Cow::Borrowed(mol)) => *mol,
+            Ok(std::borrow::Cow::Owned(mol)) => {
+                println!("Prepared 3D molecular geometry for ADME inference using RDKit.");
+                mol
+            }
+            Err(error) => {
+                // Preserve the previous behavior: each model can still report its own failure and
+                // the aggregate inference returns defaults for unavailable properties.
+                println!(
+                    "Attempted 3D molecular preparation for ADME inference using RDKit, \
+                     but it failed: {error}"
+                );
+                &mol_for_thread
+            }
+        };
+
+        match infer_therapeutic_props(
+            mol_for_inference,
+            &mut models_for_thread,
+            &ff_params_for_thread,
+        ) {
+            Ok(properties) => {
+                println!(
+                    "Computed molecular descriptors for the bundled ADME models using native \
+                     computations (not RDKit)."
+                );
+                let _ = tx.send((mol_i, properties));
+            }
+            Err(error) => eprintln!("Error inferring therapeutic properties: {error}"),
+        }
+    });
+
+    *therapeutic_properties_avail = Some(rx);
+}
 
 /// CPU/file result produced while restoring one item from the previous session. Parsing stays on
 /// the worker; application and graphics state are updated later on the UI thread.

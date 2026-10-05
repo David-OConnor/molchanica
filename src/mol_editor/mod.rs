@@ -57,7 +57,7 @@ use crate::{
     split_join::start_structure_lookup,
     state::{OperatingMode, PrimaryModeCam, State, StateUi},
     ui::{mol_editor::ATOM_SN_LABEL_SIZE, util::handle_redraw},
-    util::{RedrawFlags, aromatic_ring_centroid, find_neighbor_posit, handle_err},
+    util::{RedrawFlags, aromatic_ring_centroid, create_smiles, find_neighbor_posit, handle_err},
 };
 
 pub const INIT_CAM_DIST: f32 = 20.;
@@ -236,7 +236,7 @@ impl MolEditorState {
     pub fn refresh_smiles(&mut self) {
         // Not all edits keep the adjacency list current; SMILES generation (and MD) use it.
         self.mol.common.build_adjacency_list();
-        let smiles = self.mol.common.to_smiles();
+        let smiles = create_smiles(&self.mol.common);
 
         if smiles == self.smiles {
             return;
@@ -427,7 +427,7 @@ impl MolEditorState {
         // The identifiers loaded with the molecule stay until its structure changes; see
         // `refresh_smiles`.
         self.mol.common.build_adjacency_list();
-        self.smiles = self.mol.common.to_smiles();
+        self.smiles = create_smiles(&self.mol.common);
         self.db_check = None;
 
         self.move_to_origin();
@@ -1122,7 +1122,7 @@ fn name_edited_mol(state: &mut State, lig_i: usize) -> Option<PathBuf> {
     let lig = state.ligands.get_mut(lig_i)?;
 
     lig.common.build_adjacency_list();
-    let smiles = lig.common.to_smiles();
+    let smiles = create_smiles(&lig.common);
 
     lig.idents.clear();
     if !smiles.is_empty() {

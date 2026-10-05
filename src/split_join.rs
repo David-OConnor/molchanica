@@ -18,7 +18,9 @@ use dynamics::{
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
-use mol_defs::molecules::{Bond, MolIdent, MolType, MoleculeGeneric, small::MoleculeSmall};
+use mol_defs::molecules::{
+    Bond, MolIdent, MolType, MoleculeGeneric, common::MoleculeCommon, small::MoleculeSmall,
+};
 use na_seq::Element;
 
 use crate::{
@@ -28,7 +30,7 @@ use crate::{
     prefs::OpenType,
     selection::Selection,
     state::{OperatingMode, State},
-    util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
+    util::{RedrawFlags, close_mol, create_smiles, handle_err, handle_success, orbit_center},
 };
 
 /// A PubChem lookup for a molecule produced by splitting or joining, or by the molecule editor.
@@ -132,13 +134,23 @@ fn build_joined(
         atom.partial_charge = None;
     }
 
-    let mut joined = MoleculeSmall::new(
+    let common = MoleculeCommon::new(
         format!("{} + {}", a.ident, b.ident),
         a.atoms,
         a.bonds,
         Default::default(),
         None,
     );
+    let smiles = create_smiles(&common);
+    let idents = match smiles.is_empty() {
+        true => Vec::new(),
+        false => vec![MolIdent::Smiles(smiles)],
+    };
+    let mut joined = MoleculeSmall {
+        common,
+        idents,
+        ..Default::default()
+    };
     joined.common.reassign_sns();
     Ok(joined)
 }
@@ -650,7 +662,8 @@ pub fn split_lig_at_bonds(
     }
 
     let lig = &mut state.ligands[lig_i];
-    lig.idents.push(MolIdent::Smiles(lig.common.to_smiles()));
+    lig.idents
+        .push(MolIdent::Smiles(create_smiles(&lig.common)));
     lig.update_characterization();
 
     // A simulation set up with this ligand indexes its old atoms.

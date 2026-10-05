@@ -4,6 +4,7 @@
 
 use std::{
     f64::consts::TAU,
+    io,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -27,7 +28,7 @@ use lin_alg::{
 use mol_defs::{
     molecules::{
         Atom, Bond, Chain, MolGenericRefMut, MolType, MoleculeGeneric, Residue, aa_color,
-        peptide::MoleculePeptide, small::MoleculeSmall,
+        common::MoleculeCommon, peptide::MoleculePeptide, small::MoleculeSmall,
     },
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
@@ -42,7 +43,7 @@ use crate::{
     },
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
-    reflection,
+    rdkit_smiles, reflection,
     render::{
         Color, MESH_OTHER_RIBBONS, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE,
         set_flashlight,
@@ -55,6 +56,61 @@ use crate::{
 pub const AMU_TO_KG: f64 = 1.660_539e-27;
 const KCAL_PER_MOL_A2_TO_N_PER_M: f64 = 0.694_77;
 const HZ_TO_PS_INV: f64 = 1.0e-12;
+
+/// Serialize a molecular graph with RDKit when it is available, otherwise use Molchanica.
+pub fn create_smiles(molecule: &MoleculeCommon) -> String {
+    if let Ok(python) = crate::external_tools::find_rdkit_python() {
+        match rdkit_smiles::serialize(&python, molecule) {
+            Ok(smiles) => {
+                println!("Created a SMILES string using RDKit.");
+                return smiles;
+            }
+            Err(error) => {
+                println!(
+                    "RDKit could not create a SMILES string ({error}). Falling back to Molchanica."
+                );
+            }
+        }
+    }
+
+    let smiles = molecule.to_smiles();
+    println!("Created a SMILES string using native computations (not RDKit).");
+    smiles
+}
+
+/// Parse user-supplied SMILES with RDKit when it is available, otherwise use Molchanica.
+pub fn parse_smiles(smiles: &str) -> io::Result<MoleculeCommon> {
+    if let Ok(python) = crate::external_tools::find_rdkit_python() {
+        return match rdkit_smiles::parse(&python, smiles) {
+            Ok(molecule) => {
+                println!("Parsed a SMILES string using RDKit.");
+                Ok(molecule)
+            }
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
+                println!("Attempted to parse a SMILES string using RDKit: {error}");
+                Err(error)
+            }
+            Err(error) => {
+                println!(
+                    "RDKit could not parse a SMILES string ({error}). Falling back to Molchanica."
+                );
+                parse_smiles_natively(smiles)
+            }
+        };
+    }
+
+    parse_smiles_natively(smiles)
+}
+
+fn parse_smiles_natively(smiles: &str) -> io::Result<MoleculeCommon> {
+    let molecule = MoleculeCommon::from_smiles(smiles);
+    if molecule.is_ok() {
+        println!("Parsed a SMILES string using native computations (not RDKit).");
+    } else {
+        println!("Attempted to parse a SMILES string using native computations (not RDKit).");
+    }
+    molecule
+}
 
 /// Used in places where we can redraw one or more of several molecule types.
 #[derive(Default, Debug)]
@@ -1108,7 +1164,19 @@ pub fn make_lig_3d(
         return;
     };
 
-    let specific = state.mol_specific_params.get(&lig.common.ident);
+    // FRCMOD files and managed-molecule manifests historically stored upper-case keys, while a
+    // molecule's display/internal identifier can retain mixed case. Parameter discovery already
+    // treats those identifiers case-insensitively, so retrieval must do the same.
+    let specific = state
+        .mol_specific_params
+        .get(&lig.common.ident)
+        .or_else(|| {
+            state
+                .mol_specific_params
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(&lig.common.ident))
+                .map(|(_, params)| params)
+        });
     let result = lig.common.make_3d(&state.ff_param_set, specific);
 
     let ident = lig.common.name(Some(&lig.idents)).into_owned();

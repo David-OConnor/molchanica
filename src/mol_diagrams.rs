@@ -198,13 +198,7 @@ fn load_chebi_diagram(
 ) -> Result<Option<ColorImage>, String> {
     if let Some(python) = rdkit_python {
         match load_local_diagram(id, python, foreground) {
-            Ok(Some(image)) => {
-                println!(
-                    "Molecule diagram CHEBI:{id}: built locally with RDKit ({})",
-                    python.display()
-                );
-                return Ok(Some(image));
-            }
+            Ok(Some(image)) => return Ok(Some(image)),
             Ok(None) => {
                 println!(
                     "Molecule diagram CHEBI:{id}: local RDKit selected, but ChEBI has no SMILES"
@@ -219,13 +213,21 @@ fn load_chebi_diagram(
         }
     }
 
-    println!("Molecule diagram CHEBI:{id}: calling remote ChEBI diagram endpoint");
+    println!(
+        "Molecule diagram CHEBI:{id}: requesting the remote ChEBI diagram \
+         (not computed locally with RDKit)"
+    );
     let Some(svg) = bio_apis::chebi::load_diagram(id, 300, 180)
         .map_err(|error| format!("CHEBI:{id}: {error:?}"))?
     else {
         return Ok(None);
     };
-    render_svg(&svg, foreground).map(Some)
+    let image = render_svg(&svg, foreground)?;
+    println!(
+        "Molecule diagram CHEBI:{id}: loaded from the remote ChEBI service \
+         (not computed locally with RDKit)"
+    );
+    Ok(Some(image))
 }
 
 fn load_local_diagram(
@@ -246,6 +248,10 @@ fn load_local_diagram(
     };
     let svg = bio_tools::rdkit::depict_smiles(python, &smiles, 300, 180)
         .map_err(|error| error.to_string())?;
+    println!(
+        "Molecule diagram CHEBI:{id}: generated from SMILES using RDKit ({})",
+        python.display()
+    );
     render_svg(&svg, foreground).map(Some)
 }
 

@@ -955,6 +955,7 @@ impl ParquetMolDb {
             for i in 0..smiles_col.len() {
                 if targets.contains(smiles_col.value(i)) {
                     let mut mol = MoleculeSmall::from_bytes(mol_data_col.value(i))?;
+                    use_row_key_as_ident_if_missing(&mut mol, smiles_col.value(i));
                     apply_ident_cols(
                         &mut mol,
                         u32_at(Some(cid_col), i),
@@ -983,7 +984,7 @@ impl ParquetMolDb {
     pub fn load_all(&self) -> io::Result<Vec<MoleculeSmall>> {
         let has_chebi_hmdb = has_chebi_hmdb_cols(&self.source)?;
 
-        let mut cols = vec![COL_MOL_DATA, COL_PUBCHEM_CID];
+        let mut cols = vec![COL_SMILES, COL_MOL_DATA, COL_PUBCHEM_CID];
         if has_chebi_hmdb {
             cols.push(COL_CHEBI_ID);
             cols.push(COL_HMDB_ID);
@@ -993,6 +994,7 @@ impl ParquetMolDb {
 
         let mut result = Vec::with_capacity(self.index_meta.len());
         while let Some(batch) = reader.next().transpose().map_err(arrow_err_to_io)? {
+            let smiles_col = str_col(&batch, COL_SMILES)?;
             let mol_data_col = bin_col(&batch, COL_MOL_DATA)?;
             let cid_col = u32_col(&batch, COL_PUBCHEM_CID)?;
             let (chebi_col, hmdb_col) = match has_chebi_hmdb {
@@ -1005,6 +1007,7 @@ impl ParquetMolDb {
 
             for i in 0..mol_data_col.len() {
                 let mut mol = MoleculeSmall::from_bytes(mol_data_col.value(i))?;
+                use_row_key_as_ident_if_missing(&mut mol, smiles_col.value(i));
                 apply_ident_cols(
                     &mut mol,
                     u32_at(Some(cid_col), i),
@@ -1292,6 +1295,16 @@ fn apply_ident_cols(
         if !mol.idents.contains(&ident) {
             mol.idents.push(ident);
         }
+    }
+}
+
+/// Older database rows can carry a blank Molfile title, especially ChEBI rows. Molecule-specific
+/// force-field parameters are keyed by `common.ident`, so a blank value would make unrelated
+/// molecules overwrite and reuse one another's parameters. The database's SMILES key is already
+/// unique and is available whenever `mol_data` is decoded.
+fn use_row_key_as_ident_if_missing(mol: &mut MoleculeSmall, smiles: &str) {
+    if mol.common.ident.trim().is_empty() {
+        mol.common.ident = smiles.to_owned();
     }
 }
 

@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
     fs::File,
     io,
@@ -16,10 +15,7 @@ use bio_files::MmCif;
 use egui::{Color32, Response, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
-    molecules::{
-        MolIdent, MolType, MoleculeGeneric, PeptideIdent, common::MoleculeCommon,
-        small::MoleculeSmall,
-    },
+    molecules::{MolIdent, MolType, MoleculeGeneric, PeptideIdent, small::MoleculeSmall},
     smiles::is_smiles,
 };
 
@@ -48,7 +44,7 @@ use crate::{
     render::{Color, set_flashlight, set_static_light},
     state::{DbSel, OperatingMode, State},
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, misc, set_window_title},
-    util::{RedrawFlags, handle_err, handle_success, reset_orbit_center},
+    util::{RedrawFlags, handle_err, handle_success, parse_smiles, reset_orbit_center},
 };
 
 /// A path formatted for display: the home directory abbreviated to "~", and forward slashes on all
@@ -1022,7 +1018,7 @@ fn run_query(request: QueryRequest) -> QueryResult {
             }
         },
         QueryRequest::Smiles(input) => {
-            let common = match MoleculeCommon::from_smiles(&input) {
+            let mut common = match parse_smiles(&input) {
                 Ok(common) => common,
                 Err(error) => {
                     return QueryResult::Error(format!(
@@ -1031,13 +1027,12 @@ fn run_query(request: QueryRequest) -> QueryResult {
                 }
             };
             let smiles_start: String = input.chars().take(5).collect();
-            let mol = MoleculeSmall::new(
-                format!("From SMILES {smiles_start}"),
-                common.atoms,
-                common.bonds,
-                HashMap::new(),
-                None,
-            );
+            common.ident = format!("From SMILES {smiles_start}");
+            let mol = MoleculeSmall {
+                common,
+                idents: vec![MolIdent::Smiles(input.clone())],
+                ..Default::default()
+            };
             QueryResult::Smiles { input, mol }
         }
     }

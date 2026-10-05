@@ -107,6 +107,14 @@ pub fn load_sdf_chebi(id: u32) -> Result<DownloadedSmallMol, ReqError> {
     let source_text = chebi::load_sdf(id)?;
     let sdf = Sdf::new(&source_text).map_err(ReqError::from)?;
     let mut mol: MoleculeSmall = sdf.try_into().map_err(ReqError::from)?;
+
+    // ChEBI serves a bare Molfile whose title line is commonly blank. `MoleculeSmall` uses that
+    // title as its internal identifier, including as the key for molecule-specific force-field
+    // parameters. Leaving it blank makes independently downloaded ChEBI molecules share one
+    // parameter entry.
+    if mol.common.ident.trim().is_empty() {
+        mol.common.ident = format!("CHEBI:{id}");
+    }
     mol.idents.push(MolIdent::Chebi(id));
 
     Ok(DownloadedSmallMol { mol, source_text })
