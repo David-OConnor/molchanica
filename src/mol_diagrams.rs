@@ -2,7 +2,8 @@
 //!
 //! Prefer the local RDKit installation configured in Tools. Callers may supply a static SMILES;
 //! otherwise this route fetches one through bio_apis before drawing locally. Without a working
-//! RDKit installation, bio_apis::chebi supplies ChEBI's remote SVG.
+//! RDKit installation, bio_apis::chebi supplies ChEBI's remote SVG. Raw remote SVGs use a bounded
+//! persistent cache; recoloring and rasterization still happen locally for the current theme.
 //!
 //! SVG is the interchange format; resvg rasterizes it off the UI thread at double the
 //! display resolution. egui owns the resulting textures. HTTP belongs in bio_apis;
@@ -11,10 +12,15 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
+    fs, io,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+    },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use egui::{Color32, ColorImage, Context, TextureHandle, TextureOptions, Ui, vec2};
@@ -25,6 +31,12 @@ pub const DIAGRAM_WIDTH: f32 = 75.0;
 const DIAGRAM_HEIGHT: f32 = 45.0;
 const MAX_DOWNLOADS: usize = 4;
 const CACHE_CAPACITY: usize = 128;
+const REMOTE_CACHE_CAPACITY: usize = 256;
+const REMOTE_CACHE_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const REMOTE_CACHE_DIRECTORY: &str = "molecule_diagrams/chebi-svg-v1";
+
+static REMOTE_CACHE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+static REMOTE_CACHE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug)]
 pub struct DiagramRequest {
@@ -50,6 +62,18 @@ enum Entry {
     Failed(String),
 }
 
+enum RdKitDiscovery {
+    Unresolved,
+    Discovering(Receiver<Option<PathBuf>>),
+    Ready(Option<PathBuf>),
+}
+
+impl Default for RdKitDiscovery {
+    fn default() -> Self {
+        Self::Unresolved
+    }
+}
+
 struct CachedDiagram {
     entry: Entry,
     last_used: u64,
@@ -61,7 +85,7 @@ struct CachedDiagram {
 pub struct DiagramCache {
     entries: HashMap<u32, CachedDiagram>,
     generation: u64,
-    rdkit_python: Option<PathBuf>,
+    rdkit: RdKitDiscovery,
     foreground: Option<Color32>,
 }
 
@@ -128,14 +152,19 @@ impl DiagramCache {
     /// Called after drawing so pagination and retries apply to the page actually on screen.
     /// Unstarted requests are not queued: switching pages gives the new page priority.
     pub fn request(&mut self, participants: &[DiagramRequest], ctx: &Context) {
-        let rdkit_python = find_executable(Tool::RdKit).ok();
         let foreground = ctx.global_style().visuals.strong_text_color();
-        if rdkit_python != self.rdkit_python || self.foreground != Some(foreground) {
-            // Installing/uninstalling RDKit in Tools changes the backend without a restart.
+        if self.foreground != Some(foreground) {
+            // Rasterized images contain the current text color, so a theme change invalidates them.
             self.entries.clear();
-            self.rdkit_python = rdkit_python;
             self.foreground = Some(foreground);
         }
+
+        // System RDKit discovery may need to probe Python interpreters. Finish that once before
+        // launching any diagram jobs, so discovering the interpreter cannot invalidate and
+        // duplicate a page of work on the next frame.
+        let Some(rdkit_python) = self.poll_rdkit_python(ctx) else {
+            return;
+        };
         self.generation += 1;
 
         // Mark all displayed entries before eviction, including ones later in the list.
@@ -185,14 +214,13 @@ impl DiagramCache {
 
             let (tx, rx) = mpsc::channel();
             let ctx = ctx.clone();
-            let rdkit_python = self.rdkit_python.clone();
+            let rdkit_python = rdkit_python.clone();
             let smiles = request.smiles;
             thread::spawn(move || {
-                let python = rdkit_python.or_else(|| find_rdkit_python().ok());
                 let _ = tx.send(load_chebi_diagram(
                     id,
                     smiles,
-                    python.as_deref(),
+                    rdkit_python.as_deref(),
                     foreground,
                 ));
                 ctx.request_repaint();
@@ -211,6 +239,78 @@ impl DiagramCache {
             // Also handles a worker disconnecting before it can request a repaint.
             ctx.request_repaint_after(Duration::from_millis(100));
         }
+    }
+
+    /// The outer `Option` is `None` while one asynchronous discovery is in progress. The inner
+    /// `Option` is `None` when discovery completed without finding RDKit.
+    fn poll_rdkit_python(&mut self, ctx: &Context) -> Option<Option<PathBuf>> {
+        let directly_resolved = find_executable(Tool::RdKit).ok();
+        let state = std::mem::take(&mut self.rdkit);
+
+        match state {
+            RdKitDiscovery::Unresolved => {
+                if let Some(python) = directly_resolved {
+                    self.rdkit = RdKitDiscovery::Ready(Some(python.clone()));
+                    Some(Some(python))
+                } else {
+                    self.start_rdkit_discovery(ctx);
+                    None
+                }
+            }
+            RdKitDiscovery::Discovering(rx) => {
+                if let Some(python) = directly_resolved {
+                    self.rdkit = RdKitDiscovery::Ready(Some(python.clone()));
+                    return Some(Some(python));
+                }
+
+                match rx.try_recv() {
+                    Ok(python) => {
+                        self.rdkit = RdKitDiscovery::Ready(python.clone());
+                        Some(python)
+                    }
+                    Err(TryRecvError::Empty) => {
+                        self.rdkit = RdKitDiscovery::Discovering(rx);
+                        ctx.request_repaint_after(Duration::from_millis(100));
+                        None
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        self.rdkit = RdKitDiscovery::Ready(None);
+                        Some(None)
+                    }
+                }
+            }
+            RdKitDiscovery::Ready(current) if directly_resolved == current => {
+                self.rdkit = RdKitDiscovery::Ready(current.clone());
+                Some(current)
+            }
+            RdKitDiscovery::Ready(current) => {
+                self.entries.clear();
+
+                if let Some(python) = directly_resolved {
+                    self.rdkit = RdKitDiscovery::Ready(Some(python.clone()));
+                    Some(Some(python))
+                } else if current.is_some() {
+                    // A managed or explicitly configured interpreter disappeared. Search once for
+                    // a system installation before using the remote fallback.
+                    self.start_rdkit_discovery(ctx);
+                    None
+                } else {
+                    self.rdkit = RdKitDiscovery::Ready(None);
+                    Some(None)
+                }
+            }
+        }
+    }
+
+    fn start_rdkit_discovery(&mut self, ctx: &Context) {
+        let (tx, rx) = mpsc::channel();
+        let worker_ctx = ctx.clone();
+        thread::spawn(move || {
+            let _ = tx.send(find_rdkit_python().ok());
+            worker_ctx.request_repaint();
+        });
+        self.rdkit = RdKitDiscovery::Discovering(rx);
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
 
@@ -239,6 +339,29 @@ fn load_chebi_diagram(
         }
     }
 
+    if let Some((svg, path)) = load_cached_remote_diagram(id, 300, 180) {
+        match render_svg(&svg, foreground) {
+            Ok(image) => {
+                println!(
+                    "Molecule diagram CHEBI:{id}: loaded from the persistent ChEBI diagram cache \
+                     (originally downloaded, not computed locally with RDKit)"
+                );
+                return Ok(Some(image));
+            }
+            Err(error) => {
+                println!(
+                    "Molecule diagram CHEBI:{id}: ignoring invalid cached ChEBI diagram: {error}"
+                );
+                if let Err(remove_error) = remove_cached_remote_diagram(&path) {
+                    eprintln!(
+                        "Unable to remove invalid molecule-diagram cache file {}: {remove_error}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
     println!(
         "Molecule diagram CHEBI:{id}: requesting the remote ChEBI diagram \
          (not computed locally with RDKit)"
@@ -249,11 +372,101 @@ fn load_chebi_diagram(
         return Ok(None);
     };
     let image = render_svg(&svg, foreground)?;
+    if let Err(error) = store_remote_diagram(id, 300, 180, &svg) {
+        eprintln!("Unable to cache the remote CHEBI:{id} diagram: {error}");
+    }
     println!(
         "Molecule diagram CHEBI:{id}: loaded from the remote ChEBI service \
          (not computed locally with RDKit)"
     );
     Ok(Some(image))
+}
+
+fn remote_diagram_cache_path(id: u32, width: u32, height: u32) -> Option<PathBuf> {
+    Some(
+        crate::external_tools::data_root()?
+            .join(REMOTE_CACHE_DIRECTORY)
+            .join(format!("chebi-{id}-{width}x{height}.svg")),
+    )
+}
+
+fn load_cached_remote_diagram(id: u32, width: u32, height: u32) -> Option<(Vec<u8>, PathBuf)> {
+    let _cache_guard = REMOTE_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let path = remote_diagram_cache_path(id, width, height)?;
+    fs::read(&path).ok().map(|svg| (svg, path))
+}
+
+fn remove_cached_remote_diagram(path: &Path) -> io::Result<()> {
+    let _cache_guard = REMOTE_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    fs::remove_file(path)
+}
+
+fn store_remote_diagram(id: u32, width: u32, height: u32, svg: &[u8]) -> io::Result<()> {
+    let _cache_guard = REMOTE_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(path) = remote_diagram_cache_path(id, width, height) else {
+        return Ok(());
+    };
+    let Some(directory) = path.parent() else {
+        return Ok(());
+    };
+    fs::create_dir_all(directory)?;
+
+    let temp_id = REMOTE_CACHE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let temp = directory.join(format!(".chebi-{id}-{}-{temp_id}.tmp", std::process::id()));
+    fs::write(&temp, svg)?;
+
+    if let Err(error) = fs::rename(&temp, &path) {
+        if path.exists() {
+            // Another diagram cache may have stored the same ChEBI entry concurrently.
+            let _ = fs::remove_file(&temp);
+        } else {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+    }
+
+    prune_remote_diagram_cache(directory)
+}
+
+fn prune_remote_diagram_cache(directory: &Path) -> io::Result<()> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if metadata.is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "svg")
+        {
+            files.push((
+                entry.path(),
+                metadata.len(),
+                metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            ));
+        }
+    }
+
+    files.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
+    let mut total_bytes: u64 = files.iter().map(|(_, size, _)| size).sum();
+    let mut first_retained = 0;
+
+    while files.len() - first_retained > REMOTE_CACHE_CAPACITY
+        || total_bytes > REMOTE_CACHE_MAX_BYTES
+    {
+        let (path, size, _) = &files[first_retained];
+        fs::remove_file(path)?;
+        total_bytes = total_bytes.saturating_sub(*size);
+        first_retained += 1;
+    }
+
+    Ok(())
 }
 
 fn load_local_diagram(
