@@ -1,14 +1,15 @@
 //! Skeletal molecule diagrams for the reaction viewer.
 //!
-//! Prefer the local RDKit installation configured in Tools. Reaction participants only carry
-//! ChEBI IDs, so this route still fetches SMILES via bio_apis before drawing locally.
-//! Without a working RDKit installation, bio_apis::chebi supplies ChEBI's remote SVG.
+//! Prefer the local RDKit installation configured in Tools. Callers may supply a static SMILES;
+//! otherwise this route fetches one through bio_apis before drawing locally. Without a working
+//! RDKit installation, bio_apis::chebi supplies ChEBI's remote SVG.
 //!
 //! SVG is the interchange format; resvg rasterizes it off the UI thread at double the
 //! display resolution. egui owns the resulting textures. HTTP belongs in bio_apis;
 //! the local depiction implementation belongs in bio_tools::rdkit.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
@@ -24,6 +25,23 @@ pub const DIAGRAM_WIDTH: f32 = 75.0;
 const DIAGRAM_HEIGHT: f32 = 45.0;
 const MAX_DOWNLOADS: usize = 4;
 const CACHE_CAPACITY: usize = 128;
+
+#[derive(Clone, Copy, Debug)]
+pub struct DiagramRequest {
+    chebi_id: u32,
+    smiles: Option<&'static str>,
+    retry: bool,
+}
+
+impl DiagramRequest {
+    pub fn new(chebi_id: u32, smiles: Option<&'static str>, retry: bool) -> Self {
+        Self {
+            chebi_id,
+            smiles,
+            retry,
+        }
+    }
+}
 
 enum Entry {
     Loading(Receiver<Result<Option<ColorImage>, String>>),
@@ -109,7 +127,7 @@ impl DiagramCache {
 
     /// Called after drawing so pagination and retries apply to the page actually on screen.
     /// Unstarted requests are not queued: switching pages gives the new page priority.
-    pub fn request(&mut self, participants: &[(u32, bool)], ctx: &Context) {
+    pub fn request(&mut self, participants: &[DiagramRequest], ctx: &Context) {
         let rdkit_python = find_executable(Tool::RdKit).ok();
         let foreground = ctx.global_style().visuals.strong_text_color();
         if rdkit_python != self.rdkit_python || self.foreground != Some(foreground) {
@@ -121,16 +139,16 @@ impl DiagramCache {
         self.generation += 1;
 
         // Mark all displayed entries before eviction, including ones later in the list.
-        for &(id, retry) in participants {
-            if retry
+        for request in participants {
+            if request.retry
                 && matches!(
-                    self.entries.get(&id).map(|c| &c.entry),
+                    self.entries.get(&request.chebi_id).map(|c| &c.entry),
                     Some(Entry::Failed(_))
                 )
             {
-                self.entries.remove(&id);
+                self.entries.remove(&request.chebi_id);
             }
-            if let Some(cached) = self.entries.get_mut(&id) {
+            if let Some(cached) = self.entries.get_mut(&request.chebi_id) {
                 cached.last_used = self.generation;
             }
         }
@@ -141,7 +159,8 @@ impl DiagramCache {
             .filter(|cached| matches!(cached.entry, Entry::Loading(_)))
             .count();
 
-        for &(id, _) in participants {
+        for request in participants {
+            let id = request.chebi_id;
             if self.entries.contains_key(&id) || downloading >= MAX_DOWNLOADS {
                 continue;
             }
@@ -167,9 +186,15 @@ impl DiagramCache {
             let (tx, rx) = mpsc::channel();
             let ctx = ctx.clone();
             let rdkit_python = self.rdkit_python.clone();
+            let smiles = request.smiles;
             thread::spawn(move || {
                 let python = rdkit_python.or_else(|| find_rdkit_python().ok());
-                let _ = tx.send(load_chebi_diagram(id, python.as_deref(), foreground));
+                let _ = tx.send(load_chebi_diagram(
+                    id,
+                    smiles,
+                    python.as_deref(),
+                    foreground,
+                ));
                 ctx.request_repaint();
             });
             self.entries.insert(
@@ -193,11 +218,12 @@ impl DiagramCache {
 /// installation are logged before falling back, so a broken environment doesn't hide diagrams.
 fn load_chebi_diagram(
     id: u32,
+    provided_smiles: Option<&str>,
     rdkit_python: Option<&Path>,
     foreground: Color32,
 ) -> Result<Option<ColorImage>, String> {
     if let Some(python) = rdkit_python {
-        match load_local_diagram(id, python, foreground) {
+        match load_local_diagram(id, provided_smiles, python, foreground) {
             Ok(Some(image)) => return Ok(Some(image)),
             Ok(None) => {
                 println!(
@@ -232,24 +258,37 @@ fn load_chebi_diagram(
 
 fn load_local_diagram(
     id: u32,
+    provided_smiles: Option<&str>,
     python: &Path,
     foreground: Color32,
 ) -> Result<Option<ColorImage>, String> {
-    println!(
-        "Molecule diagram CHEBI:{id}: fetching ChEBI SMILES for local RDKit (not a diagram request)"
-    );
-    let compound = bio_apis::chebi::load_compound(id)
-        .map_err(|error| format!("Unable to load CHEBI:{id} SMILES: {error:?}"))?;
-    let Some(smiles) = compound
-        .default_structure
-        .and_then(|structure| structure.smiles)
-    else {
-        return Ok(None);
+    let smiles = if let Some(smiles) = provided_smiles {
+        println!("Molecule diagram CHEBI:{id}: using embedded synthesis-library SMILES");
+        Cow::Borrowed(smiles)
+    } else {
+        println!(
+            "Molecule diagram CHEBI:{id}: fetching ChEBI SMILES for local RDKit \
+             (not a diagram request)"
+        );
+        let compound = bio_apis::chebi::load_compound(id)
+            .map_err(|error| format!("Unable to load CHEBI:{id} SMILES: {error:?}"))?;
+        let Some(smiles) = compound
+            .default_structure
+            .and_then(|structure| structure.smiles)
+        else {
+            return Ok(None);
+        };
+        Cow::Owned(smiles)
     };
     let svg = bio_tools::rdkit::depict_smiles(python, &smiles, 300, 180)
         .map_err(|error| error.to_string())?;
+    let source = if provided_smiles.is_some() {
+        "embedded synthesis-library SMILES"
+    } else {
+        "ChEBI SMILES"
+    };
     println!(
-        "Molecule diagram CHEBI:{id}: generated from SMILES using RDKit ({})",
+        "Molecule diagram CHEBI:{id}: generated from {source} using RDKit ({})",
         python.display()
     );
     render_svg(&svg, foreground).map(Some)

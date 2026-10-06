@@ -13,6 +13,7 @@ use synthesis::broad_target::{LibraryEnzyme, LibraryMolecule, LibraryRoute, Libr
 
 use crate::{
     file_io::managed_mols::ManagedMolProvider,
+    mol_diagrams::DiagramRequest,
     reactions::{
         Entry, ParticipantAction, Query, ReactionsState, SynthesisDownloadId, SynthesisDownloads,
         SynthesisEntry, SynthesisParticipantAction, SynthesisReactionsState, SynthesisSort,
@@ -506,7 +507,7 @@ fn synthesis_route_card(
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
-    diagram_requests: &mut Vec<(u32, bool)>,
+    diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
 ) {
     Frame::group(ui.style()).show(ui, |ui| {
@@ -534,6 +535,7 @@ fn synthesis_route_card(
 
         for (index, step) in route.steps.iter().enumerate() {
             synthesis_step_card(
+                &route.target.name,
                 index,
                 step,
                 action,
@@ -561,13 +563,14 @@ fn synthesis_route_card(
 }
 
 fn synthesis_step_card(
+    route_target: &str,
     index: usize,
     step: &LibraryStep,
     action: SynthesisParticipantAction,
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
-    diagram_requests: &mut Vec<(u32, bool)>,
+    diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
 ) {
     Frame::canvas(ui.style()).show(ui, |ui| {
@@ -642,7 +645,7 @@ fn synthesis_step_card(
         }
 
         CollapsingHeader::new("Reaction scope and evidence")
-            .id_salt(("step_scope", &step.key, index))
+            .id_salt(("step_scope", route_target, &step.key, index))
             .show(ui, |ui| {
                 ui.label(&step.generic_equation);
                 ui.horizontal_wrapped(|ui| {
@@ -681,7 +684,7 @@ fn synthesis_side(
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
-    diagram_requests: &mut Vec<(u32, bool)>,
+    diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
 ) {
     ui.label(RichText::new(label).small().color(color));
@@ -751,7 +754,7 @@ fn synthesis_side(
                 cell(ui, molecule_width, |ui| {
                     if let Some(id) = molecule.chebi_id {
                         let retry = diagrams.show(id, ui);
-                        diagram_requests.push((id, retry));
+                        diagram_requests.push(DiagramRequest::new(id, molecule.smiles, retry));
                     } else {
                         ui.weak("No ChEBI diagram available.");
                     }
@@ -1035,7 +1038,7 @@ fn reaction_card(
     reaction: &Reaction,
     state: &ReactionsState,
     clicked: &mut Option<(u32, String)>,
-    diagram_requests: &mut Vec<(u32, bool)>,
+    diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
 ) {
     Frame::group(ui.style()).show(ui, |ui| {
@@ -1136,7 +1139,7 @@ fn side(
     color: Color32,
     state: &ReactionsState,
     clicked: &mut Option<(u32, String)>,
-    diagram_requests: &mut Vec<(u32, bool)>,
+    diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
 ) {
     ui.label(RichText::new(label).small().color(color));
@@ -1239,7 +1242,7 @@ fn side(
                 cell(ui, molecule_width, |ui| {
                     if let Some(id) = participant_chebi_id(participants, equation, index) {
                         let retry = state.diagrams.show(id, ui);
-                        diagram_requests.push((id, retry));
+                        diagram_requests.push(DiagramRequest::new(id, None, retry));
                     } else {
                         ui.weak("No 2D structure: no ChEBI ID supplied.");
                     }
