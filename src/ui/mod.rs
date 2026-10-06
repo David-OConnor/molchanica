@@ -99,7 +99,7 @@ pub(in crate::ui) fn load_all_idents_button(ui: &mut Ui, loading: bool) -> bool 
             COLOR_ACTION,
             "Query online databases to load other idents, e.g. ChEBI, PubChem etc"
         )
-        .clicked()
+            .clicked()
     }
 }
 
@@ -118,7 +118,9 @@ fn set_window_title(title: &str, scene: &mut Scene) {
     // ui.ctx().send_viewport_cmd(ViewportCommand::Title(title.to_string()));
 }
 
-#[derive(Clone)]
+#[derive(
+    Clone
+)]
 struct NumFieldBuffer<T> {
     text: String,
     last_value: T,
@@ -958,7 +960,7 @@ fn top_controls(
                 )
                 .clicked()
             {
-                if let Err(e) = webbrowser::open(DOCS_URL){
+                if let Err(e) = webbrowser::open(DOCS_URL) {
                     eprintln!("Failed to open the web browser: {:?}", e);
                 }
                 state.ui.popup.about = !state.ui.popup.about;
@@ -1003,6 +1005,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     let out_main_panel = Panel::top("0").show(ui, |ui| {
         ui.spacing_mut().slider_width = 120.;
 
+
         if state.volatile.operating_mode == OperatingMode::MolEditor {
             mol_editor::editor(state, scene, &mut updates, redraw.ligand, ui);
 
@@ -1028,7 +1031,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             &mut updates,
             &mut redraw,
             &mut reset_cam,
-            ui
+            ui,
         );
 
         if state.volatile.active_mol.is_some() || state.ligands.len() >= 2 {
@@ -1360,13 +1363,13 @@ pub(crate) fn cam_controls(
 
     if arc_active
         && ui
-            .button(
-                RichText::new("Orbit sel").color(misc::active_color(state.ui.orbit_selected_atom)),
-            )
-            .on_hover_text(
-                "Toggle whether the camera orbits around the selection, or the molecule center.",
-            )
-            .clicked()
+        .button(
+            RichText::new("Orbit sel").color(misc::active_color(state.ui.orbit_selected_atom)),
+        )
+        .on_hover_text(
+            "Toggle whether the camera orbits around the selection, or the molecule center.",
+        )
+        .clicked()
     {
         state.ui.orbit_selected_atom = !state.ui.orbit_selected_atom;
 
@@ -1428,7 +1431,7 @@ pub(crate) fn cam_controls(
             &mut depth.0,
             VIEW_DEPTH_NEAR_MIN..=VIEW_DEPTH_NEAR_MAX,
         ))
-        .on_hover_text(near_help);
+            .on_hover_text(near_help);
 
         let far_help = "(Hotkey: Ctrl + scroll) Fade distant objects. This may make it easier to see objects near the camera.";
         ui.label("Far:").on_hover_text(far_help);
