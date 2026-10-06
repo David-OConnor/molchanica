@@ -750,9 +750,19 @@ const CHEBI_PREFIX: &str = "chebi:";
 const PDBE_PREFIX: &str = "pdbe:";
 
 /// Whether a query's text, less any `pdbe:` prefix, is a PDB ID rather than a chemical component ID:
-/// the bare 4-character form, or the 12-character `pdb_`-prefixed one.
+/// the digit-leading, 4-character legacy form, or the 12-character `pdb_`-prefixed one.
 fn is_pdb_id(inp_l: &str) -> bool {
-    inp_l.len() == 4 || inp_l.starts_with("pdb_")
+    let is_legacy = inp_l.len() == 4
+        && inp_l
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_digit() && b != b'0')
+        && inp_l.bytes().all(|b| b.is_ascii_alphanumeric());
+    let is_extended = inp_l.len() == 12
+        && inp_l.starts_with("pdb_")
+        && inp_l[4..].bytes().all(|b| b.is_ascii_alphanumeric());
+
+    is_legacy || is_extended
 }
 
 /// Decide which lookup Enter activates, mirroring the order the buttons are drawn in below. This is
@@ -789,7 +799,14 @@ fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
         return EnterTarget::Rcsb;
     }
 
-    if inp.len() == 3 {
+    // Uppercase three-character inputs conventionally denote PDB chemical components. Lowercase
+    // inputs such as `trp` are more likely PubChem name searches; Geostd and PDBe remain available
+    // as explicit buttons for either spelling.
+    if inp.len() == 3
+        && inp
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    {
         return EnterTarget::Geostd;
     }
 
@@ -801,7 +818,7 @@ fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
         return EnterTarget::Smiles;
     }
 
-    if inp.len() >= 5 {
+    if inp.len() >= QUERY_ENTER_LEN_MIN {
         return EnterTarget::PubchemSearch;
     }
 
@@ -1320,7 +1337,6 @@ pub(in crate::ui) fn load_mol_from_query(
 
         if button_clicked || (enter_pressed && is_tgt) {
             start_query(state, QueryRequest::Geostd(inp_l.to_owned()));
-            return;
         }
 
         // A chemical component from PDBe, e.g. `ATP`. These share their IDs with Geostd, which owns
@@ -1331,8 +1347,6 @@ pub(in crate::ui) fn load_mol_from_query(
         {
             start_query(state, QueryRequest::PdbeLigand(inp.to_owned()));
         }
-
-        return;
     }
 
     if inp.len() > 4 && inp_l.starts_with("db") {
@@ -1358,7 +1372,8 @@ pub(in crate::ui) fn load_mol_from_query(
     }
 
     // PubChem name search.
-    if inp.len() >= 5 && !inp_l.starts_with("pdb_") && !inp_l.starts_with("db") {
+    let is_prefixed_database_query = inp_l.starts_with("pdb_") || inp_l.starts_with("db");
+    if inp.len() >= QUERY_ENTER_LEN_MIN && !is_prefixed_database_query {
         let is_tgt = enter_tgt == EnterTarget::PubchemSearch;
         let button_clicked = query_btn(ui, "Search PubChem", is_tgt).clicked();
         if button_clicked || (enter_pressed && is_tgt) {

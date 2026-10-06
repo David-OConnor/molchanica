@@ -27,6 +27,7 @@ mcubes = "0.1.7"
 dynamics = { version = "0.2.2", features = ["encode"] }
 mol_defs = { version = "0.1.0", features = ["render"] }
 adme = { path = "../adme" }
+synthesis = { path = "../synthesis" }
 
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
 ewald = { version = "0.1.15" }

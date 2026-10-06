@@ -655,6 +655,7 @@ pub fn close_mol(
         MolType::Water => (),
     }
 
+    state.ui.mol_picker.on_close(mol_type, i);
     redraw.set(mol_type);
 
     if let Some((orbit_mol_type, orbit_i)) = &state.volatile.orbit_center

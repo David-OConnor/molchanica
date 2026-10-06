@@ -257,7 +257,7 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
 }
 
-fn mol_type_label(t: MolType) -> &'static str {
+pub(crate) fn mol_type_label(t: MolType) -> &'static str {
     match t {
         MolType::Peptide => "Protein",
         MolType::Ligand => "Ligand",

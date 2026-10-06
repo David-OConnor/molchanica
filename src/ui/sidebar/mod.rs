@@ -2,22 +2,13 @@ use bio_apis::pubchem;
 use bio_files::{FrameSlice, md_params::ForceFieldParams};
 use dynamics::{FfMolType, merge_params};
 use egui::{Color32, RichText, TextEdit, Ui};
-use graphics::{ControlScheme, EngineUpdates, Scene};
+use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
-use mol_defs::{
-    molecules::{
-        MolGenericRef, MolGenericRefMut, MolIdent, MolType, common::MoleculeCommon,
-        nucleic_acid::NucleicAcidType,
-    },
-    properties::mol_characterization::MolCharacterization,
-    screening::pharmacophore::{Pharmacophore, PharmacophoreState},
-};
+use mol_defs::molecules::{MolGenericRef, MolGenericRefMut, MolIdent, MolType};
 
 use crate::{
     button,
-    cam::{
-        MolCameraTarget, VIEW_DIR_FRONT, move_cam_to_mol, move_mol_to_cam, reset_camera, set_fog,
-    },
+    cam::{VIEW_DIR_FRONT, move_mol_to_cam, reset_camera},
     file_io::{save_mol, sequence::save_seq_dialog},
     label,
     md::{
@@ -29,19 +20,19 @@ use crate::{
     pocket_render::PocketRender,
     properties::{crystal, logp, sol_shrinking_box, water_sol, water_sol_mix},
     sonification,
-    state::{MetadataTarget, OperatingMode, PlayingAudio, PopupState, State},
+    state::{MetadataTarget, OperatingMode, PlayingAudio, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_HIGHLIGHT,
-        COLOR_INACTIVE, ROW_SPACING, highlighted_box, load_all_idents_button, num_field,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        highlighted_box, load_all_idents_button, num_field,
         panels::md_viewer,
-        popup::pharmacophore,
         util::{Idents, list_idents},
     },
-    util::{RedrawFlags, close_mol, handle_err, handle_success, orbit_center},
+    util::{RedrawFlags, handle_err, handle_success},
 };
 
 mod char_adme;
 mod mol_editor_sidebar;
+mod mol_picker;
 
 const SONIFICATION_INCLUDE_H: bool = true;
 
@@ -68,206 +59,13 @@ fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
     }
 }
 
-/// For a molecule or sequence row's select button: the name, truncated if long, and its hover
-/// text. When truncated, the hover text starts with the full name.
-fn picker_name(name: &str, help: &str) -> (String, String) {
-    const MAX_NAME_LEN: usize = 30;
-
-    if name.chars().count() > MAX_NAME_LEN {
-        let truncated: String = name.chars().take(MAX_NAME_LEN - 1).collect();
-        (format!("{truncated}…"), format!("{name}\n\n{help}"))
-    } else {
-        (name.to_owned(), help.to_owned())
-    }
-}
-
-/// Abstracts over all molecule types. (Currently vnot protein though)
-/// A single row for the molecule.
-fn mol_picker_one(
-    active_mol: &mut Option<(MolType, usize)>,
-    orbit_center: &mut Option<(MolType, usize)>,
-    ph_state: &mut PharmacophoreState,
-    i_mol: usize,
-    mol: &mut MoleculeCommon,
-    idents: Option<&Vec<MolIdent>>, // For small mols,
-    mol_char: &Option<MolCharacterization>,
-    pharmacophore: Option<&Pharmacophore>,
-    mol_type: MolType,
-    popup: &mut PopupState,
-    scene: &mut Scene,
-    ui: &mut Ui,
-    engine_updates: &mut EngineUpdates,
-    redraw: &mut bool,
-    recenter_orbit: &mut bool,
-    close: &mut Option<(MolType, usize)>,
-    cam_snapshot: &mut Option<usize>,
-    reset_fog: &mut bool,
-    mol_audio_playing: &Option<PlayingAudio>,
-    audio_action: &mut Option<AudioAction>,
-) {
-    let active = match active_mol {
-        Some((mol_type_active, i)) => *mol_type_active == mol_type && *i == i_mol,
-        _ => false,
-    };
-
-    let color = if active {
-        COLOR_ACTIVE_RADIO
-    } else {
-        COLOR_INACTIVE
-    };
-
-    highlighted_box(active, Color32::from_rgb(55, 40, 40)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(COL_SPACING / 2.);
-                if ui
-                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                    .on_hover_text("(Hotkey: Delete) Close this molecule.")
-                    .clicked()
-                {
-                    *close = Some((mol_type, i_mol));
-                }
-
-                if mol_type != MolType::Pocket {
-                    if let Some(copies) = &mut mol.selected_for_md {
-                        md_copies_field(copies, ui);
-                    }
-
-                    let color_md = if mol.selected_for_md.is_some() {
-                        COLOR_ACTIVE
-                    } else {
-                        COLOR_INACTIVE
-                    };
-
-                    if ui
-                        .button(RichText::new("MD").color(color_md))
-                        .on_hover_text(
-                            "Select or deselect this molecule for molecular dynamics simulation.",
-                        )
-                        .clicked()
-                    {
-                        mol.selected_for_md = match mol.selected_for_md {
-                            Some(_) => None,
-                            None => Some(1),
-                        };
-                    }
-                }
-
-                let color_vis = if mol.visible {
-                    COLOR_ACTIVE
-                } else {
-                    COLOR_INACTIVE
-                };
-
-                if ui.button(RichText::new("👁").color(color_vis)).clicked() {
-                    mol.visible = !mol.visible;
-
-                    *redraw = true; // todo Overkill; only need to redraw (or even just clear) one.
-                }
-
-                if ui
-                    .button(RichText::new("Cam"))
-                    .on_hover_text("Move camera near near this molecule, looking at it.")
-                    .clicked()
-                {
-                    let molecule_center: Vec3 = mol.centroid().into();
-                    let forward: Vec3 = VIEW_DIR_FRONT.into();
-                    let alignment = molecule_center + forward;
-
-                    move_cam_to_mol(
-                        MolCameraTarget::new(mol, (mol_type, i_mol)),
-                        cam_snapshot,
-                        scene,
-                        orbit_center,
-                        alignment,
-                        engine_updates,
-                    );
-                    *reset_fog = true;
-                }
-
-                let row_h = ui.spacing().interact_size.y;
-
-                let (name_disp, help_text) = picker_name(
-                    &mol.name(idents),
-                    "Make this molecule the active / selected one. Middle click to close it.",
-                );
-
-                let sel_btn = ui
-                    .add_sized(
-                        egui::vec2(ui.available_width(), row_h),
-                        egui::Button::new(RichText::new(name_disp).color(color)),
-                    )
-                    .on_hover_text(help_text);
-
-                if sel_btn.clicked() {
-                    if active && active_mol.is_some() {
-                        *active_mol = None;
-                    } else {
-                        *active_mol = Some((mol_type, i_mol));
-                        *orbit_center = *active_mol;
-
-                        *recenter_orbit = true;
-                    }
-
-                    *redraw = true; // To reflect the change in thickness, color etc.
-                }
-
-                if sel_btn.middle_clicked() {
-                    *close = Some((mol_type, i_mol));
-                }
-            });
-        });
-
-        if let Some(char) = mol_char {
-            let color_details = if active {
-                Color32::WHITE
-            } else {
-                Color32::GRAY
-            };
-
-            label!(ui, char.to_string().trim(), color_details);
-        }
-
-        if let Some(pm) = pharmacophore
-            && !pm.features.is_empty()
-        {
-            pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_state, ui);
-        }
-        //
-        // let playing_this_mol = mol_audio_playing
-        //     .as_ref()
-        //     .is_some_and(|audio| audio.is_for(mol_type, i_mol));
-        //
-        // let (text, color, hover_text) = if playing_this_mol {
-        //     ("Pause", COLOR_ACTIVE, "Stop sonifying this molecule.")
-        // } else {
-        //     (
-        //         "Play",
-        //         COLOR_ACTION,
-        //         "Sonify this molecule using its force-field bond-stretching parameters.",
-        //     )
-        // };
-        //
-        // if mol_type != MolType::Pocket
-        //     && ui
-        //         .button(RichText::new(text).color(color))
-        //         .on_hover_text(hover_text)
-        //         .clicked()
-        // {
-        //     *audio_action = Some(AudioAction::Toggle(mol_type, i_mol));
-        // }
-
-        ui.separator();
-    });
-}
-
 fn toggle_audio(state: &mut State, mol_type: MolType, i_mol: usize) {
     if state.volatile.is_playing_audio_for(mol_type, i_mol) {
         state.volatile.playing_audio = None;
         return;
     }
 
-    let (mol, ff_params) = match sonification_input(state, mol_type, i_mol) {
+    let (mol, ff_params) = match mol_picker::sonification_input(state, mol_type, i_mol) {
         Ok(input) => input,
         Err(e) => {
             handle_err(&mut state.ui, e);
@@ -280,75 +78,6 @@ fn toggle_audio(state: &mut State, mol_type: MolType, i_mol: usize) {
             state.volatile.playing_audio = Some(PlayingAudio::new(mol_type, i_mol, handle));
         }
         Err(e) => handle_err(&mut state.ui, format!("Unable to play molecule audio: {e}")),
-    }
-}
-
-fn sonification_input(
-    state: &State,
-    mol_type: MolType,
-    i_mol: usize,
-) -> Result<(MoleculeCommon, ForceFieldParams), String> {
-    match mol_type {
-        MolType::Peptide => {
-            let mol = state
-                .peptides
-                .get(i_mol)
-                .ok_or_else(|| "Peptide index is out of bounds.".to_string())?;
-            let params = state
-                .ff_param_set
-                .peptide
-                .as_ref()
-                .ok_or_else(|| "No peptide force-field parameters are loaded.".to_string())?;
-
-            Ok((mol.common.clone(), params.clone()))
-        }
-        MolType::Ligand => {
-            let mol = state
-                .ligands
-                .get(i_mol)
-                .ok_or_else(|| "Ligand index is out of bounds.".to_string())?;
-            let params = state.ff_param_set.small_mol.as_ref().ok_or_else(|| {
-                "No small-molecule force-field parameters are loaded.".to_string()
-            })?;
-
-            Ok((
-                mol.common.clone(),
-                merge_mol_specific_params(
-                    params,
-                    mol_specific_params(&state.mol_specific_params, &mol.common.ident),
-                ),
-            ))
-        }
-        MolType::NucleicAcid => {
-            let mol = state
-                .nucleic_acids
-                .get(i_mol)
-                .ok_or_else(|| "Nucleic acid index is out of bounds.".to_string())?;
-            let params = match mol.na_type {
-                NucleicAcidType::Dna => &state.ff_param_set.dna,
-                NucleicAcidType::Rna => &state.ff_param_set.rna,
-            }
-            .as_ref()
-            .ok_or_else(|| format!("No {} force-field parameters are loaded.", mol.na_type))?;
-
-            Ok((mol.common.clone(), params.clone()))
-        }
-        MolType::Lipid => {
-            let mol = state
-                .lipids
-                .get(i_mol)
-                .ok_or_else(|| "Lipid index is out of bounds.".to_string())?;
-            let params = state
-                .ff_param_set
-                .lipids
-                .as_ref()
-                .ok_or_else(|| "No lipid force-field parameters are loaded.".to_string())?;
-
-            Ok((mol.common.clone(), params.clone()))
-        }
-        MolType::Pocket | MolType::Water => {
-            Err("This molecule type cannot be sonified.".to_string())
-        }
     }
 }
 
@@ -371,337 +100,6 @@ fn merge_mol_specific_params(
     match specific {
         Some(specific) => merge_params(general, specific),
         None => general.clone(),
-    }
-}
-
-/// Select, close, hide etc molecules from ones opened.
-fn mol_picker(
-    state: &mut State,
-    scene: &mut Scene,
-    ui: &mut Ui,
-    redraw: &mut RedrawFlags,
-    updates: &mut EngineUpdates,
-) {
-    let mut recenter_orbit = false;
-    let mut close = None; // Avoids borrow error.
-
-    let mut reset_fog = false;
-    let mut audio_action = None;
-
-    for (i_mol, mol) in state.peptides.iter_mut().enumerate() {
-        mol_picker_one(
-            &mut state.volatile.active_mol,
-            &mut state.volatile.orbit_center,
-            &mut state.pharmacophore,
-            i_mol,
-            &mut mol.common,
-            None,
-            &None,
-            None,
-            MolType::Peptide,
-            &mut state.ui.popup,
-            scene,
-            ui,
-            updates,
-            &mut redraw.peptide,
-            &mut recenter_orbit,
-            &mut close,
-            &mut state.ui.cam_snapshot,
-            &mut reset_fog,
-            &state.volatile.playing_audio,
-            &mut audio_action,
-        );
-    }
-
-    for (i_mol, mol) in state.ligands.iter_mut().enumerate() {
-        mol_picker_one(
-            &mut state.volatile.active_mol,
-            &mut state.volatile.orbit_center,
-            &mut state.pharmacophore,
-            i_mol,
-            &mut mol.common,
-            Some(&mol.idents),
-            &mol.characterization,
-            Some(&mol.pharmacophore),
-            MolType::Ligand,
-            &mut state.ui.popup,
-            scene,
-            ui,
-            updates,
-            &mut redraw.ligand,
-            &mut recenter_orbit,
-            &mut close,
-            &mut state.ui.cam_snapshot,
-            &mut reset_fog,
-            &state.volatile.playing_audio,
-            &mut audio_action,
-        );
-    }
-
-    for (i_mol, mol) in state.lipids.iter_mut().enumerate() {
-        mol_picker_one(
-            &mut state.volatile.active_mol,
-            &mut state.volatile.orbit_center,
-            &mut state.pharmacophore,
-            i_mol,
-            &mut mol.common,
-            None,
-            &None,
-            None,
-            MolType::Lipid,
-            &mut state.ui.popup,
-            scene,
-            ui,
-            updates,
-            &mut redraw.lipid,
-            &mut recenter_orbit,
-            &mut close,
-            &mut state.ui.cam_snapshot,
-            &mut reset_fog,
-            &state.volatile.playing_audio,
-            &mut audio_action,
-        );
-    }
-
-    for (i_mol, mol) in state.nucleic_acids.iter_mut().enumerate() {
-        // todo: Characterization, e.g. by dna seq?
-        mol_picker_one(
-            &mut state.volatile.active_mol,
-            &mut state.volatile.orbit_center,
-            &mut state.pharmacophore,
-            i_mol,
-            &mut mol.common,
-            None,
-            &None,
-            None,
-            MolType::NucleicAcid,
-            &mut state.ui.popup,
-            scene,
-            ui,
-            updates,
-            &mut redraw.na,
-            &mut recenter_orbit,
-            &mut close,
-            &mut state.ui.cam_snapshot,
-            &mut reset_fog,
-            &state.volatile.playing_audio,
-            &mut audio_action,
-        );
-    }
-
-    for (i_mol, mol) in state.pockets.iter_mut().enumerate() {
-        // todo: Characterization, e.g. by dna seq?
-        mol_picker_one(
-            &mut state.volatile.active_mol,
-            &mut state.volatile.orbit_center,
-            &mut state.pharmacophore,
-            i_mol,
-            &mut mol.common,
-            None,
-            &None,
-            None,
-            MolType::Pocket,
-            &mut state.ui.popup,
-            scene,
-            ui,
-            updates,
-            &mut redraw.pocket,
-            &mut recenter_orbit,
-            &mut close,
-            &mut state.ui.cam_snapshot,
-            &mut reset_fog,
-            &state.volatile.playing_audio,
-            &mut audio_action,
-        );
-    }
-
-    // Removed, for now.
-
-    // for (i_mol, pm) in state.pharmacophores.iter_mut().enumerate() {
-    //     label!(
-    //         ui,
-    //         format!("Pharmacophore name: {} ident: {}", pm.name, pm.mol_ident),
-    //         Color32::WHITE
-    //     );
-    //     //
-    //     // if let Some(pm) = pharmacophore
-    //     //     && !pm.features.is_empty()
-    //     // {
-    //     pharmacophore::pharmacophore_summary(
-    //         pm,
-    //         i_mol,
-    //         &mut state.ui.popup,
-    //         &mut state.pharmacophore,
-    //         ui,
-    //     );
-    //     // }
-    // }
-
-    // todo: AAs here too?
-
-    // Peptide-relative UI state follows whichever peptide was selected in the picker.
-    if recenter_orbit {
-        state.volatile.active_seq = None;
-        state.ui.seq_selection.clear();
-    }
-
-    if recenter_orbit
-        && let Some((MolType::Peptide, peptide_i)) = state.volatile.active_mol
-        && let Some(peptide) = state.peptides.get(peptide_i)
-    {
-        state.volatile.active_peptide = Some(peptide_i);
-        state.volatile.set_aa_seq(Some(peptide));
-        state.volatile.flags.ss_mesh_created = false;
-        state.volatile.flags.sas_mesh_created = false;
-    }
-    if let Some(AudioAction::Toggle(mol_type, i_mol)) = audio_action {
-        toggle_audio(state, mol_type, i_mol);
-    }
-
-    if let Some((mol_type, i_mol)) = close {
-        close_mol(mol_type, i_mol, state, scene, redraw, updates);
-    }
-
-    if recenter_orbit
-        && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
-    {
-        *center = orbit_center(state);
-    }
-
-    if reset_fog {
-        set_fog(state, &mut scene.camera);
-    }
-}
-
-/// Select, close, and save opened sequences. Like the molecule rows, but sequences aren't
-/// rendered, so there are no visibility, camera, or MD controls.
-fn seq_picker(state: &mut State, ui: &mut Ui) {
-    // Applied after the loop; avoids borrow errors, and index shifts while iterating.
-    let mut close = None;
-    let mut save = None;
-    let mut toggle_metadata = None;
-    let mut toggle_active = None;
-
-    for (i, seq) in state.sequences.iter().enumerate() {
-        let active = state.volatile.active_seq == Some(i);
-
-        let color = if active {
-            COLOR_ACTIVE_RADIO
-        } else {
-            COLOR_INACTIVE
-        };
-
-        highlighted_box(active, Color32::from_rgb(40, 45, 60)).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(COL_SPACING / 2.);
-                    if ui
-                        .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                        .on_hover_text("Close this sequence.")
-                        .clicked()
-                    {
-                        close = Some(i);
-                    }
-
-                    let color_meta = if state.ui.popup.metadata == Some(MetadataTarget::Seq(i)) {
-                        COLOR_ACTIVE
-                    } else {
-                        COLOR_INACTIVE
-                    };
-
-                    if button!(
-                        ui,
-                        "Meta",
-                        color_meta,
-                        "Display and edit this sequence's metadata."
-                    )
-                    .clicked()
-                    {
-                        toggle_metadata = Some(i);
-                    }
-
-                    if button!(
-                        ui,
-                        "Save",
-                        COLOR_INACTIVE,
-                        "Save this sequence to a FASTA, GenBank, or SnapGene (DNA only) file."
-                    )
-                    .clicked()
-                    {
-                        save = Some(i);
-                    }
-
-                    let row_h = ui.spacing().interact_size.y;
-
-                    let (name_disp, help_text) = picker_name(
-                        seq.display_name(),
-                        "Make this sequence the active / selected one. Middle click to close it.",
-                    );
-
-                    let sel_btn = ui
-                        .add_sized(
-                            egui::vec2(ui.available_width(), row_h),
-                            egui::Button::new(RichText::new(name_disp).color(color)),
-                        )
-                        .on_hover_text(help_text);
-
-                    if sel_btn.clicked() {
-                        toggle_active = Some(i);
-                    }
-
-                    if sel_btn.middle_clicked() {
-                        close = Some(i);
-                    }
-                });
-            });
-
-            let color_details = if active {
-                Color32::WHITE
-            } else {
-                Color32::GRAY
-            };
-
-            let details = format!(
-                "{} · {} {}",
-                seq.seq_type(),
-                seq.data.len(),
-                seq.seq_type().residue_unit()
-            );
-
-            let resp = label!(ui, details, color_details);
-            if let Some(descrip) = seq.description() {
-                resp.on_hover_text(descrip);
-            }
-
-            ui.separator();
-        });
-    }
-
-    if let Some(i) = toggle_active {
-        let next = if state.volatile.active_seq == Some(i) {
-            None
-        } else {
-            Some(i)
-        };
-        state.select_sequence(next);
-    }
-
-    if let Some(i) = toggle_metadata {
-        let target = MetadataTarget::Seq(i);
-
-        state.ui.popup.metadata = if state.ui.popup.metadata == Some(target) {
-            None
-        } else {
-            Some(target)
-        };
-    }
-
-    if let Some(i) = save {
-        save_seq_dialog(state, i);
-    }
-
-    if let Some(i) = close {
-        state.close_sequence(i);
     }
 }
 
@@ -829,18 +227,38 @@ fn manip_toolbar(
                 redraw.set(active_mol_type);
             }
 
-            let color_details = if state.ui.ui_vis.sidebar_mol_details {
-                COLOR_ACTIVE
-            } else {
-                COLOR_INACTIVE
-            };
-            if button!(
-                ui,
-                "Details",
-                color_details,
-                "Toggle the details display of the active molecule."
-            ).clicked() {
-                state.ui.ui_vis.sidebar_mol_details = !state.ui.ui_vis.sidebar_mol_details;
+            {
+                let color = if state.ui.ui_vis.mol_picker_details {
+                    COLOR_ACTIVE
+                } else {
+                    COLOR_INACTIVE
+                };
+                if button!(
+                    ui,
+                    "Details",
+                    color,
+                    "Toggle details and controls under each molecule. If you have many molecules open at \
+                    once, you may wish to deselect this to declutter the display."
+                ).clicked() {
+                    state.ui.ui_vis.mol_picker_details = !state.ui.ui_vis.mol_picker_details;
+                }
+            }
+
+            {
+                let color = if state.ui.ui_vis.sidebar_mol_properties {
+                    COLOR_ACTIVE
+                } else {
+                    COLOR_INACTIVE
+                };
+                if button!(
+                    ui,
+                    "Properties",
+                    color,
+                    "Toggle the properties display of the active molecule. This includes detailed numerical data \
+                    about the molecule, and ADME properties."
+                ).clicked() {
+                    state.ui.ui_vis.sidebar_mol_properties = !state.ui.ui_vis.sidebar_mol_properties;
+                }
             }
         }
 
@@ -1052,8 +470,8 @@ pub(in crate::ui) fn sidebar(
                 mol_editor_sidebar::db_info(state, ui);
                 mol_editor_sidebar::pocket_list(state, scene, updates, ui);
             } else {
-                mol_picker(state, scene, ui, redraw, updates);
-                seq_picker(state, ui);
+                mol_picker::mol_picker(state, scene, ui, redraw, updates);
+                mol_picker::seq_picker(state, ui);
                 traj_items(state, scene, updates, ui, redraw);
                 md_viewer::viewer_mol_set(state, scene, updates, ui, redraw);
             }
@@ -1131,7 +549,7 @@ pub(in crate::ui) fn sidebar(
                 }
             }
 
-            if state.ui.ui_vis.sidebar_mol_details && !edit_mode {
+            if state.ui.ui_vis.sidebar_mol_properties && !edit_mode {
                 // These vars are all to avoid a double borrow.
                 let mut run_logp_sim = false;
                 let mut run_crystal_sim = false;

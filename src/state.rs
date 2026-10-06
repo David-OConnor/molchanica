@@ -673,6 +673,7 @@ impl Default for AaSelection {
 #[derive(Default)]
 pub struct StateUi {
     pub reactions: crate::reactions::ReactionsState,
+    pub synthesis_reactions: crate::reactions::SynthesisReactionsState,
     /// View mode for proteins/peptides.
     pub mol_view_peptide: MoleculeView,
     /// View mode for everything other than proteins/peptides.
@@ -747,6 +748,50 @@ pub struct StateUi {
     pub seq_selection: Vec<usize>,
     pub sequence_edit: SequenceEdit,
     pub aa_selection: AaSelection,
+    pub mol_picker: MolPickerState,
+}
+
+/// Search, filters, sorting, and manual order of the sidebar's molecule picker.
+#[derive(Default)]
+pub struct MolPickerState {
+    pub search: String,
+    /// Molecule types not shown.
+    pub hidden_types: Vec<MolType>,
+    pub sort: MolSort,
+    pub sort_descending: bool,
+    /// Display order, used by `MolSort::Manual`. Rearranged by dragging rows.
+    pub order: Vec<(MolType, usize)>,
+}
+
+impl MolPickerState {
+    /// Keeps `order` in sync when a molecule is closed: later molecules of its type shift down.
+    pub fn on_close(&mut self, mol_type: MolType, i: usize) {
+        self.order.retain(|&id| id != (mol_type, i));
+
+        for (t, j) in &mut self.order {
+            if *t == mol_type && *j > i {
+                *j -= 1;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum MolSort {
+    /// Grouped by type, in the order opened, unless rearranged by dragging.
+    #[default]
+    Manual,
+    Name,
+    Type,
+    AtomCount,
+    Weight,
+    // These are from small-molecule characterization. Other molecules sort last.
+    LogP,
+    Tpsa,
+    Rings,
+    RotatableBonds,
+    HBondDonors,
+    HBondAcceptors,
 }
 
 #[derive(Default)]
@@ -907,6 +952,7 @@ pub struct MolDbTableView {
 #[derive(Default, Debug)]
 pub struct PopupState {
     pub reactions: bool,
+    pub synthesis_reactions: bool,
     pub show_get_geostd: bool,
     pub show_associated_structures: bool,
     pub show_settings: bool,
@@ -1197,7 +1243,8 @@ pub struct UiVisibility {
     pub dynamics: bool,
     pub orca: bool,
     // pub strucutre_prediction: bool,
-    pub sidebar_mol_details: bool,
+    pub sidebar_mol_properties: bool,
+    pub mol_picker_details: bool,
     pub pharmacophore_list: bool,
     /// The left-side panel. When hidden, a narrow strip with a button to re-show it remains.
     pub sidebar: bool,
@@ -1215,8 +1262,8 @@ impl Default for UiVisibility {
             amino_acids: false,
             dynamics: false,
             orca: false,
-            // strucutre_prediction: true,
-            sidebar_mol_details: true, // todo: For now.
+            mol_picker_details: true,
+            sidebar_mol_properties: true,
             pharmacophore_list: false,
             sidebar: true,
             aa_selection: false,

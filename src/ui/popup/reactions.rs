@@ -5,19 +5,28 @@ use bio_apis::{
     rhea::{Reaction, ReactionSide},
 };
 use egui::{
-    Align, Align2, Button, Color32, FontId, Frame, Layout, RichText, ScrollArea, Sense, TextStyle,
-    Ui, pos2, vec2,
+    Align, Align2, Button, CollapsingHeader, Color32, ComboBox, FontId, Frame, Layout, RichText,
+    ScrollArea, Sense, TextEdit, TextStyle, Ui, pos2, vec2,
 };
 use graphics::{EngineUpdates, Scene};
+use synthesis::broad_target::{LibraryEnzyme, LibraryMolecule, LibraryRoute, LibraryStep};
 
 use crate::{
-    reactions::{Entry, ParticipantAction, Query, ReactionsState},
+    file_io::managed_mols::ManagedMolProvider,
+    reactions::{
+        Entry, ParticipantAction, Query, ReactionsState, SynthesisDownloadId, SynthesisDownloads,
+        SynthesisEntry, SynthesisParticipantAction, SynthesisReactionsState, SynthesisSort,
+    },
     state::State,
-    ui::{misc::selector, util::open_chebi_download},
+    ui::{
+        misc::selector,
+        util::{QueryResult, apply_query_result, open_chebi_download},
+    },
     util::{RedrawFlags, handle_err, make_lig_3d},
 };
 
 const PER_PAGE: usize = 4;
+const SYNTHESIS_ROUTES_PER_PAGE: usize = 2;
 /// Width of the column holding a "+" between participants.
 const PLUS_WIDTH: f32 = 14.0;
 
@@ -57,6 +66,762 @@ pub(super) fn poll_downloads(
             }
         }
     }
+
+    for (id, result) in state.ui.synthesis_reactions.take_downloads() {
+        let downloaded_lig_i = state.ligands.len();
+        let label = id.label();
+        let result = match (id, result) {
+            (_, Err(error)) => Err(error),
+            (SynthesisDownloadId::Chebi(id), Ok(downloaded)) => {
+                open_chebi_download(state, scene, redraw, updates, id, downloaded)
+            }
+            (SynthesisDownloadId::PubChem(id), Ok(downloaded)) => {
+                let mut unused_reset_cam = false;
+                apply_query_result(
+                    state,
+                    scene,
+                    redraw,
+                    &mut unused_reset_cam,
+                    updates,
+                    QueryResult::Small {
+                        downloaded,
+                        provider: ManagedMolProvider::Pubchem,
+                        key: id.to_string(),
+                        query: id.to_string(),
+                        message: format!("Loaded CID {id} from PubChem (over the internet)"),
+                        canonical_sdf: false,
+                    },
+                );
+                if state.ligands.len() > downloaded_lig_i {
+                    Ok(())
+                } else {
+                    Err(format!("Unable to open {label} in Molchanica."))
+                }
+            }
+        };
+
+        if result.is_ok()
+            && state
+                .ligands
+                .get(downloaded_lig_i)
+                .is_some_and(|ligand| ligand.common.is_2d)
+        {
+            make_lig_3d(state, downloaded_lig_i, scene, updates);
+        }
+
+        match result {
+            Ok(()) => {
+                state.ui.synthesis_reactions.download_message =
+                    Some(format!("Opened {label} in Molchanica."));
+            }
+            Err(error) => {
+                handle_err(&mut state.ui, error.clone());
+                state.ui.synthesis_reactions.download_error = Some(error);
+            }
+        }
+    }
+}
+
+pub(super) fn synthesis_reactions_window(state: &mut SynthesisReactionsState, ui: &mut Ui) {
+    state.diagrams.poll(ui.ctx());
+    ui.heading(RichText::new("Synthesis reaction library").color(Color32::WHITE));
+    ui.label(
+        "Curated candidate routes from synthesis::broad_target. Connectivity coverage does not \
+         establish substrate acceptance, stereochemistry, yield, or a complete protocol.",
+    );
+
+    let mut retry = false;
+    match &state.entry {
+        SynthesisEntry::NotLoaded => {
+            state.load();
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Building the synthesis library…");
+            });
+            return;
+        }
+        SynthesisEntry::Loading(_) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Building and validating synthesis routes…");
+            });
+            return;
+        }
+        SynthesisEntry::Failed(error) => {
+            ui.colored_label(Color32::LIGHT_RED, error);
+            retry = ui.button("Retry").clicked();
+        }
+        SynthesisEntry::Ready(_) => {}
+    }
+    if retry {
+        state.retry();
+        ui.ctx().request_repaint();
+        return;
+    }
+
+    let SynthesisEntry::Ready(data) = &state.entry else {
+        return;
+    };
+
+    CollapsingHeader::new("Coverage summary")
+        .id_salt("synthesis_coverage_summary")
+        .show(ui, |ui| {
+            ui.monospace(data.summary.trim());
+        });
+
+    ui.separator();
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Search:");
+        if ui
+            .add(
+                TextEdit::singleline(&mut state.search)
+                    .desired_width(220.0)
+                    .hint_text("target, molecule, enzyme, EC, key…"),
+            )
+            .changed()
+        {
+            state.page = 0;
+        }
+
+        ui.label("Class:");
+        let class_label = if state.class_filter.is_empty() {
+            "All classes"
+        } else {
+            &state.class_filter
+        };
+        ComboBox::from_id_salt("synthesis_class_filter")
+            .selected_text(class_label)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_value(&mut state.class_filter, String::new(), "All classes")
+                    .changed()
+                {
+                    state.page = 0;
+                }
+                for class in &data.classes {
+                    if ui
+                        .selectable_value(&mut state.class_filter, class.clone(), class)
+                        .changed()
+                    {
+                        state.page = 0;
+                    }
+                }
+            });
+
+        ui.label("Steps:");
+        ComboBox::from_id_salt("synthesis_step_filter")
+            .selected_text(match state.step_filter {
+                0 => "Any".to_owned(),
+                steps => steps.to_string(),
+            })
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_value(&mut state.step_filter, 0, "Any")
+                    .changed()
+                {
+                    state.page = 0;
+                }
+                let max_steps = data
+                    .routes
+                    .iter()
+                    .map(|route| route.steps.len())
+                    .max()
+                    .unwrap_or(0);
+                for steps in 1..=max_steps {
+                    if ui
+                        .selectable_value(&mut state.step_filter, steps, steps.to_string())
+                        .changed()
+                    {
+                        state.page = 0;
+                    }
+                }
+            });
+
+        ui.label("Sort:");
+        if let Some(sort) = selector(
+            ui,
+            state.sort,
+            &[
+                (
+                    SynthesisSort::TargetAscending,
+                    "Target A–Z",
+                    "Sort by target name, ascending.",
+                ),
+                (
+                    SynthesisSort::TargetDescending,
+                    "Target Z–A",
+                    "Sort by target name, descending.",
+                ),
+                (
+                    SynthesisSort::Class,
+                    "Class",
+                    "Sort by product class, then target name.",
+                ),
+                (
+                    SynthesisSort::FewestSteps,
+                    "Fewest steps",
+                    "Show shorter routes first.",
+                ),
+                (
+                    SynthesisSort::MostSteps,
+                    "Most steps",
+                    "Show longer routes first.",
+                ),
+            ],
+        ) {
+            if sort != state.sort {
+                state.sort = sort;
+                state.page = 0;
+            }
+        }
+    });
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Click a molecule to:");
+        if let Some(action) = selector(
+            ui,
+            state.participant_action,
+            &[
+                (
+                    SynthesisParticipantAction::OpenDatabasePage,
+                    "Open molecule page",
+                    "Open ChEBI when available, otherwise PubChem.",
+                ),
+                (
+                    SynthesisParticipantAction::Download,
+                    "Open in Molchanica",
+                    "Download the ChEBI or PubChem structure and open it in Molchanica.",
+                ),
+                (
+                    SynthesisParticipantAction::SearchRhea,
+                    "Search Rhea",
+                    "Open Rhea reactions for the molecule's ChEBI identifier.",
+                ),
+            ],
+        ) {
+            state.participant_action = action;
+        }
+    });
+
+    if !state.downloads.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spinner();
+            ui.label("Downloading:");
+            for id in state.downloads.keys() {
+                ui.label(id.label());
+            }
+        });
+    }
+    if let Some(message) = &state.download_message {
+        ui.label(message);
+    }
+    if let Some(error) = &state.download_error {
+        ui.colored_label(Color32::LIGHT_RED, error);
+        ui.label("Click the molecule again to retry.");
+    }
+
+    let search = state.search.trim().to_ascii_lowercase();
+    let mut visible: Vec<_> = data
+        .routes
+        .iter()
+        .enumerate()
+        .filter(|(_, route)| {
+            (state.class_filter.is_empty() || route.class == state.class_filter)
+                && (state.step_filter == 0 || route.steps.len() == state.step_filter)
+                && route_matches(route, &search)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    sort_routes(&mut visible, &data.routes, state.sort);
+
+    let count = visible.len();
+    if count == 0 {
+        state.page = 0;
+        ui.separator();
+        ui.label("No synthesis routes match these filters.");
+        return;
+    }
+
+    let pages = count.div_ceil(SYNTHESIS_ROUTES_PER_PAGE);
+    state.page = state.page.min(pages - 1);
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(state.page > 0, Button::new("Previous"))
+            .clicked()
+        {
+            state.page -= 1;
+        }
+        ui.label(format!("Page {} of {pages}", state.page + 1));
+        if ui
+            .add_enabled(state.page + 1 < pages, Button::new("Next"))
+            .clicked()
+        {
+            state.page += 1;
+        }
+        let first = state.page * SYNTHESIS_ROUTES_PER_PAGE + 1;
+        let last = ((state.page + 1) * SYNTHESIS_ROUTES_PER_PAGE).min(count);
+        ui.label(format!("{first}–{last} of {count} routes"));
+    });
+    ui.add_space(6.0);
+
+    let mut clicked_participant = None;
+    let mut diagram_requests = Vec::new();
+    ScrollArea::vertical()
+        .id_salt(("synthesis_reactions", state.page, &search))
+        .max_height(ui.available_height())
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for &index in visible
+                .iter()
+                .skip(state.page * SYNTHESIS_ROUTES_PER_PAGE)
+                .take(SYNTHESIS_ROUTES_PER_PAGE)
+            {
+                synthesis_route_card(
+                    &data.routes[index],
+                    state.participant_action,
+                    &state.downloads,
+                    &mut state.diagrams,
+                    &mut clicked_participant,
+                    &mut diagram_requests,
+                    ui,
+                );
+                ui.add_space(8.0);
+            }
+        });
+    state.diagrams.request(&diagram_requests, ui.ctx());
+
+    if let Some(molecule) = clicked_participant {
+        match state.participant_action {
+            SynthesisParticipantAction::OpenDatabasePage => {
+                if let Some(id) = molecule.chebi_id {
+                    chebi::open_overview(id);
+                } else if let Some(id) = molecule.pubchem_id {
+                    pubchem::open_overview(id);
+                }
+            }
+            SynthesisParticipantAction::Download => {
+                state.download(molecule.chebi_id, molecule.pubchem_id);
+            }
+            SynthesisParticipantAction::SearchRhea => {
+                if let Some(id) = molecule.chebi_id {
+                    let _ = webbrowser::open(&format!(
+                        "https://www.rhea-db.org/rhea?query=chebi_exact%3A{id}"
+                    ));
+                }
+            }
+        }
+        ui.ctx().request_repaint();
+    }
+}
+
+fn route_matches(route: &LibraryRoute, search: &str) -> bool {
+    if search.is_empty() {
+        return true;
+    }
+
+    let mut values = vec![route.class.to_ascii_lowercase()];
+    push_molecule_search_values(&route.target, &mut values);
+    for molecule in &route.starting_materials {
+        push_molecule_search_values(molecule, &mut values);
+    }
+    for step in &route.steps {
+        values.extend(
+            [
+                &step.key,
+                &step.family,
+                &step.generic_equation,
+                &step.evidence,
+                &step.reversibility,
+                &step.limitations,
+            ]
+            .map(|value| value.to_ascii_lowercase()),
+        );
+        for molecule in step.reactants.iter().chain(&step.products) {
+            push_molecule_search_values(molecule, &mut values);
+        }
+        for enzyme in &step.enzymes {
+            values.push(enzyme.common_name.to_ascii_lowercase());
+            if let Some(ec) = &enzyme.ec {
+                values.push(ec.to_ascii_lowercase());
+            }
+            if let Some(accession) = &enzyme.uniprot_id {
+                values.push(accession.to_ascii_lowercase());
+            }
+        }
+        values.extend(
+            step.catalytic_cofactors
+                .iter()
+                .chain(&step.requirements)
+                .map(|value| value.to_ascii_lowercase()),
+        );
+    }
+    values.extend(
+        route
+            .support_notes
+            .iter()
+            .map(|value| value.to_ascii_lowercase()),
+    );
+
+    search
+        .split_whitespace()
+        .all(|term| values.iter().any(|value| value.contains(term)))
+}
+
+fn push_molecule_search_values(molecule: &LibraryMolecule, values: &mut Vec<String>) {
+    values.push(molecule.name.to_ascii_lowercase());
+    if let Some(id) = molecule.chebi_id {
+        values.push(format!("chebi:{id}"));
+    }
+    if let Some(id) = molecule.pubchem_id {
+        values.push(format!("cid:{id}"));
+        values.push(id.to_string());
+    }
+}
+
+fn sort_routes(indices: &mut [usize], routes: &[LibraryRoute], sort: SynthesisSort) {
+    let target = |index: usize| routes[index].target.name.to_ascii_lowercase();
+    indices.sort_by(|&a, &b| match sort {
+        SynthesisSort::TargetAscending => target(a).cmp(&target(b)),
+        SynthesisSort::TargetDescending => target(b).cmp(&target(a)),
+        SynthesisSort::Class => routes[a]
+            .class
+            .cmp(&routes[b].class)
+            .then_with(|| target(a).cmp(&target(b))),
+        SynthesisSort::FewestSteps => routes[a]
+            .steps
+            .len()
+            .cmp(&routes[b].steps.len())
+            .then_with(|| target(a).cmp(&target(b))),
+        SynthesisSort::MostSteps => routes[b]
+            .steps
+            .len()
+            .cmp(&routes[a].steps.len())
+            .then_with(|| target(a).cmp(&target(b))),
+    });
+}
+
+fn synthesis_route_card(
+    route: &LibraryRoute,
+    action: SynthesisParticipantAction,
+    downloads: &SynthesisDownloads,
+    diagrams: &mut crate::mol_diagrams::DiagramCache,
+    clicked: &mut Option<LibraryMolecule>,
+    diagram_requests: &mut Vec<(u32, bool)>,
+    ui: &mut Ui,
+) {
+    Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(&route.target.name).heading().strong());
+            ui.weak(&route.class);
+            ui.weak(format!(
+                "{} step{}",
+                route.steps.len(),
+                if route.steps.len() == 1 { "" } else { "s" }
+            ));
+            molecule_identifier_links(&route.target, ui);
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.weak("Starting materials:");
+            for (index, molecule) in route.starting_materials.iter().enumerate() {
+                if index > 0 {
+                    ui.weak("+");
+                }
+                ui.label(&molecule.name);
+            }
+        });
+        ui.add_space(5.0);
+
+        for (index, step) in route.steps.iter().enumerate() {
+            synthesis_step_card(
+                index,
+                step,
+                action,
+                downloads,
+                diagrams,
+                clicked,
+                diagram_requests,
+                ui,
+            );
+            if index + 1 < route.steps.len() {
+                ui.add_space(6.0);
+            }
+        }
+
+        if !route.support_notes.is_empty() {
+            CollapsingHeader::new("Route requirements and caveats")
+                .id_salt(("route_notes", &route.target.name))
+                .show(ui, |ui| {
+                    for note in &route.support_notes {
+                        ui.label(note);
+                    }
+                });
+        }
+    });
+}
+
+fn synthesis_step_card(
+    index: usize,
+    step: &LibraryStep,
+    action: SynthesisParticipantAction,
+    downloads: &SynthesisDownloads,
+    diagrams: &mut crate::mol_diagrams::DiagramCache,
+    clicked: &mut Option<LibraryMolecule>,
+    diagram_requests: &mut Vec<(u32, bool)>,
+    ui: &mut Ui,
+) {
+    Frame::canvas(ui.style()).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(format!("Step {}", index + 1)).strong());
+            ui.label(&step.family);
+            ui.weak(format!("[{}]", step.key));
+        });
+
+        let equals_width = 36.0;
+        let spacing = ui.spacing().item_spacing.x;
+        let available_for_sides = ui.available_width() - equals_width - 2.0 * spacing;
+        let side_width = (available_for_sides / 2.0).max(0.0);
+        ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+            ui.allocate_ui_with_layout(vec2(side_width, 0.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_max_width(side_width);
+                synthesis_side(
+                    &step.reactants,
+                    "Reactants",
+                    Color32::from_rgb(125, 195, 230),
+                    action,
+                    downloads,
+                    diagrams,
+                    clicked,
+                    diagram_requests,
+                    ui,
+                );
+            });
+
+            let label_height =
+                ui.text_style_height(&TextStyle::Small) + ui.spacing().item_spacing.y;
+            let name_height = name_row_height(ui);
+            let (rect, response) = ui.allocate_exact_size(
+                vec2(equals_width, label_height + name_height),
+                Sense::hover(),
+            );
+            ui.painter().text(
+                pos2(
+                    rect.center().x,
+                    rect.min.y + label_height + name_height / 2.0,
+                ),
+                Align2::CENTER_CENTER,
+                "→",
+                FontId::proportional(26.0),
+                ui.visuals().text_color(),
+            );
+            response.on_hover_text("Planned synthesis direction");
+
+            ui.allocate_ui_with_layout(vec2(side_width, 0.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_max_width(side_width);
+                synthesis_side(
+                    &step.products,
+                    "Products",
+                    Color32::from_rgb(150, 215, 170),
+                    action,
+                    downloads,
+                    diagrams,
+                    clicked,
+                    diagram_requests,
+                    ui,
+                );
+            });
+        });
+
+        enzyme_links(&step.enzymes, ui);
+        if !step.catalytic_cofactors.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak("Catalytic cofactors:");
+                ui.label(step.catalytic_cofactors.join(" + "));
+            });
+        }
+
+        CollapsingHeader::new("Reaction scope and evidence")
+            .id_salt(("step_scope", &step.key, index))
+            .show(ui, |ui| {
+                ui.label(&step.generic_equation);
+                ui.horizontal_wrapped(|ui| {
+                    ui.weak("Evidence:");
+                    ui.label(&step.evidence);
+                    ui.weak("Reversibility:");
+                    ui.label(&step.reversibility);
+                });
+                if !step.requirements.is_empty() {
+                    ui.weak("Requirements:");
+                    for requirement in &step.requirements {
+                        ui.label(format!("• {requirement}"));
+                    }
+                }
+                if !step.limitations.is_empty() {
+                    ui.weak("Limitations:");
+                    ui.label(&step.limitations);
+                }
+                if !step.references.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.weak("References:");
+                        for (reference_index, reference) in step.references.iter().enumerate() {
+                            ui.hyperlink_to(format!("{}", reference_index + 1), reference);
+                        }
+                    });
+                }
+            });
+    });
+}
+
+fn synthesis_side(
+    participants: &[LibraryMolecule],
+    label: &str,
+    color: Color32,
+    action: SynthesisParticipantAction,
+    downloads: &SynthesisDownloads,
+    diagrams: &mut crate::mol_diagrams::DiagramCache,
+    clicked: &mut Option<LibraryMolecule>,
+    diagram_requests: &mut Vec<(u32, bool)>,
+    ui: &mut Ui,
+) {
+    ui.label(RichText::new(label).small().color(color));
+
+    let spacing = ui.spacing().item_spacing.x;
+    let molecule_width = ui.available_width().min(crate::mol_diagrams::DIAGRAM_WIDTH);
+    let column_width = molecule_width + PLUS_WIDTH + 2.0 * spacing;
+    let per_row = (((ui.available_width() + spacing) / column_width) as usize).max(1);
+    let row_layout = Layout::left_to_right(Align::Min);
+
+    for (row, row_molecules) in participants.chunks(per_row).enumerate() {
+        let first = row * per_row;
+        ui.with_layout(row_layout, |ui| {
+            for (index, molecule) in row_molecules.iter().enumerate() {
+                let index = first + index;
+                if index > 0 {
+                    let (rect, _) = ui
+                        .allocate_exact_size(vec2(PLUS_WIDTH, name_row_height(ui)), Sense::hover());
+                    ui.painter().text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        "+",
+                        TextStyle::Button.resolve(ui.style()),
+                        color,
+                    );
+                }
+
+                cell(ui, molecule_width, |ui| {
+                    let download_id = molecule
+                        .chebi_id
+                        .map(SynthesisDownloadId::Chebi)
+                        .or_else(|| molecule.pubchem_id.map(SynthesisDownloadId::PubChem));
+                    let enabled = match action {
+                        SynthesisParticipantAction::OpenDatabasePage
+                        | SynthesisParticipantAction::Download => download_id.is_some(),
+                        SynthesisParticipantAction::SearchRhea => molecule.chebi_id.is_some(),
+                    };
+                    let loading = action == SynthesisParticipantAction::Download
+                        && download_id.is_some_and(|id| downloads.contains_key(&id));
+                    let marker = if molecule.is_feedstock { " [FS]" } else { "" };
+                    let button = Button::new(
+                        RichText::new(format!("{}{marker}", molecule.name))
+                            .strong()
+                            .color(color),
+                    )
+                    .fill(color.gamma_multiply(0.12))
+                    .frame(true)
+                    .wrap_mode(egui::TextWrapMode::Wrap);
+                    let hover = molecule_hover(molecule, action);
+                    if ui
+                        .add_enabled(enabled && !loading, button)
+                        .on_hover_text(hover)
+                        .clicked()
+                    {
+                        *clicked = Some(molecule.clone());
+                    }
+                });
+            }
+        });
+
+        ui.with_layout(row_layout, |ui| {
+            for (index, molecule) in row_molecules.iter().enumerate() {
+                let index = first + index;
+                if index > 0 {
+                    ui.allocate_exact_size(vec2(PLUS_WIDTH, 0.0), Sense::hover());
+                }
+                cell(ui, molecule_width, |ui| {
+                    if let Some(id) = molecule.chebi_id {
+                        let retry = diagrams.show(id, ui);
+                        diagram_requests.push((id, retry));
+                    } else {
+                        ui.weak("No ChEBI diagram available.");
+                    }
+                });
+            }
+        });
+    }
+}
+
+fn molecule_hover(molecule: &LibraryMolecule, action: SynthesisParticipantAction) -> String {
+    let identifiers = match (molecule.chebi_id, molecule.pubchem_id) {
+        (Some(chebi), Some(cid)) => format!("CHEBI:{chebi}; CID {cid}"),
+        (Some(chebi), None) => format!("CHEBI:{chebi}"),
+        (None, Some(cid)) => format!("CID {cid}"),
+        (None, None) => "No ChEBI or PubChem identifier".to_owned(),
+    };
+    let action = match action {
+        SynthesisParticipantAction::OpenDatabasePage => "Open molecule database page",
+        SynthesisParticipantAction::Download => "Download and open in Molchanica",
+        SynthesisParticipantAction::SearchRhea => "Search exact ChEBI matches in Rhea",
+    };
+    format!("{identifiers} — {action}")
+}
+
+fn molecule_identifier_links(molecule: &LibraryMolecule, ui: &mut Ui) {
+    if let Some(id) = molecule.chebi_id {
+        ui.hyperlink_to(
+            format!("CHEBI:{id}"),
+            format!("https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:{id}"),
+        );
+        ui.hyperlink_to(
+            "Rhea",
+            format!("https://www.rhea-db.org/rhea?query=chebi_exact%3A{id}"),
+        );
+    }
+    if let Some(id) = molecule.pubchem_id {
+        ui.hyperlink_to(
+            format!("CID {id}"),
+            format!("https://pubchem.ncbi.nlm.nih.gov/compound/{id}"),
+        );
+    }
+}
+
+fn enzyme_links(enzymes: &[LibraryEnzyme], ui: &mut Ui) {
+    ui.horizontal_wrapped(|ui| {
+        ui.weak("Enzyme candidates:");
+        if enzymes.is_empty() {
+            ui.label("none specified");
+        }
+        for (index, enzyme) in enzymes.iter().enumerate() {
+            if index > 0 {
+                ui.weak("or");
+            }
+            ui.label(&enzyme.common_name);
+            if let Some(ec) = &enzyme.ec {
+                let number = ec.strip_prefix("EC ").unwrap_or(ec);
+                ui.hyperlink_to(ec, format!("https://enzyme.expasy.org/EC/{number}"));
+                ui.hyperlink_to(
+                    "Rhea",
+                    format!("https://www.rhea-db.org/rhea?query=ec%3A{number}"),
+                );
+            }
+            if let Some(accession) = &enzyme.uniprot_id {
+                ui.hyperlink_to(
+                    format!("UniProt {accession}"),
+                    format!("https://www.uniprot.org/uniprotkb/{accession}/entry"),
+                );
+            }
+        }
+    });
 }
 
 pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {

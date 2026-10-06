@@ -105,8 +105,8 @@ fn spawn_therapeutic_inference(
         ) {
             Ok(properties) => {
                 println!(
-                    "Computed molecular descriptors for the bundled ADME models using native \
-                     computations (not RDKit)."
+                    "Computed native descriptor features for bundled ADME inference. This is \
+                     separate from SMILES parsing, which uses RDKit when available."
                 );
                 let _ = tx.send((mol_i, properties));
             }

@@ -109,6 +109,19 @@ pub(in crate::ui) fn load_popups(
         state.ui.popup.reactions &= open;
     }
 
+    if state.ui.popup.synthesis_reactions {
+        let open = show_popup(
+            popup("Synthesis reaction library")
+                .default_width(980.0)
+                .min_width(880.0)
+                .default_height(820.0)
+                .max_height(1_600.0),
+            ui.ctx(),
+            |ui| reactions::synthesis_reactions_window(&mut state.ui.synthesis_reactions, ui),
+        );
+        state.ui.popup.synthesis_reactions &= open;
+    }
+
     if state.ui.popup.show_get_geostd {
         let open = show_popup(popup("Load force-field parameters"), ui.ctx(), |ui| {
             get_geostd(state, scene, updates, ui);

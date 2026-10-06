@@ -61,8 +61,9 @@ mod panels;
 pub mod popup;
 mod sidebar;
 pub mod util;
-use crate::ui::popup::about::DOCS_URL;
 pub(crate) use util::{QueryResult, apply_query_result};
+
+use crate::ui::popup::about::DOCS_URL;
 
 pub(in crate::ui) const ROW_SPACING: f32 = 10.;
 pub(in crate::ui) const COL_SPACING: f32 = 30.;
@@ -802,6 +803,174 @@ fn input_may_change_prefs(ui: &Ui) -> bool {
     })
 }
 
+/// A set of controls near the top of the main view. This has buttons to open various tools, settings, databases etc, and
+/// the query input.
+fn top_controls(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+    reset_cam: &mut bool,
+    ui: &mut Ui,
+) {
+    ui.horizontal_wrapped(|ui| {
+        section_box().show(ui, |ui| {
+            let color_settings = if state.ui.popup.show_settings {
+                Color32::LIGHT_RED
+            } else {
+                COLOR_HIGHLIGHT
+            };
+            if ui
+                .button(RichText::new("⚙").color(color_settings))
+                .clicked()
+            {
+                state.ui.popup.show_settings = !state.ui.popup.show_settings;
+            }
+
+            if ui.button(RichText::new("Editor").color(COLOR_HIGHLIGHT)).clicked() {
+                enter_edit_mode(state, scene, updates);
+            }
+
+            if button!(
+                    ui,
+                    "FF params",
+                    COLOR_HIGHLIGHT,
+                    "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
+                    gaff2, amino19, and lipid21."
+                ).clicked() {
+                state.ui.popup.ff_params = !state.ui.popup.ff_params;
+            }
+
+            if button!(
+                        ui, "Mol DBs",
+                        COLOR_HIGHLIGHT,
+                        "Open a window where you can create, read, and update Parquest databases of molecules.\
+                        This is for screening large numbers of molecules."
+
+                    ).clicked() {
+                state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
+            }
+
+            if button!(
+                    ui,
+                    "Reaction lib",
+                    COLOR_HIGHLIGHT,
+                    "Browse, search, sort, and filter the curated synthesis reaction library."
+                )
+                .clicked()
+            {
+                let opening = !state.ui.popup.synthesis_reactions;
+                state.ui.popup.synthesis_reactions = opening;
+                if opening {
+                    state.ui.synthesis_reactions.load();
+                }
+            }
+
+            if button!(
+                    ui,
+                    "RFD3",
+                    COLOR_HIGHLIGHT,
+                    "Generate protein backbones with RFdiffusion3: unconditional, around a \
+                    target, ligand, nucleic acid, or motif, or under a point group. Feed the \
+                    result to ProteinMPNN to get a sequence."
+                )
+                .clicked()
+            {
+                state.ui.popup.rfd3 = !state.ui.popup.rfd3;
+            }
+
+            if button!(
+                    ui,
+                    "Pred struct",
+                    COLOR_HIGHLIGHT,
+                    "Predict a structure from an amino-acid or nucleotide sequence."
+                )
+                .clicked()
+            {
+                state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
+            }
+
+            if button!(
+                    ui,
+                    "Pred seq",
+                    COLOR_HIGHLIGHT,
+                    "Predict amino-acid sequences for a protein backbone using ProteinMPNN."
+                )
+                .clicked()
+            {
+                state.ui.popup.sequence_pred = !state.ui.popup.sequence_pred;
+            }
+
+            // todo: Sort out the intent behind this "Design" button. If we don't end up
+            // todo using it in something like it's current form, remove the underlying
+            // todo code this button woujld call.
+            // if button!(
+            //     ui,
+            //     "Design",
+            //     COLOR_HIGHLIGHT,
+            //     "Design sequences for the active protein's backbone, scan every point mutation \
+            //     for stability, and annotate antibody chains."
+            // )
+            //     .clicked()
+            // {
+            //     state.ui.popup.protein_design = !state.ui.popup.protein_design;
+            // }
+
+            if button!(
+                    ui,
+                    "Alignment screen",
+                    COLOR_HIGHLIGHT,
+                    "Perform a fast small molecule alignment screening from all \
+                    files in a selected folder"
+                ).clicked() {
+                state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
+            }
+
+            if button!(
+                    ui,
+                    "Tools",
+                    COLOR_HIGHLIGHT,
+                    "Show which optional third-party tools (OpenDDE, Boltz-2, LigandMPNN, \
+                    GROMACS, ORCA, ...) are installed and working, and how to install the ones that \
+                    are not."
+                )
+                .clicked()
+            {
+                state.ui.popup.external_tools = !state.ui.popup.external_tools;
+            }
+
+            if button!(
+                    ui,
+                    "About",
+                    COLOR_HIGHLIGHT,
+                    "Show this program's version, and links to its home page and source code."
+                )
+                .clicked()
+            {
+                state.ui.popup.about = !state.ui.popup.about;
+            }
+
+            if button!(
+                    ui,
+                    "Docs",
+                    COLOR_HIGHLIGHT,
+                    "Open a web browser to the Molchanica documentation."
+                )
+                .clicked()
+            {
+                if let Err(e) = webbrowser::open(DOCS_URL){
+                    eprintln!("Failed to open the web browser: {:?}", e);
+                }
+                state.ui.popup.about = !state.ui.popup.about;
+            }
+
+
+            ui.add_space(COL_SPACING * 2.);
+            query_input(state, scene, ui, redraw, updates, reset_cam);
+        });
+    });
+}
+
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUpdates {
@@ -853,147 +1022,14 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
         let close_active_mol = false; // to avoid borrow error.
 
-        ui.horizontal_wrapped(|ui| {
-            section_box().show(ui, |ui| {
-                let color_settings = if state.ui.popup.show_settings {
-                    Color32::LIGHT_RED
-                } else {
-                    COLOR_HIGHLIGHT
-                };
-                if ui
-                    .button(RichText::new("⚙").color(color_settings))
-                    .clicked()
-                {
-                    state.ui.popup.show_settings = !state.ui.popup.show_settings;
-                }
-
-                if ui.button(RichText::new("Editor").color(COLOR_HIGHLIGHT)).clicked() {
-                    enter_edit_mode(state, scene, &mut updates);
-                }
-
-                if button!(
-                    ui,
-                    "FF params",
-                    COLOR_HIGHLIGHT,
-                    "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
-                    gaff2, amino19, and lipid21."
-                ).clicked() {
-                    state.ui.popup.ff_params = !state.ui.popup.ff_params;
-                }
-
-                if button!(
-                        ui, "Mol DBs",
-                        COLOR_HIGHLIGHT,
-                        "Open a window where you can create, read, and update Parquest databases of molecules.\
-                        This is for screening large numbers of molecules."
-
-                    ).clicked() {
-                    state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
-                }
-
-                if button!(
-                    ui,
-                    "RFD3",
-                    COLOR_HIGHLIGHT,
-                    "Generate protein backbones with RFdiffusion3: unconditional, around a \
-                    target, ligand, nucleic acid, or motif, or under a point group. Feed the \
-                    result to ProteinMPNN to get a sequence."
-                )
-                    .clicked()
-                {
-                    state.ui.popup.rfd3 = !state.ui.popup.rfd3;
-                }
-
-                if button!(
-                    ui,
-                    "Pred struct",
-                    COLOR_HIGHLIGHT,
-                    "Predict a structure from an amino-acid or nucleotide sequence."
-                )
-                    .clicked()
-                {
-                    state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
-                }
-
-                if button!(
-                    ui,
-                    "Pred seq",
-                    COLOR_HIGHLIGHT,
-                    "Predict amino-acid sequences for a protein backbone using ProteinMPNN."
-                )
-                    .clicked()
-                {
-                    state.ui.popup.sequence_pred = !state.ui.popup.sequence_pred;
-                }
-
-                // todo: Sort out the intent behind this "Design" button. If we don't end up
-                // todo using it in something like it's current form, remove the underlying
-                // todo code this button woujld call.
-                // if button!(
-                //     ui,
-                //     "Design",
-                //     COLOR_HIGHLIGHT,
-                //     "Design sequences for the active protein's backbone, scan every point mutation \
-                //     for stability, and annotate antibody chains."
-                // )
-                //     .clicked()
-                // {
-                //     state.ui.popup.protein_design = !state.ui.popup.protein_design;
-                // }
-
-                if button!(
-                    ui,
-                    "Alignment screen",
-                    COLOR_HIGHLIGHT,
-                    "Perform a fast small molecule alignment screening from all \
-                    files in a selected folder"
-                ).clicked() {
-                    state.ui.popup.alignment_screening = !state.ui.popup.alignment_screening;
-                }
-
-                if button!(
-                    ui,
-                    "Tools",
-                    COLOR_HIGHLIGHT,
-                    "Show which optional third-party tools (OpenDDE, Boltz-2, LigandMPNN, \
-                    GROMACS, ORCA, ...) are installed and working, and how to install the ones that \
-                    are not."
-                )
-                    .clicked()
-                {
-                    state.ui.popup.external_tools = !state.ui.popup.external_tools;
-                }
-
-                if button!(
-                    ui,
-                    "About",
-                    COLOR_HIGHLIGHT,
-                    "Show this program's version, and links to its home page and source code."
-                )
-                    .clicked()
-                {
-                    state.ui.popup.about = !state.ui.popup.about;
-                }
-
-                if button!(
-                    ui,
-                    "Docs",
-                    COLOR_HIGHLIGHT,
-                    "Open a web browser to the Molchanica documentation."
-                )
-                    .clicked()
-                {
-                    if let Err(e) = webbrowser::open(DOCS_URL){
-                        eprintln!("Failed to open the web browser: {:?}", e);
-                    }
-                    state.ui.popup.about = !state.ui.popup.about;
-                }
-
-
-                    ui.add_space(COL_SPACING * 2.);
-                query_input(state, scene, ui, &mut redraw, &mut updates, &mut reset_cam);
-            });
-        });
+        top_controls(
+            state,
+            scene,
+            &mut updates,
+            &mut redraw,
+            &mut reset_cam,
+            ui
+        );
 
         if state.volatile.active_mol.is_some() || state.ligands.len() >= 2 {
             ui.horizontal(|ui| {
