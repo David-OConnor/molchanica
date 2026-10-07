@@ -1,27 +1,34 @@
 //! Paginated reaction cards shared by the ligand and protein sidebars.
 
+use std::cmp::Ordering;
+
 use bio_apis::{
     chebi, pubchem,
     rhea::{Reaction, ReactionSide},
 };
 use egui::{
-    Align, Align2, Button, CollapsingHeader, Color32, ComboBox, FontId, Frame, Layout, RichText,
-    ScrollArea, Sense, Slider, TextEdit, TextStyle, Ui, pos2, vec2,
+    Align, Align2, Button, CollapsingHeader, Color32, ComboBox, FontId, Frame, Grid, Layout,
+    RichText, ScrollArea, Sense, Slider, TextEdit, TextStyle, Ui, pos2, vec2,
 };
 use graphics::{EngineUpdates, Scene};
-use synthesis::broad_target::{LibraryEnzyme, LibraryMolecule, LibraryRoute, LibraryStep};
+use synthesis::{
+    EnzymeCommission,
+    broad_target::{LibraryEnzyme, LibraryMaterial, LibraryMolecule, LibraryRoute, LibraryStep},
+};
 
 use crate::{
     file_io::managed_mols::ManagedMolProvider,
     mol_diagrams::{DIAGRAM_SCALE_MAX, DIAGRAM_SCALE_MIN, DiagramRequest},
     prefs::ToSave,
     reactions::{
-        Entry, ParticipantAction, Query, ReactionsState, SynthesisDownloadId, SynthesisDownloads,
-        SynthesisEntry, SynthesisParticipantAction, SynthesisReactionsState, SynthesisSort,
+        BuildingBlockColumn, BuildingBlockKind, BuildingBlocksView, Entry, ParticipantAction,
+        Query, ReactionsState, RouteComponent, SynthesisDownloadId, SynthesisDownloads,
+        SynthesisEntry, SynthesisLibraryData, SynthesisParticipantAction, SynthesisReactionsState,
+        SynthesisSort, route_has_ec_class,
     },
     state::State,
     ui::{
-        misc::selector,
+        misc::{selector, selector_option},
         util::{QueryResult, apply_query_result, open_chebi_download},
     },
     util::{RedrawFlags, handle_err, make_lig_3d},
@@ -31,6 +38,8 @@ const PER_PAGE: usize = 4;
 const SYNTHESIS_ROUTES_PER_PAGE: usize = 2;
 /// Width of the column holding a "+" between participants.
 const PLUS_WIDTH: f32 = 14.0;
+const BLOCK_COL_SPACING: f32 = 12.0;
+const BLOCK_TABLE_HEIGHT: f32 = 260.0;
 
 /// Finish imports even when the user has closed the popup or changed the selected molecule.
 pub(super) fn poll_downloads(
@@ -175,6 +184,15 @@ pub(super) fn synthesis_reactions_window(
             ui.monospace(data.summary.trim());
         });
 
+    if building_blocks(
+        data,
+        &mut state.building_blocks,
+        &mut state.component_filter,
+        ui,
+    ) {
+        state.page = 0;
+    }
+
     ui.separator();
     ui.horizontal_wrapped(|ui| {
         ui.label("Search:");
@@ -189,7 +207,7 @@ pub(super) fn synthesis_reactions_window(
             state.page = 0;
         }
 
-        ui.label("Class:");
+        ui.label("Target class:");
         let class_label = if state.class_filter.is_empty() {
             "All classes"
         } else {
@@ -207,6 +225,35 @@ pub(super) fn synthesis_reactions_window(
                 for class in &data.classes {
                     if ui
                         .selectable_value(&mut state.class_filter, class.clone(), class)
+                        .changed()
+                    {
+                        state.page = 0;
+                    }
+                }
+            });
+
+        ui.label("Enzyme class:");
+        let enzyme_class_label = match state.enzyme_class_filter {
+            None => "All classes".to_owned(),
+            Some(top) => top.to_string(),
+        };
+        ComboBox::from_id_salt("synthesis_enzyme_class_filter")
+            .selected_text(enzyme_class_label)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_value(&mut state.enzyme_class_filter, None, "All classes")
+                    .changed()
+                {
+                    state.page = 0;
+                }
+                for &top in &data.ec_classes {
+                    if ui
+                        .selectable_value(
+                            &mut state.enzyme_class_filter,
+                            Some(top),
+                            top.to_string(),
+                        )
+                        .on_hover_text("Routes with any step catalyzed by an enzyme in this class.")
                         .changed()
                     {
                         state.page = 0;
@@ -260,8 +307,8 @@ pub(super) fn synthesis_reactions_window(
                 ),
                 (
                     SynthesisSort::Class,
-                    "Class",
-                    "Sort by product class, then target name.",
+                    "Target class",
+                    "Sort by target class, then target name.",
                 ),
                 (
                     SynthesisSort::FewestSteps,
@@ -281,6 +328,30 @@ pub(super) fn synthesis_reactions_window(
             }
         }
     });
+
+    if let Some(component) = state.component_filter {
+        ui.horizontal_wrapped(|ui| {
+            let kind = match component {
+                RouteComponent::Feedstock(_) => "feedstock",
+                RouteComponent::Enzyme(_) => "enzyme",
+                RouteComponent::Cofactor(_) => "cofactor",
+            };
+            ui.label(format!("Only routes using the {kind}"));
+            ui.label(
+                RichText::new(component.name(&data.inventory))
+                    .strong()
+                    .color(Color32::WHITE),
+            );
+            if ui
+                .button("Clear")
+                .on_hover_text("Show routes regardless of the building blocks they use.")
+                .clicked()
+            {
+                state.component_filter = None;
+                state.page = 0;
+            }
+        });
+    }
 
     ui.horizontal_wrapped(|ui| {
         ui.label("Click a molecule to:");
@@ -337,6 +408,12 @@ pub(super) fn synthesis_reactions_window(
         .enumerate()
         .filter(|(_, route)| {
             (state.class_filter.is_empty() || route.class == state.class_filter)
+                && state
+                    .enzyme_class_filter
+                    .is_none_or(|top| route_has_ec_class(route, top))
+                && state
+                    .component_filter
+                    .is_none_or(|component| component.used_by(route, &data.inventory))
                 && (state.step_filter == 0 || route.steps.len() == state.step_filter)
                 && route_matches(route, &search)
         })
@@ -427,6 +504,417 @@ pub(super) fn synthesis_reactions_window(
     }
 }
 
+/// One building block, flattened so feedstocks, enzymes, and cofactors share a table.
+struct BlockRow<'a> {
+    component: RouteComponent,
+    name: &'a str,
+    pubchem_id: Option<u32>,
+    chebi_id: Option<u32>,
+    ec: Option<EnzymeCommission>,
+    uniprot_id: Option<&'a str>,
+    detail: String,
+    hover: String,
+    /// The number of library routes using this building block.
+    routes: usize,
+}
+
+/// A sortable table of the library's feedstocks, enzymes, or cofactors. Clicking a name shows
+/// only the routes using it. Returns true if that route filter changed.
+fn building_blocks(
+    data: &SynthesisLibraryData,
+    view: &mut BuildingBlocksView,
+    component_filter: &mut Option<RouteComponent>,
+    ui: &mut Ui,
+) -> bool {
+    let inventory = &data.inventory;
+    let mut changed = false;
+
+    CollapsingHeader::new("Building blocks: feedstocks, enzymes, and cofactors")
+        .id_salt("synthesis_building_blocks")
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let labels = [
+                    format!("Feedstocks ({})", inventory.feedstocks.len()),
+                    format!("Enzymes ({})", inventory.enzymes.len()),
+                    format!("Cofactors ({})", inventory.cofactors.len()),
+                ];
+                if let Some(kind) = selector(
+                    ui,
+                    view.kind,
+                    &[
+                        (
+                            BuildingBlockKind::Feedstocks,
+                            &labels[0],
+                            "Purchased organic inputs, and gases.",
+                        ),
+                        (
+                            BuildingBlockKind::Enzymes,
+                            &labels[1],
+                            "Candidate catalysts for the selected reaction templates.",
+                        ),
+                        (
+                            BuildingBlockKind::Cofactors,
+                            &labels[2],
+                            "Consumed carriers and donors, and catalytic cofactors.",
+                        ),
+                    ],
+                ) {
+                    view.kind = kind;
+                }
+
+                ui.add_space(12.0);
+                ui.label("Filter:");
+                ui.add(
+                    TextEdit::singleline(&mut view.search)
+                        .desired_width(200.0)
+                        .hint_text("name, role, ID…"),
+                );
+            });
+
+            let mut rows = block_rows(data, view.kind);
+            let total = rows.len();
+            let search = view.search.trim().to_ascii_lowercase();
+            rows.retain(|row| block_matches(row, &search));
+
+            let columns = block_columns(view.kind);
+            // The sort column may belong to another kind, e.g. EC numbers for feedstocks.
+            let sort = if columns.iter().any(|&(column, _, _)| column == view.sort) {
+                view.sort
+            } else {
+                BuildingBlockColumn::Name
+            };
+            sort_blocks(&mut rows, sort, view.descending);
+
+            ui.weak(format!(
+                "{} of {total} shown. Click a name to show only the routes using it; click a \
+                 column heading to sort.",
+                rows.len()
+            ));
+
+            // The name column takes the width the others leave.
+            let fixed: f32 = columns.iter().map(|&(_, _, width)| width).sum();
+            let gaps = BLOCK_COL_SPACING * (columns.len() - 1) as f32;
+            let name_width =
+                (ui.available_width() - fixed - gaps - ui.spacing().scroll.bar_width - 4.0)
+                    .max(160.0);
+            let width = |column: BuildingBlockColumn, width: f32| {
+                if column == BuildingBlockColumn::Name {
+                    name_width
+                } else {
+                    width
+                }
+            };
+
+            // Headings stay outside the scroll area, so they remain visible.
+            Grid::new(("synthesis_block_headings", view.kind))
+                .num_columns(columns.len())
+                .min_col_width(0.0)
+                .spacing([BLOCK_COL_SPACING, 4.0])
+                .show(ui, |ui| {
+                    for &(column, heading, w) in columns {
+                        table_cell(ui, width(column, w), |ui| {
+                            let selected = column == sort;
+                            let heading = match (selected, view.descending) {
+                                (false, _) => heading.to_owned(),
+                                (true, false) => format!("{heading} ⬆"),
+                                (true, true) => format!("{heading} ⬇"),
+                            };
+
+                            if selector_option(ui, selected, heading)
+                                .on_hover_text("Sort by this column; click again to reverse.")
+                                .clicked()
+                            {
+                                if selected {
+                                    view.descending = !view.descending;
+                                } else {
+                                    view.sort = column;
+                                    // Most-used first is the useful default for counts.
+                                    view.descending = column == BuildingBlockColumn::Routes;
+                                }
+                            }
+                        });
+                    }
+                    ui.end_row();
+                });
+
+            ScrollArea::vertical()
+                .id_salt(("synthesis_block_rows", view.kind))
+                .max_height(BLOCK_TABLE_HEIGHT)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    Grid::new(("synthesis_block_grid", view.kind))
+                        .num_columns(columns.len())
+                        .striped(true)
+                        .min_col_width(0.0)
+                        .spacing([BLOCK_COL_SPACING, 4.0])
+                        .show(ui, |ui| {
+                            for row in &rows {
+                                for &(column, _, w) in columns {
+                                    table_cell(ui, width(column, w), |ui| {
+                                        block_cell(row, column, component_filter, &mut changed, ui);
+                                    });
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
+        });
+
+    changed
+}
+
+/// `(column, heading, width)`. The name column's width is set from the space left over.
+fn block_columns(kind: BuildingBlockKind) -> &'static [(BuildingBlockColumn, &'static str, f32)] {
+    use BuildingBlockColumn::*;
+
+    match kind {
+        BuildingBlockKind::Feedstocks | BuildingBlockKind::Cofactors => &[
+            (PubChem, "PubChem CID", 100.0),
+            (Name, "Name", 0.0),
+            (Chebi, "ChEBI ID", 90.0),
+            (Detail, "Role", 170.0),
+            (Routes, "Routes", 70.0),
+        ],
+        BuildingBlockKind::Enzymes => &[
+            (Ec, "EC number", 100.0),
+            (Name, "Name", 0.0),
+            (UniProt, "UniProt ID", 90.0),
+            (Detail, "Reaction family", 230.0),
+            (Routes, "Routes", 70.0),
+        ],
+    }
+}
+
+fn block_rows(data: &SynthesisLibraryData, kind: BuildingBlockKind) -> Vec<BlockRow<'_>> {
+    let inventory = &data.inventory;
+    let routes = |component: RouteComponent| {
+        data.routes
+            .iter()
+            .filter(|route| component.used_by(route, inventory))
+            .count()
+    };
+
+    match kind {
+        BuildingBlockKind::Feedstocks => inventory
+            .feedstocks
+            .iter()
+            .enumerate()
+            .map(|(i, material)| {
+                let component = RouteComponent::Feedstock(i);
+                material_row(component, material, routes(component))
+            })
+            .collect(),
+        BuildingBlockKind::Cofactors => inventory
+            .cofactors
+            .iter()
+            .enumerate()
+            .map(|(i, material)| {
+                let component = RouteComponent::Cofactor(i);
+                material_row(component, material, routes(component))
+            })
+            .collect(),
+        BuildingBlockKind::Enzymes => inventory
+            .enzymes
+            .iter()
+            .enumerate()
+            .map(|(i, catalyst)| {
+                let component = RouteComponent::Enzyme(i);
+                let enzyme = &catalyst.enzyme;
+                let families = catalyst.families.join("; ");
+
+                BlockRow {
+                    component,
+                    name: &enzyme.common_name,
+                    pubchem_id: None,
+                    chebi_id: None,
+                    ec: enzyme.ec,
+                    uniprot_id: enzyme.uniprot_id.as_deref(),
+                    hover: format!(
+                        "Reaction families: {families}\n\nClick to show only the routes using it."
+                    ),
+                    detail: families,
+                    routes: routes(component),
+                }
+            })
+            .collect(),
+    }
+}
+
+fn material_row(
+    component: RouteComponent,
+    material: &LibraryMaterial,
+    routes: usize,
+) -> BlockRow<'_> {
+    BlockRow {
+        component,
+        name: &material.name,
+        pubchem_id: material.pubchem_id,
+        chebi_id: material.chebi_id,
+        ec: None,
+        uniprot_id: None,
+        detail: material.role.clone(),
+        hover: format!(
+            "{} {}\n{}\n\nClick to show only the routes using it.",
+            material.supplier, material.product_number, material.formulation_note
+        ),
+        routes,
+    }
+}
+
+fn block_cell(
+    row: &BlockRow,
+    column: BuildingBlockColumn,
+    component_filter: &mut Option<RouteComponent>,
+    changed: &mut bool,
+    ui: &mut Ui,
+) {
+    match column {
+        BuildingBlockColumn::Name => {
+            let selected = *component_filter == Some(row.component);
+            if ui
+                .selectable_label(selected, row.name)
+                .on_hover_text(row.hover.as_str())
+                .clicked()
+            {
+                *component_filter = if selected { None } else { Some(row.component) };
+                *changed = true;
+            }
+        }
+        BuildingBlockColumn::PubChem => match row.pubchem_id {
+            Some(id) => {
+                ui.hyperlink_to(
+                    id.to_string(),
+                    format!("https://pubchem.ncbi.nlm.nih.gov/compound/{id}"),
+                );
+            }
+            None => {
+                ui.weak("—");
+            }
+        },
+        BuildingBlockColumn::Chebi => match row.chebi_id {
+            Some(id) => {
+                ui.hyperlink_to(
+                    id.to_string(),
+                    format!("https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:{id}"),
+                );
+            }
+            None => {
+                ui.weak("—");
+            }
+        },
+        BuildingBlockColumn::Ec => match row.ec {
+            Some(ec) => {
+                let number = ec.number();
+                ui.hyperlink_to(&number, format!("https://enzyme.expasy.org/EC/{number}"));
+            }
+            None => {
+                ui.weak("—");
+            }
+        },
+        BuildingBlockColumn::UniProt => match row.uniprot_id {
+            Some(accession) => {
+                ui.hyperlink_to(
+                    accession,
+                    format!("https://www.uniprot.org/uniprotkb/{accession}/entry"),
+                );
+            }
+            None => {
+                ui.weak("—");
+            }
+        },
+        BuildingBlockColumn::Detail => {
+            ui.label(&row.detail).on_hover_text(row.detail.as_str());
+        }
+        BuildingBlockColumn::Routes => {
+            ui.label(row.routes.to_string());
+        }
+    }
+}
+
+fn block_matches(row: &BlockRow, search: &str) -> bool {
+    if search.is_empty() {
+        return true;
+    }
+
+    let mut values = vec![
+        row.name.to_ascii_lowercase(),
+        row.detail.to_ascii_lowercase(),
+    ];
+    if let Some(id) = row.pubchem_id {
+        values.push(format!("cid:{id}"));
+        values.push(id.to_string());
+    }
+    if let Some(id) = row.chebi_id {
+        values.push(format!("chebi:{id}"));
+        values.push(id.to_string());
+    }
+    if let Some(ec) = row.ec {
+        values.push(ec.to_string().to_ascii_lowercase());
+    }
+    if let Some(accession) = row.uniprot_id {
+        values.push(accession.to_ascii_lowercase());
+    }
+
+    search
+        .split_whitespace()
+        .all(|term| values.iter().any(|value| value.contains(term)))
+}
+
+/// Ties sort by name, ascending.
+fn sort_blocks(rows: &mut [BlockRow], column: BuildingBlockColumn, descending: bool) {
+    let directed = |ordering: Ordering| {
+        if descending {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    };
+
+    rows.sort_by(|a, b| {
+        let name = || {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        };
+        let ordering = match column {
+            BuildingBlockColumn::Name => directed(name()),
+            BuildingBlockColumn::Detail => directed(
+                a.detail
+                    .to_ascii_lowercase()
+                    .cmp(&b.detail.to_ascii_lowercase()),
+            ),
+            BuildingBlockColumn::Routes => directed(a.routes.cmp(&b.routes)),
+            BuildingBlockColumn::PubChem => cmp_present(a.pubchem_id, b.pubchem_id, descending),
+            BuildingBlockColumn::Chebi => cmp_present(a.chebi_id, b.chebi_id, descending),
+            BuildingBlockColumn::Ec => cmp_present(a.ec.map(ec_key), b.ec.map(ec_key), descending),
+            BuildingBlockColumn::UniProt => cmp_present(a.uniprot_id, b.uniprot_id, descending),
+        };
+        ordering.then_with(name)
+    });
+}
+
+/// Rows missing the value go last, in either direction.
+fn cmp_present<T: Ord>(a: Option<T>, b: Option<T>, descending: bool) -> Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) if descending => b.cmp(&a),
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+/// Numeric, level by level: EC 1.1.1.10 follows EC 1.1.1.9.
+fn ec_key(ec: EnzymeCommission) -> (u8, u8, u8, u16, bool) {
+    (
+        ec.top_level as u8,
+        ec.level_1,
+        ec.level_2,
+        ec.level_3,
+        ec.preliminary,
+    )
+}
+
 fn route_matches(route: &LibraryRoute, search: &str) -> bool {
     if search.is_empty() {
         return true;
@@ -455,7 +943,7 @@ fn route_matches(route: &LibraryRoute, search: &str) -> bool {
         for enzyme in &step.enzymes {
             values.push(enzyme.common_name.to_ascii_lowercase());
             if let Some(ec) = &enzyme.ec {
-                values.push(ec.to_ascii_lowercase());
+                values.push(ec.to_string().to_ascii_lowercase());
             }
             if let Some(accession) = &enzyme.uniprot_id {
                 values.push(accession.to_ascii_lowercase());
@@ -830,8 +1318,11 @@ fn enzyme_links(enzymes: &[LibraryEnzyme], ui: &mut Ui) {
             }
             ui.label(&enzyme.common_name);
             if let Some(ec) = &enzyme.ec {
-                let number = ec.strip_prefix("EC ").unwrap_or(ec);
-                ui.hyperlink_to(ec, format!("https://enzyme.expasy.org/EC/{number}"));
+                let number = ec.number();
+                ui.hyperlink_to(
+                    ec.to_string(),
+                    format!("https://enzyme.expasy.org/EC/{number}"),
+                );
                 ui.hyperlink_to(
                     "Rhea",
                     format!("https://www.rhea-db.org/rhea?query=ec%3A{number}"),
@@ -1312,6 +1803,21 @@ fn cell(ui: &mut Ui, width: f32, add_contents: impl FnOnce(&mut Ui)) {
         ui.set_width(width);
         add_contents(ui);
     });
+}
+
+/// A fixed-width, truncating table cell. Pinning both the minimum and maximum width keeps the
+/// heading grid's columns aligned with the body grid's.
+fn table_cell(ui: &mut Ui, width: f32, add_contents: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        vec2(width, ui.spacing().interact_size.y),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.set_min_width(width);
+            ui.set_max_width(width);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+            add_contents(ui);
+        },
+    );
 }
 
 /// Height of a single-line molecule button; "+" and "=" are centered on it.

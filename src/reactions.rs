@@ -11,7 +11,10 @@ use bio_apis::{
     rhea::{self, Reaction},
 };
 use mol_defs::molecules::{MolGenericRef, MolIdent, MolIdentType};
-use synthesis::broad_target::{FeedstockLibrary, LibraryRoute};
+use synthesis::{
+    EcTopLevel,
+    broad_target::{LibraryInventory, LibraryRoute, ReactionLibrary},
+};
 
 use crate::{
     file_io::download_mols::{DownloadedSmallMol, load_sdf_chebi, load_sdf_pubchem},
@@ -118,6 +121,98 @@ pub struct SynthesisLibraryData {
     pub summary: String,
     pub routes: Vec<LibraryRoute>,
     pub classes: Vec<String>,
+    /// Top-level EC classes catalyzing at least one step, sorted.
+    pub ec_classes: Vec<EcTopLevel>,
+    pub inventory: LibraryInventory,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BuildingBlockKind {
+    #[default]
+    Feedstocks,
+    Enzymes,
+    Cofactors,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum BuildingBlockColumn {
+    #[default]
+    Name,
+    PubChem,
+    Chebi,
+    Ec,
+    UniProt,
+    /// The role of a feedstock or cofactor, or the reaction families of an enzyme.
+    Detail,
+    Routes,
+}
+
+/// Browsing state for the table of the library's feedstocks, enzymes, and cofactors.
+#[derive(Default)]
+pub struct BuildingBlocksView {
+    pub kind: BuildingBlockKind,
+    pub search: String,
+    pub sort: BuildingBlockColumn,
+    pub descending: bool,
+}
+
+/// A building block routes can be filtered by: an index into a `LibraryInventory` list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RouteComponent {
+    Feedstock(usize),
+    Enzyme(usize),
+    Cofactor(usize),
+}
+
+impl RouteComponent {
+    pub fn name(self, inventory: &LibraryInventory) -> &str {
+        let name = match self {
+            Self::Feedstock(i) => inventory.feedstocks.get(i).map(|f| f.name.as_str()),
+            Self::Enzyme(i) => inventory
+                .enzymes
+                .get(i)
+                .map(|e| e.enzyme.common_name.as_str()),
+            Self::Cofactor(i) => inventory.cofactors.get(i).map(|c| c.name.as_str()),
+        };
+        name.unwrap_or_default()
+    }
+
+    /// True if the route consumes this feedstock or cofactor, or lists this enzyme for a step.
+    /// Catalytic cofactors count, although they are not consumed.
+    pub fn used_by(self, route: &LibraryRoute, inventory: &LibraryInventory) -> bool {
+        match self {
+            Self::Feedstock(i) => inventory.feedstocks.get(i).is_some_and(|feedstock| {
+                route
+                    .starting_materials
+                    .iter()
+                    .any(|molecule| molecule.name == feedstock.name)
+            }),
+            Self::Enzyme(i) => inventory.enzymes.get(i).is_some_and(|catalyst| {
+                route
+                    .steps
+                    .iter()
+                    .any(|step| step.enzymes.contains(&catalyst.enzyme))
+            }),
+            Self::Cofactor(i) => inventory.cofactors.get(i).is_some_and(|cofactor| {
+                route.steps.iter().any(|step| {
+                    step.reactants
+                        .iter()
+                        .any(|molecule| molecule.name == cofactor.name)
+                        || step.catalytic_cofactors.contains(&cofactor.name)
+                })
+            }),
+        }
+    }
+}
+
+/// True if an enzyme for any step of the route belongs to this top-level EC class.
+pub fn route_has_ec_class(route: &LibraryRoute, top_level: EcTopLevel) -> bool {
+    route
+        .steps
+        .iter()
+        .flat_map(|step| &step.enzymes)
+        .filter_map(|enzyme| enzyme.ec)
+        .any(|ec| ec.top_level == top_level)
 }
 
 pub enum SynthesisEntry {
@@ -144,6 +239,11 @@ pub struct SynthesisReactionsState {
     pub entry: SynthesisEntry,
     pub search: String,
     pub class_filter: String,
+    /// None shows every route; otherwise keep routes with a step catalyzed by this EC class.
+    pub enzyme_class_filter: Option<EcTopLevel>,
+    /// None shows every route; otherwise keep routes using this feedstock, enzyme, or cofactor.
+    pub component_filter: Option<RouteComponent>,
+    pub building_blocks: BuildingBlocksView,
     /// Zero shows routes of every length; other values are exact step counts.
     pub step_filter: usize,
     pub sort: SynthesisSort,
@@ -162,7 +262,7 @@ impl SynthesisReactionsState {
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            let library = FeedstockLibrary::new();
+            let library = ReactionLibrary::new();
             let summary = library.format_coverage_summary();
             let result = library
                 .routes()
@@ -171,10 +271,24 @@ impl SynthesisReactionsState {
                         routes.iter().map(|route| route.class.clone()).collect();
                     classes.sort();
                     classes.dedup();
+
+                    let mut ec_classes: Vec<_> = routes
+                        .iter()
+                        .flat_map(|route| &route.steps)
+                        .flat_map(|step| &step.enzymes)
+                        .filter_map(|enzyme| enzyme.ec.map(|ec| ec.top_level))
+                        .collect();
+                    ec_classes.sort();
+                    ec_classes.dedup();
+
+                    let inventory = library.inventory(&routes);
+
                     SynthesisLibraryData {
                         summary,
                         routes,
                         classes,
+                        ec_classes,
+                        inventory,
                     }
                 })
                 .map_err(|error| format!("Unable to build the synthesis library: {error}"));
@@ -184,6 +298,8 @@ impl SynthesisReactionsState {
     }
 
     pub fn retry(&mut self) {
+        // Its indices refer to the previous library.
+        self.component_filter = None;
         self.entry = SynthesisEntry::NotLoaded;
         self.load();
     }
