@@ -597,6 +597,7 @@ pub fn close_mol(
         mol.common().path.clone()
     };
 
+    #[cfg(feature = "sonification")]
     state.volatile.update_playing_audio_after_close(mol_type, i);
 
     if let Some(path) = path {

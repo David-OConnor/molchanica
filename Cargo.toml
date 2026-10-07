@@ -70,8 +70,8 @@ bytes = "1.12.1"
 # `ldconfig -p | grep libcuda` reports on the affected machine before reaching for linking again.)
 cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
 
-rodio = "0.22.2"  # For sonification of bonds etc.
-webbrowser = "1.2.4"  # For opening links, e.g. from the About popup.
+rodio = {  version = "0.22.2", optional = true }  # For sonification of bonds etc.
+webbrowser = "1.2.4"  # For opening links, e.g. from the remote DBs
 
 
 # We use these when developing locally to reduce friction.
@@ -100,6 +100,7 @@ default = ["cuda"]
 #cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/vkfft", "ewald/vkfft"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
+sonification = ["rodio"]
 
 [profile.release]
 strip = true  # Strip symbols from binary. Size reduction on Linux/Mac.

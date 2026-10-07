@@ -50,7 +50,6 @@ use crate::{
     peptide_ligands::LigAttachUi,
     prefs::{DepthMode, ToSave},
     selection::{Selection, ViewSelLevel},
-    sonification::MoleculeSonification,
     threads::ThreadReceivers,
     ui::popup::{
         external_tools::ExternalToolsUi, ff_params::FfParamsUi, protein_design::ProteinDesignUi,
@@ -533,8 +532,9 @@ pub struct StateVolatile {
     pub parquet_dbs: Vec<ParquetMolDb>,
     /// The database the DB popup is showing, and that screening runs against.
     pub parquet_db_active: Option<DbSel>,
+    #[cfg(feature = "sonification")]
     /// Playback handle for the molecule currently being sonified, if any.
-    pub playing_audio: Option<PlayingAudio>,
+    pub playing_audio: Option<crate::sonification::PlayingAudio>,
     /// Long-running computations in progress, e.g. MD, ML inference, and tool installs. Displayed
     /// as a status indicator.
     pub ongoing_computations: Computations,
@@ -583,28 +583,6 @@ impl StateVolatile {
             .collect();
         self.seq_display_cache.dirty = true;
     }
-
-    pub fn is_playing_audio_for(&self, mol_type: MolType, i_mol: usize) -> bool {
-        self.playing_audio
-            .as_ref()
-            .is_some_and(|audio| audio.is_for(mol_type, i_mol))
-    }
-
-    pub fn update_playing_audio_after_close(&mut self, mol_type: MolType, i_mol: usize) {
-        let Some(audio) = &mut self.playing_audio else {
-            return;
-        };
-
-        if audio.mol_type != mol_type {
-            return;
-        }
-
-        if audio.i_mol == i_mol {
-            self.playing_audio = None;
-        } else if audio.i_mol > i_mol {
-            audio.i_mol -= 1;
-        }
-    }
 }
 
 /// Which molecule database the UI is acting on. The ones embedded in the binary live in
@@ -618,26 +596,6 @@ pub enum DbSel {
     Chebi,
     /// Index into `StateVolatile::parquet_dbs`.
     Loaded(usize),
-}
-
-pub struct PlayingAudio {
-    pub mol_type: MolType,
-    pub i_mol: usize,
-    pub _handle: MoleculeSonification,
-}
-
-impl PlayingAudio {
-    pub fn new(mol_type: MolType, i_mol: usize, handle: MoleculeSonification) -> Self {
-        Self {
-            mol_type,
-            i_mol,
-            _handle: handle,
-        }
-    }
-
-    pub fn is_for(&self, mol_type: MolType, i_mol: usize) -> bool {
-        self.mol_type == mol_type && self.i_mol == i_mol
-    }
 }
 
 /// Holds data related to filters, selections, etc used to help with amino acid-specific
