@@ -281,7 +281,7 @@ impl SynthesisReactionsState {
                     ec_classes.sort();
                     ec_classes.dedup();
 
-                    let inventory = library.inventory(&routes);
+                    let inventory = library.inventory();
 
                     SynthesisLibraryData {
                         summary,
