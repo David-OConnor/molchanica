@@ -52,6 +52,7 @@ mod properties;
 mod reactions;
 mod screening;
 mod selection;
+#[cfg(feature = "sonification")]
 mod sonification;
 mod state;
 #[cfg(test)]

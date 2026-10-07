@@ -19,8 +19,7 @@ use crate::{
     mol_manip::{ManipMode, set_manip},
     pocket_render::PocketRender,
     properties::{crystal, logp, sol_shrinking_box, water_sol, water_sol_mix},
-    sonification,
-    state::{MetadataTarget, OperatingMode, PlayingAudio, State},
+    state::{MetadataTarget, OperatingMode, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         highlighted_box, load_all_idents_button, num_field,
@@ -34,8 +33,6 @@ mod char_adme;
 mod mol_editor_sidebar;
 mod mol_picker;
 
-const SONIFICATION_INCLUDE_H: bool = true;
-
 /// Width of the strip left in place of the sidebar when it's hidden; fits the show button.
 const SIDEBAR_HIDDEN_WIDTH: f32 = 40.;
 
@@ -43,6 +40,7 @@ const SIDEBAR_HIDDEN_WIDTH: f32 = 40.;
 enum AudioAction {
     Toggle(MolType, usize),
 }
+
 
 fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
     let mut copies_str = copies.to_string();
@@ -59,27 +57,7 @@ fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
     }
 }
 
-fn toggle_audio(state: &mut State, mol_type: MolType, i_mol: usize) {
-    if state.volatile.is_playing_audio_for(mol_type, i_mol) {
-        state.volatile.playing_audio = None;
-        return;
-    }
 
-    let (mol, ff_params) = match mol_picker::sonification_input(state, mol_type, i_mol) {
-        Ok(input) => input,
-        Err(e) => {
-            handle_err(&mut state.ui, e);
-            return;
-        }
-    };
-
-    match sonification::play(&mol, &ff_params, SONIFICATION_INCLUDE_H) {
-        Ok(handle) => {
-            state.volatile.playing_audio = Some(PlayingAudio::new(mol_type, i_mol, handle));
-        }
-        Err(e) => handle_err(&mut state.ui, format!("Unable to play molecule audio: {e}")),
-    }
-}
 
 fn mol_specific_params<'a>(
     params: &'a std::collections::HashMap<String, ForceFieldParams>,

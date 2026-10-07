@@ -7,17 +7,20 @@
 use std::io;
 
 use bio_files::{BondType, md_params::ForceFieldParams};
-use mol_defs::molecules::common::MoleculeCommon;
+use mol_defs::molecules::{MolType, common::MoleculeCommon};
 use na_seq::Element::Hydrogen;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source, source::SineWave};
-
+use crate::state::State;
 use crate::util;
+use crate::util::handle_err;
 
 const AUDIO_TRANSPOSITION_FROM_HZ: f64 = 2.0e-11;
 const PS_INV_TO_HZ: f64 = 1.0e12;
 const MIN_FREQ_HZ: f32 = 80.0;
 const MAX_FREQ_HZ: f32 = 5_000.0;
 const VOLUME: f32 = 0.08;
+
+const SONIFICATION_INCLUDE_H: bool = true;
 
 /// Playback handle for one molecule.
 ///
@@ -215,4 +218,71 @@ fn invalid_bond(field: &str) -> io::Error {
         io::ErrorKind::InvalidData,
         format!("molecule has a bond with an invalid {field}"),
     )
+}
+
+pub struct PlayingAudio {
+    pub mol_type: MolType,
+    pub i_mol: usize,
+    pub _handle: MoleculeSonification,
+}
+
+impl PlayingAudio {
+    pub fn new(mol_type: MolType, i_mol: usize, handle: MoleculeSonification) -> Self {
+        Self {
+            mol_type,
+            i_mol,
+            _handle: handle,
+        }
+    }
+
+    pub fn is_for(&self, mol_type: MolType, i_mol: usize) -> bool {
+        self.mol_type == mol_type && self.i_mol == i_mol
+    }
+}
+
+impl StateVolatile {
+    pub fn is_playing_audio_for(&self, mol_type: MolType, i_mol: usize) -> bool {
+        self.playing_audio
+            .as_ref()
+            .is_some_and(|audio| audio.is_for(mol_type, i_mol))
+    }
+
+    pub fn update_playing_audio_after_close(&mut self, mol_type: MolType, i_mol: usize) {
+        let Some(audio) = &mut self.playing_audio else {
+            return;
+        };
+
+        if audio.mol_type != mol_type {
+            return;
+        }
+
+        if audio.i_mol == i_mol {
+            self.playing_audio = None;
+        } else if audio.i_mol > i_mol {
+            audio.i_mol -= 1;
+        }
+    }
+}
+
+pub fn toggle_audio(state: &mut State, mol_type: MolType, i_mol: usize) {
+    if state.volatile.is_playing_audio_for(mol_type, i_mol) {
+        state.volatile.playing_audio = None;
+        return;
+    }
+
+    let (mol, ff_params) = match crate::ui::sidebar::mol_picker::sonification_input(state, mol_type, i_mol) {
+        Ok(input) => input,
+        Err(e) => {
+            handle_err(&mut state.ui, e);
+            return;
+        }
+    };
+
+    match sonification::play(&mol, &ff_params, crate::ui::sidebar::SONIFICATION_INCLUDE_H) {
+        Ok(handle) => {
+            state.volatile.playing_audio =
+                Some(sonification::PlayingAudio::new(mol_type, i_mol, handle));
+        }
+        Err(e) => handle_err(&mut state.ui, format!("Unable to play molecule audio: {e}")),
+    }
 }

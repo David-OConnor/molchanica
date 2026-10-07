@@ -64,6 +64,7 @@ struct PickerActions {
     recenter_orbit: bool,
     close: Option<(MolType, usize)>,
     reset_fog: bool,
+    #[cfg(feature = "sonification")]
     audio_action: Option<AudioAction>,
 }
 
@@ -243,31 +244,34 @@ fn mol_picker_one(
                 let (popup, ph_state) = (&mut state.ui.popup, &mut state.pharmacophore);
                 pharmacophore::pharmacophore_summary(pm, i_mol, popup, ph_state, ui);
             }
-            //
-            // let playing_this_mol = state
-            //     .volatile
-            //     .playing_audio
-            //     .as_ref()
-            //     .is_some_and(|audio| audio.is_for(mol_type, i_mol));
-            //
-            // let (text, color, hover_text) = if playing_this_mol {
-            //     ("Pause", COLOR_ACTIVE, "Stop sonifying this molecule.")
-            // } else {
-            //     (
-            //         "Play",
-            //         COLOR_ACTION,
-            //         "Sonify this molecule using its force-field bond-stretching parameters.",
-            //     )
-            // };
-            //
-            // if mol_type != MolType::Pocket
-            //     && ui
-            //         .button(RichText::new(text).color(color))
-            //         .on_hover_text(hover_text)
-            //         .clicked()
-            // {
-            //     actions.audio_action = Some(AudioAction::Toggle(mol_type, i_mol));
-            // }
+
+            #[cfg(feature = "sonification")]
+            {
+                let playing_this_mol = state
+                    .volatile
+                    .playing_audio
+                    .as_ref()
+                    .is_some_and(|audio| audio.is_for(mol_type, i_mol));
+
+                let (text, color, hover_text) = if playing_this_mol {
+                    ("Pause", COLOR_ACTIVE, "Stop sonifying this molecule.")
+                } else {
+                    (
+                        "Play",
+                        crate::ui::COLOR_ACTION,
+                        "Sonify this molecule using its force-field bond-stretching parameters.",
+                    )
+                };
+
+                if mol_type != MolType::Pocket
+                    && ui
+                        .button(RichText::new(text).color(color))
+                        .on_hover_text(hover_text)
+                        .clicked()
+                {
+                    actions.audio_action = Some(AudioAction::Toggle(mol_type, i_mol));
+                }
+            }
         }
 
         ui.separator();
@@ -484,6 +488,7 @@ fn sort_mols(state: &State, ids: &mut [(MolType, usize)], sort: MolSort, descend
     }
 }
 
+#[cfg(feature = "sonification")]
 pub fn sonification_input(
     state: &State,
     mol_type: MolType,
@@ -674,6 +679,8 @@ pub fn mol_picker(
         state.volatile.flags.ss_mesh_created = false;
         state.volatile.flags.sas_mesh_created = false;
     }
+
+    #[cfg(feature = "sonification")]
     if let Some(AudioAction::Toggle(mol_type, i_mol)) = actions.audio_action {
         sidebar::toggle_audio(state, mol_type, i_mol);
     }
