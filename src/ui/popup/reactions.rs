@@ -669,15 +669,15 @@ fn block_columns(kind: BuildingBlockKind) -> &'static [(BuildingBlockColumn, &'s
 
     match kind {
         BuildingBlockKind::Feedstocks | BuildingBlockKind::Cofactors => &[
-            (PubChem, "PubChem CID", 100.0),
             (Name, "Name", 0.0),
+            (PubChem, "PubChem CID", 100.0),
             (Chebi, "ChEBI ID", 90.0),
             (Detail, "Role", 170.0),
             (Routes, "Routes", 70.0),
         ],
         BuildingBlockKind::Enzymes => &[
-            (Ec, "EC number", 100.0),
             (Name, "Name", 0.0),
+            (Ec, "EC number", 100.0),
             (UniProt, "UniProt ID", 90.0),
             (Detail, "Reaction family", 230.0),
             (Routes, "Routes", 70.0),
