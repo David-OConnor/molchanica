@@ -10,10 +10,11 @@ use bio_apis::{
     pdbe,
     rhea::{self, Reaction},
 };
+use egui_file_dialog::{DialogState, FileDialog, FileDialogConfig};
 use mol_defs::molecules::{MolGenericRef, MolIdent, MolIdentType};
 use synthesis::{
     EcTopLevel,
-    broad_target::{LibraryInventory, LibraryRoute, ReactionLibrary},
+    broad_target::{LibraryInventory, LibraryRoute, ReactionLibrary, create_protocol_for_route},
 };
 
 use crate::{
@@ -228,9 +229,82 @@ impl Default for SynthesisEntry {
     }
 }
 
+/// A save dialog with a snapshot of the route chosen for protocol export.
+pub struct ProtocolExport {
+    dialog: FileDialog,
+    pending: Option<(LibraryRoute, LibraryInventory)>,
+    pub message: Option<String>,
+    pub error: Option<String>,
+}
+
+impl Default for ProtocolExport {
+    fn default() -> Self {
+        let config = FileDialogConfig::default()
+            .add_file_filter_extensions("Markdown", vec!["md"])
+            .add_save_extension("Markdown", "md");
+        Self {
+            dialog: FileDialog::with_config(config)
+                .id("synthesis_protocol_save")
+                .title("Save synthesis protocol")
+                .default_save_extension("Markdown"),
+            pending: None,
+            message: None,
+            error: None,
+        }
+    }
+}
+
+impl ProtocolExport {
+    pub fn begin(&mut self, route: &LibraryRoute, inventory: &LibraryInventory) {
+        let stem: String = route
+            .target
+            .name
+            .chars()
+            .map(|character| {
+                if character.is_control() || r#"<>:"/\|?*"#.contains(character) {
+                    '_'
+                } else {
+                    character
+                }
+            })
+            .collect();
+        self.dialog.config_mut().default_file_name =
+            format!("protocol-{}.md", stem.trim_matches(['.', ' ']));
+        self.pending = Some((route.clone(), inventory.clone()));
+        self.message = None;
+        self.error = None;
+        self.dialog.save_file();
+    }
+
+    /// Updated with the other file dialogs even when the reactions popup is closed.
+    pub fn update(&mut self, context: &egui::Context) {
+        self.dialog.update(context);
+        if let Some(path) = self.dialog.take_picked() {
+            if let Some((route, inventory)) = self.pending.take() {
+                match create_protocol_for_route(&route, &inventory, &path) {
+                    Ok(()) => {
+                        self.message = Some(format!("Saved protocol to {}", path.display()));
+                        self.error = None;
+                    }
+                    Err(error) => {
+                        self.error = Some(format!("Unable to save protocol: {error}"));
+                        self.message = None;
+                    }
+                }
+            }
+        } else if matches!(
+            self.dialog.state(),
+            DialogState::Cancelled | DialogState::Closed
+        ) {
+            self.pending = None;
+        }
+    }
+}
+
 /// Synthesis routes deliberately have their own state instead of sharing Rhea queries or results.
 #[derive(Default)]
 pub struct SynthesisReactionsState {
+    pub protocol_export: ProtocolExport,
     pub diagrams: crate::mol_diagrams::DiagramCache,
     pub participant_action: SynthesisParticipantAction,
     pub download_message: Option<String>,

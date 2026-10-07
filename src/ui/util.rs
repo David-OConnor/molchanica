@@ -216,6 +216,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.save_md.update(ctx);
     state.volatile.dialogs.save_gro.update(ctx);
     state.volatile.dialogs.save_seq.update(ctx);
+    state.ui.synthesis_reactions.protocol_export.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {

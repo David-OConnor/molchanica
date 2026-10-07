@@ -140,10 +140,12 @@ pub(super) fn synthesis_reactions_window(
 ) {
     state.diagrams.poll(ui.ctx());
     ui.heading(RichText::new("Synthesis reaction library").color(Color32::WHITE));
-    ui.label(
-        "Curated candidate routes from synthesis::broad_target. Connectivity coverage does not \
-         establish substrate acceptance, stereochemistry, yield, or a complete protocol.",
-    );
+    if let Some(message) = &state.protocol_export.message {
+        ui.label(message);
+    }
+    if let Some(error) = &state.protocol_export.error {
+        ui.colored_label(Color32::LIGHT_RED, error);
+    }
 
     let mut retry = false;
     match &state.entry {
@@ -452,6 +454,7 @@ pub(super) fn synthesis_reactions_window(
     ui.add_space(6.0);
 
     let mut clicked_participant = None;
+    let mut protocol_index = None;
     let mut diagram_requests = Vec::new();
     ScrollArea::vertical()
         .id_salt(("synthesis_reactions", state.page, &search))
@@ -463,7 +466,7 @@ pub(super) fn synthesis_reactions_window(
                 .skip(state.page * SYNTHESIS_ROUTES_PER_PAGE)
                 .take(SYNTHESIS_ROUTES_PER_PAGE)
             {
-                synthesis_route_card(
+                if synthesis_route_card(
                     &data.routes[index],
                     state.participant_action,
                     diagram_scale,
@@ -472,13 +475,21 @@ pub(super) fn synthesis_reactions_window(
                     &mut clicked_participant,
                     &mut diagram_requests,
                     ui,
-                );
+                ) {
+                    protocol_index = Some(index);
+                }
                 ui.add_space(8.0);
             }
         });
     state
         .diagrams
         .request(&diagram_requests, diagram_scale, ui.ctx());
+
+    if let Some(index) = protocol_index {
+        state
+            .protocol_export
+            .begin(&data.routes[index], &data.inventory);
+    }
 
     if let Some(molecule) = clicked_participant {
         match state.participant_action {
@@ -1010,7 +1021,8 @@ fn synthesis_route_card(
     clicked: &mut Option<LibraryMolecule>,
     diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
-) {
+) -> bool {
+    let mut create_protocol = false;
     Frame::group(ui.style()).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal_wrapped(|ui| {
@@ -1022,6 +1034,12 @@ fn synthesis_route_card(
                 if route.steps.len() == 1 { "" } else { "s" }
             ));
             molecule_identifier_links(&route.target, ui);
+            create_protocol = ui
+                .button("Create protocol")
+                .on_hover_text(
+                    "Save a Markdown protocol with reagent sources and explicit preparation gaps.",
+                )
+                .clicked();
         });
         ui.horizontal_wrapped(|ui| {
             ui.weak("Starting materials:");
@@ -1062,6 +1080,7 @@ fn synthesis_route_card(
                 });
         }
     });
+    create_protocol
 }
 
 fn synthesis_step_card(

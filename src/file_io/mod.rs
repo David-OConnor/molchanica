@@ -885,7 +885,7 @@ impl State {
                 OpenType::Map
             }
             "dcd" | "xtc" | "trr" => {
-                if let Some(md) = &self.volatile.md_local.mol_dynamics {
+                if self.volatile.md_local.mol_dynamics.is_some() {
                     //
                     // // This function in the `dynamics` lib will handle saving in the appropriate format
                     // // for the given file extension.
@@ -904,7 +904,6 @@ impl State {
                         "No dynamics state; can't save a trajectory",
                     ));
                 }
-                OpenType::Trajectory
             }
             _ => {
                 return Err(io::Error::new(
