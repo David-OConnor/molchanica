@@ -6,14 +6,15 @@ use bio_apis::{
 };
 use egui::{
     Align, Align2, Button, CollapsingHeader, Color32, ComboBox, FontId, Frame, Layout, RichText,
-    ScrollArea, Sense, TextEdit, TextStyle, Ui, pos2, vec2,
+    ScrollArea, Sense, Slider, TextEdit, TextStyle, Ui, pos2, vec2,
 };
 use graphics::{EngineUpdates, Scene};
 use synthesis::broad_target::{LibraryEnzyme, LibraryMolecule, LibraryRoute, LibraryStep};
 
 use crate::{
     file_io::managed_mols::ManagedMolProvider,
-    mol_diagrams::DiagramRequest,
+    mol_diagrams::{DIAGRAM_SCALE_MAX, DIAGRAM_SCALE_MIN, DiagramRequest},
+    prefs::ToSave,
     reactions::{
         Entry, ParticipantAction, Query, ReactionsState, SynthesisDownloadId, SynthesisDownloads,
         SynthesisEntry, SynthesisParticipantAction, SynthesisReactionsState, SynthesisSort,
@@ -123,7 +124,11 @@ pub(super) fn poll_downloads(
     }
 }
 
-pub(super) fn synthesis_reactions_window(state: &mut SynthesisReactionsState, ui: &mut Ui) {
+pub(super) fn synthesis_reactions_window(
+    state: &mut SynthesisReactionsState,
+    to_save: &mut ToSave,
+    ui: &mut Ui,
+) {
     state.diagrams.poll(ui.ctx());
     ui.heading(RichText::new("Synthesis reaction library").color(Color32::WHITE));
     ui.label(
@@ -302,7 +307,11 @@ pub(super) fn synthesis_reactions_window(state: &mut SynthesisReactionsState, ui
         ) {
             state.participant_action = action;
         }
+
+        ui.add_space(12.0);
+        diagram_scale_slider(to_save, ui);
     });
+    let diagram_scale = to_save.reaction_diagram_scale;
 
     if !state.downloads.is_empty() {
         ui.horizontal_wrapped(|ui| {
@@ -380,6 +389,7 @@ pub(super) fn synthesis_reactions_window(state: &mut SynthesisReactionsState, ui
                 synthesis_route_card(
                     &data.routes[index],
                     state.participant_action,
+                    diagram_scale,
                     &state.downloads,
                     &mut state.diagrams,
                     &mut clicked_participant,
@@ -389,7 +399,9 @@ pub(super) fn synthesis_reactions_window(state: &mut SynthesisReactionsState, ui
                 ui.add_space(8.0);
             }
         });
-    state.diagrams.request(&diagram_requests, ui.ctx());
+    state
+        .diagrams
+        .request(&diagram_requests, diagram_scale, ui.ctx());
 
     if let Some(molecule) = clicked_participant {
         match state.participant_action {
@@ -504,6 +516,7 @@ fn sort_routes(indices: &mut [usize], routes: &[LibraryRoute], sort: SynthesisSo
 fn synthesis_route_card(
     route: &LibraryRoute,
     action: SynthesisParticipantAction,
+    diagram_scale: f32,
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
@@ -539,6 +552,7 @@ fn synthesis_route_card(
                 index,
                 step,
                 action,
+                diagram_scale,
                 downloads,
                 diagrams,
                 clicked,
@@ -567,6 +581,7 @@ fn synthesis_step_card(
     index: usize,
     step: &LibraryStep,
     action: SynthesisParticipantAction,
+    diagram_scale: f32,
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
@@ -593,6 +608,7 @@ fn synthesis_step_card(
                     "Reactants",
                     Color32::from_rgb(125, 195, 230),
                     action,
+                    diagram_scale,
                     downloads,
                     diagrams,
                     clicked,
@@ -614,11 +630,11 @@ fn synthesis_step_card(
                     rect.min.y + label_height + name_height / 2.0,
                 ),
                 Align2::CENTER_CENTER,
-                "→",
-                FontId::proportional(26.0),
+                "=",
+                FontId::proportional(28.0),
                 ui.visuals().text_color(),
             );
-            response.on_hover_text("Planned synthesis direction");
+            response.on_hover_text("Planned synthesis direction: reactants to products");
 
             ui.allocate_ui_with_layout(vec2(side_width, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_max_width(side_width);
@@ -627,6 +643,7 @@ fn synthesis_step_card(
                     "Products",
                     Color32::from_rgb(150, 215, 170),
                     action,
+                    diagram_scale,
                     downloads,
                     diagrams,
                     clicked,
@@ -681,6 +698,7 @@ fn synthesis_side(
     label: &str,
     color: Color32,
     action: SynthesisParticipantAction,
+    diagram_scale: f32,
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
@@ -690,7 +708,9 @@ fn synthesis_side(
     ui.label(RichText::new(label).small().color(color));
 
     let spacing = ui.spacing().item_spacing.x;
-    let molecule_width = ui.available_width().min(crate::mol_diagrams::DIAGRAM_WIDTH);
+    let molecule_width = ui
+        .available_width()
+        .min(crate::mol_diagrams::DIAGRAM_WIDTH * diagram_scale);
     let column_width = molecule_width + PLUS_WIDTH + 2.0 * spacing;
     let per_row = (((ui.available_width() + spacing) / column_width) as usize).max(1);
     let row_layout = Layout::left_to_right(Align::Min);
@@ -753,7 +773,7 @@ fn synthesis_side(
                 }
                 cell(ui, molecule_width, |ui| {
                     if let Some(id) = molecule.chebi_id {
-                        let retry = diagrams.show(id, ui);
+                        let retry = diagrams.show(id, diagram_scale, ui);
                         diagram_requests.push(DiagramRequest::new(id, molecule.smiles, retry));
                     } else {
                         ui.weak("No ChEBI diagram available.");
@@ -827,7 +847,7 @@ fn enzyme_links(enzymes: &[LibraryEnzyme], ui: &mut Ui) {
     });
 }
 
-pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
+pub(super) fn reactions_window(state: &mut ReactionsState, to_save: &mut ToSave, ui: &mut Ui) {
     state.diagrams.poll(ui.ctx());
     ui.heading(RichText::new(&state.title).color(Color32::WHITE));
     let has_chebi_id = matches!(state.selected.as_ref(), Some(Query::Chebi(_)));
@@ -879,7 +899,12 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
         ) {
             state.participant_action = action;
         }
+
+        ui.add_space(12.0);
+        diagram_scale_slider(to_save, ui);
     });
+    let diagram_scale = to_save.reaction_diagram_scale;
+
     if !state.downloads.is_empty() {
         ui.horizontal_wrapped(|ui| {
             ui.spinner();
@@ -1004,6 +1029,7 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
                             reaction_card(
                                 reaction,
                                 state,
+                                diagram_scale,
                                 &mut clicked_participant,
                                 &mut diagram_requests,
                                 ui,
@@ -1015,7 +1041,9 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
         }
     }
 
-    state.diagrams.request(&diagram_requests, ui.ctx());
+    state
+        .diagrams
+        .request(&diagram_requests, diagram_scale, ui.ctx());
 
     if retry {
         state.cache.remove(&query);
@@ -1037,6 +1065,7 @@ pub(super) fn reactions_window(state: &mut ReactionsState, ui: &mut Ui) {
 fn reaction_card(
     reaction: &Reaction,
     state: &ReactionsState,
+    diagram_scale: f32,
     clicked: &mut Option<(u32, String)>,
     diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
@@ -1079,6 +1108,7 @@ fn reaction_card(
                             "Left side",
                             Color32::from_rgb(125, 195, 230),
                             state,
+                            diagram_scale,
                             clicked,
                             diagram_requests,
                             ui,
@@ -1117,6 +1147,7 @@ fn reaction_card(
                             "Right side",
                             Color32::from_rgb(150, 215, 170),
                             state,
+                            diagram_scale,
                             clicked,
                             diagram_requests,
                             ui,
@@ -1138,6 +1169,7 @@ fn side(
     label: &str,
     color: Color32,
     state: &ReactionsState,
+    diagram_scale: f32,
     clicked: &mut Option<(u32, String)>,
     diagram_requests: &mut Vec<DiagramRequest>,
     ui: &mut Ui,
@@ -1146,7 +1178,9 @@ fn side(
 
     let names: Vec<&str> = equation.split(" + ").collect();
     let spacing = ui.spacing().item_spacing.x;
-    let molecule_width = ui.available_width().min(crate::mol_diagrams::DIAGRAM_WIDTH);
+    let molecule_width = ui
+        .available_width()
+        .min(crate::mol_diagrams::DIAGRAM_WIDTH * diagram_scale);
 
     // Wrap manually, so each row of names sits on its own row of diagrams. Count a "+" column
     // with every molecule; this may fit one fewer on the first row, but never overflows.
@@ -1241,7 +1275,7 @@ fn side(
 
                 cell(ui, molecule_width, |ui| {
                     if let Some(id) = participant_chebi_id(participants, equation, index) {
-                        let retry = state.diagrams.show(id, ui);
+                        let retry = state.diagrams.show(id, diagram_scale, ui);
                         diagram_requests.push(DiagramRequest::new(id, None, retry));
                     } else {
                         ui.weak("No 2D structure: no ChEBI ID supplied.");
@@ -1249,6 +1283,26 @@ fn side(
                 });
             }
         });
+    }
+}
+
+/// Scales the 2D molecule diagrams in both reaction popups. Saved with the preferences.
+fn diagram_scale_slider(to_save: &mut ToSave, ui: &mut Ui) {
+    ui.label("Diagram size:");
+    if ui
+        .add(
+            Slider::new(
+                &mut to_save.reaction_diagram_scale,
+                DIAGRAM_SCALE_MIN..=DIAGRAM_SCALE_MAX,
+            )
+            .fixed_decimals(1)
+            .suffix("×"),
+        )
+        .on_hover_text("Scale the molecule structure diagrams.")
+        .changed()
+    {
+        // Flushed by `check_prefs_save`, rather than writing the file on every drag step.
+        to_save.save_flag = true;
     }
 }
 

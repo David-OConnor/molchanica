@@ -104,7 +104,7 @@ pub(in crate::ui) fn load_popups(
                 .default_height(800.0)
                 .max_height(1_600.0),
             ui.ctx(),
-            |ui| reactions::reactions_window(&mut state.ui.reactions, ui),
+            |ui| reactions::reactions_window(&mut state.ui.reactions, &mut state.to_save, ui),
         );
         state.ui.popup.reactions &= open;
     }
@@ -117,7 +117,13 @@ pub(in crate::ui) fn load_popups(
                 .default_height(820.0)
                 .max_height(1_600.0),
             ui.ctx(),
-            |ui| reactions::synthesis_reactions_window(&mut state.ui.synthesis_reactions, ui),
+            |ui| {
+                reactions::synthesis_reactions_window(
+                    &mut state.ui.synthesis_reactions,
+                    &mut state.to_save,
+                    ui,
+                )
+            },
         );
         state.ui.popup.synthesis_reactions &= open;
     }

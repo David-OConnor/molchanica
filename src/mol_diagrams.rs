@@ -6,7 +6,8 @@
 //! persistent cache; recoloring and rasterization still happen locally for the current theme.
 //!
 //! SVG is the interchange format; resvg rasterizes it off the UI thread at double the
-//! display resolution. egui owns the resulting textures. HTTP belongs in bio_apis;
+//! display resolution. Enlarging the diagrams re-rasterizes the retained SVG, without repeating
+//! the depiction. egui owns the resulting textures. HTTP belongs in bio_apis;
 //! the local depiction implementation belongs in bio_tools::rdkit.
 
 use std::{
@@ -15,7 +16,7 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, TryRecvError},
     },
@@ -29,6 +30,12 @@ use crate::external_tools::{Tool, find_executable, find_rdkit_python};
 
 pub const DIAGRAM_WIDTH: f32 = 75.0;
 const DIAGRAM_HEIGHT: f32 = 45.0;
+/// Bounds of the user-adjustable display scale, relative to `DIAGRAM_WIDTH`.
+pub const DIAGRAM_SCALE_MIN: f32 = 0.5;
+pub const DIAGRAM_SCALE_MAX: f32 = 4.0;
+/// Raster scales are rounded up to this step, so dragging the slider doesn't re-rasterize
+/// on every frame.
+const RASTER_SCALE_STEP: f32 = 0.5;
 const MAX_DOWNLOADS: usize = 4;
 const CACHE_CAPACITY: usize = 128;
 const REMOTE_CACHE_CAPACITY: usize = 256;
@@ -55,9 +62,25 @@ impl DiagramRequest {
     }
 }
 
+/// A worker's output: the theme-styled SVG, and its rasterization at `raster_scale`.
+struct Rendered {
+    svg: Arc<str>,
+    image: ColorImage,
+    raster_scale: f32,
+}
+
+struct ReadyDiagram {
+    texture: TextureHandle,
+    /// Kept so a larger display scale can be re-rasterized without re-running the depiction.
+    svg: Arc<str>,
+    raster_scale: f32,
+    /// A sharper rasterization in progress; the current texture is shown until it finishes.
+    rerender: Option<(f32, Receiver<Result<ColorImage, String>>)>,
+}
+
 enum Entry {
-    Loading(Receiver<Result<Option<ColorImage>, String>>),
-    Ready(TextureHandle),
+    Loading(Receiver<Result<Option<Rendered>, String>>),
+    Ready(ReadyDiagram),
     Unavailable,
     Failed(String),
 }
@@ -94,16 +117,25 @@ impl DiagramCache {
     /// their results are collected next time it opens.
     pub fn poll(&mut self, ctx: &Context) {
         for (&id, cached) in &mut self.entries {
+            if let Entry::Ready(ready) = &mut cached.entry {
+                ready.poll_rerender(id);
+                continue;
+            }
             let Entry::Loading(rx) = &cached.entry else {
                 continue;
             };
 
             cached.entry = match rx.try_recv() {
-                Ok(Ok(Some(image))) => Entry::Ready(ctx.load_texture(
-                    format!("chebi-diagram-{id}"),
-                    image,
-                    TextureOptions::LINEAR,
-                )),
+                Ok(Ok(Some(rendered))) => Entry::Ready(ReadyDiagram {
+                    texture: ctx.load_texture(
+                        format!("chebi-diagram-{id}"),
+                        rendered.image,
+                        TextureOptions::LINEAR,
+                    ),
+                    svg: rendered.svg,
+                    raster_scale: rendered.raster_scale,
+                    rerender: None,
+                }),
                 Ok(Ok(None)) => Entry::Unavailable,
                 Ok(Err(error)) => Entry::Failed(error),
                 Err(TryRecvError::Empty) => continue,
@@ -114,17 +146,18 @@ impl DiagramCache {
         }
     }
 
-    /// Draw a stable-size slot below the molecule button. Return whether Retry was clicked.
-    pub fn show(&self, id: u32, ui: &mut Ui) -> bool {
-        let width = ui.available_width().min(DIAGRAM_WIDTH).max(1.0);
+    /// Draw a stable-size slot below the molecule button. `scale` multiplies the default diagram
+    /// size. Return whether Retry was clicked.
+    pub fn show(&self, id: u32, scale: f32, ui: &mut Ui) -> bool {
+        let width = ui.available_width().min(DIAGRAM_WIDTH * scale).max(1.0);
         let size = vec2(width, width * DIAGRAM_HEIGHT / DIAGRAM_WIDTH);
         let mut retry = false;
 
         ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Center), |ui| {
             ui.set_min_size(size);
             match self.entries.get(&id).map(|cached| &cached.entry) {
-                Some(Entry::Ready(texture)) => {
-                    ui.add(egui::Image::new(texture).fit_to_exact_size(size))
+                Some(Entry::Ready(ready)) => {
+                    ui.add(egui::Image::new(&ready.texture).fit_to_exact_size(size))
                         .on_hover_text(format!("2D structure for CHEBI:{id}"));
                 }
                 Some(Entry::Unavailable) => {
@@ -151,7 +184,9 @@ impl DiagramCache {
 
     /// Called after drawing so pagination and retries apply to the page actually on screen.
     /// Unstarted requests are not queued: switching pages gives the new page priority.
-    pub fn request(&mut self, participants: &[DiagramRequest], ctx: &Context) {
+    /// `scale` is the display scale passed to `show`.
+    pub fn request(&mut self, participants: &[DiagramRequest], scale: f32, ctx: &Context) {
+        let raster_scale = raster_scale(scale);
         let foreground = ctx.global_style().visuals.strong_text_color();
         if self.foreground != Some(foreground) {
             // Rasterized images contain the current text color, so a theme change invalidates them.
@@ -179,8 +214,16 @@ impl DiagramCache {
             }
             if let Some(cached) = self.entries.get_mut(&request.chebi_id) {
                 cached.last_used = self.generation;
+                if let Entry::Ready(ready) = &mut cached.entry {
+                    ready.request_rerender(raster_scale, ctx);
+                }
             }
         }
+
+        let rerendering = self.entries.values().any(|cached| match &cached.entry {
+            Entry::Ready(ready) => ready.rerender.is_some(),
+            _ => false,
+        });
 
         let mut downloading = self
             .entries
@@ -222,6 +265,7 @@ impl DiagramCache {
                     smiles,
                     rdkit_python.as_deref(),
                     foreground,
+                    raster_scale,
                 ));
                 ctx.request_repaint();
             });
@@ -235,7 +279,7 @@ impl DiagramCache {
             downloading += 1;
         }
 
-        if downloading > 0 {
+        if downloading > 0 || rerendering {
             // Also handles a worker disconnecting before it can request a repaint.
             ctx.request_repaint_after(Duration::from_millis(100));
         }
@@ -314,6 +358,57 @@ impl DiagramCache {
     }
 }
 
+impl ReadyDiagram {
+    /// Re-rasterize from the retained SVG when the display needs more resolution. Shrinking keeps
+    /// the existing, sharper texture.
+    fn request_rerender(&mut self, raster_scale: f32, ctx: &Context) {
+        let target = self
+            .rerender
+            .as_ref()
+            .map_or(self.raster_scale, |(scale, _)| *scale);
+        if raster_scale <= target {
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        let svg = Arc::clone(&self.svg);
+        thread::spawn(move || {
+            let _ = tx.send(rasterize_svg(&svg, raster_scale));
+            ctx.request_repaint();
+        });
+        // Replacing an older, smaller job drops its receiver; that worker's send is ignored.
+        self.rerender = Some((raster_scale, rx));
+    }
+
+    fn poll_rerender(&mut self, id: u32) {
+        let Some((scale, rx)) = &self.rerender else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(Ok(image)) => {
+                self.texture.set(image, TextureOptions::LINEAR);
+                self.raster_scale = *scale;
+            }
+            Ok(Err(error)) => {
+                // Keep the current texture, and don't retry this scale every frame.
+                eprintln!("Unable to re-rasterize the CHEBI:{id} diagram: {error}");
+                self.raster_scale = *scale;
+            }
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => self.raster_scale = *scale,
+        }
+        self.rerender = None;
+    }
+}
+
+/// The raster scale needed to display at `scale`, rounded up to a `RASTER_SCALE_STEP` multiple.
+fn raster_scale(scale: f32) -> f32 {
+    let scale = scale.clamp(DIAGRAM_SCALE_MIN, DIAGRAM_SCALE_MAX);
+    (scale / RASTER_SCALE_STEP).ceil() * RASTER_SCALE_STEP
+}
+
 /// Choose the depiction backend and rasterize in a worker. Failures of a configured local
 /// installation are logged before falling back, so a broken environment doesn't hide diagrams.
 fn load_chebi_diagram(
@@ -321,10 +416,11 @@ fn load_chebi_diagram(
     provided_smiles: Option<&str>,
     rdkit_python: Option<&Path>,
     foreground: Color32,
-) -> Result<Option<ColorImage>, String> {
+    raster_scale: f32,
+) -> Result<Option<Rendered>, String> {
     if let Some(python) = rdkit_python {
-        match load_local_diagram(id, provided_smiles, python, foreground) {
-            Ok(Some(image)) => return Ok(Some(image)),
+        match load_local_diagram(id, provided_smiles, python, foreground, raster_scale) {
+            Ok(Some(rendered)) => return Ok(Some(rendered)),
             Ok(None) => {
                 println!(
                     "Molecule diagram CHEBI:{id}: local RDKit selected, but ChEBI has no SMILES"
@@ -340,13 +436,13 @@ fn load_chebi_diagram(
     }
 
     if let Some((svg, path)) = load_cached_remote_diagram(id, 300, 180) {
-        match render_svg(&svg, foreground) {
-            Ok(image) => {
+        match render_svg(&svg, foreground, raster_scale) {
+            Ok(rendered) => {
                 println!(
                     "Molecule diagram CHEBI:{id}: loaded from the persistent ChEBI diagram cache \
                      (originally downloaded, not computed locally with RDKit)"
                 );
-                return Ok(Some(image));
+                return Ok(Some(rendered));
             }
             Err(error) => {
                 println!(
@@ -371,7 +467,7 @@ fn load_chebi_diagram(
     else {
         return Ok(None);
     };
-    let image = render_svg(&svg, foreground)?;
+    let rendered = render_svg(&svg, foreground, raster_scale)?;
     if let Err(error) = store_remote_diagram(id, 300, 180, &svg) {
         eprintln!("Unable to cache the remote CHEBI:{id} diagram: {error}");
     }
@@ -379,7 +475,7 @@ fn load_chebi_diagram(
         "Molecule diagram CHEBI:{id}: loaded from the remote ChEBI service \
          (not computed locally with RDKit)"
     );
-    Ok(Some(image))
+    Ok(Some(rendered))
 }
 
 fn remote_diagram_cache_path(id: u32, width: u32, height: u32) -> Option<PathBuf> {
@@ -474,7 +570,8 @@ fn load_local_diagram(
     provided_smiles: Option<&str>,
     python: &Path,
     foreground: Color32,
-) -> Result<Option<ColorImage>, String> {
+    raster_scale: f32,
+) -> Result<Option<Rendered>, String> {
     let smiles = if let Some(smiles) = provided_smiles {
         println!("Molecule diagram CHEBI:{id}: using embedded synthesis-library SMILES");
         Cow::Borrowed(smiles)
@@ -504,10 +601,21 @@ fn load_local_diagram(
         "Molecule diagram CHEBI:{id}: generated from {source} using RDKit ({})",
         python.display()
     );
-    render_svg(&svg, foreground).map(Some)
+    render_svg(&svg, foreground, raster_scale).map(Some)
 }
 
-fn render_svg(svg: &[u8], foreground: Color32) -> Result<ColorImage, String> {
+fn render_svg(svg: &[u8], foreground: Color32, raster_scale: f32) -> Result<Rendered, String> {
+    let svg: Arc<str> = style_svg(svg, foreground)?.into();
+    let image = rasterize_svg(&svg, raster_scale)?;
+
+    Ok(Rendered {
+        svg,
+        image,
+        raster_scale,
+    })
+}
+
+fn style_svg(svg: &[u8], foreground: Color32) -> Result<String, String> {
     // RDKit SVGs (local and ChEBI) use hex paints in inline styles and attributes.
     // Remove the white paint and recolor the remaining bonds/outlined labels. Applying this
     // before rasterization preserves antialiasing against the actual panel background.
@@ -531,12 +639,17 @@ fn render_svg(svg: &[u8], foreground: Color32) -> Result<ColorImage, String> {
         format!("{}{}{replacement}", &captures[1], &captures[2])
     });
 
+    Ok(styled.into_owned())
+}
+
+/// Rasterize at double the display resolution for `raster_scale`.
+fn rasterize_svg(svg: &str, raster_scale: f32) -> Result<ColorImage, String> {
     // Both backends outline text, so fonts and a system font scan are unnecessary.
     egui_extras::image::load_svg_bytes_with_size(
-        styled.as_bytes(),
+        svg.as_bytes(),
         egui::load::SizeHint::Size {
-            width: (2.0 * DIAGRAM_WIDTH) as u32,
-            height: (2.0 * DIAGRAM_HEIGHT) as u32,
+            width: (2.0 * DIAGRAM_WIDTH * raster_scale).round() as u32,
+            height: (2.0 * DIAGRAM_HEIGHT * raster_scale).round() as u32,
             maintain_aspect_ratio: true,
         },
         &Default::default(),

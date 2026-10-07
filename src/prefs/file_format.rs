@@ -1335,6 +1335,7 @@ impl ToSave {
             let (near, far) = self.manual_depth();
             out.extend_from_slice(&near.to_le_bytes());
             out.extend_from_slice(&far.to_le_bytes());
+            out.extend_from_slice(&self.reaction_diagram_scale.to_le_bytes());
             packets.push((PacketType::Misc, out));
         }
 
@@ -1486,6 +1487,17 @@ impl ToSave {
                         3 if payload.len() >= j + 5 => DepthMode::Manual(manual_depth),
                         _ => DepthMode::default(),
                     };
+
+                    // Older files end before the diagram scale; keep the default.
+                    if payload.len() >= j + 9 {
+                        let scale = parse_le!(payload, f32, j + 5..j + 9);
+                        if scale.is_finite() {
+                            to_save.reaction_diagram_scale = scale.clamp(
+                                crate::mol_diagrams::DIAGRAM_SCALE_MIN,
+                                crate::mol_diagrams::DIAGRAM_SCALE_MAX,
+                            );
+                        }
+                    }
                 }
             }
         }

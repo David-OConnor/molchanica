@@ -307,6 +307,8 @@ pub struct ToSave {
     pub depth_mode: DepthMode,
     /// Last manual values to restore after selecting Auto or Disabled.
     manual_depth_cache: (u16, u16),
+    /// Display scale of the 2D molecule diagrams in the reaction popups. 1.0 is the default size.
+    pub reaction_diagram_scale: f32,
 }
 
 impl Default for ToSave {
@@ -329,6 +331,7 @@ impl Default for ToSave {
             mesh_coloring: Default::default(),
             depth_mode: DepthMode::default(),
             manual_depth_cache: (VIEW_DEPTH_NEAR_MIN, VIEW_DEPTH_DEFAULT),
+            reaction_diagram_scale: 1.0,
         }
     }
 }
