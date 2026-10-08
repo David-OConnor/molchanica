@@ -10,9 +10,8 @@ use bio_files::{BondType, md_params::ForceFieldParams};
 use mol_defs::molecules::{MolType, common::MoleculeCommon};
 use na_seq::Element::Hydrogen;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source, source::SineWave};
-use crate::state::State;
-use crate::util;
-use crate::util::handle_err;
+
+use crate::{state::State, util, util::handle_err};
 
 const AUDIO_TRANSPOSITION_FROM_HZ: f64 = 2.0e-11;
 const PS_INV_TO_HZ: f64 = 1.0e12;
@@ -270,13 +269,14 @@ pub fn toggle_audio(state: &mut State, mol_type: MolType, i_mol: usize) {
         return;
     }
 
-    let (mol, ff_params) = match crate::ui::sidebar::mol_picker::sonification_input(state, mol_type, i_mol) {
-        Ok(input) => input,
-        Err(e) => {
-            handle_err(&mut state.ui, e);
-            return;
-        }
-    };
+    let (mol, ff_params) =
+        match crate::ui::sidebar::mol_picker::sonification_input(state, mol_type, i_mol) {
+            Ok(input) => input,
+            Err(e) => {
+                handle_err(&mut state.ui, e);
+                return;
+            }
+        };
 
     match sonification::play(&mol, &ff_params, crate::ui::sidebar::SONIFICATION_INCLUDE_H) {
         Ok(handle) => {

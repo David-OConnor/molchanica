@@ -41,7 +41,6 @@ enum AudioAction {
     Toggle(MolType, usize),
 }
 
-
 fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
     let mut copies_str = copies.to_string();
     if ui
@@ -56,8 +55,6 @@ fn md_copies_field(copies: &mut usize, ui: &mut Ui) {
         *copies = parsed.max(1);
     }
 }
-
-
 
 fn mol_specific_params<'a>(
     params: &'a std::collections::HashMap<String, ForceFieldParams>,
