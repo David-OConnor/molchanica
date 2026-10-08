@@ -317,6 +317,28 @@ fn add_bond(
     result
 }
 
+/// Orient multiple-bond offsets toward the neighbor, or choose a perpendicular when the
+/// neighbor lies on the bond axis (including the endpoint fallback for an isolated bond).
+/// `axis` must be a unit vector.
+fn bond_offset_direction(axis: Vec3, center: Vec3, neighbor: Vec3) -> Vec3 {
+    let to_neighbor = neighbor - center;
+    let projected = to_neighbor - axis * axis.dot(to_neighbor);
+
+    if projected.magnitude_squared() > 1e-12 {
+        return projected.to_normalized();
+    }
+
+    // Keep bonds in the XY plane when possible, matching the editor's initial camera view.
+    // Choose a reference away from the bond axis so its projection cannot vanish.
+    let reference = if axis.y.abs() < 0.9 {
+        Vec3::new(0., 1., 0.)
+    } else {
+        Vec3::new(1., 0., 0.)
+    };
+
+    (reference - axis * axis.dot(reference)).to_normalized()
+}
+
 pub fn bond_entities(
     posit_0: Vec3,
     posit_1: Vec3,
@@ -383,11 +405,9 @@ pub fn bond_entities(
 
             let (posit_0_inner, posit_1_inner, center_inner, dist_half_inner) = {
                 // Direction from the bond midpoint toward the neighbor atom, projected into the
-                // plane perpendicular to the bond axis. The neighbor is always on the ring, so
-                // this unambiguously points toward the ring interior regardless of winding order.
-                let to_neighbor = neighbor.0 - center;
-                let along_bond = diff_unit.dot(to_neighbor);
-                let dir_in = (to_neighbor - diff_unit * along_bond).to_normalized();
+                // plane perpendicular to the bond axis. A ring centroid points toward the ring
+                // interior; bonds outside a ring may need the perpendicular fallback.
+                let dir_in = bond_offset_direction(diff_unit, center, neighbor.0);
                 let offset = dir_in * AR_INNER_OFFSET;
 
                 let mut p0 = posit_0 + offset;
@@ -434,18 +454,9 @@ pub fn bond_entities(
         }
         BondType::Double => {
             // Draw two offset bond cylinders.
-            // See notes above in the Aromatic section.
-
-            let (offset_a, offset_b) = {
-                // The compare doesn't matter here, as it's symmetric.
-                let perp_vec = diff.cross(posit_1 - neighbor.0).to_normalized();
-
-                let dir_in = perp_vec.cross(diff.to_normalized()).to_normalized();
-                let offset_a = dir_in * DBL_BOND_OFFSET;
-                let offset_b = -dir_in * DBL_BOND_OFFSET;
-
-                (offset_a, offset_b)
-            };
+            let dir_in = bond_offset_direction(diff_unit, center, neighbor.0);
+            let offset_a = dir_in * DBL_BOND_OFFSET;
+            let offset_b = -offset_a;
 
             result.extend(add_bond(
                 (posit_0 + offset_a, posit_1 + offset_a),
@@ -470,18 +481,10 @@ pub fn bond_entities(
             ));
         }
         BondType::Triple => {
-            // Draw two offset bond cylinders.
-            // todo: DRY
-            let (offset_a, offset_b) = {
-                // The compare doesn't matter here, as it's symmetric.
-                let perp_vec = diff.cross(posit_1 - neighbor.0).to_normalized();
-
-                let dir_in = perp_vec.cross(diff.to_normalized()).to_normalized();
-                let offset_a = dir_in * TRIPLE_BOND_OFFSET;
-                let offset_b = -dir_in * TRIPLE_BOND_OFFSET;
-
-                (offset_a, offset_b)
-            };
+            // Draw a central cylinder and two offset cylinders.
+            let dir_in = bond_offset_direction(diff_unit, center, neighbor.0);
+            let offset_a = dir_in * TRIPLE_BOND_OFFSET;
+            let offset_b = -offset_a;
 
             result.extend(add_bond(
                 (posit_0, posit_1),

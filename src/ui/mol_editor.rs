@@ -1,6 +1,6 @@
 use bio_files::BondType;
 use dynamics::Solvent;
-use egui::{Color32, ComboBox, RichText, Slider, Ui};
+use egui::{Color32, ComboBox, Key, Modifiers, RichText, Slider, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene};
 use mol_defs::molecules::{Bond, MolType, small::MoleculeSmall};
 use na_seq::{
@@ -57,9 +57,34 @@ pub const ATOM_SN_LABEL_COLOR: (u8, u8, u8, u8) = (40, 220, 255, 255);
 // Font size. (`TextOverlay` has no separate stroke weight; this is what controls thickness.)
 pub const ATOM_SN_LABEL_SIZE: f32 = 16.;
 
+/// Keep editor shortcuts available over the scene and buttons, but leave text input and
+/// modified shortcuts alone. Consuming a press prevents it from activating twice in a frame.
+fn edit_hotkey_pressed(ui: &Ui, key: Key) -> bool {
+    if ui.ctx().text_edit_focused() {
+        return false;
+    }
+
+    ui.input_mut(|input| {
+        let pressed = input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: pressed_key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if *pressed_key == key && !modifiers.alt && !modifiers.ctrl && !modifiers.command
+            )
+        });
+
+        pressed && input.consume_key(Modifiers::NONE, key)
+    })
+}
+
 fn change_el_button(
     sel: &Selection,
     el: Element,
+    hotkey: Key,
     ui: &mut Ui,
     entities: &mut Vec<Entity>,
     state_ui: &mut StateUi,
@@ -78,8 +103,11 @@ fn change_el_button(
 
     if ui
         .button(RichText::new(el.to_letter()).color(color))
-        .on_hover_text(format!("Change the selected atom's element to {el}"))
+        .on_hover_text(format!(
+            "(Hotkey: \"{hotkey:?}\") Change the selected atom's element to {el}"
+        ))
         .clicked()
+        || edit_hotkey_pressed(ui, hotkey)
     {
         let idxs = match sel {
             Selection::AtomLig((_, i)) => vec![*i],
@@ -576,29 +604,33 @@ fn bond_edit_tools(
     section_box().show(ui, |ui| {
         if ui
             .button("-")
-            .on_hover_text("Change this to a single bond.")
+            .on_hover_text("(Hotkey: \"1\") Change this to a single bond.")
             .clicked()
+            || edit_hotkey_pressed(ui, Key::Num1)
         {
             new_bond_type = Some(BondType::Single);
         }
         if ui
             .button("=")
-            .on_hover_text("Change this to a double bond.")
+            .on_hover_text("(Hotkey: \"2\") Change this to a double bond.")
             .clicked()
+            || edit_hotkey_pressed(ui, Key::Num2)
         {
             new_bond_type = Some(BondType::Double);
         }
         if ui
             .button("Tr")
-            .on_hover_text("Change this to a triple bond.")
+            .on_hover_text("(Hotkey: \"3\") Change this to a triple bond.")
             .clicked()
+            || edit_hotkey_pressed(ui, Key::Num3)
         {
             new_bond_type = Some(BondType::Triple);
         }
         if ui
             .button("Ar")
-            .on_hover_text("Change this to an aromatic.")
+            .on_hover_text("(Hotkey: \"4\") Change this to an aromatic.")
             .clicked()
+            || edit_hotkey_pressed(ui, Key::Num4)
         {
             new_bond_type = Some(BondType::Aromatic);
         }
@@ -742,6 +774,10 @@ fn edit_tools(
         }
     };
 
+    if selected_idxs.is_empty() {
+        return;
+    }
+
     if bond_mode {
         let mut rebuild_ff_params = false;
         bond_edit_tools(
@@ -860,13 +896,20 @@ fn edit_tools(
 
             ui.add_space(COL_SPACING / 2.);
 
-            for el in [
-                Carbon, Hydrogen, Oxygen, Nitrogen, Sulfur, Phosphorus, Chlorine,
+            for (el, hotkey) in [
+                (Carbon, Key::C),
+                (Hydrogen, Key::H),
+                (Oxygen, Key::O),
+                (Nitrogen, Key::N),
+                (Sulfur, Key::S),
+                (Phosphorus, Key::P),
+                (Chlorine, Key::L),
             ] {
                 let sel = state.ui.selection.clone(); // todo :/
                 change_el_button(
                     &sel,
                     el,
+                    hotkey,
                     ui,
                     &mut scene.entities,
                     &mut state.ui,
