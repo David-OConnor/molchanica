@@ -2,7 +2,7 @@
 name = "molchanica"
 # Single source of truth for the app version: the About popup reads it via `CARGO_PKG_VERSION`,
 # and the `make_release` scripts parse it out of this file.
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 
 
@@ -70,7 +70,7 @@ bytes = "1.12.1"
 # `ldconfig -p | grep libcuda` reports on the affected machine before reaching for linking again.)
 cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
 
-rodio = {  version = "0.22.2", optional = true }  # For sonification of bonds etc.
+rodio = { version = "0.22.2", optional = true }  # For sonification of bonds etc.
 webbrowser = "1.2.4"  # For opening links, e.g. from the remote DBs
 
 
