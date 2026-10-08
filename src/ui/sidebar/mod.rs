@@ -49,20 +49,9 @@ fn mol_safety_section(mol: &MoleculeSmall, loading: bool, ui: &mut Ui) -> bool {
     let mut load = false;
     ui.add_space(ROW_SPACING);
     section_box().show(ui, |ui| {
-        ui.strong("Safety (GHS)");
-        if let Some(data) = &mol.safety_data {
-            ui.label("Reported chemical hazards from PubChem.");
-            if let Some(signal) = &data.signal_word {
-                ui.label(RichText::new(signal).strong().color(COLOR_ACTION));
-            }
-            safety::pictograms(data, 32.0, true, ui);
-            CollapsingHeader::new("Hazard statements and sources")
-                .id_salt(("mol_safety_details", &mol.common.ident))
-                .show(ui, |ui| safety::safety_details(data, ui));
-        } else {
-            ui.weak("Safety data is not loaded or unavailable.");
-            ui.weak("Missing data does not establish safety.");
-            ui.horizontal(|ui| {
+        ui.horizontal(|ui| {
+            ui.strong("Safety (GHS)");
+            if mol.safety_data.is_none() {
                 load = ui
                     .add_enabled(!loading, egui::Button::new("Load safety data"))
                     .on_hover_text(
@@ -73,7 +62,18 @@ fn mol_safety_section(mol: &MoleculeSmall, loading: bool, ui: &mut Ui) -> bool {
                     ui.spinner();
                     ui.weak("Loading…");
                 }
-            });
+            }
+        });
+
+        if let Some(data) = &mol.safety_data {
+            ui.label("Reported chemical hazards from PubChem.");
+            if let Some(signal) = &data.signal_word {
+                ui.label(RichText::new(signal).strong().color(COLOR_ACTION));
+            }
+            safety::pictograms(data, 32.0, false, ui);
+            CollapsingHeader::new("Hazard statements and sources")
+                .id_salt(("mol_safety_details", &mol.common.ident))
+                .show(ui, |ui| safety::safety_details(data, ui));
         }
     });
     load

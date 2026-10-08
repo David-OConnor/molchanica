@@ -27,48 +27,54 @@ pub(super) fn safety_badges(data: Option<&SafetyData>, ui: &mut Ui) {
             .on_hover_text("No GHS classification is available. Safety is unknown.");
         return;
     };
-    pictograms(data, 22.0, false, ui);
+    pictograms(data, 22.0, true, ui);
 }
 
 /// White SVG symbols from bio_files are cached as egui textures under stable local URIs.
-pub(super) fn pictograms(data: &SafetyData, size: f32, labels: bool, ui: &mut Ui) {
+pub(super) fn pictograms(data: &SafetyData, size: f32, details_on_hover: bool, ui: &mut Ui) {
     egui_extras::install_image_loaders(ui.ctx());
     let pictograms = data.pictograms();
     if pictograms.is_empty() {
         ui.weak("No pictograms reported")
             .on_hover_ui(|ui| safety_details(data, ui));
     }
-    if labels {
+    ui.horizontal_wrapped(|ui| {
         for (code, label) in pictograms {
-            ui.horizontal_wrapped(|ui| {
-                pictogram(data, code, label, size, ui);
-                ui.label(label);
-            });
+            pictogram(data, code, label, size, details_on_hover, ui);
         }
-        ui.hyperlink_to("PubChem GHS", &data.pubchem_url);
-    } else {
-        ui.horizontal_wrapped(|ui| {
-            for (code, label) in pictograms {
-                pictogram(data, code, label, size, ui);
-            }
-            ui.hyperlink_to("GHS", &data.pubchem_url)
-                .on_hover_text(safety_summary(Some(data)));
-        });
-    }
+        let link_label = if details_on_hover {
+            "GHS"
+        } else {
+            "PubChem GHS"
+        };
+        ui.hyperlink_to(link_label, &data.pubchem_url)
+            .on_hover_text(safety_summary(Some(data)));
+    });
 }
 
-fn pictogram(data: &SafetyData, code: &str, label: &str, size: f32, ui: &mut Ui) {
+fn pictogram(
+    data: &SafetyData,
+    code: &str,
+    label: &str,
+    size: f32,
+    details_on_hover: bool,
+    ui: &mut Ui,
+) {
     let Some(bytes) = bio_files::pubchem::ghs_pictogram(code) else {
         return;
     };
-    ui.add(
+    let response = ui.add(
         egui::Image::from_bytes(format!("bytes://ghs-white/{code}.svg"), bytes)
             .fit_to_exact_size(vec2(size, size)),
-    )
-    .on_hover_ui(|ui| {
-        ui.strong(format!("{code}: {label}"));
-        safety_details(data, ui);
-    });
+    );
+    if details_on_hover {
+        response.on_hover_ui(|ui| {
+            ui.strong(format!("{code}: {label}"));
+            safety_details(data, ui);
+        });
+    } else {
+        response.on_hover_text(label);
+    }
 }
 
 pub(super) fn safety_details(data: &SafetyData, ui: &mut Ui) {

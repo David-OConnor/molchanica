@@ -605,14 +605,6 @@ fn building_blocks(
                 rows.len()
             ));
 
-            if view.kind != BuildingBlockKind::Enzymes {
-                ui.weak(
-                    "GHS icons combine PubChem reports. Hover for hazard statements and sources. \
-                    Compound reports may cover different forms or mixtures; check the supplier SDS \
-                    for the purchased formulation. Missing data does not establish safety.",
-                );
-            }
-
             // The name column takes the width the others leave.
             let fixed: f32 = columns.iter().map(|&(_, _, width)| width).sum();
             let gaps = BLOCK_COL_SPACING * (columns.len() - 1) as f32;
