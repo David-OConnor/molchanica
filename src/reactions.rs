@@ -145,6 +145,7 @@ pub enum BuildingBlockColumn {
     UniProt,
     /// The role of a feedstock or cofactor, or the reaction families of an enzyme.
     Detail,
+    Safety,
     Routes,
 }
 

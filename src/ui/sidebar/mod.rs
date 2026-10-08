@@ -1,10 +1,13 @@
 use bio_apis::pubchem;
+
 use bio_files::{FrameSlice, md_params::ForceFieldParams};
 use dynamics::{FfMolType, merge_params};
-use egui::{Color32, RichText, TextEdit, Ui};
+use egui::{CollapsingHeader, Color32, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
-use mol_defs::molecules::{MolGenericRef, MolGenericRefMut, MolIdent, MolType};
+use mol_defs::molecules::{
+    MolGenericRef, MolGenericRefMut, MolIdent, MolType, small::MoleculeSmall,
+};
 
 use crate::{
     button,
@@ -20,10 +23,14 @@ use crate::{
     pocket_render::PocketRender,
     properties::{crystal, logp, sol_shrinking_box, water_sol, water_sol_mix},
     state::{MetadataTarget, OperatingMode, State},
+    threads::start_safety_data_lookup,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        highlighted_box, load_all_idents_button, num_field,
+        highlighted_box, load_all_idents_button,
+        misc::section_box,
+        num_field,
         panels::md_viewer,
+        safety,
         util::{Idents, list_idents},
     },
     util::{RedrawFlags, handle_err, handle_success},
@@ -35,6 +42,42 @@ mod mol_picker;
 
 /// Width of the strip left in place of the sidebar when it's hidden; fits the show button.
 const SIDEBAR_HIDDEN_WIDTH: f32 = 40.;
+
+/// Compound hazards appear below identifiers whenever molecule properties are visible.
+/// Returns whether the user requested a background PubChem lookup.
+fn mol_safety_section(mol: &MoleculeSmall, loading: bool, ui: &mut Ui) -> bool {
+    let mut load = false;
+    ui.add_space(ROW_SPACING);
+    section_box().show(ui, |ui| {
+        ui.strong("Safety (GHS)");
+        if let Some(data) = &mol.safety_data {
+            ui.label("Reported chemical hazards from PubChem.");
+            if let Some(signal) = &data.signal_word {
+                ui.label(RichText::new(signal).strong().color(COLOR_ACTION));
+            }
+            safety::pictograms(data, 32.0, true, ui);
+            CollapsingHeader::new("Hazard statements and sources")
+                .id_salt(("mol_safety_details", &mol.common.ident))
+                .show(ui, |ui| safety::safety_details(data, ui));
+        } else {
+            ui.weak("Safety data is not loaded or unavailable.");
+            ui.weak("Missing data does not establish safety.");
+            ui.horizontal(|ui| {
+                load = ui
+                    .add_enabled(!loading, egui::Button::new("Load safety data"))
+                    .on_hover_text(
+                        "Load reported GHS hazards from PubChem using the molecule's identifiers.",
+                    )
+                    .clicked();
+                if loading {
+                    ui.spinner();
+                    ui.weak("Loading…");
+                }
+            });
+        }
+    });
+    load
+}
 
 #[derive(Clone, Copy)]
 enum AudioAction {
@@ -525,6 +568,24 @@ pub(in crate::ui) fn sidebar(
             }
 
             if state.ui.ui_vis.sidebar_mol_properties && !edit_mode {
+                let mut load_safety_data = false;
+                if let Some(MolGenericRef::Small(mol)) = state.active_mol() {
+                    let loading = state
+                        .volatile
+                        .thread_receivers
+                        .safety_data_avail
+                        .iter()
+                        .any(|lookup| lookup.matches_molecule(mol));
+                    load_safety_data = mol_safety_section(mol, loading, ui);
+                }
+                if load_safety_data
+                    && let Some((MolType::Ligand, i)) = state.volatile.active_mol
+                    && let Some(mol) = state.ligands.get(i)
+                {
+                    start_safety_data_lookup(&mut state.volatile.thread_receivers, i, mol);
+                    ui.ctx().request_repaint();
+                }
+
                 // These vars are all to avoid a double borrow.
                 let mut run_logp_sim = false;
                 let mut run_crystal_sim = false;

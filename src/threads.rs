@@ -16,9 +16,10 @@ use bio_apis::{
     rcsb::{FilesAvailable, PdbDataResults},
 };
 use bio_files::gromacs::GromacsOutput;
+use chrono::Utc;
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
-    molecules::{MolIdent, MolType},
+    molecules::{MolIdent, MolType, small::MoleculeSmall},
     screening::pharmacophore::PhScreeningScore,
     sfc_mesh::MeshColors,
 };
@@ -64,6 +65,8 @@ pub struct ThreadReceivers {
     /// index and internal name from when the request started, so a removed/reordered ligand does
     /// not receive another molecule's result.
     pub all_idents_avail: Option<(usize, String, Receiver<IdentLookupOutcome>)>,
+    /// Safety lookups retain molecule identity and connectivity across selection changes.
+    pub safety_data_avail: Vec<SafetyLookup>,
     /// PubChem lookups naming molecules produced by a split or join; one per molecule.
     pub structure_lookups: Vec<StructureLookup>,
     /// The molecule editor's "Check DBs" PubChem lookup. Carries the SMILES looked up, so a
@@ -105,6 +108,7 @@ impl ThreadReceivers {
             || !self.mol_pending_data_avail.is_empty()
             || self.pubchem_properties_avail.is_some()
             || self.all_idents_avail.is_some()
+            || !self.safety_data_avail.is_empty()
             || !self.structure_lookups.is_empty()
             || self.editor_db_check.is_some()
             || self.therapeutic_properties_avail.is_some()
@@ -114,6 +118,173 @@ impl ThreadReceivers {
             || self.ph_screening.is_some()
             || self.gromacs_md_avail.is_some()
             || self.orca_run.is_some()
+    }
+}
+
+pub struct SafetyLookup {
+    requested_index: usize,
+    ident: String,
+    smiles: String,
+    cid: Option<u32>,
+    receiver: Receiver<Result<(u32, Option<pubchem::SafetyData>), String>>,
+}
+
+impl SafetyLookup {
+    pub fn matches_molecule(&self, mol: &MoleculeSmall) -> bool {
+        self.ident == mol.common.ident
+            && self.smiles == mol.common.to_smiles()
+            && self.cid.is_none_or(|cid| molecule_cid(mol) == Some(cid))
+    }
+}
+
+fn molecule_cid(mol: &MoleculeSmall) -> Option<u32> {
+    mol.idents.iter().find_map(|ident| match ident {
+        MolIdent::PubChem(cid) if *cid > 0 => Some(*cid),
+        _ => None,
+    })
+}
+
+fn load_molecule_safety(idents: &[MolIdent]) -> Result<(u32, Option<pubchem::SafetyData>), String> {
+    let cid = idents.iter().find_map(|ident| match ident {
+        MolIdent::PubChem(cid) if *cid > 0 => Some(*cid),
+        _ => None,
+    });
+    let cid = match cid {
+        Some(cid) => cid,
+        None => {
+            let mut resolved = idents.to_vec();
+            let props = pubchem_properties_from_idents(&resolved)
+                .or_else(|error| {
+                    let Some(id) = resolved.iter().find_map(|ident| match ident {
+                        MolIdent::Chebi(id) => Some(*id),
+                        _ => None,
+                    }) else {
+                        return Err(error);
+                    };
+                    let compound = chebi::load_compound(id)?;
+                    apply_chebi_compound(&mut resolved, &compound);
+                    pubchem_properties_from_idents(&resolved)
+                })
+                .map_err(|error| {
+                    format!("Unable to resolve a PubChem CID for safety data: {error:?}")
+                })?;
+            if props.cid == 0 {
+                return Err(
+                    "PubChem has no compound record for this structure; safety is unknown."
+                        .to_owned(),
+                );
+            }
+            props.cid
+        }
+    };
+
+    let mut data = pubchem::safety_data(cid)
+        .map_err(|error| format!("Unable to load safety data for CID {cid}: {error:?}"))?;
+    if let Some(data) = &mut data {
+        data.retrieved_on = Some(Utc::now().format("%Y-%m-%d").to_string());
+    }
+    Ok((cid, data))
+}
+
+pub fn start_safety_data_lookup(
+    receivers: &mut ThreadReceivers,
+    index: usize,
+    mol: &MoleculeSmall,
+) {
+    if receivers
+        .safety_data_avail
+        .iter()
+        .any(|lookup| lookup.matches_molecule(mol))
+    {
+        return;
+    }
+    let idents = mol.idents.clone();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(load_molecule_safety(&idents));
+    });
+    receivers.safety_data_avail.push(SafetyLookup {
+        requested_index: index,
+        ident: mol.common.ident.clone(),
+        smiles: mol.common.to_smiles(),
+        cid: molecule_cid(mol),
+        receiver: rx,
+    });
+}
+
+fn poll_safety_data(state: &mut State) {
+    let mut i = 0;
+    while i < state.volatile.thread_receivers.safety_data_avail.len() {
+        let result = state.volatile.thread_receivers.safety_data_avail[i]
+            .receiver
+            .try_recv();
+        let result = match result {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => {
+                i += 1;
+                continue;
+            }
+            Err(TryRecvError::Disconnected) => {
+                Err("The safety data lookup stopped unexpectedly.".to_owned())
+            }
+        };
+        let lookup = state
+            .volatile
+            .thread_receivers
+            .safety_data_avail
+            .swap_remove(i);
+        let index = state
+            .ligands
+            .get(lookup.requested_index)
+            .filter(|mol| lookup.matches_molecule(mol))
+            .map(|_| lookup.requested_index)
+            .or_else(|| {
+                state
+                    .ligands
+                    .iter()
+                    .position(|mol| lookup.matches_molecule(mol))
+            });
+        let Some(index) = index else {
+            continue;
+        };
+
+        match result {
+            Ok((cid, data)) => {
+                let mol = &mut state.ligands[index];
+                // An identifier lookup may have completed while safety data was in flight.
+                if molecule_cid(mol).is_some_and(|current| current != cid) {
+                    continue;
+                }
+                if molecule_cid(mol).is_none() {
+                    mol.idents.push(MolIdent::PubChem(cid));
+                }
+                let available = data.is_some();
+                mol.safety_data = data;
+                let cache_result = managed_mols::update_managed_mol(&state.volatile.prefs_dir, mol);
+                state.to_save.save_flag = true;
+                if let Err(error) = cache_result {
+                    handle_err(
+                        &mut state.ui,
+                        format!(
+                            "Loaded safety data, but could not update the cached molecule: {error}"
+                        ),
+                    );
+                } else if available {
+                    handle_success(
+                        &mut state.ui,
+                        format!("Loaded GHS safety data for CID {cid}"),
+                    );
+                } else {
+                    handle_err(
+                        &mut state.ui,
+                        format!(
+                            "No GHS classification is available for CID {cid}. Safety remains unknown."
+                        ),
+                    );
+                }
+            }
+            Err(error) => handle_err(&mut state.ui, error),
+        }
     }
 }
 
@@ -546,6 +717,7 @@ pub fn handle_thread_rx(
     reset_cam: &mut bool,
     updates: &mut EngineUpdates,
 ) {
+    poll_safety_data(state);
     let query_result = state
         .volatile
         .thread_receivers

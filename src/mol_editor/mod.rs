@@ -243,6 +243,7 @@ impl MolEditorState {
         }
 
         self.mol.idents.clear();
+        self.mol.clear_safety_data();
         if !smiles.is_empty() {
             self.mol.idents.push(MolIdent::Smiles(smiles.clone()));
         }
@@ -1125,6 +1126,7 @@ fn name_edited_mol(state: &mut State, lig_i: usize) -> Option<PathBuf> {
     let smiles = create_smiles(&lig.common);
 
     lig.idents.clear();
+    lig.clear_safety_data();
     if !smiles.is_empty() {
         lig.idents.push(MolIdent::Smiles(smiles));
     }

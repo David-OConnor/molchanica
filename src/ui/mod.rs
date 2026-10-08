@@ -59,6 +59,7 @@ pub mod mol_editor;
 mod mol_type_tools;
 mod panels;
 pub mod popup;
+mod safety;
 mod sidebar;
 pub mod util;
 pub(crate) use util::{QueryResult, apply_query_result};

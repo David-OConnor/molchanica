@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 
 use bio_apis::{
     chebi, pubchem,
+    pubchem::SafetyData,
     rhea::{Reaction, ReactionSide},
 };
 use egui::{
@@ -29,6 +30,7 @@ use crate::{
     state::State,
     ui::{
         misc::{selector, selector_option},
+        safety::{safety_badges, safety_summary},
         util::{QueryResult, apply_query_result, open_chebi_download},
     },
     util::{RedrawFlags, handle_err, make_lig_3d},
@@ -525,6 +527,7 @@ struct BlockRow<'a> {
     uniprot_id: Option<&'a str>,
     detail: String,
     hover: String,
+    safety: Option<&'a SafetyData>,
     /// The number of library routes using this building block.
     routes: usize,
 }
@@ -601,6 +604,14 @@ fn building_blocks(
                  column heading to sort.",
                 rows.len()
             ));
+
+            if view.kind != BuildingBlockKind::Enzymes {
+                ui.weak(
+                    "GHS icons combine PubChem reports. Hover for hazard statements and sources. \
+                    Compound reports may cover different forms or mixtures; check the supplier SDS \
+                    for the purchased formulation. Missing data does not establish safety.",
+                );
+            }
 
             // The name column takes the width the others leave.
             let fixed: f32 = columns.iter().map(|&(_, _, width)| width).sum();
@@ -684,6 +695,7 @@ fn block_columns(kind: BuildingBlockKind) -> &'static [(BuildingBlockColumn, &'s
             (PubChem, "PubChem CID", 100.0),
             (Chebi, "ChEBI ID", 90.0),
             (Detail, "Role", 170.0),
+            (Safety, "GHS hazards", 180.0),
             (Routes, "Routes", 70.0),
         ],
         BuildingBlockKind::Enzymes => &[
@@ -744,6 +756,7 @@ fn block_rows(data: &SynthesisLibraryData, kind: BuildingBlockKind) -> Vec<Block
                         "Reaction families: {families}\n\nClick to show only the routes using it."
                     ),
                     detail: families,
+                    safety: None,
                     routes: routes(component),
                 }
             })
@@ -764,6 +777,7 @@ fn material_row(
         ec: None,
         uniprot_id: None,
         detail: material.role.clone(),
+        safety: material.safety.as_ref(),
         hover: format!(
             "{} {}\n{}\n\nClick to show only the routes using it.",
             material.supplier, material.product_number, material.formulation_note
@@ -839,6 +853,7 @@ fn block_cell(
         BuildingBlockColumn::Routes => {
             ui.label(row.routes.to_string());
         }
+        BuildingBlockColumn::Safety => safety_badges(row.safety, ui),
     }
 }
 
@@ -850,6 +865,7 @@ fn block_matches(row: &BlockRow, search: &str) -> bool {
     let mut values = vec![
         row.name.to_ascii_lowercase(),
         row.detail.to_ascii_lowercase(),
+        safety_summary(row.safety).to_ascii_lowercase(),
     ];
     if let Some(id) = row.pubchem_id {
         values.push(format!("cid:{id}"));
@@ -895,6 +911,9 @@ fn sort_blocks(rows: &mut [BlockRow], column: BuildingBlockColumn, descending: b
                     .cmp(&b.detail.to_ascii_lowercase()),
             ),
             BuildingBlockColumn::Routes => directed(a.routes.cmp(&b.routes)),
+            BuildingBlockColumn::Safety => {
+                directed(safety_summary(a.safety).cmp(&safety_summary(b.safety)))
+            }
             BuildingBlockColumn::PubChem => cmp_present(a.pubchem_id, b.pubchem_id, descending),
             BuildingBlockColumn::Chebi => cmp_present(a.chebi_id, b.chebi_id, descending),
             BuildingBlockColumn::Ec => cmp_present(a.ec.map(ec_key), b.ec.map(ec_key), descending),
@@ -981,6 +1000,9 @@ fn route_matches(route: &LibraryRoute, search: &str) -> bool {
 
 fn push_molecule_search_values(molecule: &LibraryMolecule, values: &mut Vec<String>) {
     values.push(molecule.name.to_ascii_lowercase());
+    if let Some(safety) = &molecule.safety {
+        values.push(safety_summary(Some(safety)).to_ascii_lowercase());
+    }
     if let Some(id) = molecule.chebi_id {
         values.push(format!("chebi:{id}"));
     }
@@ -1041,15 +1063,13 @@ fn synthesis_route_card(
                 )
                 .clicked();
         });
-        ui.horizontal_wrapped(|ui| {
-            ui.weak("Starting materials:");
-            for (index, molecule) in route.starting_materials.iter().enumerate() {
-                if index > 0 {
-                    ui.weak("+");
-                }
+        ui.weak("Starting materials and reported GHS hazards:");
+        for molecule in &route.starting_materials {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(&molecule.name);
-            }
-        });
+                safety_badges(molecule.safety.as_ref(), ui);
+            });
+        }
         ui.add_space(5.0);
 
         for (index, step) in route.steps.iter().enumerate() {
@@ -1268,6 +1288,9 @@ fn synthesis_side(
                     {
                         *clicked = Some(molecule.clone());
                     }
+                    if molecule.is_feedstock || molecule.safety.is_some() {
+                        safety_badges(molecule.safety.as_ref(), ui);
+                    }
                 });
             }
         });
@@ -1303,7 +1326,12 @@ fn molecule_hover(molecule: &LibraryMolecule, action: SynthesisParticipantAction
         SynthesisParticipantAction::Download => "Download and open in Molchanica",
         SynthesisParticipantAction::SearchRhea => "Search exact ChEBI matches in Rhea",
     };
-    format!("{identifiers} — {action}")
+    let safety = if molecule.is_feedstock || molecule.safety.is_some() {
+        format!("\nGHS: {}", safety_summary(molecule.safety.as_ref()))
+    } else {
+        String::new()
+    };
+    format!("{identifiers} — {action}{safety}")
 }
 
 fn molecule_identifier_links(molecule: &LibraryMolecule, ui: &mut Ui) {
