@@ -14,7 +14,10 @@ use egui::{
 use graphics::{EngineUpdates, Scene};
 use synthesis::{
     EnzymeCommission,
-    broad_target::{LibraryEnzyme, LibraryMaterial, LibraryMolecule, LibraryRoute, LibraryStep},
+    broad_target::{
+        LibraryEnzyme, LibraryMaterial, LibraryMolecule, LibraryRoute, LibraryStep,
+        SigmaAldrichProduct,
+    },
 };
 
 use crate::{
@@ -535,6 +538,7 @@ struct BlockRow<'a> {
     name: &'a str,
     pubchem_id: Option<u32>,
     chebi_id: Option<u32>,
+    sigma_aldrich: Option<&'a SigmaAldrichProduct>,
     ec: Option<EnzymeCommission>,
     uniprot_id: Option<&'a str>,
     detail: String,
@@ -699,7 +703,16 @@ fn block_columns(kind: BuildingBlockKind) -> &'static [(BuildingBlockColumn, &'s
     use BuildingBlockColumn::*;
 
     match kind {
-        BuildingBlockKind::Feedstocks | BuildingBlockKind::Cofactors => &[
+        BuildingBlockKind::Feedstocks => &[
+            (Name, "Name", 0.0),
+            (PubChem, "PubChem CID", 100.0),
+            (Chebi, "ChEBI ID", 90.0),
+            (SigmaAldrich, "Sigma-Aldrich", 120.0),
+            (Detail, "Role", 170.0),
+            (Safety, "GHS hazards", 180.0),
+            (Routes, "Routes", 70.0),
+        ],
+        BuildingBlockKind::Cofactors => &[
             (Name, "Name", 0.0),
             (PubChem, "PubChem CID", 100.0),
             (Chebi, "ChEBI ID", 90.0),
@@ -759,6 +772,7 @@ fn block_rows(data: &SynthesisLibraryData, kind: BuildingBlockKind) -> Vec<Block
                     name: &enzyme.common_name,
                     pubchem_id: None,
                     chebi_id: None,
+                    sigma_aldrich: None,
                     ec: enzyme.ec,
                     uniprot_id: enzyme.uniprot_id.as_deref(),
                     hover: format!(
@@ -783,6 +797,7 @@ fn material_row(
         name: &material.name,
         pubchem_id: material.pubchem_id,
         chebi_id: material.chebi_id,
+        sigma_aldrich: material.sigma_aldrich.as_ref(),
         ec: None,
         uniprot_id: None,
         detail: material.role.clone(),
@@ -836,6 +851,16 @@ fn block_cell(
                 ui.weak("—");
             }
         },
+        BuildingBlockColumn::SigmaAldrich => match row.sigma_aldrich {
+            Some(product) => {
+                ui.hyperlink_to(&product.product_id, &product.url)
+                    .on_hover_text("Open Sigma-Aldrich product page in browser");
+            }
+            None => {
+                ui.weak("—")
+                    .on_hover_text("No Sigma-Aldrich product recorded.");
+            }
+        },
         BuildingBlockColumn::Ec => match row.ec {
             Some(ec) => {
                 let number = ec.number();
@@ -884,6 +909,9 @@ fn block_matches(row: &BlockRow, search: &str) -> bool {
         values.push(format!("chebi:{id}"));
         values.push(id.to_string());
     }
+    if let Some(product) = row.sigma_aldrich {
+        values.push(product.product_id.to_ascii_lowercase());
+    }
     if let Some(ec) = row.ec {
         values.push(ec.to_string().to_ascii_lowercase());
     }
@@ -925,6 +953,13 @@ fn sort_blocks(rows: &mut [BlockRow], column: BuildingBlockColumn, descending: b
             }
             BuildingBlockColumn::PubChem => cmp_present(a.pubchem_id, b.pubchem_id, descending),
             BuildingBlockColumn::Chebi => cmp_present(a.chebi_id, b.chebi_id, descending),
+            BuildingBlockColumn::SigmaAldrich => cmp_present(
+                a.sigma_aldrich
+                    .map(|product| product.product_id.to_ascii_lowercase()),
+                b.sigma_aldrich
+                    .map(|product| product.product_id.to_ascii_lowercase()),
+                descending,
+            ),
             BuildingBlockColumn::Ec => cmp_present(a.ec.map(ec_key), b.ec.map(ec_key), descending),
             BuildingBlockColumn::UniProt => cmp_present(a.uniprot_id, b.uniprot_id, descending),
         };

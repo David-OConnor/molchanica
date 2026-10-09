@@ -141,6 +141,7 @@ pub enum BuildingBlockColumn {
     Name,
     PubChem,
     Chebi,
+    SigmaAldrich,
     Ec,
     UniProt,
     /// The role of a feedstock or cofactor, or the reaction families of an enzyme.

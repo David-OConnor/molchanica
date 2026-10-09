@@ -87,7 +87,7 @@ pub(super) fn safety_details(data: &SafetyData, ui: &mut Ui) {
         ui.weak(format!("PubChem retrieved: {date}"));
     }
     ui.weak(
-        "Union of contributor reports; forms and mixtures may differ. \
+        "First classification displayed by PubChem. \
         Material hazards do not quantify reaction risk. Check the supplier SDS.",
     );
     ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
