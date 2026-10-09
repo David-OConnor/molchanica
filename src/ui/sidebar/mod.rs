@@ -57,6 +57,7 @@ fn mol_safety_section(mol: &MoleculeSmall, loading: bool, ui: &mut Ui) -> bool {
                         "Load reported GHS hazards from PubChem using the molecule's identifiers.",
                     )
                     .clicked();
+
                 if loading {
                     ui.spinner();
                     ui.weak("Loading…");
@@ -70,6 +71,7 @@ fn mol_safety_section(mol: &MoleculeSmall, loading: bool, ui: &mut Ui) -> bool {
                 ui.label(RichText::new(signal).strong().color(COLOR_ACTION));
             }
             safety::pictograms(data, 32.0, false, ui);
+
             CollapsingHeader::new("Hazard statements and sources")
                 .id_salt(("mol_safety_details", &mol.common.ident))
                 .show(ui, |ui| safety::safety_details(data, ui));
