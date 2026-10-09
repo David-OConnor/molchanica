@@ -309,6 +309,8 @@ pub struct ToSave {
     manual_depth_cache: (u16, u16),
     /// Display scale of the 2D molecule diagrams in the reaction popups. 1.0 is the default size.
     pub reaction_diagram_scale: f32,
+    /// Show GHS hazard pictograms and summaries in the synthesis reaction library.
+    pub synthesis_show_safety: bool,
 }
 
 impl Default for ToSave {
@@ -332,6 +334,7 @@ impl Default for ToSave {
             depth_mode: DepthMode::default(),
             manual_depth_cache: (VIEW_DEPTH_NEAR_MIN, VIEW_DEPTH_DEFAULT),
             reaction_diagram_scale: 1.0,
+            synthesis_show_safety: false,
         }
     }
 }

@@ -1336,6 +1336,7 @@ impl ToSave {
             out.extend_from_slice(&near.to_le_bytes());
             out.extend_from_slice(&far.to_le_bytes());
             out.extend_from_slice(&self.reaction_diagram_scale.to_le_bytes());
+            out.push(self.synthesis_show_safety as u8);
             packets.push((PacketType::Misc, out));
         }
 
@@ -1497,6 +1498,11 @@ impl ToSave {
                                 crate::mol_diagrams::DIAGRAM_SCALE_MAX,
                             );
                         }
+                    }
+
+                    // Older files end before the safety toggle; keep the default (off).
+                    if payload.len() >= j + 10 {
+                        to_save.synthesis_show_safety = payload[j + 9] != 0;
                     }
                 }
             }

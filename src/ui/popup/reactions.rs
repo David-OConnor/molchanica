@@ -192,6 +192,7 @@ pub(super) fn synthesis_reactions_window(
         data,
         &mut state.building_blocks,
         &mut state.component_filter,
+        to_save.synthesis_show_safety,
         ui,
     ) {
         state.page = 0;
@@ -385,8 +386,18 @@ pub(super) fn synthesis_reactions_window(
 
         ui.add_space(12.0);
         diagram_scale_slider(to_save, ui);
+
+        ui.add_space(12.0);
+        if ui
+            .checkbox(&mut to_save.synthesis_show_safety, "GHS hazards")
+            .on_hover_text("Show GHS safety pictograms and hazard summaries.")
+            .changed()
+        {
+            to_save.save_flag = true;
+        }
     });
     let diagram_scale = to_save.reaction_diagram_scale;
+    let show_safety = to_save.synthesis_show_safety;
 
     if !state.downloads.is_empty() {
         ui.horizontal_wrapped(|ui| {
@@ -472,6 +483,7 @@ pub(super) fn synthesis_reactions_window(
                     &data.routes[index],
                     state.participant_action,
                     diagram_scale,
+                    show_safety,
                     &state.downloads,
                     &mut state.diagrams,
                     &mut clicked_participant,
@@ -538,6 +550,7 @@ fn building_blocks(
     data: &SynthesisLibraryData,
     view: &mut BuildingBlocksView,
     component_filter: &mut Option<RouteComponent>,
+    show_safety: bool,
     ui: &mut Ui,
 ) -> bool {
     let inventory = &data.inventory;
@@ -590,7 +603,11 @@ fn building_blocks(
             let search = view.search.trim().to_ascii_lowercase();
             rows.retain(|row| block_matches(row, &search));
 
-            let columns = block_columns(view.kind);
+            let columns: Vec<_> = block_columns(view.kind)
+                .iter()
+                .copied()
+                .filter(|&(column, _, _)| show_safety || column != BuildingBlockColumn::Safety)
+                .collect();
             // The sort column may belong to another kind, e.g. EC numbers for feedstocks.
             let sort = if columns.iter().any(|&(column, _, _)| column == view.sort) {
                 view.sort
@@ -625,7 +642,7 @@ fn building_blocks(
                 .min_col_width(0.0)
                 .spacing([BLOCK_COL_SPACING, 4.0])
                 .show(ui, |ui| {
-                    for &(column, heading, w) in columns {
+                    for &(column, heading, w) in &columns {
                         table_cell(ui, width(column, w), |ui| {
                             let selected = column == sort;
                             let heading = match (selected, view.descending) {
@@ -663,7 +680,7 @@ fn building_blocks(
                         .spacing([BLOCK_COL_SPACING, 4.0])
                         .show(ui, |ui| {
                             for row in &rows {
-                                for &(column, _, w) in columns {
+                                for &(column, _, w) in &columns {
                                     table_cell(ui, width(column, w), |ui| {
                                         block_cell(row, column, component_filter, &mut changed, ui);
                                     });
@@ -1030,6 +1047,7 @@ fn synthesis_route_card(
     route: &LibraryRoute,
     action: SynthesisParticipantAction,
     diagram_scale: f32,
+    show_safety: bool,
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
@@ -1055,11 +1073,23 @@ fn synthesis_route_card(
                 )
                 .clicked();
         });
-        ui.weak("Starting materials and reported GHS hazards:");
-        for molecule in &route.starting_materials {
+        if show_safety {
+            ui.weak("Starting materials and reported GHS hazards:");
+            for molecule in &route.starting_materials {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(&molecule.name);
+                    safety_badges(molecule.safety.as_ref(), ui);
+                });
+            }
+        } else {
             ui.horizontal_wrapped(|ui| {
-                ui.label(&molecule.name);
-                safety_badges(molecule.safety.as_ref(), ui);
+                ui.weak("Starting materials:");
+                let names: Vec<_> = route
+                    .starting_materials
+                    .iter()
+                    .map(|molecule| molecule.name.as_str())
+                    .collect();
+                ui.label(names.join(", "));
             });
         }
         ui.add_space(5.0);
@@ -1071,6 +1101,7 @@ fn synthesis_route_card(
                 step,
                 action,
                 diagram_scale,
+                show_safety,
                 downloads,
                 diagrams,
                 clicked,
@@ -1101,6 +1132,7 @@ fn synthesis_step_card(
     step: &LibraryStep,
     action: SynthesisParticipantAction,
     diagram_scale: f32,
+    show_safety: bool,
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
@@ -1128,6 +1160,7 @@ fn synthesis_step_card(
                     Color32::from_rgb(125, 195, 230),
                     action,
                     diagram_scale,
+                    show_safety,
                     downloads,
                     diagrams,
                     clicked,
@@ -1163,6 +1196,7 @@ fn synthesis_step_card(
                     Color32::from_rgb(150, 215, 170),
                     action,
                     diagram_scale,
+                    show_safety,
                     downloads,
                     diagrams,
                     clicked,
@@ -1218,6 +1252,7 @@ fn synthesis_side(
     color: Color32,
     action: SynthesisParticipantAction,
     diagram_scale: f32,
+    show_safety: bool,
     downloads: &SynthesisDownloads,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
@@ -1272,7 +1307,7 @@ fn synthesis_side(
                     .fill(color.gamma_multiply(0.12))
                     .frame(true)
                     .wrap_mode(egui::TextWrapMode::Wrap);
-                    let hover = molecule_hover(molecule, action);
+                    let hover = molecule_hover(molecule, action, show_safety);
                     if ui
                         .add_enabled(enabled && !loading, button)
                         .on_hover_text(hover)
@@ -1280,7 +1315,7 @@ fn synthesis_side(
                     {
                         *clicked = Some(molecule.clone());
                     }
-                    if molecule.is_feedstock || molecule.safety.is_some() {
+                    if show_safety && (molecule.is_feedstock || molecule.safety.is_some()) {
                         safety_badges(molecule.safety.as_ref(), ui);
                     }
                 });
@@ -1306,7 +1341,11 @@ fn synthesis_side(
     }
 }
 
-fn molecule_hover(molecule: &LibraryMolecule, action: SynthesisParticipantAction) -> String {
+fn molecule_hover(
+    molecule: &LibraryMolecule,
+    action: SynthesisParticipantAction,
+    show_safety: bool,
+) -> String {
     let identifiers = match (molecule.chebi_id, molecule.pubchem_id) {
         (Some(chebi), Some(cid)) => format!("CHEBI:{chebi}; CID {cid}"),
         (Some(chebi), None) => format!("CHEBI:{chebi}"),
@@ -1318,7 +1357,7 @@ fn molecule_hover(molecule: &LibraryMolecule, action: SynthesisParticipantAction
         SynthesisParticipantAction::Download => "Download and open in Molchanica",
         SynthesisParticipantAction::SearchRhea => "Search exact ChEBI matches in Rhea",
     };
-    let safety = if molecule.is_feedstock || molecule.safety.is_some() {
+    let safety = if show_safety && (molecule.is_feedstock || molecule.safety.is_some()) {
         format!("\nGHS: {}", safety_summary(molecule.safety.as_ref()))
     } else {
         String::new()
