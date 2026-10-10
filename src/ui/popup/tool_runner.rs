@@ -109,6 +109,13 @@ impl Default for ToolWindows {
     }
 }
 
+impl ToolWindows {
+    /// Load a sequence into the structure prediction window's input the next time it's drawn.
+    pub(crate) fn load_structure_pred_seq(&mut self, sequence: Sequence) {
+        self.structure_prediction.pending_sequence = Some(sequence);
+    }
+}
+
 /// Draw one tool window's contents, loading any structure the user picks from its results.
 pub(in crate::ui) fn tool_window(
     state: &mut State,
@@ -232,6 +239,63 @@ impl Form {
         self.values.insert(field.to_owned(), updated);
         self.authoritative_mode = self.mode.clone();
         Ok(())
+    }
+
+    /// Put a sequence in the input's first molecule: the first entity of a document entered as
+    /// text, or the molecule builder's first protein. Switches to the builder if the current
+    /// input mode has nowhere to put it, e.g. when uploading a file.
+    fn load_sequence(&mut self, tool: Tool, sequence: &Sequence) -> Result<(), String> {
+        let document_target = self
+            .contract
+            .fields
+            .iter()
+            .filter(|field| field.kind() == FieldKind::TextArea && field.applies_to(&self.mode))
+            .find_map(|field| {
+                let current = self.values.get(&field.name)?;
+                let targets = document_sequence_targets(tool, &field.name, current).ok()?;
+                targets.into_iter().next().map(|(_, target)| target)
+            });
+
+        if let Some(target) = document_target {
+            return self.insert_sequence(tool, &target, sequence);
+        }
+
+        let field = self
+            .contract
+            .field("sequence_molecules")
+            .ok_or_else(|| "This tool has no sequence input".to_owned())?;
+
+        if !field.applies_to(&self.mode)
+            && let Some(mode) = field.input_modes.split(',').next()
+        {
+            self.mode = mode.trim().to_owned();
+        }
+
+        let current = self
+            .values
+            .get("sequence_molecules")
+            .map(String::as_str)
+            .unwrap_or("[]");
+        let mut boxes: Vec<Value> = serde_json::from_str(current)
+            .map_err(|error| format!("Molecule input is invalid JSON: {error}"))?;
+
+        let index = match boxes.iter().position(|b| b["type"] == "protein") {
+            Some(i) => i,
+            None => {
+                boxes.insert(
+                    0,
+                    json!({"type": "protein", "sequence": "", "modifications": []}),
+                );
+                0
+            }
+        };
+
+        self.values.insert(
+            "sequence_molecules".into(),
+            serde_json::to_string(&boxes).map_err(|error| error.to_string())?,
+        );
+
+        self.insert_sequence(tool, &SequenceTarget::Molecule(index), sequence)
     }
 
     /// Prepare the selected structure only when Run is clicked. The shared adapter accepts
@@ -711,6 +775,8 @@ pub(crate) struct ToolWindow {
     file_action: Option<FileAction>,
     sequence_dialog: FileDialog,
     sequence_file_target: Option<(Tool, SequenceTarget)>,
+    /// A sequence to load into the selected tool's input. See [`ToolWindows::load_structure_pred_seq`].
+    pending_sequence: Option<Sequence>,
 }
 
 impl ToolWindow {
@@ -736,6 +802,7 @@ impl ToolWindow {
             )
             .default_file_filter("Sequence files"),
             sequence_file_target: None,
+            pending_sequence: None,
         }
     }
 
@@ -852,6 +919,21 @@ impl ToolWindow {
                     ui.colored_label(Color32::LIGHT_RED, error);
                     return None;
                 }
+            }
+        }
+
+        if let Some(sequence) = self.pending_sequence.take() {
+            let form = self.forms.get_mut(&self.tool).unwrap();
+
+            match form.load_sequence(self.tool, &sequence) {
+                Ok(()) => {
+                    self.error = None;
+                    self.message = Some(format!(
+                        "Loaded {} into the input.",
+                        sequence.display_name()
+                    ));
+                }
+                Err(error) => self.error = Some(error),
             }
         }
 

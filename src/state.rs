@@ -26,6 +26,7 @@ use lin_alg::f32::{Quaternion, Vec3};
 use mol_defs::{
     molecules::{
         MolGenericRef, MolGenericRefMut, MolType,
+        amino_acid::AminoAcidTemplates,
         lipid::{LipidShape, MoleculeLipid},
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
         peptide::MoleculePeptide,
@@ -707,6 +708,8 @@ pub struct StateUi {
     pub sequence_edit: SequenceEdit,
     pub aa_selection: AaSelection,
     pub mol_picker: MolPickerState,
+    /// Single-letter amino acid codes, for creating peptides and sequences.
+    pub aa_seq_to_create: String,
 }
 
 /// Search, filters, sorting, and manual order of the sidebar's molecule picker.
@@ -1282,8 +1285,7 @@ pub struct Templates {
     // pub rna: Vec<MoleculeNucleicAcid>,
     pub dna: HashMap<String, TemplateData>,
     pub rna: HashMap<String, TemplateData>,
-    // todo: A/R
-    pub amino_acid: Vec<MoleculeSmall>,
+    pub amino_acid: AminoAcidTemplates,
 }
 
 /// Flags to accomplish things that must be done somewhere with access to `Scene`.

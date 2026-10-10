@@ -707,7 +707,7 @@ fn block_columns(kind: BuildingBlockKind) -> &'static [(BuildingBlockColumn, &'s
             (Name, "Name", 0.0),
             (PubChem, "PubChem CID", 100.0),
             (Chebi, "ChEBI ID", 90.0),
-            (SigmaAldrich, "Sigma-Aldrich", 120.0),
+            (SigmaAldrich, "Sigma", 120.0),
             (Detail, "Role", 170.0),
             (Safety, "GHS hazards", 180.0),
             (Routes, "Routes", 70.0),

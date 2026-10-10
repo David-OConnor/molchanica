@@ -66,7 +66,6 @@ fn mol_safety_section(mol: &MoleculeSmall, loading: bool, ui: &mut Ui) -> bool {
         });
 
         if let Some(data) = &mol.safety_data {
-            ui.label("Top GHS classification from PubChem.");
             if let Some(signal) = &data.signal_word {
                 ui.label(RichText::new(signal).strong().color(COLOR_ACTION));
             }

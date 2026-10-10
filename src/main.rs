@@ -66,7 +66,9 @@ use dynamics::{
     Integrator,
     params::{FfParamSet, LIPID_21_LIB},
 };
-use mol_defs::molecules::{lipid::load_lipid_templates, nucleic_acid::load_na_templates};
+use mol_defs::molecules::{
+    amino_acid::load_aa_templates, lipid::load_lipid_templates, nucleic_acid::load_na_templates,
+};
 use state::State;
 
 use crate::{render::render, util::handle_err};
@@ -240,6 +242,18 @@ fn main() {
             handle_err(
                 &mut state.ui,
                 format!("Unable to load nucleic acid templates: {e}"),
+            );
+        }
+    }
+
+    match load_aa_templates() {
+        Ok(t) => {
+            state.templates.amino_acid = t;
+        }
+        Err(e) => {
+            handle_err(
+                &mut state.ui,
+                format!("Unable to load amino acid templates: {e}"),
             );
         }
     }

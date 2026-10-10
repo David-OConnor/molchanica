@@ -401,13 +401,13 @@ pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
         );
     }
 
-    let tooltip = "Show or hide tools for adding lipids";
+    let tooltip = "Show or hide tools for creating lipids";
     vis_helper(&mut state.ui.ui_vis.lipids, "Lipid", tooltip, ui);
 
-    let tooltip = "Show or hide tools for nucleic acids (DNA, RNA)";
+    let tooltip = "Show or hide tools for creating nucleic acids (DNA, RNA)";
     vis_helper(&mut state.ui.ui_vis.nucleic_acids, "NA", tooltip, ui);
 
-    let tooltip = "Show or hide tools for amino acids. This can be used to build arbitrary proteins \
+    let tooltip = "Show or hide tools for creating amino acid sequences (peptides, proteins). This can be used to build arbitrary proteins \
     from a primary sequence.";
     vis_helper(&mut state.ui.ui_vis.amino_acids, "AA", tooltip, ui);
 
