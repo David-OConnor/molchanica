@@ -7,11 +7,16 @@ use egui::{
     text_selection::LabelSelectionState, vec2,
 };
 
+use graphics::{EngineUpdates, Scene};
+use na_seq::{SeqType, SequenceData};
+
 use crate::{
     drawing::color_viridis,
     selection::Selection,
     state::{AaSeqDisplayCache, State},
-    ui::panels,
+    ui::panels::aa_creation::{
+        create_folded, create_folded_button, create_unfolded, create_unfolded_button,
+    },
 };
 
 /// Label on the button that copies the whole amino acid sequence to the clipboard.
@@ -517,7 +522,13 @@ pub(in crate::ui) fn peptide_aa_seq(
 }
 
 /// Active standalone sequence, with an editor separate from peptide residue tools.
-pub(in crate::ui) fn standalone_sequence(state: &mut State, i: usize, ui: &mut Ui) {
+pub(in crate::ui) fn standalone_sequence(
+    state: &mut State,
+    i: usize,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+) {
     let Some(seq) = state.sequences.get(i) else {
         return;
     };
@@ -525,13 +536,24 @@ pub(in crate::ui) fn standalone_sequence(state: &mut State, i: usize, ui: &mut U
     let name = seq.display_name().to_owned();
     let seq_type = seq.seq_type();
     let has_features = !seq.features.is_empty();
+
+    let mut unfolded = false;
+    let mut folded = false;
+
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("{name} ({seq_type})")).color(Color32::WHITE));
 
-        if state.ui.sequence_edit.target != Some(i) && ui.button("Edit sequence").clicked() {
-            state.ui.sequence_edit.target = Some(i);
-            state.ui.sequence_edit.text = seq.data.to_letters();
-            state.ui.sequence_edit.error = None;
+        if state.ui.sequence_edit.target != Some(i) {
+            if ui.button("Edit sequence").clicked() {
+                state.ui.sequence_edit.target = Some(i);
+                state.ui.sequence_edit.text = seq.data.to_letters();
+                state.ui.sequence_edit.error = None;
+            }
+
+            if seq_type == SeqType::AminoAcid {
+                unfolded = create_unfolded_button(ui);
+            }
+            folded = create_folded_button(ui);
         }
     });
 
@@ -574,5 +596,15 @@ pub(in crate::ui) fn standalone_sequence(state: &mut State, i: usize, ui: &mut U
             &mut state.volatile.seq_display_cache,
             ui,
         );
+    }
+
+    if unfolded
+        && let Some(SequenceData::AminoAcid(aas)) = state.sequences.get(i).map(|s| s.data.clone())
+    {
+        create_unfolded(&aas, state, scene, updates);
+    }
+
+    if folded && let Some(sequence) = state.sequences.get(i).cloned() {
+        create_folded(sequence, state);
     }
 }

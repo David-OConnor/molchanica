@@ -110,9 +110,10 @@ impl Default for ToolWindows {
 }
 
 impl ToolWindows {
-    /// Load a sequence into the structure prediction window's input the next time it's drawn.
-    pub(crate) fn load_structure_pred_seq(&mut self, sequence: Sequence) {
-        self.structure_prediction.pending_sequence = Some(sequence);
+    /// Load a sequence into the structure prediction window's input, and set the job name, the
+    /// next time it's drawn.
+    pub(crate) fn load_structure_pred_seq(&mut self, sequence: Sequence, job_name: String) {
+        self.structure_prediction.pending_sequence = Some((sequence, job_name));
     }
 }
 
@@ -775,8 +776,9 @@ pub(crate) struct ToolWindow {
     file_action: Option<FileAction>,
     sequence_dialog: FileDialog,
     sequence_file_target: Option<(Tool, SequenceTarget)>,
-    /// A sequence to load into the selected tool's input. See [`ToolWindows::load_structure_pred_seq`].
-    pending_sequence: Option<Sequence>,
+    /// A sequence to load into the selected tool's input, and a job name.
+    /// See [`ToolWindows::load_structure_pred_seq`].
+    pending_sequence: Option<(Sequence, String)>,
 }
 
 impl ToolWindow {
@@ -922,11 +924,15 @@ impl ToolWindow {
             }
         }
 
-        if let Some(sequence) = self.pending_sequence.take() {
+        if let Some((sequence, job_name)) = self.pending_sequence.take() {
             let form = self.forms.get_mut(&self.tool).unwrap();
 
             match form.load_sequence(self.tool, &sequence) {
                 Ok(()) => {
+                    if form.contract.field("job_name").is_some() {
+                        form.values.insert("job_name".into(), job_name);
+                    }
+
                     self.error = None;
                     self.message = Some(format!(
                         "Loaded {} into the input.",
@@ -1249,6 +1255,40 @@ impl ToolWindow {
         }
 
         let result = &self.results[self.selected_result].1;
+        let mut load = None;
+
+        // The predicted structures are the main output; list them first so they can be opened
+        // without hunting through the full file list.
+        let structures: Vec<&PathBuf> = result
+            .files
+            .iter()
+            .filter(|path| output_category(path) == Some(DataCategory::Structure))
+            .collect();
+        if !structures.is_empty() {
+            ui.label(RichText::new("Structures").strong());
+            ScrollArea::vertical()
+                .id_salt("tool_result_structures")
+                .max_height(160.0)
+                .show(ui, |ui| {
+                    for path in structures {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(RichText::new("Load structure").color(COLOR_ACTION))
+                                .clicked()
+                            {
+                                match structure_for_loading(path, &result.directory) {
+                                    Ok(path) => load = Some(path),
+                                    Err(error) => self.error = Some(error.to_string()),
+                                }
+                            }
+                            ui.label(output_label(result, path))
+                                .on_hover_text(path.display().to_string());
+                        });
+                    }
+                });
+            ui.add_space(4.0);
+        }
+
         let mut export = None;
         ui.horizontal(|ui| {
             if let Some(path) = &self.selected_file
@@ -1266,7 +1306,6 @@ impl ToolWindow {
             }
         });
 
-        let mut load = None;
         ScrollArea::vertical()
             .id_salt("tool_result_files")
             .max_height(180.0)
@@ -1287,16 +1326,7 @@ impl ToolWindow {
                             export = Some(path.clone());
                         }
 
-                        let log_root = result
-                            .details
-                            .get("run_log_dir")
-                            .and_then(Value::as_str)
-                            .map(Path::new);
-                        let label = log_root
-                            .and_then(|root| path.strip_prefix(root.join("outputs")).ok())
-                            .unwrap_or(path)
-                            .display()
-                            .to_string();
+                        let label = output_label(result, path);
                         if ui
                             .selectable_label(self.selected_file.as_ref() == Some(path), label)
                             .on_hover_text(path.display().to_string())
@@ -1382,6 +1412,21 @@ fn read_output_text(path: &Path, maximum: u64) -> io::Result<String> {
     }
     String::from_utf8(bytes)
         .map_err(|_| io::Error::other("Binary output. Save the original file to inspect it."))
+}
+
+/// An output's path relative to the run's `outputs` folder, when it is under it.
+fn output_label(result: &AdapterResult, path: &Path) -> String {
+    let log_root = result
+        .details
+        .get("run_log_dir")
+        .and_then(Value::as_str)
+        .map(Path::new);
+
+    log_root
+        .and_then(|root| path.strip_prefix(root.join("outputs")).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn output_category(path: &Path) -> Option<DataCategory> {

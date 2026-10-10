@@ -1129,7 +1129,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.add_space(ROW_SPACING / 2.);
 
         if let Some(seq_i) = state.volatile.active_seq {
-            aa_seq::standalone_sequence(state, seq_i, ui);
+            aa_seq::standalone_sequence(state, seq_i, scene, &mut updates, ui);
         } else if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
             let peptide_name = state
                 .volatile
