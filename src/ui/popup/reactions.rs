@@ -716,6 +716,7 @@ fn block_columns(kind: BuildingBlockKind) -> &'static [(BuildingBlockColumn, &'s
             (Name, "Name", 0.0),
             (PubChem, "PubChem CID", 100.0),
             (Chebi, "ChEBI ID", 90.0),
+            (SigmaAldrich, "Sigma", 120.0),
             (Detail, "Role", 170.0),
             (Safety, "GHS hazards", 180.0),
             (Routes, "Routes", 70.0),
@@ -724,6 +725,7 @@ fn block_columns(kind: BuildingBlockKind) -> &'static [(BuildingBlockColumn, &'s
             (Name, "Name", 0.0),
             (Ec, "EC number", 100.0),
             (UniProt, "UniProt ID", 90.0),
+            (SigmaAldrich, "Sigma", 120.0),
             (Detail, "Reaction family", 230.0),
             (Routes, "Routes", 70.0),
         ],
@@ -766,17 +768,22 @@ fn block_rows(data: &SynthesisLibraryData, kind: BuildingBlockKind) -> Vec<Block
                 let component = RouteComponent::Enzyme(i);
                 let enzyme = &catalyst.enzyme;
                 let families = catalyst.families.join("; ");
+                let preparation = enzyme
+                    .source
+                    .as_ref()
+                    .map(|source| format!("\n\n{}\n{}", source.product, source.formulation_note))
+                    .unwrap_or_default();
 
                 BlockRow {
                     component,
                     name: &enzyme.common_name,
                     pubchem_id: None,
                     chebi_id: None,
-                    sigma_aldrich: None,
+                    sigma_aldrich: enzyme.sigma_aldrich.as_ref(),
                     ec: enzyme.ec,
                     uniprot_id: enzyme.uniprot_id.as_deref(),
                     hover: format!(
-                        "Reaction families: {families}\n\nClick to show only the routes using it."
+                        "Reaction families: {families}{preparation}\n\nClick to show only the routes using it."
                     ),
                     detail: families,
                     safety: None,
