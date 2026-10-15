@@ -1,3 +1,2 @@
-make_release.sh text eol=lf
-install_scripts/setup_molchanica.sh text eol=lf
+*.sh text eol=lf
 

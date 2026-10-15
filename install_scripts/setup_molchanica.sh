@@ -54,12 +54,6 @@ if [ -f "./$cufft_lib" ]; then
   printf "Copied %s (the cuFFT dependency) to %s.\n" "$cufft_lib" "$APP_DIR"
 fi
 
-#read -p "Install gemmi from apt, to support unprocessed electron density files? [y/n] " ans
-#if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
-#  sudo apt install gemmi
-#  printf "\ngemmi installed. You can uninstall it with sudo apt remove gemmi.\n"
-#fi
-
 # Optional third-party tools are installed in-process from Molchanica's Tools panel. Each recipe
 # keeps its environment and assets under $APP_DIR/process_executables, along with everything else.
 

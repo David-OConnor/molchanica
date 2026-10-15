@@ -669,9 +669,7 @@ pub struct StateUi {
     /// A flag so we know to update the flashlight upon loading a new model; this should be done within
     /// a callback.
     pub show_docking_tools: bool,
-    pub movement_speed_input: String,
-    pub rotation_sens_input: String,
-    pub mol_move_sens_input: String, // scroll
+    pub label_sizes: LabelSizes,
     pub cmd_line_input: String,
     pub cmd_line_output: String,
     /// Indicates CLI, or errors more broadly by changing its displayed color.
@@ -845,6 +843,39 @@ impl Default for LabelVis {
             atom_detailed: false,
             bond: false,
             chain: false,
+        }
+    }
+}
+
+/// Font sizes of the text labels drawn over the 3D render. (`TextOverlay` has no separate stroke
+/// weight; the size is also what controls thickness.)
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelSizes {
+    /// Small molecule, lipid, and nucleic acid names.
+    pub mol: f32,
+    /// Protein names.
+    pub protein: f32,
+    /// Protein chain IDs.
+    pub chain: f32,
+    /// One-letter amino acid codes.
+    pub residue: f32,
+    /// Atom serial numbers, including in the molecule editor, and pharmacophore feature numbers.
+    pub atom_sn: f32,
+}
+
+impl LabelSizes {
+    pub const MIN: f32 = 6.;
+    pub const MAX: f32 = 80.;
+}
+
+impl Default for LabelSizes {
+    fn default() -> Self {
+        Self {
+            mol: 18.,
+            protein: 40.,
+            chain: 30.,
+            residue: 16.,
+            atom_sn: 16.,
         }
     }
 }

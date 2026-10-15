@@ -69,10 +69,7 @@ const COLOR_WATER_BOND: Color = (0.5, 0.5, 0.8);
 
 const COLOR_SFC_DOT: Color = (0.7, 0.7, 0.7);
 
-const LABEL_SIZE_ATOM: f32 = 16.;
-const LABEL_SIZE_CHAIN: f32 = 30.;
-const LABEL_SIZE_MOL: f32 = 18.;
-const LABEL_SIZE_MOL_LARGE: f32 = 40.;
+// Label font sizes are user-configurable; see `LabelSizes`.
 
 pub const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (255, 60, 160, 255);
 // pub const LABEL_COLOR_ATOM: (u8, u8, u8, u8) = (40, 220, 255, 255);
@@ -158,6 +155,8 @@ static LIG_N: OnceLock<Color> = OnceLock::new();
 // todo: If more than a certain atom count, draw atom labels every Xth atom.
 
 /// Display the molecule name, atom name, etc, depending on label configuration.
+/// `mol_label_size` is the font size of the molecule name; it depends on the molecule type.
+#[allow(clippy::too_many_arguments)]
 fn text_overlay(
     entity: &mut Entity,
     mol_ident: &str,
@@ -166,6 +165,7 @@ fn text_overlay(
     sel: bool,
     chains: &[Chain],
     atom_count: usize,
+    mol_label_size: f32,
     ui: &StateUi,
 ) {
     // todo: Global consts A/R
@@ -177,7 +177,7 @@ fn text_overlay(
         if atom_count <= ATOM_LIMIT_FOR_ALL_SNS || i_atom.is_multiple_of(ATOM_DRAW_RATIO) {
             entity.overlay_text = Some(TextOverlay {
                 text: format!("{}", atom.serial_number),
-                size: LABEL_SIZE_ATOM,
+                size: ui.label_sizes.atom_sn,
                 color: LABEL_COLOR_ATOM,
                 font_family: FontFamily::Proportional,
             });
@@ -200,7 +200,7 @@ fn text_overlay(
         if i_atom == chain.atoms[chain.atoms.len() / 2] {
             entity.overlay_text = Some(TextOverlay {
                 text: format!("{}", chain.id),
-                size: LABEL_SIZE_CHAIN,
+                size: ui.label_sizes.chain,
                 color: LABEL_COLOR_ATOM,
                 font_family: FontFamily::Proportional,
             });
@@ -214,16 +214,16 @@ fn text_overlay(
     };
 
     let text_full = mol_ident.to_string();
-    let (text, font_size) = if atom_count > 150 {
-        (text_full, LABEL_SIZE_MOL_LARGE)
+    let text = if atom_count > 150 {
+        text_full
     } else {
-        (truncate_str(&text_full, 20), LABEL_SIZE_MOL)
+        truncate_str(&text_full, 20)
     };
 
     if ui.visibility.labels.mol && i_atom == 0 {
         entity.overlay_text = Some(TextOverlay {
             text,
-            size: font_size,
+            size: mol_label_size,
             color,
             font_family: FontFamily::Proportional,
         });
@@ -243,6 +243,7 @@ fn text_overlay_bond(
     sel: bool,
     chains: &[Chain],
     atom_count: usize,
+    mol_label_size: f32,
     ui: &StateUi,
 ) {
     for (entity, i_atom) in entities.iter_mut().zip([bond.atom_0, bond.atom_1]) {
@@ -259,6 +260,7 @@ fn text_overlay_bond(
             sel,
             chains,
             atom_count,
+            mol_label_size,
             ui,
         );
     }
@@ -949,10 +951,11 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     mol_active,
                     &[],
                     mol.common().atoms.len(),
+                    ui.label_sizes.mol,
                     ui,
                 );
             } else if editor_atom_sns {
-                entity.overlay_text = Some(mol_editor::atom_sn_label(atom));
+                entity.overlay_text = Some(mol_editor::atom_sn_label(atom, ui.label_sizes.atom_sn));
             }
 
             entity.class = mol.mol_type().entity_type() as u32;
@@ -1220,6 +1223,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     mol_active, // todo
                     &[],
                     mol.common().bonds.len(),
+                    ui.label_sizes.mol,
                     ui,
                 );
             } else if editor_atom_sns {
@@ -1231,8 +1235,10 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     }
                     atoms_labeled[i_atom] = true;
 
-                    entity.overlay_text =
-                        Some(mol_editor::atom_sn_label(&mol.common().atoms[i_atom]));
+                    entity.overlay_text = Some(mol_editor::atom_sn_label(
+                        &mol.common().atoms[i_atom],
+                        ui.label_sizes.atom_sn,
+                    ));
                 }
             }
         }
@@ -1240,7 +1246,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
         if let MolGenericRef::Small(m) = &mol
             && show_pharmacophore
         {
-            result.extend(draw_mol_pharmacophore(m, mode));
+            result.extend(draw_mol_pharmacophore(m, mode, ui.label_sizes.atom_sn));
         }
 
         result.extend(entities);
@@ -1277,7 +1283,11 @@ pub fn draw_mol_with_pharmacophore_visibility(
 
 /// Note: We currently have this combined with the same call time and entity class as other
 /// small mols.
-fn draw_mol_pharmacophore(mol: &MoleculeSmall, op_mode: OperatingMode) -> Vec<Entity> {
+fn draw_mol_pharmacophore(
+    mol: &MoleculeSmall,
+    op_mode: OperatingMode,
+    label_size: f32,
+) -> Vec<Entity> {
     let mut res = Vec::new();
 
     for (i, feat) in mol.pharmacophore.features.iter().enumerate() {
@@ -1298,7 +1308,7 @@ fn draw_mol_pharmacophore(mol: &MoleculeSmall, op_mode: OperatingMode) -> Vec<En
         if op_mode == OperatingMode::MolEditor {
             ent.overlay_text = Some(TextOverlay {
                 text: format!("{}", i + 1),
-                size: LABEL_SIZE_ATOM,
+                size: label_size,
                 color: LABEL_COLOR_ATOM,
                 font_family: FontFamily::Proportional,
             });

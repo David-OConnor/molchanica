@@ -2,8 +2,6 @@
 param(
     [string]$SourceDirectory,
     [string]$InstallDirectory
-#     [switch]$InstallOpenDde,
-#     [switch]$SkipOpenDde
 )
 
 # This file installs the application for the current user, and creates a Start menu entry.

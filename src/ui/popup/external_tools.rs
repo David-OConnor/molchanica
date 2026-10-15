@@ -6,7 +6,14 @@
 //! functionality is primarily for the UI, and integrating tool inputs and outputs
 //! with Molchanica's native types and molecule state.
 
-use std::{collections::HashMap, fs, io, sync::mpsc, thread, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs, io, mem,
+    panic::{self, AssertUnwindSafe},
+    sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc},
+    thread,
+    time::Duration,
+};
 
 use egui::{Color32, RichText, ScrollArea, Ui};
 
@@ -18,15 +25,16 @@ use crate::{
 
 type DiskUsage = Result<Option<u64>, String>;
 
-/// Panel state: the last probe's results, and the receiver for one in flight.
+/// Panel state: the last probe's results, the probes in flight, and the install queue.
 #[derive(Default)]
 pub struct ExternalToolsUi {
     statuses: HashMap<Tool, ToolStatus>,
-    pending: Option<mpsc::Receiver<ToolCheckUpdate>>,
-    install_pending: Option<(Tool, mpsc::Receiver<Result<(), String>>)>,
+    /// Probes in flight: a full one from [`Self::start_probe`], and single-tool ones started as
+    /// each queued job finishes.
+    probes: Vec<mpsc::Receiver<ToolCheckUpdate>>,
+    queue: JobQueue,
     install_results: HashMap<Tool, InstallResult>,
     disk_usage: HashMap<Tool, DiskUsage>,
-    uninstall_pending: Option<(Tool, mpsc::Receiver<Result<(), String>>)>,
     uninstall_results: HashMap<Tool, UninstallResult>,
     confirm_uninstall: Option<Tool>,
     /// Set once, so opening the panel runs a probe without the user having to ask.
@@ -49,118 +57,255 @@ enum UninstallResult {
     Failed(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JobKind {
+    Install,
+    Uninstall,
+}
+
+impl JobKind {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Uninstall => "uninstall",
+        }
+    }
+
+    fn progress(self) -> &'static str {
+        match self {
+            Self::Install => "Installing",
+            Self::Uninstall => "Uninstalling",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ToolJob {
+    tool: Tool,
+    kind: JobKind,
+}
+
+impl ToolJob {
+    /// Blocks for as long as the installer or uninstaller runs.
+    fn run(self) -> Result<(), String> {
+        let result = match self.kind {
+            JobKind::Install => external_tools::install(self.tool),
+            JobKind::Uninstall => external_tools::uninstall(self.tool),
+        };
+        result.map_err(|error| error.to_string())
+    }
+}
+
+/// The install queue's state, shared between the panel and its worker thread.
+#[derive(Default)]
+struct QueueState {
+    /// Jobs not yet started, in the order they will run.
+    waiting: VecDeque<ToolJob>,
+    running: Option<ToolJob>,
+    /// Finished jobs the panel has not collected yet.
+    finished: Vec<(ToolJob, Result<(), String>)>,
+    /// Whether a worker thread is draining `waiting`. There is at most one, so installers never
+    /// compete with each other for the network, the disk, or uv's cache.
+    worker_running: bool,
+}
+
+/// Installs and uninstalls, run one at a time on a worker thread, in the order they were queued.
+///
+/// A locked queue rather than a channel, so waiting jobs can be cancelled. The worker owns a
+/// handle to it, so the queue keeps draining while the panel is closed.
+#[derive(Clone, Default)]
+struct JobQueue {
+    state: Arc<Mutex<QueueState>>,
+}
+
+impl JobQueue {
+    fn lock(&self) -> MutexGuard<'_, QueueState> {
+        // The lock is never held across a job, so a poisoned one still holds a consistent queue.
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn snapshot(&self) -> QueueSnapshot {
+        let state = self.lock();
+        QueueSnapshot {
+            running: state.running,
+            waiting: state.waiting.iter().copied().collect(),
+        }
+    }
+
+    /// Queue a job, starting the worker if it is idle. Does nothing if the tool already has a job
+    /// running or waiting.
+    fn push(&self, job: ToolJob, context: &egui::Context, computations: &Computations) {
+        let mut state = self.lock();
+        let already_queued = state.running.is_some_and(|queued| queued.tool == job.tool)
+            || state.waiting.iter().any(|queued| queued.tool == job.tool);
+        if already_queued {
+            return;
+        }
+
+        state.waiting.push_back(job);
+        if state.worker_running {
+            return;
+        }
+        state.worker_running = true;
+        drop(state);
+
+        let queue = self.clone();
+        let context = context.clone();
+        let computations = computations.clone();
+        thread::spawn(move || queue.drain(&context, &computations));
+    }
+
+    /// Remove a tool's job, if it has not started yet. A running installer can't be interrupted.
+    fn cancel(&self, tool: Tool) {
+        self.lock().waiting.retain(|job| job.tool != tool);
+    }
+
+    fn cancel_waiting(&self) {
+        self.lock().waiting.clear();
+    }
+
+    fn take_finished(&self) -> Vec<(ToolJob, Result<(), String>)> {
+        mem::take(&mut self.lock().finished)
+    }
+
+    /// The worker: run waiting jobs one after another, until none are left.
+    fn drain(&self, context: &egui::Context, computations: &Computations) {
+        loop {
+            let job = {
+                let mut state = self.lock();
+                let Some(job) = state.waiting.pop_front() else {
+                    // Cleared under the same lock `push` checks, so a job pushed after this
+                    // starts a new worker rather than waiting on this one.
+                    state.worker_running = false;
+                    return;
+                };
+                state.running = Some(job);
+                job
+            };
+
+            let computation = computations.start(
+                ComputationType::Install,
+                job.tool.spec().name(),
+                Some(job.kind.progress().to_lowercase()),
+            );
+
+            // A panicking installer must not take the worker down with it, or every job queued
+            // behind it would wait forever.
+            let result = panic::catch_unwind(AssertUnwindSafe(|| job.run())).unwrap_or_else(|_| {
+                Err(format!(
+                    "the {}er stopped without reporting a result",
+                    job.kind.verb()
+                ))
+            });
+            drop(computation);
+
+            {
+                let mut state = self.lock();
+                state.running = None;
+                state.finished.push((job, result));
+            }
+            context.request_repaint();
+        }
+    }
+}
+
+/// The queue as of this frame, so drawing the rows doesn't take the lock once per tool.
+struct QueueSnapshot {
+    running: Option<ToolJob>,
+    waiting: Vec<ToolJob>,
+}
+
+/// Where a tool's job is in the queue.
+enum QueuePlace {
+    Running(JobKind),
+    /// 1-based position among the waiting jobs.
+    Waiting(JobKind, usize),
+}
+
+impl QueueSnapshot {
+    fn is_empty(&self) -> bool {
+        self.running.is_none() && self.waiting.is_empty()
+    }
+
+    fn place(&self, tool: Tool) -> Option<QueuePlace> {
+        if let Some(job) = self.running.filter(|job| job.tool == tool) {
+            return Some(QueuePlace::Running(job.kind));
+        }
+
+        self.waiting
+            .iter()
+            .position(|job| job.tool == tool)
+            .map(|i| QueuePlace::Waiting(self.waiting[i].kind, i + 1))
+    }
+}
+
 impl ExternalToolsUi {
     fn is_probing(&self) -> bool {
-        self.pending.is_some()
+        !self.probes.is_empty()
     }
 
-    fn installing(&self) -> Option<Tool> {
-        self.install_pending.as_ref().map(|(tool, _)| *tool)
-    }
-
-    fn uninstalling(&self) -> Option<Tool> {
-        self.uninstall_pending.as_ref().map(|(tool, _)| *tool)
-    }
-
-    fn is_busy(&self) -> bool {
-        self.is_probing() || self.installing().is_some() || self.uninstalling().is_some()
-    }
-
-    /// Start a probe on a worker thread.
+    /// Start a probe of every tool on a worker thread, superseding any probe in flight.
     ///
     /// Off the UI thread because a probe launches a subprocess per tool, and the Python-based ones
     /// import Torch before answering — seconds each, on a cold cache. Blocking the UI for that
     /// would be worse than the problem this panel solves.
     fn start_probe(&mut self) {
-        if self.is_busy() {
-            return;
-        }
+        self.probes.clear();
         self.statuses.clear();
         self.disk_usage.clear();
-        self.pending = Some(external_tools::check_all());
+        self.probes.push(external_tools::check_all());
         self.probed_once = true;
         self.confirm_uninstall = None;
     }
 
-    fn poll(&mut self) {
-        let Some(receiver) = &self.pending else {
-            return;
-        };
-
-        let disconnected = loop {
-            match receiver.try_recv() {
-                Ok(ToolCheckUpdate::Status(status)) => {
-                    self.statuses.insert(status.tool, status);
-                }
-                Ok(ToolCheckUpdate::ManagedDiskUsage { tool, result }) => {
-                    self.disk_usage
-                        .insert(tool, result.map_err(|error| error.to_string()));
-                }
-                Err(mpsc::TryRecvError::Empty) => break false,
-                // The worker either finished normally or died. In either case, drop the receiver
-                // so the panel can be retried rather than showing "checking" forever.
-                Err(mpsc::TryRecvError::Disconnected) => break true,
-            }
-        };
-
-        if disconnected {
-            self.pending = None;
-        }
+    /// Re-probe one tool without disturbing the other rows, e.g. once its queued job finishes.
+    fn recheck(&mut self, tool: Tool) {
+        self.statuses.remove(&tool);
+        self.disk_usage.remove(&tool);
+        self.probes.push(external_tools::check_tools(vec![tool]));
     }
 
-    /// Start one installer on a worker thread. Installers can download large model environments,
-    /// so they must never block egui's render thread.
-    fn start_install(&mut self, tool: Tool, context: &egui::Context, computations: &Computations) {
-        if self.is_busy() || !tool.spec().can_install_here() {
-            return;
-        }
+    fn poll(&mut self) {
+        let statuses = &mut self.statuses;
+        let disk_usage = &mut self.disk_usage;
 
-        let (tx, rx) = mpsc::channel();
-
-        self.install_pending = Some((tool, rx));
-        self.install_results.remove(&tool);
-        self.confirm_uninstall = None;
-        self.uninstall_results.remove(&tool);
-
-        let computation = computations.start(
-            ComputationType::Install,
-            tool.spec().name(),
-            Some("installing".to_owned()),
-        );
-
-        let context = context.clone();
-        thread::spawn(move || {
-            let result = external_tools::install(tool).map_err(|error| error.to_string());
-            drop(computation);
-
-            let _ = tx.send(result);
-            context.request_repaint();
+        self.probes.retain(|receiver| {
+            loop {
+                match receiver.try_recv() {
+                    Ok(ToolCheckUpdate::Status(status)) => {
+                        statuses.insert(status.tool, status);
+                    }
+                    Ok(ToolCheckUpdate::ManagedDiskUsage { tool, result }) => {
+                        disk_usage.insert(tool, result.map_err(|error| error.to_string()));
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break true,
+                    // The worker either finished normally or died. In either case, drop the
+                    // receiver so the panel can be retried rather than showing "checking" forever.
+                    Err(mpsc::TryRecvError::Disconnected) => break false,
+                }
+            }
         });
     }
 
-    /// Poll the active installer, returning true once it finishes so the caller can re-probe all
-    /// tools and immediately reflect the new installation state.
-    fn poll_install(&mut self) -> bool {
-        let Some((tool, receiver)) = &self.install_pending else {
-            return false;
-        };
+    /// Queue one installer. Installers can download large model environments, so they run on the
+    /// queue's worker thread and never block egui's render thread.
+    fn queue_install(&mut self, tool: Tool, context: &egui::Context, computations: &Computations) {
+        if !tool.spec().can_install_here() {
+            return;
+        }
 
-        let tool = *tool;
-        let result = match receiver.try_recv() {
-            Ok(Ok(())) => InstallResult::Success,
-            Ok(Err(error)) => InstallResult::Failed(error),
-            Err(mpsc::TryRecvError::Empty) => return false,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                InstallResult::Failed("installer stopped without reporting a result".to_owned())
-            }
-        };
+        self.confirm_uninstall = None;
+        self.install_results.remove(&tool);
+        self.uninstall_results.remove(&tool);
 
-        self.install_results.insert(tool, result);
-        self.install_pending = None;
-        true
+        let job = ToolJob {
+            tool,
+            kind: JobKind::Install,
+        };
+        self.queue.push(job, context, computations);
     }
 
-    fn start_uninstall(
+    fn queue_uninstall(
         &mut self,
         tool: Tool,
         context: &egui::Context,
@@ -168,50 +313,46 @@ impl ExternalToolsUi {
     ) {
         let has_managed_files =
             matches!(self.disk_usage.get(&tool), Some(Ok(Some(_))) | Some(Err(_)));
-        if self.is_busy() || !tool.spec().molchanica_managed || !has_managed_files {
+        if !tool.spec().molchanica_managed || !has_managed_files {
             return;
         }
 
-        let (tx, rx) = mpsc::channel();
-        self.uninstall_pending = Some((tool, rx));
         self.confirm_uninstall = None;
         self.install_results.remove(&tool);
         self.uninstall_results.remove(&tool);
 
-        let computation = computations.start(
-            ComputationType::Install,
-            tool.spec().name(),
-            Some("uninstalling".to_owned()),
-        );
-
-        let context = context.clone();
-        thread::spawn(move || {
-            let result = external_tools::uninstall(tool).map_err(|error| error.to_string());
-            drop(computation);
-
-            let _ = tx.send(result);
-            context.request_repaint();
-        });
+        let job = ToolJob {
+            tool,
+            kind: JobKind::Uninstall,
+        };
+        self.queue.push(job, context, computations);
     }
 
-    fn poll_uninstall(&mut self) -> bool {
-        let Some((tool, receiver)) = &self.uninstall_pending else {
-            return false;
-        };
+    /// Record the results of jobs that finished since the last frame, and return those jobs.
+    fn collect_finished(&mut self) -> Vec<ToolJob> {
+        let mut jobs = Vec::new();
 
-        let tool = *tool;
-        let result = match receiver.try_recv() {
-            Ok(Ok(())) => UninstallResult::Success,
-            Ok(Err(error)) => UninstallResult::Failed(error),
-            Err(mpsc::TryRecvError::Empty) => return false,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                UninstallResult::Failed("uninstaller stopped without reporting a result".to_owned())
+        for (job, result) in self.queue.take_finished() {
+            match job.kind {
+                JobKind::Install => {
+                    let result = match result {
+                        Ok(()) => InstallResult::Success,
+                        Err(error) => InstallResult::Failed(error),
+                    };
+                    self.install_results.insert(job.tool, result);
+                }
+                JobKind::Uninstall => {
+                    let result = match result {
+                        Ok(()) => UninstallResult::Success,
+                        Err(error) => UninstallResult::Failed(error),
+                    };
+                    self.uninstall_results.insert(job.tool, result);
+                }
             }
-        };
+            jobs.push(job);
+        }
 
-        self.uninstall_results.insert(tool, result);
-        self.uninstall_pending = None;
-        true
+        jobs
     }
 
     /// How many tools are ready, for a one-line summary elsewhere in the UI.
@@ -220,6 +361,29 @@ impl ExternalToolsUi {
             .values()
             .filter(|status| status.result == CheckResult::Pass)
             .count()
+    }
+}
+
+/// Where a tool's job is in the queue, with a way to take it back out while it waits.
+fn queue_place_ui(ui: &mut Ui, queue: &JobQueue, place: &QueuePlace, tool: Tool) {
+    match place {
+        QueuePlace::Running(kind) => {
+            ui.spinner();
+            ui.label(RichText::new(format!("{}…", kind.progress())).color(COLOR_ACTION));
+        }
+        QueuePlace::Waiting(kind, position) => {
+            ui.label(
+                RichText::new(format!("Queued to {} (#{position})", kind.verb()))
+                    .color(COLOR_ACTION),
+            );
+            if ui
+                .small_button("Cancel")
+                .on_hover_text("Remove this from the queue.")
+                .clicked()
+            {
+                queue.cancel(tool);
+            }
+        }
     }
 }
 
@@ -269,17 +433,22 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let tools = &mut state.ui.external_tools;
     tools.poll();
 
-    let changing_rdkit = matches!(tools.install_pending, Some((Tool::RdKit, _)))
-        || matches!(tools.uninstall_pending, Some((Tool::RdKit, _)));
-    let install_finished = tools.poll_install();
-    let uninstall_finished = tools.poll_uninstall();
-
-    if install_finished || uninstall_finished {
-        tools.start_probe();
-        if changing_rdkit {
+    let finished = tools.collect_finished();
+    if !finished.is_empty() {
+        if finished.iter().any(|job| job.tool == Tool::RdKit) {
             // A Python executable can exist before pip finishes. Revisit any diagrams that
             // fell back to ChEBI during installation, including reinstalls at the same path.
             state.ui.reactions.diagrams = Default::default();
+        }
+
+        if tools.queue.snapshot().is_empty() {
+            tools.start_probe();
+        } else {
+            // While the queue still runs, re-probe only the finished tools, so their rows stop
+            // offering the action just taken; the full probe waits until the queue is empty.
+            for job in &finished {
+                tools.recheck(job.tool);
+            }
         }
     }
 
@@ -290,6 +459,8 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
         context.request_repaint_after(Duration::from_millis(50));
     }
 
+    let queue = tools.queue.snapshot();
+
     ui.horizontal(|ui| {
         ui.heading("Third-party tools");
         ui.add_space(ROW_SPACING);
@@ -297,7 +468,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
             ui.label(RichText::new("Checking…").color(COLOR_ACTION));
         } else if ui
             .add_enabled(
-                !tools.is_busy(),
+                queue.is_empty(),
                 egui::Button::new(RichText::new("Re-check").color(COLOR_HIGHLIGHT)),
             )
             .on_hover_text(
@@ -309,6 +480,45 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
             tools.start_probe();
         }
     });
+
+    if !queue.is_empty() {
+        ui.add_space(ROW_SPACING);
+        ui.horizontal_wrapped(|ui| {
+            if let Some(job) = queue.running {
+                ui.spinner();
+                ui.label(
+                    RichText::new(format!(
+                        "{} {}…",
+                        job.kind.progress(),
+                        job.tool.spec().name()
+                    ))
+                    .color(COLOR_ACTION),
+                );
+            }
+
+            if !queue.waiting.is_empty() {
+                let waiting: Vec<_> = queue
+                    .waiting
+                    .iter()
+                    .map(|job| format!("{} {}", job.kind.verb(), job.tool.spec().name()))
+                    .collect();
+
+                ui.label(
+                    RichText::new(format!("Queued: {}", waiting.join(", "))).color(COLOR_INACTIVE),
+                );
+                if ui
+                    .button("Cancel queued")
+                    .on_hover_text(
+                        "Remove every job that has not started yet. The one in progress runs to \
+                         completion.",
+                    )
+                    .clicked()
+                {
+                    tools.queue.cancel_waiting();
+                }
+            }
+        });
+    }
 
     ui.add_space(ROW_SPACING);
 
@@ -405,7 +615,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     }
 
                     if status.result != CheckResult::CantFind {
-                        let uninstalling = tools.uninstalling();
+                        let place = queue.place(status.tool);
                         let confirming = tools.confirm_uninstall == Some(status.tool);
                         let (has_managed_files, disk_text, disk_hover) =
 
@@ -448,9 +658,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                                 }
                             };
 
-                        let button_text = if uninstalling == Some(status.tool) {
-                            "Uninstalling…"
-                        } else if confirming {
+                        let button_text = if confirming {
                             "Confirm uninstall"
                         } else {
                             "Uninstall"
@@ -468,19 +676,19 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
 
                         let response = ui
                             .add_enabled(
-                                spec.molchanica_managed && has_managed_files && !tools.is_busy(),
+                                spec.molchanica_managed && has_managed_files && place.is_none(),
                                 egui::Button::new(button_text),
                             )
                             .on_hover_text(uninstall_hint);
                         if response.clicked() {
                             if confirming {
-                                tools.start_uninstall(status.tool, &context, computations);
+                                tools.queue_uninstall(status.tool, &context, computations);
                             } else {
                                 tools.confirm_uninstall = Some(status.tool);
                             }
                         }
-                        if uninstalling == Some(status.tool) {
-                            ui.spinner();
+                        if let Some(place) = &place {
+                            queue_place_ui(ui, &tools.queue, place, status.tool);
                         }
                         let size_response =
                             ui.label(RichText::new(disk_text).color(COLOR_INACTIVE).small());
@@ -514,11 +722,11 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                                     .small(),
                                 );
                             } else {
-                                let installing = tools.installing();
+                                let place = queue.place(status.tool);
                                 ui.horizontal(|ui| {
                                     let response = ui
                                         .add_enabled(
-                                            spec.molchanica_managed && !tools.is_busy(),
+                                            spec.molchanica_managed && place.is_none(),
                                             egui::Button::new("Install"),
                                         )
                                         .on_hover_text(if spec.molchanica_managed {
@@ -527,11 +735,10 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                                             spec.install_hint.to_owned()
                                         });
                                     if response.clicked() {
-                                        tools.start_install(status.tool, &context, computations);
+                                        tools.queue_install(status.tool, &context, computations);
                                     }
-                                    if installing == Some(status.tool) {
-                                        ui.spinner();
-                                        ui.label(RichText::new("Installing…").color(COLOR_ACTION));
+                                    if let Some(place) = &place {
+                                        queue_place_ui(ui, &tools.queue, place, status.tool);
                                     } else if !spec.molchanica_managed {
                                         ui.label(
                                             RichText::new(spec.install_hint)
@@ -632,7 +839,8 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     ui.label(
         RichText::new(
             "Install buttons use the shared bio_tools Rust recipes and place each tool in \
-             Molchanica's managed data directory.",
+             Molchanica's managed data directory. Installs and uninstalls are queued, and run one \
+             at a time in the order clicked; they keep running if this window is closed.",
         )
         .color(COLOR_INACTIVE),
     );

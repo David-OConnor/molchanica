@@ -24,9 +24,8 @@ use crate::{
         BLEND_AMT_HETERO_RES, COLOR_HETERO_RES, COLOR_MOL_MOVING, COLOR_MOL_ROTATE,
         COLOR_SA_SURFACE, COLOR_SECONDARY_STRUCTURE, COLOR_SELECTED, COLOR_SFC_DOT,
         DENSITY_ISO_OPACITY, EntityClass, LABEL_COLOR_ATOM, LABEL_COLOR_MOL, LABEL_COLOR_MOL_SEL,
-        LABEL_SIZE_CHAIN, LABEL_SIZE_MOL_LARGE, MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE,
-        MESH_SURFACE_DOT, MESH_WATER_SPHERE, MoleculeView, SAS_ISO_OPACITY, SIZE_SFC_DOT,
-        atoms_bonds,
+        MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MESH_SURFACE_DOT, MESH_WATER_SPHERE,
+        MoleculeView, SAS_ISO_OPACITY, SIZE_SFC_DOT, atoms_bonds,
         atoms_bonds::{
             ATOM_SHININESS, BALL_RADIUS_WATER_O, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H,
             draw_hydrogen_bond,
@@ -210,7 +209,7 @@ fn ribbon_text_overlay_entities(
                     .as_deref()
                     .unwrap_or(&mol.common.ident)
                     .to_owned(),
-                size: LABEL_SIZE_MOL_LARGE,
+                size: ui.label_sizes.protein,
                 color,
                 font_family: FontFamily::Proportional,
             });
@@ -241,7 +240,7 @@ fn ribbon_text_overlay_entities(
             );
             ent.overlay_text = Some(TextOverlay {
                 text: chain.id.clone(),
-                size: LABEL_SIZE_CHAIN,
+                size: ui.label_sizes.chain,
                 color: LABEL_COLOR_ATOM,
                 font_family: FontFamily::Proportional,
             });
@@ -314,7 +313,7 @@ fn residue_text_overlay_entities(
         );
         entity.overlay_text = Some(TextOverlay {
             text: aa.to_str(AaIdent::OneLetter),
-            size: drawing::LABEL_SIZE_ATOM,
+            size: ui.label_sizes.residue,
             color: LABEL_COLOR_ATOM,
             font_family: FontFamily::Monospace,
         });
@@ -925,6 +924,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             mol_active,
             &mol.chains,
             mol.common.atoms.len(),
+            ui.label_sizes.protein,
             ui,
         );
 
@@ -1204,6 +1204,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 mol_active,
                 &mol.chains,
                 mol.common.bonds.len(),
+                ui.label_sizes.protein,
                 ui,
             );
         }

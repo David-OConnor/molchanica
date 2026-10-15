@@ -47,8 +47,8 @@ use crate::{
     },
     selection::{Selection, ViewSelLevel},
     state::{
-        CamSnapshot, DistFilter, LabelVis, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring,
-        UiVisibility, Visibility,
+        CamSnapshot, DistFilter, LabelSizes, LabelVis, LipidUi, MsaaSetting, NucleicAcidUi,
+        ResColoring, UiVisibility, Visibility,
     },
 };
 
@@ -1204,6 +1204,17 @@ impl UiPrefs {
         out.push(0);
         out.extend_from_slice(&self.nearby_dist_thresh.to_le_bytes());
         out.push(self.mol_view_peptide.to_u8());
+
+        let sizes = &self.label_sizes;
+        for size in [
+            sizes.mol,
+            sizes.protein,
+            sizes.chain,
+            sizes.residue,
+            sizes.atom_sn,
+        ] {
+            out.extend_from_slice(&size.to_le_bytes());
+        }
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1248,6 +1259,28 @@ impl UiPrefs {
         } else {
             mol_view
         };
+        i += 1;
+
+        // Absent in prefs files written before label sizes were configurable; keep the defaults.
+        let mut label_sizes = LabelSizes::default();
+        if i + 20 <= data.len() {
+            let sizes = &mut label_sizes;
+            for size in [
+                &mut sizes.mol,
+                &mut sizes.protein,
+                &mut sizes.chain,
+                &mut sizes.residue,
+                &mut sizes.atom_sn,
+            ] {
+                let v = parse_le!(data, f32, i..i + 4);
+                i += 4;
+
+                if v.is_finite() {
+                    *size = v.clamp(LabelSizes::MIN, LabelSizes::MAX);
+                }
+            }
+        }
+
         Ok(Self {
             selection,
             cam_snapshots,
@@ -1258,6 +1291,7 @@ impl UiPrefs {
             ui_visibility,
             dist_filter,
             nearby_dist_thresh,
+            label_sizes,
         })
     }
 }

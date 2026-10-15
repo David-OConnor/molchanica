@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+$appName = "molchanica"
 
 # The version is defined in one place only: Cargo.toml's `[package] version`. Read it from there,
 # so a release never ships under a version that disagrees with the one the app reports.
@@ -7,10 +8,10 @@ if (-not $versionMatch) { throw "Could not read the version from Cargo.toml" }
 # Archive names use underscores, e.g. 0.3.7 -> 0_3_7.
 $version = $versionMatch.Matches[0].Groups[1].Value -replace '\.', '_'
 $outDir = "target\release"
-$exe    = Join-Path $outDir "molchanica.exe"
+$exe    = Join-Path $outDir "${appName}.exe"
 $readme = "README.md"
-$setup = "install_scripts/setup_molchanica.ps1"
-$setupLauncher = "install_scripts/setup_molchanica.bat"
+$setup = "install_scripts/setup_${appName}.ps1"
+$setupLauncher = "install_scripts/setup_${appName}.bat"
 $cufft = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin\x64\cufft64_12.dll"
 # Needed by the bio_tools ProteinMPNN recipe for native ddG scanning. Its absence is handled (the
 # conversion is skipped), but shipping it means one less reason to need the repository.
@@ -50,14 +51,14 @@ if ($dumpbin) {
     Write-Warning "dumpbin was not found, so the release was not checked for load-time CUDA or VC++ runtime imports."
 }
 
-$zip1 = "molchanica_${version}_win.zip"
+$zip1 = "${appName}_${version}_win.zip"
 if (Test-Path $zip1) { Remove-Item $zip1 -Force }
 Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mpnnConvert, $cufft -DestinationPath $zip1 -Force
 
 # We don't use a second binary for non-CUDA; the Cuda-compiled binary should work
 # on non-CUDA-available setups. The only difference in the packages is inclusion of hte cuFFT library.
 # cargo build --release --no-default-features
-$zip2 = "molchanica_${version}_win_nocuda.zip"
+$zip2 = "${appName}_${version}_win_nocuda.zip"
 if (Test-Path $zip2) { Remove-Item $zip2 -Force }
 Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mpnnConvert -DestinationPath $zip2 -Force
 

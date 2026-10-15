@@ -54,8 +54,6 @@ const MAX_RELAX_ITERS: usize = 300;
 // Atom serial number labels, drawn over each atom when "Atom #" is enabled. Cyan: distinct from the
 // (pink) pharmacophore feature numbering, and from the element, pocket, and H bond colors.
 pub const ATOM_SN_LABEL_COLOR: (u8, u8, u8, u8) = (40, 220, 255, 255);
-// Font size. (`TextOverlay` has no separate stroke weight; this is what controls thickness.)
-pub const ATOM_SN_LABEL_SIZE: f32 = 16.;
 
 /// Keep editor shortcuts available over the scene and buttons, but leave text input and
 /// modified shortcuts alone. Consuming a press prevents it from activating twice in a frame.

@@ -35,8 +35,8 @@ use crate::{
     md::MdBackend,
     selection::{Selection, ViewSelLevel},
     state::{
-        CamSnapshot, DistFilter, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring, State,
-        UiVisibility, Visibility,
+        CamSnapshot, DistFilter, LabelSizes, LipidUi, MsaaSetting, NucleicAcidUi, ResColoring,
+        State, UiVisibility, Visibility,
     },
 };
 
@@ -258,6 +258,7 @@ pub struct UiPrefs {
     pub ui_visibility: UiVisibility,
     pub dist_filter: DistFilter,
     pub nearby_dist_thresh: u16,
+    pub label_sizes: LabelSizes,
 }
 
 impl Default for UiPrefs {
@@ -273,6 +274,7 @@ impl Default for UiPrefs {
             nearby_dist_thresh: 15,
             visibility: Default::default(),
             ui_visibility: Default::default(),
+            label_sizes: Default::default(),
         }
     }
 }
@@ -645,6 +647,7 @@ impl State {
         self.to_save.ui_prefs.nearby_dist_thresh = self.ui.nearby_dist_thresh;
         self.to_save.ui_prefs.visibility = self.ui.visibility.clone();
         self.to_save.ui_prefs.ui_visibility = self.ui.ui_vis.clone();
+        self.to_save.ui_prefs.label_sizes = self.ui.label_sizes.clone();
         self.to_save.mesh_coloring = self.ui.mesh_coloring;
         self.to_save.save_flag = false;
 
@@ -692,10 +695,8 @@ impl State {
         self.ui.nearby_dist_thresh = self.to_save.ui_prefs.nearby_dist_thresh;
         self.ui.visibility = self.to_save.ui_prefs.visibility.clone();
         self.ui.ui_vis = self.to_save.ui_prefs.ui_visibility.clone();
+        self.ui.label_sizes = self.to_save.ui_prefs.label_sizes.clone();
 
-        self.ui.movement_speed_input = self.to_save.control_settings.movement_speed.to_string();
-        self.ui.rotation_sens_input = self.to_save.control_settings.rotation_sens.to_string();
-        self.ui.mol_move_sens_input = self.to_save.control_settings.mol_move_sens.to_string();
         self.ui.mesh_coloring = self.to_save.mesh_coloring;
     }
 

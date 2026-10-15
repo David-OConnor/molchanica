@@ -90,4 +90,4 @@ pub use paths::{
 };
 pub use process::{RunControl, ToolWorkspace, run_tool};
 pub use registry::{Tool, ToolAdapter};
-pub use status::{CheckResult, ToolCheckUpdate, ToolStatus, check_all, is_installed};
+pub use status::{CheckResult, ToolCheckUpdate, ToolStatus, check_all, check_tools, is_installed};

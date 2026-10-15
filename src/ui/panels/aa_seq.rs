@@ -6,7 +6,6 @@ use egui::{
     TextEdit, TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
     text_selection::LabelSelectionState, vec2,
 };
-
 use graphics::{EngineUpdates, Scene};
 use na_seq::{SeqType, SequenceData};
 

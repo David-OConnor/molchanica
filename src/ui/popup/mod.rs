@@ -8,20 +8,18 @@ mod protein_res_management;
 pub(in crate::ui) mod rama_plot;
 pub mod reactions;
 pub mod recent_files;
+mod settings;
 pub(crate) mod tool_runner;
 
 use std::{
     collections::HashMap,
-    ops::RangeInclusive,
     path::{Path, PathBuf},
 };
 
 use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
-use egui::{
-    Color32, ComboBox, Context, Pos2, Response, RichText, ScrollArea, Slider, TextEdit, Ui, Window,
-};
-use graphics::{AmbientOcclusion, ControlScheme, EngineUpdates, Scene};
+use egui::{Color32, Context, Pos2, RichText, ScrollArea, TextEdit, Ui, Window};
+use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{MolGenericRef, MolType, common::MoleculeCommon};
 use na_seq::AaIdent;
@@ -31,12 +29,11 @@ use crate::{
     button, cam,
     cam::{MolCameraTarget, move_cam_to_mol},
     file_io::download_mols::load_atom_coords_rcsb,
-    inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
     label,
     mol_alignment::run_alignment,
     screening::screen_by_alignment,
     selection::{Selection, ViewSelLevel},
-    state::{MetadataTarget, MsaaSetting, State},
+    state::{MetadataTarget, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         load_all_idents_button,
@@ -158,7 +155,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.show_settings {
         let open = show_popup(popup("Settings"), ui.ctx(), |ui| {
-            settings(state, scene, ui, updates);
+            settings::settings(state, scene, ui, redraw, updates);
         });
         state.ui.popup.show_settings &= open;
     }
@@ -746,243 +743,6 @@ fn metadata_editor(
 
         result.metadata = Some(metadata);
     }
-}
-
-// Slider ranges for the graphics settings, in the engine's own units — no scaling between
-// what the slider shows and what `GraphicsSettings` receives.
-/// World-space SSAO sample radius, in Å.
-const SSAO_RADIUS_RANGE: RangeInclusive<f32> = 0.1..=40.0;
-/// Edge-cueing strength. Unitless; the engine treats 0 as disabled.
-const EDGE_CUEING_RANGE: RangeInclusive<f32> = 0.0..=3.0;
-/// Mesh inflation for depth-aware halos, in Å.
-const HALO_RANGE: RangeInclusive<f32> = 0.0..=0.1;
-
-/// True on the frame a slider interaction ends — the drag is released, or a keyboard edit of
-/// the value box is committed. Dragging changes the value every frame, so this is what
-/// distinguishes "the user is still choosing" from "the user has chosen", and keeps prefs
-/// writes to one per adjustment.
-///
-/// Checked outside the value-changed branch on purpose: the frame a drag ends is usually not
-/// a frame on which the value moved.
-fn interaction_finished(resp: &Response) -> bool {
-    resp.drag_stopped() || resp.lost_focus()
-}
-
-fn graphics_settings(
-    state: &mut State,
-    scene: &mut Scene,
-    ui: &mut Ui,
-    updates: &mut EngineUpdates,
-) {
-    // Set whenever a value changes, including mid-drag: the 3D view should track a slider
-    // live. Writing the prefs file is gated separately, since that serializes the whole
-    // state and hits the disk — doing it once per frame of a drag is what made saves spam.
-    let mut changed = false;
-    // Set only when an interaction *finishes* (drag released, or a discrete control used).
-    let mut save = false;
-
-    let msaa_prev = state.to_save.graphics.msaa;
-    ComboBox::from_id_salt(10)
-        .width(40.)
-        .selected_text(state.to_save.graphics.msaa.to_str())
-        .show_ui(ui, |ui| {
-            ui.selectable_value(
-                &mut state.to_save.graphics.msaa,
-                MsaaSetting::None,
-                MsaaSetting::None.to_str(),
-            );
-            ui.selectable_value(
-                &mut state.to_save.graphics.msaa,
-                MsaaSetting::Four,
-                MsaaSetting::Four.to_str(),
-            );
-        });
-
-    if state.to_save.graphics.msaa != msaa_prev {
-        // An explicit choice; stop following the GPU-based default.
-        state.to_save.graphics.msaa_user_set = true;
-        changed = true;
-        save = true;
-    }
-
-    ui.add_space(COL_SPACING);
-
-    ui.label("Ambient occlusion");
-    let mut ao_en = state.to_save.graphics.ambient_occlusion == AmbientOcclusion::Ssao;
-    if ui.checkbox(&mut ao_en, "").changed() {
-        state.to_save.graphics.ambient_occlusion = if ao_en {
-            AmbientOcclusion::Ssao
-        } else {
-            AmbientOcclusion::None
-        };
-
-        changed = true;
-        save = true;
-    }
-
-    ui.add_space(COL_SPACING);
-    {
-        let mut val = state.to_save.graphics.ssao_radius;
-        let prev = val;
-        ui.spacing_mut().slider_width = 160.;
-
-        ui.label("AO radius (Å):").on_hover_text(
-            "How far ambient occlusion looks for occluders, in Å. Small values shade only \
-             tight crevices; large ones shade broad hollows, but lose fine detail.",
-        );
-        let resp = ui.add_enabled(
-            ao_en,
-            Slider::new(&mut val, SSAO_RADIUS_RANGE).fixed_decimals(1),
-        );
-
-        if val != prev {
-            state.to_save.graphics.ssao_radius = val;
-            changed = true;
-        }
-        save |= interaction_finished(&resp);
-    }
-
-    ui.add_space(COL_SPACING);
-    {
-        let mut val = state.to_save.graphics.edge_cueing.unwrap_or_default();
-        let prev = val;
-        ui.spacing_mut().slider_width = 160.;
-
-        ui.label("Edge cueing (strength):")
-            .on_hover_text("Darkens surfaces as they turn away from the camera. 0 disables it.");
-        let resp = ui.add(Slider::new(&mut val, EDGE_CUEING_RANGE).fixed_decimals(2));
-
-        if val != prev {
-            // The engine takes `None` for "off"; the slider bottoming out means the same thing.
-            state.to_save.graphics.edge_cueing = if val <= 0. { None } else { Some(val) };
-            changed = true;
-        }
-        save |= interaction_finished(&resp);
-    }
-
-    ui.add_space(COL_SPACING);
-    {
-        let mut val = state.to_save.graphics.depth_aware_halos.unwrap_or_default();
-        let prev = val;
-        ui.spacing_mut().slider_width = 160.;
-
-        ui.label("Halos (Å):").on_hover_text(
-            "Mesh inflation, in Å, used to draw dark rings where near geometry overlaps far \
-             geometry. 0 disables it.",
-        );
-        let resp = ui.add(Slider::new(&mut val, HALO_RANGE).fixed_decimals(3));
-
-        if val != prev {
-            state.to_save.graphics.depth_aware_halos = if val <= 0. { None } else { Some(val) };
-            changed = true;
-        }
-        save |= interaction_finished(&resp);
-    }
-
-    if changed {
-        // Re-derive the engine settings from the prefs, rather than mirroring each control into
-        // `graphics_settings` as it changes: `to_engine` is the one place that mapping lives.
-        state.graphics_settings = state.to_save.graphics.to_engine();
-
-        // Mark prefs dirty rather than writing them: `check_prefs_save` flushes within
-        // PREFS_SAVE_INTERVAL. This is the backstop for changes that never finish an
-        // interaction, such as nudging a slider with the arrow keys and then walking away.
-        state.to_save.save_flag = true;
-        // Triggers a graphics re-init
-        updates.graphics_settings = Some(state.graphics_settings.clone());
-    }
-
-    if save {
-        state.update_save_prefs();
-    }
-}
-
-fn settings(state: &mut State, scene: &mut Scene, ui: &mut Ui, updates: &mut EngineUpdates) {
-    ui.horizontal(|ui| {
-        ui.heading("Settings");
-        ui.add_space(COL_SPACING);
-        // todo: Make this consistent with your other controls.
-        ui.label("Multi-sample anti-aliasing. Reduces jagged edges. Recommend to enable.");
-    });
-
-    ui.horizontal(|ui| {
-        graphics_settings(state, scene, ui, updates);
-    });
-
-    ui.add_space(ROW_SPACING * 2.);
-
-    ui.horizontal(|ui| {
-        ui.add_space(COL_SPACING);
-        ui.label("Cam move speed:");
-        if ui
-            .add(TextEdit::singleline(&mut state.ui.movement_speed_input).desired_width(32.))
-            .changed()
-        {
-            if let Ok(v) = &mut state.ui.movement_speed_input.parse::<u8>() {
-                state.to_save.control_settings.movement_speed = *v;
-                scene.input_settings.move_sens = *v as f32;
-
-                state.update_save_prefs();
-            } else {
-                // reset
-                state.ui.movement_speed_input =
-                    state.to_save.control_settings.movement_speed.to_string();
-            }
-        }
-
-        ui.add_space(COL_SPACING / 2.);
-        ui.label("Cam rot sensitivity:");
-        if ui
-            .add(TextEdit::singleline(&mut state.ui.rotation_sens_input).desired_width(32.))
-            .changed()
-        {
-            if let Ok(v) = &mut state.ui.rotation_sens_input.parse::<u8>() {
-                state.to_save.control_settings.rotation_sens = *v;
-                scene.input_settings.rotate_sens = *v as f32 / 100.;
-
-                state.update_save_prefs();
-            } else {
-                // reset
-                state.ui.rotation_sens_input =
-                    state.to_save.control_settings.rotation_sens.to_string();
-            }
-        }
-
-        ui.add_space(COL_SPACING);
-        ui.label("Mol scroll move speed:").on_hover_text(
-            "When using the scroll wheel to move molecules, this controls how fast they move.",
-        );
-        if ui
-            .add(TextEdit::singleline(&mut state.ui.mol_move_sens_input).desired_width(32.))
-            .changed()
-        {
-            if let Ok(v) = &mut state.ui.mol_move_sens_input.parse::<u8>() {
-                state.to_save.control_settings.mol_move_sens = *v;
-                state.update_save_prefs();
-            } else {
-                // reset
-                state.ui.mol_move_sens_input =
-                    state.to_save.control_settings.mol_move_sens.to_string();
-            }
-        }
-
-        ui.add_space(COL_SPACING / 2.);
-        if ui.button("Reset sensitivities").clicked() {
-            state.to_save.control_settings.movement_speed = MOVEMENT_SENS as u8;
-            state.ui.movement_speed_input =
-                state.to_save.control_settings.movement_speed.to_string();
-            scene.input_settings.move_sens = MOVEMENT_SENS;
-
-            state.to_save.control_settings.rotation_sens = (ROTATE_SENS * 100.) as u8;
-            state.ui.rotation_sens_input = state.to_save.control_settings.rotation_sens.to_string();
-            scene.input_settings.rotate_sens = ROTATE_SENS;
-
-            state.to_save.control_settings.mol_move_sens = (SENS_MOL_MOVE_SCROLL * 1_000.) as u8;
-            state.ui.mol_move_sens_input = state.to_save.control_settings.mol_move_sens.to_string();
-
-            state.update_save_prefs();
-        }
-    });
 }
 
 fn alignment(

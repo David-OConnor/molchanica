@@ -56,7 +56,7 @@ use crate::{
     selection::{Selection, ViewSelLevel},
     split_join::start_structure_lookup,
     state::{OperatingMode, PrimaryModeCam, State, StateUi},
-    ui::{mol_editor::ATOM_SN_LABEL_SIZE, util::handle_redraw},
+    ui::util::handle_redraw,
     util::{RedrawFlags, aromatic_ring_centroid, create_smiles, find_neighbor_posit, handle_err},
 };
 
@@ -153,10 +153,10 @@ impl Default for MolEditorState {
 
 /// The editor's atom serial number label. This is independent of `LabelVis::atom_sn`, and colored
 /// differently from the pharmacophore feature numbering, so the two aren't confused.
-pub fn atom_sn_label(atom: &Atom) -> TextOverlay {
+pub fn atom_sn_label(atom: &Atom, size: f32) -> TextOverlay {
     TextOverlay {
         text: atom.serial_number.to_string(),
-        size: ATOM_SN_LABEL_SIZE,
+        size,
         color: LABEL_COLOR_ATOM,
         font_family: FontFamily::Proportional,
     }

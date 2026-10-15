@@ -185,16 +185,21 @@ pub fn check(tool: Tool) -> ToolStatus {
 }
 
 /// Probe every tool concurrently, streaming each result as soon as it is available.
+pub fn check_all() -> Receiver<ToolCheckUpdate> {
+    check_tools(Tool::ALL.to_vec())
+}
+
+/// Probe the given tools concurrently, streaming each result as soon as it is available.
 ///
 /// Concurrent because a serial pass costs the sum of every Python interpreter's Torch import.
 /// The channel disconnects after every status and applicable managed-disk measurement has been
 /// sent, following the same non-blocking receiver pattern used by the rest of the UI workers.
-pub fn check_all() -> Receiver<ToolCheckUpdate> {
+pub fn check_tools(tools: Vec<Tool>) -> Receiver<ToolCheckUpdate> {
     use rayon::prelude::*;
 
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        Tool::ALL.par_iter().for_each_with(tx, |tx, tool| {
+        tools.par_iter().for_each_with(tx, |tx, tool| {
             let started = Instant::now();
             let status = check(*tool);
             println!(

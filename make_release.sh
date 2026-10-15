@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+app_name="molchanica"
+
 # The version is defined in one place only: Cargo.toml's `[package] version`. Read it from there,
 # so a release never ships under a version that disagrees with the one the app reports.
 # Archive names use underscores, e.g. 0.3.7 -> 0_3_7.
@@ -10,9 +12,9 @@ if [[ -z "$version" ]]; then
     exit 1
 fi
 outdir=target/release
-exe="$outdir/molchanica"
+exe="$outdir/$app_name"
 readme="README.md"
-setup="install_scripts/setup_molchanica.sh"
+setup="install_scripts/setup_${app_name}.sh"
 icon="resources/icon.png"
 cufft="/usr/local/cuda/lib64/libcufft.so.12"
 # Needed by the bio_tools ProteinMPNN recipe for native ΔΔG scanning. Its absence is handled (the
@@ -23,6 +25,11 @@ mpnn_convert="scripts/convert_mpnn_weights.py"
 export PATH=/usr/local/cuda/bin:$PATH
 
 chmod +x "$setup"
+
+# The zip takes the setup script as it is on disk, not as git stores it. On Windows, that copy can
+# have CRLF endings (core.autocrlf, or an editor), which makes bash fail on the first line for
+# whoever installs the release. Strip them here so the archive is right regardless.
+sed -i 's/\r$//' "$setup"
 
 cargo build --release
 
@@ -38,11 +45,11 @@ if ldd "$exe" | grep -Eq 'libcuda\.so|libcufft\.so|libnvrtc\.so|libcudart\.so'; 
     exit 1
 fi
 
-zip -j -r "molchanica_${version}_linux.zip" "$exe" "$readme" "$setup" "$icon" \
+zip -j -r "${app_name}_${version}_linux.zip" "$exe" "$readme" "$setup" "$icon" \
     "$mpnn_convert" "$cufft"
 
 # We don't use a second binary for non-CUDA; the Cuda-compiled binary should work
 # on non-CUDA-available setups. The only difference in the packages is inclusion of hte cuFFT library.
 #cargo build --release --no-default-features
-zip -j -r "molchanica_${version}_linux_nocuda.zip" "$exe" "$readme" "$setup" "$icon" \
+zip -j -r "${app_name}_${version}_linux_nocuda.zip" "$exe" "$readme" "$setup" "$icon" \
     "$mpnn_convert"
