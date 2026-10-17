@@ -21,6 +21,7 @@
 use std::{
     collections::HashMap,
     fs, io,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
 };
 
@@ -93,6 +94,7 @@ enum PacketType {
     NucleicAcid = 9,
     /// Loose scalar fields that don't warrant their own packet.
     Misc = 10,
+    SelectionsAndRepresentations = 11,
 }
 
 impl PacketType {
@@ -109,6 +111,7 @@ impl PacketType {
             8 => Self::Lipid,
             9 => Self::NucleicAcid,
             10 => Self::Misc,
+            11 => Self::SelectionsAndRepresentations,
             _ => return None,
         })
     }
@@ -603,7 +606,8 @@ impl Selection {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
-            Selection::None => out.push(0),
+            // Evaluated indices are transient; named expressions are saved separately.
+            Selection::None | Selection::Atoms(_) => out.push(0),
             Selection::AtomPeptide(i) => {
                 out.push(1);
                 out.extend_from_slice(&(*i as u64).to_le_bytes());
@@ -1374,6 +1378,41 @@ impl ToSave {
             packets.push((PacketType::Misc, out));
         }
 
+        // Selection expressions and layers are independent of the transient picked indices.
+        {
+            let mut out = Vec::new();
+            out.extend_from_slice(&(self.named_selections.len() as u32).to_le_bytes());
+            for selection in &self.named_selections {
+                for value in [&selection.name, &selection.expression] {
+                    out.extend_from_slice(&(value.len() as u32).to_le_bytes());
+                    out.extend_from_slice(value.as_bytes());
+                }
+            }
+            out.extend_from_slice(&(self.representations.len() as u32).to_le_bytes());
+            for layer in &self.representations {
+                for value in [&layer.name, &layer.expression] {
+                    out.extend_from_slice(&(value.len() as u32).to_le_bytes());
+                    out.extend_from_slice(value.as_bytes());
+                }
+                out.push(layer.view.to_u8());
+                out.push(layer.visible as u8);
+                out.push(layer.color.is_some() as u8);
+                if let Some(color) = layer.color {
+                    for value in color {
+                        out.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+                out.extend_from_slice(&layer.opacity.to_le_bytes());
+                out.extend_from_slice(&layer.size.to_le_bytes());
+            }
+            out.extend_from_slice(&(self.hidden_default_objects.len() as u32).to_le_bytes());
+            for key in &self.hidden_default_objects {
+                out.extend_from_slice(&(key.len() as u32).to_le_bytes());
+                out.extend_from_slice(key.as_bytes());
+            }
+            packets.push((PacketType::SelectionsAndRepresentations, out));
+        }
+
         let mut out = McaHeader {
             num_packets: packets.len() as u8,
         }
@@ -1495,6 +1534,75 @@ impl ToSave {
                 }
                 PacketType::NucleicAcid => {
                     to_save.nucleic_acid = NucleicAcidUi::from_bytes(payload)?;
+                }
+                PacketType::SelectionsAndRepresentations => {
+                    let mut reader = Cursor::new(payload);
+                    let read_u32 = |reader: &mut Cursor<&[u8]>| -> io::Result<u32> {
+                        let mut bytes = [0; 4];
+                        reader.read_exact(&mut bytes)?;
+                        Ok(u32::from_le_bytes(bytes))
+                    };
+                    let read_string = |reader: &mut Cursor<&[u8]>| -> io::Result<String> {
+                        let len = read_u32(reader)? as usize;
+                        if len > payload.len().saturating_sub(reader.position() as usize) {
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "Truncated selection string",
+                            ));
+                        }
+                        let mut bytes = vec![0; len];
+                        reader.read_exact(&mut bytes)?;
+                        String::from_utf8(bytes)
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+                    };
+                    let read_float = |reader: &mut Cursor<&[u8]>| -> io::Result<f32> {
+                        let value = f32::from_bits(read_u32(reader)?);
+                        if !value.is_finite() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Nonfinite layer style",
+                            ));
+                        }
+                        Ok(value)
+                    };
+                    let n = read_u32(&mut reader)?;
+                    for _ in 0..n {
+                        to_save.named_selections.push(
+                            crate::selection::expression::NamedSelection {
+                                name: read_string(&mut reader)?,
+                                expression: read_string(&mut reader)?,
+                            },
+                        );
+                    }
+                    let n = read_u32(&mut reader)?;
+                    for _ in 0..n {
+                        let name = read_string(&mut reader)?;
+                        let expression = read_string(&mut reader)?;
+                        let mut flags = [0; 3];
+                        reader.read_exact(&mut flags)?;
+                        let mut layer = crate::drawing::representations::Representation::new(
+                            expression,
+                            MoleculeView::from_u8(flags[0]),
+                        );
+                        layer.name = name;
+                        layer.visible = flags[1] != 0;
+                        if flags[2] != 0 {
+                            layer.color = Some([
+                                read_float(&mut reader)?.clamp(0., 1.),
+                                read_float(&mut reader)?.clamp(0., 1.),
+                                read_float(&mut reader)?.clamp(0., 1.),
+                            ]);
+                        }
+                        layer.opacity = read_float(&mut reader)?.clamp(0., 1.);
+                        layer.size = read_float(&mut reader)?.clamp(0.1, 3.);
+                        to_save.representations.push(layer);
+                    }
+                    let n = read_u32(&mut reader)?;
+                    for _ in 0..n {
+                        to_save
+                            .hidden_default_objects
+                            .push(read_string(&mut reader)?);
+                    }
                 }
                 PacketType::Misc => {
                     let mut j = 0;

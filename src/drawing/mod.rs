@@ -43,6 +43,7 @@ use crate::{
 pub mod aa_highlight;
 pub mod atoms_bonds;
 pub mod peptide;
+pub mod representations;
 pub mod ribbon_mesh;
 mod viridis_lut;
 pub mod wrappers;
@@ -288,6 +289,8 @@ pub enum EntityClass {
     Pharmacophore = 11,
     PharmacophoreHint = 12,
     Pocket = 13,
+    Representation = 14,
+    SelectionHighlight = 15,
     Other = 99,
 }
 

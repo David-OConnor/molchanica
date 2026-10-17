@@ -1092,6 +1092,12 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         section_box().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 view_settings(state, scene, &mut updates, &mut redraw, ui);
+                if ui.add_enabled(state.peptides.len() >= 2, egui::Button::new("Compare proteins")).clicked() {
+                    state.ui.popup.protein_comparison = true;
+                }
+                if ui.button("Selections / layers").clicked() {
+                    state.ui.popup.selections = true;
+                }
 
                 ui.add_space(COL_SPACING / 2.);
                 ui.separator();
@@ -1223,6 +1229,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     // Run one or more MD steps, if a MD computation is in progress.
     state.md_step(scene, &mut updates);
+    crate::drawing::representations::update(state, scene, &mut updates);
 
     state.ui.dt_render = start.elapsed().as_secs_f32();
 

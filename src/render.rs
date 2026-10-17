@@ -139,6 +139,13 @@ fn render_handler(state: &mut State, scene: &mut Scene, _dt: f32) -> EngineUpdat
     updates
 }
 
+/// Run by `Graphics` once, when the event loop exits. Persist prefs on close, so changes made
+/// since the last action-triggered or timed save (e.g. selection, visibility, molecule positions)
+/// still stick.
+fn exit_handler(state: &mut State) {
+    state.update_save_prefs();
+}
+
 /// Entry point to our render and event loop.
 pub fn render(state: State) {
     let white = [1., 1., 1., 0.5];
@@ -263,7 +270,7 @@ pub fn render(state: State) {
 
     let graphics_settings = state.graphics_settings.clone();
 
-    graphics::run(
+    graphics::run_with_exit_handler(
         state,
         scene,
         ui_settings,
@@ -272,5 +279,6 @@ pub fn render(state: State) {
         inputs::event_dev_handler,
         inputs::event_win_handler,
         ui_handler,
+        exit_handler,
     );
 }

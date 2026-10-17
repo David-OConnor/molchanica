@@ -163,6 +163,16 @@ pub fn draw_all_ligs(state: &mut State, scene: &mut Scene, updates: &mut EngineU
 
     let mut entities = Vec::new();
     for (i_mol, mol) in mols.iter_mut().enumerate() {
+        if state
+            .to_save
+            .hidden_default_objects
+            .contains(&crate::selection::expression::object_key(
+                &MolGenericRef::Small(mol),
+            ))
+        {
+            mol.common.entity_i_range = None;
+            continue;
+        }
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol = drawing::draw_mol(
@@ -222,6 +232,16 @@ pub fn draw_all_nucleic_acids(state: &mut State, scene: &mut Scene, updates: &mu
 
     let mut entities = Vec::new();
     for (i_mol, mol) in mols.iter_mut().enumerate() {
+        if state
+            .to_save
+            .hidden_default_objects
+            .contains(&crate::selection::expression::object_key(
+                &MolGenericRef::NucleicAcid(mol),
+            ))
+        {
+            mol.common.entity_i_range = None;
+            continue;
+        }
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol = drawing::draw_mol(
@@ -279,6 +299,16 @@ pub fn draw_all_lipids(state: &mut State, scene: &mut Scene, updates: &mut Engin
 
     let mut entities = Vec::new();
     for (i_mol, mol) in mols.iter_mut().enumerate() {
+        if state
+            .to_save
+            .hidden_default_objects
+            .contains(&crate::selection::expression::object_key(
+                &MolGenericRef::Lipid(mol),
+            ))
+        {
+            mol.common.entity_i_range = None;
+            continue;
+        }
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol = drawing::draw_mol(
@@ -331,6 +361,16 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, updates: &mut Engi
 
     let mut entities = Vec::new();
     for mol in &mut state.pockets {
+        if state
+            .to_save
+            .hidden_default_objects
+            .contains(&crate::selection::expression::object_key(
+                &MolGenericRef::Pocket(mol),
+            ))
+        {
+            mol.common.entity_i_range = None;
+            continue;
+        }
         let start_i_mol = ent_i_start + entities.len();
 
         let ents_this_mol =

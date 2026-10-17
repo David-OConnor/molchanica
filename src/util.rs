@@ -145,6 +145,7 @@ impl RedrawFlags {
     pub fn set_from_sel(&mut self, sel: &Selection) {
         use Selection::*;
         match sel {
+            Atoms(_) => self.set_all(),
             AtomPeptide(_) | AtomsPeptide(_) | Residue(_) | Residues(_) | BondPeptide(_) => {
                 self.peptide = true
             }
@@ -227,6 +228,15 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
 
     if state.ui.orbit_selected_atom && state.volatile.operating_mode != OperatingMode::MolEditor {
         match &state.ui.selection {
+            Selection::Atoms(_) => {
+                let points = crate::selection::expression::positions(state);
+                if !points.is_empty() {
+                    let sum = points
+                        .iter()
+                        .fold(Vec3F32::new_zero(), |sum, p| sum + Vec3F32::from(*p));
+                    return sum / points.len() as f32;
+                }
+            }
             Selection::AtomPeptide(i) => {
                 if let Some(mol) = state
                     .peptide_for_tools_i()
@@ -778,6 +788,10 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         for (mol_i, mol) in state.peptides.iter().enumerate() {
             if Some(mol_i) == selected_peptide
                 || !mol.common.visible
+                || !crate::drawing::representations::default_visible(
+                    state,
+                    &mol_defs::molecules::MolGenericRef::Peptide(mol),
+                )
                 || effective_mol_view_peptide(state, mol_i) != MoleculeView::Ribbon
             {
                 continue;

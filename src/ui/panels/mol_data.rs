@@ -268,6 +268,13 @@ pub(in crate::ui) fn selected_data_mol_editor(state: &State, selection: &Selecti
 pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mut Ui) {
     ui.horizontal(|ui| {
         match selection {
+            Selection::Atoms(objects) => {
+                let count: usize = objects.iter().map(|o| o.atoms.len()).sum();
+                ui.label(format!(
+                    "{count} selected atoms in {} objects",
+                    objects.len()
+                ));
+            }
             Selection::AtomPeptide(sel_i) => {
                 let Some(mol) = state
                     .peptide_for_tools_i()

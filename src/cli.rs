@@ -12,10 +12,9 @@ use std::{
     str::FromStr,
 };
 
-use bio_files::ResidueType;
 use graphics::{EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC, arc_rotation};
 use mol_defs::molecules::AtomRole;
-use na_seq::{AminoAcid, Element};
+use na_seq::Element;
 use regex::Regex;
 
 use crate::{
@@ -31,14 +30,39 @@ fn new_invalid(msg: &str) -> io::Error {
     io::Error::new(ErrorKind::InvalidData, msg)
 }
 
+/// A comma inside a quoted model path is part of the expression, not a name separator.
+fn selection_args(input: &str) -> Option<(&str, &str)> {
+    let mut quote = None;
+    let mut chars = input.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if let Some(q) = quote {
+            if c == '\\'
+                && chars
+                    .peek()
+                    .is_some_and(|&(_, next)| next == q || next == '\\')
+            {
+                chars.next();
+            } else if c == q {
+                quote = None;
+            }
+        } else if c == '"' || c == '\'' {
+            quote = Some(c);
+        } else if c == ',' {
+            return Some((&input[..i], &input[i + 1..]));
+        }
+    }
+    None
+}
+
 // We use this for autocomplete.
-pub const CLI_CMDS: [&str; 20] = [
+pub const CLI_CMDS: [&str; 21] = [
     "help",
     "fetch",
     "save",
     "load",
     "show",
     "show_as",
+    "align mobile, reference",
     "view",
     "hide",
     "remove",
@@ -49,9 +73,9 @@ pub const CLI_CMDS: [&str; 20] = [
     "pwd",
     "ls",
     "cd",
-    "select resn",
-    "select resi",
-    "select elem",
+    "select name, expression",
+    "select expression",
+    "delete selection_name",
     "set",
 ];
 
@@ -67,6 +91,58 @@ pub fn handle_cmd(
 
     state.volatile.cli_input_history.push(input.clone());
     state.volatile.cli_input_selected += 1;
+
+    if let Some((command, args)) = input.split_once(char::is_whitespace) {
+        let args = args.trim();
+        match command.to_ascii_lowercase().as_str() {
+            "align" => {
+                let (mobile, reference) = selection_args(args).ok_or_else(|| {
+                    new_invalid("Usage: align mobile_expression, reference_expression")
+                })?;
+                crate::ui::popup::protein_comparison::start_expressions(
+                    state,
+                    mobile.trim(),
+                    reference.trim(),
+                )
+                .map_err(|e| new_invalid(&e))?;
+                return Ok(
+                    "Protein comparison started; results will appear in Compare proteins".into(),
+                );
+            }
+            "select" | "sele" => {
+                let count = if let Some((name, expression)) = selection_args(args) {
+                    crate::selection::expression::save_named(state, name.trim(), expression.trim())
+                        .map_err(|e| new_invalid(&e))?
+                } else {
+                    let atoms = crate::selection::expression::evaluate(state, args)
+                        .map_err(|e| new_invalid(&e))?;
+                    let count: usize = atoms.iter().map(|a| a.atoms.len()).sum();
+                    state.ui.selection = Selection::Atoms(atoms);
+                    count
+                };
+                *redraw = true;
+                return Ok(format!("Selected {count} atoms"));
+            }
+            "delete" => {
+                crate::selection::expression::delete_named(state, args.trim_start_matches('%'))
+                    .map_err(|e| new_invalid(&e))?;
+                return Ok(format!("Deleted selection {args}"));
+            }
+            "show" => {
+                let (view, expression) = args.split_once(',').unwrap_or((args, "all"));
+                let count = crate::drawing::representations::add(
+                    state,
+                    expression.trim(),
+                    view.trim().parse()?,
+                )
+                .map_err(|e| new_invalid(&e))?;
+                return Ok(format!(
+                    "Added representation layer ({count} atoms). Edit it in Selections / layers."
+                ));
+            }
+            _ => (),
+        }
+    }
 
     // todo: Helpers to reduce regex DRY.
     let re_help = Regex::new(r"(?i)^help$").unwrap();
@@ -90,10 +166,6 @@ pub fn handle_cmd(
     let re_pwd = Regex::new(r"(?i)^pwd\s*$").unwrap();
     let re_ls = Regex::new(r"(?i)^ls\s*$").unwrap();
     let re_cd = Regex::new(r"(?i)^cd\s+(.+)$").unwrap();
-
-    let re_sel_resi = Regex::new(r"(?i)^(?:sele|select)\s+resi\s+([0-9]+)$").unwrap();
-    let re_sel_resn = Regex::new(r"(?i)^(?:sele|select)\s+resn\s+([a-z]{3})$").unwrap();
-    let re_sel_elem = Regex::new(r"(?i)^(?:sele|select)\s+elem\s+([a-z]{1,2})$").unwrap();
 
     let re_set = Regex::new(r"(?i)^set\s+([a-z0-9\s\-_]+)(?:,\s*([a-z0-9]+))?$").unwrap();
 
@@ -136,7 +208,7 @@ pub fn handle_cmd(
         return Ok(format!("Loaded {filename}"));
     }
 
-    // Note: We don't have show and hide for the varous display items; this sets the display.
+    // show_as retains the global default-view shortcut; show creates additive layers.
     if let Some(caps) = re_show.captures(&input) {
         let mode = &caps[1];
         let view = mode.parse()?;
@@ -345,67 +417,6 @@ pub fn handle_cmd(
 
         env::set_current_dir(dir)?;
         return Ok(format!("Now in {}", env::current_dir()?.display()));
-    }
-
-    // Selections
-    if let Some(caps) = re_sel_resn.captures(&input)
-        && let Some(mol) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-    {
-        let aa = AminoAcid::from_str(&caps[1])?;
-
-        let mut result = Vec::new();
-
-        for res in &mol.residues {
-            if let ResidueType::AminoAcid(aa_) = res.res_type
-                && aa_ == aa
-            {
-                result.extend(&res.atoms);
-            }
-        }
-
-        state.ui.selection = Selection::AtomsPeptide(result);
-        *redraw = true;
-        return Ok("Complete".to_owned());
-    }
-
-    if let Some(caps) = re_sel_resi.captures(&input)
-        && let Some(mol) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-    {
-        let i: u32 = caps[1]
-            .parse()
-            .map_err(|_| io::Error::new(ErrorKind::InvalidData, "Invalid index."))?;
-
-        for (i_res, res) in mol.residues.iter().enumerate() {
-            if res.serial_number == i {
-                state.ui.selection = Selection::Residue(i_res);
-                *redraw = true;
-                return Ok("Complete".to_owned());
-            }
-        }
-        return Err(new_invalid("Unable to find this residue"));
-    }
-
-    if let Some(caps) = re_sel_elem.captures(&input)
-        && let Some(mol) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-    {
-        let el = Element::from_letter(&caps[1])?;
-
-        let mut result = Vec::new();
-        for (i, atom) in mol.common.atoms.iter().enumerate() {
-            if atom.element == el {
-                result.push(i);
-            }
-        }
-
-        state.ui.selection = Selection::AtomsPeptide(result);
-        *redraw = true;
-        return Ok("Complete".to_owned());
     }
 
     if let Some(caps) = re_set.captures(&input) {

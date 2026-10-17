@@ -3,11 +3,13 @@ pub mod external_tools;
 pub mod ff_params;
 pub mod mol_db;
 pub mod pharmacophore;
+pub mod protein_comparison;
 pub mod protein_design;
 mod protein_res_management;
 pub(in crate::ui) mod rama_plot;
 pub mod reactions;
 pub mod recent_files;
+pub mod selections;
 mod settings;
 pub(crate) mod tool_runner;
 
@@ -88,6 +90,21 @@ pub(in crate::ui) fn load_popups(
     reset_cam: &mut bool,
     updates: &mut EngineUpdates,
 ) {
+    protein_comparison::poll(state, ui, redraw);
+    if state.ui.popup.protein_comparison {
+        state.ui.popup.protein_comparison = show_popup(
+            popup("Protein superposition and comparison").default_width(760.),
+            ui.ctx(),
+            |ui| protein_comparison::editor(state, scene, ui, redraw, updates),
+        );
+    }
+    if state.ui.popup.selections {
+        state.ui.popup.selections = show_popup(
+            popup("Selections and representation layers").default_width(700.),
+            ui.ctx(),
+            |ui| selections::editor(state, ui, redraw),
+        );
+    }
     reactions::poll_downloads(state, scene, redraw, updates);
     if crate::reactions::poll(state) {
         ui.ctx()

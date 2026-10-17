@@ -305,6 +305,54 @@ Can import Map files directly, and save load density to Map format.
 Uses neural networks to infer pharmacokinetic properties of arbitrary small molecules,
 using [Therapeutic Data Commons](https://tdcommons.ai/) data.
 
+## Protein superposition and comparison
+
+Open two proteins, then choose **Compare proteins** beside the view controls. Pick the reference
+and mobile chains; optional selection expressions (including saved names such as `%core`) restrict
+the fitting region. **Superpose** aligns corresponding Cα atoms and moves the entire mobile object
+rigidly. **Compare without moving** calculates the same fit and statistics without applying it.
+The reference stays fixed. Embedded hetero residues move with the mobile protein; separately loaded
+ligands and electron-density maps do not move.
+
+Three correspondence methods are available:
+
+- **Sequence alignment** handles substitutions and gaps in related proteins using a global affine-gap
+  alignment of residues with Cα coordinates (match +3, substitution −1, gap opening −5, extension −1).
+- **Residue numbers** pairs matching serial numbers within the chosen chains.
+- **Selected residue order** pairs equal-length selections in residue order.
+
+The fit requires at least three noncollinear pairs and uses a proper rigid rotation, without scaling
+or reflection. Missing Cα atoms are skipped and one alternate conformation is used per residue.
+Optional outlier rejection removes pairs beyond a distance cutoff and refits for up to five cycles.
+The panel reports matched/retained/rejected counts, coverage, sequence identity, RMSD before fitting,
+and RMSD after fitting for both all pairs and the retained fitting pairs. This is a sequence-guided
+comparison workflow, not a sequence-independent fold search or automatic multimer chain assignment.
+Sequence alignment is limited to four million cells; restrict the fitting regions for longer chains.
+
+The deviation plot and residue table help locate structural differences. Click a row to select and
+focus the paired residues, or select all matches, rejected pairs, or pairs above a distance threshold.
+These selections can be saved or given additional representations through **Selections / layers**.
+Comparison layers show the reference in blue and mobile in orange, with each object's default view
+disabled; the layers remain editable. **Undo superposition** restores the previous mobile coordinates.
+Results detect closed, edited, or moved structures and require a new comparison before applying a
+stale transform or using stale residue mappings.
+
+**Copy residue CSV** exports the correspondence and deviations; **Copy transform** copies the fitted
+4×4 mobile-to-reference transform. **Export fitted mmCIF** saves all mobile atoms at their fitted
+coordinates, even after a comparison performed without moving. This is a coordinate-only file,
+without the source's experimental metadata or maps. Use this explicit export to retain the fitted pose:
+the ordinary protein Save path preserves the source CIF text. Comparison results and undo history are
+session-local. Superposition applies in the main molecule view with MD paused.
+
+From the CLI, `align mobile_expression, reference_expression` starts the same workflow and opens the
+comparison panel. Each expression must identify Cα atoms from one protein chain, for example:
+
+```text
+align model mobile and chain A, model reference and chain A
+```
+
+The command uses sequence correspondence and the panel's outlier-rejection and comparison-layer settings.
+
 ## PyMol-like Command line interface
 
 Molchanica supports a very limited subset of PyMol's CLI interface. Supported commands:
@@ -327,18 +375,63 @@ Molchanica supports a very limited subset of PyMol's CLI interface. Supported co
 
 ### View and edit
 
-- `show`: Set the view mode. e.g. `show sticks`
+- `show representation, expression`: Add a representation layer, e.g. `show sticks, ligand`. Without an expression, applies to `all`.
+- `show_as`: Set the global default view mode, e.g. `show_as cartoon`. Existing layers remain independent.
 - `view`: Save and load scenes. e.g. `view v1`, `view v1 store`, `view v2 recall`
 - `hide`: Limited options available, e.g. `resn HOH`, `hydro`, `chain`, `hetatm` etc.
 - `remove`: Limited options available, e.g. `resn HOH`, `hydro`, `chain`, `hetatm` etc.
 
 ### Selections
 
-- `select resn`: Select a residue by 3-letter amino acid identifier
-- `select resi`: Select a residue by index
-- `select elem`: Select an atom by element abbreviation
+- `select expression`: Select atoms across loaded molecules. `sele` also works as the command name.
+- `select name, expression`: Save or update a named selection.
+- `select %name`: Recall a named selection. Bare names also work.
+- `delete name`: Delete an unused named selection. References from other selections or layers must be removed first.
 
-(`sele` works too)
+Open **Selections /
+layers** beside the view controls to create, recall, update, or delete selections;
+add and edit layers; and toggle each object's default view. Use **Use picked selection** or **Use
+object…**
+to build an expression from the current selection or an object.
+
+Expressions support `and`, `or`, `not`, parentheses, `byres (...)`, and `... within 4 of (...)` (Å).
+`and` binds more tightly than `or`; use parentheses around compound spatial queries.
+Selectors include `model`, `chain`, `resi`, `resn`, `elem`, `name`, `id`, `index`, and `alt`.
+For example, `chain A and resi 10-25+40 and not hydrogen`. `resi` uses residue serial numbers;
+`id` uses atom serial numbers; `index` is a 1-based atom index within each object.
+Text values accept case-insensitive matching, `*` wildcards, and `+` lists. Quote paths or values
+containing spaces. `model` matches an object's path, identifier, filename stem, or assigned name.
+
+Convenience selectors include `all`, `none`, `protein`, `nucleic`, `ligand`, `lipid`, `water`,
+`hydrogen`, `backbone`, `sidechain`, and `hetatm`. Comparisons include `charge < 0` and
+`occupancy >= 0.5` (`partial_charge` and `q`, respectively, are aliases). Missing properties do not match.
+`sele` in an expression means the current picked selection; saving a name or adding a layer captures
+those atoms by object identity and atom serial number.
+
+```text
+select site, byres (protein within 4 of ligand)
+show cartoon, protein
+show sticks, site and not hydrogen
+show spheres, ligand
+show surface, protein
+```
+
+Layers can overlap, with independent visibility, color, opacity, and atom/bond radius. Supported views
+are backbone, sticks, ball-and-stick, spheres, cartoon/ribbon (proteins), surface, and dots.
+Turn off an object's **Default object
+view** to show only its layers. Global view filters apply to the
+default view; each layer's expression controls its atom set. An object's visibility toggle controls all
+of its layers. Use the layer editor to hide or delete layers; the CLI's existing `hide` commands still
+control default-view filters.
+
+Named expressions, layers, and default-view toggles are stored in preferences and restored between
+launches. Named expressions are reevaluated when recalled and when used by layers. Distance-based
+layers follow moving molecules, and layers referencing a name follow its updates. Closed objects contribute no atoms and can match
+again when reopened. The object picker uses source paths (identifiers for unsaved objects), so reopening
+objects in a different order does not retarget saved expressions. Copies sharing a source path match
+the same path selector; use distinct source files to persistently distinguish them.
+Layers currently apply to the main molecule view; the molecule editor and MD trajectory viewer retain
+their own rendering controls.
 
 ### Camera controls
 
@@ -468,7 +561,6 @@ similar in the path, e.g.:
 
 ### Errata
 
-- Only one protein can be loaded at a time
 - Opening electron density files in general can be slow. This can lead to the program starting slowly if it was
 - Minimizing may pause molecular dynamics computations.
 - On some displays (Ones with pixel scaling), dragging the MD time slider may also move the camera. To workaround, click

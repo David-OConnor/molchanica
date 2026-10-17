@@ -1,6 +1,8 @@
 //! For determining which items the user has selected using the mouse cursor. Involves
 //! mapping 2D to 3D coordinates, and choosing the right item from what's open and visible.
 
+pub mod expression;
+
 use std::{fmt, fmt::Display, str::FromStr};
 
 use bincode::{Decode, Encode};
@@ -32,10 +34,20 @@ const SELECTION_DIST_THRESH_LARGE: f32 = 1.2; // e.g. VDW views like spheres.
 
 const SEL_NEAR_PAD: f32 = 4.;
 
-#[derive(Clone, PartialEq, Debug, Default, Encode, Decode)]
+/// One molecule's portion of a selection, evaluated against the currently loaded objects.
+#[derive(Clone, PartialEq, Debug)]
+pub struct MoleculeAtoms {
+    pub mol_type: MolType,
+    pub mol_i: usize,
+    pub atoms: Vec<usize>,
+}
+
+#[derive(Clone, PartialEq, Debug, Default)]
 pub enum Selection {
     #[default]
     None,
+    /// A selection expression may span several molecules and molecule types.
+    Atoms(Vec<MoleculeAtoms>),
     /// Of the protein
     AtomPeptide(usize),
     /// Of the protein
@@ -64,6 +76,9 @@ pub enum Selection {
 
 impl Selection {
     pub(crate) fn is_peptide(&self) -> bool {
+        if let Self::Atoms(objects) = self {
+            return objects.iter().any(|o| o.mol_type == MolType::Peptide);
+        }
         matches!(
             self,
             Self::AtomPeptide(_)
@@ -800,6 +815,52 @@ pub(crate) fn handle_selection_attempt(
         let atoms_along_ray_pocket =
             points_along_ray_atom(selected_ray, &pocket_atoms, dist_thresh_mol);
 
+        let atoms_along_ray_pep: Vec<_> = atoms_along_ray_pep
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Peptide, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_lig: Vec<_> = atoms_along_ray_lig
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Ligand, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_na: Vec<_> = atoms_along_ray_na
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::NucleicAcid, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_lipid: Vec<_> = atoms_along_ray_lipid
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Lipid, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_pocket: Vec<_> = atoms_along_ray_pocket
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Pocket, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+
         find_sel_from_cursor_ray(
             &atoms_along_ray_pep,
             &atoms_along_ray_lig,
@@ -857,6 +918,52 @@ pub(crate) fn handle_selection_attempt(
         let atoms_along_ray_pocket =
             points_along_ray_bond(selected_ray, &pocket_bonds, &pocket_atoms, dist_thresh_mol);
 
+        let atoms_along_ray_pep: Vec<_> = atoms_along_ray_pep
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Peptide, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_lig: Vec<_> = atoms_along_ray_lig
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Ligand, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_na: Vec<_> = atoms_along_ray_na
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::NucleicAcid, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_lipid: Vec<_> = atoms_along_ray_lipid
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Lipid, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+        let atoms_along_ray_pocket: Vec<_> = atoms_along_ray_pocket
+            .into_iter()
+            .filter(|(i, _)| {
+                state.get_mol(MolType::Pocket, *i).is_some_and(|m| {
+                    m.common().visible
+                        && crate::drawing::representations::default_visible(state, &m)
+                })
+            })
+            .collect();
+
         find_sel_from_cursor_ray(
             &atoms_along_ray_pep,
             &atoms_along_ray_lig,
@@ -880,6 +987,16 @@ pub(crate) fn handle_selection_attempt(
             true,
             state.volatile.inputs_commanded.run,
         )
+    };
+
+    // A layer can reveal atoms hidden by the default view, or use a different radius.
+    let (sel_atoms, dist_atoms, atom_mol) = if let Some((picked, distance, mol)) =
+        crate::drawing::representations::pick(state, selected_ray)
+        && distance < dist_atoms.min(dist_bonds)
+    {
+        (picked, distance, Some(mol))
+    } else {
+        (sel_atoms, dist_atoms, atom_mol)
     };
 
     // Change the active molecule to the one that owns the winning atom or bond.
@@ -1613,6 +1730,16 @@ impl State {
     /// Resolve an atom or residue selection to a camera target. For multiple peptide atoms or
     /// residues, use the first selected item. Invalid and unsupported selections have no target.
     pub fn selected_target(&self) -> Option<lin_alg::f64::Vec3> {
+        if matches!(self.ui.selection, Selection::Atoms(_)) {
+            let points = expression::positions(self);
+            return (!points.is_empty()).then(|| {
+                points
+                    .iter()
+                    .copied()
+                    .fold(lin_alg::f64::Vec3::new_zero(), |sum, p| sum + p)
+                    / points.len() as f64
+            });
+        }
         let (mol_type, (mol_i, atom_i)) = match &self.ui.selection {
             Selection::AtomPeptide(_)
             | Selection::AtomsPeptide(_)

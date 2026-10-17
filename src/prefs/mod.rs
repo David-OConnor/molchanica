@@ -287,6 +287,9 @@ impl Default for UiPrefs {
 /// but are here due to our save mechanic.
 #[derive(Clone, PartialEq)]
 pub struct ToSave {
+    pub named_selections: Vec<crate::selection::expression::NamedSelection>,
+    pub representations: Vec<crate::drawing::representations::Representation>,
+    pub hidden_default_objects: Vec<String>,
     pub per_mol: HashMap<String, PerMolToSave>,
     pub open_history: Vec<OpenHistory>,
     pub control_scheme: ControlSchemeType,
@@ -318,6 +321,9 @@ pub struct ToSave {
 impl Default for ToSave {
     fn default() -> Self {
         Self {
+            named_selections: Vec::new(),
+            representations: Vec::new(),
+            hidden_default_objects: Vec::new(),
             per_mol: Default::default(),
             open_history: Default::default(),
             control_scheme: ControlSchemeType::Free,

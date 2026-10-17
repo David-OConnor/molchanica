@@ -811,23 +811,35 @@ pub fn build_ribbon_mesh(
             continue;
         }
 
-        build_segment_mesh(
-            &frames,
-            seg.sec_struct,
-            aa_count,
-            residues,
-            atoms,
-            bonds,
-            res_coloring,
-            view_sel_level,
-            selection,
-            residue_colors,
-            sifts,
-            chain_count,
-            chains,
-            &mut vertices,
-            &mut indices,
-        );
+        // A selection may remove residues from the middle of a secondary-structure
+        // segment. Never bridge that hole, another chain, or a structural gap.
+        for run in frames.chunk_by(|a, b| {
+            b.res_idx == a.res_idx + 1
+                && res_to_chain.get(&a.res_idx) == res_to_chain.get(&b.res_idx)
+        }) {
+            for sub in split_at_gaps(run) {
+                if sub.len() < 2 {
+                    continue;
+                }
+                build_segment_mesh(
+                    sub,
+                    seg.sec_struct,
+                    aa_count,
+                    residues,
+                    atoms,
+                    bonds,
+                    res_coloring,
+                    view_sel_level,
+                    selection,
+                    residue_colors,
+                    sifts,
+                    chain_count,
+                    chains,
+                    &mut vertices,
+                    &mut indices,
+                );
+            }
+        }
     }
 
     // ── 3. Render coil / loop regions ─────────────────────────────────────────

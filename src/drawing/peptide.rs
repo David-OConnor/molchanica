@@ -413,63 +413,9 @@ impl PointGrid {
 /// Positions of the selected atoms, of any molecule type. For bonds, this is both of their atoms;
 /// for residues, all of their atoms.
 fn sel_posits(state: &State) -> Vec<Vec3> {
-    // Peptide selections are of this one.
-    let pep_i = state.peptide_for_tools_i();
-
-    let res_atoms = |res_is: &[usize]| -> Vec<usize> {
-        let Some(pep) = pep_i.and_then(|i| state.peptides.get(i)) else {
-            return Vec::new();
-        };
-
-        res_is
-            .iter()
-            .filter_map(|i| pep.residues.get(*i))
-            .flat_map(|res| res.atoms.iter().copied())
-            .collect()
-    };
-
-    let none = Vec::new;
-
-    // Molecule type, molecule index, atom indices, bond indices.
-    let (mol_type, mol_i, atoms, bonds) = match &state.ui.selection {
-        Selection::AtomPeptide(i) => (MolType::Peptide, pep_i, vec![*i], none()),
-        Selection::AtomsPeptide(is) => (MolType::Peptide, pep_i, is.clone(), none()),
-        Selection::BondPeptide(i) => (MolType::Peptide, pep_i, none(), vec![*i]),
-        Selection::Residue(i) => (MolType::Peptide, pep_i, res_atoms(&[*i]), none()),
-        Selection::Residues(is) => (MolType::Peptide, pep_i, res_atoms(is), none()),
-
-        Selection::AtomLig((m, i)) => (MolType::Ligand, Some(*m), vec![*i], none()),
-        Selection::AtomsLig((m, is)) => (MolType::Ligand, Some(*m), is.clone(), none()),
-        Selection::BondLig((m, i)) => (MolType::Ligand, Some(*m), none(), vec![*i]),
-        Selection::BondsLig((m, is)) => (MolType::Ligand, Some(*m), none(), is.clone()),
-
-        Selection::AtomNucleicAcid((m, i)) => (MolType::NucleicAcid, Some(*m), vec![*i], none()),
-        Selection::BondNucleicAcid((m, i)) => (MolType::NucleicAcid, Some(*m), none(), vec![*i]),
-
-        Selection::AtomLipid((m, i)) => (MolType::Lipid, Some(*m), vec![*i], none()),
-        Selection::BondLipid((m, i)) => (MolType::Lipid, Some(*m), none(), vec![*i]),
-
-        Selection::AtomPocket((m, i)) => (MolType::Pocket, Some(*m), vec![*i], none()),
-        Selection::BondPocket((m, i)) => (MolType::Pocket, Some(*m), none(), vec![*i]),
-
-        Selection::None | Selection::ComponentEditor(_) => return Vec::new(),
-    };
-
-    let Some(mol) = mol_i.and_then(|i| state.get_mol(mol_type, i)) else {
-        return Vec::new();
-    };
-    let common = mol.common();
-
-    let bond_atoms = bonds
-        .iter()
-        .filter_map(|i| common.bonds.get(*i))
-        .flat_map(|b| [b.atom_0, b.atom_1]);
-
-    atoms
+    crate::selection::expression::positions(state)
         .into_iter()
-        .chain(bond_atoms)
-        .filter_map(|i| common.atom_posits.get(i))
-        .map(|p| (*p).into())
+        .map(Into::into)
         .collect()
 }
 
@@ -599,6 +545,10 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     let has_other_ribbons = state.peptides.iter().enumerate().any(|(mol_i, mol)| {
         Some(mol_i) != selected_peptide
             && mol.common.visible
+            && crate::drawing::representations::default_visible(
+                state,
+                &mol_defs::molecules::MolGenericRef::Peptide(mol),
+            )
             && effective_mol_view_peptide(state, mol_i) == MoleculeView::Ribbon
     });
     if has_other_ribbons {
@@ -631,7 +581,12 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
     let Some(mol) = state.peptides.get(mol_i) else {
         return;
     };
-    if !mol.common.visible {
+    if !mol.common.visible
+        || !crate::drawing::representations::default_visible(
+            state,
+            &mol_defs::molecules::MolGenericRef::Peptide(mol),
+        )
+    {
         return;
     }
 

@@ -471,6 +471,7 @@ impl Drop for ComputationGuard {
 /// Temporary, and generated state.
 #[derive(Default)]
 pub struct StateVolatile {
+    pub representations: crate::drawing::representations::RepresentationCache,
     pub dialogs: FileDialogs,
     pub thread_receivers: ThreadReceivers,
     /// Prevents repeatedly starting the built-in database worker if an embedded database is
@@ -631,6 +632,8 @@ impl Default for AaSelection {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
+    pub protein_comparison: crate::ui::popup::protein_comparison::ProteinComparison,
+    pub selection_editor: crate::ui::popup::selections::SelectionEditor,
     pub reactions: crate::reactions::ReactionsState,
     pub synthesis_reactions: crate::reactions::SynthesisReactionsState,
     /// View mode for proteins/peptides.
@@ -943,6 +946,8 @@ pub struct MolDbTableView {
 /// Defines which UI popups are displayed.
 #[derive(Default, Debug)]
 pub struct PopupState {
+    pub protein_comparison: bool,
+    pub selections: bool,
     pub reactions: bool,
     pub synthesis_reactions: bool,
     pub show_get_geostd: bool,
