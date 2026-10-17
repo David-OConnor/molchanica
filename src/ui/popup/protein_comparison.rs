@@ -291,6 +291,7 @@ pub fn editor(
         ui.horizontal(|ui| {
             let apply = ui.button("Superpose").clicked();
             let measure = ui.button("Compare without moving").clicked();
+
             if apply || measure {
                 let request = protein_alignment::source(
                     state,

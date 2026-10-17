@@ -2,7 +2,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use egui::{
-    Button, Color32, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, RichText, Sense, Stroke,
+    Button, Color32, CursorIcon, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, RichText, Sense, Stroke,
     TextEdit, TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
     text_selection::LabelSelectionState, vec2,
 };
@@ -379,6 +379,23 @@ pub(in crate::ui) fn sequence_display(
             Color32::WHITE,
             Stroke::NONE,
         );
+
+        // `label_text_selection` shows the text cursor anywhere over `response`, but that also
+        // spans the blank space after the final residue and the copy buttons. Restore the
+        // normal pointer there, unless a selection drag is underway. This runs before the
+        // buttons are added, so any cursor they set still wins.
+        if response.hovered()
+            && !response.dragged()
+            && let Some(pointer) = response.hover_pos()
+        {
+            let pos = pointer - rect.min;
+            let in_galley = Rect::from_min_size(Pos2::ZERO, galley.size()).contains(pos.to_pos2());
+            let past_last_residue = pos.y >= last_row.min.y && pos.x > last_row.right();
+
+            if !in_galley || past_last_residue {
+                ui.ctx().set_cursor_icon(CursorIcon::Default);
+            }
+        }
 
         let all_rect = Rect::from_min_size(rect.min + btn_offset, all_size);
         let sel_rect = Rect::from_min_size(

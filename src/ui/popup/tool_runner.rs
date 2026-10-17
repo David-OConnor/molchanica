@@ -779,6 +779,9 @@ pub(crate) struct ToolWindow {
     /// A sequence to load into the selected tool's input, and a job name.
     /// See [`ToolWindows::load_structure_pred_seq`].
     pending_sequence: Option<(Sequence, String)>,
+    /// When set, the window shows results only (without the input form), under this heading.
+    /// `None` shows the job setup form.
+    results_heading: Option<&'static str>,
 }
 
 impl ToolWindow {
@@ -805,6 +808,7 @@ impl ToolWindow {
             .default_file_filter("Sequence files"),
             sequence_file_target: None,
             pending_sequence: None,
+            results_heading: None,
         }
     }
 
@@ -828,7 +832,8 @@ impl ToolWindow {
                 self.selected_result = self.results.len() - 1;
                 self.preview = first.as_ref().map(|path| preview_text(path));
                 self.selected_file = first;
-                self.message = Some("Run completed. All raw results are retained on disk.".into());
+                self.message = Some("All raw results are retained on disk.".into());
+                self.results_heading = Some("Run complete");
             }
             JobResult::Run(Err(error)) | JobResult::Install(Err(error)) => self.error = Some(error),
             JobResult::Install(Ok(())) => self.message = Some("Installation completed.".into()),
@@ -881,6 +886,15 @@ impl ToolWindow {
         self.poll();
         self.handle_picked_file(ui);
         self.handle_picked_sequence_file(ui);
+
+        // A sequence sent here from elsewhere goes into the form, so show it.
+        if self.pending_sequence.is_some() {
+            self.results_heading = None;
+        }
+
+        if let Some(heading) = self.results_heading {
+            return self.results_page(heading, ui);
+        }
 
         let busy = self.receiver.is_some();
 
@@ -1090,12 +1104,55 @@ impl ToolWindow {
             }
         }
 
+        self.status_ui(ui);
+
+        if !self.results.is_empty() && !busy {
+            ui.add_space(ROW_SPACING);
+            if ui
+                .button("View results →")
+                .on_hover_text("Show the results of this window's previous runs.")
+                .clicked()
+            {
+                self.error = None;
+                self.message = None;
+                self.results_heading = Some("Previous results");
+            }
+        }
+
+        None
+    }
+
+    /// The error and status message, if any.
+    fn status_ui(&self, ui: &mut Ui) {
         if let Some(error) = &self.error {
             ui.colored_label(Color32::LIGHT_RED, error);
         }
         if let Some(message) = &self.message {
             ui.label(message);
         }
+    }
+
+    /// The window after a run: its results only, and a way back to the job setup form.
+    fn results_page(&mut self, heading: &str, ui: &mut Ui) -> Option<PathBuf> {
+        if ui.button("← Back to job setup").clicked() {
+            self.results_heading = None;
+            self.error = None;
+            self.message = None;
+            return None;
+        }
+        ui.add_space(ROW_SPACING);
+
+        ui.label(
+            RichText::new(heading)
+                .color(Color32::LIGHT_GREEN)
+                .size(16.)
+                .strong(),
+        );
+
+        // E.g. a saved run loaded while another is still going.
+        self.progress_ui(ui);
+        self.status_ui(ui);
+        ui.add_space(ROW_SPACING);
 
         self.results_ui(ui)
     }
@@ -1140,6 +1197,9 @@ impl ToolWindow {
                         self.preview = self.selected_file.as_ref().map(|path| preview_text(path));
                         self.selected_result = self.results.len();
                         self.results.push((tool, result));
+                        self.error = None;
+                        self.message = None;
+                        self.results_heading = Some("Saved run loaded");
                     }
                     Err(error) => self.error = Some(error.to_string()),
                 }
@@ -1230,7 +1290,6 @@ impl ToolWindow {
         if self.results.is_empty() {
             return None;
         }
-        ui.separator();
 
         let previous = self.selected_result;
         ComboBox::from_id_salt("tool_result_history")

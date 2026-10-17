@@ -124,6 +124,7 @@ pub fn source(
     if mol.common.atom_posits.len() != mol.common.atoms.len() {
         return Err("Protein atom coordinates are incomplete".into());
     }
+
     if mol
         .common
         .atom_posits
@@ -132,6 +133,7 @@ pub fn source(
     {
         return Err("Protein contains nonfinite coordinates".into());
     }
+
     let selected = expression::evaluate(
         state,
         if selection.trim().is_empty() {
@@ -140,11 +142,13 @@ pub fn source(
             selection
         },
     )?;
+
     let atoms = selected
         .iter()
         .find(|s| s.mol_type == MolType::Peptide && s.mol_i == i)
         .map(|s| s.atoms.as_slice())
         .unwrap_or(&[]);
+
     let mut by_residue: BTreeMap<usize, usize> = BTreeMap::new();
     for &a in atoms {
         let atom = &mol.common.atoms[a];
@@ -161,6 +165,7 @@ pub fn source(
         {
             continue;
         }
+
         // Use one alternate per residue: unlabelled/A first, then highest occupancy.
         let rank = |a: usize| {
             let a = &mol.common.atoms[a];
@@ -176,10 +181,12 @@ pub fn source(
                 a.occupancy.unwrap_or(0.),
             )
         };
+
         if by_residue.get(&r).is_none_or(|&old| rank(a) > rank(old)) {
             by_residue.insert(r, a);
         }
     }
+
     let ca: Vec<_> = by_residue
         .into_iter()
         .map(|(r, a)| {
@@ -598,9 +605,11 @@ pub fn compare(
                 .magnitude(),
         })
         .collect();
+
     let all_rmsd =
         (pairs.iter().map(|p| p.distance * p.distance).sum::<f64>() / pairs.len() as f64).sqrt();
     let kept: Vec<_> = pairs.iter().filter(|p| p.retained).collect();
+
     let fit_rmsd =
         (kept.iter().map(|p| p.distance * p.distance).sum::<f64>() / kept.len() as f64).sqrt();
     let transformed = mobile
