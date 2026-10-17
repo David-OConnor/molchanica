@@ -85,7 +85,6 @@ pub fn handle_cmd(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
     redraw: &mut bool,
-    reset_cam: &mut bool,
 ) -> io::Result<String> {
     let input = state.ui.cmd_line_input.trim().to_string();
 
@@ -179,7 +178,7 @@ pub fn handle_cmd(
 
     if let Some(caps) = re_fetch.captures(&input) {
         let ident = &caps[1];
-        download_mols::load_atom_coords_rcsb(ident, state, scene, updates, redraw, reset_cam);
+        download_mols::load_atom_coords_rcsb(ident, state, scene, updates, redraw);
 
         return Ok(format!("Loaded {ident} molecule from RCSB PDB"));
     }

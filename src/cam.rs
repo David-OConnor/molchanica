@@ -1,9 +1,9 @@
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use egui::Ui;
 use graphics::{Camera, ControlScheme, EngineUpdates, FWD_VEC, RIGHT_VEC, Scene, UP_VEC};
 use lin_alg::f32::{Quaternion, Vec3};
-use mol_defs::molecules::{MolGenericRef, MolType, common::MoleculeCommon};
+use mol_defs::molecules::{AtomRole, MolGenericRef, MolType, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
@@ -253,6 +253,22 @@ pub fn move_cam_to_active_mol(
 const MOVE_TO_TARGET_DIST: f32 = 15.;
 pub const MOVE_TO_CAM_DIST: f32 = 20.;
 
+// Clearance kept between a newly opened molecule and existing ones, in Å.
+const OPEN_CLEARANCE: f32 = 3.;
+// Approximate drawn atom radius, used when testing whether atoms block the view.
+const OCCLUDER_RADIUS: f32 = 1.5;
+// Keeps small molecules from filling the view when framing them.
+const FRAME_DIST_MIN: f32 = 12.;
+
+// The search for free space to open a molecule into: candidate spacing, the number of shells
+// around the starting point, and candidates per shell.
+const PLACEMENT_STEP: f32 = 4.;
+const PLACEMENT_SHELLS: usize = 12;
+const PLACEMENT_DIRS: usize = 32;
+
+// Candidate directions when looking for an unobscured view of a molecule.
+const VIEW_DIRS: usize = 64;
+
 /// Move the camera to look at a point of interest. Takes the starting location into account.
 /// todo: Smooth interpolated zoom.
 pub fn cam_look_at(cam: &mut Camera, target: lin_alg::f64::Vec3) {
@@ -394,4 +410,224 @@ pub fn move_cam_to_sel(state: &mut State, cam: &mut Camera, updates: &mut Engine
 pub fn move_mol_to_cam(mol: &mut MoleculeCommon, cam: &Camera) {
     let new_posit = cam.position + cam.orientation.rotate_vec(FWD_VEC) * MOVE_TO_CAM_DIST;
     mol.move_to(new_posit.into());
+}
+
+/// Move a newly opened molecule in front of the camera, into free space where no other molecule
+/// blocks the view of it. Use with [`frame_mol`], which then points the camera at it.
+pub fn place_mol_in_view(mol: &mut MoleculeCommon, state: &State, cam: &Camera) {
+    if mol.atom_posits.is_empty() {
+        return;
+    }
+
+    let fwd = cam.orientation.rotate_vec(FWD_VEC);
+    let start = cam.position + fwd * MOVE_TO_CAM_DIST;
+    mol.move_to(start.into());
+
+    let radius = mol.bounding_radius() as f32;
+    let dist = frame_dist(cam, radius);
+
+    // Only atoms this close to the start can collide with a candidate, or block the view of it.
+    let reach = PLACEMENT_STEP * PLACEMENT_SHELLS as f32 + radius + dist + OCCLUDER_RADIUS;
+    let obstacles: Vec<_> = obstacle_posits(state, None)
+        .into_iter()
+        .filter(|p| (*p - start).magnitude_squared() < reach * reach)
+        .collect();
+
+    if obstacles.is_empty() {
+        return;
+    }
+
+    let min_sep = radius + OPEN_CLEARANCE;
+    let is_free = |p: &Vec3| {
+        obstacles
+            .iter()
+            .all(|o| (*o - *p).magnitude_squared() > min_sep * min_sep)
+    };
+    let is_clear = |p: &Vec3| count_occluders(&obstacles, *p, radius, fwd, dist) == 0;
+
+    // First, step along the line of sight toward the camera; this is in front of whatever the
+    // user is looking at. Then search outward from the start, preferring spots nearer the camera.
+    let mut candidates: Vec<Vec3> = (0..)
+        .map(|i| MOVE_TO_CAM_DIST - PLACEMENT_STEP * i as f32)
+        .take_while(|t| *t >= PLACEMENT_STEP)
+        .map(|t| cam.position + fwd * t)
+        .collect();
+
+    for i in 1..=PLACEMENT_SHELLS {
+        let shell_radius = PLACEMENT_STEP * i as f32;
+
+        let mut shell: Vec<_> = sphere_dirs(PLACEMENT_DIRS)
+            .map(|dir| start + dir * shell_radius)
+            .collect();
+
+        shell.sort_by(|a, b| {
+            let dist_a = (*a - cam.position).magnitude_squared();
+            let dist_b = (*b - cam.position).magnitude_squared();
+            dist_a.total_cmp(&dist_b)
+        });
+
+        candidates.extend(shell);
+    }
+
+    // If no spot has a clear view from the current camera direction, `frame_mol` turns the
+    // camera to find one.
+    let posit = candidates
+        .iter()
+        .find(|p| is_free(p) && is_clear(p))
+        .or_else(|| candidates.iter().find(|p| is_free(p)));
+
+    if let Some(p) = posit {
+        mol.move_to((*p).into());
+    }
+}
+
+/// Point the camera at a molecule, from far enough away to see all of it. E.g. for one that was
+/// just opened. Keeps the current viewing direction, unless other molecules would block the view.
+pub fn frame_mol(
+    state: &mut State,
+    scene: &mut Scene,
+    molecule: (MolType, usize),
+    updates: &mut EngineUpdates,
+) {
+    let Some(mol) = state.get_mol(molecule.0, molecule.1) else {
+        return;
+    };
+    let mol = mol.common();
+
+    if mol.atom_posits.is_empty() {
+        return;
+    }
+
+    let center: Vec3 = mol.centroid().into();
+    let radius = mol.bounding_radius() as f32;
+
+    let cam = &mut scene.camera;
+    let dist = frame_dist(cam, radius);
+    let fwd = cam.orientation.rotate_vec(FWD_VEC);
+
+    let obstacles = obstacle_posits(state, Some(molecule));
+    let dir = clear_view_dir(&obstacles, center, radius, dist, fwd);
+
+    // A relative rotation preserves the camera's roll.
+    cam.orientation = Quaternion::from_unit_vecs(fwd, dir) * cam.orientation;
+    cam.position = center - dir * dist;
+
+    set_flashlight(scene);
+    updates.camera = true;
+    updates.lighting = true;
+
+    // Manual depth was tuned for the previous view; it could clip or fog out this one.
+    // As in `reset_camera`. Callers apply it with `set_fog`.
+    if let DepthMode::Manual(depth) = &mut state.to_save.depth_mode {
+        *depth = (VIEW_DEPTH_NEAR_MIN, VIEW_DEPTH_DEFAULT);
+    }
+
+    state.ui.cam_snapshot = None;
+}
+
+/// The camera distance from a sphere's center at which all of it fits in view.
+fn frame_dist(cam: &Camera, radius: f32) -> f32 {
+    let half_y = cam.fov_y / 2.;
+    let half_x = if cam.aspect > 0. {
+        (half_y.tan() * cam.aspect).atan()
+    } else {
+        half_y
+    };
+
+    (radius / half_y.min(half_x).sin()).max(FRAME_DIST_MIN)
+}
+
+/// Heavy-atom positions of visible molecules, other than `exclude`. Omits water, which is
+/// often hidden.
+fn obstacle_posits(state: &State, exclude: Option<(MolType, usize)>) -> Vec<Vec3> {
+    fn tagged<'a>(
+        mol_type: MolType,
+        mols: impl Iterator<Item = &'a MoleculeCommon> + 'a,
+    ) -> impl Iterator<Item = ((MolType, usize), &'a MoleculeCommon)> + 'a {
+        mols.enumerate().map(move |(i, mol)| ((mol_type, i), mol))
+    }
+
+    tagged(MolType::Peptide, state.peptides.iter().map(|m| &m.common))
+        .chain(tagged(
+            MolType::Ligand,
+            state.ligands.iter().map(|m| &m.common),
+        ))
+        .chain(tagged(
+            MolType::NucleicAcid,
+            state.nucleic_acids.iter().map(|m| &m.common),
+        ))
+        .chain(tagged(
+            MolType::Lipid,
+            state.lipids.iter().map(|m| &m.common),
+        ))
+        .chain(tagged(
+            MolType::Pocket,
+            state.pockets.iter().map(|m| &m.common),
+        ))
+        .filter(|(id, mol)| mol.visible && Some(*id) != exclude)
+        .flat_map(|(_, mol)| mol.atoms.iter().zip(&mol.atom_posits))
+        .filter(|(atom, _)| atom.element != Element::Hydrogen && atom.role != Some(AtomRole::Water))
+        .map(|(_, posit)| (*posit).into())
+        .collect()
+}
+
+/// The number of obstacle atoms blocking the view of a sphere, from a camera `dist` behind its
+/// center along `dir`.
+fn count_occluders(obstacles: &[Vec3], center: Vec3, radius: f32, dir: Vec3, dist: f32) -> usize {
+    let cam_posit = center - dir * dist;
+
+    obstacles
+        .iter()
+        .filter(|posit| {
+            let rel = **posit - cam_posit;
+            let t = rel.dot(dir);
+
+            if t <= 0. || t >= dist {
+                return false;
+            }
+
+            // The view cone narrows from the sphere's silhouette to a point at the camera.
+            let cone_radius = radius * t / dist + OCCLUDER_RADIUS;
+            rel.magnitude_squared() - t * t < cone_radius * cone_radius
+        })
+        .count()
+}
+
+/// A direction to view a sphere from, avoiding obstacles. Keeps the current direction unless
+/// another is substantially less obscured; among equally obscured ones, prefers the smallest turn.
+fn clear_view_dir(obstacles: &[Vec3], center: Vec3, radius: f32, dist: f32, current: Vec3) -> Vec3 {
+    let occluded_current = count_occluders(obstacles, center, radius, current, dist);
+    if occluded_current == 0 {
+        return current;
+    }
+
+    let mut best = (occluded_current, current);
+    for dir in sphere_dirs(VIEW_DIRS) {
+        let occluded = count_occluders(obstacles, center, radius, dir, dist);
+
+        if occluded < best.0 || (occluded == best.0 && dir.dot(current) > best.1.dot(current)) {
+            best = (occluded, dir);
+        }
+    }
+
+    // E.g. superposed proteins block each other from every direction. Don't swing the camera
+    // around for a marginal improvement.
+    if best.0 * 2 <= occluded_current {
+        best.1
+    } else {
+        current
+    }
+}
+
+/// Approximately evenly-spaced unit vectors, on a Fibonacci sphere.
+fn sphere_dirs(n: usize) -> impl Iterator<Item = Vec3> {
+    let golden_angle = PI * (3. - 5_f32.sqrt());
+
+    (0..n).map(move |i| {
+        let y = 1. - 2. * (i as f32 + 0.5) / n as f32;
+        let r = (1. - y * y).sqrt();
+        let theta = golden_angle * i as f32;
+
+        Vec3::new(r * theta.cos(), y, r * theta.sin())
+    })
 }

@@ -378,7 +378,6 @@ pub fn handle_redraw(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
-    reset_cam: bool,
     updates: &mut EngineUpdates,
 ) {
     if state.volatile.md_local.draw_md_mols
@@ -435,11 +434,6 @@ pub fn handle_redraw(
 
     if redraw.pocket {
         draw_all_pockets(state, scene, updates);
-    }
-
-    // Perform cleanup.
-    if reset_cam {
-        reset_camera(state, scene, updates, VIEW_DIR_FRONT);
     }
 
     *redraw = Default::default();
@@ -1092,7 +1086,6 @@ pub(crate) fn apply_query_result(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
-    reset_cam: &mut bool,
     updates: &mut EngineUpdates,
     result: QueryResult,
 ) {
@@ -1112,7 +1105,6 @@ pub(crate) fn apply_query_result(
                 scene,
                 updates,
                 &mut redraw.peptide,
-                reset_cam,
             ) {
                 state.ui.db_input.clear();
                 if let Some(message) = message {

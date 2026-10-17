@@ -287,7 +287,6 @@ fn draw_cli(
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
     redraw: &mut RedrawFlags,
-    reset_cam: &mut bool,
     ui: &mut Ui,
 ) {
     ui.horizontal_wrapped(|ui| {
@@ -358,8 +357,7 @@ fn draw_cli(
         if (button_clicked || enter_pressed) && state.ui.cmd_line_input.len() >= 2 {
             // todo: Error color
             state.ui.cmd_line_output =
-                match cli::handle_cmd(state, scene, engine_updates, &mut redraw.peptide, reset_cam)
-                {
+                match cli::handle_cmd(state, scene, engine_updates, &mut redraw.peptide) {
                     Ok(out) => {
                         state.ui.cmd_line_out_is_err = false;
                         out
@@ -809,7 +807,6 @@ fn top_controls(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
     redraw: &mut RedrawFlags,
-    reset_cam: &mut bool,
     ui: &mut Ui,
 ) {
     ui.horizontal_wrapped(|ui| {
@@ -965,7 +962,7 @@ fn top_controls(
 
 
             ui.add_space(COL_SPACING * 2.);
-            query_input(state, scene, ui, redraw, updates, reset_cam);
+            query_input(state, scene, ui, redraw, updates);
         });
     });
 }
@@ -987,8 +984,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     let mut redraw = RedrawFlags::default();
 
-    let mut reset_cam = false;
-
     // For getting DT for certain buttons when held. Does not seem to be the same as the 3D render DT.
     let start = Instant::now();
 
@@ -1007,7 +1002,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             state.mol_editor.md_step(&state.dev, &mut scene.entities, &state.ui,
                                      &mut updates, state.volatile.mol_manip.mode);
 
-            load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
+            load_popups(state, scene, ui, &mut redraw, &mut updates);
 
             return;
         }
@@ -1019,7 +1014,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             scene,
             &mut updates,
             &mut redraw,
-            &mut reset_cam,
             ui,
         );
 
@@ -1165,7 +1159,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             scene,
             &mut updates,
             &mut redraw,
-            &mut reset_cam,
             ui,
         );
 
@@ -1183,7 +1176,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         //     // }));
         // }
 
-        load_popups(state, scene, ui, &mut redraw, &mut reset_cam, &mut updates);
+        load_popups(state, scene, ui, &mut redraw, &mut updates);
 
         // -------UI above; clean-up items (based on flags) below
 
@@ -1211,7 +1204,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     handle_scene_flags(state, scene, &mut updates);
     let query_was_pending = state.volatile.thread_receivers.query.is_some();
-    handle_thread_rx(state, scene, &mut redraw, &mut reset_cam, &mut updates);
+    handle_thread_rx(state, scene, &mut redraw, &mut updates);
     if query_was_pending && state.volatile.thread_receivers.query.is_none() {
         ui.request_repaint();
     }
@@ -1220,7 +1213,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.request_repaint_after(Duration::from_millis(50));
     }
 
-    handle_redraw(state, scene, &mut redraw, reset_cam, &mut updates);
+    handle_redraw(state, scene, &mut redraw, &mut updates);
 
     // Run one or more MD steps, if a MD computation is in progress.
     state.md_step(scene, &mut updates);
@@ -1530,7 +1523,6 @@ fn query_input(
     ui: &mut Ui,
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
-    reset_cam: &mut bool,
 ) {
     let color_open_tools = if state.peptides.is_empty() && state.ligands.is_empty() {
         COLOR_ACTION
@@ -1600,7 +1592,6 @@ fn query_input(
                         scene,
                         updates,
                         &mut redraw.peptide,
-                        reset_cam,
                     );
                 }
                 Err(e) => handle_err(

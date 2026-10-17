@@ -27,8 +27,7 @@ use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::{
     molecules::{
-        MolGeneric, MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        POCKET_METADATA_KEY,
+        MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY,
         common::{MoleculeCommon, bonds_avail},
         peptide::MoleculePeptide,
         small::MoleculeSmall,
@@ -37,11 +36,10 @@ use mol_defs::{
     screening::pharmacophore::Pharmacophore,
 };
 use na_seq::{Element, Sequence};
-use rand::RngExt;
 
 use crate::{
     cam,
-    cam::move_mol_to_cam,
+    cam::place_mol_in_view,
     drawing::{
         MolTypeExt,
         peptide::draw_peptide,
@@ -60,9 +58,6 @@ use crate::{
 pub mod download_mols;
 pub(crate) mod managed_mols;
 pub mod sequence;
-
-// When opening molecules deconflict; don't allow a mol to be closer than this to another.
-const MOL_MIN_DIST_OPEN: f64 = 12.;
 
 /// Prepare one molecule once before running the bundled ADME models. The ADME crate repairs
 /// missing or untrusted 3D geometry with RDKit; doing that here makes the backend choice visible
@@ -1122,7 +1117,7 @@ impl State {
                 }
 
                 if !keep_posit {
-                    move_mol_to_cam(mol.common_mut(), &scene.camera);
+                    place_mol_in_view(&mut mol.common, self, &scene.camera);
                 }
 
                 if let Some(p) = &self.ff_param_set.small_mol {
@@ -1150,22 +1145,6 @@ impl State {
                 }
 
                 let centroid = mol.common.centroid();
-                // If there is already a molecule here, offset.
-                // todo: Apply this logic to other mol types A/R
-                for mol_other in self.ligands.iter().filter(|_| !keep_posit) {
-                    if (mol_other.common.centroid() - centroid).magnitude() < MOL_MIN_DIST_OPEN {
-                        let mut rng = rand::rng();
-                        let dir =
-                            Vec3::new(rng.random(), rng.random(), rng.random()).to_normalized();
-
-                        let pos_new = centroid + dir * MOL_MIN_DIST_OPEN;
-
-                        mol.common.move_to(pos_new);
-                        // Note: No further safeguard in this case.
-                        break;
-                    }
-                }
-
                 let ident = mol.common.ident.clone();
 
                 if let Some(p) = &mut mol.pharmacophore.pocket {
@@ -1184,10 +1163,7 @@ impl State {
                 (ident, centroid)
             }
             MoleculeGeneric::NucleicAcid(mut mol) => {
-                // if let Some(ref mut s) = scene {
-                //     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                move_mol_to_cam(mol.common_mut(), &scene.camera);
-                // }
+                place_mol_in_view(&mut mol.common, self, &scene.camera);
 
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
@@ -1201,10 +1177,7 @@ impl State {
                 (ident, centroid)
             }
             MoleculeGeneric::Lipid(mut mol) => {
-                // if let Some(ref mut s) = scene {
-                //     move_mol_to_cam(&mut mol.common_mut(), &s.camera);
-                move_mol_to_cam(mol.common_mut(), &scene.camera);
-                // }
+                place_mol_in_view(&mut mol.common, self, &scene.camera);
 
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
@@ -1221,9 +1194,7 @@ impl State {
                 (ident, centroid)
             }
             MoleculeGeneric::Pocket(mut mol) => {
-                // if let Some(ref mut s) = scene {
-                move_mol_to_cam(mol.common_mut(), &scene.camera);
-                // }
+                place_mol_in_view(&mut mol.common, self, &scene.camera);
 
                 let centroid = mol.common.centroid();
                 let ident = mol.common.ident.clone();
@@ -1263,6 +1234,12 @@ impl State {
 
         if let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme {
             *center = centroid.into();
+        }
+
+        // Show the new molecule. Not for one split off in place, which is already in view, or
+        // for session restoration, which frames the whole session once done.
+        if draw_now && !keep_posit {
+            cam::frame_mol(self, scene, (mol_type, mol_i), updates);
         }
 
         cam::set_fog(self, &mut scene.camera);

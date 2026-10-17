@@ -17,13 +17,14 @@ use mol_defs::molecules::{
 };
 
 use crate::{
+    cam,
     drawing::EntityClass,
     file_io::{
         load_peptide,
         managed_mols::{self, ManagedMolProvider},
     },
     prefs::OpenType,
-    render::set_flashlight,
+    render::set_static_light,
     state::State,
     util::handle_err,
 };
@@ -141,17 +142,8 @@ pub fn load_atom_coords_rcsb(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
     redraw: &mut bool,
-    reset_cam: &mut bool,
 ) {
-    load_atom_coords(
-        CifSource::Rcsb,
-        ident,
-        state,
-        scene,
-        updates,
-        redraw,
-        reset_cam,
-    );
+    load_atom_coords(CifSource::Rcsb, ident, state, scene, updates, redraw);
 }
 
 /// Download a protein's mmCIF file, and open it. `ident` is a PDB ID for RCSB and PDBe, and a
@@ -164,12 +156,9 @@ pub fn load_atom_coords(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
     redraw: &mut bool,
-    reset_cam: &mut bool,
 ) -> bool {
     let result = load_cif(source, ident);
-    open_atom_coords(
-        source, ident, result, state, scene, updates, redraw, reset_cam,
-    )
+    open_atom_coords(source, ident, result, state, scene, updates, redraw)
 }
 
 /// Apply a downloaded structure on the UI thread. The query bar downloads and parses it in a
@@ -182,7 +171,6 @@ pub fn open_atom_coords(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
     redraw: &mut bool,
-    reset_cam: &mut bool,
 ) -> bool {
     let source_name = source.name();
     println!("Loading atom data from {source_name}...");
@@ -272,9 +260,13 @@ pub fn open_atom_coords(
     state.volatile.orbit_center = Some((MolType::Peptide, peptide_i));
 
     *redraw = true;
-    *reset_cam = true;
-    set_flashlight(scene);
-    updates.lighting = true;
+
+    // Frame it as for a protein opened from a file. Also place the outside light above it.
+    cam::frame_mol(state, scene, (MolType::Peptide, peptide_i), updates);
+    cam::set_fog(state, &mut scene.camera);
+
+    let pep = &state.peptides[peptide_i].common;
+    set_static_light(scene, pep.centroid().into(), pep.bounding_radius() as f32);
 
     // Predicted structures have no RCSB entry to fetch data for.
     if source == CifSource::AlphaFold {

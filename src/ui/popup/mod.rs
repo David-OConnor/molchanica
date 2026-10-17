@@ -87,7 +87,6 @@ pub(in crate::ui) fn load_popups(
     scene: &mut Scene,
     ui: &mut Ui,
     redraw: &mut RedrawFlags,
-    reset_cam: &mut bool,
     updates: &mut EngineUpdates,
 ) {
     protein_comparison::poll(state, ui, redraw);
@@ -151,7 +150,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.show_associated_structures {
         let open = show_popup(popup("Associated structures"), ui.ctx(), |ui| {
-            associated_structures(state, scene, updates, &mut redraw.peptide, reset_cam, ui);
+            associated_structures(state, scene, updates, &mut redraw.peptide, ui);
         });
         state.ui.popup.show_associated_structures &= open;
     }
@@ -437,7 +436,6 @@ fn associated_structures(
     scene: &mut Scene,
     engine_updates: &mut EngineUpdates,
     redraw_peptide: &mut bool,
-    reset_cam: &mut bool,
     ui: &mut Ui,
 ) {
     let mut associated_structs = Vec::new();
@@ -469,7 +467,6 @@ fn associated_structures(
                         scene,
                         engine_updates,
                         redraw_peptide,
-                        reset_cam,
                     );
                 }
             });

@@ -721,7 +721,6 @@ pub fn handle_thread_rx(
     state: &mut State,
     scene: &mut Scene,
     redraw: &mut RedrawFlags,
-    reset_cam: &mut bool,
     updates: &mut EngineUpdates,
 ) {
     poll_safety_data(state);
@@ -734,7 +733,7 @@ pub fn handle_thread_rx(
     match query_result {
         Some(Ok(result)) => {
             state.volatile.thread_receivers.query = None;
-            apply_query_result(state, scene, redraw, reset_cam, updates, result);
+            apply_query_result(state, scene, redraw, updates, result);
         }
         Some(Err(TryRecvError::Disconnected)) => {
             state.volatile.thread_receivers.query = None;

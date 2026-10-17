@@ -92,12 +92,10 @@ pub(super) fn poll_downloads(
                 open_chebi_download(state, scene, redraw, updates, id, downloaded)
             }
             (SynthesisDownloadId::PubChem(id), Ok(downloaded)) => {
-                let mut unused_reset_cam = false;
                 apply_query_result(
                     state,
                     scene,
                     redraw,
-                    &mut unused_reset_cam,
                     updates,
                     QueryResult::Small {
                         downloaded,

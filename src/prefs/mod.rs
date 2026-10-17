@@ -75,6 +75,7 @@ pub enum OpenType {
 }
 
 impl Display for OpenType {
+    /// Note: These are sometimes truncated for display purposes, to save UI space.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let v = match self {
             Self::Peptide => "Peptide",
@@ -84,11 +85,11 @@ impl Display for OpenType {
             Self::Pocket => "Pocket",
             Self::Map => "Density map",
             Self::Frcmod => "Frcmod",
-            Self::Trajectory => "MD Trajectory",
+            Self::Trajectory => "MD Traj",
             Self::MdParams => "MD Params",
             Self::ParquetDb => "Parquet DB",
             Self::MdMols => "MD Mols",
-            Self::Sequence => "Sequence",
+            Self::Sequence => "Seq",
         };
         write!(f, "{v}")
     }

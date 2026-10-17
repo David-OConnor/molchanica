@@ -713,7 +713,7 @@ pub fn exit_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engine
 
     let mut flags = RedrawFlags::default();
     flags.set_all();
-    handle_redraw(state, scene, &mut flags, false, updates);
+    handle_redraw(state, scene, &mut flags, updates);
 
     set_flashlight(scene);
 
