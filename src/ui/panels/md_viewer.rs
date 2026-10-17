@@ -257,17 +257,6 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
 }
 
-pub(crate) fn mol_type_label(t: MolType) -> &'static str {
-    match t {
-        MolType::Peptide => "Protein",
-        MolType::Ligand => "Ligand",
-        MolType::NucleicAcid => "Nucleic Acid",
-        MolType::Lipid => "Lipid",
-        MolType::Water => "Water",
-        MolType::Pocket => "Pocket",
-    }
-}
-
 /// Build a single water `ViewerMolecule` whose range starts at `start_i`.
 fn make_water_mol(start_i: usize) -> ViewerMolecule {
     let zero = lin_alg::f64::Vec3::default();
@@ -435,7 +424,7 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
                         format!(
                             "{} [{}] ({} atoms)",
                             mol.mol.ident,
-                            mol_type_label(mol.mol_type),
+                            mol.mol_type,
                             mol.mol.atoms.len()
                         ),
                         Color32::WHITE

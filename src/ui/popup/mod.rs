@@ -190,7 +190,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.recent_files {
         // The number of rows per page flexes to fill the window's height.
-        let window = popup("Recent molecules").default_height(480.);
+        let window = popup("Recent files").default_height(480.);
         let open = show_popup(window, ui.ctx(), |ui| {
             recent_files::recent_files_popup(state, scene, ui, updates);
         });
@@ -461,13 +461,7 @@ fn associated_structures(
                     .button(RichText::new("Open this protein").color(COLOR_HIGHLIGHT))
                     .clicked()
                 {
-                    load_atom_coords_rcsb(
-                        &s.pdb_id,
-                        state,
-                        scene,
-                        engine_updates,
-                        redraw_peptide,
-                    );
+                    load_atom_coords_rcsb(&s.pdb_id, state, scene, engine_updates, redraw_peptide);
                 }
             });
 

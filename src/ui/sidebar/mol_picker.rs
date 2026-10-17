@@ -5,16 +5,16 @@ use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
     MolGenericRef, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType,
 };
+use na_seq::SeqType;
 
 use crate::{
     button,
     cam::{MolCameraTarget, VIEW_DIR_FRONT, move_cam_to_mol, set_fog},
-    file_io::sequence::save_seq_dialog,
     label,
-    state::{MetadataTarget, MolPickerState, MolSort, State},
+    state::{MolPickerState, MolSort, State},
     ui::{
         COL_SPACING, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, highlighted_box,
-        panels::md_viewer::mol_type_label, popup::pharmacophore, sidebar, sidebar::AudioAction,
+        popup::pharmacophore, sidebar,
     },
     util::{RedrawFlags, close_mol, orbit_center},
 };
@@ -41,6 +41,46 @@ const SORTS: [(MolSort, &str); 11] = [
     (MolSort::HBondDonors, "H donors"),
     (MolSort::HBondAcceptors, "H acceptors"),
 ];
+
+/// Width of a row's drag handle. Sequence rows, which have none, pad by this to stay aligned.
+const DRAG_HANDLE_WIDTH: f32 = 8.;
+
+/// Width of the type-indicator letter at the start of each row; fixed, so names line up.
+const TYPE_INDICATOR_WIDTH: f32 = 12.;
+
+// Colors identifying molecule (or other file) types in the UI. Also used by the
+// recent-files popup.
+const COLOR_TYPE_PEPTIDE: Color32 = Color32::from_rgb(110, 170, 255);
+const COLOR_TYPE_LIGAND: Color32 = Color32::from_rgb(110, 220, 120);
+const COLOR_TYPE_LIPID: Color32 = Color32::from_rgb(240, 200, 80);
+const COLOR_TYPE_NUCLEIC_ACID: Color32 = Color32::from_rgb(235, 110, 215);
+const COLOR_TYPE_POCKET: Color32 = Color32::from_rgb(245, 140, 80);
+const COLOR_TYPE_WATER: Color32 = Color32::from_rgb(100, 210, 230);
+pub(crate) const COLOR_TYPE_SEQ: Color32 = Color32::from_rgb(180, 150, 255);
+
+/// The color of a row's type indicator, by molecule type.
+pub(crate) fn mol_type_color(mol_type: MolType) -> Color32 {
+    match mol_type {
+        MolType::Peptide => COLOR_TYPE_PEPTIDE,
+        MolType::Ligand => COLOR_TYPE_LIGAND,
+        MolType::Lipid => COLOR_TYPE_LIPID,
+        MolType::NucleicAcid => COLOR_TYPE_NUCLEIC_ACID,
+        MolType::Pocket => COLOR_TYPE_POCKET,
+        MolType::Water => COLOR_TYPE_WATER,
+    }
+}
+
+/// An indicator so users can quickly tell what type of molecule (or non-molecule file like
+/// sequence) a row is: A bold, colored letter in a fixed-width slot.
+fn type_indicator(ui: &mut Ui, letter: char, color: Color32, hover_text: &str) {
+    let size = vec2(TYPE_INDICATOR_WIDTH, ui.spacing().interact_size.y);
+
+    ui.add_sized(
+        size,
+        egui::Label::new(RichText::new(letter).color(color).strong()),
+    )
+    .on_hover_text(hover_text);
+}
 
 /// The drag-and-drop payload of a molecule row being rearranged.
 struct DraggedMol(MolType, usize);
@@ -73,7 +113,7 @@ fn drag_handle(ui: &mut Ui, mol_type: MolType, i_mol: usize) {
     let id = Id::new(("mol_picker_drag", mol_type as u8, i_mol));
 
     ui.dnd_drag_source(id, DraggedMol(mol_type, i_mol), |ui| {
-        let size = vec2(8., ui.spacing().interact_size.y);
+        let size = vec2(DRAG_HANDLE_WIDTH, ui.spacing().interact_size.y);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
 
         // A 2x3 grid of dots.
@@ -126,6 +166,11 @@ fn mol_picker_one(
     let row = highlighted_box(active, Color32::from_rgb(55, 40, 40)).show(ui, |ui| {
         ui.horizontal(|ui| {
             drag_handle(ui, mol_type, i_mol);
+
+            // Placed left-to-right, before the right-to-left controls; the name button
+            // fills the remaining width, so anything after it overflows onto the handle.
+            let letter = mol_type.to_string().chars().next().unwrap();
+            type_indicator(ui, letter, mol_type_color(mol_type), &mol_type.to_string());
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(COL_SPACING / 2.);
@@ -194,35 +239,37 @@ fn mol_picker_one(
                     actions.reset_fog = true;
                 }
 
-                let row_h = ui.spacing().interact_size.y;
+                {
+                    let row_h = ui.spacing().interact_size.y;
 
-                let (name_disp, help_text) = picker_name(
-                    &mol.name(idents),
-                    "Make this molecule the active / selected one. Middle click to close it.",
-                );
+                    let (name_disp, help_text) = picker_name(
+                        &mol.name(idents),
+                        "Make this molecule the active / selected one. Middle click to close it.",
+                    );
 
-                let sel_btn = ui
-                    .add_sized(
-                        egui::vec2(ui.available_width(), row_h),
-                        egui::Button::new(RichText::new(name_disp).color(color)),
-                    )
-                    .on_hover_text(help_text);
+                    let sel_btn = ui
+                        .add_sized(
+                            vec2(ui.available_width(), row_h),
+                            egui::Button::new(RichText::new(name_disp).color(color)),
+                        )
+                        .on_hover_text(help_text);
 
-                if sel_btn.clicked() {
-                    if active && state.volatile.active_mol.is_some() {
-                        state.volatile.active_mol = None;
-                    } else {
-                        state.volatile.active_mol = Some((mol_type, i_mol));
-                        state.volatile.orbit_center = state.volatile.active_mol;
+                    if sel_btn.clicked() {
+                        if active && state.volatile.active_mol.is_some() {
+                            state.volatile.active_mol = None;
+                        } else {
+                            state.volatile.active_mol = Some((mol_type, i_mol));
+                            state.volatile.orbit_center = state.volatile.active_mol;
 
-                        actions.recenter_orbit = true;
+                            actions.recenter_orbit = true;
+                        }
+
+                        redraw.set(mol_type); // To reflect the change in thickness, color etc.
                     }
 
-                    redraw.set(mol_type); // To reflect the change in thickness, color etc.
-                }
-
-                if sel_btn.middle_clicked() {
-                    actions.close = Some((mol_type, i_mol));
+                    if sel_btn.middle_clicked() {
+                        actions.close = Some((mol_type, i_mol));
+                    }
                 }
             });
         });
@@ -308,7 +355,7 @@ fn picker_toolbar(p: &mut MolPickerState, present: &[MolType], ui: &mut Ui) {
 
                 if button!(
                     ui,
-                    mol_type_label(t),
+                    t.to_string(),
                     color,
                     "Show or hide molecules of this type."
                 )
@@ -700,13 +747,11 @@ pub fn mol_picker(
     }
 }
 
-/// Select, close, and save opened sequences. Like the molecule rows, but sequences aren't
+/// Select and close opened sequences. Like the molecule rows, but sequences aren't
 /// rendered, so there are no visibility, camera, or MD controls.
 pub fn seq_picker(state: &mut State, ui: &mut Ui) {
     // Applied after the loop; avoids borrow errors, and index shifts while iterating.
     let mut close = None;
-    let mut save = None;
-    let mut toggle_metadata = None;
     let mut toggle_active = None;
 
     for (i, seq) in state.sequences.iter().enumerate() {
@@ -720,6 +765,11 @@ pub fn seq_picker(state: &mut State, ui: &mut Ui) {
 
         highlighted_box(active, Color32::from_rgb(40, 45, 60)).show(ui, |ui| {
             ui.horizontal(|ui| {
+                // No drag handle here; pad by its width so the indicator lines up with the
+                // molecule rows'.
+                ui.add_space(DRAG_HANDLE_WIDTH + ui.spacing().item_spacing.x);
+                type_indicator(ui, 'S', COLOR_TYPE_SEQ, "Sequence");
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(COL_SPACING / 2.);
                     if ui
@@ -730,54 +780,36 @@ pub fn seq_picker(state: &mut State, ui: &mut Ui) {
                         close = Some(i);
                     }
 
-                    let color_meta = if state.ui.popup.metadata == Some(MetadataTarget::Seq(i)) {
-                        COLOR_ACTIVE
+                    let seq_label = if seq.seq_type() == SeqType::AminoAcid {
+                        "AA Seq"
                     } else {
-                        COLOR_INACTIVE
+                        "NA Seq"
                     };
 
-                    if button!(
-                        ui,
-                        "Meta",
-                        color_meta,
-                        "Display and edit this sequence's metadata."
-                    )
-                    .clicked()
+                    label!(ui, seq_label, Color32::GRAY);
+
                     {
-                        toggle_metadata = Some(i);
-                    }
+                        let row_h = ui.spacing().interact_size.y;
 
-                    if button!(
-                        ui,
-                        "Save",
-                        COLOR_INACTIVE,
-                        "Save this sequence to a FASTA, GenBank, or SnapGene (DNA only) file."
-                    )
-                    .clicked()
-                    {
-                        save = Some(i);
-                    }
+                        let (name_disp, help_text) = picker_name(
+                            seq.display_name(),
+                            "Make this sequence the active / selected one. Middle click to close it.",
+                        );
 
-                    let row_h = ui.spacing().interact_size.y;
+                        let sel_btn = ui
+                            .add_sized(
+                                egui::vec2(ui.available_width(), row_h),
+                                egui::Button::new(RichText::new(name_disp).color(color)),
+                            )
+                            .on_hover_text(help_text);
 
-                    let (name_disp, help_text) = picker_name(
-                        seq.display_name(),
-                        "Make this sequence the active / selected one. Middle click to close it.",
-                    );
+                        if sel_btn.clicked() {
+                            toggle_active = Some(i);
+                        }
 
-                    let sel_btn = ui
-                        .add_sized(
-                            egui::vec2(ui.available_width(), row_h),
-                            egui::Button::new(RichText::new(name_disp).color(color)),
-                        )
-                        .on_hover_text(help_text);
-
-                    if sel_btn.clicked() {
-                        toggle_active = Some(i);
-                    }
-
-                    if sel_btn.middle_clicked() {
-                        close = Some(i);
+                        if sel_btn.middle_clicked() {
+                            close = Some(i);
+                        }
                     }
                 });
             });
@@ -811,20 +843,6 @@ pub fn seq_picker(state: &mut State, ui: &mut Ui) {
             Some(i)
         };
         state.select_sequence(next);
-    }
-
-    if let Some(i) = toggle_metadata {
-        let target = MetadataTarget::Seq(i);
-
-        state.ui.popup.metadata = if state.ui.popup.metadata == Some(target) {
-            None
-        } else {
-            Some(target)
-        };
-    }
-
-    if let Some(i) = save {
-        save_seq_dialog(state, i);
     }
 
     if let Some(i) = close {

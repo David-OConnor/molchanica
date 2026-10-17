@@ -12,7 +12,10 @@ use crate::{
     file_io::managed_mols,
     prefs::OpenType,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        sidebar::mol_picker::{COLOR_TYPE_SEQ, mol_type_color},
+    },
     util::{handle_err, handle_success},
 };
 
@@ -184,12 +187,15 @@ pub(in crate::ui::popup) fn recent_files_popup(
                 ident
             };
 
-            let (r, g, b) = match file.type_ {
-                OpenType::Peptide => MolType::Peptide.color(),
-                OpenType::Ligand => MolType::Ligand.color(),
-                OpenType::NucleicAcid => MolType::NucleicAcid.color(),
-                OpenType::Lipid => MolType::Lipid.color(),
-                _ => (255, 255, 255),
+            // The same color scheme as the molecule picker's type indicators.
+            let color = match file.type_ {
+                OpenType::Peptide => mol_type_color(MolType::Peptide),
+                OpenType::Ligand => mol_type_color(MolType::Ligand),
+                OpenType::NucleicAcid => mol_type_color(MolType::NucleicAcid),
+                OpenType::Lipid => mol_type_color(MolType::Lipid),
+                OpenType::Pocket => mol_type_color(MolType::Pocket),
+                OpenType::Sequence => COLOR_TYPE_SEQ,
+                _ => Color32::WHITE,
             };
 
             let elapsed_minutes = (now - file.timestamp).num_minutes();
@@ -198,7 +204,7 @@ pub(in crate::ui::popup) fn recent_files_popup(
             Some(Row {
                 path: file.path.clone(),
                 filename,
-                color: Color32::from_rgb(r, g, b),
+                color,
                 type_str: file.type_.to_string(),
                 ident_str,
                 descrip,

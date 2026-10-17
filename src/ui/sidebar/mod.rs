@@ -37,7 +37,7 @@ use crate::{
 
 mod char_adme;
 mod mol_editor_sidebar;
-mod mol_picker;
+pub(crate) mod mol_picker;
 
 /// Width of the strip left in place of the sidebar when it's hidden; fits the show button.
 const SIDEBAR_HIDDEN_WIDTH: f32 = 40.;
@@ -79,6 +79,7 @@ fn mol_safety_section(mol: &MoleculeSmall, loading: bool, ui: &mut Ui) -> bool {
     load
 }
 
+#[cfg(feature = "sonification")]
 #[derive(Clone, Copy)]
 enum AudioAction {
     Toggle(MolType, usize),
@@ -337,9 +338,10 @@ fn manip_toolbar(
     });
 }
 
-/// Per-molecule functionality, lookups, popups etc.
+/// Per-molecule functionality, lookups, popups etc. `mol_type` is `None` for sequences, which
+/// only get the metadata button.
 fn mol_specific_aux_btns(
-    mol_type: MolType,
+    mol_type: Option<MolType>,
     load_all_idents: &mut bool,
     toggle_metadata_popup: &mut bool,
     show_reactions: &mut bool,
@@ -350,20 +352,23 @@ fn mol_specific_aux_btns(
 ) {
     ui.horizontal(|ui| {
         // The online identifier lookup is for small molecules only.
-        if mol_type == MolType::Ligand && load_all_idents_button(ui, loading_idents) {
+        if mol_type == Some(MolType::Ligand) && load_all_idents_button(ui, loading_idents) {
             *load_all_idents = true;
         }
 
-        if button!(
-            ui,
-            "Metadata",
-            Color32::GRAY,
+        let metadata_help = if mol_type.is_some() {
             "Display metadata for this molecule"
-        )
-            .clicked()
-        {
+        } else {
+            "Display and edit this sequence's metadata"
+        };
+
+        if button!(ui, "Metadata", Color32::GRAY, metadata_help).clicked() {
             *toggle_metadata_popup = true;
         }
+
+        let Some(mol_type) = mol_type else {
+            return;
+        };
 
         let reactions_help = if mol_type == MolType::Peptide {
             "Display Rhea reactions annotated to this protein through its UniProt mapping."
@@ -521,7 +526,18 @@ pub(in crate::ui) fn sidebar(
                 _ => None,
             };
 
-            if let Some((mol_type, _)) = state.volatile.active_mol {
+            let active_seq = state
+                .volatile
+                .active_seq
+                .filter(|&i| i < state.sequences.len());
+
+            let aux_btns_type = match state.volatile.active_mol {
+                Some((mol_type, _)) => Some(Some(mol_type)),
+                None if active_seq.is_some() => Some(None),
+                None => None,
+            };
+
+            if let Some(mol_type) = aux_btns_type {
                 mol_specific_aux_btns(
                     mol_type,
                     &mut load_all_idents,
@@ -665,10 +681,10 @@ pub(in crate::ui) fn sidebar(
             if toggle_metadata_popup {
                 state.ui.popup.metadata = match state.ui.popup.metadata {
                     Some(_) => None,
-                    None => state
-                        .volatile
-                        .active_mol
-                        .map(|(mol_type, i)| MetadataTarget::Mol(mol_type, i)),
+                    None => match state.volatile.active_mol {
+                        Some((mol_type, i)) => Some(MetadataTarget::Mol(mol_type, i)),
+                        None => active_seq.map(MetadataTarget::Seq),
+                    },
                 };
             }
 
