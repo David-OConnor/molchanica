@@ -190,7 +190,9 @@ pub(in crate::ui) fn load_popups(
     }
 
     if state.ui.popup.recent_files {
-        let open = show_popup(popup("Recent molecules"), ui.ctx(), |ui| {
+        // The number of rows per page flexes to fill the window's height.
+        let window = popup("Recent molecules").default_height(480.);
+        let open = show_popup(window, ui.ctx(), |ui| {
             recent_files::recent_files_popup(state, scene, ui, updates);
         });
         state.ui.popup.recent_files &= open;

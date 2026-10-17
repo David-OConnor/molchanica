@@ -997,6 +997,16 @@ impl OpenHistory {
             None => out.push(0),
         }
         out.push(self.last_session as u8);
+        // After `last_session`, so prefs written before orientation was added still parse.
+        match &self.orientation {
+            Some(o) => {
+                out.push(1);
+                let b = bincode::encode_to_vec(o, bincode::config::standard()).unwrap_or_default();
+                out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                out.extend_from_slice(&b);
+            }
+            None => out.push(0),
+        }
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1035,12 +1045,28 @@ impl OpenHistory {
             None
         };
         let last_session = data[i] != 0;
+        i += 1;
+
+        // Absent from prefs written before orientation was added.
+        let orientation = if data.get(i).is_some_and(|v| *v != 0) {
+            i += 1;
+            let len = parse_le!(data, u32, i..i + 4) as usize;
+            i += 4;
+            let o = bincode::decode_from_slice(&data[i..i + len], bincode::config::standard())
+                .unwrap()
+                .0;
+            Some(o)
+        } else {
+            None
+        };
+
         Ok(Self {
             timestamp,
             path,
             type_,
             ident,
             position,
+            orientation,
             last_session,
         })
     }

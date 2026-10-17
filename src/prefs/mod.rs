@@ -18,12 +18,12 @@ use bio_apis::{
 use chrono::{DateTime, Utc};
 use dynamics::MdConfig;
 use graphics::{AmbientOcclusion, ControlScheme, GraphicsSettings};
-use lin_alg::f64::Vec3;
+use lin_alg::f64::{Quaternion, Vec3};
 
 mod file_format;
 
 use mol_defs::{
-    molecules::{MolIdent, MolType, peptide::MoleculePeptide},
+    molecules::{MolIdent, MolType, common::MoleculeCommon, peptide::MoleculePeptide},
     sfc_mesh::MeshColoring,
 };
 
@@ -118,6 +118,9 @@ pub struct OpenHistory {
     /// Only applicable for molecules and similar. A single central position.
     /// todo: We may wish to add per-atom positions later.
     pub position: Option<Vec3>,
+    /// Only applicable for molecules and similar. The rigid rotation, about the centroid, from
+    /// the file's coordinates to the molecule's current ones.
+    pub orientation: Option<Quaternion>,
     /// For determining which to open at program start.
     pub last_session: bool,
 }
@@ -130,10 +133,19 @@ impl OpenHistory {
             path: path.to_owned(),
             ident,
             type_,
+            orientation: None,
             position: None,
             last_session: true,
         }
     }
+}
+
+/// The rigid rotation, about the centroid, that best maps a molecule's file (internal) atom
+/// positions onto its current ones. None if it can't be determined, e.g. for fewer than three
+/// atoms, or collinear ones.
+fn mol_orientation(mol: &MoleculeCommon) -> Option<Quaternion> {
+    let local: Vec<Vec3> = mol.atoms.iter().map(|a| a.posit).collect();
+    crate::protein_alignment::fit_rotation(&mol.atom_posits, &local).ok()
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -615,6 +627,7 @@ impl State {
                     && &oh.path == p
                 {
                     oh.position = Some(mol.common.centroid());
+                    oh.orientation = mol_orientation(&mol.common);
                 }
             }
         }
@@ -625,6 +638,7 @@ impl State {
                     && &oh.path == p
                 {
                     oh.position = Some(mol.common.centroid());
+                    oh.orientation = mol_orientation(&mol.common);
                 }
             }
         }
@@ -635,6 +649,7 @@ impl State {
                     && &oh.path == p
                 {
                     oh.position = Some(mol.common.centroid());
+                    oh.orientation = mol_orientation(&mol.common);
                 }
             }
         }

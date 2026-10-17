@@ -6,7 +6,7 @@ use std::{
 };
 
 use bio_files::ResidueType;
-use lin_alg::f64::Vec3;
+use lin_alg::f64::{Quaternion, Vec3};
 use mol_defs::molecules::{AtomRole, MolGenericRef, MolType, peptide::MoleculePeptide};
 use na_seq::{AaIdent, AtomTypeInRes};
 
@@ -369,16 +369,47 @@ impl Transform {
     }
 }
 
+fn centroid(points: &[Vec3]) -> Vec3 {
+    points.iter().copied().fold(Vec3::new_zero(), |a, b| a + b) / points.len() as f64
+}
+
 /// Horn's quaternion solution, using Jacobi diagonalization of the symmetric 4×4 matrix.
 /// A unit quaternion always produces a proper rotation, never a reflection or a scale change.
 pub fn fit(reference: &[Vec3], mobile: &[Vec3]) -> Result<Transform, String> {
+    let q = fit_rotation(reference, mobile)?;
+    let (w, x, y, z) = (q.w, q.x, q.y, q.z);
+
+    let mut transform = Transform {
+        rotation: [
+            [
+                1. - 2. * (y * y + z * z),
+                2. * (x * y - z * w),
+                2. * (x * z + y * w),
+            ],
+            [
+                2. * (x * y + z * w),
+                1. - 2. * (x * x + z * z),
+                2. * (y * z - x * w),
+            ],
+            [
+                2. * (x * z - y * w),
+                2. * (y * z + x * w),
+                1. - 2. * (x * x + y * y),
+            ],
+        ],
+        translation: Vec3::new_zero(),
+    };
+    transform.translation = centroid(reference) - transform.apply(centroid(mobile));
+    Ok(transform)
+}
+
+/// The rotation, about the centroids, that best maps `mobile` onto `reference` in the
+/// least-squares sense. See `fit`.
+pub fn fit_rotation(reference: &[Vec3], mobile: &[Vec3]) -> Result<Quaternion, String> {
     if reference.len() != mobile.len() || reference.len() < 3 {
         return Err("A fit needs at least three paired Cα atoms".into());
     }
-    let center = |points: &[Vec3]| {
-        points.iter().copied().fold(Vec3::new_zero(), |a, b| a + b) / points.len() as f64
-    };
-    let (cr, cm) = (center(reference), center(mobile));
+    let (cr, cm) = (centroid(reference), centroid(mobile));
     for points in [reference, mobile] {
         let origin = points[0];
         let axis = points
@@ -472,29 +503,8 @@ pub fn fit(reference: &[Vec3], mobile: &[Vec3]) -> Result<Transform, String> {
         a[q][p] = 0.;
     }
     let best = (0..4).max_by(|&i, &j| a[i][i].total_cmp(&a[j][j])).unwrap();
-    let [w, x, y, z] = [v[0][best], v[1][best], v[2][best], v[3][best]];
-    let mut transform = Transform {
-        rotation: [
-            [
-                1. - 2. * (y * y + z * z),
-                2. * (x * y - z * w),
-                2. * (x * z + y * w),
-            ],
-            [
-                2. * (x * y + z * w),
-                1. - 2. * (x * x + z * z),
-                2. * (y * z - x * w),
-            ],
-            [
-                2. * (x * z - y * w),
-                2. * (y * z + x * w),
-                1. - 2. * (x * x + y * y),
-            ],
-        ],
-        translation: Vec3::new_zero(),
-    };
-    transform.translation = cr - transform.apply(cm);
-    Ok(transform)
+
+    Ok(Quaternion::new(v[0][best], v[1][best], v[2][best], v[3][best]).to_normalized())
 }
 
 pub struct ResiduePair {

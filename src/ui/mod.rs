@@ -985,11 +985,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     handle_input(state, ui, &mut updates, scene);
 
-    // todo: Trying to set popup color; Not working
-    // let mut style = (*ctx.style()).clone();
-    // style.visuals.widgets.noninteractive.bg_fill = COLOR_POPUP;
-    // ctx.set_style(style);
-
     let mut redraw = RedrawFlags::default();
 
     let mut reset_cam = false;

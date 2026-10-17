@@ -384,10 +384,17 @@ fn apply_session_restore_item(
             };
             state.restore_mol_to_state(molecule, scene, updates, &history.path);
 
-            if let Some(position) = history.position
-                && let Some(mut molecule) = state.get_mol_mut(mol_type, mol_i)
-            {
-                molecule.common_mut().move_to(position);
+            if let Some(mut molecule) = state.get_mol_mut(mol_type, mol_i) {
+                let common = molecule.common_mut();
+
+                // Orientation is relative to the file's coordinates; apply it before moving.
+                if let Some(orientation) = history.orientation {
+                    common.reset_posits();
+                    common.rotate(orientation, None);
+                }
+                if let Some(position) = history.position {
+                    common.move_to(position);
+                }
             }
         }
         SessionRestorePayload::Density(density) => state.load_density(density),

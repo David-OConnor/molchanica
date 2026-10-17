@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::Utc;
-use egui::{Align, Color32, Grid, Layout, RichText, TextEdit, Ui};
+use egui::{Align, Color32, Grid, Layout, RichText, TextEdit, TextStyle, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::MolType;
 
@@ -12,12 +12,28 @@ use crate::{
     file_io::managed_mols,
     prefs::OpenType,
     state::State,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING},
+    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
     util::{handle_err, handle_success},
 };
 
-/// Number of recent-file rows shown per page in the recent-files popup.
-pub const PER_PAGE: usize = 15;
+/// Vertical gap between rows of the file list.
+const ROW_GAP: f32 = 4.;
+
+/// The order in which file-type filter buttons are displayed.
+const TYPES_DISPLAY_ORDER: [OpenType; 12] = [
+    OpenType::Peptide,
+    OpenType::Ligand,
+    OpenType::NucleicAcid,
+    OpenType::Lipid,
+    OpenType::Pocket,
+    OpenType::Sequence,
+    OpenType::Map,
+    OpenType::Trajectory,
+    OpenType::MdMols,
+    OpenType::MdParams,
+    OpenType::Frcmod,
+    OpenType::ParquetDb,
+];
 
 // todo: Return a color too
 pub fn recentness_descrip(age_min: i64) -> (String, Color32) {
@@ -105,14 +121,14 @@ pub(in crate::ui::popup) fn recent_files_popup(
 
     // Title and filename filter.
     ui.horizontal(|ui| {
-        ui.heading(RichText::new("Recent molecules").color(Color32::WHITE));
+        ui.heading(RichText::new("Recent files").color(Color32::WHITE));
         ui.add_space(COL_SPACING);
 
         if ui
             .add(
                 TextEdit::singleline(&mut state.ui.popup.recent_files_filter)
                     .desired_width(200.)
-                    .hint_text("Filter by filename"),
+                    .hint_text("Filter"),
             )
             .changed()
         {
@@ -121,6 +137,8 @@ pub(in crate::ui::popup) fn recent_files_popup(
         }
     });
 
+    ui.add_space(ROW_SPACING);
+    type_filter(state, ui);
     ui.add_space(ROW_SPACING);
 
     // Owned display data for the rows matching the filter, most recent first. Collecting
@@ -137,12 +155,14 @@ pub(in crate::ui::popup) fn recent_files_popup(
     }
 
     let filter = state.ui.popup.recent_files_filter.to_lowercase();
+    let hidden_types = &state.ui.popup.recent_files_hidden_types;
 
     let rows: Vec<Row> = state
         .to_save
         .open_history
         .iter()
         .rev()
+        .filter(|file| !hidden_types.contains(&file.type_))
         .filter_map(|file| {
             let filename = Path::new(&file.path).file_name()?.to_str()?.to_string();
             let ident = file.ident.clone().unwrap_or_default();
@@ -187,8 +207,24 @@ pub(in crate::ui::popup) fn recent_files_popup(
         })
         .collect();
 
-    // Clamp the current page; the filtered list may have shrunk since the last frame.
-    let num_pages = rows.len().div_ceil(PER_PAGE).max(1);
+    // Fit as many rows as the window's height allows. We fix the row height (to a button's
+    // natural height) so this is exact; content taller than the window would make it grow.
+    let row_height = {
+        let spacing = ui.spacing();
+
+        (ui.text_style_height(&TextStyle::Button) + 2. * spacing.button_padding.y)
+            .max(spacing.interact_size.y)
+            .ceil()
+    };
+    // Space below the list: Item spacing after the grid, then the pagination controls.
+    let footer_height = ROW_SPACING + row_height;
+    let list_height = ui.available_height() - ui.spacing().item_spacing.y - footer_height;
+
+    let per_page = (((list_height + ROW_GAP) / (row_height + ROW_GAP)).floor() as usize).max(1);
+
+    // Clamp the current page; the filtered list, or the window, may have shrunk since the last
+    // frame.
+    let num_pages = rows.len().div_ceil(per_page).max(1);
     if state.ui.popup.recent_files_page >= num_pages {
         state.ui.popup.recent_files_page = num_pages - 1;
     }
@@ -196,9 +232,10 @@ pub(in crate::ui::popup) fn recent_files_popup(
 
     Grid::new("recent_files_grid")
         .num_columns(4)
-        .spacing([COL_SPACING, 4.])
+        .spacing([COL_SPACING, ROW_GAP])
+        .min_row_height(row_height)
         .show(ui, |ui| {
-            for row in rows.iter().skip(page * PER_PAGE).take(PER_PAGE) {
+            for row in rows.iter().skip(page * per_page).take(per_page) {
                 // todo: Make the whole row clickable?
                 if ui
                     .button(RichText::new(&row.filename).color(row.color))
@@ -240,6 +277,12 @@ pub(in crate::ui::popup) fn recent_files_popup(
         state.ui.popup.recent_files = false;
     }
 
+    // Keep the pagination controls at the bottom of the window, e.g. on a partial last page.
+    let pad = ui.available_height() - footer_height;
+    if pad > 0. {
+        ui.add_space(pad);
+    }
+
     ui.add_space(ROW_SPACING);
 
     // Pagination controls.
@@ -274,4 +317,65 @@ pub(in crate::ui::popup) fn recent_files_popup(
             }
         });
     });
+}
+
+/// Toggle buttons for filtering by file type. Only types present in the history are shown.
+fn type_filter(state: &mut State, ui: &mut Ui) {
+    let mut changed = false;
+
+    ui.horizontal_wrapped(|ui| {
+        for type_ in TYPES_DISPLAY_ORDER {
+            let count = state
+                .to_save
+                .open_history
+                .iter()
+                .filter(|h| h.type_ == type_)
+                .count();
+
+            if count == 0 {
+                continue;
+            }
+
+            let hidden = &mut state.ui.popup.recent_files_hidden_types;
+            let shown = !hidden.contains(&type_);
+            let color = if shown { COLOR_ACTIVE } else { COLOR_INACTIVE };
+
+            let resp = ui
+                .button(RichText::new(format!("{type_} ({count})")).color(color))
+                .on_hover_text(format!(
+                    "Show or hide {} in this list. Right-click to show only this type.",
+                    type_descrip_plural(type_)
+                ));
+
+            if resp.clicked() {
+                if shown {
+                    hidden.push(type_);
+                } else {
+                    hidden.retain(|t| *t != type_);
+                }
+                changed = true;
+            } else if resp.secondary_clicked() {
+                *hidden = TYPES_DISPLAY_ORDER
+                    .into_iter()
+                    .filter(|t| *t != type_)
+                    .collect();
+                changed = true;
+            }
+        }
+
+        if !state.ui.popup.recent_files_hidden_types.is_empty()
+            && ui
+                .button(RichText::new("All").color(COLOR_HIGHLIGHT))
+                .on_hover_text("Show all file types.")
+                .clicked()
+        {
+            state.ui.popup.recent_files_hidden_types.clear();
+            changed = true;
+        }
+    });
+
+    if changed {
+        // Jump back to the first page whenever the filter changes.
+        state.ui.popup.recent_files_page = 0;
+    }
 }

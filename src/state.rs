@@ -49,7 +49,7 @@ use crate::{
     mol_manip::MolManip,
     orca::StateOrca,
     peptide_ligands::LigAttachUi,
-    prefs::{DepthMode, ToSave},
+    prefs::{DepthMode, OpenType, ToSave},
     selection::{Selection, ViewSelLevel},
     threads::ThreadReceivers,
     ui::popup::{
@@ -959,8 +959,10 @@ pub struct PopupState {
     pub recent_files: bool,
     /// Current page in the recent-files popup.
     pub recent_files_page: usize,
-    /// Filename filter text for the recent-files popup.
+    /// Filename or identifier filter text for the recent-files popup.
     pub recent_files_filter: String,
+    /// File types toggled off in the recent-files popup.
+    pub recent_files_hidden_types: Vec<OpenType>,
     pub metadata: Option<MetadataTarget>,
     pub alignment: bool,
     pub alignment_screening: bool,
