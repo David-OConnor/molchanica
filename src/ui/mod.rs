@@ -669,8 +669,6 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
             *redraw = true;
         }
     }
-
-    ui.add_space(COL_SPACING);
 }
 
 fn misc_view_options(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
