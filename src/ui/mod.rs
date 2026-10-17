@@ -1128,9 +1128,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 .volatile
                 .active_peptide
                 .and_then(|i| state.peptides.get(i))
-                .map(|mol| mol.common.name(None));
+                .map(|mol| mol.common.name(None).to_string());
 
-            aa_seq::peptide_aa_seq(
+            let create_seq = aa_seq::peptide_aa_seq(
                 &mut state.ui.selection,
                 peptide_name.as_deref(),
                 &state.volatile.aa_seq_text,
@@ -1140,6 +1140,12 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 ui,
                 &mut redraw.peptide,
             );
+
+            // The whole sequence, not just the selected residues.
+            if create_seq {
+                let text = state.volatile.aa_seq_text.clone();
+                panels::aa_creation::create_sequence(&text, peptide_name.as_deref(), state);
+            }
         }
 
         let mut smiles_cache = std::mem::take(&mut state.ui.smiles_display_cache);

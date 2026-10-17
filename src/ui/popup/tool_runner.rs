@@ -1109,7 +1109,7 @@ impl ToolWindow {
         if !self.results.is_empty() && !busy {
             ui.add_space(ROW_SPACING);
             if ui
-                .button("View results →")
+                .button("View results ▶")
                 .on_hover_text("Show the results of this window's previous runs.")
                 .clicked()
             {
@@ -1134,7 +1134,7 @@ impl ToolWindow {
 
     /// The window after a run: its results only, and a way back to the job setup form.
     fn results_page(&mut self, heading: &str, ui: &mut Ui) -> Option<PathBuf> {
-        if ui.button("← Back to job setup").clicked() {
+        if ui.button("◀ Back to job setup").clicked() {
             self.results_heading = None;
             self.error = None;
             self.message = None;

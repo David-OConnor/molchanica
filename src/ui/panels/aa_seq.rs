@@ -2,8 +2,8 @@
 use std::{collections::HashSet, sync::Arc};
 
 use egui::{
-    Button, Color32, CursorIcon, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, RichText, Sense, Stroke,
-    TextEdit, TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
+    Button, Color32, CursorIcon, Direction, FontId, Frame, Galley, Layout, Pos2, Rect, RichText,
+    Sense, Stroke, TextEdit, TextFormat, TextStyle, Ui, UiBuilder, Vec2, pos2, text::LayoutJob,
     text_selection::LabelSelectionState, vec2,
 };
 use graphics::{EngineUpdates, Scene};
@@ -14,7 +14,8 @@ use crate::{
     selection::Selection,
     state::{AaSeqDisplayCache, State},
     ui::panels::aa_creation::{
-        create_folded, create_folded_button, create_unfolded, create_unfolded_button,
+        CREATE_SEQ_HOVER, CREATE_SEQ_TEXT, create_folded, create_folded_button, create_seq_btn,
+        create_unfolded, create_unfolded_button,
     },
 };
 
@@ -222,14 +223,18 @@ fn seq_num_labels(
 /// `res_indices` maps each letter to its selected residue index (or the same position for a
 /// standalone sequence), and `res_sns` to its displayed number. Rows are interleaved with
 /// residue numbers, which aren't selectable or copied with the sequence.
+///
+/// `show_create` adds a button for creating a standalone sequence from the whole of this one.
+/// Returns whether it was clicked; creating it needs the full `State`, which the caller has.
 pub(in crate::ui) fn sequence_display(
     selection: &mut Vec<usize>,
     seq_text: &str,
     res_indices: &[usize],
     res_sns: &[u32],
     cache: &mut AaSeqDisplayCache,
+    show_create: bool,
     ui: &mut Ui,
-) {
+) -> bool {
     let selected = selection.clone();
     let font_id = TextStyle::Body.resolve(ui.style());
 
@@ -253,10 +258,20 @@ pub(in crate::ui) fn sequence_display(
 
     let all_size = btn_size(SEQ_COPY_ALL_TEXT, ui);
     let sel_size = btn_size(SEQ_COPY_SEL_TEXT, ui);
-    let btns_size = vec2(
+    let create_size = if show_create {
+        btn_size(CREATE_SEQ_TEXT, ui)
+    } else {
+        Vec2::ZERO
+    };
+
+    let mut btns_size = vec2(
         all_size.x + SEQ_BTN_GAP + sel_size.x,
         all_size.y.max(sel_size.y),
     );
+    if show_create {
+        btns_size.x += SEQ_BTN_GAP + create_size.x;
+        btns_size.y = btns_size.y.max(create_size.y);
+    }
 
     let wrap_width = (ui.available_width() - btns_size.x - SEQ_COPY_PAD).max(1.0);
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -328,7 +343,7 @@ pub(in crate::ui) fn sequence_display(
     // Cloned out of the cache (an `Arc` bump) so the drag handling below can still borrow the
     // cache mutably.
     let Some(galley) = cache.galley.clone() else {
-        return;
+        return false;
     };
 
     Frame::new().show(ui, |ui| {
@@ -402,6 +417,20 @@ pub(in crate::ui) fn sequence_display(
             rect.min + btn_offset + vec2(all_size.x + SEQ_BTN_GAP, 0.),
             sel_size,
         );
+        let create_rect = show_create.then(|| {
+            Rect::from_min_size(
+                sel_rect.right_top() + vec2(SEQ_BTN_GAP, 0.),
+                create_size,
+            )
+        });
+
+        // The allocation covers the buttons, so drags and clicks starting on one must not also
+        // select residues.
+        let on_btn = |pointer: Pos2| {
+            all_rect.contains(pointer)
+                || sel_rect.contains(pointer)
+                || create_rect.is_some_and(|r| r.contains(pointer))
+        };
 
         if ui
             .put(all_rect, Button::new(SEQ_COPY_ALL_TEXT))
@@ -410,6 +439,12 @@ pub(in crate::ui) fn sequence_display(
         {
             ui.ctx().copy_text(seq_text.to_owned());
         }
+
+        let create_clicked = create_rect.is_some_and(|create_rect| {
+            ui.put(create_rect, create_seq_btn())
+                .on_hover_text(CREATE_SEQ_HOVER)
+                .clicked()
+        });
 
         // `Ui::put`, but greyed out with nothing selected. (`put` has no enabled variant.)
         let copy_sel = ui
@@ -461,8 +496,7 @@ pub(in crate::ui) fn sequence_display(
         // the same stretch of protein that egui highlights in the text.
         if response.drag_started()
             && let Some(pointer) = response.interact_pointer_pos()
-            && !all_rect.contains(pointer)
-            && !sel_rect.contains(pointer)
+            && !on_btn(pointer)
         {
             cache.drag_anchor = Some(seq_pos(pointer));
         }
@@ -489,21 +523,25 @@ pub(in crate::ui) fn sequence_display(
             cache.drag_anchor = None;
         }
 
-        // The allocated area covers the buttons too, so skip clicks landing on them;
-        // otherwise copying would also select the last residue.
+        // Skip clicks landing on the buttons; otherwise copying would also select the last
+        // residue.
         if response.clicked()
             && let Some(pointer) = response.interact_pointer_pos()
-            && !all_rect.contains(pointer)
-            && !sel_rect.contains(pointer)
+            && !on_btn(pointer)
             && let Some(residue) = res_indices.get(seq_pos(pointer)).copied()
         {
             *selection = vec![residue];
             ui.request_repaint();
         }
-    });
+
+        create_clicked
+    })
+    .inner
 }
 
 /// Connect the shared sequence renderer to peptide residue selection and 3D redraws.
+///
+/// Returns whether the user asked to create a standalone sequence from this one.
 pub(in crate::ui) fn peptide_aa_seq(
     selection: &mut Selection,
     name: Option<&str>,
@@ -513,7 +551,7 @@ pub(in crate::ui) fn peptide_aa_seq(
     cache: &mut AaSeqDisplayCache,
     ui: &mut Ui,
     redraw: &mut bool,
-) {
+) -> bool {
     let mut selected = match selection {
         Selection::Residue(index) => vec![*index],
         Selection::Residues(indices) => indices.clone(),
@@ -525,7 +563,15 @@ pub(in crate::ui) fn peptide_aa_seq(
         ui.label(RichText::new(name).color(Color32::WHITE));
     }
 
-    sequence_display(&mut selected, seq_text, res_indices, res_sns, cache, ui);
+    let create = sequence_display(
+        &mut selected,
+        seq_text,
+        res_indices,
+        res_sns,
+        cache,
+        true,
+        ui,
+    );
 
     if selected != prev {
         *selection = match selected.len() {
@@ -535,6 +581,8 @@ pub(in crate::ui) fn peptide_aa_seq(
         };
         *redraw = true;
     }
+
+    create
 }
 
 /// Active standalone sequence, with an editor separate from peptide residue tools.
@@ -610,6 +658,8 @@ pub(in crate::ui) fn standalone_sequence(
             &state.volatile.seq_positions,
             &state.volatile.seq_numbers,
             &mut state.volatile.seq_display_cache,
+            // This is already a standalone sequence.
+            false,
             ui,
         );
     }

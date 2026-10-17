@@ -1,7 +1,7 @@
 //! Create peptides and amino acid sequences from single-letter amino acid codes.
 
 use chrono::Local;
-use egui::{RichText, TextEdit, Ui};
+use egui::{Button, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{MoleculeGeneric, aa_color, peptide::MoleculePeptide};
 use na_seq::{AaIdent, AminoAcid, SeqType, Sequence, SequenceData};
@@ -35,8 +35,13 @@ fn parse_seq(text: &str) -> Result<Vec<AminoAcid>, String> {
     }
 }
 
-fn make_sequence(seq: Vec<AminoAcid>) -> Sequence {
-    let name = format!("Peptide {}aa", seq.len());
+/// `name` defaults to one describing the sequence's length.
+fn make_sequence(seq: Vec<AminoAcid>, name: Option<&str>) -> Sequence {
+    let name = match name {
+        Some(name) => name.to_owned(),
+        None => format!("Peptide {}aa", seq.len()),
+    };
+
     Sequence::new(SequenceData::AminoAcid(seq), name)
 }
 
@@ -67,6 +72,32 @@ pub(in crate::ui) fn create_folded_button(ui: &mut Ui) -> bool {
     ui.button(RichText::new("Create folded").color(COLOR_HIGHLIGHT))
         .on_hover_text("Open the structure prediction window, with this sequence as its input.")
         .clicked()
+}
+
+pub(in crate::ui) const CREATE_SEQ_TEXT: &str = "Create sequence";
+pub(in crate::ui) const CREATE_SEQ_HOVER: &str =
+    "Add this as an amino acid sequence, e.g. to view, edit, or save.";
+
+/// The widget alone, so callers that place it at an exact rect (`Ui::put`) can share it. Pair
+/// with `CREATE_SEQ_HOVER`.
+pub(in crate::ui) fn create_seq_btn() -> Button<'static> {
+    Button::new(RichText::new(CREATE_SEQ_TEXT).color(COLOR_ACTION))
+}
+
+/// Add a standalone amino acid sequence from single-letter codes, and make it the active one.
+pub(in crate::ui) fn create_sequence(text: &str, name: Option<&str>, state: &mut State) {
+    match parse_seq(text) {
+        Ok(seq) => {
+            let sequence = make_sequence(seq, name);
+            let msg = format!("Added sequence {}", sequence.display_name());
+
+            state.sequences.push(sequence);
+            state.select_sequence(Some(state.sequences.len() - 1));
+
+            handle_success(&mut state.ui, msg);
+        }
+        Err(e) => handle_err(&mut state.ui, e),
+    }
 }
 
 /// Build an unfolded peptide, and add it in front of the camera.
@@ -145,30 +176,18 @@ pub(in crate::ui) fn aa_section(
 
                 if create_folded_button(ui) {
                     match parse_seq(&state.ui.aa_seq_to_create) {
-                        Ok(seq) => create_folded(make_sequence(seq), state),
+                        Ok(seq) => create_folded(make_sequence(seq, None), state),
                         Err(e) => handle_err(&mut state.ui, e),
                     }
                 }
 
                 if ui
-                    .button(RichText::new("Create sequence").color(COLOR_ACTION))
-                    .on_hover_text(
-                        "Add this as an amino acid sequence, e.g. to view, edit, or save.",
-                    )
+                    .add(create_seq_btn())
+                    .on_hover_text(CREATE_SEQ_HOVER)
                     .clicked()
                 {
-                    match parse_seq(&state.ui.aa_seq_to_create) {
-                        Ok(seq) => {
-                            let sequence = make_sequence(seq);
-                            let msg = format!("Added sequence {}", sequence.display_name());
-
-                            state.sequences.push(sequence);
-                            state.select_sequence(Some(state.sequences.len() - 1));
-
-                            handle_success(&mut state.ui, msg);
-                        }
-                        Err(e) => handle_err(&mut state.ui, e),
-                    }
+                    let text = state.ui.aa_seq_to_create.clone();
+                    create_sequence(&text, None, state);
                 }
             });
         });
