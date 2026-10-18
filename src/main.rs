@@ -22,6 +22,7 @@ mod file_io;
 mod inputs;
 mod pocket_render;
 mod prefs;
+mod publication;
 mod render;
 mod sfc_mesh;
 mod split_join;

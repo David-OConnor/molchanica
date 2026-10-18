@@ -75,6 +75,38 @@ commercial use requiring a subscription.
 
 ## Functionality
 
+### Publication figures
+
+Open **Publication figure** beside the view controls. Set exact pixel dimensions, PNG print
+resolution (DPI), background color or transparency, and 2×/3× supersampling. **Use view aspect**
+matches the camera's current aspect ratio; otherwise the preview shows the new framing. The
+vertical field of view stays fixed. **Render preview** freezes the current geometry and camera
+and renders the full export resolution on a worker thread. **Save PNG** writes those exact pixels,
+including alpha and DPI metadata. Camera/window changes after rendering do not alter the saved
+figure; render again to capture them. The checkerboard in the preview is not exported.
+
+Figures include visible entity labels, with adjustable color and scale. Under **Distance
+measurements**, select an atom, capture the start, select another atom, and add the distance.
+Dashed lines and distances in Å are rendered with the figure. Measurements capture fixed world
+coordinates; recapture them after moving molecules. Export reports an error if a measurement
+endpoint falls outside the figure, rather than silently omitting it.
+
+The export renderer uses smooth atom/bond meshes (Standard or High detail) and studio lighting, highlights,
+screen-space contact shading, and optional depth outlines. Paper and Presentation presets, plus
+named styles saved in `figure_styles.json` in the preferences folder, keep figure panels
+consistent. Styles contain output and appearance settings; scene representations and camera
+positions remain controlled by the main view and its camera snapshots. Label and outline sizes
+scale with figure height, independently of window size or desktop DPI.
+
+This is an offscreen raster renderer, not a ray tracer. Contact shading and outlines use opaque
+geometry's depth; transparent surfaces use back-to-front entity sorting, which can be imperfect
+for intersecting surfaces. Viewport fog, selection highlighting, and manipulation gizmos are
+excluded. Gaussian volumes currently require switching to a mesh representation before export.
+Exports support 64–8192 pixels per side, up to 32 million supersampled pixels, and are also
+bounded by the GPU's texture limit. CUDA is not required.
+
+### Other features
+
 - View the 3D structure of proteins and small molecules
 - Molecular dynamics, using Amber force fields, and the OPC water model
 - Visualize ligand docking

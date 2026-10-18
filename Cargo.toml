@@ -9,6 +9,11 @@ edition = "2024"
 [dependencies]
 graphics = { version = "0.6.8", features = ["app_utils"] }
 egui = "0.36.2"
+# Offscreen publication rendering, using the same GPU stack as the interactive engine.
+wgpu = "30.0.1"
+egui-wgpu = "0.36.2"
+pollster = "1.0.1"
+png = "0.18.1"
 # ChEBI supplies molecular diagrams as SVG, with atom labels already outlined.
 egui_extras = { version = "0.36.2", default-features = false, features = ["svg"] }
 

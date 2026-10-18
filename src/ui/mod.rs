@@ -1087,6 +1087,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 if ui.button("Selections / layers").clicked() {
                     state.ui.popup.selections = true;
                 }
+                if ui.button("Publication figure").clicked() {
+                    state.publication.open = true;
+                }
 
                 ui.add_space(COL_SPACING / 2.);
                 ui.separator();
@@ -1224,6 +1227,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     // Run one or more MD steps, if a MD computation is in progress.
     state.md_step(scene, &mut updates);
     crate::drawing::representations::update(state, scene, &mut updates);
+
+    // Capture after pending geometry updates, so the figure reflects this frame's scene.
+    crate::publication::show(state, scene, ui.ctx());
 
     state.ui.dt_render = start.elapsed().as_secs_f32();
 

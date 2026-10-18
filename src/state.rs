@@ -59,6 +59,7 @@ use crate::{
 };
 
 pub struct State {
+    pub publication: crate::publication::Publication,
     pub ui: StateUi,
     pub volatile: StateVolatile,
     pub peptides: Vec<MoleculePeptide>,
@@ -122,6 +123,7 @@ impl Default for State {
 
         Self {
             ui,
+            publication: Default::default(),
             volatile: StateVolatile::new(),
             peptides: Default::default(),
             ligands: Default::default(),
