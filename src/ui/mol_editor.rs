@@ -439,6 +439,35 @@ pub(in crate::ui) fn editor(
 
         ui.add_space(COL_SPACING);
         if ui
+            .button(RichText::new("Clear / add").color(Color32::LIGHT_RED))
+            .on_hover_text("Load the edited molecule, then start a fresh molecule in the editor.")
+            .clicked()
+        {
+            mol_editor::clear_and_add(state, scene, updates);
+        }
+
+        if let Some(mol_i) = state.mol_editor.mol_i_in_state
+            && mol_i < state.ligands.len()
+            && ui
+                .button(RichText::new("Clear / update").color(Color32::LIGHT_RED))
+                .on_hover_text(
+                    "Update the loaded molecule with changes made, then start a fresh molecule in the editor.",
+                )
+                .clicked()
+        {
+            mol_editor::clear_and_update(state, scene, updates, mol_i);
+        }
+
+        if ui
+            .button(RichText::new("Clear / discard").color(Color32::LIGHT_RED))
+            .on_hover_text("Discard unsaved changes, then start a fresh molecule in the editor.")
+            .clicked()
+        {
+            mol_editor::clear_editor(state, scene, updates);
+        }
+
+        ui.add_space(COL_SPACING);
+        if ui
             .button(RichText::new("Exit / add").color(Color32::LIGHT_RED))
             .on_hover_text("Exit the molecule editor, and load the edited molecule.")
             .clicked()

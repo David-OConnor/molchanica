@@ -2,8 +2,7 @@
 
 use bio_files::BondType;
 use graphics::{
-    ControlScheme, DeviceEvent, ElementState, EngineUpdates, EntityUpdate, FWD_VEC, Scene,
-    WindowEvent,
+    ControlScheme, DeviceEvent, ElementState, EngineUpdates, FWD_VEC, Scene, WindowEvent,
     event::{MouseButton, MouseScrollDelta},
     winit::keyboard::{KeyCode, PhysicalKey::Code},
 };
@@ -14,7 +13,7 @@ use na_seq::Element::Carbon;
 use crate::{
     cam,
     cam::{FOG_DIST_MAX, FOG_DIST_MIN, move_cam_to_sel},
-    drawing::{EntityClass, draw_pocket, peptide, wrappers},
+    drawing::{EntityClass, MolTypeExt, draw_pocket, peptide, wrappers},
     mol_editor,
     mol_editor::{add_atoms::add_atom, sync_md},
     mol_manip,
@@ -261,75 +260,48 @@ fn redraw_inplace_helper(
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) {
-    // todo: Fragile? Error handle.
-    let mol_i = state.volatile.active_mol.unwrap().1;
+    let Some((active_type, mol_i)) = state.volatile.active_mol else {
+        return;
+    };
+    if active_type != mol_type {
+        return;
+    }
 
-    let err = "Uhoh: Index error on in-place redraw";
+    let Some(mol) = state.get_mol(mol_type, mol_i) else {
+        return;
+    };
+    let class = mol_type.entity_type() as u32;
+    let valid_range = mol.common().entity_i_range.is_some_and(|(start, end)| {
+        scene
+            .entities
+            .get(start..end)
+            .is_some_and(|entities| entities.iter().all(|entity| entity.class == class))
+    });
 
-    let mol = match mol_type {
-        MolType::Peptide => {
-            if mol_i >= state.peptides.len() {
-                eprintln!("{err}");
-                return;
-            }
-
-            wrappers::update_single_peptide_inplace(mol_i, state, scene);
-            &mut state.peptides[mol_i].common
+    // Representations and selection highlights can invalidate cached entity ranges. Recreate
+    // the entities at the current atom positions instead of leaving them still until tool exit.
+    if !valid_range {
+        match mol_type {
+            MolType::Peptide => peptide::draw_peptide(state, scene, updates),
+            MolType::Ligand => wrappers::draw_all_ligs(state, scene, updates),
+            MolType::NucleicAcid => wrappers::draw_all_nucleic_acids(state, scene, updates),
+            MolType::Lipid => wrappers::draw_all_lipids(state, scene, updates),
+            MolType::Pocket => wrappers::draw_all_pockets(state, scene, updates),
+            MolType::Water => unreachable!(),
         }
-        MolType::Ligand => {
-            wrappers::update_single_ligand_inplace(mol_i, state, scene);
+        return;
+    }
 
-            if mol_i >= state.ligands.len() {
-                eprintln!("{err}");
-                wrappers::draw_all_ligs(state, scene, updates);
-                return;
-            }
-
-            &mut state.ligands[mol_i].common
-        }
-        MolType::NucleicAcid => {
-            wrappers::update_single_nucleic_acid_inplace(mol_i, state, scene);
-
-            if mol_i >= state.nucleic_acids.len() {
-                eprintln!("{err}");
-                wrappers::draw_all_nucleic_acids(state, scene, updates);
-                return;
-            }
-
-            &mut state.nucleic_acids[mol_i].common
-        }
-        MolType::Lipid => {
-            wrappers::update_single_lipid_inplace(mol_i, state, scene);
-
-            if mol_i >= state.lipids.len() {
-                eprintln!("{err}");
-                wrappers::draw_all_lipids(state, scene, updates);
-                return;
-            }
-
-            &mut state.lipids[mol_i].common
-        }
-        MolType::Pocket => {
-            wrappers::update_single_pocket_inplace(mol_i, state, scene);
-
-            if mol_i >= state.pockets.len() {
-                eprintln!("{err}");
-                wrappers::draw_all_pockets(state, scene, updates);
-                return;
-            }
-
-            &mut state.pockets[mol_i].common
-        }
+    match mol_type {
+        MolType::Peptide => wrappers::update_single_peptide_inplace(mol_i, state, scene),
+        MolType::Ligand => wrappers::update_single_ligand_inplace(mol_i, state, scene),
+        MolType::NucleicAcid => wrappers::update_single_nucleic_acid_inplace(mol_i, state, scene),
+        MolType::Lipid => wrappers::update_single_lipid_inplace(mol_i, state, scene),
+        MolType::Pocket => wrappers::update_single_pocket_inplace(mol_i, state, scene),
         MolType::Water => unreachable!(),
     };
 
-    updates.entities = match mol.entity_i_range {
-        Some(range) => EntityUpdate::Indexes(range),
-        None => {
-            eprintln!("Error: Missing entity index range.");
-            EntityUpdate::All
-        }
-    };
+    updates.entities.push_class(class);
 }
 
 fn handle_mouse_button(

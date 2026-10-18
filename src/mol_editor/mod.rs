@@ -1050,8 +1050,59 @@ pub(super) fn build_dynamics(
     Ok(md_state)
 }
 
+/// Start a fresh molecule while keeping the editor open and its pocket, if any.
+pub fn clear_editor(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    state.mol_editor.clear_mol(&mut state.ui.selection);
+    state.mol_editor.mol_i_in_state = None;
+    state.mol_editor.selected_comp = None;
+    state.mol_editor.rotatable_bonds.clear();
+    state.mol_editor.md.running = false;
+    sync_md(state);
+
+    state.volatile.mol_manip.mode = ManipMode::None;
+    state.volatile.mol_manip.pivot = None;
+    scene.input_settings.control_scheme = ControlScheme::Arc {
+        center: state.mol_editor.mol.common.centroid().into(),
+    };
+    scene.camera.position = Vec3F32::new(0., 0., INIT_CAM_DIST);
+    scene.camera.orientation = cam::front_orientation();
+    updates.camera = true;
+
+    redraw(
+        &mut scene.entities,
+        &state.mol_editor,
+        &state.ui,
+        state.volatile.mol_manip.mode,
+        updates,
+    );
+}
+
+/// Add the editor's molecule to state, then start a fresh molecule in the editor.
+pub fn clear_and_add(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    add_edited_mol(state);
+    clear_editor(state, scene, updates);
+}
+
+/// Update the molecule loaded into the editor, then start a fresh molecule in the editor.
+pub fn clear_and_update(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    lig_i: usize,
+) {
+    if update_edited_mol(state, lig_i) {
+        clear_editor(state, scene, updates);
+    }
+}
+
 /// Exit the editor, adding its molecule to state as a new one.
 pub fn exit_and_add(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    add_edited_mol(state);
+    exit_edit_mode(state, scene, updates);
+}
+
+/// Add the editor's molecule to state without changing editor mode.
+fn add_edited_mol(state: &mut State) {
     let mol = state.mol_editor.to_new_mol();
     state.ligands.push(mol);
 
@@ -1065,8 +1116,6 @@ pub fn exit_and_add(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         let posit = cam.position + cam.orientation.rotate_vec(FWD_VEC) * MOVE_TO_CAM_DIST;
         state.ligands[lig_i].common.move_to(posit.into());
     }
-
-    exit_edit_mode(state, scene, updates);
 }
 
 /// Exit the editor, replacing the molecule it was loaded from with the edited one.
@@ -1076,11 +1125,18 @@ pub fn exit_and_update(
     updates: &mut EngineUpdates,
     lig_i: usize,
 ) {
+    if update_edited_mol(state, lig_i) {
+        exit_edit_mode(state, scene, updates);
+    }
+}
+
+/// Replace the molecule loaded into the editor without changing editor mode.
+fn update_edited_mol(state: &mut State, lig_i: usize) -> bool {
     let editor = &mut state.mol_editor;
     editor.mol.common.reassign_sns();
 
     let Some(lig) = state.ligands.get_mut(lig_i) else {
-        return;
+        return false;
     };
 
     // The editor centers the molecule at the origin; we move it back to here.
@@ -1107,7 +1163,7 @@ pub fn exit_and_update(
         lig.common.move_to(centroid_prev);
     }
 
-    exit_edit_mode(state, scene, updates);
+    true
 }
 
 /// A molecule from the editor, added to or updated in state at `lig_i`, may be a different
