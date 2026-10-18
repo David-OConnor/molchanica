@@ -1592,13 +1592,7 @@ fn query_input(
         {
             match rcsb::get_newly_released() {
                 Ok(ident) => {
-                    load_atom_coords_rcsb(
-                        &ident,
-                        state,
-                        scene,
-                        updates,
-                        &mut redraw.peptide,
-                    );
+                    load_atom_coords_rcsb(&ident, state, scene, updates, &mut redraw.peptide);
                 }
                 Err(e) => handle_err(
                     &mut state.ui,

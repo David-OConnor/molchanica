@@ -1,19 +1,21 @@
 //! The protein comparison workflow: choose chains, fit, inspect deviations, and undo.
+use std::{
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
+    time::Duration,
+};
+
+use egui::{Color32, ComboBox, DragValue, ScrollArea, TextEdit, Ui};
+use egui_plot::{Line, Plot, PlotPoints};
+use graphics::{EngineUpdates, Scene};
+use mol_defs::molecules::{MolGenericRef, MolType};
+
 use crate::{
     cam,
     protein_alignment::{self, Comparison, Correspondence, Source},
     selection::expression,
     state::State,
     util::RedrawFlags,
-};
-use egui::{Color32, ComboBox, DragValue, ScrollArea, TextEdit, Ui};
-use egui_plot::{Line, Plot, PlotPoints};
-use graphics::{EngineUpdates, Scene};
-use mol_defs::molecules::{MolGenericRef, MolType};
-use std::{
-    sync::mpsc::{self, Receiver, TryRecvError},
-    thread,
-    time::Duration,
 };
 #[derive(Default)]
 pub struct SourceChoice {

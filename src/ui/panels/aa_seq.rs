@@ -346,197 +346,196 @@ pub(in crate::ui) fn sequence_display(
         return false;
     };
 
-    Frame::new().show(ui, |ui| {
-        // Sit the buttons just past the final residue, on the line it ends on. The allocation
-        // spans both, so the widgets below don't overlap them.
-        let last_row = galley
-            .rows
-            .last()
-            .map(|row| row.rect())
-            .unwrap_or(Rect::ZERO);
-        let btn_offset = vec2(
-            last_row.right() + SEQ_COPY_PAD,
-            // Centered on the line it shares, but never above the galley: a single-row sequence
-            // is shorter than the button.
-            (last_row.center().y - btns_size.y / 2.).max(0.),
-        );
-        let size = vec2(
-            galley.size().x.max(btn_offset.x + btns_size.x),
-            galley.size().y.max(btn_offset.y + btns_size.y),
-        );
+    Frame::new()
+        .show(ui, |ui| {
+            // Sit the buttons just past the final residue, on the line it ends on. The allocation
+            // spans both, so the widgets below don't overlap them.
+            let last_row = galley
+                .rows
+                .last()
+                .map(|row| row.rect())
+                .unwrap_or(Rect::ZERO);
+            let btn_offset = vec2(
+                last_row.right() + SEQ_COPY_PAD,
+                // Centered on the line it shares, but never above the galley: a single-row sequence
+                // is shorter than the button.
+                (last_row.center().y - btns_size.y / 2.).max(0.),
+            );
+            let size = vec2(
+                galley.size().x.max(btn_offset.x + btns_size.x),
+                galley.size().y.max(btn_offset.y + btns_size.y),
+            );
 
-        // `click_and_drag`, so a drag across the sequence selects text the way it does in a
-        // normal label; a plain click still picks a single residue.
-        let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-        // Only behind the text: the copy buttons keep the panel's own background.
-        ui.painter().rect_filled(
-            Rect::from_min_size(rect.min, galley.size()).expand(SEQ_BG_PAD),
-            3.,
-            SEQ_BG,
-        );
-        for (pos, label) in &cache.num_labels {
-            ui.painter()
-                .galley(rect.min + pos.to_vec2(), Arc::clone(label), SEQ_NUM_COLOR);
-        }
-        // Faux-bold, under the real glyphs; see `SEQ_BOLD_OFFSET`.
-        ui.painter().galley(
-            rect.min + vec2(SEQ_BOLD_OFFSET, 0.),
-            Arc::clone(&galley),
-            Color32::WHITE,
-        );
-        // Paints the galley, and handles drag-to-select and ctrl+C on the selected span. The
-        // per-residue coloring doesn't get in the way: it's all one galley.
-        LabelSelectionState::label_text_selection(
-            ui,
-            &response,
-            rect.min,
-            Arc::clone(&galley),
-            Color32::WHITE,
-            Stroke::NONE,
-        );
-
-        // `label_text_selection` shows the text cursor anywhere over `response`, but that also
-        // spans the blank space after the final residue and the copy buttons. Restore the
-        // normal pointer there, unless a selection drag is underway. This runs before the
-        // buttons are added, so any cursor they set still wins.
-        if response.hovered()
-            && !response.dragged()
-            && let Some(pointer) = response.hover_pos()
-        {
-            let pos = pointer - rect.min;
-            let in_galley = Rect::from_min_size(Pos2::ZERO, galley.size()).contains(pos.to_pos2());
-            let past_last_residue = pos.y >= last_row.min.y && pos.x > last_row.right();
-
-            if !in_galley || past_last_residue {
-                ui.ctx().set_cursor_icon(CursorIcon::Default);
+            // `click_and_drag`, so a drag across the sequence selects text the way it does in a
+            // normal label; a plain click still picks a single residue.
+            let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+            // Only behind the text: the copy buttons keep the panel's own background.
+            ui.painter().rect_filled(
+                Rect::from_min_size(rect.min, galley.size()).expand(SEQ_BG_PAD),
+                3.,
+                SEQ_BG,
+            );
+            for (pos, label) in &cache.num_labels {
+                ui.painter()
+                    .galley(rect.min + pos.to_vec2(), Arc::clone(label), SEQ_NUM_COLOR);
             }
-        }
+            // Faux-bold, under the real glyphs; see `SEQ_BOLD_OFFSET`.
+            ui.painter().galley(
+                rect.min + vec2(SEQ_BOLD_OFFSET, 0.),
+                Arc::clone(&galley),
+                Color32::WHITE,
+            );
+            // Paints the galley, and handles drag-to-select and ctrl+C on the selected span. The
+            // per-residue coloring doesn't get in the way: it's all one galley.
+            LabelSelectionState::label_text_selection(
+                ui,
+                &response,
+                rect.min,
+                Arc::clone(&galley),
+                Color32::WHITE,
+                Stroke::NONE,
+            );
 
-        let all_rect = Rect::from_min_size(rect.min + btn_offset, all_size);
-        let sel_rect = Rect::from_min_size(
-            rect.min + btn_offset + vec2(all_size.x + SEQ_BTN_GAP, 0.),
-            sel_size,
-        );
-        let create_rect = show_create.then(|| {
-            Rect::from_min_size(
-                sel_rect.right_top() + vec2(SEQ_BTN_GAP, 0.),
-                create_size,
-            )
-        });
+            // `label_text_selection` shows the text cursor anywhere over `response`, but that also
+            // spans the blank space after the final residue and the copy buttons. Restore the
+            // normal pointer there, unless a selection drag is underway. This runs before the
+            // buttons are added, so any cursor they set still wins.
+            if response.hovered()
+                && !response.dragged()
+                && let Some(pointer) = response.hover_pos()
+            {
+                let pos = pointer - rect.min;
+                let in_galley =
+                    Rect::from_min_size(Pos2::ZERO, galley.size()).contains(pos.to_pos2());
+                let past_last_residue = pos.y >= last_row.min.y && pos.x > last_row.right();
 
-        // The allocation covers the buttons, so drags and clicks starting on one must not also
-        // select residues.
-        let on_btn = |pointer: Pos2| {
-            all_rect.contains(pointer)
-                || sel_rect.contains(pointer)
-                || create_rect.is_some_and(|r| r.contains(pointer))
-        };
+                if !in_galley || past_last_residue {
+                    ui.ctx().set_cursor_icon(CursorIcon::Default);
+                }
+            }
 
-        if ui
-            .put(all_rect, Button::new(SEQ_COPY_ALL_TEXT))
-            .on_hover_text("Copy this sequence to the clipboard")
-            .clicked()
-        {
-            ui.ctx().copy_text(seq_text.to_owned());
-        }
+            let all_rect = Rect::from_min_size(rect.min + btn_offset, all_size);
+            let sel_rect = Rect::from_min_size(
+                rect.min + btn_offset + vec2(all_size.x + SEQ_BTN_GAP, 0.),
+                sel_size,
+            );
+            let create_rect = show_create.then(|| {
+                Rect::from_min_size(sel_rect.right_top() + vec2(SEQ_BTN_GAP, 0.), create_size)
+            });
 
-        let create_clicked = create_rect.is_some_and(|create_rect| {
-            ui.put(create_rect, create_seq_btn())
-                .on_hover_text(CREATE_SEQ_HOVER)
+            // The allocation covers the buttons, so drags and clicks starting on one must not also
+            // select residues.
+            let on_btn = |pointer: Pos2| {
+                all_rect.contains(pointer)
+                    || sel_rect.contains(pointer)
+                    || create_rect.is_some_and(|r| r.contains(pointer))
+            };
+
+            if ui
+                .put(all_rect, Button::new(SEQ_COPY_ALL_TEXT))
+                .on_hover_text("Copy this sequence to the clipboard")
                 .clicked()
-        });
-
-        // `Ui::put`, but greyed out with nothing selected. (`put` has no enabled variant.)
-        let copy_sel = ui
-            .scope_builder(
-                UiBuilder::new()
-                    .max_rect(sel_rect)
-                    .layout(Layout::centered_and_justified(Direction::TopDown)),
-                |ui| ui.add_enabled(!selected.is_empty(), Button::new(SEQ_COPY_SEL_TEXT)),
-            )
-            .inner
-            .on_hover_text("Copy the selected residues to the clipboard")
-            .on_disabled_hover_text("Select residues first, by dragging across the sequence");
-
-        if copy_sel.clicked() {
-            // In sequence order regardless of how the residues were selected, and with any gap
-            // between selected stretches simply closed up.
-            let selected_set: HashSet<usize> = selected.iter().copied().collect();
-            let text: String = seq_text
-                .chars()
-                .enumerate()
-                .filter(|(index, _)| {
-                    res_indices
-                        .get(*index)
-                        .is_some_and(|res_i| selected_set.contains(res_i))
-                })
-                .map(|(_, residue)| residue)
-                .collect();
-
-            ui.ctx().copy_text(text);
-        }
-
-        // The sequence position under the pointer, clamped to the last residue: a pointer past
-        // the end of a row resolves to one index beyond it. A pointer over a row's residue
-        // numbers counts as over that row, below them, instead of whichever row is closest.
-        let seq_pos = |pointer: Pos2| {
-            let mut pos = pointer - rect.min;
-            if let Some(row) = galley.rows.iter().find(|row| pos.y < row.max_y()) {
-                pos.y = pos.y.max(row.min_y());
+            {
+                ui.ctx().copy_text(seq_text.to_owned());
             }
 
-            galley
-                .cursor_from_pos(pos)
-                .index
-                .0
-                .min(res_indices.len().saturating_sub(1))
-        };
+            let create_clicked = create_rect.is_some_and(|create_rect| {
+                ui.put(create_rect, create_seq_btn())
+                    .on_hover_text(CREATE_SEQ_HOVER)
+                    .clicked()
+            });
 
-        // Dragging across the sequence selects the residues it spans, so the 3D view highlights
-        // the same stretch of protein that egui highlights in the text.
-        if response.drag_started()
-            && let Some(pointer) = response.interact_pointer_pos()
-            && !on_btn(pointer)
-        {
-            cache.drag_anchor = Some(seq_pos(pointer));
-        }
+            // `Ui::put`, but greyed out with nothing selected. (`put` has no enabled variant.)
+            let copy_sel = ui
+                .scope_builder(
+                    UiBuilder::new()
+                        .max_rect(sel_rect)
+                        .layout(Layout::centered_and_justified(Direction::TopDown)),
+                    |ui| ui.add_enabled(!selected.is_empty(), Button::new(SEQ_COPY_SEL_TEXT)),
+                )
+                .inner
+                .on_hover_text("Copy the selected residues to the clipboard")
+                .on_disabled_hover_text("Select residues first, by dragging across the sequence");
 
-        if let Some(anchor) = cache.drag_anchor
-            && response.dragged()
-            && let Some(pointer) = response.interact_pointer_pos()
-        {
-            let current = seq_pos(pointer);
-            let (start, end) = (anchor.min(current), anchor.max(current));
+            if copy_sel.clicked() {
+                // In sequence order regardless of how the residues were selected, and with any gap
+                // between selected stretches simply closed up.
+                let selected_set: HashSet<usize> = selected.iter().copied().collect();
+                let text: String = seq_text
+                    .chars()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        res_indices
+                            .get(*index)
+                            .is_some_and(|res_i| selected_set.contains(res_i))
+                    })
+                    .map(|(_, residue)| residue)
+                    .collect();
 
-            let residues = res_indices
-                .get(start..=end)
-                .map(<[usize]>::to_vec)
-                .unwrap_or_default();
+                ui.ctx().copy_text(text);
+            }
 
-            if *selection != residues {
-                *selection = residues;
+            // The sequence position under the pointer, clamped to the last residue: a pointer past
+            // the end of a row resolves to one index beyond it. A pointer over a row's residue
+            // numbers counts as over that row, below them, instead of whichever row is closest.
+            let seq_pos = |pointer: Pos2| {
+                let mut pos = pointer - rect.min;
+                if let Some(row) = galley.rows.iter().find(|row| pos.y < row.max_y()) {
+                    pos.y = pos.y.max(row.min_y());
+                }
+
+                galley
+                    .cursor_from_pos(pos)
+                    .index
+                    .0
+                    .min(res_indices.len().saturating_sub(1))
+            };
+
+            // Dragging across the sequence selects the residues it spans, so the 3D view highlights
+            // the same stretch of protein that egui highlights in the text.
+            if response.drag_started()
+                && let Some(pointer) = response.interact_pointer_pos()
+                && !on_btn(pointer)
+            {
+                cache.drag_anchor = Some(seq_pos(pointer));
+            }
+
+            if let Some(anchor) = cache.drag_anchor
+                && response.dragged()
+                && let Some(pointer) = response.interact_pointer_pos()
+            {
+                let current = seq_pos(pointer);
+                let (start, end) = (anchor.min(current), anchor.max(current));
+
+                let residues = res_indices
+                    .get(start..=end)
+                    .map(<[usize]>::to_vec)
+                    .unwrap_or_default();
+
+                if *selection != residues {
+                    *selection = residues;
+                    ui.request_repaint();
+                }
+            }
+
+            if response.drag_stopped() {
+                cache.drag_anchor = None;
+            }
+
+            // Skip clicks landing on the buttons; otherwise copying would also select the last
+            // residue.
+            if response.clicked()
+                && let Some(pointer) = response.interact_pointer_pos()
+                && !on_btn(pointer)
+                && let Some(residue) = res_indices.get(seq_pos(pointer)).copied()
+            {
+                *selection = vec![residue];
                 ui.request_repaint();
             }
-        }
 
-        if response.drag_stopped() {
-            cache.drag_anchor = None;
-        }
-
-        // Skip clicks landing on the buttons; otherwise copying would also select the last
-        // residue.
-        if response.clicked()
-            && let Some(pointer) = response.interact_pointer_pos()
-            && !on_btn(pointer)
-            && let Some(residue) = res_indices.get(seq_pos(pointer)).copied()
-        {
-            *selection = vec![residue];
-            ui.request_repaint();
-        }
-
-        create_clicked
-    })
-    .inner
+            create_clicked
+        })
+        .inner
 }
 
 /// Connect the shared sequence renderer to peptide residue selection and 3D redraws.

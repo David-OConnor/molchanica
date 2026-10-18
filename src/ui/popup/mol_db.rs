@@ -371,7 +371,12 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     // the loaded DBs below there's no path tail to show.
     for (sel, db, bytes, name) in [
         (DbSel::Hmdb, &state.hmdb_mol_db, HMDB_MOL_DB, HMDB_DB_NAME),
-        (DbSel::Chebi, &state.chebi_mol_db, CHEBI_MOL_DB, CHEBI_DB_NAME),
+        (
+            DbSel::Chebi,
+            &state.chebi_mol_db,
+            CHEBI_MOL_DB,
+            CHEBI_DB_NAME,
+        ),
     ] {
         let Some(db) = db else {
             if bytes.is_empty() {

@@ -620,4 +620,3 @@ fn update_highlight(
     clear_mol_entity_indices(state, None);
     updates.entities = EntityUpdate::All;
 }
-

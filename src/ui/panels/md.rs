@@ -3,9 +3,10 @@ use dynamics::{
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     snapshot::SnapshotHandlers,
 };
-use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
+use egui::{Color32, ComboBox, RichText, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
+use mol_defs::molecules::MolType;
 
 use crate::{
     button,
@@ -17,7 +18,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        flag_btn, misc, num_field, panels::md_viewer,
+        flag_btn, misc, num_field, panels::md_viewer, sidebar::mol_picker::mol_type_color,
     },
     util::RedrawFlags,
 };
@@ -52,6 +53,10 @@ pub fn md_setup(
                     ui.label(RichText::new("GPU").color(Color32::LIGHT_GREEN));
                 }
             }
+
+            ui.add_space(COL_SPACING / 2.0);
+
+            selected_mols_summary(state, ui);
 
             ui.add_space(COL_SPACING / 2.0);
 
@@ -281,6 +286,57 @@ pub fn md_setup(
     });
 
     md_viewer::dynamics_viewer(state, scene, updates, redraw, ui);
+}
+
+/// Counts molecule copies using the same selection as the simulation.
+fn selected_mols_summary(state: &State, ui: &mut Ui) {
+    let mols = md::get_mols_sel_for_md(state);
+    if mols.is_empty() {
+        ui.label("No mols selected; solvent only");
+        return;
+    }
+
+    let format = TextFormat {
+        font_id: TextStyle::Body.resolve(ui.style()),
+        color: ui.visuals().text_color(),
+        ..Default::default()
+    };
+    let mut label = LayoutJob::default();
+    label.append("Mols: ", 0., format.clone());
+
+    let mut first = true;
+    for mol_type in [
+        MolType::Ligand,
+        MolType::Peptide,
+        MolType::Lipid,
+        MolType::NucleicAcid,
+    ] {
+        let count: usize = mols
+            .iter()
+            .filter(|(t, _, _)| MolType::from(*t) == mol_type)
+            .map(|(_, _, copies)| *copies)
+            .sum();
+        if count == 0 {
+            continue;
+        }
+
+        if !first {
+            label.append(", ", 0., format.clone());
+        }
+        first = false;
+
+        let letter = mol_type.to_string().chars().next().unwrap();
+        label.append(
+            &format!("{count}{letter}"),
+            0.,
+            TextFormat {
+                color: mol_type_color(mol_type),
+                ..format.clone()
+            },
+        );
+    }
+
+    ui.label(label);
 }
 
 /// Section for integrator config, various modelling parameters etc
