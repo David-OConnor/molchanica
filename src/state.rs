@@ -998,6 +998,8 @@ pub struct PopupState {
     /// Why the About window's "Open data folder" button last failed, if it did. Reported in the
     /// window rather than only on stderr, which a GUI launch has nowhere to show.
     pub about_folder_error: Option<String>,
+    /// Checking for, downloading, and installing a newer release, from the About window.
+    pub updater: software_manager::Updater,
 }
 
 #[derive(Clone, PartialEq, Encode, Decode)]

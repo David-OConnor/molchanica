@@ -73,6 +73,10 @@ cudarc = { version = "0.19.10", default-features = false, features = ["std", "dr
 rodio = { version = "0.22.2", optional = true }  # For sonification of bonds etc.
 webbrowser = "1.2.4"  # For opening links, e.g. from the remote DBs
 
+# Checking for, downloading, and installing new releases, from the About popup. Without its
+# default `gui` feature, which is the Software Manager application itself.
+software_manager = { path = "../../software_manager", default-features = false }
+
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]

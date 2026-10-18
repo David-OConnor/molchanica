@@ -1,9 +1,10 @@
-//! The About popup: what this program is, which version is running, where to find it online, and
-//! where it keeps its files.
+//! The About popup: what this program is, which version is running, whether there's a newer one,
+//! where to find it online, and where it keeps its files.
 
-use std::io;
+use std::{io, time::Duration};
 
-use egui::{Color32, CursorIcon, Label, RichText, Sense, Ui};
+use egui::{Color32, CursorIcon, Label, ProgressBar, RichText, Sense, Ui};
+use software_manager::{Application, UpdateStatus};
 
 use crate::{
     VERSION, external_tools,
@@ -51,6 +52,97 @@ fn open_data_folder() -> io::Result<()> {
     open_dir(&root)
 }
 
+/// Check GitHub for a newer release, download it, and install it. Installing waits for Molchanica
+/// to close, since its files can't be replaced while it runs; the release's own setup script then
+/// installs it, and Molchanica reopens.
+fn update_section(state: &mut State, ui: &mut Ui) {
+    let updater = &mut state.ui.popup.updater;
+    updater.poll();
+
+    if updater.busy() {
+        // So the download progress moves.
+        ui.ctx().request_repaint_after(Duration::from_millis(100));
+    }
+
+    let mut check = false;
+    let mut download = false;
+    let mut install = false;
+
+    ui.horizontal(|ui| match updater.status() {
+        UpdateStatus::Idle => {
+            check = ui.button("Check for updates").clicked();
+        }
+        UpdateStatus::Checking(_) => {
+            ui.spinner();
+            ui.label("Checking for updates…");
+        }
+        UpdateStatus::UpToDate => {
+            ui.label(RichText::new("This is the latest version.").color(Color32::WHITE));
+            check = ui.button("Check again").clicked();
+        }
+        UpdateStatus::Available(release) => {
+            ui.label(
+                RichText::new(format!("Version {} is available.", release.version))
+                    .color(Color32::WHITE),
+            );
+            link(ui, "Release notes", &release.page_url);
+
+            download = ui
+                .button("Download and install")
+                .on_hover_text(format!(
+                    "Download the update ({:.0} MB). Installing it is the next step.",
+                    release.size as f64 / 1_000_000.
+                ))
+                .clicked();
+        }
+        UpdateStatus::Downloading {
+            release, progress, ..
+        } => {
+            ui.add(
+                ProgressBar::new(progress.fraction())
+                    .text(format!("Downloading {}…", release.version))
+                    .desired_width(300.),
+            );
+        }
+        UpdateStatus::Ready(staged) => {
+            ui.label(format!("Version {} is downloaded.", staged.release.version));
+
+            install = ui
+                .button(RichText::new("Restart and install").color(COLOR_HIGHLIGHT))
+                .on_hover_text(
+                    "Close Molchanica, install the update, then reopen it. Preferences are saved \
+                    first; save any other work before this.",
+                )
+                .clicked();
+        }
+        UpdateStatus::Installing => {
+            ui.label("Installing…");
+        }
+        UpdateStatus::Failed(e) => {
+            ui.label(
+                RichText::new(format!("Unable to update: {e}"))
+                    .color(Color32::ORANGE)
+                    .small(),
+            );
+            check = ui.button("Try again").clicked();
+        }
+    });
+
+    let ctx = ui.ctx().clone();
+    let repaint = move || ctx.request_repaint();
+
+    if check {
+        updater.check(Application::Molchanica, VERSION, repaint);
+    } else if download {
+        updater.download(repaint);
+    } else if install && updater.install_on_exit() {
+        // The graphics engine doesn't let the UI close the window, so exit directly. The
+        // installer is waiting for this process to end.
+        state.update_save_prefs();
+        std::process::exit(0);
+    }
+}
+
 pub(in crate::ui::popup) fn about_window(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.heading(RichText::new("Molchanica").color(Color32::WHITE));
@@ -60,6 +152,10 @@ pub(in crate::ui::popup) fn about_window(state: &mut State, ui: &mut Ui) {
     ui.add_space(ROW_SPACING);
 
     ui.label("Molecule editing, visualization, and dynamics.");
+
+    ui.add_space(ROW_SPACING);
+
+    update_section(state, ui);
 
     ui.add_space(ROW_SPACING);
 
