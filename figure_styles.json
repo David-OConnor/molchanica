@@ -1,0 +1,30 @@
+{
+  "settings": {
+    "width": 2400,
+    "height": 1800,
+    "dpi": 300,
+    "samples": 2,
+    "sphere_detail": 4,
+    "transparent": false,
+    "background": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "labels": true,
+    "label_scale": 1.0,
+    "label_color": [
+      25,
+      25,
+      25
+    ],
+    "ambient": 0.3,
+    "key": 0.65,
+    "fill": 0.25,
+    "specular": 0.2,
+    "light_angle": -35.0,
+    "occlusion": 0.25,
+    "outlines": 0.0
+  },
+  "styles": {}
+}

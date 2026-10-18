@@ -1,6 +1,6 @@
 //! Window-independent, instanced raster rendering. Supersampling includes text and annotations.
 
-use std::{collections::BTreeMap, sync::mpsc};
+use std::{collections::BTreeMap, ops::Range, sync::mpsc, time::Duration};
 
 use egui::{Align2, Color32, FontId, Pos2, Stroke};
 use graphics::{Entity, Handedness, Scene};
@@ -71,10 +71,65 @@ struct Batch {
     transparent: bool,
 }
 
+struct Draw {
+    mesh: usize,
+    indices: Range<u32>,
+    instances: Range<u32>,
+    transparent: bool,
+}
+
+/// Keep each submission small enough for the desktop/viewport to get GPU time between them.
+/// Splitting indices also bounds a single large surface mesh, not just atom instances.
+fn draw_groups(batches: &[Batch], scene: &Scene) -> Vec<Vec<Draw>> {
+    const TRIANGLES: u32 = 1_000_000;
+    let mut groups = vec![Vec::new()];
+    let mut cost = 0;
+    for batch in batches {
+        let count = scene.meshes[batch.mesh].indices.len() as u32;
+        for start in (0..count).step_by((TRIANGLES * 3) as usize) {
+            let end = (start + TRIANGLES * 3).min(count);
+            let triangles = ((end - start) / 3).max(1);
+            let instances = (TRIANGLES / triangles).max(1);
+            for first in (batch.first..batch.first + batch.count).step_by(instances as usize) {
+                let last = (first + instances).min(batch.first + batch.count);
+                let next_cost = triangles * (last - first);
+                if cost + next_cost > TRIANGLES || groups.last().unwrap().len() >= 256 {
+                    groups.push(Vec::new());
+                    cost = 0;
+                }
+                groups.last_mut().unwrap().push(Draw {
+                    mesh: batch.mesh,
+                    indices: start..end,
+                    instances: first..last,
+                    transparent: batch.transparent,
+                });
+                cost += next_cost;
+            }
+        }
+    }
+    groups
+}
+
+fn submit(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    encoder: wgpu::CommandEncoder,
+) -> Result<(), String> {
+    let index = queue.submit([encoder.finish()]);
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .map_err(|e| format!("GPU submission did not finish within 10 seconds: {e}"))?;
+    Ok(())
+}
+
 pub(super) fn render(
     mut scene: Scene,
     settings: Settings,
     measurements: &[Measurement],
+    mut progress: impl FnMut(&str),
 ) -> Result<Figure, String> {
     settings.validate()?;
     if !scene.gaussians.is_empty() {
@@ -91,6 +146,7 @@ pub(super) fn render(
         return Err("A distance endpoint is outside the figure. Reframe the scene or change the aspect ratio to include both endpoints.".into());
     }
 
+    progress("Initializing offscreen GPU…");
     let gpu = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(gpu.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .map_err(|e| format!("No offscreen GPU adapter: {e}"))?;
@@ -218,6 +274,7 @@ pub(super) fn render(
     let transparent_bind = bind_globals(&transparent_pipeline);
 
     let mut opaque = BTreeMap::<usize, Vec<&Entity>>::new();
+    progress("Preparing scene buffers…");
     let mut transparent = Vec::new();
     let mesh_transparency: Vec<bool> = scene
         .meshes
@@ -359,7 +416,6 @@ pub(super) fn render(
             },
         ],
     });
-    let mut encoder = device.create_command_encoder(&Default::default());
     let background = if settings.transparent {
         wgpu::Color::TRANSPARENT
     } else {
@@ -370,70 +426,98 @@ pub(super) fn render(
             a: 1.,
         }
     };
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Figure geometry"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &color_view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(background),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.),
-                    store: wgpu::StoreOp::Store,
+    let groups = draw_groups(&batches, &scene);
+    for (i, draws) in groups.iter().enumerate() {
+        progress(&format!("Rendering geometry ({}/{})…", i + 1, groups.len()));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Figure geometry"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if i == 0 {
+                            wgpu::LoadOp::Clear(background)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: if i == 0 {
+                            wgpu::LoadOp::Clear(1.)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            ..Default::default()
-        });
-        pass.set_vertex_buffer(1, instances.slice(..));
-        for batch in &batches {
-            let Some((vertices, indices, count)) = meshes.get(&batch.mesh) else {
-                continue;
-            };
-            pass.set_pipeline(if batch.transparent {
-                &transparent_pipeline
-            } else {
-                &opaque_pipeline
+                ..Default::default()
             });
-            pass.set_bind_group(
-                0,
-                if batch.transparent {
-                    &transparent_bind
+            pass.set_vertex_buffer(1, instances.slice(..));
+            for draw in draws {
+                let Some((vertices, indices, _)) = meshes.get(&draw.mesh) else {
+                    continue;
+                };
+                pass.set_pipeline(if draw.transparent {
+                    &transparent_pipeline
                 } else {
-                    &opaque_bind
-                },
-                &[],
-            );
-            pass.set_vertex_buffer(0, vertices.slice(..));
-            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..*count, 0, batch.first..batch.first + batch.count);
+                    &opaque_pipeline
+                });
+                pass.set_bind_group(
+                    0,
+                    if draw.transparent {
+                        &transparent_bind
+                    } else {
+                        &opaque_bind
+                    },
+                    &[],
+                );
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(draw.indices.clone(), 0, draw.instances.clone());
+            }
         }
+        submit(&device, &queue, encoder)?;
     }
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Figure depth shading"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &output_view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(background),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        pass.set_pipeline(&post_pipeline);
-        pass.set_bind_group(0, &post_bind, &[]);
-        pass.draw(0..3, 0..1);
+    // Scissor the full-screen depth pass as well: supersampling can make it more expensive
+    // than the geometry pass. Every strip samples the original complete depth/color textures.
+    for y in (0..height).step_by(128) {
+        progress("Rendering lighting and outlines…");
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Figure depth shading"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if y == 0 {
+                            wgpu::LoadOp::Clear(background)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&post_pipeline);
+            pass.set_bind_group(0, &post_bind, &[]);
+            pass.set_scissor_rect(0, y, width, (height - y).min(128));
+            pass.draw(0..3, 0..1);
+        }
+        submit(&device, &queue, encoder)?;
     }
+    progress("Rendering labels and measurements…");
+    let mut encoder = device.create_command_encoder(&Default::default());
     draw_labels(
         &scene,
         &settings,
@@ -467,7 +551,8 @@ pub(super) fn render(
             depth_or_array_layers: 1,
         },
     );
-    queue.submit([encoder.finish()]);
+    submit(&device, &queue, encoder)?;
+    progress("Reading figure pixels…");
     let (tx, rx) = mpsc::channel();
     readback
         .slice(..)
@@ -475,15 +560,19 @@ pub(super) fn render(
             let _ = tx.send(result);
         });
     device
-        .poll(wgpu::PollType::wait_indefinitely())
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(Duration::from_secs(10)),
+        })
         .map_err(|e| e.to_string())?;
-    rx.recv()
+    rx.recv_timeout(Duration::from_secs(10))
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
     let data = readback
         .slice(..)
         .get_mapped_range()
         .map_err(|e| e.to_string())?;
+    progress("Antialiasing figure…");
     let rgba = downsample(&data, padded_row as usize, &settings);
     drop(data);
     readback.unmap();

@@ -86,6 +86,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn handle_cli_flags() -> Option<i32> {
     let flag = std::env::args().nth(1)?;
     match flag.as_str() {
+        // Internal worker: exit before initializing application state, CUDA, or the viewport.
+        "--render-figure" => Some(publication::worker_main()),
         // Checks the native ProteinMPNN port in src/therapeutic_misc/ddg against the reference forward
         // pass scripts/convert_mpnn_weights.py recorded from upstream. See that module's docs.
         "--verify-mpnn" => {

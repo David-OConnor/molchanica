@@ -2,6 +2,9 @@
 //! editor controls, selection outlines, or manipulation gizmos enter the exported image.
 
 mod renderer;
+mod worker;
+
+pub(crate) use worker::worker_main;
 
 use std::{
     collections::BTreeMap,
@@ -10,10 +13,10 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use egui::{Color32, Context, DragValue, Slider, TextureHandle, TextureOptions};
@@ -56,7 +59,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     result.map_err(|e| e.to_string())
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[serde(default)]
 pub(super) struct Settings {
     width: u32,
@@ -140,7 +143,7 @@ impl Settings {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, bincode::Encode, bincode::Decode)]
 pub(super) struct Measurement {
     a: Vec3,
     b: Vec3,
@@ -192,13 +195,28 @@ pub struct Publication {
     style_name: String,
     measurements: Vec<Measurement>,
     endpoint: Option<Vec3>,
-    render_rx: Option<mpsc::Receiver<Result<Figure, String>>>,
+    render_rx: Option<mpsc::Receiver<RenderEvent>>,
+    render_cancel: Option<Arc<AtomicBool>>,
+    render_started: Option<Instant>,
     save_rx: Option<mpsc::Receiver<Result<PathBuf, String>>>,
     figure: Option<Arc<Figure>>,
     pending_save: Option<Arc<Figure>>,
     preview: Option<TextureHandle>,
     dialog: egui_file_dialog::FileDialog,
     status: String,
+}
+
+enum RenderEvent {
+    Progress(String),
+    Finished(Result<Figure, String>),
+}
+
+impl Drop for Publication {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.render_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Publication {
@@ -214,10 +232,13 @@ impl Publication {
     }
 
     fn poll(&mut self, ctx: &Context) {
-        if let Some(rx) = &self.render_rx {
+        while let Some(rx) = &self.render_rx {
             match rx.try_recv() {
-                Ok(result) => {
+                Ok(RenderEvent::Progress(status)) => self.status = status,
+                Ok(RenderEvent::Finished(result)) => {
                     self.render_rx = None;
+                    self.render_cancel = None;
+                    self.render_started = None;
                     match result {
                         Ok(figure) => {
                             // Keep the GPU preview bounded; retain the exact full-resolution PNG pixels.
@@ -254,9 +275,11 @@ impl Publication {
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.render_rx = None;
+                    self.render_cancel = None;
+                    self.render_started = None;
                     self.status = "The render worker stopped unexpectedly.".into();
                 }
-                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Empty) => break,
             }
         }
         if let Some(rx) = &self.save_rx {
@@ -470,40 +493,44 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
                         p.library.settings.validate().is_ok(),
                         egui::Button::new("Render preview"),
                     ).clicked() {
-                        p.persist(prefs_dir);
-                        let mut snapshot = scene.clone();
-                        // Interactive atom LOD depends on scene size. Figures always use smooth
-                        // spheres and cylinders, without changing the interactive scene.
-                        for index in [
-                            crate::render::MESH_SPHERE_HIGHRES,
-                            crate::render::MESH_SPHERE_LOWRES,
-                            crate::render::MESH_SPHERE_MEDRES,
-                        ] {
-                            snapshot.meshes[index] = graphics::Mesh::new_sphere(
-                                1., p.library.settings.sphere_detail,
-                            );
-                        }
-                        snapshot.meshes[crate::render::MESH_BOND] = graphics::Mesh::new_cylinder(
-                            1.,
-                            crate::drawing::atoms_bonds::BOND_RADIUS_BASE,
-                            if p.library.settings.sphere_detail == 4 { 48 } else { 32 },
-                        );
+                        let snapshot = match worker::snapshot(scene) {
+                            Ok(snapshot) => snapshot,
+                            Err(e) => {
+                                p.status = e;
+                                return;
+                            }
+                        };
                         let settings = p.library.settings.clone();
                         let measurements = p.measurements.clone();
+                        let prefs_path = prefs_dir.join("figure_styles.json");
+                        let prefs_bytes = serde_json::to_vec_pretty(&p.library);
                         let (tx, rx) = mpsc::channel();
+                        let cancel = Arc::new(AtomicBool::new(false));
+                        p.render_cancel = Some(cancel.clone());
+                        p.render_started = Some(Instant::now());
                         p.render_rx = Some(rx);
                         p.figure = None;
                         p.preview = None;
-                        p.status = "Rendering at full export resolution…".into();
+                        p.status = "Preparing figure in a separate process…".into();
+                        let repaint = ctx.clone();
+                        ctx.request_repaint();
+                        if let Ok(bytes) = prefs_bytes {
+                            std::thread::spawn(move || {
+                                let _ = atomic_write(&prefs_path, &bytes);
+                            });
+                        }
                         std::thread::spawn(move || {
+                            // Disk sync, serialization, GPU initialization and mesh generation
+                            // must never run inside the UI callback.
                             let result = std::panic::catch_unwind(
                                 std::panic::AssertUnwindSafe(|| {
-                                    renderer::render(snapshot, settings, &measurements)
+                                    worker::run(snapshot, settings, measurements, &cancel, &tx)
                                 }),
                             ).unwrap_or_else(|_| {
                                 Err("GPU rendering failed. Try a smaller image.".into())
                             });
-                            let _ = tx.send(result);
+                            let _ = tx.send(RenderEvent::Finished(result));
+                            repaint.request_repaint();
                         });
                     }
                     let ready = p.figure.as_ref().is_some_and(|f| f.settings == p.library.settings);
@@ -519,6 +546,17 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
             });
             if busy {
                 ui.spinner();
+            }
+            if let Some(cancel) = &p.render_cancel {
+                ui.horizontal(|ui| {
+                    if let Some(start) = p.render_started {
+                        ui.label(format!("{} s elapsed · 120 s limit", start.elapsed().as_secs()));
+                    }
+                    if ui.button("Cancel render").clicked() {
+                        cancel.store(true, Ordering::Relaxed);
+                        p.status = "Cancelling render…".into();
+                    }
+                });
             }
             ui.label(&p.status);
             if let Some(preview) = &p.preview {

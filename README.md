@@ -81,7 +81,9 @@ Open **Publication figure** beside the view controls. Set exact pixel dimensions
 resolution (DPI), background color or transparency, and 2×/3× supersampling. **Use view aspect**
 matches the camera's current aspect ratio; otherwise the preview shows the new framing. The
 vertical field of view stays fixed. **Render preview** freezes the current geometry and camera
-and renders the full export resolution on a worker thread. **Save PNG** writes those exact pixels,
+and renders the full export resolution in a separate worker process. The dialog shows progress
+and a **Cancel render** button. A render that exceeds 120 seconds is stopped; GPU work is split
+into bounded submissions so the viewport can keep drawing. **Save PNG** writes those exact pixels,
 including alpha and DPI metadata. Camera/window changes after rendering do not alter the saved
 figure; render again to capture them. The checkerboard in the preview is not exported.
 
