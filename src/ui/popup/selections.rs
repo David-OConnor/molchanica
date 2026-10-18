@@ -48,7 +48,7 @@ pub fn editor(state: &mut State, ui: &mut Ui, redraw: &mut RedrawFlags) {
             .selected_text("Use object…")
             .show_ui(ui, |ui| {
                 for (_, _, mol) in expression::objects(state) {
-                    if ui.button(mol.name().as_ref()).clicked() {
+                    if ui.button(&*mol.name()).clicked() {
                         edit.expression = expression::object_expression(&mol);
                     }
                 }

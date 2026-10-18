@@ -1008,12 +1008,23 @@ pub fn handle_thread_rx(
     if prefs_dirty {
         state.to_save.save_flag = true;
     }
-    if let Some(rx) = &mut state.volatile.thread_receivers.therapeutic_properties_avail
-        && let Ok((i_mol, tp)) = rx.try_recv()
-        && i_mol < state.ligands.len()
-    {
-        state.ligands[i_mol].therapeutic_props = Some(tp);
-        state.volatile.thread_receivers.therapeutic_properties_avail = None;
+    let therapeutic_result = state
+        .volatile
+        .thread_receivers
+        .therapeutic_properties_avail
+        .as_ref()
+        .map(|rx| rx.try_recv());
+    match therapeutic_result {
+        Some(Ok((i_mol, properties))) => {
+            if let Some(mol) = state.ligands.get_mut(i_mol) {
+                mol.therapeutic_props = Some(properties);
+            }
+            state.volatile.thread_receivers.therapeutic_properties_avail = None;
+        }
+        Some(Err(TryRecvError::Disconnected)) => {
+            state.volatile.thread_receivers.therapeutic_properties_avail = None;
+        }
+        Some(Err(TryRecvError::Empty)) | None => {}
     }
 
     if let Some(rx) = &mut state.volatile.thread_receivers.amber_geostd_data_avail

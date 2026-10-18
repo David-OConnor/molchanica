@@ -15,7 +15,7 @@ use mol_defs::molecules::{MoleculeGeneric, small::hmdb_accession};
 
 use crate::{
     button, label,
-    mol_db::{MolMeta, ParquetMolDb},
+    mol_db::{CHEBI_DB_NAME, CHEBI_MOL_DB, HMDB_DB_NAME, HMDB_MOL_DB, MolMeta, ParquetMolDb},
     prefs::OpenType,
     state::{DbSel, PopupState, State},
     threads::start_builtin_mol_db_load,
@@ -369,11 +369,22 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
     // The built-in DBs, each present only if this build has it embedded; see `State::hmdb_mol_db`
     // and `State::chebi_mol_db`. They have no file path (they're baked into the binary), so unlike
     // the loaded DBs below there's no path tail to show.
-    for (sel, db) in [
-        (DbSel::Hmdb, &state.hmdb_mol_db),
-        (DbSel::Chebi, &state.chebi_mol_db),
+    for (sel, db, bytes, name) in [
+        (DbSel::Hmdb, &state.hmdb_mol_db, HMDB_MOL_DB, HMDB_DB_NAME),
+        (DbSel::Chebi, &state.chebi_mol_db, CHEBI_MOL_DB, CHEBI_DB_NAME),
     ] {
         let Some(db) = db else {
+            if bytes.is_empty() {
+                label!(ui, format!("{name}: database not bundled."), Color32::GRAY);
+            } else if state.volatile.builtin_mol_db_load_started
+                && state.volatile.thread_receivers.builtin_mol_dbs.is_none()
+            {
+                label!(
+                    ui,
+                    format!("{name}: unable to load database."),
+                    Color32::LIGHT_RED
+                );
+            }
             continue;
         };
 

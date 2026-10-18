@@ -549,6 +549,10 @@ standalone executable.
 If you're not compiling on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the
 `--no-default-features` to the build command. This will disable GPU support on the executable produced.
 
+The bundled molecule databases are optional. `hmdb.parquet` and `ChEBI.parquet` in the
+project root are embedded when present; missing files are reported in the molecule database
+popup. Add either file and rebuild to bundle it, or use **Load DB** to open a database at runtime.
+
 #### Compiling with GPU support
 
 If compiling with GPU support, your compiling PC must have

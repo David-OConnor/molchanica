@@ -526,6 +526,8 @@ pub(in crate::ui) fn mol_char_disp(
 
                 adme_disp(&ther.adme, ui);
                 tox_disp(&ther.toxicity, ui);
+            } else if !adme::embedded_models_available() {
+                ui.label("ADME predictions unavailable: no trained models are bundled.");
             }
         });
 }

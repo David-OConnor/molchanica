@@ -176,7 +176,7 @@ fn source_picker(state: &State, ui: &mut Ui, label: &str, choice: &mut SourceCho
                                 .selectable_value(
                                     &mut choice.key,
                                     expression::object_key(&mol_ref),
-                                    mol_ref.name().as_ref(),
+                                    &*mol_ref.name(),
                                 )
                                 .changed()
                             {

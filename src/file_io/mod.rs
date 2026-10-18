@@ -69,6 +69,10 @@ fn spawn_therapeutic_inference(
     therapeutic_properties_avail: &mut Option<Receiver<(usize, TherapeuticProperties)>>,
     mol_i: usize,
 ) {
+    if !adme::embedded_models_available() {
+        return;
+    }
+
     let (tx, rx) = mpsc::channel();
     let mol_for_thread = mol.clone();
     let ff_params_for_thread = ff_params.clone();
@@ -83,8 +87,7 @@ fn spawn_therapeutic_inference(
                 mol
             }
             Err(error) => {
-                // Preserve the previous behavior: each model can still report its own failure and
-                // the aggregate inference returns defaults for unavailable properties.
+                // Let inference report any remaining geometry or model error to the caller.
                 println!(
                     "Attempted 3D molecular preparation for ADME inference using RDKit, \
                      but it failed: {error}"

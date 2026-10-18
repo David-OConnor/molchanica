@@ -69,9 +69,16 @@ const BATCH_SIZE_READ: usize = 8_192;
 const BATCH_SIZE_WRITE: usize = 2_048;
 
 // We include a collection of common small molecules with the application, so they can
-// be loaded without internet queries. This increases application size.
+// be loaded without internet queries. Missing files leave the corresponding database unavailable.
+#[cfg(embedded_hmdb)]
 pub const HMDB_MOL_DB: &[u8] = include_bytes!("../../hmdb.parquet");
+#[cfg(not(embedded_hmdb))]
+pub const HMDB_MOL_DB: &[u8] = &[];
+
+#[cfg(embedded_chebi)]
 pub const CHEBI_MOL_DB: &[u8] = include_bytes!("../../ChEBI.parquet");
+#[cfg(not(embedded_chebi))]
+pub const CHEBI_MOL_DB: &[u8] = &[];
 
 /// Name shown in the UI for the database embedded in the binary; it has no filename.
 pub const HMDB_DB_NAME: &str = "HMDB (built in)";
