@@ -12,9 +12,8 @@ use bio_apis::{
 };
 use egui_file_dialog::{DialogState, FileDialog, FileDialogConfig};
 use mol_defs::molecules::{MolGenericRef, MolIdent, MolIdentType};
-use synthesis::{
-    EcTopLevel,
-    broad_target::{LibraryInventory, LibraryRoute, ReactionLibrary, create_protocol_for_route},
+use synthesis::broad_target::{
+    LibraryInventory, LibraryRoute, ReactionFilters, ReactionLibrary, create_protocol_for_route,
 };
 
 use crate::{
@@ -119,11 +118,10 @@ impl SynthesisDownloadId {
 }
 
 pub struct SynthesisLibraryData {
+    pub library: ReactionLibrary,
     pub summary: String,
     pub routes: Vec<LibraryRoute>,
     pub classes: Vec<String>,
-    /// Top-level EC classes catalyzing at least one step, sorted.
-    pub ec_classes: Vec<EcTopLevel>,
     pub inventory: LibraryInventory,
 }
 
@@ -206,16 +204,6 @@ impl RouteComponent {
             }),
         }
     }
-}
-
-/// True if an enzyme for any step of the route belongs to this top-level EC class.
-pub fn route_has_ec_class(route: &LibraryRoute, top_level: EcTopLevel) -> bool {
-    route
-        .steps
-        .iter()
-        .flat_map(|step| &step.enzymes)
-        .filter_map(|enzyme| enzyme.ec)
-        .any(|ec| ec.top_level == top_level)
 }
 
 pub enum SynthesisEntry {
@@ -315,8 +303,7 @@ pub struct SynthesisReactionsState {
     pub entry: SynthesisEntry,
     pub search: String,
     pub class_filter: String,
-    /// None shows every route; otherwise keep routes with a step catalyzed by this EC class.
-    pub enzyme_class_filter: Option<EcTopLevel>,
+    pub filters: ReactionFilters,
     /// None shows every route; otherwise keep routes using this feedstock, enzyme, or cofactor.
     pub component_filter: Option<RouteComponent>,
     pub building_blocks: BuildingBlocksView,
@@ -348,22 +335,13 @@ impl SynthesisReactionsState {
                     classes.sort();
                     classes.dedup();
 
-                    let mut ec_classes: Vec<_> = routes
-                        .iter()
-                        .flat_map(|route| &route.steps)
-                        .flat_map(|step| &step.enzymes)
-                        .filter_map(|enzyme| enzyme.ec.map(|ec| ec.top_level))
-                        .collect();
-                    ec_classes.sort();
-                    ec_classes.dedup();
-
                     let inventory = library.inventory();
 
                     SynthesisLibraryData {
+                        library,
                         summary,
                         routes,
                         classes,
-                        ec_classes,
                         inventory,
                     }
                 })

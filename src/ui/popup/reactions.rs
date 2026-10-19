@@ -9,14 +9,14 @@ use bio_apis::{
 };
 use egui::{
     Align, Align2, Button, CollapsingHeader, Color32, ComboBox, FontId, Frame, Grid, Layout,
-    RichText, ScrollArea, Sense, Slider, TextEdit, TextStyle, Ui, pos2, vec2,
+    PopupCloseBehavior, RichText, ScrollArea, Sense, Slider, TextEdit, TextStyle, Ui, pos2, vec2,
 };
 use graphics::{EngineUpdates, Scene};
 use synthesis::{
-    EnzymeCommission,
+    EcTopLevel, EnzymeCommission,
     broad_target::{
-        LibraryEnzyme, LibraryMaterial, LibraryMolecule, LibraryRoute, LibraryStep,
-        SigmaAldrichProduct,
+        FeedstockRole, LibraryEnzyme, LibraryMaterial, LibraryMolecule, LibraryRoute, LibraryStep,
+        ReactionFilters, SigmaAldrichProduct,
     },
 };
 
@@ -28,7 +28,7 @@ use crate::{
         BuildingBlockColumn, BuildingBlockKind, BuildingBlocksView, Entry, ParticipantAction,
         Query, ReactionsState, RouteComponent, SynthesisDownloadId, SynthesisDownloads,
         SynthesisEntry, SynthesisLibraryData, SynthesisParticipantAction, SynthesisReactionsState,
-        SynthesisSort, route_has_ec_class,
+        SynthesisSort,
     },
     state::State,
     ui::{
@@ -238,35 +238,6 @@ pub(super) fn synthesis_reactions_window(
                 }
             });
 
-        ui.label("Enzyme class:");
-        let enzyme_class_label = match state.enzyme_class_filter {
-            None => "All classes".to_owned(),
-            Some(top) => top.to_string(),
-        };
-        ComboBox::from_id_salt("synthesis_enzyme_class_filter")
-            .selected_text(enzyme_class_label)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_value(&mut state.enzyme_class_filter, None, "All classes")
-                    .changed()
-                {
-                    state.page = 0;
-                }
-                for &top in &data.ec_classes {
-                    if ui
-                        .selectable_value(
-                            &mut state.enzyme_class_filter,
-                            Some(top),
-                            top.to_string(),
-                        )
-                        .on_hover_text("Routes with any step catalyzed by an enzyme in this class.")
-                        .changed()
-                    {
-                        state.page = 0;
-                    }
-                }
-            });
-
         ui.label("Steps:");
         ComboBox::from_id_salt("synthesis_step_filter")
             .selected_text(match state.step_filter {
@@ -417,6 +388,10 @@ pub(super) fn synthesis_reactions_window(
         ui.label("Click the molecule again to retry.");
     }
 
+    if synthesis_route_filters(&mut state.filters, ui) {
+        state.page = 0;
+    }
+
     let search = state.search.trim().to_ascii_lowercase();
     let mut visible: Vec<_> = data
         .routes
@@ -424,9 +399,7 @@ pub(super) fn synthesis_reactions_window(
         .enumerate()
         .filter(|(_, route)| {
             (state.class_filter.is_empty() || route.class == state.class_filter)
-                && state
-                    .enzyme_class_filter
-                    .is_none_or(|top| route_has_ec_class(route, top))
+                && data.library.route_matches_filters(route, &state.filters)
                 && state
                     .component_filter
                     .is_none_or(|component| component.used_by(route, &data.inventory))
@@ -527,6 +500,126 @@ pub(super) fn synthesis_reactions_window(
             }
         }
         ui.ctx().request_repaint();
+    }
+}
+
+/// Restrictions apply to complete synthesis routes and do not affect the Rhea viewer.
+fn synthesis_route_filters(filters: &mut ReactionFilters, ui: &mut Ui) -> bool {
+    const FEEDSTOCK_ROLES: [(FeedstockRole, &str); 8] = [
+        (FeedstockRole::CarbonylScaffold, "Carbonyl scaffolds"),
+        (FeedstockRole::AminoAcidScaffold, "Amino acid scaffolds"),
+        (FeedstockRole::NucleosideScaffold, "Nucleoside scaffolds"),
+        (
+            FeedstockRole::CarbohydrateScaffold,
+            "Carbohydrate scaffolds",
+        ),
+        (
+            FeedstockRole::AromaticAmineScaffold,
+            "Aromatic amine scaffolds",
+        ),
+        (FeedstockRole::AmineDonor, "Amine donors"),
+        (FeedstockRole::AcylDonor, "Acyl donors"),
+        (FeedstockRole::CommonGas, "Common gases"),
+    ];
+    const EC_CLASSES: [(EcTopLevel, &str); 7] = [
+        (EcTopLevel::Oxioreductase, "EC 1: Oxidoreductase"),
+        (EcTopLevel::Transferase, "EC 2: Transferase"),
+        (EcTopLevel::Hydrolase, "EC 3: Hydrolase"),
+        (EcTopLevel::Lysase, "EC 4: Lyase"),
+        (EcTopLevel::Isomerase, "EC 5: Isomerase"),
+        (EcTopLevel::Ligase, "EC 6: Ligase"),
+        (EcTopLevel::Translocase, "EC 7: Translocase"),
+    ];
+
+    let before = filters.clone();
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Allowed feedstocks (all steps):");
+        let label = match &filters.feedstock_roles {
+            None => "All feedstocks".to_owned(),
+            Some(roles) => format!("{} of {} roles", roles.len(), FEEDSTOCK_ROLES.len()),
+        };
+        ComboBox::from_id_salt("synthesis_feedstock_roles")
+            .selected_text(label)
+            .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+            .show_ui(ui, |ui| {
+                allowed_values(&mut filters.feedstock_roles, &FEEDSTOCK_ROLES, ui);
+            })
+            .response
+            .on_hover_text(
+                "Every external feedstock at every step must have an allowed role, including \
+                 donors and gases. Intermediates and support cofactors do not restrict roles.",
+            );
+
+        ui.label("Allowed EC classes (all steps):");
+        let label = match &filters.enzyme_classes {
+            None => "All enzymes".to_owned(),
+            Some(classes) => format!("{} of {} classes", classes.len(), EC_CLASSES.len()),
+        };
+        ComboBox::from_id_salt("synthesis_allowed_ec_classes")
+            .selected_text(label)
+            .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+            .show_ui(ui, |ui| {
+                if ui.button("EC 1–3").clicked() {
+                    filters.enzyme_classes = Some(vec![
+                        EcTopLevel::Oxioreductase,
+                        EcTopLevel::Transferase,
+                        EcTopLevel::Hydrolase,
+                    ]);
+                }
+                allowed_values(&mut filters.enzyme_classes, &EC_CLASSES, ui);
+            })
+            .response
+            .on_hover_text(
+                "Every step must list catalysts, and every listed catalyst must have a known \
+                 EC class in the selection. All enzymes also includes unclassified catalysts.",
+            );
+
+        ui.checkbox(
+            &mut filters.exclude_acute_toxicity,
+            "Exclude acute toxicity (GHS06)",
+        )
+        .on_hover_text(
+            "Exclude routes with a reported skull-and-crossbones hazard on any input, \
+                 intermediate, product, coproduct or catalytic support, using cached GHS data.",
+        );
+    });
+
+    if filters.exclude_acute_toxicity {
+        ui.weak(
+            "Molecules with unavailable GHS data are retained; this does not establish safety.",
+        );
+    }
+
+    *filters != before
+}
+
+/// A multi-selection with an unrestricted default and an explicit empty selection.
+fn allowed_values<T: Copy + PartialEq>(
+    selected: &mut Option<Vec<T>>,
+    choices: &[(T, &str)],
+    ui: &mut Ui,
+) {
+    ui.horizontal(|ui| {
+        if ui.button("All").clicked() {
+            *selected = None;
+        }
+        if ui.button("None").clicked() {
+            *selected = Some(Vec::new());
+        }
+    });
+
+    for &(value, label) in choices {
+        let mut allowed = selected
+            .as_ref()
+            .is_none_or(|values| values.contains(&value));
+        if ui.checkbox(&mut allowed, label).changed() {
+            let values = selected.get_or_insert_with(|| choices.iter().map(|&(v, _)| v).collect());
+            if allowed {
+                values.push(value);
+            } else {
+                values.retain(|&v| v != value);
+            }
+        }
     }
 }
 
