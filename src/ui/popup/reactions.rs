@@ -533,7 +533,7 @@ fn synthesis_route_filters(filters: &mut ReactionFilters, ui: &mut Ui) -> bool {
 
     let before = filters.clone();
     ui.horizontal_wrapped(|ui| {
-        ui.label("Allowed feedstocks (all steps):");
+        ui.label("Allowed feedstocks:");
         let label = match &filters.feedstock_roles {
             None => "All feedstocks".to_owned(),
             Some(roles) => format!("{} of {} roles", roles.len(), FEEDSTOCK_ROLES.len()),
@@ -550,7 +550,7 @@ fn synthesis_route_filters(filters: &mut ReactionFilters, ui: &mut Ui) -> bool {
                  donors and gases. Intermediates and support cofactors do not restrict roles.",
             );
 
-        ui.label("Allowed EC classes (all steps):");
+        ui.label("Allowed EC:");
         let label = match &filters.enzyme_classes {
             None => "All enzymes".to_owned(),
             Some(classes) => format!("{} of {} classes", classes.len(), EC_CLASSES.len()),
@@ -583,12 +583,6 @@ fn synthesis_route_filters(filters: &mut ReactionFilters, ui: &mut Ui) -> bool {
                  intermediate, product, coproduct or catalytic support, using cached GHS data.",
         );
     });
-
-    if filters.exclude_acute_toxicity {
-        ui.weak(
-            "Molecules with unavailable GHS data are retained; this does not establish safety.",
-        );
-    }
 
     *filters != before
 }

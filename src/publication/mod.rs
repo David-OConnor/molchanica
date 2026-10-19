@@ -4,8 +4,6 @@
 mod renderer;
 mod worker;
 
-pub(crate) use worker::worker_main;
-
 use std::{
     collections::BTreeMap,
     fs,
@@ -23,6 +21,7 @@ use egui::{Color32, Context, DragValue, Slider, TextureHandle, TextureOptions};
 use graphics::Scene;
 use lin_alg::f32::Vec3;
 use serde::{Deserialize, Serialize};
+pub(crate) use worker::worker_main;
 
 use crate::{selection::expression, state::State};
 

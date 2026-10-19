@@ -55,9 +55,7 @@ and either installing the CUDA toolkit, or disabling CUDA.
 
 ### Installing and using integrated third-party tools
 
-Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA,
-Gemmi, and ML-based protein design tools. See [the documentation](https://www.athanorlab.com/docs/third_party_tools.html)
-for details.
+Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, Gemmi, and ML-based protein design tools. See [the documentation](https://www.athanorlab.com/docs/third_party_tools.html) for details.
 
 ### Datasets
 
@@ -74,6 +72,28 @@ commercial use requiring a subscription.
 - **Sequence prediction** using ProteinMPNN and LigandMPNN
 
 ## Functionality
+
+### Selection expressions
+
+Open **Selections / layers** to build selections with clickable controls or enter an expression.
+The controls show the syntax they generate and preview changes immediately. Press **Enter** to
+select / preview; **Shift+Enter** inserts a line. Molchanica supports most commonly used
+[PyMOL selection syntax](https://pymol.org/tutorials/scripting/PyMOLSelectionOperators-v2.pdf),
+including Boolean expressions, identifiers, residue expansion, and distance/bond selections.
+
+```text
+elem O
+select alpha_carbons, protein and name CA
+select acidic_res, resn ASP+GLU
+binding_loop, chain A and resi 100-120
+select active_site, byres (protein within 4 of ligand)
+%active_site and not hydrogens
+```
+
+The `select` prefix is optional. `name, expression` saves or updates a selection; a bare name
+recalls one you have defined. Names such as `active_site` are user-defined, not built-in selectors.
+See the [selection guide and compatibility limits](https://www.athanorlab.com/docs/view_select.html#selection-expressions)
+for more examples, or the [PyMOL selection algebra reference](https://pymolwiki.org/Selection_Algebra).
 
 ### Publication figures
 
@@ -350,7 +370,8 @@ ligands and electron-density maps do not move.
 
 Three correspondence methods are available:
 
-- **Sequence alignment** handles substitutions and gaps in related proteins using a global affine-gap
+- **Sequence
+  alignment** handles substitutions and gaps in related proteins using a global affine-gap
   alignment of residues with Cα coordinates (match +3, substitution −1, gap opening −5, extension −1).
 - **Residue numbers** pairs matching serial numbers within the chosen chains.
 - **Selected residue order** pairs equal-length selections in residue order.
@@ -367,7 +388,8 @@ The deviation plot and residue table help locate structural differences. Click a
 focus the paired residues, or select all matches, rejected pairs, or pairs above a distance threshold.
 These selections can be saved or given additional representations through **Selections / layers**.
 Comparison layers show the reference in blue and mobile in orange, with each object's default view
-disabled; the layers remain editable. **Undo superposition** restores the previous mobile coordinates.
+disabled; the layers remain editable. **Undo
+superposition** restores the previous mobile coordinates.
 Results detect closed, edited, or moved structures and require a new comparison before applying a
 stale transform or using stale residue mappings.
 
@@ -432,9 +454,7 @@ Expressions support `and`, `or`, `not`, parentheses, `byres (...)`, and `... wit
 `and` binds more tightly than `or`; use parentheses around compound spatial queries.
 Selectors include `model`, `chain`, `resi`, `resn`, `elem`, `name`, `id`, `index`, and `alt`.
 For example, `chain A and resi 10-25+40 and not hydrogen`. `resi` uses residue serial numbers;
-`id` uses atom serial numbers; `index` is a 1-based atom index within each object.
-Text values accept case-insensitive matching, `*` wildcards, and `+` lists. Quote paths or values
-containing spaces. `model` matches an object's path, identifier, filename stem, or assigned name.
+`id` uses atom serial numbers; `index` is a 1-based atom index within each object. Text values accept case-insensitive matching, `*` wildcards, and `+` lists. Quote paths or values containing spaces. `model` matches an object's path, identifier, filename stem, or assigned name.
 
 Convenience selectors include `all`, `none`, `protein`, `nucleic`, `ligand`, `lipid`, `water`,
 `hydrogen`, `backbone`, `sidechain`, and `hetatm`. Comparisons include `charge < 0` and
@@ -451,21 +471,13 @@ show surface, protein
 ```
 
 Layers can overlap, with independent visibility, color, opacity, and atom/bond radius. Supported views
-are backbone, sticks, ball-and-stick, spheres, cartoon/ribbon (proteins), surface, and dots.
-Turn off an object's **Default object
-view** to show only its layers. Global view filters apply to the
-default view; each layer's expression controls its atom set. An object's visibility toggle controls all
-of its layers. Use the layer editor to hide or delete layers; the CLI's existing `hide` commands still
+are backbone, sticks, ball-and-stick, spheres, cartoon/ribbon (proteins), surface, and dots. Turn off an object's
+**Default object
+view** to show only its layers. Global view filters apply to the default view; each layer's expression controls its atom set. An object's visibility toggle controls all of its layers. Use the layer editor to hide or delete layers; the CLI's existing `hide` commands still
 control default-view filters.
 
-Named expressions, layers, and default-view toggles are stored in preferences and restored between
-launches. Named expressions are reevaluated when recalled and when used by layers. Distance-based
-layers follow moving molecules, and layers referencing a name follow its updates. Closed objects contribute no atoms and can match
-again when reopened. The object picker uses source paths (identifiers for unsaved objects), so reopening
-objects in a different order does not retarget saved expressions. Copies sharing a source path match
-the same path selector; use distinct source files to persistently distinguish them.
-Layers currently apply to the main molecule view; the molecule editor and MD trajectory viewer retain
-their own rendering controls.
+Named expressions, layers, and default-view toggles are stored in preferences and restored between launches. Named expressions are reevaluated when recalled and when used by layers. Distance-based layers follow moving molecules, and layers referencing a name follow its updates. Closed objects contribute no atoms and can match again when reopened. The object picker uses source paths (identifiers for unsaved objects), so reopening objects in a different order does not retarget saved expressions. Copies sharing a source path match
+the same path selector; use distinct source files to persistently distinguish them. Layers currently apply to the main molecule view; the molecule editor and MD trajectory viewer retain their own rendering controls.
 
 ### Camera controls
 

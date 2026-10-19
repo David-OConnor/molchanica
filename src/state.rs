@@ -130,7 +130,6 @@ impl Default for State {
             ligands: Default::default(),
             nucleic_acids: Default::default(),
             lipids: Default::default(),
-            // pharmacophores: Default::default(),
             pockets: Default::default(),
             sequences: Default::default(),
             trajectories: Default::default(),

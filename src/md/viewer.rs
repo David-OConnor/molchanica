@@ -23,8 +23,8 @@ use na_seq::Element;
 
 use crate::{
     drawing::{
-        BLEND_AMT_MD_GROUP, MoleculeView, blend_color, color_viridis, draw_md_hydrogen_bonds,
-        draw_mol, draw_water,
+        BLEND_AMT_MD_GROUP, blend_color, color_viridis, draw_md_hydrogen_bonds, draw_mol,
+        draw_water,
     },
     mol_manip::ManipMode,
     prefs::{OpenHistory, OpenType},
@@ -971,10 +971,6 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
         return;
     };
 
-    // MD molecules have no bonds and need atom-level rendering regardless of global mol_view.
-    let prev_mol_view = state.ui.mol_view;
-    state.ui.mol_view = MoleculeView::BallAndStick;
-
     let num_mols = set.mols.len();
     let num_groups = set.groups.len();
     let num_tinted_groups = num_groups.saturating_sub(1);
@@ -1151,8 +1147,6 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
             },
         ));
     }
-
-    state.ui.mol_view = prev_mol_view;
 
     scene.entities.clear();
     scene.entities.extend(ents);

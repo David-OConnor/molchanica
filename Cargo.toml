@@ -39,7 +39,7 @@ ewald = { version = "0.1.15" }
 
 # For loading and saving config
 bincode = "2.0.1"
-rayon = "1.12.0"  # Parallel execution on CPU using thread pools.
+rayon = "1.12.0"
 
 # For electron density reflections
 rustfft = "6.4.1"

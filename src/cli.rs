@@ -21,7 +21,6 @@ use crate::{
     cam::{VIEW_DIR_FRONT, move_cam_to_sel, reset_camera},
     file_io::download_mols,
     render::set_flashlight,
-    selection::Selection,
     state::State,
     util,
 };
@@ -109,16 +108,8 @@ pub fn handle_cmd(
                 );
             }
             "select" | "sele" => {
-                let count = if let Some((name, expression)) = selection_args(args) {
-                    crate::selection::expression::save_named(state, name.trim(), expression.trim())
-                        .map_err(|e| new_invalid(&e))?
-                } else {
-                    let atoms = crate::selection::expression::evaluate(state, args)
-                        .map_err(|e| new_invalid(&e))?;
-                    let count: usize = atoms.iter().map(|a| a.atoms.len()).sum();
-                    state.ui.selection = Selection::Atoms(atoms);
-                    count
-                };
+                let count = crate::selection::expression::select(state, args)
+                    .map_err(|e| new_invalid(&e))?;
                 *redraw = true;
                 return Ok(format!("Selected {count} atoms"));
             }

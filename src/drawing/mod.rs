@@ -791,6 +791,13 @@ pub fn draw_mol_with_pharmacophore_visibility(
 
     let compact_md_solvent_style = use_md_compact_solvent_style(draw_md_mols, &mol.common().ident);
 
+    // Keep MD solvents compact while solute molecules follow the selected view.
+    let mol_view = if compact_md_solvent_style {
+        MoleculeView::BallAndStick
+    } else {
+        ui.mol_view
+    };
+
     // Highlight the active small molecule by outlining its atoms and bonds.
     // todo: Other molecule types A/R.
     let outline = if mol_active && mol.mol_type() == MolType::Ligand {
@@ -801,7 +808,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
 
     // todo: You have problems with transparent objects like the view cube in conjunction
     // todo with the transparent surface; workaround to not draw the cube here.
-    if ui.show_docking_tools && ui.mol_view != MoleculeView::Surface {
+    if ui.show_docking_tools && mol_view != MoleculeView::Surface {
         // Add a visual indicator for the docking site.
     }
 
@@ -817,7 +824,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
     };
 
     if matches!(
-        ui.mol_view,
+        mol_view,
         MoleculeView::BallAndStick | MoleculeView::SpaceFill
     ) {
         for (i_atom, atom) in mol.common().atoms.iter().enumerate() {
@@ -920,7 +927,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 color = atoms_bonds::COLOR_JOIN_ANCHOR;
             }
 
-            let (radius, mesh) = match ui.mol_view {
+            let (radius, mesh) = match mol_view {
                 MoleculeView::SpaceFill => (atom.element.vdw_radius(), MESH_SPACEFILL_SPHERE),
                 _ => match atom.element {
                     Element::Hydrogen => (BALL_STICK_RADIUS_H, MESH_BALL_STICK_SPHERE),
@@ -928,12 +935,11 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 },
             };
 
-            let radius =
-                if compact_md_solvent_style && !matches!(ui.mol_view, MoleculeView::SpaceFill) {
-                    radius * MD_SOLVENT_ATOM_RADIUS_SCALE
-                } else {
-                    radius
-                };
+            let radius = if compact_md_solvent_style {
+                radius * MD_SOLVENT_ATOM_RADIUS_SCALE
+            } else {
+                radius
+            };
 
             let mut entity = Entity::new(
                 mesh,
@@ -965,6 +971,16 @@ pub fn draw_mol_with_pharmacophore_visibility(
             entity.outline = outline;
             result.push(entity);
         }
+    }
+
+    if let MolGenericRef::Small(m) = &mol
+        && show_pharmacophore
+    {
+        result.extend(draw_mol_pharmacophore(m, mode, ui.label_sizes.atom_sn));
+    }
+
+    if mol_view == MoleculeView::SpaceFill {
+        return result;
     }
 
     // Aromatic-only adjacency list used for ring centroid BFS (so it finds the aromatic ring,
@@ -1201,7 +1217,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
             mol.mol_type(),
             &mol.common().ident,
             draw_md_mols,
-            true,
+            mol_view != MoleculeView::BallAndStick,
             neighbor_posit,
             mol_active,
             to_hydrogen,
@@ -1213,7 +1229,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
 
         // Draw atom-based labels on bonds if not in a view mode that shows atoms.
         if !matches!(
-            ui.mol_view,
+            mol_view,
             MoleculeView::BallAndStick | MoleculeView::SpaceFill
         ) {
             if mode != OperatingMode::MolEditor {
@@ -1244,12 +1260,6 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     ));
                 }
             }
-        }
-
-        if let MolGenericRef::Small(m) = &mol
-            && show_pharmacophore
-        {
-            result.extend(draw_mol_pharmacophore(m, mode, ui.label_sizes.atom_sn));
         }
 
         result.extend(entities);

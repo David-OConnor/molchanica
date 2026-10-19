@@ -304,8 +304,6 @@ fn draw_cli(
         let edit_resp = ui.add(
             TextEdit::singleline(&mut state.ui.cmd_line_input)
                 .desired_width(200.)
-                // Prevent losing focus on Tab;
-                // .cursor_at_end(true)
                 .lock_focus(true),
         );
 
@@ -327,11 +325,6 @@ fn draw_cli(
 
         if tab_pressed && !state.ui.cmd_line_input.is_empty() {
             autocomplete_cli(&mut state.ui.cmd_line_input);
-
-            // edit_resp.surrender_focus();
-            // state.ui.cmd_line_input.push(' ');
-            // state.ui.cmd_line_input.pop();
-            // edit_resp.request_focus();
         }
 
         if up_pressed {
