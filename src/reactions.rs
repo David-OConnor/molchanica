@@ -108,6 +108,59 @@ pub enum SynthesisDownloadId {
 pub type SynthesisDownloads =
     HashMap<SynthesisDownloadId, Receiver<Result<DownloadedSmallMol, String>>>;
 
+pub enum RheaIds {
+    Loading(Receiver<Result<Vec<u32>, String>>),
+    Ready(Vec<u32>),
+    Failed(String),
+}
+
+/// Resolve synthesis search links on demand, retaining results for the session.
+#[derive(Default)]
+pub struct RheaLinks {
+    cache: HashMap<String, RheaIds>,
+}
+
+impl RheaLinks {
+    pub fn get(&mut self, query: &str) -> &RheaIds {
+        self.cache.entry(query.to_owned()).or_insert_with(|| {
+            let (tx, rx) = mpsc::channel();
+            let query = query.to_owned();
+            thread::spawn(move || {
+                let result = rhea::find_ids_from_search(&query, None)
+                    .map(|mut ids| {
+                        ids.sort_unstable();
+                        ids.dedup();
+                        ids
+                    })
+                    .map_err(|error| format!("Unable to load Rhea reaction IDs: {error:?}"));
+                let _ = tx.send(result);
+            });
+            RheaIds::Loading(rx)
+        })
+    }
+
+    fn poll(&mut self) -> bool {
+        let mut pending = false;
+        for entry in self.cache.values_mut() {
+            let RheaIds::Loading(rx) = entry else {
+                continue;
+            };
+
+            match rx.try_recv() {
+                Ok(Ok(ids)) => *entry = RheaIds::Ready(ids),
+                Ok(Err(error)) => *entry = RheaIds::Failed(error),
+                Err(TryRecvError::Disconnected) => {
+                    *entry = RheaIds::Failed(
+                        "The Rhea lookup stopped before returning reaction IDs.".to_owned(),
+                    );
+                }
+                Err(TryRecvError::Empty) => pending = true,
+            }
+        }
+        pending
+    }
+}
+
 impl SynthesisDownloadId {
     pub fn label(self) -> String {
         match self {
@@ -296,6 +349,7 @@ impl ProtocolExport {
 pub struct SynthesisReactionsState {
     pub protocol_export: ProtocolExport,
     pub diagrams: crate::mol_diagrams::DiagramCache,
+    pub rhea_links: RheaLinks,
     pub participant_action: SynthesisParticipantAction,
     pub download_message: Option<String>,
     pub download_error: Option<String>,
@@ -359,8 +413,9 @@ impl SynthesisReactionsState {
     }
 
     pub fn poll(&mut self) -> bool {
+        let rhea_pending = self.rhea_links.poll();
         let SynthesisEntry::Loading(rx) = &self.entry else {
-            return false;
+            return rhea_pending;
         };
 
         match rx.try_recv() {
@@ -373,7 +428,7 @@ impl SynthesisReactionsState {
             }
             Err(TryRecvError::Empty) => return true,
         }
-        false
+        rhea_pending
     }
 
     pub fn download(&mut self, chebi_id: Option<u32>, pubchem_id: Option<u32>) {

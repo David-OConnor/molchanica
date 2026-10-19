@@ -26,9 +26,9 @@ use crate::{
     prefs::ToSave,
     reactions::{
         BuildingBlockColumn, BuildingBlockKind, BuildingBlocksView, Entry, ParticipantAction,
-        Query, ReactionsState, RouteComponent, SynthesisDownloadId, SynthesisDownloads,
-        SynthesisEntry, SynthesisLibraryData, SynthesisParticipantAction, SynthesisReactionsState,
-        SynthesisSort,
+        Query, ReactionsState, RheaIds, RheaLinks, RouteComponent, SynthesisDownloadId,
+        SynthesisDownloads, SynthesisEntry, SynthesisLibraryData, SynthesisParticipantAction,
+        SynthesisReactionsState, SynthesisSort,
     },
     state::State,
     ui::{
@@ -459,6 +459,7 @@ pub(super) fn synthesis_reactions_window(
                     diagram_scale,
                     show_safety,
                     &state.downloads,
+                    &mut state.rhea_links,
                     &mut state.diagrams,
                     &mut clicked_participant,
                     &mut diagram_requests,
@@ -1176,6 +1177,7 @@ fn synthesis_route_card(
     diagram_scale: f32,
     show_safety: bool,
     downloads: &SynthesisDownloads,
+    rhea_links: &mut RheaLinks,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
     diagram_requests: &mut Vec<DiagramRequest>,
@@ -1192,7 +1194,7 @@ fn synthesis_route_card(
                 route.steps.len(),
                 if route.steps.len() == 1 { "" } else { "s" }
             ));
-            molecule_identifier_links(&route.target, ui);
+            molecule_identifier_links(&route.target, rhea_links, ui);
             create_protocol = ui
                 .button("Create protocol")
                 .on_hover_text(
@@ -1230,6 +1232,7 @@ fn synthesis_route_card(
                 diagram_scale,
                 show_safety,
                 downloads,
+                rhea_links,
                 diagrams,
                 clicked,
                 diagram_requests,
@@ -1261,6 +1264,7 @@ fn synthesis_step_card(
     diagram_scale: f32,
     show_safety: bool,
     downloads: &SynthesisDownloads,
+    rhea_links: &mut RheaLinks,
     diagrams: &mut crate::mol_diagrams::DiagramCache,
     clicked: &mut Option<LibraryMolecule>,
     diagram_requests: &mut Vec<DiagramRequest>,
@@ -1333,7 +1337,7 @@ fn synthesis_step_card(
             });
         });
 
-        enzyme_links(&step.enzymes, ui);
+        enzyme_links(&step.enzymes, rhea_links, ui);
         if !step.catalytic_cofactors.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 ui.weak("Catalytic cofactors:");
@@ -1492,15 +1496,40 @@ fn molecule_hover(
     format!("{identifiers} — {action}{safety}")
 }
 
-fn molecule_identifier_links(molecule: &LibraryMolecule, ui: &mut Ui) {
+/// Show every match as a direct reaction link; searches remain usable during lookup or offline.
+fn rhea_identifier_links(query: &str, search_url: String, links: &mut RheaLinks, ui: &mut Ui) {
+    let hover = match links.get(query) {
+        RheaIds::Ready(ids) if !ids.is_empty() => {
+            for id in ids {
+                ui.hyperlink_to(
+                    format!("Rhea {id}"),
+                    format!("https://www.rhea-db.org/rhea/{id}"),
+                );
+            }
+            return;
+        }
+        RheaIds::Ready(_) => "No matching Rhea reactions found. Open the search in browser.",
+        RheaIds::Loading(_) => {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+            "Loading matching Rhea reaction IDs. Open the search in browser."
+        }
+        RheaIds::Failed(error) => error.as_str(),
+    };
+    ui.hyperlink_to("Rhea search", search_url).on_hover_text(hover);
+}
+
+fn molecule_identifier_links(molecule: &LibraryMolecule, rhea_links: &mut RheaLinks, ui: &mut Ui) {
     if let Some(id) = molecule.chebi_id {
         ui.hyperlink_to(
             format!("CHEBI:{id}"),
             format!("https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:{id}"),
         );
-        ui.hyperlink_to(
-            "Rhea",
+        rhea_identifier_links(
+            &format!("chebi_exact:{id}"),
             format!("https://www.rhea-db.org/rhea?query=chebi_exact%3A{id}"),
+            rhea_links,
+            ui,
         );
     }
     if let Some(id) = molecule.pubchem_id {
@@ -1511,7 +1540,7 @@ fn molecule_identifier_links(molecule: &LibraryMolecule, ui: &mut Ui) {
     }
 }
 
-fn enzyme_links(enzymes: &[LibraryEnzyme], ui: &mut Ui) {
+fn enzyme_links(enzymes: &[LibraryEnzyme], rhea_links: &mut RheaLinks, ui: &mut Ui) {
     ui.horizontal_wrapped(|ui| {
         ui.weak("Enzyme candidates:");
         if enzymes.is_empty() {
@@ -1528,9 +1557,11 @@ fn enzyme_links(enzymes: &[LibraryEnzyme], ui: &mut Ui) {
                     ec.to_string(),
                     format!("https://enzyme.expasy.org/EC/{number}"),
                 );
-                ui.hyperlink_to(
-                    "Rhea",
+                rhea_identifier_links(
+                    &format!("ec:{number}"),
                     format!("https://www.rhea-db.org/rhea?query=ec%3A{number}"),
+                    rhea_links,
+                    ui,
                 );
             }
             if let Some(accession) = &enzyme.uniprot_id {
@@ -1538,6 +1569,10 @@ fn enzyme_links(enzymes: &[LibraryEnzyme], ui: &mut Ui) {
                     format!("UniProt {accession}"),
                     format!("https://www.uniprot.org/uniprotkb/{accession}/entry"),
                 );
+            }
+            if let Some(product) = &enzyme.sigma_aldrich {
+                ui.hyperlink_to(format!("Sigma-Aldrich {}", product.product_id), &product.url)
+                    .on_hover_text("Open Sigma-Aldrich product page in browser");
             }
         }
     });
@@ -1650,11 +1685,6 @@ pub(super) fn reactions_window(state: &mut ReactionsState, to_save: &mut ToSave,
             ui.hyperlink_to(label, url);
         }
     });
-    if matches!(query, Query::Chebi(_)) {
-        ui.label(
-            "Showing exact ChEBI matches. The general ChEBI search may include related compounds.",
-        );
-    }
     ui.separator();
 
     let mut retry = false;
@@ -1770,7 +1800,7 @@ fn reaction_card(
         ui.set_width(ui.available_width());
         ui.horizontal_wrapped(|ui| {
             ui.hyperlink_to(
-                RichText::new(reaction.accession()).strong(),
+                reaction.accession(),
                 format!("https://www.rhea-db.org/rhea/{}", reaction.id),
             );
             if !reaction.ec_numbers.is_empty() {
