@@ -14,8 +14,8 @@ use crate::{
     selection::Selection,
     state::{AaSeqDisplayCache, State},
     ui::panels::aa_creation::{
-        CREATE_SEQ_HOVER, CREATE_SEQ_TEXT, create_folded, create_folded_button, create_seq_btn,
-        create_unfolded, create_unfolded_button,
+        CREATE_SEQ_HOVER, CREATE_SEQ_TEXT, create_folded, create_folded_button, create_peptide,
+        create_peptide_button, create_seq_btn, geometry_selector,
     },
 };
 
@@ -600,7 +600,7 @@ pub(in crate::ui) fn standalone_sequence(
     let seq_type = seq.seq_type();
     let has_features = !seq.features.is_empty();
 
-    let mut unfolded = false;
+    let mut peptide = false;
     let mut folded = false;
 
     ui.horizontal(|ui| {
@@ -614,7 +614,8 @@ pub(in crate::ui) fn standalone_sequence(
             }
 
             if seq_type == SeqType::AminoAcid {
-                unfolded = create_unfolded_button(ui);
+                geometry_selector(ui, &mut state.ui.aa_geometry_to_create);
+                peptide = create_peptide_button(ui);
             }
             folded = create_folded_button(ui);
         }
@@ -663,10 +664,10 @@ pub(in crate::ui) fn standalone_sequence(
         );
     }
 
-    if unfolded
+    if peptide
         && let Some(SequenceData::AminoAcid(aas)) = state.sequences.get(i).map(|s| s.data.clone())
     {
-        create_unfolded(&aas, state, scene, updates);
+        create_peptide(&aas, state, scene, updates);
     }
 
     if folded && let Some(sequence) = state.sequences.get(i).cloned() {

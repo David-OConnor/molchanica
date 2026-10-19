@@ -48,6 +48,7 @@ use crate::{
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     orca::StateOrca,
+    peptide_creation::PeptideGeometry,
     peptide_ligands::LigAttachUi,
     prefs::{DepthMode, OpenType, ToSave},
     selection::{Selection, ViewSelLevel},
@@ -713,6 +714,8 @@ pub struct StateUi {
     pub mol_picker: MolPickerState,
     /// Single-letter amino acid codes, for creating peptides and sequences.
     pub aa_seq_to_create: String,
+    /// Initial backbone geometry shared by the peptide creation controls.
+    pub aa_geometry_to_create: PeptideGeometry,
 }
 
 /// Search, filters, sorting, and manual order of the sidebar's molecule picker.

@@ -48,6 +48,7 @@ mod mol_diagrams;
 mod mol_editor;
 mod mol_manip;
 mod orca;
+mod peptide_creation;
 mod peptide_ligands;
 mod properties;
 mod protein_alignment;

@@ -3,14 +3,18 @@
 use chrono::Local;
 use egui::{Button, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
-use mol_defs::molecules::{MoleculeGeneric, aa_color, peptide::MoleculePeptide};
+use mol_defs::molecules::{MoleculeGeneric, aa_color};
 use na_seq::{AaIdent, AminoAcid, SeqType, Sequence, SequenceData};
 
 use crate::{
     cam::move_mol_to_cam,
     drawing::aa_highlight::AMINO_ACIDS,
+    peptide_creation::{PeptideGeometry, build_peptide},
     state::State,
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, misc::section_box},
+    ui::{
+        COLOR_ACTION, COLOR_HIGHLIGHT,
+        misc::{section_box, selector},
+    },
     util::{handle_err, handle_success, make_egui_color},
 };
 
@@ -59,11 +63,37 @@ fn job_name(sequence: &Sequence) -> String {
     format!("{prefix} {}", Local::now().format("%Y-%m-%d"))
 }
 
-pub(in crate::ui) fn create_unfolded_button(ui: &mut Ui) -> bool {
-    ui.button(RichText::new("Create unfolded").color(COLOR_ACTION))
+pub(in crate::ui) fn geometry_selector(ui: &mut Ui, geometry: &mut PeptideGeometry) {
+    ui.label("Initial geometry");
+
+    let options = [
+        (
+            PeptideGeometry::Line,
+            "Line",
+            "Create the current extended chain geometry.",
+        ),
+        (
+            PeptideGeometry::BetaSheet,
+            "Beta Sheet",
+            "Create a beta strand with beta-sheet backbone angles (φ = −135°, ψ = 135°).",
+        ),
+        (
+            PeptideGeometry::AlphaHelix,
+            "Alpha Helix",
+            "Create a right-handed alpha helix (φ = −60°, ψ = −45°).",
+        ),
+    ];
+
+    if let Some(selected) = selector(ui, *geometry, &options) {
+        *geometry = selected;
+    }
+}
+
+pub(in crate::ui) fn create_peptide_button(ui: &mut Ui) -> bool {
+    ui.button(RichText::new("Create peptide").color(COLOR_ACTION))
         .on_hover_text(
-            "Create a peptide from this sequence, as an extended chain (β-strand). \
-            Uses Amber residue templates.",
+            "Create a peptide from this sequence using the selected initial geometry \
+            and Amber residue templates.",
         )
         .clicked()
 }
@@ -100,14 +130,18 @@ pub(in crate::ui) fn create_sequence(text: &str, name: Option<&str>, state: &mut
     }
 }
 
-/// Build an unfolded peptide, and add it in front of the camera.
-pub(in crate::ui) fn create_unfolded(
+/// Build a peptide with the selected initial geometry, and add it in front of the camera.
+pub(in crate::ui) fn create_peptide(
     seq: &[AminoAcid],
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
 ) {
-    match MoleculePeptide::from_seq(seq, &state.templates.amino_acid) {
+    match build_peptide(
+        seq,
+        &state.templates.amino_acid,
+        state.ui.aa_geometry_to_create,
+    ) {
         Ok(mut mol) => {
             move_mol_to_cam(&mut mol.common, &scene.camera);
             state.load_mol_to_state(MoleculeGeneric::Peptide(mol), scene, updates, None);
@@ -141,6 +175,10 @@ pub(in crate::ui) fn aa_section(
 
             ui.horizontal_wrapped(|ui| {
                 for aa in AMINO_ACIDS {
+                    if aa == AminoAcid::Sec {
+                        continue;
+                    }
+
                     let letter = aa.to_str(AaIdent::OneLetter);
                     let color = make_egui_color(aa_color(aa));
 
@@ -152,6 +190,10 @@ pub(in crate::ui) fn aa_section(
                         state.ui.aa_seq_to_create.push_str(&letter);
                     }
                 }
+            });
+
+            ui.horizontal(|ui| {
+                geometry_selector(ui, &mut state.ui.aa_geometry_to_create);
             });
 
             ui.horizontal(|ui| {
@@ -167,9 +209,9 @@ pub(in crate::ui) fn aa_section(
                 )
                 .on_hover_text(help_text);
 
-                if create_unfolded_button(ui) {
+                if create_peptide_button(ui) {
                     match parse_seq(&state.ui.aa_seq_to_create) {
-                        Ok(seq) => create_unfolded(&seq, state, scene, updates),
+                        Ok(seq) => create_peptide(&seq, state, scene, updates),
                         Err(e) => handle_err(&mut state.ui, e),
                     }
                 }
