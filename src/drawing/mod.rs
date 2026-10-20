@@ -83,9 +83,9 @@ const LABEL_COLOR_MOL_SEL: (u8, u8, u8, u8) = (255, 10, 10, 255);
 // Hetero residues in protein, so they stand out from the normal protein molecules.
 // Lower blend values mean more of the original color.
 const COLOR_HETERO_RES: Color = (0.0, 0.0, 1.0);
-const BLEND_AMT_HETERO_RES: f32 = 0.4;
+const BLEND_AMT_HETERO_RES: f32 = 0.2;
 const LIGAND_COLOR: Color = (0., 0.4, 1.);
-const LIGAND_BLEND_AMT: f32 = 0.4;
+const LIGAND_BLEND_AMT: f32 = 0.2;
 const LIPID_COLOR: Color = (1.0, 1.0, 0.);
 const LIPID_BLEND_AMT: f32 = 0.3;
 pub const BLEND_AMT_MD_GROUP: f32 = 0.72;

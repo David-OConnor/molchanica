@@ -1804,7 +1804,15 @@ fn reaction_card(
                 format!("https://www.rhea-db.org/rhea/{}", reaction.id),
             );
             if !reaction.ec_numbers.is_empty() {
-                ui.weak(format!("EC {}", reaction.ec_numbers.join(", ")));
+                ui.weak("EC");
+
+                for (index, number) in reaction.ec_numbers.iter().enumerate() {
+                    if index > 0 {
+                        ui.weak(",");
+                    }
+                    ui.hyperlink_to(number, format!("https://enzyme.expasy.org/EC/{number}"))
+                        .on_hover_text("Open the ExPASy ENZYME entry in browser");
+                }
             }
             ui.weak(format!("{} annotated enzymes", reaction.enzyme_count));
         });
