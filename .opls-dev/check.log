@@ -1,0 +1,1106 @@
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\the_a\code\Bio\molchanica\target\debug\incremental\na_seq-18l053b1keyi9\s-hndfbb5upu-1gdwu7e-working`
+
+warning: `na_seq` (lib) generated 1 warning
+    Checking bio_apis v0.3.0 (C:\Users\the_a\code\Bio\bio_apis)
+   Compiling dynamics v0.2.2 (C:\Users\the_a\code\Bio\dynamics)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `C:\Users\the_a\code\Bio\molchanica\target\debug\incremental\graphics-2fjkcdgsjc3vc\s-hnav8dif7v-1o0pj3k-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\the_a\code\Bio\molchanica\target\debug\incremental\bio_tools-3uxyhfsrb2oou\s-hncel5xlpi-1hmyn2k-working`
+
+warning: `graphics` (lib) generated 1 warning
+warning: `bio_tools` (lib) generated 1 warning
+    Checking mol_defs v0.1.0 (C:\Users\the_a\code\Bio\mol_defs)
+warning: unused imports: `Display`, `Formatter`, `f64::consts::TAU`, and `fmt`
+ --> C:\Users\the_a\code\Bio\mol_defs\src\util.rs:4:5
+  |
+4 |     f64::consts::TAU,
+  |     ^^^^^^^^^^^^^^^^
+5 |     fmt,
+  |     ^^^
+6 |     fmt::{Display, Formatter},
+  |           ^^^^^^^  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable statement
+   --> C:\Users\the_a\code\Bio\mol_defs\src\molecules\conformers.rs:369:9
+    |
+365 |           unimplemented!();
+    |           ---------------- any code following this expression is unreachable
+...
+369 | /         Self {
+370 | |             conformer_samples: Vec::new(),
+371 | |             num_donor_h_bonds_avg: 0.0,
+372 | |             num_acc_h_bonds_avg: 0.0,
+373 | |             h_bond_total_str_avg: 0.0,
+374 | |         };
+    | |__________^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `snaps`
+   --> C:\Users\the_a\code\Bio\mol_defs\src\molecules\conformers.rs:363:16
+    |
+363 |     pub fn new(snaps: &[Snapshot]) -> Self {
+    |                ^^^^^ help: if this is intentional, prefix it with an underscore: `_snaps`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `mol`
+   --> C:\Users\the_a\code\Bio\mol_defs\src\properties\mol_characterization.rs:155:12
+    |
+155 | fn xlogp_3(mol: &MoleculeCommon) -> f32 {
+    |            ^^^ help: if this is intentional, prefix it with an underscore: `_mol`
+
+warning: function `xlogp_3` is never used
+   --> C:\Users\the_a\code\Bio\mol_defs\src\properties\mol_characterization.rs:155:4
+    |
+155 | fn xlogp_3(mol: &MoleculeCommon) -> f32 {
+    |    ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mol_defs` (lib) generated 5 warnings (run `cargo fix --lib -p mol_defs` to apply 3 suggestions)
+    Checking adme v0.1.0 (C:\Users\the_a\code\Bio\adme)
+    Checking synthesis v0.1.0 (C:\Users\the_a\code\Bio\synthesis)
+warning: type `SupportEntry` is more private than the item `ReactionLibrary::supports`
+  --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\library.rs:17:5
+   |
+17 |     pub supports: &'static [SupportEntry],
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `ReactionLibrary::supports` is reachable at visibility `pub`
+   |
+note: but type `SupportEntry` is only usable at visibility `pub(crate)`
+  --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\support.rs:35:1
+   |
+35 | pub(crate) struct SupportEntry {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `TargetMol` is more private than the item `ReactionLibrary::targets`
+   --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\library.rs:18:5
+    |
+ 18 |     pub targets: Vec<TargetMol>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `ReactionLibrary::targets` is reachable at visibility `pub`
+    |
+note: but type `TargetMol` is only usable at visibility `pub(crate)`
+   --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\catalog.rs:138:1
+    |
+138 | pub(crate) struct TargetMol {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `feedstocks` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\catalog.rs:152:15
+    |
+152 | pub(crate) fn feedstocks() -> Vec<MoleculeSmall> {
+    |               ^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `format_steps` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\catalog.rs:595:19
+    |
+593 | impl SynthesisRoute {
+    | ------------------- method in this implementation
+594 |     /// Human-readable steps, including the actual broad_target candidate, cofactors and coproducts.
+595 |     pub(crate) fn format_steps(&self) -> String {
+    |                   ^^^^^^^^^^^^
+
+warning: function `support_names` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\catalog.rs:697:4
+    |
+697 | fn support_names(species: &[crate::legacy::reactions_legacy::ReactantCategory]) -> String {
+    |    ^^^^^^^^^^^^^
+
+warning: function `synthesis_route` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\catalog.rs:767:15
+    |
+767 | pub(crate) fn synthesis_route(target: &MoleculeSmall) -> io::Result<Option<SynthesisRoute>> {
+    |               ^^^^^^^^^^^^^^^
+
+warning: field `support_notes` is never read
+  --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\library.rs:23:5
+   |
+15 | pub struct ReactionLibrary {
+   |            --------------- field in this struct
+...
+23 |     support_notes: Vec<&'static str>,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `ReactionLibrary` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: function `write_protocol` is never used
+  --> C:\Users\the_a\code\Bio\synthesis\src\broad_target\protocol_generation.rs:20:15
+   |
+20 | pub(crate) fn write_protocol(route: &SynthesisRoute, path: &Path) -> io::Result<()> {
+   |               ^^^^^^^^^^^^^^
+
+warning: enum `EnzymeInstance` is never used
+  --> C:\Users\the_a\code\Bio\synthesis\src\legacy\mod.rs:25:17
+   |
+25 | pub(crate) enum EnzymeInstance {
+   |                 ^^^^^^^^^^^^^^
+
+warning: enum `PhosphorylDonors` is never used
+  --> C:\Users\the_a\code\Bio\synthesis\src\legacy\cofactor.rs:29:10
+   |
+29 | pub enum PhosphorylDonors {
+   |          ^^^^^^^^^^^^^^^^
+
+warning: enum `ChiralPool` is never used
+  --> C:\Users\the_a\code\Bio\synthesis\src\legacy\cofactor.rs:76:10
+   |
+76 | pub enum ChiralPool {
+   |          ^^^^^^^^^^
+
+warning: enum `ProteinModifiers` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\cofactor.rs:117:17
+    |
+117 | pub(crate) enum ProteinModifiers {
+    |                 ^^^^^^^^^^^^^^^^
+
+warning: enum `Coenzymes` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\cofactor.rs:128:6
+    |
+128 | enum Coenzymes {
+    |      ^^^^^^^^^
+
+warning: enum `FeedstockBulkCarbon` is never used
+  --> C:\Users\the_a\code\Bio\synthesis\src\legacy\feedstock.rs:89:10
+   |
+89 | pub enum FeedstockBulkCarbon {
+   |          ^^^^^^^^^^^^^^^^^^^
+
+warning: enum `Feedstock` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\feedstock.rs:155:10
+    |
+155 | pub enum Feedstock {
+    |          ^^^^^^^^^
+
+warning: method `mol` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\feedstock.rs:268:12
+    |
+267 | impl Feedstock {
+    | -------------- method in this implementation
+268 |     pub fn mol(self) -> MoleculeSmall {
+    |            ^^^
+
+warning: enum `ActionGroup` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\feedstock.rs:279:10
+    |
+279 | pub enum ActionGroup {
+    |          ^^^^^^^^^^^
+
+warning: methods `cid` and `mol` are never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\feedstock.rs:326:12
+    |
+323 | impl ActionGroup {
+    | ---------------- methods in this implementation
+...
+326 |     pub fn cid(self) -> u32 {
+    |            ^^^
+...
+362 |     pub fn mol(self) -> MoleculeSmall {
+    |            ^^^
+
+warning: enum `EnzymeRxnSpecificInstance` is never used
+  --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:25:10
+   |
+25 | pub enum EnzymeRxnSpecificInstance {
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `data` is never used
+  --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:54:12
+   |
+53 | impl EnzymeRxnSpecificInstance {
+   | ------------------------------ method in this implementation
+54 |     pub fn data(self) -> TransformationData {
+   |            ^^^^
+
+warning: struct `TransformationData` is never constructed
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:217:12
+    |
+217 | pub struct TransformationData {
+    |            ^^^^^^^^^^^^^^^^^^
+
+warning: struct `TransformationDataSimple` is never constructed
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:250:12
+    |
+250 | pub struct TransformationDataSimple {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `format_simple` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:280:12
+    |
+273 | impl TransformationDataSimple {
+    | ----------------------------- method in this implementation
+...
+280 |     pub fn format_simple(&self) -> String {
+    |            ^^^^^^^^^^^^^
+
+warning: struct `ReactionPromiscuous` is never constructed
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:296:12
+    |
+296 | pub struct ReactionPromiscuous {}
+    |            ^^^^^^^^^^^^^^^^^^^
+
+warning: function `format_chebi_ids` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:299:4
+    |
+299 | fn format_chebi_ids(ids: &[u32]) -> String {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: struct `MultiStepExample` is never constructed
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:318:8
+    |
+318 | struct MultiStepExample {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `multi_step_examples` is never used
+   --> C:\Users\the_a\code\Bio\synthesis\src\legacy\transformation.rs:336:4
+    |
+336 | fn multi_step_examples() -> Vec<MultiStepExample> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: `synthesis` (lib) generated 27 warnings
+warning: unused variable: `i`
+  --> C:\Users\the_a\code\Bio\adme\src\gnn\component.rs:91:10
+   |
+91 |     for (i, comp) in comps.iter().enumerate() {
+   |          ^ help: if this is intentional, prefix it with an underscore: `_i`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `protein`
+  --> C:\Users\the_a\code\Bio\adme\src\mol_gen.rs:16:5
+   |
+16 |     protein: Option<&MoleculePeptide>,
+   |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_protein`
+
+warning: unused variable: `char`
+  --> C:\Users\the_a\code\Bio\adme\src\mol_gen.rs:23:18
+   |
+23 |         let Some(char) = &mol.characterization else {
+   |                  ^^^^ help: if this is intentional, prefix it with an underscore: `_char`
+
+warning: method `model_paths` is never used
+   --> C:\Users\the_a\code\Bio\adme\src\lib.rs:265:19
+    |
+105 | impl DatasetTdc {
+    | --------------- method in this implementation
+...
+265 |     pub(crate) fn model_paths(self) -> (PathBuf, PathBuf, PathBuf) {
+    |                   ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DIHEDRAL_DIVIDER_REF` is never used
+  --> C:\Users\the_a\code\Bio\adme\src\gnn\mod.rs:61:7
+   |
+61 | const DIHEDRAL_DIVIDER_REF: f32 = 6.0;
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `new` is never used
+   --> C:\Users\the_a\code\Bio\adme\src\gnn\atom_bond.rs:780:19
+    |
+765 | impl GraphDataAtom {
+    | ------------------ associated function in this implementation
+...
+780 |     pub(crate) fn new(
+    |                   ^^^
+
+warning: associated function `new` is never used
+   --> C:\Users\the_a\code\Bio\adme\src\gnn\component.rs:310:19
+    |
+298 | impl GraphDataComponent {
+    | ----------------------- associated function in this implementation
+...
+310 |     pub(crate) fn new(
+    |                   ^^^
+
+warning: associated function `new` is never used
+   --> C:\Users\the_a\code\Bio\adme\src\gnn\spacial.rs:292:19
+    |
+276 | impl GraphDataSpacial {
+    | --------------------- associated function in this implementation
+...
+292 |     pub(crate) fn new(
+    |                   ^^^
+
+warning: function `mlp_feats_from_mol` is never used
+  --> C:\Users\the_a\code\Bio\adme\src\mlp.rs:21:15
+   |
+21 | pub(crate) fn mlp_feats_from_mol(
+   |               ^^^^^^^^^^^^^^^^^^
+
+warning: function `generate` is never used
+  --> C:\Users\the_a\code\Bio\adme\src\mol_gen.rs:14:8
+   |
+14 | pub fn generate(
+   |        ^^^^^^^^
+
+warning: method `feature_names_with_prefix` is never used
+   --> C:\Users\the_a\code\Bio\adme\src\non_nn_ml.rs:153:12
+    |
+ 96 | impl GnnAnalysisTools {
+    | --------------------- method in this implementation
+...
+153 |     pub fn feature_names_with_prefix(&self, prefix: &'static str) -> Vec<String> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `adme` (lib) generated 11 warnings (run `cargo fix --lib -p adme` to apply 3 suggestions)
+    Checking molchanica v0.4.3 (C:\Users\the_a\code\Bio\molchanica)
+warning: unused import: `std::sync::Arc`
+ --> src\ui\panels\mod.rs:1:5
+  |
+1 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Color32`, `FontId`, `Galley`, `Pos2`, `Rect`, `Ui`, and `pos2`
+ --> src\ui\panels\mod.rs:3:12
+  |
+3 | use egui::{Color32, FontId, Galley, Pos2, Rect, Ui, pos2};
+  |            ^^^^^^^  ^^^^^^  ^^^^^^  ^^^^  ^^^^  ^^  ^^^^
+
+warning: unused imports: `draw_all_ligs`, `draw_all_lipids`, and `draw_all_nucleic_acids`
+ --> src\ui\panels\view.rs:9:20
+  |
+9 |         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
+  |                    ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `bio_files::md_params::ForceFieldParams`
+ --> src\ui\sidebar\mol_picker.rs:1:5
+  |
+1 | use bio_files::md_params::ForceFieldParams;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `common::MoleculeCommon` and `nucleic_acid::NucleicAcidType`
+ --> src\ui\sidebar\mol_picker.rs:6:29
+  |
+6 |     MolGenericRef, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType,
+  |                             ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `process_executables_dir`
+  --> src\external_tools\mod.rs:89:26
+   |
+89 |     migrate_legacy_data, process_executables_dir,
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: value assigned to `therm_en_` is never read
+   --> src\ui\panels\md.rs:516:25
+    |
+516 |     let mut therm_en_ = false;
+    |                         ^^^^^ this value is reassigned later and never used
+...
+552 |             therm_en_ = therm_en;
+    |             -------------------- `therm_en_` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src\ui\panels\mol_data.rs:565:9
+    |
+565 |     let mut res_to_make = None;
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src\ui\panels\mol_data.rs:566:9
+    |
+566 |     let mut res_to_detach = None;
+    |         ----^^^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\ui\panels\mol_data.rs:567:9
+    |
+567 |     let mut res_to_remove = None;
+    |         ----^^^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\ui\panels\mol_data.rs:568:9
+    |
+568 |     let mut move_lig_to_res = None;
+    |         ----^^^^^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `res_selected`
+   --> src\ui\panels\mol_data.rs:628:13
+    |
+628 |         let res_selected = res_sel_i.and_then(|i| pep.residues.get(i));
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_res_selected`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `name`
+   --> src\ui\panels\mol_data.rs:636:25
+    |
+636 |                     let name = match &res.res_type {
+    |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `pep_atom_set`
+    --> src\md\mod.rs:1079:16
+     |
+1079 |     let (mols, pep_atom_set) = setup_mols_dyn_with_residues(
+     |                ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_pep_atom_set`
+
+warning: variable does not need to be mutable
+    --> src\md\mod.rs:1337:9
+     |
+1337 |     let mut pep_md = state.volatile.md_local.pep_atom_set.clone(); // Avoids borrow problem.
+     |         ----^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\mol_alignment.rs:363:9
+    |
+363 |     let mut mol_t_posits = mol_template.atom_posits.clone();
+    |         ----^^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\mol_db\mod.rs:126:17
+    |
+126 |     fn from_mol(mut m: MoleculeSmall) -> io::Result<Self> {
+    |                 ----^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\mol_db\mod.rs:132:14
+    |
+132 |         let (mut pubchem_cid, mut pubchem_title) =
+    |              ----^^^^^^^^^^^
+    |              |
+    |              help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\mol_db\mod.rs:132:31
+    |
+132 |         let (mut pubchem_cid, mut pubchem_title) =
+    |                               ----^^^^^^^^^^^^^
+    |                               |
+    |                               help: remove this `mut`
+
+warning: type `LodCoarse` is more private than the item `ModelScale::lod_coarse`
+  --> src\lod_generalization.rs:31:5
+   |
+31 |     pub lod_coarse: LodCoarse,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ field `ModelScale::lod_coarse` is reachable at visibility `pub(crate)`
+   |
+note: but type `LodCoarse` is only usable at visibility `pub(self)`
+  --> src\lod_generalization.rs:13:1
+   |
+13 | enum LodCoarse {
+   | ^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+warning: constant `COLOR_MD_NEAR_MOL` is never used
+  --> src\drawing\mod.rs:53:7
+   |
+53 | const COLOR_MD_NEAR_MOL: Color = (0.0, 0., 1.); // Blended into
+   |       ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `BLEND_AMT_MD_NEAR_MOL` is never used
+  --> src\drawing\mod.rs:54:7
+   |
+54 | const BLEND_AMT_MD_NEAR_MOL: f32 = 0.5; // A higher value means it's closer to the special color.
+   |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `LABEL_COLOR_CHAIN` is never used
+  --> src\drawing\mod.rs:78:7
+   |
+78 | const LABEL_COLOR_CHAIN: (u8, u8, u8, u8) = (200, 100, 160, 255);
+   |       ^^^^^^^^^^^^^^^^^
+
+warning: variants `DockingSite`, `Pharmacophore`, and `Other` are never constructed
+   --> src\drawing\mod.rs:287:5
+    |
+277 | pub enum EntityClass {
+    |          ----------- variants in this enum
+...
+287 |     DockingSite = 9,
+    |     ^^^^^^^^^^^
+288 |     WaterModel = 10,
+289 |     Pharmacophore = 11,
+    |     ^^^^^^^^^^^^^
+...
+294 |     Other = 99,
+    |     ^^^^^
+    |
+    = note: `EntityClass` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: function `save_trajectory` is never used
+    --> src\file_io\mod.rs:1394:8
+     |
+1394 | pub fn save_trajectory(dialog: &mut FileDialog) -> io::Result<()> {
+     |        ^^^^^^^^^^^^^^^
+
+warning: constant `MESH_DOCKING_BOX` is never used
+  --> src\render.rs:38:11
+   |
+38 | pub const MESH_DOCKING_BOX: usize = 5;
+   |           ^^^^^^^^^^^^^^^^
+
+warning: constant `ATOM_SN_LABEL_COLOR` is never used
+  --> src\ui\mol_editor.rs:56:11
+   |
+56 | pub const ATOM_SN_LABEL_COLOR: (u8, u8, u8, u8) = (40, 220, 255, 255);
+   |           ^^^^^^^^^^^^^^^^^^^
+
+warning: method `ready_count` is never used
+   --> src\ui\popup\external_tools.rs:359:12
+    |
+242 | impl ExternalToolsUi {
+    | -------------------- method in this implementation
+...
+359 |     pub fn ready_count(&self) -> usize {
+    |            ^^^^^^^^^^^
+
+warning: function `mol_specific_params` is never used
+   --> src\ui\sidebar\mod.rs:103:4
+    |
+103 | fn mol_specific_params<'a>(
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `merge_mol_specific_params` is never used
+   --> src\ui\sidebar\mod.rs:115:4
+    |
+115 | fn merge_mol_specific_params(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `small` is never used
+   --> src\ui\util.rs:111:12
+    |
+109 | impl<'a> Idents<'a> {
+    | ------------------- method in this implementation
+110 |     /// E.g. for `MoleculeCommon::name`, which draws on small-molecule identifiers.
+111 |     pub fn small(self) -> Option<&'a Vec<MolIdent>> {
+    |            ^^^^^
+
+warning: function `find_atom` is never used
+   --> src\util.rs:439:8
+    |
+439 | pub fn find_atom<'a>(atoms: &'a [Atom], indices: &[usize], i_to_find: usize) -> Option<&'a Atom> {
+    |        ^^^^^^^^^
+
+warning: function `rotate_atoms_about_point` is never used
+    --> src\util.rs:1563:8
+     |
+1563 | pub fn rotate_atoms_about_point(atoms: &mut [Atom], pivot: Vec3, rotator: Quaternion) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `shared_with_neighbor` is never read
+  --> src\crystal.rs:51:9
+   |
+35 | pub struct AtomInCrystal {
+   |            ------------- field in this struct
+...
+51 |     pub shared_with_neighbor: bool,
+   |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `Subset` is never used
+  --> src\drug_design\pdbbind.rs:38:10
+   |
+38 | pub enum Subset {
+   |          ^^^^^^
+
+warning: associated items `ALL`, `label`, and `directory_names` are never used
+  --> src\drug_design\pdbbind.rs:51:15
+   |
+50 | impl Subset {
+   | ----------- associated items in this implementation
+51 |     pub const ALL: [Self; 4] = [Self::Refined, Self::General, Self::Core, Self::Any];
+   |               ^^^
+52 |
+53 |     pub fn label(self) -> &'static str {
+   |            ^^^^^
+...
+67 |     fn directory_names(self) -> &'static [&'static str] {
+   |        ^^^^^^^^^^^^^^^
+
+warning: enum `AffinityKind` is never used
+   --> src\drug_design\pdbbind.rs:101:10
+    |
+101 | pub enum AffinityKind {
+    |          ^^^^^^^^^^^^
+
+warning: method `label` is never used
+   --> src\drug_design\pdbbind.rs:108:12
+    |
+107 | impl AffinityKind {
+    | ----------------- method in this implementation
+108 |     pub fn label(self) -> &'static str {
+    |            ^^^^^
+
+warning: enum `Relation` is never used
+   --> src\drug_design\pdbbind.rs:121:10
+    |
+121 | pub enum Relation {
+    |          ^^^^^^^^
+
+warning: method `is_exact` is never used
+   --> src\drug_design\pdbbind.rs:129:12
+    |
+128 | impl Relation {
+    | ------------- method in this implementation
+129 |     pub fn is_exact(self) -> bool {
+    |            ^^^^^^^^
+
+warning: struct `Affinity` is never constructed
+   --> src\drug_design\pdbbind.rs:136:12
+    |
+136 | pub struct Affinity {
+    |            ^^^^^^^^
+
+warning: method `is_regression_quality` is never used
+   --> src\drug_design\pdbbind.rs:157:12
+    |
+151 | impl Affinity {
+    | ------------- method in this implementation
+...
+157 |     pub fn is_regression_quality(&self) -> bool {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `Entry` is never constructed
+   --> src\drug_design\pdbbind.rs:164:12
+    |
+164 | pub struct Entry {
+    |            ^^^^^
+
+warning: methods `ligand` and `structure_for_pocket_work` are never used
+   --> src\drug_design\pdbbind.rs:185:12
+    |
+182 | impl Entry {
+    | ---------- methods in this implementation
+...
+185 |     pub fn ligand(&self) -> Option<&Path> {
+    |            ^^^^^^
+...
+191 |     pub fn structure_for_pocket_work(&self) -> Option<&Path> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `root` is never used
+   --> src\drug_design\pdbbind.rs:200:8
+    |
+200 | pub fn root() -> Option<PathBuf> {
+    |        ^^^^
+
+warning: function `installed_root` is never used
+   --> src\drug_design\pdbbind.rs:208:8
+    |
+208 | pub fn installed_root() -> Option<PathBuf> {
+    |        ^^^^^^^^^^^^^^
+
+warning: function `require_root` is never used
+   --> src\drug_design\pdbbind.rs:212:4
+    |
+212 | fn require_root() -> io::Result<PathBuf> {
+    |    ^^^^^^^^^^^^
+
+warning: function `normalized_id` is never used
+   --> src\drug_design\pdbbind.rs:231:4
+    |
+231 | fn normalized_id(pdb_id: &str) -> io::Result<String> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `find` is never used
+   --> src\drug_design\pdbbind.rs:249:8
+    |
+249 | pub fn find(pdb_id: &str, subset: Subset) -> io::Result<Option<Entry>> {
+    |        ^^^^
+
+warning: function `entries` is never used
+   --> src\drug_design\pdbbind.rs:277:8
+    |
+277 | pub fn entries(subset: Subset) -> io::Result<Vec<Entry>> {
+    |        ^^^^^^^
+
+warning: function `build_entry` is never used
+   --> src\drug_design\pdbbind.rs:309:4
+    |
+309 | fn build_entry(
+    |    ^^^^^^^^^^^
+
+warning: function `load_index` is never used
+   --> src\drug_design\pdbbind.rs:337:8
+    |
+337 | pub fn load_index(root: &Path) -> io::Result<HashMap<String, Affinity>> {
+    |        ^^^^^^^^^^
+
+warning: function `parse_index_line` is never used
+   --> src\drug_design\pdbbind.rs:384:4
+    |
+384 | fn parse_index_line(line: &str) -> Option<(String, Affinity)> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `parse_measurement` is never used
+   --> src\drug_design\pdbbind.rs:417:4
+    |
+417 | fn parse_measurement(raw: &str) -> Option<(AffinityKind, Relation, Option<f64>)> {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: field `references` is never read
+   --> src\external_tools\tool_form.rs:171:9
+    |
+159 | pub struct FormContract {
+    |            ------------ field in this struct
+...
+171 |     pub references: BTreeMap<String, String>,
+    |         ^^^^^^^^^^
+    |
+    = note: `FormContract` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+   --> src\external_tools\tool_form.rs:269:9
+    |
+268 | pub struct Preset {
+    |            ------ field in this struct
+269 |     pub id: String,
+    |         ^^
+    |
+    = note: `Preset` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Noise002`, `Noise010`, and `Noise030` are never constructed
+   --> src\external_tools\mpnn.rs:98:5
+    |
+ 97 | pub enum ProteinMpnnCheckpoint {
+    |          --------------------- variants in this enum
+ 98 |     Noise002,
+    |     ^^^^^^^^
+ 99 |     Noise010,
+    |     ^^^^^^^^
+...
+102 |     Noise030,
+    |     ^^^^^^^^
+    |
+    = note: `ProteinMpnnCheckpoint` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `carry_over_snap_energy` is never used
+    --> src\md\mod.rs:1356:8
+     |
+1356 | pub fn carry_over_snap_energy(snaps: &mut [Snapshot]) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `ui_start_time` and `ui_end_time` are never read
+  --> src\md\trajectory.rs:81:9
+   |
+65 | pub struct Trajectory {
+   |            ---------- fields in this struct
+...
+81 |     pub ui_start_time: String,
+   |         ^^^^^^^^^^^^^
+82 |     pub ui_end_time: String,
+   |         ^^^^^^^^^^^
+   |
+   = note: `Trajectory` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `visible` is never read
+  --> src\md\viewer.rs:82:9
+   |
+76 | pub struct ViewerGroupDisplay {
+   |            ------------------ field in this struct
+...
+82 |     pub visible: bool,
+   |         ^^^^^^^
+   |
+   = note: `ViewerGroupDisplay` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `get_snap_mut` is never used
+   --> src\md\viewer.rs:279:12
+    |
+262 | impl SnapshotViewer {
+    | ------------------- method in this implementation
+...
+279 |     pub fn get_snap_mut(&mut self, i: usize) -> Option<&mut Snapshot> {
+    |            ^^^^^^^^^^^^
+
+warning: struct `Torsion` is never constructed
+  --> src\mol_alignment.rs:69:12
+   |
+69 | pub struct Torsion {
+   |            ^^^^^^^
+
+warning: field `results_screening` is never read
+  --> src\mol_alignment.rs:79:9
+   |
+75 | pub struct StateAlignment {
+   |            -------------- field in this struct
+...
+79 |     pub results_screening: Vec<AlignmentResult>,
+   |         ^^^^^^^^^^^^^^^^^
+   |
+   = note: `StateAlignment` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: struct `PoseAlignment` is never constructed
+  --> src\mol_alignment.rs:84:12
+   |
+84 | pub struct PoseAlignment {
+   |            ^^^^^^^^^^^^^
+
+warning: method `position_atoms` is never used
+  --> src\mol_alignment.rs:95:12
+   |
+94 | impl PoseAlignment {
+   | ------------------ method in this implementation
+95 |     pub fn position_atoms(&self, mol: &MoleculeCommon) -> Vec<Vec3> {
+   |            ^^^^^^^^^^^^^^
+
+warning: field `tanimoto_coefficient` is never read
+   --> src\mol_alignment.rs:154:9
+    |
+130 | pub struct AlignmentResult {
+    |            --------------- field in this struct
+...
+154 |     pub tanimoto_coefficient: f32,
+    |         ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `AlignmentResult` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `index_and_idents`, `load_idents_meta`, `load_idents_meta_all`, and `update_idents_meta` are never used
+    --> src\mol_db\mod.rs:626:12
+     |
+ 428 | impl ParquetMolDb {
+     | ----------------- methods in this implementation
+...
+ 626 |     pub fn index_and_idents(
+     |            ^^^^^^^^^^^^^^^^
+...
+1034 |     pub fn load_idents_meta(&self, smiles: &str) -> io::Result<MolIdentsMeta> {
+     |            ^^^^^^^^^^^^^^^^
+...
+1057 |     pub fn load_idents_meta_all(&self) -> io::Result<HashMap<String, MolIdentsMeta>> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+1150 |     pub fn update_idents_meta(
+     |            ^^^^^^^^^^^^^^^^^^
+
+warning: method `help_text` is never used
+   --> src\orca.rs:222:12
+    |
+221 | impl TaskType {
+    | ------------- method in this implementation
+222 |     pub fn help_text(self) -> String {
+    |            ^^^^^^^^^
+
+warning: variant `Properties` is never constructed
+  --> src\properties\crystal.rs:69:5
+   |
+68 | pub enum CrystalEstimateSource {
+   |          --------------------- variant in this enum
+69 |     Properties,
+   |     ^^^^^^^^^^
+   |
+   = note: `CrystalEstimateSource` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `source`, `h_bond_capacity`, `hydrophobicity`, `aromatic_stacking_propensity`, and `flexibility_penalty` are never read
+   --> src\properties\crystal.rs:111:9
+    |
+110 | pub struct CrystalData {
+    |            ----------- fields in this struct
+111 |     pub source: CrystalEstimateSource,
+    |         ^^^^^^
+...
+119 |     pub h_bond_capacity: f32,
+    |         ^^^^^^^^^^^^^^^
+120 |     pub hydrophobicity: f32,
+    |         ^^^^^^^^^^^^^^
+121 |     pub aromatic_stacking_propensity: f32,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+122 |     pub flexibility_penalty: f32,
+    |         ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `CrystalData` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: constant `OCTANOL_PER_UNIT_VOL` is never used
+  --> src\properties\logp.rs:33:7
+   |
+33 | const OCTANOL_PER_UNIT_VOL: f32 = 356. / (46. * 46. * 46.);
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `WATER_MOL_PER_OCTANOL` is never used
+  --> src\properties\logp.rs:44:7
+   |
+44 | const WATER_MOL_PER_OCTANOL: f32 = 0.38;
+   |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `map_to_aqsoldb` is never used
+   --> src\properties\mixing_analysis.rs:627:4
+    |
+627 | fn map_to_aqsoldb(v: f32) -> f32 {
+    |    ^^^^^^^^^^^^^^
+
+warning: variant `HomogeneousMix` is never constructed
+   --> src\properties\sol_shrinking_box.rs:167:5
+    |
+165 | pub enum ShrinkingBoxMode {
+    |          ---------------- variant in this enum
+166 |     /// Interleave OPC water and solute copies throughout the whole cell.
+167 |     HomogeneousMix,
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `ShrinkingBoxMode` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `mode` and `target_box_extent_a` are never read
+   --> src\properties\sol_shrinking_box.rs:194:9
+    |
+193 | pub struct ShrinkingBoxMdData {
+    |            ------------------ fields in this struct
+194 |     pub mode: ShrinkingBoxMode,
+    |         ^^^^
+...
+199 |     pub target_box_extent_a: Vec3F32,
+    |         ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `ShrinkingBoxMdData` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `file_stem_has_id` is never used
+    --> src\properties\sol_shrinking_box.rs:1601:8
+     |
+1601 |     fn file_stem_has_id(path: &Path, id: usize) -> bool {
+     |        ^^^^^^^^^^^^^^^^
+
+warning: function `find_sdf_by_id` is never used
+    --> src\properties\sol_shrinking_box.rs:1611:8
+     |
+1611 |     fn find_sdf_by_id(path: &Path, id: usize) -> io::Result<PathBuf> {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `load_sdf_molecule` is never used
+    --> src\properties\sol_shrinking_box.rs:1632:8
+     |
+1632 |     fn load_sdf_molecule(path: &Path) -> io::Result<MoleculeSmall> {
+     |        ^^^^^^^^^^^^^^^^^
+
+warning: function `parse_csv_line` is never used
+    --> src\properties\sol_shrinking_box.rs:1638:8
+     |
+1638 |     fn parse_csv_line(line: &str) -> Vec<String> {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `load_nominal_solubilities` is never used
+    --> src\properties\sol_shrinking_box.rs:1660:8
+     |
+1660 |     fn load_nominal_solubilities(csv_path: &Path) -> io::Result<HashMap<usize, f32>> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `run_on_select_mols` is never used
+    --> src\properties\sol_shrinking_box.rs:1701:12
+     |
+1701 |     pub fn run_on_select_mols(dev: &ComputationDevice, param_set: &FfParamSet) {
+     |            ^^^^^^^^^^^^^^^^^^
+
+warning: enum `WaterSolEstimateSource` is never used
+  --> src\properties\water_sol.rs:62:10
+   |
+62 | pub enum WaterSolEstimateSource {
+   |          ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `lambda`, `mean_dh_dl`, and `sem_dh_dl` are never read
+  --> src\properties\water_sol.rs:70:9
+   |
+69 | pub struct WaterSolAlchemicalWindow {
+   |            ------------------------ fields in this struct
+70 |     pub lambda: f64,
+   |         ^^^^^^
+71 |     pub mean_dh_dl: f64,
+   |         ^^^^^^^^^^
+72 |     pub sem_dh_dl: f64,
+   |         ^^^^^^^^^
+   |
+   = note: `WaterSolAlchemicalWindow` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `box_min_side_a` is never read
+  --> src\properties\water_sol.rs:81:9
+   |
+77 | pub struct WaterSolMdProperties {
+   |            -------------------- field in this struct
+...
+81 |     pub box_min_side_a: f32,
+   |         ^^^^^^^^^^^^^^
+   |
+   = note: `WaterSolMdProperties` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: struct `WaterSolAnalyticProps` is never constructed
+ --> src\properties\water_sol_analytic.rs:6:34
+  |
+6 | pub(in crate::properties) struct WaterSolAnalyticProps {
+  |                                  ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `property_terms` is never used
+  --> src\properties\water_sol_analytic.rs:21:30
+   |
+21 | pub(in crate::properties) fn property_terms(char: &MolCharacterization) -> WaterSolAnalyticProps {
+   |                              ^^^^^^^^^^^^^^
+
+warning: variant `ProteinEditor` is never constructed
+    --> src\state.rs:1178:5
+     |
+1172 | pub enum OperatingMode {
+     |          ------------- variant in this enum
+...
+1178 |     ProteinEditor,
+     |     ^^^^^^^^^^^^^
+     |
+     = note: `OperatingMode` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `residue_index` and `wild_type_log_probability` are never read
+  --> src\therapeutic_misc\ddg\mod.rs:53:9
+   |
+51 | pub struct PositionScan {
+   |            ------------ fields in this struct
+52 |     /// Index into the peptide's `residues`, so a caller can select or colour the structure.
+53 |     pub residue_index: usize,
+   |         ^^^^^^^^^^^^^
+...
+65 |     pub wild_type_log_probability: f32,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `PositionScan` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `ddg_for` and `stabilizing` are never used
+  --> src\therapeutic_misc\ddg\mod.rs:70:12
+   |
+68 | impl PositionScan {
+   | ----------------- methods in this implementation
+69 |     /// ΔΔG for one substitution.
+70 |     pub fn ddg_for(&self, mutant: AminoAcid) -> Option<f32> {
+   |            ^^^^^^^
+...
+77 |     pub fn stabilizing(&self) -> Vec<(AminoAcid, f32)> {
+   |            ^^^^^^^^^^^
+
+warning: field `correlation_scale` is never read
+   --> src\therapeutic_misc\ddg\mod.rs:110:9
+    |
+107 | pub struct DdgScan {
+    |            ------- field in this struct
+...
+110 |     pub correlation_scale: Option<f32>,
+    |         ^^^^^^^^^^^^^^^^^
+    |
+    = note: `DdgScan` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `row_mut` is never used
+  --> src\therapeutic_misc\ddg\mpnn.rs:78:8
+   |
+65 | impl Matrix {
+   | ----------- method in this implementation
+...
+78 |     fn row_mut(&mut self, index: usize) -> &mut [f32] {
+   |        ^^^^^^^
+
+warning: `molchanica` (bin "molchanica") generated 91 warnings (run `cargo fix --bin "molchanica" -p molchanica` to apply 18 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.53s

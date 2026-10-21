@@ -5,6 +5,8 @@
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
 };
 
 use bio_files::ResidueGeneric;
@@ -25,6 +27,7 @@ struct Assignment {
     explicit: Option<ExplicitParams>,
     atom_serials: Vec<u32>,
     error: Option<String>,
+    pending: bool,
 }
 
 #[derive(Default)]
@@ -35,6 +38,8 @@ pub struct ForceFields {
     assignments: HashMap<(u8, usize), Assignment>,
     amber: HashMap<(u8, u64), Vec<Annotation>>,
     dirty: bool,
+    opls_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
+    opls_results: HashMap<u64, Result<MolDynamics, String>>,
 }
 
 pub fn family_name(family: ForceFieldFamily) -> &'static str {
@@ -148,6 +153,36 @@ fn amber_annotations(
 }
 
 impl ForceFields {
+    pub fn has_pending(&self) -> bool {
+        !self.opls_jobs.is_empty()
+    }
+
+    fn poll_opls(&mut self) {
+        let mut completed = Vec::new();
+        for (&topology, rx) in &self.opls_jobs {
+            match rx.try_recv() {
+                Ok(result) => completed.push((topology, result)),
+                Err(TryRecvError::Disconnected) => completed.push((topology,
+                    Err("OPLS parameter generation worker stopped unexpectedly".into()))),
+                Err(TryRecvError::Empty) => (),
+            }
+        }
+        for (topology, result) in completed {
+            self.opls_jobs.remove(&topology);
+            self.opls_results.insert(topology, result);
+            self.assignments.retain(|_, a| {
+                a.topology != topology || a.family != ForceFieldFamily::Opls
+            });
+            self.dirty = true;
+        }
+    }
+
+    fn retry_opls(&mut self) {
+        self.opls_results.retain(|_, result| result.is_ok());
+        self.assignments.retain(|_, a| a.family != ForceFieldFamily::Opls || a.error.is_none());
+        self.dirty = true;
+    }
+
     /// Amber-specific analysis and editing tools work on this copy. Keep their
     /// trained models and preparation parameters consistent while the loaded
     /// molecule continues to display the user's selected family.
@@ -236,6 +271,7 @@ impl ForceFields {
         let mut explicit = None;
         let mut atom_serials = Vec::new();
         let mut error = None;
+        let mut pending = false;
         if self.family == ForceFieldFamily::Amber {
             // An Amber-side load or parameter edit already supplied new data.
             // Otherwise restore the annotations saved before switching family.
@@ -281,7 +317,42 @@ impl ForceFields {
                     .collect(),
                 ..input
             };
-            let result = dynamics::gromacs::parameterize(&input, self.params.as_ref().unwrap());
+            let result = if self.family == ForceFieldFamily::Opls && kind == FfMolType::SmallOrganic {
+                if let Some(result) = self.opls_results.get(&topology) {
+                    if let Ok(prepared) = result {
+                        self.params.as_ref().unwrap().opls.as_ref().unwrap()
+                            .remember_small_molecule(prepared);
+                    }
+                    Some(result.clone())
+                } else if self.opls_jobs.contains_key(&topology) {
+                    None
+                } else {
+                    let mut prepared = input.clone();
+                    let local = self.params.as_ref().unwrap().opls.as_ref().unwrap()
+                        .build_small_molecule_cached(&mut prepared.atoms, &prepared.bonds);
+                    match local {
+                        Ok(params) => {
+                            prepared.explicit_params = Some(params);
+                            Some(Ok(prepared))
+                        }
+                        Err(_) => {
+                            let (tx, rx) = mpsc::channel();
+                            self.opls_jobs.insert(topology, rx);
+                            thread::spawn(move || {
+                                let result = FfParamSet::new_opls()
+                                    .map_err(|e| e.to_string())
+                                    .and_then(|set| dynamics::gromacs::parameterize(&input, &set)
+                                        .map_err(|e| e.descrip));
+                                let _ = tx.send(result);
+                            });
+                            None
+                        }
+                    }
+                }
+            } else {
+                Some(dynamics::gromacs::parameterize(&input, self.params.as_ref().unwrap())
+                    .map_err(|e| e.descrip))
+            };
             // A failed family assignment must not leave Amber names/charges
             // attached to a molecule presented as CHARMM or OPLS.
             for a in &mut mol.atoms {
@@ -289,7 +360,7 @@ impl ForceFields {
                 a.partial_charge = None;
             }
             match result {
-                Ok(prepared) => {
+                Some(Ok(prepared)) => {
                     atom_serials = prepared.atoms.iter().map(|a| a.serial_number).collect();
                     let by_serial: HashMap<_, _> = prepared
                         .atoms
@@ -304,7 +375,8 @@ impl ForceFields {
                     }
                     explicit = prepared.explicit_params;
                 }
-                Err(e) => error = Some(format!("{}: {}", mol.ident, e.descrip)),
+                Some(Err(e)) => error = Some(format!("{}: {e}", mol.ident)),
+                None => pending = true,
             }
         }
         let amber = if self.family == ForceFieldFamily::Amber {
@@ -322,6 +394,7 @@ impl ForceFields {
                 explicit,
                 atom_serials,
                 error,
+                pending,
             },
         );
         true
@@ -404,6 +477,31 @@ impl ForceFields {
 }
 
 impl State {
+    /// Avoid starting synchronous network work from MD/energy/export UI paths.
+    /// Only molecules actually selected for this simulation can block it.
+    pub fn check_md_force_fields(&self) -> Result<(), String> {
+        if self.force_fields.family == ForceFieldFamily::Amber {
+            return Ok(());
+        }
+        let molecules = self.peptides.iter().enumerate()
+            .map(|(i, m)| (MolType::Peptide, i, &m.common))
+            .chain(self.ligands.iter().enumerate().map(|(i, m)| (MolType::Ligand, i, &m.common)))
+            .chain(self.lipids.iter().enumerate().map(|(i, m)| (MolType::Lipid, i, &m.common)))
+            .chain(self.nucleic_acids.iter().enumerate().map(|(i, m)| (MolType::NucleicAcid, i, &m.common)));
+
+        for (kind, i, mol) in molecules {
+            if mol.selected_for_md.is_none() { continue; }
+            let assignment = self.force_fields.assignments.get(&(kind as u8, i))
+                .filter(|a| a.family == self.force_fields.family)
+                .ok_or_else(|| format!("{}: force field assignment is not ready yet", mol.ident))?;
+            if assignment.pending {
+                return Err(format!("{}: generating OPLS parameters with LigParGen; wait for parameterization to finish", mol.ident));
+            }
+            if let Some(error) = &assignment.error { return Err(error.clone()); }
+        }
+        Ok(())
+    }
+
     pub fn selected_force_field(&self) -> &FfParamSet {
         self.force_fields
             .params
@@ -424,6 +522,9 @@ impl State {
         };
         self.force_fields.params = params;
         self.force_fields.family = family;
+        if family == ForceFieldFamily::Opls {
+            self.force_fields.retry_opls();
+        }
         let preset = MdConfig::for_family(family);
         let cfg = &mut self.to_save.md.config;
         cfg.ff_family = family;
@@ -450,6 +551,7 @@ impl State {
     /// Called before drawing and after background loads. The same path handles
     /// every molecule source, copies, and topology edits.
     pub fn refresh_force_fields(&mut self) -> bool {
+        self.force_fields.poll_opls();
         let mut changed = std::mem::take(&mut self.force_fields.dirty);
         for (i, mol) in self.peptides.iter_mut().enumerate() {
             changed |= self.force_fields.assign(
@@ -557,6 +659,23 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
     let errors: Vec<_> = state.force_fields.errors().collect();
     if !errors.is_empty() {
         ui.colored_label(Color32::YELLOW, format!("{} unparameterized", errors.len()))
-            .on_hover_text(errors.join("\n\n"));
+            .on_hover_text(format!(
+                "Across all open molecules, including those not selected for MD. \
+                 Both force field selectors show the same count.\n\n{}",
+                errors.join("\n\n")
+            ));
+        if state.force_fields.family == ForceFieldFamily::Opls
+            && ui.small_button("Retry").on_hover_text(
+                "Retry failed LigParGen requests. An internet connection is needed for uncached ligands."
+            ).clicked()
+        {
+            state.force_fields.retry_opls();
+        }
+    }
+    if state.force_fields.has_pending() {
+        ui.spinner();
+        ui.label(format!("{} parameterizing", state.force_fields.opls_jobs.len()))
+            .on_hover_text("Generating OPLS ligand parameters with LigParGen; results are cached locally.");
+        ui.request_repaint_after(std::time::Duration::from_millis(50));
     }
 }

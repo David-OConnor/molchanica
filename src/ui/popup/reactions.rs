@@ -1516,7 +1516,8 @@ fn rhea_identifier_links(query: &str, search_url: String, links: &mut RheaLinks,
         }
         RheaIds::Failed(error) => error.as_str(),
     };
-    ui.hyperlink_to("Rhea search", search_url).on_hover_text(hover);
+    ui.hyperlink_to("Rhea search", search_url)
+        .on_hover_text(hover);
 }
 
 fn molecule_identifier_links(molecule: &LibraryMolecule, rhea_links: &mut RheaLinks, ui: &mut Ui) {
@@ -1571,8 +1572,11 @@ fn enzyme_links(enzymes: &[LibraryEnzyme], rhea_links: &mut RheaLinks, ui: &mut 
                 );
             }
             if let Some(product) = &enzyme.sigma_aldrich {
-                ui.hyperlink_to(format!("Sigma-Aldrich {}", product.product_id), &product.url)
-                    .on_hover_text("Open Sigma-Aldrich product page in browser");
+                ui.hyperlink_to(
+                    format!("Sigma-Aldrich {}", product.product_id),
+                    &product.url,
+                )
+                .on_hover_text("Open Sigma-Aldrich product page in browser");
             }
         }
     });

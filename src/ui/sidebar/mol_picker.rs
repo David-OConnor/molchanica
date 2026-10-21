@@ -545,7 +545,9 @@ pub fn sonification_input(
         let mol = state
             .get_mol(mol_type, i_mol)
             .ok_or("Molecule index is out of bounds")?;
-        return state.force_fields.sonification_input(mol_type, i_mol, mol.common());
+        return state
+            .force_fields
+            .sonification_input(mol_type, i_mol, mol.common());
     }
 
     match mol_type {

@@ -725,10 +725,7 @@ pub(in crate::ui) fn viewer_mol_set(
     redraw: &mut RedrawFlags,
 ) {
     let empty = state.volatile.md_local.viewer.mol_sets.is_empty();
-    if empty && !state.trajectories.is_empty() {
-        return;
-    }
-
+    // Keep the force field selector available even without a loaded molecule set.
     ui.horizontal(|ui| {
         ui.label("MD mol sets");
 
@@ -744,6 +741,10 @@ pub(in crate::ui) fn viewer_mol_set(
     ).clicked() {
             state.ui.popup.md_mol_set_editor = !state.ui.popup.md_mol_set_editor;
         }
+
+        ui.add_space(COL_SPACING);
+        ui.label("Force field:");
+        crate::force_fields::selector(state, ui, "sidebar_force_field");
     });
 
     if empty {

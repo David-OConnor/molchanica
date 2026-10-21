@@ -1173,7 +1173,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         redraw.lipid = true;
         redraw.na = true;
     }
-    if state.volatile.thread_receivers.has_pending() {
+    if state.volatile.thread_receivers.has_pending() || state.force_fields.has_pending() {
         ui.request_repaint_after(Duration::from_millis(50));
     }
 

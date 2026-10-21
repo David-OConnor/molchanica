@@ -256,6 +256,7 @@ pub fn gromacs_input_from_state(
     state: &State,
     // ) -> io::Result<(GromacsInput, Vec<(FfMolType, MoleculeCommon, usize)>)> {
 ) -> io::Result<GromacsInput> {
+    state.check_md_force_fields().map_err(io::Error::other)?;
     // Filter molecules for docking by if they're selected.
     // mut so we can move their posits in the initial snapshot change.
 

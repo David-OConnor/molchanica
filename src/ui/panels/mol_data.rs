@@ -182,9 +182,15 @@ fn disp_bond_data(
         let ff_0 = atom_0.force_field_type.as_deref()?;
         let ff_1 = atom_1.force_field_type.as_deref()?;
         let bond = p.get_bond(&(ff_0.to_owned(), ff_1.to_owned()), true)?;
-        let mass_0 = p.mass.get(ff_0).map(|m| m.mass)
+        let mass_0 = p
+            .mass
+            .get(ff_0)
+            .map(|m| m.mass)
             .unwrap_or_else(|| atom_0.element.atomic_weight());
-        let mass_1 = p.mass.get(ff_1).map(|m| m.mass)
+        let mass_1 = p
+            .mass
+            .get(ff_1)
+            .map(|m| m.mass)
             .unwrap_or_else(|| atom_1.element.atomic_weight());
         Some((bond, mass_0, mass_1))
     });
@@ -448,7 +454,10 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     &mol.common.atoms,
                     params.as_ref(),
                     state.force_fields.bond_params(
-                        MolType::Ligand, *mol_i, bond.atom_0_sn, bond.atom_1_sn,
+                        MolType::Ligand,
+                        *mol_i,
+                        bond.atom_0_sn,
+                        bond.atom_1_sn,
                     ),
                     ui,
                 );
@@ -470,7 +479,10 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                         &mol.common.atoms,
                         params.as_ref(),
                         state.force_fields.bond_params(
-                            MolType::Ligand, *mol_i, bond.atom_0_sn, bond.atom_1_sn,
+                            MolType::Ligand,
+                            *mol_i,
+                            bond.atom_0_sn,
+                            bond.atom_1_sn,
                         ),
                         ui,
                     );
@@ -494,7 +506,10 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     &mol.common.atoms,
                     params,
                     state.force_fields.bond_params(
-                        MolType::NucleicAcid, *mol_i, bond.atom_0_sn, bond.atom_1_sn,
+                        MolType::NucleicAcid,
+                        *mol_i,
+                        bond.atom_0_sn,
+                        bond.atom_1_sn,
                     ),
                     ui,
                 );
@@ -512,7 +527,10 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                     &mol.common.atoms,
                     state.selected_force_field().lipids.as_ref(),
                     state.force_fields.bond_params(
-                        MolType::Lipid, *mol_i, bond.atom_0_sn, bond.atom_1_sn,
+                        MolType::Lipid,
+                        *mol_i,
+                        bond.atom_0_sn,
+                        bond.atom_1_sn,
                     ),
                     ui,
                 );

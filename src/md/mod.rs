@@ -10,13 +10,12 @@ use std::{
 
 use bincode::{Decode, Encode};
 use bio_files::{
-    AtomGeneric, ResidueGeneric, create_bonds, gromacs::GromacsOutput,
-    md_params::ForceFieldParams,
+    AtomGeneric, ResidueGeneric, create_bonds, gromacs::GromacsOutput, md_params::ForceFieldParams,
 };
 use dynamics::{
-    ComputationDevice, FfMolType, ForceFieldFamily, MdConfig, MdOverrides, MdState,
-    MolDynamics, ParamError, SimBoxInit, Solvent, compute_energy_snapshot,
-    params::FfParamSet, snapshot::Snapshot,
+    ComputationDevice, FfMolType, ForceFieldFamily, MdConfig, MdOverrides, MdState, MolDynamics,
+    ParamError, SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet,
+    snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, Entity, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
@@ -787,6 +786,12 @@ impl State {
 /// Called directly from the UI; non-blocking if run = false. E.g., can launch here to load to state,
 /// then call `md_step`.
 pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
+    state.refresh_force_fields();
+    if let Err(error) = state.check_md_force_fields() {
+        state.volatile.md_local.launching = false;
+        handle_err(&mut state.ui, error);
+        return;
+    }
     // Filter molecules for docking by if they're selected.
     // mut so we can move their posits in the initial snapshot change.
 
@@ -1060,6 +1065,7 @@ pub fn custom_solvents_to_mol_commons(
 /// Called directly from the UI; computes energy.
 // pub fn launch_md_energy_computation(state: &mut State) -> Result<Snapshot, ParamError> {
 pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamError> {
+    state.check_md_force_fields().map_err(|e| ParamError::new(&e))?;
     let mols_in = get_mols_sel_for_md(state);
 
     let peptide_only_near_lig = if state.ui.md.peptide_only_near_ligs {
@@ -1266,9 +1272,14 @@ impl Display for MdBackend {
 fn ready_to_run_helper(state: &mut State) -> bool {
     clear_cli_out(&mut state.ui);
 
-    // OPLS assigns its own ligand types, charges and bonded terms at MD setup.
-    // Amber's GeoStd/GAFF2 cache is not a prerequisite for another family.
+    // OPLS generation runs in the background. Amber's GeoStd/GAFF2 cache is
+    // not a prerequisite, but selected molecules must finish parameterization.
     if state.to_save.md.config.ff_family != ForceFieldFamily::Amber {
+        state.refresh_force_fields();
+        if let Err(error) = state.check_md_force_fields() {
+            handle_err(&mut state.ui, error);
+            return false;
+        }
         return true;
     }
 

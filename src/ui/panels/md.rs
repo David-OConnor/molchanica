@@ -1,6 +1,5 @@
 use dynamics::{
-    ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT,
-    LINCS_ITER_DEFAULT,
+    ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     snapshot::SnapshotHandlers,
 };
@@ -454,11 +453,13 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
         ui.label("Solvent:").on_hover_text(help_text);
         ComboBox::from_id_salt(6)
             .width(80.)
-            .selected_text(if matches!(state.to_save.md.config.solvent, Solvent::WaterOpc) {
-                "Water (force field default)".to_owned()
-            } else {
-                state.to_save.md.config.solvent.to_string()
-            })
+            .selected_text(
+                if matches!(state.to_save.md.config.solvent, Solvent::WaterOpc) {
+                    "Water (force field default)".to_owned()
+                } else {
+                    state.to_save.md.config.solvent.to_string()
+                },
+            )
             .show_ui(ui, |ui| {
                 // todo: Don't hard-code shake tol
                 for v in &[
