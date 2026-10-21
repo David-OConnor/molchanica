@@ -94,6 +94,7 @@ impl Selection {
             self,
             Self::BondPeptide(_)
                 | Self::BondLig(_)
+                | Self::BondsLig(_)
                 | Self::BondNucleicAcid(_)
                 | Self::BondLipid(_)
                 | Self::BondPocket(_)
@@ -152,13 +153,11 @@ impl Selection {
     }
 }
 
-fn selection_dist_thresh(view: MoleculeView, view_sel_level: ViewSelLevel) -> f32 {
+fn selection_dist_thresh(view: MoleculeView, bond_mode: bool) -> f32 {
     match view {
         MoleculeView::SpaceFill => SELECTION_DIST_THRESH_LARGE,
-        _ => match view_sel_level {
-            ViewSelLevel::Bond => SELECTION_DIST_THRESH_BOND,
-            _ => SELECTION_DIST_THRESH_SMALL,
-        },
+        _ if bond_mode => SELECTION_DIST_THRESH_BOND,
+        _ => SELECTION_DIST_THRESH_SMALL,
     }
 }
 
@@ -425,11 +424,9 @@ pub fn find_sel_from_cursor_ray(
     let indices = nearest.indices();
 
     let sel = match ui.view_sel_level {
-        // ViewSelLevel::Atom => match nearest.mol_type {
-        ViewSelLevel::Atom | ViewSelLevel::Bond => {
+        ViewSelLevel::AtomBond => {
             if bond_mode {
                 match nearest.mol_type {
-                    // todo: Rework this (with appropriate steps upstream). Get bonds along ray.
                     MolType::Peptide => Selection::BondPeptide(nearest.atom_i),
                     MolType::Ligand => {
                         if shift_held {
@@ -800,11 +797,10 @@ pub(crate) fn handle_selection_attempt(
     // If we don't scale the selection distance appropriately, an atom etc
     // behind the desired one, but closer to the ray, may be selected; likely
     // this is undesired.
-    let dist_thresh_peptide =
-        selection_dist_thresh(state.ui.mol_view_peptide, state.ui.view_sel_level);
-    let dist_thresh_mol = selection_dist_thresh(state.ui.mol_view, state.ui.view_sel_level);
-
     let (sel_atoms, dist_atoms, atom_mol) = {
+        let dist_thresh_peptide = selection_dist_thresh(state.ui.mol_view_peptide, false);
+        let dist_thresh_mol = selection_dist_thresh(state.ui.mol_view, false);
+
         let atoms_along_ray_pep =
             points_along_ray_atom(selected_ray, &pep_atoms, dist_thresh_peptide);
 
@@ -887,6 +883,9 @@ pub(crate) fn handle_selection_attempt(
     };
 
     let (sel_bonds, dist_bonds, bond_mol) = {
+        let dist_thresh_peptide = selection_dist_thresh(state.ui.mol_view_peptide, true);
+        let dist_thresh_mol = selection_dist_thresh(state.ui.mol_view, true);
+
         let mut lig_bonds = Vec::new();
         // todo: I don' tlike these clones.
         for mol in &state.ligands {
@@ -1097,8 +1096,6 @@ pub fn handle_selection_attempt_mol_editor(
     redraw: &mut bool,
     engine_updates: &mut EngineUpdates,
 ) {
-    // todo: Allow a sel mode in the Primary mode that lets you pick either atoms or bonds, like this.
-
     let Some(cursor) = state.ui.cursor_pos else {
         return;
     };
@@ -1108,8 +1105,6 @@ pub fn handle_selection_attempt_mol_editor(
     let diff = selected_ray.1 - selected_ray.0;
 
     selected_ray.0 += diff.to_normalized() * SEL_NEAR_PAD;
-
-    let dist_thresh = selection_dist_thresh(state.ui.mol_view, ViewSelLevel::Atom);
 
     let mol = &state.mol_editor.mol;
 
@@ -1126,6 +1121,7 @@ pub fn handle_selection_attempt_mol_editor(
         .collect();
 
     let (sel_atoms, dist_atoms, _atom_mol) = {
+        let dist_thresh = selection_dist_thresh(state.ui.mol_view, false);
         let atoms_along_ray_lig =
             points_along_ray_atom(selected_ray, std::slice::from_ref(&atoms), dist_thresh);
 
@@ -1155,6 +1151,7 @@ pub fn handle_selection_attempt_mol_editor(
     };
 
     let (sel_bonds, dist_bonds, _bond_mol) = {
+        let dist_thresh = selection_dist_thresh(state.ui.mol_view, true);
         let bonds = mol.common.bonds.clone(); // todo: This clone...
 
         let bonds_along_ray_lig = points_along_ray_bond(
@@ -1318,31 +1315,66 @@ fn ray_metrics(ray_origin: Vec3F32, ray_dir: Vec3F32, posit: Vec3F32) -> (f32, f
     (dist_to_ray, t)
 }
 
-/// This is primarily for use with proteins, and generally not for
-/// small molecules. It it likely relevant for nucleic acids and lipids.
+/// Choose individual atoms/bonds or whole peptide residues for selection and coloring.
 #[derive(Clone, Copy, PartialEq, Debug, Default, Encode, Decode)]
 pub enum ViewSelLevel {
     #[default]
-    Atom,
-    Bond,
+    AtomBond,
     Residue,
 }
 
 impl ViewSelLevel {
-    pub fn next(self) -> Self {
+    pub fn cycle(self) -> Self {
         match self {
-            Self::Atom => Self::Bond,
-            Self::Bond => Self::Residue,
-            Self::Residue => Self::Atom,
+            Self::AtomBond => Self::Residue,
+            Self::Residue => Self::AtomBond,
         }
     }
 
-    // todo: repetitive
-    pub fn prev(self) -> Self {
-        match self {
-            Self::Atom => Self::Residue,
-            Self::Bond => Self::Atom,
-            Self::Residue => Self::Bond,
+    /// Keep the corresponding peptide residues or representative atoms selected when toggling.
+    fn convert_selection(self, selection: &Selection, peptide: &MoleculePeptide) -> Selection {
+        let selected_residues = || {
+            (0..peptide.residues.len()).filter(|&i| {
+                selection.includes_peptide_residue(i, &peptide.common.atoms, &peptide.common.bonds)
+            })
+        };
+
+        match (self, selection) {
+            (
+                Self::Residue,
+                Selection::AtomPeptide(_) | Selection::AtomsPeptide(_) | Selection::BondPeptide(_),
+            ) => {
+                let residues: Vec<_> = selected_residues().collect();
+
+                match residues.len() {
+                    0 => Selection::None,
+                    1 => Selection::Residue(residues[0]),
+                    _ => Selection::Residues(residues),
+                }
+            }
+            (Self::AtomBond, Selection::Residue(_) | Selection::Residues(_)) => {
+                let atoms: Vec<_> = selected_residues()
+                    .filter_map(|i| {
+                        let mut atoms = peptide.residues[i]
+                            .atoms
+                            .iter()
+                            .copied()
+                            .filter(|&a| a < peptide.common.atoms.len());
+
+                        atoms
+                            .clone()
+                            .find(|&a| peptide.common.atoms[a].role == Some(AtomRole::C_Alpha))
+                            .or_else(|| atoms.next())
+                    })
+                    .collect();
+
+                match atoms.len() {
+                    0 => Selection::None,
+                    1 => Selection::AtomPeptide(atoms[0]),
+                    _ => Selection::AtomsPeptide(atoms),
+                }
+            }
+            _ => selection.clone(),
         }
     }
 }
@@ -1350,9 +1382,8 @@ impl ViewSelLevel {
 impl Display for ViewSelLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Atom => write!(f, "Atom"),
+            Self::AtomBond => write!(f, "Atom/Bond"),
             Self::Residue => write!(f, "Residue"),
-            Self::Bond => write!(f, "Bond"),
         }
     }
 }
@@ -1453,7 +1484,7 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
     let dir = if reverse { -1 } else { 1 };
 
     match state.ui.view_sel_level {
-        ViewSelLevel::Atom | ViewSelLevel::Bond => {
+        ViewSelLevel::AtomBond => {
             state.ui.selection = cycle_atom_bond(state, mol, dir);
         }
         ViewSelLevel::Residue => {
@@ -1623,7 +1654,16 @@ fn search_hits(state: &State, query: &str) -> (Vec<Selection>, usize) {
         };
 
         match state.ui.view_sel_level {
-            ViewSelLevel::Atom => atom_hits(&mut hits),
+            ViewSelLevel::AtomBond => {
+                // Start with the atom, then let Enter cycle through its connected bonds.
+                atom_hits(&mut hits);
+
+                for (i, bond) in mol.bonds.iter().enumerate() {
+                    if bond.atom_0_sn == sn || bond.atom_1_sn == sn {
+                        hits.push(Selection::from_bond(mol_type, mol_i, i));
+                    }
+                }
+            }
             ViewSelLevel::Residue => match pep {
                 Some(pep) => {
                     for (i, res) in pep.residues.iter().enumerate() {
@@ -1647,13 +1687,6 @@ fn search_hits(state: &State, query: &str) -> (Vec<Selection>, usize) {
                 // Non-peptide molecules have no residues; fall back to atoms.
                 None => atom_hits(&mut hits),
             },
-            ViewSelLevel::Bond => {
-                for (i, bond) in mol.bonds.iter().enumerate() {
-                    if bond.atom_0_sn == sn || bond.atom_1_sn == sn {
-                        hits.push(Selection::from_bond(mol_type, mol_i, i));
-                    }
-                }
-            }
         }
 
         if !hits.is_empty() {
@@ -1727,6 +1760,24 @@ fn selected_chain(pep: &MoleculePeptide, sel: &Selection) -> Option<usize> {
 }
 
 impl State {
+    /// Apply the same selection conversion and mesh updates for the dropdown and hotkeys.
+    pub fn set_view_sel_level(&mut self, level: ViewSelLevel) {
+        if level == self.ui.view_sel_level {
+            return;
+        }
+
+        if let Some(peptide) = self.peptide_for_tools() {
+            self.ui.selection = level.convert_selection(&self.ui.selection, peptide);
+        }
+        self.ui.view_sel_level = level;
+
+        if self.ui.mol_view_peptide == MoleculeView::Ribbon {
+            self.volatile.flags.update_ss_mesh = true;
+        } else {
+            self.volatile.flags.ss_mesh_dirty = true;
+        }
+    }
+
     /// Resolve an atom or residue selection to a camera target. For multiple peptide atoms or
     /// residues, use the first selected item. Invalid and unsupported selections have no target.
     pub fn selected_target(&self) -> Option<lin_alg::f64::Vec3> {

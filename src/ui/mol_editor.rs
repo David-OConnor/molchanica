@@ -190,7 +190,7 @@ pub(in crate::ui) fn editor(
                 .clicked()
             {
                 state.ui.atom_color_by_charge = !state.ui.atom_color_by_charge;
-                state.ui.view_sel_level = ViewSelLevel::Atom;
+                state.ui.view_sel_level = ViewSelLevel::AtomBond;
 
                 redraw = true;
             }

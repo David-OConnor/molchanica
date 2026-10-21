@@ -592,7 +592,7 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
 
     // Rebuilt shortly.
     state.mol_editor.md.md = None;
-    state.ui.view_sel_level = ViewSelLevel::Atom;
+    state.ui.view_sel_level = ViewSelLevel::AtomBond;
 
     state.ui.ui_vis.sidebar_mol_properties = false;
     state.ui.ui_vis.pharmacophore_list = true;
@@ -780,7 +780,7 @@ fn draw_atom(
             &[],
             &[],
             &ui.selection,
-            ViewSelLevel::Atom, // Always color lipids by atom.
+            ViewSelLevel::AtomBond, // Use element or partial-charge colors.
             false,
             ui.res_coloring,
             ui.atom_color_by_charge,
@@ -889,7 +889,7 @@ fn draw_bond(
         &[],
         &[],
         &ui.selection,
-        ViewSelLevel::Atom, // Always color ligands by atom.
+        ViewSelLevel::AtomBond, // Always color ligands by atom.
         false,
         ui.res_coloring,
         ui.atom_color_by_charge,
@@ -908,7 +908,7 @@ fn draw_bond(
         &[],
         &[],
         &ui.selection,
-        ViewSelLevel::Atom, // Always color ligands by atom.
+        ViewSelLevel::AtomBond, // Always color ligands by atom.
         false,
         ui.res_coloring,
         ui.atom_color_by_charge,

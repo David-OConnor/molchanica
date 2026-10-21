@@ -10,7 +10,7 @@ use egui::{
     Sense, Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
-use mol_defs::molecules::{MolGenericRef, MolIdent};
+use mol_defs::molecules::{MolGenericRef, MolIdent, MolType};
 use na_seq::Element;
 use panels::{
     md::md_setup,
@@ -380,19 +380,24 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
         .volatile
         .active_seq
         .filter(|&i| i < state.sequences.len());
+
+    let residue_navigation = state.ui.view_sel_level == ViewSelLevel::Residue
+        && matches!(state.volatile.active_mol, Some((MolType::Peptide, _)));
+
     let (btn_text_p, btn_text_n) = if active_seq.is_some() {
         ("Prev residue", "Next residue")
+    } else if residue_navigation {
+        ("Prev AA", "Next AA")
+    } else if state.ui.selection.is_bond() {
+        ("Prev bond", "Next bond")
     } else {
-        match state.ui.view_sel_level {
-            ViewSelLevel::Atom => ("Prev atom", "Next atom"),
-            ViewSelLevel::Residue => ("Prev AA", "Next AA"),
-            ViewSelLevel::Bond => ("Prev bond", "Next bond"),
-        }
+        ("Prev atom", "Next atom")
     };
 
     let help_txt = "Search in the active molecule or sequence by position or residue letter; \
     for molecules, search by atom serial number, residue serial number, \
-    amino acid identifier, hetero residue name, etc. Press Enter to go to the next match, e.g. the \
+    amino acid identifier, hetero residue name, etc. In Atom/Bond mode, an atom serial number \
+    matches the atom and its connected bonds. Press Enter to go to the next match, e.g. the \
     same residue number in another chain.";
 
     let text_color = state.ui.atom_res_search_miss.then_some(COLOR_OUT_ERROR);
@@ -460,14 +465,6 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
     }
 }
 
-fn view_sel_level_text(level: ViewSelLevel) -> &'static str {
-    match level {
-        ViewSelLevel::Atom => "Atom",
-        ViewSelLevel::Bond => "Bond",
-        ViewSelLevel::Residue => "Residue",
-    }
-}
-
 fn res_coloring_text(coloring: ResColoring) -> &'static str {
     match coloring {
         ResColoring::AminoAcid => "AA",
@@ -482,83 +479,35 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
     let help_text = "(Hotkeys:  ;  and  '  )";
     ui.label("View/Sel:").on_hover_text(help_text);
     let prev_view = state.ui.view_sel_level;
+    let mut view_sel_level = prev_view;
 
     let views: &[ViewSelLevel] = if include_res {
-        &[
-            ViewSelLevel::Atom,
-            ViewSelLevel::Bond,
-            ViewSelLevel::Residue,
-        ]
+        &[ViewSelLevel::AtomBond, ViewSelLevel::Residue]
     } else {
-        &[ViewSelLevel::Atom, ViewSelLevel::Bond]
+        &[ViewSelLevel::AtomBond]
     };
 
     // Ideally hover text here too, but I'm not sure how.
     ComboBox::from_id_salt(1)
         .width(80.)
-        .selected_text(view_sel_level_text(state.ui.view_sel_level))
+        .selected_text(view_sel_level.to_string())
         .show_ui(ui, |ui| {
             for &view in views {
-                ui.selectable_value(
-                    &mut state.ui.view_sel_level,
-                    view,
-                    view_sel_level_text(view),
-                );
+                ui.selectable_value(&mut view_sel_level, view, view.to_string());
             }
         })
         .response
         .on_hover_text(help_text);
 
-    if state.ui.view_sel_level != prev_view {
+    if view_sel_level != prev_view {
+        state.set_view_sel_level(view_sel_level);
         *redraw = true;
-        if state.ui.mol_view_peptide == MoleculeView::Ribbon {
-            state.volatile.flags.update_ss_mesh = true;
-        } else {
-            state.volatile.flags.ss_mesh_dirty = true;
-        }
-        // If we change from atom to res, select the prev-selected atom's res. If vice-versa,
-        // select that residue's Cα.
-        // state.ui.selection = Selection::None;
-        // todo: This section needs some updates, but isn't critical.
-        if let Some(mol) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-        {
-            match state.ui.view_sel_level {
-                ViewSelLevel::Residue => {
-                    state.ui.selection = match state.ui.selection {
-                        Selection::AtomPeptide(i) => {
-                            Selection::Residue(mol.common.atoms[i].residue.unwrap_or_default())
-                        }
-                        _ => Selection::None,
-                    };
-                }
-                ViewSelLevel::Atom => {
-                    state.ui.selection = match state.ui.selection {
-                        // It seems [0] is often N, and [1] is Cα
-                        Selection::Residue(i) => {
-                            if i >= mol.residues.len() {
-                                handle_err(&mut state.ui, "Residue bounds problem".to_string());
-                                Selection::None
-                            } else if mol.residues[i].atoms.len() >= 2 {
-                                Selection::AtomPeptide(mol.residues[i].atoms[1])
-                            } else {
-                                Selection::None
-                            }
-                        }
-
-                        _ => Selection::None,
-                    };
-                }
-                ViewSelLevel::Bond => {}
-            }
-        }
     }
 
     // Buttons to alter the color profile, e.g. for res position, or partial charge.
     ui.add_space(COL_SPACING / 2.);
     match state.ui.view_sel_level {
-        ViewSelLevel::Atom => {
+        ViewSelLevel::AtomBond => {
             let color = if state.ui.atom_color_by_charge {
                 COLOR_ACTIVE
             } else {
@@ -573,7 +522,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                 .clicked()
             {
                 state.ui.atom_color_by_charge = !state.ui.atom_color_by_charge;
-                state.ui.view_sel_level = ViewSelLevel::Atom;
+                state.ui.view_sel_level = ViewSelLevel::AtomBond;
 
                 if !state.peptides.is_empty() {
                     state.volatile.flags.update_sas_coloring = true;
@@ -638,8 +587,6 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
                 *redraw = true;
             }
         }
-        // todo: We could color these based on current vs nominal length and/or frequency.
-        ViewSelLevel::Bond => (),
     }
 
     if state.ligands.len() >= 2 {

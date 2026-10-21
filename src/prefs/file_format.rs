@@ -286,15 +286,14 @@ impl MoleculeView {
 impl ViewSelLevel {
     fn to_u8(self) -> u8 {
         match self {
-            Self::Atom => 0,
-            Self::Bond => 1,
+            Self::AtomBond => 0,
             Self::Residue => 2,
         }
     }
     fn from_u8(v: u8) -> Self {
         match v {
-            0 => Self::Atom,
-            1 => Self::Bond,
+            // Legacy Atom (0) and Bond (1) modes now share the same behavior.
+            0 | 1 => Self::AtomBond,
             2 => Self::Residue,
             _ => Self::default(),
         }

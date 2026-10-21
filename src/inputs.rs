@@ -536,29 +536,14 @@ fn handle_physical_key(
                     }
                     OperatingMode::ProteinEditor => (),
                 },
-                KeyCode::Semicolon => match op_mode {
+                KeyCode::Semicolon | KeyCode::Quote => match op_mode {
                     OperatingMode::Primary => {
-                        state.ui.view_sel_level = state.ui.view_sel_level.prev();
+                        state.set_view_sel_level(state.ui.view_sel_level.cycle());
 
                         redraw.set_all();
                     }
-                    OperatingMode::MolEditor => {
-                        state.ui.view_sel_level = state.ui.view_sel_level.prev();
-                        *redraw_mol_editor = true;
-                    }
-                    OperatingMode::ProteinEditor => (),
-                },
-                KeyCode::Quote => match op_mode {
-                    OperatingMode::Primary => {
-                        state.ui.view_sel_level = state.ui.view_sel_level.next();
-
-                        redraw.set_all();
-                    }
-                    OperatingMode::MolEditor => {
-                        state.ui.view_sel_level = state.ui.view_sel_level.next();
-                        *redraw_mol_editor = true;
-                    }
-                    OperatingMode::ProteinEditor => (),
+                    // The molecule editor only uses atom/bond selection.
+                    OperatingMode::MolEditor | OperatingMode::ProteinEditor => (),
                 },
                 KeyCode::KeyM => {
                     let mol_type = if op_mode == OperatingMode::MolEditor {

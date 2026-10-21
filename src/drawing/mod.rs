@@ -887,7 +887,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     &[],
                     &[],
                     sel,
-                    ViewSelLevel::Atom, // Always color lipids by atom.
+                    ViewSelLevel::AtomBond, // Small molecules use element or charge colors.
                     false,
                     ui.res_coloring,
                     ui.atom_color_by_charge,
@@ -1116,8 +1116,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 0,
                 &[],
                 &[],
-                sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
-                ViewSelLevel::Atom, // Always color ligands by atom.
+                sel,
+                ViewSelLevel::AtomBond, // Always color ligands by atom.
                 false,
                 ui.res_coloring,
                 ui.atom_color_by_charge,
@@ -1134,8 +1134,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 0,
                 &[],
                 &[],
-                sel,                // ignores bond coloring by adjacent atom if in bond sel mode.
-                ViewSelLevel::Atom, // Always color ligands by atom.
+                sel,
+                ViewSelLevel::AtomBond, // Always color ligands by atom.
                 false,
                 ui.res_coloring,
                 ui.atom_color_by_charge,
@@ -1143,8 +1143,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 components,
             );
 
-            // If in atom sel mode, we color bonds normally above (The  half of each bond connected
-            // to the selected atom). If in bond sel mode, we color the bond between two atoms below.
+            // Atom selections color the adjacent half-bonds above; bond selections color both
+            // halves of each selected bond below.
 
             match &ui.selection {
                 Selection::BondLig((_mol_i, bond_i))

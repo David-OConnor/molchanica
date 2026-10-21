@@ -127,7 +127,7 @@ pub fn atom_color(
     components: &Option<MolComponents>,
 ) -> Color {
     let mut result = match view_sel_level {
-        ViewSelLevel::Atom => {
+        ViewSelLevel::AtomBond => {
             if atom_color_by_q {
                 if let Some(q) = atom.partial_charge {
                     drawing::color_viridis_float(q, CHARGE_MAP_MIN, CHARGE_MAP_MAX)
@@ -165,7 +165,6 @@ pub fn atom_color(
             }
             color
         }
-        ViewSelLevel::Bond => atom.element.color(), // Handled elsewhere.
     };
 
     // If selected, the selected color overrides the element or residue color.
