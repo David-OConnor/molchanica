@@ -423,6 +423,12 @@ pub(in crate::ui) fn sidebar(
         .default_size(140.0)
         .size_range(60.0..=800.0)
         .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Force field:");
+                crate::force_fields::selector(state, ui, "sidebar_force_field");
+            });
+            ui.separator();
+
             ui.horizontal(|ui| {
                 if button!(ui, "◀", COLOR_ACTION, "Hide the sidebar").clicked() {
                     state.ui.ui_vis.sidebar = false;
@@ -975,9 +981,10 @@ fn md_property_runners(
     let Some(active_mol) = state.volatile.active_mol.as_ref() else {
         return;
     };
-    let Some(mol) = state.get_small(active_mol.1).cloned() else {
+    let Some(mut mol) = state.get_small(active_mol.1).cloned() else {
         return;
     };
+    mol.common = state.force_fields.amber_copy(&mol.common);
 
     if run_logp_sim {
         match logp::run(&mol, state, scene, updates) {

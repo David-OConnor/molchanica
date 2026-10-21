@@ -328,24 +328,24 @@ fn mol_picker_one(
 }
 
 /// Search, molecule type filters, and sorting, above the molecule rows.
-fn picker_toolbar(p: &mut MolPickerState, present: &[MolType], ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if !p.search.is_empty()
-                && button!(ui, "❌", Color32::LIGHT_RED, "Clear the search.").clicked()
-            {
-                p.search.clear();
-            }
-
-            ui.add(
-                TextEdit::singleline(&mut p.search)
-                    .hint_text("Search names, idents, files")
-                    .desired_width(ui.available_width()),
-            );
-        });
-    });
-
+fn mol_picker_toolbar(p: &mut MolPickerState, present: &[MolType], ui: &mut Ui) {
+    // Left-to-right, so the sort stays on the search row when there's room, and wraps otherwise.
+    // (A nested right-to-left layout here claims the full row width.)
     ui.horizontal_wrapped(|ui| {
+        ui.add(
+            TextEdit::singleline(&mut p.search)
+                .hint_text("Search names, idents, files")
+                .desired_width(ui.available_width().min(200.)),
+        );
+
+        if !p.search.is_empty()
+            && button!(ui, "❌", Color32::LIGHT_RED, "Clear the search.").clicked()
+        {
+            p.search.clear();
+        }
+
+        ui.add_space(COL_SPACING / 2.);
+
         // Type filters are only useful with several types open, but stay up while any type is
         // hidden, so it can be shown again.
         if present.len() >= 2 || present.iter().any(|t| p.hidden_types.contains(t)) {
@@ -541,6 +541,13 @@ pub fn sonification_input(
     mol_type: MolType,
     i_mol: usize,
 ) -> Result<(MoleculeCommon, ForceFieldParams), String> {
+    if state.force_fields.family != dynamics::ForceFieldFamily::Amber {
+        let mol = state
+            .get_mol(mol_type, i_mol)
+            .ok_or("Molecule index is out of bounds")?;
+        return state.force_fields.sonification_input(mol_type, i_mol, mol.common());
+    }
+
     match mol_type {
         MolType::Peptide => {
             let mol = state
@@ -632,7 +639,7 @@ pub fn mol_picker(
         !p.search.trim().is_empty() || present.iter().any(|t| p.hidden_types.contains(t));
 
     if total >= 2 || filtering {
-        picker_toolbar(p, &present, ui);
+        mol_picker_toolbar(p, &present, ui);
     }
 
     // The molecules to show, in display order.

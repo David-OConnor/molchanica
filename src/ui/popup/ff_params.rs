@@ -721,6 +721,18 @@ fn not_loaded(ui: &mut Ui) {
 
 /// View and edit the general force field parameters. E.g. Amber's parm19, gaff2, and amino19.
 pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
+    if state.force_fields.family != dynamics::ForceFieldFamily::Amber {
+        ui.label(format!(
+            "{} parameters",
+            crate::force_fields::family_name(state.force_fields.family),
+        ));
+        ui.label(
+            "This family assigns molecule-specific parameters at preparation. \
+            Atom types and partial charges are shown on the molecule; \
+            the general Amber parameter tables apply only when Amber is selected.",
+        );
+        return;
+    }
     // A popup's area is only `spacing.default_area_size` (400px) tall, and the table's scroll area
     // can't exceed the height available to it: without this, `TABLE_HEIGHT` has no effect. Give it
     // everything between the top of the popup and the bottom of the window.

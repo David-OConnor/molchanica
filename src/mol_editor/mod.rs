@@ -625,8 +625,10 @@ pub fn enter_edit_mode(state: &mut State, scene: &mut Scene, updates: &mut Engin
         if i >= state.ligands.len() {
             eprintln!("Expected a ligand at this index, but out of bounds when entering edit mode");
         } else {
+            let mut source = state.ligands[i].clone();
+            source.common = state.force_fields.amber_copy(&source.common);
             state.mol_editor.load_mol(
-                &state.ligands[i],
+                &source,
                 scene,
                 updates,
                 &mut state.ui,

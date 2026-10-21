@@ -1,5 +1,6 @@
 use dynamics::{
-    ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
+    ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT,
+    LINCS_ITER_DEFAULT,
     LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
     snapshot::SnapshotHandlers,
 };
@@ -263,6 +264,8 @@ pub fn md_setup(
         long-range reciprical forces at this distance. For LJ, may represent a hard-cutoff. See the appropriate docs for \
         the backend used, details vary.";
         ui.horizontal_wrapped(|ui| {
+            force_field_cfg(state, ui);
+            ui.add_space(COL_SPACING / 2.);
             integrator_cfg(state, ui);
 
             ui.add_space(COL_SPACING / 2.);
@@ -286,6 +289,11 @@ pub fn md_setup(
     });
 
     md_viewer::dynamics_viewer(state, scene, updates, redraw, ui);
+}
+
+fn force_field_cfg(state: &mut State, ui: &mut Ui) {
+    ui.label("Force field:");
+    crate::force_fields::selector(state, ui, "md_force_field");
 }
 
 /// Counts molecule copies using the same selection as the simulation.
@@ -446,7 +454,11 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
         ui.label("Solvent:").on_hover_text(help_text);
         ComboBox::from_id_salt(6)
             .width(80.)
-            .selected_text(state.to_save.md.config.solvent.to_string())
+            .selected_text(if matches!(state.to_save.md.config.solvent, Solvent::WaterOpc) {
+                "Water (force field default)".to_owned()
+            } else {
+                state.to_save.md.config.solvent.to_string()
+            })
             .show_ui(ui, |ui| {
                 // todo: Don't hard-code shake tol
                 for v in &[
@@ -459,7 +471,11 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
                     ui.selectable_value(
                         &mut state.to_save.md.config.solvent,
                         v.clone(),
-                        v.to_string(),
+                        if matches!(v, Solvent::WaterOpc) {
+                            "Water (force field default)".to_owned()
+                        } else {
+                            v.to_string()
+                        },
                     );
                 }
             })

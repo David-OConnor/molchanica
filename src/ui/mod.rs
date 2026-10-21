@@ -924,6 +924,14 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     let mut redraw = RedrawFlags::default();
 
+    if state.refresh_force_fields() {
+        ui.request_repaint();
+        redraw.peptide = true;
+        redraw.ligand = true;
+        redraw.lipid = true;
+        redraw.na = true;
+    }
+
     // For getting DT for certain buttons when held. Does not seem to be the same as the 3D render DT.
     let start = Instant::now();
 
@@ -1158,6 +1166,13 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.request_repaint();
     }
     start_session_restore(state);
+    if state.refresh_force_fields() {
+        ui.request_repaint();
+        redraw.peptide = true;
+        redraw.ligand = true;
+        redraw.lipid = true;
+        redraw.na = true;
+    }
     if state.volatile.thread_receivers.has_pending() {
         ui.request_repaint_after(Duration::from_millis(50));
     }

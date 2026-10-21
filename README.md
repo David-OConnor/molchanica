@@ -609,6 +609,26 @@ the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed.
 similar in the path, e.g.:
 `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64`
 
+### Force-field selection
+
+The selector at the top of the sidebar chooses Amber, CHARMM36m or OPLS-AA/L.
+Each session starts with Amber for proteins, ligands, lipids, DNA and RNA.
+Changing the selector reassigns types and partial charges on open molecules,
+and updates MD's family, cutoffs, LJ convention and default water model. Newly
+loaded molecules use the same selection. The MD panel shares this selector.
+
+Structural atom names, coordinates and atom ordering are preserved. Amber
+templates remain available for hydrogen placement; Amber-specific analysis and
+editing tools use preparation copies. Switching back restores the loaded Amber
+annotations, including supplied ligand charges.
+
+CHARMM currently builds proteins. OPLS builds proteins and supported organic
+ligands, including a complete, bundled parameterization for neutral creatine
+(PubChem 586). Unsupported chemistry and the other molecule classes need
+matching explicit parameters through Dynamics' API. They are left unparameterized
+in Molchanica rather than retaining another family's types and charges; the
+sidebar reports the affected molecules and reasons.
+
 ### Errata
 
 - Opening electron density files in general can be slow. This can lead to the program starting slowly if it was

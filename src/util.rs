@@ -1193,7 +1193,8 @@ pub fn make_lig_3d(
                 .find(|(key, _)| key.eq_ignore_ascii_case(&lig.common.ident))
                 .map(|(_, params)| params)
         });
-    let result = lig.common.make_3d(&state.ff_param_set, specific);
+    let mut prepared = state.force_fields.amber_copy(&lig.common);
+    let result = prepared.make_3d(&state.ff_param_set, specific);
 
     let ident = lig.common.name(Some(&lig.idents)).into_owned();
 
@@ -1201,6 +1202,8 @@ pub fn make_lig_3d(
         handle_err(&mut state.ui, format!("Unable to make {ident} 3D: {e}"));
         return;
     }
+
+    lig.common = prepared;
 
     // Geometry-derived properties.
     lig.update_characterization();

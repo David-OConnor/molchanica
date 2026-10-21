@@ -80,8 +80,10 @@ pub struct State {
     /// This is None if Computation Device is CPU.
     #[cfg(feature = "cuda")]
     pub kernel_reflections: Option<CudaFunction>,
-    // todo: Combine these params in a single struct.
+    /// Amber templates and GAFF2 data used for structural preparation and
+    /// Amber-trained analysis. The selected display/MD family is separate.
     pub ff_param_set: FfParamSet,
+    pub force_fields: crate::force_fields::ForceFields,
     pub mol_specific_params: HashMap<String, ForceFieldParams>,
     pub templates: Templates,
     pub mol_editor: MolEditorState,
@@ -139,6 +141,7 @@ impl Default for State {
             #[cfg(feature = "cuda")]
             kernel_reflections: None,
             ff_param_set: Default::default(),
+            force_fields: Default::default(),
             mol_specific_params: Default::default(),
             templates: Default::default(),
             mol_editor: Default::default(),

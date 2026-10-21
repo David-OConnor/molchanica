@@ -389,6 +389,17 @@ pub fn align(
 ) -> Result<(Vec<AlignmentResult>, MdState), ParamError> {
     let start = Instant::now();
 
+    let amber_template = MoleculeSmall {
+        common: state.force_fields.amber_copy(&mol_template.common),
+        ..mol_template.clone()
+    };
+    let amber_query = MoleculeSmall {
+        common: state.force_fields.amber_copy(&mol_query.common),
+        ..mol_query.clone()
+    };
+    let mol_template = &amber_template;
+    let mol_query = &amber_query;
+
     let mut alignments_init = make_initial_alignment(mol_template, mol_query, RING_ALIGN_ROT_COUNT);
 
     for alignment in &mut alignments_init {

@@ -128,6 +128,7 @@ pub fn make_gromacs_input(
             box_nm,
             coordinate_origin_a,
             ff_global: Some(ff_global),
+            topology_config: dynamics::gromacs::topology_config(ff_param_set, None),
             solvent: solvent_gmx,
             initial_gro: None,
             extra_molecule_counts: Vec::new(),
@@ -279,14 +280,18 @@ pub fn gromacs_input_from_state(
     };
 
     let cfg = &state.to_save.md.config;
+    let selected_params = state.selected_force_field();
+    let residues = crate::md::peptide_residue_map(state);
 
     // Build molecule entries for GROMACS input.
-    let (mols_input, _md_pep_sel) = match build_molecule_inputs(
+    let (mols_input, _md_pep_sel, resolved_mols) = match build_molecule_inputs(
         &mols,
         &state.mol_specific_params,
         state.ui.md.peptide_static,
         near_lig_thresh,
         &cfg.sim_box,
+        selected_params,
+        &residues,
     ) {
         Ok(m) => m,
         Err(e) => {
@@ -310,15 +315,34 @@ pub fn gromacs_input_from_state(
         .iter()
         .map(|(ff_mol_type, _, _)| *ff_mol_type)
         .collect();
-    make_gromacs_input(
+    let mut input = make_gromacs_input(
         mdp,
         &ff_mol_types,
         mols_input,
-        &state.ff_param_set,
+        selected_params,
         &cfg.sim_box,
         &cfg.solvent,
         minimize_energy,
-    )
+    )?;
+    input.topology_config =
+        dynamics::gromacs::topology_config(selected_params, cfg.water_model.as_ref());
+    if cfg.ff_family != dynamics::ForceFieldFamily::Amber {
+        if matches!(cfg.solvent, Solvent::OctanolWithWater | Solvent::Custom(_)) {
+            return Err(io::Error::other(
+                "Custom/octanol solvent requires parameters matching the selected force field",
+            ));
+        }
+        input.topology_override = Some(
+            dynamics::gromacs::make_topology(
+                &resolved_mols,
+                selected_params,
+                cfg.water_model.as_ref(),
+                input.solvent.is_some(),
+            )
+            .map_err(io::Error::other)?,
+        );
+    }
+    Ok(input)
 }
 
 /// Convert Molchanica molecule data into `Vec<MoleculeInput>` for GROMACS.
@@ -328,9 +352,19 @@ pub fn build_molecule_inputs(
     static_peptide: bool,
     near_lig_thresh: Option<f64>,
     sim_box_init: &SimBoxInit,
-) -> Result<(Vec<MoleculeInput>, HashSet<(usize, usize)>), String> {
+    param_set: &FfParamSet,
+    peptide_residues: &HashMap<String, Vec<bio_files::ResidueGeneric>>,
+) -> Result<
+    (
+        Vec<MoleculeInput>,
+        HashSet<(usize, usize)>,
+        Vec<(String, MolDynamics, usize)>,
+    ),
+    String,
+> {
     let mut result = Vec::new();
     let mut placed_mols = Vec::new();
+    let mut resolved_mols = Vec::new();
 
     let mut pep_atom_set = HashSet::new();
     let mut peptide_i = 0;
@@ -362,7 +396,7 @@ pub fn build_molecule_inputs(
                     bonded_only: false,
                     mol_specific_params: None,
                     explicit_params: None,
-                    residues: None,
+                    residues: peptide_residues.get(&mol.ident).cloned(),
                 },
                 if peptide_i == 0 {
                     "PEP".to_string()
@@ -396,7 +430,10 @@ pub fn build_molecule_inputs(
             )
         };
 
+        let dyn_mol =
+            dynamics::gromacs::parameterize(&dyn_mol, param_set).map_err(|e| e.to_string())?;
         let first_name = copy_mol_name(&name, 0, count);
+        resolved_mols.push((first_name.clone(), dyn_mol.clone(), 1));
         result.push(molecule_input_from_dyn(first_name, &dyn_mol));
         placed_mols.push(dyn_mol.clone());
 
@@ -413,6 +450,11 @@ pub fn build_molecule_inputs(
             }
 
             for (copy_i, placed_mol) in placed_mols[before_extra..].iter().enumerate() {
+                resolved_mols.push((
+                    copy_mol_name(&name, copy_i + 1, count),
+                    placed_mol.clone(),
+                    1,
+                ));
                 result.push(molecule_input_from_dyn(
                     copy_mol_name(&name, copy_i + 1, count),
                     placed_mol,
@@ -432,7 +474,7 @@ pub fn build_molecule_inputs(
         let _ = static_peptide; // used via peptide MolDynamics construction
     }
 
-    Ok((result, pep_atom_set))
+    Ok((result, pep_atom_set, resolved_mols))
 }
 
 fn copy_mol_name(base: &str, copy_i: usize, copy_count: usize) -> String {

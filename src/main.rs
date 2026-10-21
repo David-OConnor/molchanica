@@ -19,6 +19,7 @@
 mod docking;
 mod drawing;
 mod file_io;
+mod force_fields;
 mod inputs;
 mod pocket_render;
 mod prefs;
@@ -199,6 +200,17 @@ fn main() {
     }
 
     state.load_prefs();
+
+    // Molecule preparation starts with Amber each session. A sidebar choice
+    // changes both displayed atom types and the MD family's conventions.
+    if state.to_save.md.config.ff_family != dynamics::ForceFieldFamily::Amber {
+        let preset = dynamics::MdConfig::for_family(dynamics::ForceFieldFamily::Amber);
+        state.to_save.md.config.ff_family = preset.ff_family;
+        state.to_save.md.config.coulomb_cutoff = preset.coulomb_cutoff;
+        state.to_save.md.config.lj_cutoff = preset.lj_cutoff;
+        state.to_save.md.config.lj_modifier = preset.lj_modifier;
+        state.to_save.md.config.water_model = None;
+    }
 
     {
         // Set these UI strings for numerical values up after loading prefs

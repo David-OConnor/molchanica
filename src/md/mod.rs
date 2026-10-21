@@ -9,10 +9,14 @@ use std::{
 };
 
 use bincode::{Decode, Encode};
-use bio_files::{AtomGeneric, create_bonds, gromacs::GromacsOutput, md_params::ForceFieldParams};
+use bio_files::{
+    AtomGeneric, ResidueGeneric, create_bonds, gromacs::GromacsOutput,
+    md_params::ForceFieldParams,
+};
 use dynamics::{
-    ComputationDevice, FfMolType, MdConfig, MdOverrides, MdState, MolDynamics, ParamError,
-    SimBoxInit, Solvent, compute_energy_snapshot, params::FfParamSet, snapshot::Snapshot,
+    ComputationDevice, FfMolType, ForceFieldFamily, MdConfig, MdOverrides, MdState,
+    MolDynamics, ParamError, SimBoxInit, Solvent, compute_energy_snapshot,
+    params::FfParamSet, snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, Entity, Scene};
 use lin_alg::f64::{Quaternion, Vec3};
@@ -644,6 +648,29 @@ pub(crate) fn add_copies(
 /// If `fast_init` is set, the water solvent, and relaxation are skipped.
 pub fn build_dynamics(
     dev: &ComputationDevice,
+    mols_in: &[(FfMolType, &MoleculeCommon, usize)],
+    param_set: &FfParamSet,
+    mol_specific_params: &HashMap<String, ForceFieldParams>,
+    cfg: &MdConfig,
+    static_peptide: bool,
+    near_lig_thresh: Option<f64>,
+    pep_atom_set: &mut HashSet<(usize, usize)>,
+) -> Result<(MdState, Vec<MolDynamics>), ParamError> {
+    build_dynamics_with_residues(
+        dev,
+        mols_in,
+        param_set,
+        mol_specific_params,
+        cfg,
+        static_peptide,
+        near_lig_thresh,
+        pep_atom_set,
+        None,
+    )
+}
+
+fn build_dynamics_with_residues(
+    dev: &ComputationDevice,
     // Last item is number of copies.
     mols_in: &[(FfMolType, &MoleculeCommon, usize)],
     param_set: &FfParamSet,
@@ -652,6 +679,7 @@ pub fn build_dynamics(
     static_peptide: bool,
     near_lig_thresh: Option<f64>,
     pep_atom_set: &mut HashSet<(usize, usize)>,
+    peptide_residues: Option<&HashMap<String, Vec<ResidueGeneric>>>,
 ) -> Result<(MdState, Vec<MolDynamics>), ParamError> {
     println!("Setting up dynamics...");
 
@@ -662,12 +690,14 @@ pub fn build_dynamics(
         SimBoxInit::Pad(_) => None,
     };
 
-    let (mols, pep_set) = setup_mols_dyn(
+    let (mols, pep_set) = setup_mols_dyn_with_residues(
         mols_in,
         mol_specific_params,
         static_peptide,
         near_lig_thresh,
         box_dims,
+        peptide_residues,
+        param_set.family,
     )?;
     *pep_atom_set = pep_set;
 
@@ -799,15 +829,19 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         .alchemical_enabled
         .then_some(state.ui.md.alchemical_lambda);
 
-    match build_dynamics(
+    let selected_params = state.selected_force_field();
+    let peptide_residues = peptide_residue_map(state);
+
+    match build_dynamics_with_residues(
         &state.dev,
         &mols,
-        &state.ff_param_set,
+        selected_params,
         &state.mol_specific_params,
         cfg,
         state.ui.md.peptide_static,
         near_lig_thresh,
         &mut md_pep_sel,
+        Some(&peptide_residues),
     ) {
         Ok((mut md, custom_solvent)) => {
             let num_water = md.water.len();
@@ -1034,17 +1068,21 @@ pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamErro
         None
     };
 
-    let (mols, pep_atom_set) = setup_mols_dyn(
+    let residues = peptide_residue_map(state);
+    let selected_params = state.selected_force_field();
+    let (mols, pep_atom_set) = setup_mols_dyn_with_residues(
         &mols_in,
         &state.mol_specific_params,
         state.ui.md.peptide_static,
         peptide_only_near_lig,
         None,
+        Some(&residues),
+        selected_params.family,
     )?;
 
     // state.volatile.md_local.pep_atom_set = pep_atom_set;
 
-    compute_energy_snapshot(&state.dev, &mols, &state.ff_param_set)
+    compute_energy_snapshot(&state.dev, &mols, selected_params)
 }
 
 /// A helper to reduce repetition. Loads references to mols in state that are selected for MD.
@@ -1084,12 +1122,45 @@ pub fn get_mols_sel_for_md(state: &State) -> Vec<(FfMolType, &MoleculeCommon, us
     res
 }
 
+pub(crate) fn peptide_residue_map(state: &State) -> HashMap<String, Vec<ResidueGeneric>> {
+    state
+        .peptides
+        .iter()
+        .map(|p| {
+            (
+                p.common.ident.clone(),
+                p.residues.iter().map(|r| r.to_generic()).collect(),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn setup_mols_dyn(
     mols: &[(FfMolType, &MoleculeCommon, usize)],
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     static_peptide: bool,
     near_lig_thresh: Option<f64>,
     box_dims: Option<(f32, f32, f32)>,
+) -> Result<(Vec<MolDynamics>, HashSet<(usize, usize)>), ParamError> {
+    setup_mols_dyn_with_residues(
+        mols,
+        mol_specific_params,
+        static_peptide,
+        near_lig_thresh,
+        box_dims,
+        None,
+        ForceFieldFamily::Amber,
+    )
+}
+
+fn setup_mols_dyn_with_residues(
+    mols: &[(FfMolType, &MoleculeCommon, usize)],
+    mol_specific_params: &HashMap<String, ForceFieldParams>,
+    static_peptide: bool,
+    near_lig_thresh: Option<f64>,
+    box_dims: Option<(f32, f32, f32)>,
+    peptide_residues: Option<&HashMap<String, Vec<ResidueGeneric>>>,
+    ff_family: ForceFieldFamily,
 ) -> Result<(Vec<MolDynamics>, HashSet<(usize, usize)>), ParamError> {
     let mut res = Vec::new();
 
@@ -1129,7 +1200,7 @@ pub(crate) fn setup_mols_dyn(
                 bonded_only: false,
                 mol_specific_params: None,
                 explicit_params: None,
-                residues: None,
+                residues: peptide_residues.and_then(|m| m.get(&mol.ident).cloned()),
             };
             add_copies(&mut res, &mol, copies, box_dims);
             continue;
@@ -1141,7 +1212,7 @@ pub(crate) fn setup_mols_dyn(
         let msp = match mol_specific_params.get(&mol.ident) {
             Some(v) => Some(v.clone()),
             None => {
-                if *ff_mol_type == FfMolType::SmallOrganic {
+                if *ff_mol_type == FfMolType::SmallOrganic && ff_family == ForceFieldFamily::Amber {
                     return Err(ParamError::new(&format!(
                         "Missing molecule-specific parameters for  {}",
                         mol.ident
@@ -1194,6 +1265,13 @@ impl Display for MdBackend {
 /// For the UI functions to launch MD, and run energy computations.
 fn ready_to_run_helper(state: &mut State) -> bool {
     clear_cli_out(&mut state.ui);
+
+    // OPLS assigns its own ligand types, charges and bonded terms at MD setup.
+    // Amber's GeoStd/GAFF2 cache is not a prerequisite for another family.
+    if state.to_save.md.config.ff_family != ForceFieldFamily::Amber {
+        return true;
+    }
+
     let mut ready_to_run = true;
 
     // Check that we have FF params and mol-specific parameters.
