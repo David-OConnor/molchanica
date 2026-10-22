@@ -54,45 +54,14 @@ const ANGSTROM_TO_NM: f64 = 0.10;
 
 pub fn make_gromacs_input(
     mdp: MdpParams,
-    ff_mol_types: &[FfMolType],
+    _ff_mol_types: &[FfMolType],
     mols_input: Vec<MoleculeInput>,
     ff_param_set: &FfParamSet,
     sim_box_init: &SimBoxInit,
     solvent: &Solvent,
     minimize_energy: bool,
 ) -> io::Result<GromacsInput> {
-    // Warning: We could possibly have FF name conflicts between sets, downstream of this merge.
-    let mut ff_global = ForceFieldParams::default();
-
-    if ff_mol_types.contains(&FfMolType::Peptide) {
-        if let Some(ff) = &ff_param_set.peptide {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if ff_mol_types.contains(&FfMolType::SmallOrganic) {
-        if let Some(ff) = &ff_param_set.small_mol {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if ff_mol_types.contains(&FfMolType::Lipid) {
-        if let Some(ff) = &ff_param_set.lipids {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if ff_mol_types.contains(&FfMolType::Dna) {
-        if let Some(ff) = &ff_param_set.dna {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
-
-    if ff_mol_types.contains(&FfMolType::Rna) {
-        if let Some(ff) = &ff_param_set.rna {
-            ff_global = ff_global.merge_with(ff);
-        }
-    }
+    let ff_global = ForceFieldParams::default();
 
     // Determine simulation box dimensions (nm).
     let box_nm = sim_box_nm(&mols_input, sim_box_init);
@@ -327,8 +296,10 @@ pub fn gromacs_input_from_state(
     )?;
     input.topology_config =
         dynamics::gromacs::topology_config(selected_params, cfg.water_model.as_ref());
-    if cfg.ff_family != dynamics::ForceFieldFamily::Amber {
-        if matches!(cfg.solvent, Solvent::OctanolWithWater | Solvent::Custom(_)) {
+    {
+        if cfg.ff_family != dynamics::ForceFieldFamily::Amber
+            && matches!(cfg.solvent, Solvent::OctanolWithWater | Solvent::Custom(_))
+        {
             return Err(io::Error::other(
                 "Custom/octanol solvent requires parameters matching the selected force field",
             ));
@@ -431,8 +402,9 @@ pub fn build_molecule_inputs(
             )
         };
 
-        let dyn_mol =
-            dynamics::gromacs::parameterize(&dyn_mol, param_set).map_err(|e| e.to_string())?;
+        let dyn_mol = param_set
+            .parameterize(&dyn_mol)
+            .map_err(|e| e.to_string())?;
         let first_name = copy_mol_name(&name, 0, count);
         resolved_mols.push((first_name.clone(), dyn_mol.clone(), 1));
         result.push(molecule_input_from_dyn(first_name, &dyn_mol));

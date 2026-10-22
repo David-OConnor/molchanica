@@ -127,7 +127,9 @@ fn disp_atom_data(
 }
 
 fn ligand_params(state: &State, ident: &str) -> Option<ForceFieldParams> {
-    let general = state.selected_force_field().small_mol.as_ref()?;
+    let general = state
+        .selected_force_field()
+        .parameters(dynamics::FfMolType::SmallOrganic)?;
     let specific = state.mol_specific_params.get(ident).or_else(|| {
         state
             .mol_specific_params
@@ -212,6 +214,8 @@ pub(in crate::ui) fn selected_data_mol_editor(state: &State, selection: &Selecti
     let mol = &state.mol_editor.mol;
     let params = state
         .ff_param_set
+        .amber()
+        .unwrap()
         .small_mol
         .as_ref()
         .map(|general| merge_params(general, &state.mol_editor.md.mol_specific_params));
@@ -430,7 +434,9 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
-                    state.selected_force_field().peptide.as_ref(),
+                    state
+                        .selected_force_field()
+                        .parameters(dynamics::FfMolType::Peptide),
                     state.force_fields.bond_params(
                         MolType::Peptide,
                         state.peptide_for_tools_i().unwrap(),
@@ -497,8 +503,12 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 };
 
                 let params = match mol.na_type {
-                    NucleicAcidType::Dna => state.selected_force_field().dna.as_ref(),
-                    NucleicAcidType::Rna => state.selected_force_field().rna.as_ref(),
+                    NucleicAcidType::Dna => state
+                        .selected_force_field()
+                        .parameters(dynamics::FfMolType::Dna),
+                    NucleicAcidType::Rna => state
+                        .selected_force_field()
+                        .parameters(dynamics::FfMolType::Rna),
                 };
 
                 disp_bond_data(
@@ -525,7 +535,9 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
                 disp_bond_data(
                     bond,
                     &mol.common.atoms,
-                    state.selected_force_field().lipids.as_ref(),
+                    state
+                        .selected_force_field()
+                        .parameters(dynamics::FfMolType::Lipid),
                     state.force_fields.bond_params(
                         MolType::Lipid,
                         *mol_i,

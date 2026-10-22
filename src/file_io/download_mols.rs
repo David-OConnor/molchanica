@@ -205,7 +205,7 @@ pub fn open_atom_coords(
                 }
             };
 
-            let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map else {
+            let Some(ff_map) = &state.ff_param_set.amber().unwrap().peptide_ff_q_map else {
                 handle_err(
                     &mut state.ui,
                     "Unable to find the peptide FF Q map in parameters; can't load the molecule"

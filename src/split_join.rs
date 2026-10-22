@@ -240,15 +240,18 @@ fn relax_join(
     };
     let key = (a.clone(), b.clone());
     let reverse = (b, a);
-    let length = [specific, params.small_mol.as_ref()]
-        .into_iter()
-        .flatten()
-        .find_map(|p| p.bond.get(&key).or_else(|| p.bond.get(&reverse)))
-        .map(|p| p.r_0 as f64)
-        .filter(|r| r.is_finite() && *r > 0.)
-        .ok_or_else(|| {
-            io::Error::other("No equilibrium bond length is available for this atom pair.")
-        })?;
+    let length = [
+        specific,
+        params.parameters(dynamics::FfMolType::SmallOrganic),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|p| p.bond.get(&key).or_else(|| p.bond.get(&reverse)))
+    .map(|p| p.r_0 as f64)
+    .filter(|r| r.is_finite() && *r > 0.)
+    .ok_or_else(|| {
+        io::Error::other("No equilibrium bond length is available for this atom pair.")
+    })?;
 
     let geometry = JoinGeometry::new(mol, first, second, offset)?;
     let initial = geometry.positions(length, 0.);
@@ -475,7 +478,7 @@ pub fn join_ligands(
         suffix += 1;
     }
 
-    if let Some(params) = &state.ff_param_set.small_mol {
+    if let Some(params) = &state.ff_param_set.amber().unwrap().small_mol {
         joined.update_ff_related(&mut state.mol_specific_params, params, false);
     }
     let offset = state.ligands[first.0].common.atoms.len();
@@ -651,7 +654,7 @@ pub fn split_lig_at_bonds(
         (lig.common.ident.clone(), fragments.len())
     };
 
-    if let Some(params) = &state.ff_param_set.small_mol {
+    if let Some(params) = &state.ff_param_set.amber().unwrap().small_mol {
         let lig = &mut state.ligands[lig_i];
         lig.update_ff_related(&mut state.mol_specific_params, params, false);
     } else {
@@ -854,7 +857,7 @@ fn name_structure_mol(
     // them under the new name. (The ones under the old name may be for the molecule before the
     // edit.)
     lig.frcmod_loaded = false;
-    if let Some(params) = &state.ff_param_set.small_mol {
+    if let Some(params) = &state.ff_param_set.amber().unwrap().small_mol {
         lig.update_ff_related(&mut state.mol_specific_params, params, false);
     }
 

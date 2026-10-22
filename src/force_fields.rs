@@ -47,6 +47,7 @@ pub fn family_name(family: ForceFieldFamily) -> &'static str {
         ForceFieldFamily::Amber => "Amber",
         ForceFieldFamily::Charmm36 => "CHARMM36m",
         ForceFieldFamily::Opls => "OPLS-AA/L",
+        ForceFieldFamily::Custom => "Custom",
     }
 }
 
@@ -101,52 +102,25 @@ fn amber_annotations(
     set: &FfParamSet,
     specific: &mut HashMap<String, bio_files::md_params::ForceFieldParams>,
 ) -> Result<Vec<Annotation>, String> {
-    let general = match kind {
-        FfMolType::Peptide => &set.peptide,
-        FfMolType::SmallOrganic => &set.small_mol,
-        FfMolType::Lipid => &set.lipids,
-        FfMolType::Dna => &set.dna,
-        FfMolType::Rna => &set.rna,
-        _ => &set.carbohydrates,
+    let input = MolDynamics {
+        ff_mol_type: kind,
+        atoms: mol.atoms.iter().map(|a| a.to_generic()).collect(),
+        bonds: mol.bonds.iter().map(|b| b.to_generic()).collect(),
+        residues: (!residues.is_empty()).then(|| residues.to_vec()),
+        mol_specific_params: specific.get(&mol.ident).cloned(),
+        ..Default::default()
     };
-    if mol.atoms.iter().all(|a| {
-        a.partial_charge.is_some()
-            && a.force_field_type
-                .as_ref()
-                .is_some_and(|t| general.as_ref().is_some_and(|p| p.mass.contains_key(t)))
-    }) {
-        return Ok(annotations(mol));
+    let prepared = set
+        .parameterize_with_options(
+            &input,
+            &dynamics::params::ParameterizationOptions::local_only(),
+        )
+        .map_err(|e| e.to_string())?;
+    if let Some(parameters) = prepared.mol_specific_params {
+        specific.insert(mol.ident.clone(), parameters);
     }
-    let mut atoms: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
-    let bonds: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
-    for a in &mut atoms {
-        a.force_field_type = None;
-        a.partial_charge = None;
-    }
-    match kind {
-        FfMolType::SmallOrganic => {
-            let params = set
-                .small_mol_typer
-                .assign(&mut atoms, &bonds, None, set.small_mol.as_ref())
-                .map_err(|e| e.to_string())?;
-            specific.insert(mol.ident.clone(), params);
-        }
-        FfMolType::Peptide => {
-            let map = set
-                .peptide_ff_q_map
-                .as_ref()
-                .ok_or("Missing Amber protein templates")?;
-            dynamics::params::populate_peptide_ff_and_q(&mut atoms, residues, map)
-                .map_err(|e| e.descrip)?;
-        }
-        _ => {
-            return Err(format!(
-                "{}: reload the Amber template after topology changes",
-                mol.ident
-            ));
-        }
-    }
-    Ok(atoms
+    Ok(prepared
+        .atoms
         .into_iter()
         .map(|a| (a.force_field_type, a.partial_charge))
         .collect())
@@ -246,6 +220,8 @@ impl ForceFields {
             && mol.atoms.iter().any(|a| {
                 a.force_field_type.as_ref().is_none_or(|t| {
                     !amber_data
+                        .amber()
+                        .unwrap()
                         .small_mol
                         .as_ref()
                         .is_some_and(|p| p.mass.contains_key(t))
@@ -326,8 +302,7 @@ impl ForceFields {
                         self.params
                             .as_ref()
                             .unwrap()
-                            .opls
-                            .as_ref()
+                            .opls()
                             .unwrap()
                             .remember_small_molecule(prepared);
                     }
@@ -335,30 +310,20 @@ impl ForceFields {
                 } else if self.opls_jobs.contains_key(&topology) {
                     None
                 } else {
-                    let mut prepared = input.clone();
-                    let local = self
-                        .params
-                        .as_ref()
-                        .unwrap()
-                        .opls
-                        .as_ref()
-                        .unwrap()
-                        .build_small_molecule_cached(&mut prepared.atoms, &prepared.bonds);
+                    let local = self.params.as_ref().unwrap().parameterize_with_options(
+                        &input,
+                        &dynamics::params::ParameterizationOptions::local_only(),
+                    );
                     match local {
-                        Ok(params) => {
-                            prepared.explicit_params = Some(params);
-                            Some(Ok(prepared))
-                        }
+                        Ok(prepared) => Some(Ok(prepared)),
                         Err(_) => {
                             let (tx, rx) = mpsc::channel();
                             self.opls_jobs.insert(topology, rx);
                             thread::spawn(move || {
-                                let result = FfParamSet::new_opls()
-                                    .map_err(|e| e.to_string())
-                                    .and_then(|set| {
-                                        dynamics::gromacs::parameterize(&input, &set)
-                                            .map_err(|e| e.descrip)
-                                    });
+                                let result =
+                                    FfParamSet::new_opls().map_err(|e| e.to_string()).and_then(
+                                        |set| set.parameterize(&input).map_err(|e| e.descrip),
+                                    );
                                 let _ = tx.send(result);
                             });
                             None
@@ -367,7 +332,10 @@ impl ForceFields {
                 }
             } else {
                 Some(
-                    dynamics::gromacs::parameterize(&input, self.params.as_ref().unwrap())
+                    self.params
+                        .as_ref()
+                        .unwrap()
+                        .parameterize(&input)
                         .map_err(|e| e.descrip),
                 )
             };

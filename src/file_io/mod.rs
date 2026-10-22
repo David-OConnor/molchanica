@@ -21,7 +21,7 @@ use bio_files::{
     sdf::Sdf,
 };
 use chrono::Utc;
-use dynamics::{MdConfig, params::ProtFfChargeMapSet};
+use dynamics::{MdConfig, params::amber::ProtFfChargeMapSet};
 use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
@@ -505,7 +505,7 @@ impl State {
                 let data_str = fs::read_to_string(path)?;
                 let cif_data = MmCif::new(&data_str)?;
 
-                let Some(ff_map) = &self.ff_param_set.peptide_ff_q_map else {
+                let Some(ff_map) = &self.ff_param_set.amber().unwrap().peptide_ff_q_map else {
                     return Err(io::Error::other(
                         "Missing FF map when opening a protein; can't validate H",
                     ));
@@ -644,10 +644,17 @@ impl State {
 
         match extension.to_str().unwrap() {
             "dat" => {
-                self.ff_param_set.small_mol = Some(ForceFieldParams::load_dat(path)?);
+                self.ff_param_set.amber_mut().unwrap().small_mol =
+                    Some(ForceFieldParams::load_dat(path)?);
 
                 println!("\nLoaded forcefields:");
-                let v = &self.ff_param_set.small_mol.as_ref().unwrap();
+                let v = &self
+                    .ff_param_set
+                    .amber()
+                    .unwrap()
+                    .small_mol
+                    .as_ref()
+                    .unwrap();
                 println!("Lin");
                 for di in v.bond.values().take(20) {
                     println!("Lin: {:?}, {}, {}", di.atom_types, di.k_b, di.r_0);
@@ -1123,19 +1130,29 @@ impl State {
                     place_mol_in_view(&mut mol.common, self, &scene.camera);
                 }
 
-                if let Some(p) = &self.ff_param_set.small_mol {
+                if let Some(p) = &self.ff_param_set.amber().unwrap().small_mol {
                     mol.update_ff_related(&mut self.mol_specific_params, p, false);
 
                     mol.update_aux(
                         &self.to_save.pubchem_properties_map,
                         &mut self.volatile.thread_receivers.pubchem_properties_avail,
-                        self.ff_param_set.small_mol.as_ref().unwrap(),
+                        self.ff_param_set
+                            .amber()
+                            .unwrap()
+                            .small_mol
+                            .as_ref()
+                            .unwrap(),
                     );
 
                     spawn_therapeutic_inference(
                         &mol,
                         &mut self.volatile.inference_models,
-                        self.ff_param_set.small_mol.as_ref().unwrap(),
+                        self.ff_param_set
+                            .amber()
+                            .unwrap()
+                            .small_mol
+                            .as_ref()
+                            .unwrap(),
                         &mut self.volatile.thread_receivers.therapeutic_properties_avail,
                         mol_i,
                     );

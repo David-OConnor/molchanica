@@ -662,7 +662,7 @@ fn misc_view_options(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
 
                 // pH is global, so keep every open peptide in sync.
                 let mut hydrogen_err = None;
-                if let Some(ff_map) = &state.ff_param_set.peptide_ff_q_map {
+                if let Some(ff_map) = &state.ff_param_set.amber().unwrap().peptide_ff_q_map {
                     for mol in &mut state.peptides {
                         if let Err(e) = mol.reassign_hydrogens(state.to_save.ph, ff_map) {
                             hydrogen_err = Some(format!("Error reassigning hydrogens: {e:?}"));

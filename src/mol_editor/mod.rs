@@ -551,7 +551,7 @@ impl MolEditorState {
         self.mol.frcmod_loaded = false;
         self.md.mol_specific_params = ForceFieldParams::default();
 
-        // if let Some(p) = &param_set.small_mol {
+        // if let Some(p) = param_set.amber().and_then(|set| set.small_mol.as_ref()) {
         //     editor.mol.update_ff_related(&mut msp, p);
         // } else {
         //     eprintln!("Error: Unable to update a molecule's params due to missing GAFF2.");
@@ -561,7 +561,7 @@ impl MolEditorState {
 
         // Update this immediately, as we may take advantage of FF types when adjusting geometry,
         // and it may be useful to view them.
-        if let Some(p) = &param_set.small_mol {
+        if let Some(p) = param_set.amber().and_then(|set| set.small_mol.as_ref()) {
             self.mol.update_ff_related(&mut msp, p, false);
         } else {
             eprintln!("Error: Unable to update a molecule's params due to missing GAFF2.");
@@ -1211,7 +1211,7 @@ fn name_edited_mol(state: &mut State, lig_i: usize) -> Option<PathBuf> {
 
     // Molecule-specific params are keyed by name; build them under the new one.
     lig.frcmod_loaded = false;
-    if let Some(params) = &state.ff_param_set.small_mol {
+    if let Some(params) = &state.ff_param_set.amber().unwrap().small_mol {
         lig.update_ff_related(&mut state.mol_specific_params, params, false);
     } else {
         eprintln!("Error: Unable to update a molecule's params due to missing GAFF2.");

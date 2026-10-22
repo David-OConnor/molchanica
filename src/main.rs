@@ -68,7 +68,7 @@ use std::time::Instant;
 
 use dynamics::{
     Integrator,
-    params::{FfParamSet, LIPID_21_LIB},
+    params::{FfParamSet, amber::LIPID_21_LIB},
 };
 use mol_defs::molecules::{
     amino_acid::load_aa_templates, lipid::load_lipid_templates, nucleic_acid::load_na_templates,

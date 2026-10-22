@@ -6,7 +6,7 @@
 use std::{collections::HashMap, fmt::Display, hash::Hash, str::FromStr};
 
 use bio_files::md_params::{ChargeParams, ForceFieldParams};
-use dynamics::params::{FfParamSet, ProtFfChargeMap};
+use dynamics::params::amber::{AmberSet, ProtFfChargeMap};
 use egui::{Color32, Label, RichText, ScrollArea, TextEdit, Ui};
 use na_seq::AminoAcidGeneral;
 
@@ -104,7 +104,7 @@ impl FfCat {
     }
 
     /// Is this set of params loaded?
-    fn present(self, set: &FfParamSet) -> bool {
+    fn present(self, set: &AmberSet) -> bool {
         match self {
             Self::Peptide => set.peptide.is_some(),
             Self::SmallMol => set.small_mol.is_some(),
@@ -740,7 +740,10 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
     ui.set_max_height(avail_h);
 
     // Disjoint borrows; the tables below edit the params in place.
-    let params = &mut state.ff_param_set;
+    let Some(params) = state.ff_param_set.amber_mut() else {
+        not_loaded(ui);
+        return;
+    };
     let st = &mut state.ui.ff_params;
 
     ui.horizontal(|ui| {

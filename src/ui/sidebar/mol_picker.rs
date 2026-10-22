@@ -558,6 +558,8 @@ pub fn sonification_input(
                 .ok_or_else(|| "Peptide index is out of bounds.".to_string())?;
             let params = state
                 .ff_param_set
+                .amber()
+                .unwrap()
                 .peptide
                 .as_ref()
                 .ok_or_else(|| "No peptide force-field parameters are loaded.".to_string())?;
@@ -569,9 +571,15 @@ pub fn sonification_input(
                 .ligands
                 .get(i_mol)
                 .ok_or_else(|| "Ligand index is out of bounds.".to_string())?;
-            let params = state.ff_param_set.small_mol.as_ref().ok_or_else(|| {
-                "No small-molecule force-field parameters are loaded.".to_string()
-            })?;
+            let params = state
+                .ff_param_set
+                .amber()
+                .unwrap()
+                .small_mol
+                .as_ref()
+                .ok_or_else(|| {
+                    "No small-molecule force-field parameters are loaded.".to_string()
+                })?;
 
             Ok((
                 mol.common.clone(),
@@ -587,8 +595,8 @@ pub fn sonification_input(
                 .get(i_mol)
                 .ok_or_else(|| "Nucleic acid index is out of bounds.".to_string())?;
             let params = match mol.na_type {
-                NucleicAcidType::Dna => &state.ff_param_set.dna,
-                NucleicAcidType::Rna => &state.ff_param_set.rna,
+                NucleicAcidType::Dna => &state.ff_param_set.amber().unwrap().dna,
+                NucleicAcidType::Rna => &state.ff_param_set.amber().unwrap().rna,
             }
             .as_ref()
             .ok_or_else(|| format!("No {} force-field parameters are loaded.", mol.na_type))?;
@@ -602,6 +610,8 @@ pub fn sonification_input(
                 .ok_or_else(|| "Lipid index is out of bounds.".to_string())?;
             let params = state
                 .ff_param_set
+                .amber()
+                .unwrap()
                 .lipids
                 .as_ref()
                 .ok_or_else(|| "No lipid force-field parameters are loaded.".to_string())?;

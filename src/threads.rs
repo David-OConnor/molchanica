@@ -329,7 +329,7 @@ pub fn start_session_restore(state: &mut State) {
         .map(|history| history.path.clone())
         .collect::<Vec<_>>();
     let prefs_dir = state.volatile.prefs_dir.clone();
-    let peptide_ff_q_map = state.ff_param_set.peptide_ff_q_map.clone();
+    let peptide_ff_q_map = state.ff_param_set.amber().unwrap().peptide_ff_q_map.clone();
     let ph = state.to_save.ph;
     let (tx, rx) = mpsc::channel();
 
@@ -399,7 +399,7 @@ fn apply_session_restore_item(
         }
         SessionRestorePayload::Density(density) => state.load_density(density),
         SessionRestorePayload::GeneralForceField(params) => {
-            state.ff_param_set.small_mol = Some(params);
+            state.ff_param_set.amber_mut().unwrap().small_mol = Some(params);
         }
         SessionRestorePayload::SpecificForceField(name, params) => {
             state.mol_specific_params.insert(name.clone(), params);

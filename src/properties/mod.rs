@@ -31,7 +31,7 @@ pub(in crate::properties) fn prepare_mol_for_md(
     mol: &MoleculeSmall,
     param_set: &FfParamSet,
 ) -> io::Result<(MoleculeSmall, HashMap<String, ForceFieldParams>)> {
-    let Some(gaff2) = param_set.small_mol.as_ref() else {
+    let Some(gaff2) = param_set.amber().and_then(|set| set.small_mol.as_ref()) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Missing GAFF2 small-molecule parameters.",
