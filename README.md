@@ -611,7 +611,7 @@ similar in the path, e.g.:
 
 ### Force-field selection
 
-The selector at the top of the sidebar chooses Amber, CHARMM36m or OPLS-AA/L.
+The selector beside the sidebar's "Edit sets" button chooses Amber, CHARMM36m or OPLS-AA/L.
 Each session starts with Amber for proteins, ligands, lipids, DNA and RNA.
 Changing the selector reassigns types and partial charges on open molecules,
 and updates MD's family, cutoffs, LJ convention and default water model. Newly
@@ -622,12 +622,19 @@ templates remain available for hydrogen placement; Amber-specific analysis and
 editing tools use preparation copies. Switching back restores the loaded Amber
 annotations, including supplied ligand charges.
 
-CHARMM currently builds proteins. OPLS builds proteins and supported organic
-ligands, including a complete, bundled parameterization for neutral creatine
-(PubChem 586). Unsupported chemistry and the other molecule classes need
-matching explicit parameters through Dynamics' API. They are left unparameterized
-in Molchanica rather than retaining another family's types and charges; the
-sidebar reports the affected molecules and reasons.
+CHARMM currently builds proteins. OPLS builds proteins and organic ligands.
+Ligands outside the bundled rules are submitted automatically to the official
+LigParGen service on a background worker. Generated atom types, charges and
+complete topologies are cached locally for subsequent offline use. Neutral
+creatine (PubChem 586) also has a complete bundled template.
+
+The public LigParGen service accepts at most 200 atoms including hydrogens and
+five submissions per ten minutes. Further requests wait automatically; the
+selector shows "queued / parameterizing" during generation or this wait. Click
+"unparameterized" to see a failed molecule's actual error, then "Retry" to
+resubmit failed requests. Native MD and GROMACS use the same generated parameters.
+Chemistry the generator cannot handle, and non-Amber lipids/nucleic acids, need
+matching explicit parameters through Dynamics' API.
 
 ### Errata
 

@@ -13,7 +13,7 @@ use bio_files::ResidueGeneric;
 use dynamics::{
     ExplicitParams, FfMolType, ForceFieldFamily, MdConfig, MolDynamics, params::FfParamSet,
 };
-use egui::{Color32, ComboBox, Ui};
+use egui::{Color32, ComboBox, RichText, Ui};
 use mol_defs::molecules::{MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType};
 
 use crate::{state::State, util::handle_err};
@@ -162,24 +162,26 @@ impl ForceFields {
         for (&topology, rx) in &self.opls_jobs {
             match rx.try_recv() {
                 Ok(result) => completed.push((topology, result)),
-                Err(TryRecvError::Disconnected) => completed.push((topology,
-                    Err("OPLS parameter generation worker stopped unexpectedly".into()))),
+                Err(TryRecvError::Disconnected) => completed.push((
+                    topology,
+                    Err("OPLS parameter generation worker stopped unexpectedly".into()),
+                )),
                 Err(TryRecvError::Empty) => (),
             }
         }
         for (topology, result) in completed {
             self.opls_jobs.remove(&topology);
             self.opls_results.insert(topology, result);
-            self.assignments.retain(|_, a| {
-                a.topology != topology || a.family != ForceFieldFamily::Opls
-            });
+            self.assignments
+                .retain(|_, a| a.topology != topology || a.family != ForceFieldFamily::Opls);
             self.dirty = true;
         }
     }
 
     fn retry_opls(&mut self) {
         self.opls_results.retain(|_, result| result.is_ok());
-        self.assignments.retain(|_, a| a.family != ForceFieldFamily::Opls || a.error.is_none());
+        self.assignments
+            .retain(|_, a| a.family != ForceFieldFamily::Opls || a.error.is_none());
         self.dirty = true;
     }
 
@@ -317,10 +319,16 @@ impl ForceFields {
                     .collect(),
                 ..input
             };
-            let result = if self.family == ForceFieldFamily::Opls && kind == FfMolType::SmallOrganic {
+            let result = if self.family == ForceFieldFamily::Opls && kind == FfMolType::SmallOrganic
+            {
                 if let Some(result) = self.opls_results.get(&topology) {
                     if let Ok(prepared) = result {
-                        self.params.as_ref().unwrap().opls.as_ref().unwrap()
+                        self.params
+                            .as_ref()
+                            .unwrap()
+                            .opls
+                            .as_ref()
+                            .unwrap()
                             .remember_small_molecule(prepared);
                     }
                     Some(result.clone())
@@ -328,7 +336,13 @@ impl ForceFields {
                     None
                 } else {
                     let mut prepared = input.clone();
-                    let local = self.params.as_ref().unwrap().opls.as_ref().unwrap()
+                    let local = self
+                        .params
+                        .as_ref()
+                        .unwrap()
+                        .opls
+                        .as_ref()
+                        .unwrap()
                         .build_small_molecule_cached(&mut prepared.atoms, &prepared.bonds);
                     match local {
                         Ok(params) => {
@@ -341,8 +355,10 @@ impl ForceFields {
                             thread::spawn(move || {
                                 let result = FfParamSet::new_opls()
                                     .map_err(|e| e.to_string())
-                                    .and_then(|set| dynamics::gromacs::parameterize(&input, &set)
-                                        .map_err(|e| e.descrip));
+                                    .and_then(|set| {
+                                        dynamics::gromacs::parameterize(&input, &set)
+                                            .map_err(|e| e.descrip)
+                                    });
                                 let _ = tx.send(result);
                             });
                             None
@@ -350,8 +366,10 @@ impl ForceFields {
                     }
                 }
             } else {
-                Some(dynamics::gromacs::parameterize(&input, self.params.as_ref().unwrap())
-                    .map_err(|e| e.descrip))
+                Some(
+                    dynamics::gromacs::parameterize(&input, self.params.as_ref().unwrap())
+                        .map_err(|e| e.descrip),
+                )
             };
             // A failed family assignment must not leave Amber names/charges
             // attached to a molecule presented as CHARMM or OPLS.
@@ -483,21 +501,49 @@ impl State {
         if self.force_fields.family == ForceFieldFamily::Amber {
             return Ok(());
         }
-        let molecules = self.peptides.iter().enumerate()
+        let molecules = self
+            .peptides
+            .iter()
+            .enumerate()
             .map(|(i, m)| (MolType::Peptide, i, &m.common))
-            .chain(self.ligands.iter().enumerate().map(|(i, m)| (MolType::Ligand, i, &m.common)))
-            .chain(self.lipids.iter().enumerate().map(|(i, m)| (MolType::Lipid, i, &m.common)))
-            .chain(self.nucleic_acids.iter().enumerate().map(|(i, m)| (MolType::NucleicAcid, i, &m.common)));
+            .chain(
+                self.ligands
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| (MolType::Ligand, i, &m.common)),
+            )
+            .chain(
+                self.lipids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| (MolType::Lipid, i, &m.common)),
+            )
+            .chain(
+                self.nucleic_acids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| (MolType::NucleicAcid, i, &m.common)),
+            );
 
         for (kind, i, mol) in molecules {
-            if mol.selected_for_md.is_none() { continue; }
-            let assignment = self.force_fields.assignments.get(&(kind as u8, i))
+            if mol.selected_for_md.is_none() {
+                continue;
+            }
+            let assignment = self
+                .force_fields
+                .assignments
+                .get(&(kind as u8, i))
                 .filter(|a| a.family == self.force_fields.family)
                 .ok_or_else(|| format!("{}: force field assignment is not ready yet", mol.ident))?;
             if assignment.pending {
-                return Err(format!("{}: generating OPLS parameters with LigParGen; wait for parameterization to finish", mol.ident));
+                return Err(format!(
+                    "{}: generating OPLS parameters with LigParGen; wait for parameterization to finish",
+                    mol.ident
+                ));
             }
-            if let Some(error) = &assignment.error { return Err(error.clone()); }
+            if let Some(error) = &assignment.error {
+                return Err(error.clone());
+            }
         }
         Ok(())
     }
@@ -658,12 +704,24 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
     }
     let errors: Vec<_> = state.force_fields.errors().collect();
     if !errors.is_empty() {
-        ui.colored_label(Color32::YELLOW, format!("{} unparameterized", errors.len()))
-            .on_hover_text(format!(
-                "Across all open molecules, including those not selected for MD. \
-                 Both force field selectors show the same count.\n\n{}",
-                errors.join("\n\n")
-            ));
+        ui.menu_button(
+            RichText::new(format!("{} unparameterized", errors.len())).color(Color32::YELLOW),
+            |ui| {
+                ui.set_max_width(440.);
+                ui.strong("Force field assignment failed");
+                ui.label("This counts all open molecules, including those not selected for MD.");
+                for error in &errors {
+                    ui.separator();
+                    ui.add(egui::Label::new(*error).wrap().selectable(true));
+                }
+            },
+        )
+        .response
+        .on_hover_text(format!(
+            "Click for parameterization errors. Both force field selectors show \
+             the same count across all open molecules.\n\n{}",
+            errors.join("\n\n")
+        ));
         if state.force_fields.family == ForceFieldFamily::Opls
             && ui.small_button("Retry").on_hover_text(
                 "Retry failed LigParGen requests. An internet connection is needed for uncached ligands."
@@ -674,8 +732,15 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
     }
     if state.force_fields.has_pending() {
         ui.spinner();
-        ui.label(format!("{} parameterizing", state.force_fields.opls_jobs.len()))
-            .on_hover_text("Generating OPLS ligand parameters with LigParGen; results are cached locally.");
+        ui.label(format!(
+            "{} queued / parameterizing",
+            state.force_fields.opls_jobs.len()
+        ))
+        .on_hover_text(
+            "Generating OPLS ligand parameters with LigParGen and caching results locally. \
+             The public service allows five submissions per ten minutes; further requests \
+             wait automatically in the background. Cached molecules are available immediately.",
+        );
         ui.request_repaint_after(std::time::Duration::from_millis(50));
     }
 }
