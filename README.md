@@ -73,6 +73,37 @@ commercial use requiring a subscription.
 
 ## Functionality
 
+### Protein–ligand binding
+
+Open **Binding** in the top toolbar, then select an open protein, one chain, and a small
+molecule. For a ligand embedded in a complex, first use **Make ligs/pockets** to extract it.
+
+- **Assess current pose** checks the displayed coordinates locally. Inspect contacting residues,
+  select clashing atoms in the viewer, and copy a JSON report. Heavy-atom contacts use 4 Å;
+  clashes use more than 0.8 Å of van der Waals overlap. Gross ligand bond-length outliers are
+  also flagged. Reports become stale when coordinates, chemistry, or selected inputs change.
+- **Predict complex + affinity** runs the existing Boltz-2 integration. Review the ligand SMILES,
+  optionally use the displayed chain as a template, and leave site guidance empty to explore
+  binding without a specified pocket. Alternatively, select site residues manually or reuse the
+  current pose's contacts. Molchanica maps source residue numbers to Boltz's sequence positions.
+- Load a predicted complex from the results, inspect its pose, and compare saved runs. Binder
+  probability, continuous affinity (`log10(IC50 / µM)`, lower is stronger), and structural
+  confidence are displayed separately. Continuous affinity is intended for comparing active
+  compounds; it is not measured Kd or Ki. Missing affinity outputs are explicitly flagged.
+
+This first workflow uses one protein chain and one small molecule. The sequence contains observed
+amino-acid residues; missing residues, other chains, waters, and cofactors are excluded. Use the
+advanced **Pred struct → Boltz-2** form for more complex inputs. The geometry screen does not
+validate protonation, stereochemistry, intraligand strain, or directional interactions, and does
+not estimate affinity. Boltz generates new coordinates rather than scoring the exact displayed pose.
+
+Each prediction retains its submitted form, protein template, source coordinates, residue mapping,
+logs, and outputs in its run folder. Use **Open saved run…** to reopen `result.json`. Public MSA
+generation is optional and off by default; enabling it sends the protein sequence to ColabFold.
+Single-sequence mode may reduce accuracy. Boltz affinity accepts at most 128 atoms after RDKit
+RemoveHs, with ligands substantially above its 56-atom training limit outside the recommended domain.
+See the [Boltz-2 input and output definitions](https://github.com/jwohlwend/boltz/blob/main/docs/prediction.md).
+
 ### Selection expressions
 
 Open **Selections / layers** to build selections with clickable controls or enter an expression.

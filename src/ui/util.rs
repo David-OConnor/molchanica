@@ -216,6 +216,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.save_md.update(ctx);
     state.volatile.dialogs.save_gro.update(ctx);
     state.volatile.dialogs.save_seq.update(ctx);
+    state.volatile.dialogs.ff_params.update(ctx);
     state.ui.synthesis_reactions.protocol_export.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
@@ -362,6 +363,12 @@ pub fn update_file_dialogs(
                 }
             }
         }
+    }
+
+    if let Some(path) = state.volatile.dialogs.ff_params.take_picked()
+        && let Some(op) = state.volatile.dialogs.ff_params_op.take()
+    {
+        crate::ui::popup::ff_params::on_file_picked(state, op, &path);
     }
 
     if let Some(path) = state.volatile.dialogs.save_seq.take_picked()

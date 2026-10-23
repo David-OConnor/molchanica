@@ -56,6 +56,7 @@ use crate::{
 };
 
 pub mod download_mols;
+pub mod ff_params;
 pub(crate) mod managed_mols;
 pub mod sequence;
 
@@ -1446,6 +1447,10 @@ pub struct FileDialogs {
     pub save_seq: FileDialog,
     /// Index into `State::sequences` of the sequence queued for saving.
     pub save_seq_i: Option<usize>,
+    /// Loading or saving general force field parameters. Configured for the parameter set each
+    /// time it opens; see `ui::popup::ff_params`.
+    pub ff_params: FileDialog,
+    pub ff_params_op: Option<ff_params::ParamsFileOp>,
 }
 
 impl Default for FileDialogs {
@@ -1558,6 +1563,8 @@ impl Default for FileDialogs {
             save_gro_mol_set_i: None,
             save_seq,
             save_seq_i: None,
+            ff_params: FileDialog::new(),
+            ff_params_op: None,
         }
     }
 }

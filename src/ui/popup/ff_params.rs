@@ -1,22 +1,42 @@
-//! A viewer and editor for the general force field parameters (`FfParamSet`) loaded at startup,
-//! e.g. from Amber's parm19, ff19SB, gaff2, lipid21, and OL24. Implemented as a popup.
+//! A viewer and editor for the general force field parameters loaded at startup. Implemented as a
+//! popup. For Amber (`FfParamSet`), e.g. from parm19, ff19SB, gaff2, lipid21, and OL24. For
+//! OPLS-AA/L, GROMACS' atom type and bonded tables, and residue templates for proteins, and Foyer's
+//! tables for small molecules.
 //!
-//! Values typed into these tables are applied to `State::ff_param_set` immediately.
+//! The tables are view-only until editing is enabled. Values typed into them are applied to the
+//! loaded parameters immediately. See `file_io::ff_params` for loading, saving, and restoring them.
 
-use std::{collections::HashMap, fmt::Display, hash::Hash, str::FromStr};
+use std::{collections::HashMap, fmt::Display, hash::Hash, path::Path, str::FromStr};
 
-use bio_files::md_params::{ChargeParams, ForceFieldParams};
-use dynamics::params::amber::{AmberSet, ProtFfChargeMap};
+use bio_files::{
+    gromacs::{
+        GromacsFfParams, Rtp,
+        ff_params::{ItpDefine, ItpTypeEntry},
+    },
+    md_params::{ChargeParams, ForceFieldParams},
+};
+use dynamics::{
+    ForceFieldFamily,
+    params::{
+        amber::{AmberSet, ProtFfChargeMap},
+        opls::OplsSet,
+    },
+};
 use egui::{Color32, Label, RichText, ScrollArea, TextEdit, Ui};
+use egui_file_dialog::{FileDialog, FileDialogConfig};
 use na_seq::AminoAcidGeneral;
 
 use crate::{
+    button,
+    file_io::ff_params::{self as ff_io, ParamsFileOp, ParamsTarget},
+    force_fields::family_name,
     label,
     state::State,
     ui::{
-        COL_SPACING, COLOR_HIGHLIGHT, ROW_SPACING,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         misc::{selector_box, selector_option},
     },
+    util::{handle_err, handle_success},
 };
 
 /// Height of a table cell; matches EGUI's default `interact_size.y`. Rows must be exactly this
@@ -34,11 +54,15 @@ const W_INT: f32 = 52.;
 const W_RES: f32 = 96.;
 const W_COMMENT: f32 = 300.;
 
+/// Read-only values.
+const COLOR_VAL: Color32 = Color32::LIGHT_GRAY;
+
 /// Offset from the position shared by the other popups: this one is tall, so we start it higher
 /// and further left to keep it on screen.
 pub(in crate::ui) const POPUP_OFFSET: (f32, f32) = (-100., -200.);
 
-/// Which field of `FfParamSet` is being viewed.
+/// Which set of parameters is being viewed. For Amber, a field of `AmberSet`. OPLS has the
+/// peptide, small molecule, and peptide charge (residue template) sets.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum FfCat {
     #[default]
@@ -68,7 +92,7 @@ const CATS: [FfCat; 10] = [
 ];
 
 impl FfCat {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Peptide => "Peptide",
             Self::SmallMol => "Small mol",
@@ -83,7 +107,25 @@ impl FfCat {
         }
     }
 
-    fn hover(self) -> &'static str {
+    fn hover(self, family: ForceFieldFamily) -> &'static str {
+        if family == ForceFieldFamily::Opls {
+            return match self {
+                Self::Peptide => {
+                    "OPLS-AA/L atom types (Lennard-Jones, mass, charge), and bonded params by bond \
+                    type, for proteins. From GROMACS' ffnonbonded.itp, and ffbonded.itp."
+                }
+                Self::SmallMol => {
+                    "OPLS-AA atom types, and bonded params by class, for small organic molecules. \
+                    From Foyer. Parameters cached from LigParGen don't use these."
+                }
+                Self::PeptideQ => {
+                    "OPLS-AA/L residue templates: FF type, and partial charge by atom name, for \
+                    amino acids. From aminoacids.rtp."
+                }
+                _ => "Not part of OPLS-AA/L.",
+            };
+        }
+
         match self {
             Self::Peptide => "Bonded and Lennard-Jones params for peptides. E.g. parm19 + ff19SB.",
             Self::SmallMol => {
@@ -104,7 +146,7 @@ impl FfCat {
     }
 
     /// Is this set of params loaded?
-    fn present(self, set: &AmberSet) -> bool {
+    fn present_amber(self, set: &AmberSet) -> bool {
         match self {
             Self::Peptide => set.peptide.is_some(),
             Self::SmallMol => set.small_mol.is_some(),
@@ -117,6 +159,19 @@ impl FfCat {
             Self::DnaQ => set.dna_ff_q_map.is_some(),
             Self::RnaQ => set.rna_ff_q_map.is_some(),
         }
+    }
+
+    /// Is this set part of OPLS? Unlike Amber's, these are always loaded.
+    fn present_opls(self) -> bool {
+        matches!(self, Self::Peptide | Self::SmallMol | Self::PeptideQ)
+    }
+
+    /// Partial charges and FF types by residue, vice bonded and Lennard-Jones params.
+    pub(crate) fn is_charges(self) -> bool {
+        matches!(
+            self,
+            Self::PeptideQ | Self::LipidQ | Self::DnaQ | Self::RnaQ
+        )
     }
 }
 
@@ -165,6 +220,94 @@ impl FfKind {
     }
 }
 
+/// Which table of a `GromacsFfParams` (e.g. OPLS) is being viewed.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub enum GmxKind {
+    #[default]
+    AtomTypes,
+    Bond,
+    Angle,
+    /// Ryckaert-Bellemans, and Fourier dihedral types.
+    DihedralRb,
+    /// Periodic propers and impropers, and harmonic impropers.
+    DihedralPeriodic,
+    Constraint,
+    Macros,
+}
+
+const GMX_KINDS: [GmxKind; 7] = [
+    GmxKind::AtomTypes,
+    GmxKind::Bond,
+    GmxKind::Angle,
+    GmxKind::DihedralRb,
+    GmxKind::DihedralPeriodic,
+    GmxKind::Constraint,
+    GmxKind::Macros,
+];
+
+/// GROMACS dihedral functional forms with 6, or 4 cosine-power or Fourier coefficients.
+fn is_rb(funct: u8) -> bool {
+    matches!(funct, 3 | 5)
+}
+
+impl GmxKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::AtomTypes => "Atom types",
+            Self::Bond => "Bond",
+            Self::Angle => "Angle",
+            Self::DihedralRb => "Dihedral (RB)",
+            Self::DihedralPeriodic => "Dihedral (periodic)",
+            Self::Constraint => "Constraint",
+            Self::Macros => "Macros",
+        }
+    }
+
+    fn hover(self) -> &'static str {
+        match self {
+            Self::AtomTypes => {
+                "Mass, charge, and Lennard-Jones params by atom type, and the bond type each \
+                uses to look up bonded params."
+            }
+            Self::Bond => "Bond stretching, by bond type. Harmonic for funct 1.",
+            Self::Angle => "Angle bending, by bond type. Harmonic for funct 1.",
+            Self::DihedralRb => {
+                "Ryckaert-Bellemans (funct 3) dihedrals: V = Σ Cₙ cos(ψ)ⁿ, with ψ = φ - 180°. \
+                OPLS' propers use these. (Fourier for funct 5.)"
+            }
+            Self::DihedralPeriodic => {
+                "Periodic propers (funct 1, 9), and impropers (funct 4): V = k (1 + cos(n φ - φₛ)). \
+                Harmonic impropers for funct 2."
+            }
+            Self::Constraint => "Constraint lengths, by bond type.",
+            Self::Macros => {
+                "Named parameters, e.g. OPLS' residue-specific dihedrals, and its impropers. \
+                Residue templates reference these by name."
+            }
+        }
+    }
+
+    fn count(self, tables: &GromacsFfParams) -> usize {
+        match self {
+            Self::AtomTypes => tables.atom_types.len(),
+            Self::Bond => tables.bond_types.len(),
+            Self::Angle => tables.angle_types.len(),
+            Self::DihedralRb => tables
+                .dihedral_types
+                .iter()
+                .filter(|d| is_rb(d.funct))
+                .count(),
+            Self::DihedralPeriodic => tables
+                .dihedral_types
+                .iter()
+                .filter(|d| !is_rb(d.funct))
+                .count(),
+            Self::Constraint => tables.constraint_types.len(),
+            Self::Macros => tables.defines.len(),
+        }
+    }
+}
+
 /// Which map of a `ProtFfChargeMapSet` is being viewed.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum ProtMapSel {
@@ -181,7 +324,7 @@ const PROT_MAPS: [ProtMapSel; 3] = [
 ];
 
 impl ProtMapSel {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Internal => "Internal",
             Self::NTerminus => "N terminus",
@@ -194,81 +337,93 @@ impl ProtMapSel {
 pub struct FfParamsUi {
     pub cat: FfCat,
     pub kind: FfKind,
+    pub gmx_kind: GmxKind,
     pub prot_map: ProtMapSel,
     pub filter: String,
+    /// If false, the tables are view-only.
+    pub editing: bool,
     /// The cell currently being typed into: (cell id, raw text). We hold the raw text so
     /// partially-typed values, e.g. "-", or "1.", survive a round trip through the parsed value.
     pub cell_edit: Option<(String, String)>,
+    /// OPLS values changed. We re-assign molecules' types and charges once the cell being typed
+    /// into loses focus, vice on every keystroke.
+    pub refresh_pending: bool,
+    /// Where the last parameter file was loaded from, or saved to. We start the next dialog there.
+    pub last_dir: Option<std::path::PathBuf>,
+    /// The result of the last load, save, or restore: (message, is error).
+    pub status: Option<(String, bool)>,
 }
 
-/// A text field for a table cell. Returns the new text, if it changed this frame.
-fn edit_cell(
-    ui: &mut Ui,
-    id: &str,
-    w: f32,
-    display: String,
-    cell_edit: &mut Option<(String, String)>,
-) -> Option<String> {
-    let mut text = match cell_edit {
-        Some((id_active, t)) if id_active == id => t.clone(),
-        _ => display,
-    };
-
-    let resp = ui.add_sized([w, CELL_H], TextEdit::singleline(&mut text).id_salt(id));
-
-    if resp.changed() {
-        *cell_edit = Some((id.to_owned(), text.clone()));
-        return Some(text);
-    }
-
-    // Return to the canonical formatting once the user moves on.
-    if resp.lost_focus()
-        && cell_edit
-            .as_ref()
-            .is_some_and(|(id_active, _)| id_active == id)
-    {
-        *cell_edit = None;
-    }
-
-    None
+/// Lays out the value cells of a table: text fields while editing is enabled, and labels
+/// otherwise.
+struct Cells<'a> {
+    edit: &'a mut Option<(String, String)>,
+    editable: bool,
+    /// Set if any value changed.
+    changed: bool,
 }
 
-/// A cell for any value displayable as, and parsable from text. E.g. floats and ints.
-fn num_cell<T: Display + FromStr>(
-    ui: &mut Ui,
-    id: &str,
-    val: &mut T,
-    w: f32,
-    cell_edit: &mut Option<(String, String)>,
-) {
-    if let Some(text) = edit_cell(ui, id, w, val.to_string(), cell_edit)
-        && let Ok(v) = text.parse::<T>()
-    {
-        *val = v;
+impl Cells<'_> {
+    /// A text field. Returns the new text, if it changed this frame.
+    fn input(&mut self, ui: &mut Ui, id: &str, w: f32, display: String) -> Option<String> {
+        if !self.editable {
+            label_cell(ui, &display, w, COLOR_VAL);
+            return None;
+        }
+
+        let mut text = match self.edit {
+            Some((id_active, t)) if id_active == id => t.clone(),
+            _ => display,
+        };
+
+        let resp = ui.add_sized([w, CELL_H], TextEdit::singleline(&mut text).id_salt(id));
+
+        if resp.changed() {
+            *self.edit = Some((id.to_owned(), text.clone()));
+            return Some(text);
+        }
+
+        // Return to the canonical formatting once the user moves on.
+        if resp.lost_focus()
+            && self
+                .edit
+                .as_ref()
+                .is_some_and(|(id_active, _)| id_active == id)
+        {
+            *self.edit = None;
+        }
+
+        None
     }
-}
 
-/// Angles are stored in radians, but displayed and edited in degrees, as in the Amber
-/// parameter files.
-fn angle_cell(ui: &mut Ui, id: &str, val: &mut f32, cell_edit: &mut Option<(String, String)>) {
-    let display = format!("{:.3}", val.to_degrees());
-
-    if let Some(text) = edit_cell(ui, id, W_VAL, display, cell_edit)
-        && let Ok(v) = text.parse::<f32>()
-    {
-        *val = v.to_radians();
+    /// A cell for any value displayable as, and parsable from text. E.g. floats and ints.
+    fn num<T: Display + FromStr>(&mut self, ui: &mut Ui, id: &str, val: &mut T, w: f32) {
+        if let Some(text) = self.input(ui, id, w, val.to_string())
+            && let Ok(v) = text.parse::<T>()
+        {
+            *val = v;
+            self.changed = true;
+        }
     }
-}
 
-fn text_cell(
-    ui: &mut Ui,
-    id: &str,
-    val: &mut String,
-    w: f32,
-    cell_edit: &mut Option<(String, String)>,
-) {
-    if let Some(text) = edit_cell(ui, id, w, val.clone(), cell_edit) {
-        *val = text;
+    /// Angles are stored in radians, but displayed and edited in degrees, as in the Amber
+    /// parameter files.
+    fn angle(&mut self, ui: &mut Ui, id: &str, val: &mut f32) {
+        let display = format!("{:.3}", val.to_degrees());
+
+        if let Some(text) = self.input(ui, id, W_VAL, display)
+            && let Ok(v) = text.parse::<f32>()
+        {
+            *val = v.to_radians();
+            self.changed = true;
+        }
+    }
+
+    fn text(&mut self, ui: &mut Ui, id: &str, val: &mut String, w: f32) {
+        if let Some(text) = self.input(ui, id, w, val.clone()) {
+            *val = text;
+            self.changed = true;
+        }
     }
 }
 
@@ -320,17 +475,20 @@ fn matches(filter: &str, text: &str) -> bool {
 }
 
 /// The tables for a `ForceFieldParams`: one per field, selected by `kind`.
-fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParamsUi, ui: &mut Ui) {
-    let filter = st.filter.to_lowercase();
-    let cell_edit = &mut st.cell_edit;
-
+fn ff_params_table(
+    params: &mut ForceFieldParams,
+    kind: FfKind,
+    filter: &str,
+    cells: &mut Cells,
+    ui: &mut Ui,
+) {
     // We clone the key of each row out of the map, so we can take a mutable borrow of the value
     // while laying its row out.
     match kind {
         FfKind::Bond => {
             let mut keys = Vec::new();
             for key in params.bond.keys() {
-                if matches(&filter, &format!("{}-{}", key.0, key.1)) {
+                if matches(filter, &format!("{}-{}", key.0, key.1)) {
                     keys.push(key.clone());
                 }
             }
@@ -357,20 +515,8 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
                 label_cell(ui, &key.0, W_TYPE, Color32::WHITE);
                 label_cell(ui, &key.1, W_TYPE, Color32::WHITE);
 
-                num_cell(
-                    ui,
-                    &format!("bond_k_{key:?}"),
-                    &mut val.k_b,
-                    W_VAL,
-                    cell_edit,
-                );
-                num_cell(
-                    ui,
-                    &format!("bond_r_{key:?}"),
-                    &mut val.r_0,
-                    W_VAL,
-                    cell_edit,
-                );
+                cells.num(ui, &format!("bond_k_{key:?}"), &mut val.k_b, W_VAL);
+                cells.num(ui, &format!("bond_r_{key:?}"), &mut val.r_0, W_VAL);
 
                 comment_cell(ui, &val.comment);
             });
@@ -378,7 +524,7 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
         FfKind::Angle => {
             let mut keys = Vec::new();
             for key in params.angle.keys() {
-                if matches(&filter, &format!("{}-{}-{}", key.0, key.1, key.2)) {
+                if matches(filter, &format!("{}-{}-{}", key.0, key.1, key.2)) {
                     keys.push(key.clone());
                 }
             }
@@ -407,19 +553,8 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
                 label_cell(ui, &key.1, W_TYPE, Color32::WHITE);
                 label_cell(ui, &key.2, W_TYPE, Color32::WHITE);
 
-                num_cell(
-                    ui,
-                    &format!("angle_k_{key:?}"),
-                    &mut val.k,
-                    W_VAL,
-                    cell_edit,
-                );
-                angle_cell(
-                    ui,
-                    &format!("angle_theta_{key:?}"),
-                    &mut val.theta_0,
-                    cell_edit,
-                );
+                cells.num(ui, &format!("angle_k_{key:?}"), &mut val.k, W_VAL);
+                cells.angle(ui, &format!("angle_theta_{key:?}"), &mut val.theta_0);
 
                 comment_cell(ui, &val.comment);
             });
@@ -444,7 +579,7 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
             for (key, terms) in map.iter() {
                 total += terms.len();
 
-                if !matches(&filter, &format!("{}-{}-{}-{}", key.0, key.1, key.2, key.3)) {
+                if !matches(filter, &format!("{}-{}-{}-{}", key.0, key.1, key.2, key.3)) {
                     continue;
                 }
 
@@ -483,32 +618,24 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
                 label_cell(ui, &key.3, W_TYPE, Color32::WHITE);
                 label_cell(ui, &i.to_string(), W_INT, Color32::GRAY);
 
-                num_cell(
+                cells.num(
                     ui,
                     &format!("{id}_div_{key:?}_{i}"),
                     &mut val.divider,
                     W_INT,
-                    cell_edit,
                 );
-                num_cell(
+                cells.num(
                     ui,
                     &format!("{id}_barrier_{key:?}_{i}"),
                     &mut val.barrier_height,
                     W_VAL,
-                    cell_edit,
                 );
-                angle_cell(
-                    ui,
-                    &format!("{id}_phase_{key:?}_{i}"),
-                    &mut val.phase,
-                    cell_edit,
-                );
-                num_cell(
+                cells.angle(ui, &format!("{id}_phase_{key:?}_{i}"), &mut val.phase);
+                cells.num(
                     ui,
                     &format!("{id}_period_{key:?}_{i}"),
                     &mut val.periodicity,
                     W_INT,
-                    cell_edit,
                 );
 
                 comment_cell(ui, &val.comment);
@@ -517,7 +644,7 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
         FfKind::Mass => {
             let mut keys = Vec::new();
             for key in params.mass.keys() {
-                if matches(&filter, key) {
+                if matches(filter, key) {
                     keys.push(key.clone());
                 }
             }
@@ -540,7 +667,7 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
                 };
 
                 label_cell(ui, key, W_TYPE, Color32::WHITE);
-                num_cell(ui, &format!("mass_{key}"), &mut val.mass, W_VAL, cell_edit);
+                cells.num(ui, &format!("mass_{key}"), &mut val.mass, W_VAL);
 
                 comment_cell(ui, &val.comment);
             });
@@ -548,7 +675,7 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
         FfKind::LennardJones => {
             let mut keys = Vec::new();
             for key in params.lennard_jones.keys() {
-                if matches(&filter, key) {
+                if matches(filter, key) {
                     keys.push(key.clone());
                 }
             }
@@ -567,24 +694,21 @@ fn ff_params_table(params: &mut ForceFieldParams, kind: FfKind, st: &mut FfParam
                 };
 
                 label_cell(ui, key, W_TYPE, Color32::WHITE);
-                num_cell(
-                    ui,
-                    &format!("lj_sigma_{key}"),
-                    &mut val.sigma,
-                    W_VAL,
-                    cell_edit,
-                );
-                num_cell(ui, &format!("lj_eps_{key}"), &mut val.eps, W_VAL, cell_edit);
+                cells.num(ui, &format!("lj_sigma_{key}"), &mut val.sigma, W_VAL);
+                cells.num(ui, &format!("lj_eps_{key}"), &mut val.eps, W_VAL);
             });
         }
     }
 }
 
 /// Partial charge, and FF type by type-in-residue, for amino acids.
-fn charge_table_prot(map: &mut ProtFfChargeMap, id: &str, st: &mut FfParamsUi, ui: &mut Ui) {
-    let filter = st.filter.to_lowercase();
-    let cell_edit = &mut st.cell_edit;
-
+fn charge_table_prot(
+    map: &mut ProtFfChargeMap,
+    id: &str,
+    filter: &str,
+    cells: &mut Cells,
+    ui: &mut Ui,
+) {
     let mut total = 0;
     let mut rows = Vec::new();
 
@@ -594,7 +718,7 @@ fn charge_table_prot(map: &mut ProtFfChargeMap, id: &str, st: &mut FfParamsUi, u
 
         for (i, c) in charges.iter().enumerate() {
             let text = format!("{name} {} {}", c.type_in_res, c.ff_type);
-            if matches(&filter, &text) {
+            if matches(filter, &text) {
                 rows.push((name.clone(), *aa, i));
             }
         }
@@ -621,20 +745,8 @@ fn charge_table_prot(map: &mut ProtFfChargeMap, id: &str, st: &mut FfParamsUi, u
         label_cell(ui, name, W_TYPE, Color32::WHITE);
         label_cell(ui, &val.type_in_res.to_string(), W_RES, Color32::GRAY);
 
-        text_cell(
-            ui,
-            &format!("{id}_ff_{name}_{i}"),
-            &mut val.ff_type,
-            W_TYPE,
-            cell_edit,
-        );
-        num_cell(
-            ui,
-            &format!("{id}_q_{name}_{i}"),
-            &mut val.charge,
-            W_VAL,
-            cell_edit,
-        );
+        cells.text(ui, &format!("{id}_ff_{name}_{i}"), &mut val.ff_type, W_TYPE);
+        cells.num(ui, &format!("{id}_q_{name}_{i}"), &mut val.charge, W_VAL);
     });
 }
 
@@ -643,12 +755,10 @@ fn charge_table<K: Clone + Eq + Hash>(
     map: &mut HashMap<K, Vec<ChargeParams>>,
     key_name: impl Fn(&K) -> String,
     id: &str,
-    st: &mut FfParamsUi,
+    filter: &str,
+    cells: &mut Cells,
     ui: &mut Ui,
 ) {
-    let filter = st.filter.to_lowercase();
-    let cell_edit = &mut st.cell_edit;
-
     let mut total = 0;
     let mut rows = Vec::new();
 
@@ -658,7 +768,7 @@ fn charge_table<K: Clone + Eq + Hash>(
 
         for (i, c) in charges.iter().enumerate() {
             let text = format!("{name} {} {}", c.type_in_res, c.ff_type);
-            if matches(&filter, &text) {
+            if matches(filter, &text) {
                 rows.push((name.clone(), key.clone(), i));
             }
         }
@@ -684,27 +794,287 @@ fn charge_table<K: Clone + Eq + Hash>(
 
         label_cell(ui, name, W_RES, Color32::WHITE);
 
-        text_cell(
+        cells.text(
             ui,
             &format!("{id}_res_{name}_{i}"),
             &mut val.type_in_res,
             W_RES,
-            cell_edit,
         );
-        text_cell(
-            ui,
-            &format!("{id}_ff_{name}_{i}"),
-            &mut val.ff_type,
-            W_TYPE,
-            cell_edit,
-        );
-        num_cell(
-            ui,
-            &format!("{id}_q_{name}_{i}"),
-            &mut val.charge,
-            W_VAL,
-            cell_edit,
-        );
+        cells.text(ui, &format!("{id}_ff_{name}_{i}"), &mut val.ff_type, W_TYPE);
+        cells.num(ui, &format!("{id}_q_{name}_{i}"), &mut val.charge, W_VAL);
+    });
+}
+
+/// A `[ *types ]` table, e.g. bond types. `rows` are indices into `entries`, which we keep in file
+/// order: GROMACS' dihedral matching depends on it. Entries with fewer parameters than `params`
+/// leave the rest blank.
+fn type_entry_table(
+    entries: &mut [ItpTypeEntry],
+    rows: &[usize],
+    total: usize,
+    n_types: usize,
+    params: &[(&str, f32)],
+    id: &str,
+    cells: &mut Cells,
+    ui: &mut Ui,
+) {
+    let type_names = ["Type 1", "Type 2", "Type 3", "Type 4"];
+
+    let mut cols: Vec<_> = type_names[..n_types].iter().map(|t| (*t, W_TYPE)).collect();
+    cols.push(("Funct", W_INT));
+    cols.extend_from_slice(params);
+    cols.push(("Comment", W_COMMENT));
+
+    header(ui, &cols, rows.len(), total);
+
+    table(ui, id, rows, |ui, &i| {
+        let Some(entry) = entries.get_mut(i) else {
+            return;
+        };
+
+        for j in 0..n_types {
+            let t = entry.types.get(j).map(String::as_str).unwrap_or_default();
+            label_cell(ui, t, W_TYPE, Color32::WHITE);
+        }
+        label_cell(ui, &entry.funct.to_string(), W_INT, Color32::GRAY);
+
+        for (j, (_, w)) in params.iter().enumerate() {
+            match entry.params.get_mut(j) {
+                Some(v) => cells.num(ui, &format!("{id}_{i}_{j}"), v, *w),
+                None => label_cell(ui, "", *w, COLOR_VAL),
+            }
+        }
+
+        comment_cell(ui, &entry.comment);
+    });
+}
+
+/// The GROMACS tables, e.g. OPLS': one per field, selected by `kind`.
+fn gromacs_table(
+    tables: &mut GromacsFfParams,
+    kind: GmxKind,
+    id: &str,
+    filter: &str,
+    cells: &mut Cells,
+    ui: &mut Ui,
+) {
+    let matching = |entries: &[ItpTypeEntry], keep: &dyn Fn(&ItpTypeEntry) -> bool| {
+        let mut rows = Vec::new();
+        let mut total = 0;
+
+        for (i, e) in entries.iter().enumerate() {
+            if !keep(e) {
+                continue;
+            }
+            total += 1;
+
+            if matches(filter, &e.types.join("-")) {
+                rows.push(i);
+            }
+        }
+        (rows, total)
+    };
+
+    match kind {
+        GmxKind::AtomTypes => {
+            let types = &mut tables.atom_types;
+
+            let rows: Vec<_> = (0..types.len())
+                .filter(|&i| {
+                    let t = &types[i];
+                    matches(filter, &format!("{} {}", t.name, t.bond_type))
+                })
+                .collect();
+
+            header(
+                ui,
+                &[
+                    ("Name", W_RES),
+                    ("Bond type", W_TYPE),
+                    ("At. num", W_INT),
+                    ("Mass (amu)", W_VAL),
+                    ("Charge (e)", W_VAL),
+                    ("Ptype", W_INT),
+                    ("σ (nm)", W_VAL),
+                    ("ε (kJ/mol)", W_VAL),
+                    ("Comment", W_COMMENT),
+                ],
+                rows.len(),
+                types.len(),
+            );
+
+            table(ui, &format!("{id}_atomtypes"), &rows, |ui, &i| {
+                let Some(t) = types.get_mut(i) else {
+                    return;
+                };
+
+                label_cell(ui, &t.name, W_RES, Color32::WHITE);
+                cells.text(ui, &format!("{id}_at_bt_{i}"), &mut t.bond_type, W_TYPE);
+
+                let at_num = t.atomic_number.map(|n| n.to_string()).unwrap_or_default();
+                label_cell(ui, &at_num, W_INT, Color32::GRAY);
+
+                cells.num(ui, &format!("{id}_at_mass_{i}"), &mut t.mass, W_VAL);
+                cells.num(ui, &format!("{id}_at_q_{i}"), &mut t.charge, W_VAL);
+                label_cell(ui, &t.ptype, W_INT, Color32::GRAY);
+                cells.num(ui, &format!("{id}_at_v_{i}"), &mut t.v, W_VAL);
+                cells.num(ui, &format!("{id}_at_w_{i}"), &mut t.w, W_VAL);
+
+                comment_cell(ui, &t.comment);
+            });
+        }
+        GmxKind::Bond => {
+            let (rows, total) = matching(&tables.bond_types, &|_| true);
+            type_entry_table(
+                &mut tables.bond_types,
+                &rows,
+                total,
+                2,
+                &[("b₀ (nm)", W_VAL), ("k (kJ/mol/nm²)", W_VAL)],
+                &format!("{id}_bond"),
+                cells,
+                ui,
+            );
+        }
+        GmxKind::Angle => {
+            let (rows, total) = matching(&tables.angle_types, &|_| true);
+            type_entry_table(
+                &mut tables.angle_types,
+                &rows,
+                total,
+                3,
+                &[("θ₀ (°)", W_VAL), ("k (kJ/mol/rad²)", W_VAL)],
+                &format!("{id}_angle"),
+                cells,
+                ui,
+            );
+        }
+        GmxKind::DihedralRb => {
+            let (rows, total) = matching(&tables.dihedral_types, &|e| is_rb(e.funct));
+            type_entry_table(
+                &mut tables.dihedral_types,
+                &rows,
+                total,
+                4,
+                &[
+                    ("C₀ (kJ/mol)", W_VAL),
+                    ("C₁", W_VAL),
+                    ("C₂", W_VAL),
+                    ("C₃", W_VAL),
+                    ("C₄", W_VAL),
+                    ("C₅", W_VAL),
+                ],
+                &format!("{id}_dihe_rb"),
+                cells,
+                ui,
+            );
+        }
+        GmxKind::DihedralPeriodic => {
+            let (rows, total) = matching(&tables.dihedral_types, &|e| !is_rb(e.funct));
+            type_entry_table(
+                &mut tables.dihedral_types,
+                &rows,
+                total,
+                4,
+                &[
+                    ("φₛ (°)", W_VAL),
+                    ("k (kJ/mol)", W_VAL),
+                    ("Multiplicity", W_VAL),
+                ],
+                &format!("{id}_dihe_periodic"),
+                cells,
+                ui,
+            );
+        }
+        GmxKind::Constraint => {
+            let (rows, total) = matching(&tables.constraint_types, &|_| true);
+            type_entry_table(
+                &mut tables.constraint_types,
+                &rows,
+                total,
+                2,
+                &[("b₀ (nm)", W_VAL)],
+                &format!("{id}_constraint"),
+                cells,
+                ui,
+            );
+        }
+        GmxKind::Macros => macro_table(&mut tables.defines, id, filter, cells, ui),
+    }
+}
+
+fn macro_table(defines: &mut [ItpDefine], id: &str, filter: &str, cells: &mut Cells, ui: &mut Ui) {
+    let rows: Vec<_> = (0..defines.len())
+        .filter(|&i| matches(filter, &defines[i].name))
+        .collect();
+
+    // Macro names are long, e.g. "dih_SER_THR_chi1_N_C_C_O".
+    let w_name = 2. * W_RES + 30.;
+
+    header(
+        ui,
+        &[
+            ("Name", w_name),
+            ("Value", W_COMMENT),
+            ("Comment", W_COMMENT),
+        ],
+        rows.len(),
+        defines.len(),
+    );
+
+    table(ui, &format!("{id}_macros"), &rows, |ui, &i| {
+        let Some(d) = defines.get_mut(i) else {
+            return;
+        };
+
+        label_cell(ui, &d.name, w_name, Color32::WHITE);
+        cells.text(ui, &format!("{id}_def_{i}"), &mut d.value, W_COMMENT);
+        comment_cell(ui, &d.comment);
+    });
+}
+
+/// FF type, and partial charge by atom name, for residue templates. E.g. OPLS' amino acids.
+fn template_table(rtp: &mut Rtp, filter: &str, cells: &mut Cells, ui: &mut Ui) {
+    let mut total = 0;
+    let mut rows = Vec::new();
+
+    for (name, res) in &rtp.residues {
+        total += res.atoms.len();
+
+        for (i, a) in res.atoms.iter().enumerate() {
+            if matches(filter, &format!("{name} {} {}", a.name, a.ff_type)) {
+                rows.push((name.clone(), i));
+            }
+        }
+    }
+    rows.sort_unstable();
+
+    header(
+        ui,
+        &[
+            ("Residue", W_TYPE),
+            ("Atom", W_TYPE),
+            ("FF type", W_RES),
+            ("Charge (e)", W_VAL),
+        ],
+        rows.len(),
+        total,
+    );
+
+    table(ui, "rtp_atoms", &rows, |ui, (name, i)| {
+        let Some(atom) = rtp
+            .residues
+            .get_mut(name)
+            .and_then(|res| res.atoms.get_mut(*i))
+        else {
+            return;
+        };
+
+        label_cell(ui, name, W_TYPE, Color32::WHITE);
+        label_cell(ui, &atom.name, W_TYPE, Color32::GRAY);
+
+        cells.text(ui, &format!("rtp_ff_{name}_{i}"), &mut atom.ff_type, W_RES);
+        cells.num(ui, &format!("rtp_q_{name}_{i}"), &mut atom.charge, W_VAL);
     });
 }
 
@@ -719,71 +1089,231 @@ fn not_loaded(ui: &mut Ui) {
     label!(ui, "These parameters are not loaded.", COLOR_HIGHLIGHT);
 }
 
-/// View and edit the general force field parameters. E.g. Amber's parm19, gaff2, and amino19.
-pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
-    if state.force_fields.family != dynamics::ForceFieldFamily::Amber {
-        ui.label(format!(
-            "{} parameters",
-            crate::force_fields::family_name(state.force_fields.family),
-        ));
-        ui.label(
-            "This family assigns molecule-specific parameters at preparation. \
-            Atom types and partial charges are shown on the molecule; \
-            the general Amber parameter tables apply only when Amber is selected.",
-        );
-        return;
+/// Prompt for a file to load parameters from, or save them to. We handle the picked file in
+/// `on_file_picked`.
+fn open_file_dialog(state: &mut State, op: ParamsFileOp) {
+    let mut cfg = FileDialogConfig::default();
+    if let Some(dir) = &state.ui.ff_params.last_dir {
+        cfg.initial_directory = dir.clone();
     }
-    // A popup's area is only `spacing.default_area_size` (400px) tall, and the table's scroll area
-    // can't exceed the height available to it: without this, `TABLE_HEIGHT` has no effect. Give it
-    // everything between the top of the popup and the bottom of the window.
-    let avail_h = ui.ctx().content_rect().bottom() - ui.min_rect().top() - SCREEN_MARGIN;
-    ui.set_max_height(avail_h);
 
-    // Disjoint borrows; the tables below edit the params in place.
-    let Some(params) = state.ff_param_set.amber_mut() else {
-        not_loaded(ui);
-        return;
+    let dialog = match op {
+        ParamsFileOp::Load(target) => {
+            let exts: Vec<_> = target.load_formats().iter().map(|(_, e)| *e).collect();
+            let filter = format!("{} parameters", target.descrip());
+
+            let mut dialog = FileDialog::with_config(cfg.add_file_filter_extensions(&filter, exts))
+                .title(&format!("Load {filter}"))
+                .default_file_filter(&filter);
+
+            dialog.pick_file();
+            dialog
+        }
+        ParamsFileOp::Save(target) => {
+            let formats = target.formats();
+            for (descrip, ext) in formats {
+                cfg = cfg.add_save_extension(descrip, ext);
+            }
+
+            let (descrip, ext) = formats[0];
+            let mut dialog = FileDialog::with_config(cfg)
+                .title(&format!("Save {} parameters", target.descrip()))
+                .default_save_extension(descrip)
+                .default_file_name(&format!("{}.{ext}", target.file_stem()));
+
+            dialog.save_file();
+            dialog
+        }
     };
-    let st = &mut state.ui.ff_params;
 
-    ui.horizontal(|ui| {
-        label!(ui, "Force field parameters", Color32::WHITE);
-        ui.add_space(COL_SPACING);
+    state.volatile.dialogs.ff_params = dialog;
+    state.volatile.dialogs.ff_params_op = Some(op);
+}
+
+/// Run from `update_file_dialogs`, once a file is picked.
+pub fn on_file_picked(state: &mut State, op: ParamsFileOp, path: &Path) {
+    let (result, verb, target) = match op {
+        ParamsFileOp::Load(target) => (ff_io::load(state, target, path), "Loaded", target),
+        ParamsFileOp::Save(target) => (ff_io::save(state, target, path), "Saved", target),
+    };
+
+    state.ui.ff_params.last_dir = ff_io::parent_dir(path);
+    state.ui.ff_params.cell_edit = None;
+
+    let file = path.file_name().unwrap_or_default().to_string_lossy();
+    let msg = match result {
+        Ok(()) => Ok(format!("{verb} {} parameters: {file}", target.descrip())),
+        Err(e) => Err(format!("Error with {} parameters: {e}", target.descrip())),
+    };
+
+    report(state, msg);
+}
+
+fn report(state: &mut State, msg: Result<String, String>) {
+    match msg {
+        Ok(m) => {
+            state.ui.ff_params.status = Some((m.clone(), false));
+            handle_success(&mut state.ui, m);
+        }
+        Err(m) => {
+            state.ui.ff_params.status = Some((m.clone(), true));
+            handle_err(&mut state.ui, m);
+        }
+    }
+}
+
+/// Filter, editing lock, and loading, saving, and restoring the selected set.
+fn toolbar(state: &mut State, target: ParamsTarget, ui: &mut Ui) {
+    let mut restore = false;
+    let mut file_op = None;
+
+    ui.horizontal_wrapped(|ui| {
+        let st = &mut state.ui.ff_params;
 
         ui.label("Filter:");
         ui.add(TextEdit::singleline(&mut st.filter).desired_width(120.))
             .on_hover_text("Show only rows whose atom or residue types contain this text.");
+
+        ui.add_space(COL_SPACING / 2.);
+
+        let (text, color, hover) = if st.editing {
+            (
+                "Lock editing",
+                COLOR_ACTIVE,
+                "Editing is enabled. Click to make the tables view-only.",
+            )
+        } else {
+            (
+                "Enable editing",
+                COLOR_INACTIVE,
+                "The tables are view-only. Click to edit their values.",
+            )
+        };
+
+        if button!(ui, text, color, hover).clicked() {
+            st.editing = !st.editing;
+            st.cell_edit = None;
+        }
+
+        if button!(
+            ui,
+            "Restore original params",
+            COLOR_ACTION,
+            format!(
+                "Reset the {} parameters to those bundled with the dynamics library, discarding \
+                edits, and loaded files. Other parameter sets are unchanged.",
+                target.descrip()
+            )
+        )
+        .clicked()
+        {
+            restore = true;
+        }
+
+        ui.add_space(COL_SPACING / 2.);
+
+        let exts = |formats: &[(&str, &str)]| {
+            formats
+                .iter()
+                .map(|(d, e)| format!("{d} (.{e})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        let effect = if target.family == ForceFieldFamily::Opls && target.cat != FfCat::PeptideQ {
+            "Tables in the file replace the current ones; others are kept."
+        } else if target.family == ForceFieldFamily::Amber && !target.cat.is_charges() {
+            "A .dat replaces them; a .frcmod modifies them."
+        } else {
+            "These replace the current ones."
+        };
+
+        let load_hover = format!(
+            "Load {} parameters from {}. {effect}",
+            target.descrip(),
+            exts(&target.load_formats())
+        );
+
+        if button!(ui, "Load", COLOR_HIGHLIGHT, load_hover).clicked() {
+            file_op = Some(ParamsFileOp::Load(target));
+        }
+
+        if button!(
+            ui,
+            "Save",
+            COLOR_HIGHLIGHT,
+            format!(
+                "Save the {} parameters as {}.",
+                target.descrip(),
+                exts(target.formats())
+            )
+        )
+        .clicked()
+        {
+            file_op = Some(ParamsFileOp::Save(target));
+        }
     });
 
-    label!(
-        ui,
-        "Edits apply immediately to the loaded parameters. They are not saved to disk.",
-        Color32::GRAY
-    );
+    if restore {
+        state.ui.ff_params.cell_edit = None;
 
-    ui.add_space(ROW_SPACING);
+        let msg = match ff_io::restore(state, target) {
+            Ok(()) => Ok(format!(
+                "Restored the original {} parameters",
+                target.descrip()
+            )),
+            Err(e) => Err(format!(
+                "Unable to restore {} parameters: {e}",
+                target.descrip()
+            )),
+        };
+        report(state, msg);
+    }
 
-    // Top level: which field of the param set to view.
+    if let Some(op) = file_op {
+        open_file_dialog(state, op);
+    }
+}
+
+/// Selects a value from `options`. Disabled options are shown grayed out.
+fn selector_row<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    current: &mut T,
+    options: &[(T, &str, &str, bool)],
+) -> bool {
+    let mut changed = false;
+
     ui.horizontal_wrapped(|ui| {
         selector_box().show(ui, |ui| {
-            for cat in CATS {
-                if !cat.present(params) {
-                    label_cell(ui, cat.name(), W_RES, Color32::DARK_GRAY);
+            for &(val, name, hover, enabled) in options {
+                if !enabled {
+                    label_cell(ui, name, W_RES, Color32::DARK_GRAY);
                     continue;
                 }
 
-                if selector_option(ui, st.cat == cat, cat.name())
-                    .on_hover_text(cat.hover())
+                if selector_option(ui, *current == val, name)
+                    .on_hover_text(hover)
                     .clicked()
+                    && *current != val
                 {
-                    st.cat = cat;
-                    st.cell_edit = None;
+                    *current = val;
+                    changed = true;
                 }
             }
         });
     });
 
-    ui.add_space(ROW_SPACING);
+    changed
+}
+
+/// Returns true if a value changed.
+fn amber_tables(set: &mut AmberSet, st: &mut FfParamsUi, ui: &mut Ui) -> bool {
+    let filter = st.filter.to_lowercase();
+    let mut cells = Cells {
+        edit: &mut st.cell_edit,
+        editable: st.editing,
+        changed: false,
+    };
 
     match st.cat {
         FfCat::Peptide
@@ -792,59 +1322,45 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
         | FfCat::Rna
         | FfCat::Lipids
         | FfCat::Carbohydrates => {
-            let ff = match st.cat {
-                FfCat::Peptide => &mut params.peptide,
-                FfCat::SmallMol => &mut params.small_mol,
-                FfCat::Dna => &mut params.dna,
-                FfCat::Rna => &mut params.rna,
-                FfCat::Lipids => &mut params.lipids,
-                _ => &mut params.carbohydrates,
-            };
-
-            let Some(ff) = ff else {
+            let Some(Some(ff)) = ff_io::amber_ff_mut(set, st.cat) else {
                 not_loaded(ui);
-                return;
+                return false;
             };
 
             // Sub-selection: which field of the `ForceFieldParams`.
-            ui.horizontal_wrapped(|ui| {
-                selector_box().show(ui, |ui| {
-                    for kind in KINDS {
-                        if selector_option(ui, st.kind == kind, kind.name())
-                            .on_hover_text(kind.hover())
-                            .clicked()
-                        {
-                            st.kind = kind;
-                            st.cell_edit = None;
-                        }
-                    }
-                });
-            });
+            let options: Vec<_> = KINDS
+                .iter()
+                .map(|&k| (k, k.name(), k.hover(), true))
+                .collect();
+            if selector_row(ui, &mut st.kind, &options) {
+                *cells.edit = None;
+            }
 
             ui.add_space(ROW_SPACING);
 
-            ff_params_table(ff, st.kind, st, ui);
+            ff_params_table(ff, st.kind, &filter, &mut cells, ui);
         }
         FfCat::PeptideQ => {
-            let Some(q_map) = &mut params.peptide_ff_q_map else {
+            let Some(q_map) = &mut set.peptide_ff_q_map else {
                 not_loaded(ui);
-                return;
+                return false;
             };
 
             // Sub-selection: internal residues, or one of the terminus variants.
-            ui.horizontal_wrapped(|ui| {
-                selector_box().show(ui, |ui| {
-                    for sel in PROT_MAPS {
-                        if selector_option(ui, st.prot_map == sel, sel.name())
-                            .on_hover_text("Select this charge map to view and edit.")
-                            .clicked()
-                        {
-                            st.prot_map = sel;
-                            st.cell_edit = None;
-                        }
-                    }
-                });
-            });
+            let options: Vec<_> = PROT_MAPS
+                .iter()
+                .map(|&m| {
+                    (
+                        m,
+                        m.name(),
+                        "Select this charge map to view and edit.",
+                        true,
+                    )
+                })
+                .collect();
+            if selector_row(ui, &mut st.prot_map, &options) {
+                *cells.edit = None;
+            }
 
             ui.add_space(ROW_SPACING);
 
@@ -854,29 +1370,234 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
                 ProtMapSel::CTerminus => (&mut q_map.c_terminus, "q_c_term"),
             };
 
-            charge_table_prot(map, id, st, ui);
+            charge_table_prot(map, id, &filter, &mut cells, ui);
         }
         FfCat::LipidQ => {
-            let Some(map) = &mut params.lipid_ff_q_map else {
+            let Some(map) = &mut set.lipid_ff_q_map else {
                 not_loaded(ui);
-                return;
+                return false;
             };
 
-            charge_table(map, |k| k.to_string(), "q_lipid", st, ui);
+            charge_table(map, |k| k.to_string(), "q_lipid", &filter, &mut cells, ui);
         }
         FfCat::DnaQ | FfCat::RnaQ => {
             let (map, id) = if st.cat == FfCat::DnaQ {
-                (&mut params.dna_ff_q_map, "q_dna")
+                (&mut set.dna_ff_q_map, "q_dna")
             } else {
-                (&mut params.rna_ff_q_map, "q_rna")
+                (&mut set.rna_ff_q_map, "q_rna")
             };
 
             let Some(map) = map else {
                 not_loaded(ui);
+                return false;
+            };
+
+            charge_table(
+                map,
+                |k| format!("{} {:?}", k.nt, k.end),
+                id,
+                &filter,
+                &mut cells,
+                ui,
+            );
+        }
+    }
+
+    cells.changed
+}
+
+/// Returns true if a value changed.
+fn opls_tables(set: &mut OplsSet, st: &mut FfParamsUi, ui: &mut Ui) -> bool {
+    let filter = st.filter.to_lowercase();
+    let mut cells = Cells {
+        edit: &mut st.cell_edit,
+        editable: st.editing,
+        changed: false,
+    };
+
+    match st.cat {
+        FfCat::Peptide | FfCat::SmallMol => {
+            let (tables, id) = if st.cat == FfCat::Peptide {
+                (&mut set.tables, "opls_pep")
+            } else {
+                (set.small_mol_tables_mut(), "opls_sm")
+            };
+
+            // Sub-selection: which table. Some are empty, e.g. Foyer has no macros.
+            let options: Vec<_> = GMX_KINDS
+                .iter()
+                .map(|&k| (k, k.name(), k.hover(), k.count(tables) > 0))
+                .collect();
+            if selector_row(ui, &mut st.gmx_kind, &options) {
+                *cells.edit = None;
+            }
+
+            if st.gmx_kind.count(tables) == 0 {
+                st.gmx_kind = GmxKind::AtomTypes;
+            }
+
+            ui.add_space(ROW_SPACING);
+
+            gromacs_table(tables, st.gmx_kind, id, &filter, &mut cells, ui);
+        }
+        FfCat::PeptideQ => template_table(&mut set.templates, &filter, &mut cells, ui),
+        _ => not_loaded(ui),
+    }
+
+    cells.changed
+}
+
+/// View and edit the general force field parameters. E.g. Amber's parm19, gaff2, and amino19,
+/// or OPLS-AA/L's.
+pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
+    // A popup's area is only `spacing.default_area_size` (400px) tall, and the table's scroll area
+    // can't exceed the height available to it: without this, `TABLE_HEIGHT` has no effect. Give it
+    // everything between the top of the popup and the bottom of the window.
+    let avail_h = ui.ctx().content_rect().bottom() - ui.min_rect().top() - SCREEN_MARGIN;
+    ui.set_max_height(avail_h);
+
+    // The same selector as in the sidebar, and MD panel.
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Force field:");
+        crate::force_fields::selector(state, ui, "ff_params_force_field");
+    });
+
+    let family = state.force_fields.family;
+
+    // Sets that aren't loaded are shown dimmed, but can be selected, so they can be loaded from
+    // a file, or restored.
+    let cats: Vec<(FfCat, bool)> = match family {
+        ForceFieldFamily::Amber => {
+            let Some(set) = state.ff_param_set.amber() else {
+                not_loaded(ui);
+                return;
+            };
+            CATS.iter().map(|&c| (c, c.present_amber(set))).collect()
+        }
+        ForceFieldFamily::Opls => CATS
+            .iter()
+            .filter(|c| c.present_opls())
+            .map(|&c| (c, true))
+            .collect(),
+        f => {
+            ui.label(format!(
+                "Viewing and editing {} parameters isn't supported yet.",
+                family_name(f)
+            ));
+            return;
+        }
+    };
+
+    // Keep the selection valid for this family. E.g. after switching from Amber's DNA params to
+    // OPLS, which has none.
+    {
+        let st = &mut state.ui.ff_params;
+        if family == ForceFieldFamily::Opls && !st.cat.present_opls() {
+            st.cat = FfCat::Peptide;
+            st.cell_edit = None;
+        }
+    }
+
+    ui.add_space(ROW_SPACING / 2.);
+
+    let target = ParamsTarget {
+        family,
+        cat: state.ui.ff_params.cat,
+        prot_map: state.ui.ff_params.prot_map,
+    };
+    toolbar(state, target, ui);
+
+    {
+        let st = &state.ui.ff_params;
+
+        let (text, color) = if st.editing {
+            (
+                "Edits apply immediately to the loaded parameters. Save them to keep them.",
+                COLOR_ACTIVE,
+            )
+        } else {
+            ("View only. Enable editing to change values.", Color32::GRAY)
+        };
+        label!(ui, text, color);
+
+        if let Some((msg, is_err)) = &st.status {
+            let color = if *is_err {
+                Color32::LIGHT_RED
+            } else {
+                Color32::GRAY
+            };
+            label!(ui, msg, color);
+        }
+    }
+
+    ui.add_space(ROW_SPACING);
+
+    // Top level: which set of params to view.
+    {
+        let st = &mut state.ui.ff_params;
+        let mut changed = false;
+
+        ui.horizontal_wrapped(|ui| {
+            selector_box().show(ui, |ui| {
+                for &(cat, loaded) in &cats {
+                    let mut resp = ui
+                        .scope(|ui| {
+                            if !loaded {
+                                ui.multiply_opacity(0.4);
+                            }
+                            selector_option(ui, st.cat == cat, cat.name())
+                        })
+                        .inner;
+
+                    if !loaded {
+                        resp = resp.on_hover_text("Not loaded. Load these from a file.");
+                    }
+
+                    if resp.on_hover_text(cat.hover(family)).clicked() && st.cat != cat {
+                        st.cat = cat;
+                        changed = true;
+                    }
+                }
+            });
+        });
+
+        if changed {
+            st.cell_edit = None;
+        }
+    }
+
+    ui.add_space(ROW_SPACING);
+
+    // Disjoint borrows; the tables below edit the params in place.
+    let st = &mut state.ui.ff_params;
+
+    match family {
+        ForceFieldFamily::Amber => {
+            if let Some(set) = state.ff_param_set.amber_mut() {
+                amber_tables(set, st, ui);
+            }
+        }
+        _ => {
+            let Some(set) = state
+                .force_fields
+                .params
+                .as_mut()
+                .and_then(|p| p.opls_mut())
+            else {
+                not_loaded(ui);
                 return;
             };
 
-            charge_table(map, |k| format!("{} {:?}", k.nt, k.end), id, st, ui);
+            if opls_tables(set, st, ui) {
+                st.refresh_pending = true;
+            }
+
+            // Molecules' OPLS types and charges are assigned from these tables. (MD reads them
+            // again when it starts.) Re-assign them once the user moves on from the cell.
+            if st.refresh_pending && st.cell_edit.is_none() {
+                st.refresh_pending = false;
+                state.force_fields.invalidate();
+            }
         }
     }
 }

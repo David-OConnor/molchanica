@@ -782,6 +782,7 @@ pub(crate) struct ToolWindow {
     /// When set, the window shows results only (without the input form), under this heading.
     /// `None` shows the job setup form.
     results_heading: Option<&'static str>,
+    boltz_outputs: HashMap<PathBuf, Vec<(String, Result<Value, String>)>>,
 }
 
 impl ToolWindow {
@@ -809,10 +810,11 @@ impl ToolWindow {
             sequence_file_target: None,
             pending_sequence: None,
             results_heading: None,
+            boltz_outputs: HashMap::new(),
         }
     }
 
-    fn poll(&mut self) {
+    pub(crate) fn poll(&mut self) {
         let Some(receiver) = &self.receiver else {
             return;
         };
@@ -843,6 +845,93 @@ impl ToolWindow {
         self.control = None;
         self.started = None;
         self.installing = false;
+    }
+
+    pub(crate) fn for_binding() -> Self {
+        let mut window = Self::new(ToolWindowKind::StructurePrediction);
+        window.tool = Tool::Boltz2;
+        window
+    }
+
+    pub(crate) fn busy(&self) -> bool {
+        self.receiver.is_some()
+    }
+
+    /// Reuse installation, cancellation, retained run history, and structure import for a
+    /// workflow that builds scientific inputs from loaded molecules instead of raw fields.
+    pub(crate) fn binding_controls(
+        &mut self,
+        computations: &Computations,
+        ui: &mut Ui,
+        make_request: impl FnOnce() -> Result<crate::drug_design::binding::PredictionRequest, String>,
+    ) -> Option<PathBuf> {
+        self.poll();
+        self.handle_picked_file(ui);
+        self.progress_ui(ui);
+        let tool = Tool::Boltz2;
+        let spec = tool.spec();
+        let busy = self.busy();
+        let installed = external_tools::is_installed(tool);
+        if !spec.is_supported() {
+            ui.colored_label(
+                Color32::ORANGE,
+                "Boltz-2 requires Linux on this installation.",
+            );
+        }
+        let mut run = false;
+        let mut install = false;
+        ui.horizontal_wrapped(|ui| {
+            run = ui
+                .add_enabled(
+                    !busy && installed && spec.is_supported(),
+                    Button::new(RichText::new("Predict complex + affinity").color(COLOR_ACTION)),
+                )
+                .clicked();
+            if !installed {
+                install = ui
+                    .add_enabled(
+                        !busy && spec.can_install_here(),
+                        Button::new("Install Boltz-2"),
+                    )
+                    .clicked();
+            }
+            if ui.button("Open saved run…").clicked() {
+                self.file_action = Some(FileAction::LoadRun(tool));
+                self.dialog.pick_file();
+            }
+        });
+        if install {
+            let computation = computations.start(
+                ComputationType::Install,
+                spec.name(),
+                Some("installing".into()),
+            );
+            self.start_job(ui, true, computation, move || {
+                JobResult::Install(external_tools::install(tool).map_err(|e| e.to_string()))
+            });
+        }
+        if run {
+            match make_request() {
+                Err(error) => self.error = Some(error),
+                Ok(request) => {
+                    let computation = computations.start(
+                        ComputationType::MachineLearning,
+                        spec.name(),
+                        Some("complex and affinity prediction".into()),
+                    );
+                    let control = RunControl::default();
+                    self.control = Some(control.clone());
+                    self.start_job(ui, false, computation, move || {
+                        JobResult::Run(request.run(&control).map_err(|e| e.to_string()))
+                    });
+                }
+            }
+        }
+        self.status_ui(ui);
+        if !self.results.is_empty() {
+            ui.small("Results below belong to their saved inputs, which may differ from the current controls.");
+        }
+        self.results_ui(ui)
     }
 
     /// Start a job on a worker thread, reporting through [`Self::poll`]. `computation` is released
@@ -1313,7 +1402,37 @@ impl ToolWindow {
             self.preview = self.selected_file.as_ref().map(|path| preview_text(path));
         }
 
-        let result = &self.results[self.selected_result].1;
+        let (tool, result) = &self.results[self.selected_result];
+        if *tool == Tool::Boltz2 {
+            let outputs = self
+                .boltz_outputs
+                .entry(result.directory.clone())
+                .or_insert_with(|| {
+                    let provenance = result.directory.join("binding-input.json");
+                    result
+                        .files
+                        .iter()
+                        .chain(provenance.is_file().then_some(&provenance))
+                        .filter_map(|path| {
+                            let name = path.file_name()?.to_str()?;
+                            if !(name.starts_with("affinity_")
+                                || name.starts_with("confidence_")
+                                || name == "binding-input.json")
+                                || !name.ends_with(".json")
+                            {
+                                return None;
+                            }
+                            let value = read_output_text(path, MAX_PREVIEW_BYTES)
+                                .map_err(|e| e.to_string())
+                                .and_then(|text| {
+                                    serde_json::from_str(&text).map_err(|e| e.to_string())
+                                });
+                            Some((name.to_owned(), value))
+                        })
+                        .collect()
+                });
+            boltz_summary_ui(outputs, ui);
+        }
         let mut load = None;
 
         // The predicted structures are the main output; list them first so they can be opened
@@ -1445,6 +1564,107 @@ impl ToolWindow {
         }
         load
     }
+}
+
+/// Scientific summaries keep both affinity heads and structural confidence separate.
+fn boltz_summary_ui(outputs: &[(String, Result<Value, String>)], ui: &mut Ui) {
+    use crate::drug_design::binding::AffinityPrediction;
+
+    ui.strong("Predicted affinity · Boltz-2");
+    if let Some((_, Ok(input))) = outputs
+        .iter()
+        .find(|(name, _)| name == "binding-input.json")
+    {
+        ui.label(format!(
+            "Saved job: {} · protein: {}",
+            input["job_name"].as_str().unwrap_or("—"),
+            input["protein"]["identifier"].as_str().unwrap_or("—")
+        ));
+        ui.label(format!(
+            "Ligand SMILES: {}",
+            input["ligand_smiles"].as_str().unwrap_or("—")
+        ));
+    }
+    let mut found = false;
+    for (name, value) in outputs
+        .iter()
+        .filter(|(name, _)| name.starts_with("affinity_"))
+    {
+        found = true;
+        ui.label(name);
+        let prediction = value
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(AffinityPrediction::parse);
+        match prediction {
+            Err(error) => {
+                ui.colored_label(Color32::ORANGE, error);
+            }
+            Ok(prediction) => {
+                match prediction.binder_probability {
+                    Some(p) => {
+                        ui.label(format!("Binder probability: {p:.3} (hit discovery)"));
+                    }
+                    None => {
+                        ui.label("Binder probability: not reported");
+                    }
+                }
+                match prediction.log_ic50_um {
+                    Some(y) => {
+                        ui.label(format!(
+                            "Affinity: {y:.3} log10(IC50 / µM); lower is stronger"
+                        ));
+                        let micromolar = 10_f64.powf(y);
+                        if micromolar.is_finite() && micromolar > 0. {
+                            ui.label(format!(
+                                "IC50 equivalent: {micromolar:.3e} µM · pIC50: {:.3}",
+                                6. - y
+                            ));
+                        }
+                    }
+                    None => {
+                        ui.label("Continuous affinity: not reported");
+                    }
+                }
+            }
+        }
+    }
+    if !found {
+        ui.colored_label(Color32::ORANGE, "No affinity output in this run. A structure alone does not provide an affinity estimate.");
+    }
+    ui.small("Continuous affinity is for comparing active compounds. These are model predictions for the generated complex, not measured Kd or Ki.");
+    CollapsingHeader::new("Structural confidence · separate from affinity").show(ui, |ui| {
+        for (name, value) in outputs
+            .iter()
+            .filter(|(name, _)| name.starts_with("confidence_"))
+        {
+            ui.label(name);
+            match value {
+                Ok(value) => {
+                    for (key, label) in [
+                        ("confidence_score", "Complex confidence"),
+                        ("ligand_iptm", "Ligand interface ipTM"),
+                    ] {
+                        if let Some(v) = value
+                            .get(key)
+                            .and_then(Value::as_f64)
+                            .filter(|v| v.is_finite())
+                        {
+                            ui.label(format!("{label}: {v:.3}"));
+                        }
+                    }
+                }
+                Err(error) => {
+                    ui.colored_label(Color32::ORANGE, error);
+                }
+            }
+        }
+    });
+    ui.hyperlink_to(
+        "Boltz output definitions",
+        "https://github.com/jwohlwend/boltz/blob/main/docs/prediction.md#output",
+    );
+    ui.separator();
 }
 
 /// The text shown when an output file is selected.

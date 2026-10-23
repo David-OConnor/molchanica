@@ -637,6 +637,7 @@ impl Default for AaSelection {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
+    pub binding: crate::ui::popup::binding::BindingUi,
     pub protein_comparison: crate::ui::popup::protein_comparison::ProteinComparison,
     pub selection_editor: crate::ui::popup::selections::SelectionEditor,
     pub reactions: crate::reactions::ReactionsState,
@@ -953,6 +954,7 @@ pub struct MolDbTableView {
 /// Defines which UI popups are displayed.
 #[derive(Default, Debug)]
 pub struct PopupState {
+    pub binding: bool,
     pub protein_comparison: bool,
     pub selections: bool,
     pub reactions: bool,

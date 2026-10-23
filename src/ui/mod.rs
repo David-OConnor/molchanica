@@ -771,8 +771,8 @@ fn top_controls(
                     ui,
                     "FF params",
                     COLOR_HIGHLIGHT,
-                    "View and edit the general force field parameters loaded, e.g. from Amber's parm19, \
-                    gaff2, amino19, and lipid21."
+                    "View, edit, load, and save the general force field parameters loaded, e.g. \
+                    Amber's parm19, gaff2, amino19, and lipid21, or OPLS-AA/L's."
                 ).clicked() {
                 state.ui.popup.ff_params = !state.ui.popup.ff_params;
             }
@@ -824,6 +824,16 @@ fn top_controls(
                 .clicked()
             {
                 state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
+            }
+
+            if button!(
+                    ui,
+                    "Binding",
+                    COLOR_HIGHLIGHT,
+                    "Inspect protein–ligand contacts and clashes, or predict a complex and affinity with Boltz-2."
+                ).clicked()
+            {
+                state.ui.popup.binding = !state.ui.popup.binding;
             }
 
             if button!(

@@ -144,6 +144,15 @@ fn normalize_rfd3_document(document: &mut String) -> io::Result<()> {
 
 /// Run a shared-adapter tool to completion. Blocking; call it from a worker thread.
 pub fn run(tool: Tool, payload: Value, control: &RunControl) -> io::Result<AdapterResult> {
+    run_prepared(tool, control, |_| Ok(payload))
+}
+
+/// Prepare durable input snapshots in the run directory before launching the adapter.
+pub fn run_prepared(
+    tool: Tool,
+    control: &RunControl,
+    prepare: impl FnOnce(&Path) -> io::Result<Value>,
+) -> io::Result<AdapterResult> {
     let spec = tool.spec();
     if spec.adapter != ToolAdapter::SharedAdapter {
         return Err(io::Error::new(
@@ -160,6 +169,7 @@ pub fn run(tool: Tool, payload: Value, control: &RunControl) -> io::Result<Adapt
 
     let executables = process_executables_dir()?;
     let directory = create_results_dir(&executables, tool)?;
+    let payload = prepare(&directory)?;
     let request = directory.join("submitted-form.json");
     let response = directory.join("result.json");
     fs::write(&request, serde_json::to_vec_pretty(&payload)?)?;

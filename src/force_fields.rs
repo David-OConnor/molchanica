@@ -131,6 +131,13 @@ impl ForceFields {
         !self.opls_jobs.is_empty()
     }
 
+    /// Re-assign atom types and charges to all molecules on the next refresh. E.g. after editing
+    /// the selected family's parameters.
+    pub fn invalidate(&mut self) {
+        self.assignments.clear();
+        self.dirty = true;
+    }
+
     fn poll_opls(&mut self) {
         let mut completed = Vec::new();
         for (&topology, rx) in &self.opls_jobs {

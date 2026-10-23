@@ -1,4 +1,5 @@
 pub mod about;
+pub mod binding;
 pub mod external_tools;
 pub mod ff_params;
 pub mod mol_db;
@@ -89,6 +90,14 @@ pub(in crate::ui) fn load_popups(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
+    binding::poll(state, ui);
+    if state.ui.popup.binding {
+        state.ui.popup.binding = show_popup(
+            popup("Protein–ligand binding").default_width(760.).vscroll(true),
+            ui.ctx(),
+            |ui| binding::editor(state, scene, ui, redraw, updates),
+        );
+    }
     protein_comparison::poll(state, ui, redraw);
     if state.ui.popup.protein_comparison {
         state.ui.popup.protein_comparison = show_popup(
