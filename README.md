@@ -5,24 +5,14 @@
 [Home page](https://www.athanorlab.com/molchanica)
 [Documentation](https://www.athanorlab.com/docs)
 
-[Molchanica](https://www.athanorlab.com/molchanica) is molecule editing, visualization, and dynamics tool with a focus
-on a smooth user experience. It combines functionality found
-in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/),
-and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over both time and space. Any
-molecule you open or build can move using molecular dynamics. We are actively adding work-flow specific functionality;
-for example, molecular docking, and tools for working with LNPs.
+[Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. it integrates with machine-learning tools for protein engineering, including RFDiffusion3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
 
 Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on
 pharmacophores, machine-learning from empirical binding data and more. It automatically estimates ADME and toxicity
 parameters.
 
 We hope that Molchanica is intuitive enough that formal documentation isn't required; installing, running, opening, and
-viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI. This
-documentation is a supplement that experimental process: It describes each feature. It may highlight features you didn't
-know existed, clarify how to use a given feature, and show assumptions and implementations used.
-
-For advanced topics like molecular docking, it provides instructions for achieving the best results. Use the menu on the
-left to navigate these documentation pages.
+viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI.
 
 This README is a summary. For details, see [the documentation](https://www.athanorlab.com/docs).
 
@@ -32,12 +22,11 @@ This README is a summary. For details, see [the documentation](https://www.athan
 
 [Download, unzip, and run](https://github.com/David-OConnor/molchanica/releases).
 
-Setup scripts are included; these are optional. (The application can be launched directly), but are
+Setup scripts are included; these are optional. The application can be launched directly, but these
 useful for setting up shortcuts in your OS.
 
-- On Linux distros that use Gnome (e.g. Ubuntu), run `setup_molchanica.sh`, included in the zip, to create a Desktop
-  GUI entry. (Do not run this with `sudo`.)
-- On Windows, run `setup_molchanica.ps1` to move the program to `~/AppData/Local/Programs/Molchanica`, and create a start menu shortcut. The first time you run the program, you may get the message
+- On Linux, run `setup_molchanica.sh`, included in the zip. (Do not run this with `sudo`.)
+- On Windows, run `setup_molchanica.ps1`. The first time you run the program, you may get the message
   *"  Microsoft Defender prevented an unrecognized app from starting"*. To bypass this, click *More
   info*, then *Run
   Anyway*. A similar obstacle may be encountered on Windows: If it refuses to launch, with an error about "Smart App Control", you may disable "Smart App Control" in
