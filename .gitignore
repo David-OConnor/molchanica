@@ -32,6 +32,7 @@ Cargo.lock
 *.trr
 *.xtc
 *.prmtop
+*.fasta
 
 # Parquet mol DBs
 *.pqt

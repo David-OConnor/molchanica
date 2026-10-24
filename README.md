@@ -7,14 +7,10 @@
 
 [Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. it integrates with machine-learning tools for protein engineering, including RFDiffusion3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
 
-Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on
-pharmacophores, machine-learning from empirical binding data and more. It automatically estimates ADME and toxicity
-parameters.
+Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on pharmacophores, machine-learning from empirical binding data and more. It automatically estimates ADME and toxicity parameters using a neural network trained on [Therapeutic data commons (TDC)](https://tdcommons.ai/) data.
 
-We hope that Molchanica is intuitive enough that formal documentation isn't required; installing, running, opening, and
-viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI.
+We hope that Molchanica is intuitive enough that formal documentation isn't required; installing, running, opening, and viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI. That said, see [the documentation](https://www.athanorlab.com/docs) for details.
 
-This README is a summary. For details, see [the documentation](https://www.athanorlab.com/docs).
 
 ## Installation
 
@@ -25,8 +21,8 @@ This README is a summary. For details, see [the documentation](https://www.athan
 Setup scripts are included; these are optional. The application can be launched directly, but these
 useful for setting up shortcuts in your OS.
 
-- On Linux, run `setup_molchanica.sh`, included in the zip. (Do not run this with `sudo`.)
-- On Windows, run `setup_molchanica.ps1`. The first time you run the program, you may get the message
+- **Linux**: Run `setup_molchanica.sh`, included in the zip. (Do not run this with `sudo`.)
+- **Windows**: Run `setup_molchanica.ps1`. The first time you run the program, you may get the message
   *"  Microsoft Defender prevented an unrecognized app from starting"*. To bypass this, click *More
   info*, then *Run
   Anyway*. A similar obstacle may be encountered on Windows: If it refuses to launch, with an error about "Smart App Control", you may disable "Smart App Control" in
@@ -36,23 +32,12 @@ useful for setting up shortcuts in your OS.
 
 ### Mac, and linux distros we don't provide a binary for
 
-Compile from source by [downloading and installing Rust](https://www.rust-lang.org/tools/install), then running
-`cargo build --release` from a CLI
-in the project directory. See notes in the
-*compiling* section below about setting up Amber parameter files,
-and either installing the CUDA toolkit, or disabling CUDA.
+Compile from source by [downloading and installing Rust](https://www.rust-lang.org/tools/install), then running `cargo build --release` from a CLI in the project directory. See notes in the *compiling* section below about setting up Amber parameter files, and either installing the CUDA toolkit, or disabling CUDA.
 
 ### Installing and using integrated third-party tools
 
 Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, Gemmi, and ML-based protein design tools. See [the documentation](https://www.athanorlab.com/docs/third_party_tools.html) for details.
 
-### Datasets
-
-Molchanica can read a locally downloaded [PDBbind](https://www.pdbbind-plus.org.cn/) release:
-measured binding affinities, plus each complex's protein, pocket, and ligand files. Unpack one
-into `datasets/pdbbind` in Molchanica's own folder, or set `MOLCHANICA_PDBBIND_ROOT`. Nothing
-downloads it for you — PDBbind+ is distributed under registration, free for academic use, with
-commercial use requiring a subscription.
 
 ### Protein design
 
@@ -62,94 +47,10 @@ commercial use requiring a subscription.
 
 ## Functionality
 
-### Protein–ligand binding
-
-Open **Binding** in the top toolbar, then select an open protein, one chain, and a small
-molecule. For a ligand embedded in a complex, first use **Make ligs/pockets** to extract it.
-
-- **Assess current pose** checks the displayed coordinates locally. Inspect contacting residues,
-  select clashing atoms in the viewer, and copy a JSON report. Heavy-atom contacts use 4 Å;
-  clashes use more than 0.8 Å of van der Waals overlap. Gross ligand bond-length outliers are
-  also flagged. Reports become stale when coordinates, chemistry, or selected inputs change.
-- **Predict complex + affinity** runs the existing Boltz-2 integration. Review the ligand SMILES,
-  optionally use the displayed chain as a template, and leave site guidance empty to explore
-  binding without a specified pocket. Alternatively, select site residues manually or reuse the
-  current pose's contacts. Molchanica maps source residue numbers to Boltz's sequence positions.
-- Load a predicted complex from the results, inspect its pose, and compare saved runs. Binder
-  probability, continuous affinity (`log10(IC50 / µM)`, lower is stronger), and structural
-  confidence are displayed separately. Continuous affinity is intended for comparing active
-  compounds; it is not measured Kd or Ki. Missing affinity outputs are explicitly flagged.
-
-This first workflow uses one protein chain and one small molecule. The sequence contains observed
-amino-acid residues; missing residues, other chains, waters, and cofactors are excluded. Use the
-advanced **Pred struct → Boltz-2** form for more complex inputs. The geometry screen does not
-validate protonation, stereochemistry, intraligand strain, or directional interactions, and does
-not estimate affinity. Boltz generates new coordinates rather than scoring the exact displayed pose.
-
-Each prediction retains its submitted form, protein template, source coordinates, residue mapping,
-logs, and outputs in its run folder. Use **Open saved run…** to reopen `result.json`. Public MSA
-generation is optional and off by default; enabling it sends the protein sequence to ColabFold.
-Single-sequence mode may reduce accuracy. Boltz affinity accepts at most 128 atoms after RDKit
-RemoveHs, with ligands substantially above its 56-atom training limit outside the recommended domain.
-See the [Boltz-2 input and output definitions](https://github.com/jwohlwend/boltz/blob/main/docs/prediction.md).
-
-### Selection expressions
-
-Open **Selections / layers** to build selections with clickable controls or enter an expression.
-The controls show the syntax they generate and preview changes immediately. Press **Enter** to
-select / preview; **Shift+Enter** inserts a line. Molchanica supports most commonly used
-[PyMOL selection syntax](https://pymol.org/tutorials/scripting/PyMOLSelectionOperators-v2.pdf),
-including Boolean expressions, identifiers, residue expansion, and distance/bond selections.
-
-```text
-elem O
-select alpha_carbons, protein and name CA
-select acidic_res, resn ASP+GLU
-binding_loop, chain A and resi 100-120
-select active_site, byres (protein within 4 of ligand)
-%active_site and not hydrogens
-```
-
-The `select` prefix is optional. `name, expression` saves or updates a selection; a bare name
-recalls one you have defined. Names such as `active_site` are user-defined, not built-in selectors.
-See the [selection guide and compatibility limits](https://www.athanorlab.com/docs/view_select.html#selection-expressions)
-for more examples, or the [PyMOL selection algebra reference](https://pymolwiki.org/Selection_Algebra).
-
-### Publication figures
-
-Open **Publication figure** beside the view controls. Set exact pixel dimensions, PNG print
-resolution (DPI), background color or transparency, and 2×/3× supersampling. **Use view aspect**
-matches the camera's current aspect ratio; otherwise the preview shows the new framing. The
-vertical field of view stays fixed. **Render preview** freezes the current geometry and camera
-and renders the full export resolution in a separate worker process. The dialog shows progress
-and a **Cancel render** button. A render that exceeds 120 seconds is stopped; GPU work is split
-into bounded submissions so the viewport can keep drawing. **Save PNG** writes those exact pixels,
-including alpha and DPI metadata. Camera/window changes after rendering do not alter the saved
-figure; render again to capture them. The checkerboard in the preview is not exported.
-
-Figures include visible entity labels, with adjustable color and scale. Under **Distance
-measurements**, select an atom, capture the start, select another atom, and add the distance.
-Dashed lines and distances in Å are rendered with the figure. Measurements capture fixed world
-coordinates; recapture them after moving molecules. Export reports an error if a measurement
-endpoint falls outside the figure, rather than silently omitting it.
-
-The export renderer uses smooth atom/bond meshes (Standard or High detail) and studio lighting, highlights,
-screen-space contact shading, and optional depth outlines. Paper and Presentation presets, plus
-named styles saved in `figure_styles.json` in the preferences folder, keep figure panels
-consistent. Styles contain output and appearance settings; scene representations and camera
-positions remain controlled by the main view and its camera snapshots. Label and outline sizes
-scale with figure height, independently of window size or desktop DPI.
-
-This is an offscreen raster renderer, not a ray tracer. Contact shading and outlines use opaque
-geometry's depth; transparent surfaces use back-to-front entity sorting, which can be imperfect
-for intersecting surfaces. Viewport fog, selection highlighting, and manipulation gizmos are
-excluded. Gaussian volumes currently require switching to a mesh representation before export.
-Exports support 64–8192 pixels per side, up to 32 million supersampled pixels, and are also
-bounded by the GPU's texture limit. CUDA is not required.
-
-### Other features
 
 - View the 3D structure of proteins and small molecules
+- Create figures for publication
+- Pymol-like selection syntax
 - Molecular dynamics, using Amber force fields, and the OPC water model
 - Visualize ligand docking
 - Edit small molecules in 3D with integrated dynamics
@@ -161,6 +62,7 @@ bounded by the GPU's texture limit. CUDA is not required.
 - Design sequences for a backbone with [LigandMPNN](https://github.com/dauparas/LigandMPNN) and
   [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), conditioned on ligands and nucleic acids where present
 - Scan every point mutation at every position for stability (ΔΔG), in a single pass, natively — no Python needed at run time
+- Assess protein-ligand binding (affinity, pose validation, binding spot identification etc)
 - Antibody workflows: CDR selection, paratope contacts, and developability triage
 - Read a local [PDBbind](https://www.pdbbind-plus.org.cn/) release: look up a complex's measured binding affinity and open its protein, pocket, and ligand files
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
@@ -201,37 +103,44 @@ from the [RCSB PDB](https://www.rcsb.org/).
 - **Force field parameters**: dat, lib, frcmod, prmtop (Amber), and top (GROMACS)
 - **MD**: GRO, MDP, DCD, TRR, XTC
 
+
 ## Third-party tool integrations
 
 Molchanica integrates with a number of third-party tools, acting on the molecules Molchanica has open,
 or creating them. See [the docs page for details, and a full list of tools](https://www.athanorlab.com/docs/third_party_tools.html). These can be accessed directly from the computer if you have them installed,
 or installed within the application's UI.
 
-## Example tools supported:
 
-- OpenDDE
+### Example tools supported:
+
+
 - GROMACS
 - ORCA
+- RDKit
+- RfDiffusion3
+- Chai-1
+- OpenDDE
 - Boltz-2
 - MPNN (Protein, ligand etc)
 
-(todo: Expand:)
 
 ## A note on internet connectivity
 
-This application can run smoothly without internet connectivity. If you do have internet, it has some API integrations
-which may help. For example, loading molecules automatically from PubChem, drugbank, and RCSB PDB. It can also
-download associated ligands for a protein, automatically download molecule-specific force-field parameters, and
-other party tricks.
+Most functionality works without internet connectivity. If you have internet, it includes API integrations. For example:
+
+- Load molecules and sequences automatically from PubChem, UniProt, drugbank, and RCSB PDB.
+- Improved structure prediction accuracy using MSA servers
+- Reactions from Rhea
+- OPLS MD parameterization for small molecules
+- Buttons and links to open relevant database pages for molecules operating on
+- Finds data on the molecule you're building or editing as you work, if it's on PubChem.
+
 
 ![UI image showing mol properties and a protien](/screenshots/molchanica_ui_apr_2026.png)
 
 ## Parallel computing
 
-If an Nvidia GPU of at least RTX 3 series is available, molecular dynamics, docking, and electron density calculations
-will be performed using the GPU (via CUDA kernels). If not, the CPU will be used, leveraging thread pools
-and SIMD instructions. It uses all cores available, and either 512-bit, or 256-bit, SIMD instructions, depending
-on CPU capability.
+If an Nvidia GPU of at least RTX 3 series is available, molecular dynamics, docking, and electron density calculations will be performed using the GPU (via CUDA kernels). If not, the CPU will be used, leveraging thread pools and SIMD instructions. It uses all cores available, and either 512-bit, or 256-bit, SIMD instructions, depending on CPU capability.
 
 GPU functionality requires Nvidia driver version 580 or higher.
 
@@ -241,10 +150,11 @@ machine with no Nvidia GPU, no driver, or a driver too old for the CUDA version 
 the program starts normally and reports `Cpu` as its computing device. The separate `nocuda`
 downloads are smaller, and are otherwise equivalent on such machines.
 
+
 ## Molecular dynamics
 
-This application fully integrates classical molecular dynamics setup and playback into the GUI.
-For details, see [the documentation](https://www.athanorlab.com/docs/md.html).
+This application integrates classical molecular dynamics setup and playback into the GUI.
+For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), or GROMACS (if the latter is installed). It uses AMBER, CHARMM, or OPLS force fields, with automatic parameterization.
 
 It supports running MD directly on the following molecule types, without loading any other data:
 
@@ -254,23 +164,21 @@ It supports running MD directly on the following molecule types, without loading
 - Lipids
 - Carbohydrates (WIP)
 
+
 Overview of MD components:
 
-- [Amber parameters](https://ambermd.org/AmberModels.php)
+- [Amber, CHARMM, or OPLS parameters](https://ambermd.org/AmberModels.php)
 - Velocity Verlet integrator
 - [CSVR](https://arxiv.org/pdf/0803.4060) or Langevin Middle thermostats
 - Explicit OPC water model
 - SPME Coulomb forces
 - AM1-BCC partial charges (MBIS if you have ORCA installed)
 
-We use the [Dynamics rust library](https://github.com/david-oconnor/dynamics) for the implementation. You may also wish
-to reference that library's readme.
 
 ## Editing molecules
 
-We provide an editor for small organic molecules. This is fully-3D, and has integrated dynamics, which can be run
-continuously
-while you edit. It ensures the molecules you create are realistic, and take the appropriate shape.
+We provide an editor for small organic molecules. This is fully-3D, and has integrated dynamics, which can be run continuously while you edit. It ensures the molecules you create are realistic, and take the appropriate shape. See the documentation for details on how the editor works.
+
 
 ## The camera
 
@@ -308,8 +216,7 @@ See below for a reference.
 - Hold the **middle mouse button while dragging** to move the camera left, right, up, and down.
 - **Scroll** to move the camera forward and backwards.
 - **Scroll while holding left mouse button** to roll.
-- **Right click
-  ** to select the atom or residue under the cursor. This also selects the molecule to manipulate.
+- **Right click** to select the atom or residue under the cursor. This also selects the molecule to manipulate.
 
 #### Camera hotkeys
 
@@ -344,90 +251,37 @@ See below for a reference.
 - **R**: Rotate a molecule with the mouse and scroll wheel
 
 - **Enter**: Move the camera to the selected atom or residue.
--
-
-**Esc**: Exit move/rotate mode if in one. Otherwise, clear the selection (keeping the molecule active); if nothing is selected, deactivate the active molecule.
+- **Esc**: Exit move/rotate mode if in one. Otherwise, clear the selection (keeping the molecule active); if nothing is selected, deactivate the active molecule.
 
 - **Ctrl + scroll**: Change the fog distance. (hide distant atoms)
-
-- **Delete
-  **: In the primary mode, close the active molecule. In the molecule editor, this deletes the selected atom or
-  bond.
-
+- **Delete**: In the primary mode, close the active molecule. In the molecule editor, this deletes the selected atom or bond.
 - **Enter**: Move the camera to the selected atom, bond, or residue.
-
 - **Tab**: In the molecule editor, add an atom.
 
 Note: The molecule editor has a different set of hot keys; see its tooltips for details.
 
 ![Protein B](screenshots/protein_b.png)
 
+
 ## Reflections and electron density
 
 Supports volumetric and isosurface views for electron density data, e.g. from Cryo-EM and X-Ray crystallography data.
-It can download this data from RCSB PDB, or load files directly. To open *2fo-fc* and
-*MTZ* files, we use the
-[Gemmi](https://gemmi.readthedocs.io/en/latest/install.html) program. For this to work, the
-`gemmi` folder
-we include must remain co-located with the program's executable, or be on the system path. For convenience, we package
-it with the Windows release, and the linux install script optionally installs it with `apt`.
 
-Can import Map files directly, and save load density to Map format.
+It can download this data from RCSB PDB, or load files directly. To open *2fo-fc* and
+*MTZ* files, we use the [Gemmi](https://gemmi.readthedocs.io/en/latest/install.html) program. For this to work, the `gemmi` folder we include must remain co-located with the program's executable, or be on the system path. For convenience, we package it with the Windows release, and the linux install script optionally installs it with `apt`.
+
+It can import Map files directly, and save load density to Map format.
+
 
 ## Pharmacokinetics
 
 Uses neural networks to infer pharmacokinetic properties of arbitrary small molecules,
-using [Therapeutic Data Commons](https://tdcommons.ai/) data.
+using [Therapeutic Data Commons](https://tdcommons.ai/) data. See the docs for details
 
 ## Protein superposition and comparison
 
-Open two proteins, then choose **Compare proteins** beside the view controls. Pick the reference
-and mobile chains; optional selection expressions (including saved names such as `%core`) restrict
-the fitting region. **Superpose** aligns corresponding Cα atoms and moves the entire mobile object
-rigidly. **Compare without moving** calculates the same fit and statistics without applying it.
-The reference stays fixed. Embedded hetero residues move with the mobile protein; separately loaded
-ligands and electron-density maps do not move.
+See the docs for details
 
-Three correspondence methods are available:
-
-- **Sequence
-  alignment** handles substitutions and gaps in related proteins using a global affine-gap
-  alignment of residues with Cα coordinates (match +3, substitution −1, gap opening −5, extension −1).
-- **Residue numbers** pairs matching serial numbers within the chosen chains.
-- **Selected residue order** pairs equal-length selections in residue order.
-
-The fit requires at least three noncollinear pairs and uses a proper rigid rotation, without scaling
-or reflection. Missing Cα atoms are skipped and one alternate conformation is used per residue.
-Optional outlier rejection removes pairs beyond a distance cutoff and refits for up to five cycles.
-The panel reports matched/retained/rejected counts, coverage, sequence identity, RMSD before fitting,
-and RMSD after fitting for both all pairs and the retained fitting pairs. This is a sequence-guided
-comparison workflow, not a sequence-independent fold search or automatic multimer chain assignment.
-Sequence alignment is limited to four million cells; restrict the fitting regions for longer chains.
-
-The deviation plot and residue table help locate structural differences. Click a row to select and
-focus the paired residues, or select all matches, rejected pairs, or pairs above a distance threshold.
-These selections can be saved or given additional representations through **Selections / layers**.
-Comparison layers show the reference in blue and mobile in orange, with each object's default view
-disabled; the layers remain editable. **Undo
-superposition** restores the previous mobile coordinates.
-Results detect closed, edited, or moved structures and require a new comparison before applying a
-stale transform or using stale residue mappings.
-
-**Copy residue CSV** exports the correspondence and deviations; **Copy transform** copies the fitted
-4×4 mobile-to-reference transform. **Export fitted mmCIF** saves all mobile atoms at their fitted
-coordinates, even after a comparison performed without moving. This is a coordinate-only file,
-without the source's experimental metadata or maps. Use this explicit export to retain the fitted pose:
-the ordinary protein Save path preserves the source CIF text. Comparison results and undo history are
-session-local. Superposition applies in the main molecule view with MD paused.
-
-From the CLI, `align mobile_expression, reference_expression` starts the same workflow and opens the
-comparison panel. Each expression must identify Cα atoms from one protein chain, for example:
-
-```text
-align model mobile and chain A, model reference and chain A
-```
-
-The command uses sequence correspondence and the panel's outlier-rejection and comparison-layer settings.
 
 ## PyMol-like Command line interface
 
@@ -464,23 +318,7 @@ Molchanica supports a very limited subset of PyMol's CLI interface. Supported co
 - `select %name`: Recall a named selection. Bare names also work.
 - `delete name`: Delete an unused named selection. References from other selections or layers must be removed first.
 
-Open **Selections /
-layers** beside the view controls to create, recall, update, or delete selections;
-add and edit layers; and toggle each object's default view. Use **Use picked selection** or **Use
-object…**
-to build an expression from the current selection or an object.
-
-Expressions support `and`, `or`, `not`, parentheses, `byres (...)`, and `... within 4 of (...)` (Å).
-`and` binds more tightly than `or`; use parentheses around compound spatial queries.
-Selectors include `model`, `chain`, `resi`, `resn`, `elem`, `name`, `id`, `index`, and `alt`.
-For example, `chain A and resi 10-25+40 and not hydrogen`. `resi` uses residue serial numbers;
-`id` uses atom serial numbers; `index` is a 1-based atom index within each object. Text values accept case-insensitive matching, `*` wildcards, and `+` lists. Quote paths or values containing spaces. `model` matches an object's path, identifier, filename stem, or assigned name.
-
-Convenience selectors include `all`, `none`, `protein`, `nucleic`, `ligand`, `lipid`, `water`,
-`hydrogen`, `backbone`, `sidechain`, and `hetatm`. Comparisons include `charge < 0` and
-`occupancy >= 0.5` (`partial_charge` and `q`, respectively, are aliases). Missing properties do not match.
-`sele` in an expression means the current picked selection; saving a name or adding a layer captures
-those atoms by object identity and atom serial number.
+Supports most selection commands from Pymol, e.g.:
 
 ```text
 select site, byres (protein within 4 of ligand)
@@ -490,14 +328,7 @@ show spheres, ligand
 show surface, protein
 ```
 
-Layers can overlap, with independent visibility, color, opacity, and atom/bond radius. Supported views
-are backbone, sticks, ball-and-stick, spheres, cartoon/ribbon (proteins), surface, and dots. Turn off an object's
-**Default object
-view** to show only its layers. Global view filters apply to the default view; each layer's expression controls its atom set. An object's visibility toggle controls all of its layers. Use the layer editor to hide or delete layers; the CLI's existing `hide` commands still
-control default-view filters.
-
-Named expressions, layers, and default-view toggles are stored in preferences and restored between launches. Named expressions are reevaluated when recalled and when used by layers. Distance-based layers follow moving molecules, and layers referencing a name follow its updates. Closed objects contribute no atoms and can match again when reopened. The object picker uses source paths (identifiers for unsaved objects), so reopening objects in a different order does not retarget saved expressions. Copies sharing a source path match
-the same path selector; use distinct source files to persistently distinguish them. Layers currently apply to the main molecule view; the molecule editor and MD trajectory viewer retain their own rendering controls.
+It also supports building selection commands via the GUI.
 
 ### Camera controls
 
@@ -529,72 +360,14 @@ Molchanica can play back molecular dynamics trajectories run from other programs
 
 ### Adding nucleic acids and lipids
 
-You can add DNA, RNA, and lipids in various configurations without loading files; this program can create
-them procedurally using the GUI. It can create DNA and RNA from a given nucleic acid or amino acid sequence. It
-can create lipids arranged freely, as membrances, or as lipid nanoparticles (LNPs).
+You can add DNA, RNA, and lipids in various configurations without loading files; this program can create them procedurally using the GUI. It can create DNA and RNA from a given nucleic acid or amino acid sequence. It can create lipids arranged freely, as membrances, or as lipid nanoparticles (LNPs).
 
 ### The preferences file, and where Molchanica keeps its data
 
-*molchanica_prefs.mca* is a small binary file containing application state. It's what lets the
-program remember the last file opened, current view settings etc. It will grow with the number of
-molecules you've opened, as it stores per-molecule settings. Deleting it is harmless, other than
-resetting these conveniences.
+*molchanica_prefs.mca* is a small binary file containing application state. It's what lets the program remember the last file opened, current view settings etc. It will grow with the number of molecules you've opened, as it stores per-molecule settings. Deleting it is harmless, other than resetting these conveniences.
 
-Molchanica keeps everything it writes in **one folder: the one its executable is in**. Nothing is
-installed system-wide, and nothing is scattered across the OS's various per-user data locations —
-an install can be found, backed up, moved, or deleted in a single place.
+Molchanica keeps its data in one folder: the one its executable is in.
 
-```text
-<install folder>/
-    molchanica[.exe]         the program itself
-    cufft64_12.dll           the cuFFT library, if your download shipped with it
-    gemmi/                   Gemmi, if your download shipped with it
-    molchanica_prefs.mca     preferences and per-molecule settings
-    managed_molecules/       molecules downloaded or generated in the app
-    gpu_cache/               the graphics pipeline cache
-    process_executables/     optional third-party tools installed from the Tools panel
-        python_envs/<tool>   one isolated Python or Conda environment per Python-backed tool
-    datasets/                PDBbind and similar, when used
-```
-
-The **About** window has an *Open data folder* button that shows this folder in your file browser,
-and displays its path. (The **Tools** panel has the equivalent button for `process_executables/`.)
-
-Where that folder is, per platform:
-
-| Platform | Installed with                            | Folder                                             |
-|----------|-------------------------------------------|----------------------------------------------------|
-| Windows  | `setup_molchanica.ps1`                    | `C:\Users\<you>\AppData\Local\Programs\Molchanica` |
-| Linux    | `setup_molchanica.sh`                     | `~/molchanica`                                     |
-| Any      | No setup script — run the binary in place | Wherever you unzipped or built it                  |
-
-Both setup scripts deliberately install somewhere you can write without administrator or root
-rights, which is what makes this possible. On Windows that means `%LOCALAPPDATA%\Programs` rather
-than `Program Files`; on Linux it means your home directory rather than `/usr/local/bin`.
-
-`managed_molecules/` holds durable source files for molecules that didn't come from your disk:
-RCSB, PubChem, DrugBank, ChEBI, and Amber Geostd downloads, molecules built from SMILES, and
-generated structures. Keeping them as real files on disk is what lets them be restored on the next
-launch the same way a file you opened is.
-
-#### Putting the data somewhere else
-
-Set `MOLCHANICA_DATA_DIR` to move all of the above out of the install folder. This is worth doing
-if you install the optional tools — several are multi-GB — and want them on a different drive.
-Individual tools can be pointed at an existing installation with their own
-`MOLCHANICA_<TOOL>_EXECUTABLE`, `MOLCHANICA_<TOOL>_VENV_DIR`, and `MOLCHANICA_<TOOL>_ROOT`
-variables, which take precedence over everything above.
-
-Two cases resolve elsewhere automatically:
-
-- **Running from a source checkout.** When the executable is inside `target/debug` or
-  `target/release`, the working directory — normally the checkout root — is used instead. `cargo
-  clean` would otherwise delete multi-GB tool installs, and debug and release builds would each
-  keep their own copy.
-- **An install into a read-only location**, such as `Program Files` or a packaged `/usr/bin`.
-  Molchanica falls back to the OS per-user data directory: `%LOCALAPPDATA%\molchanica`,
-  `~/Library/Application Support/molchanica`, or `$XDG_DATA_HOME/molchanica` (defaulting to
-  `~/.local/share/molchanica`). Prefer moving the install somewhere writable over relying on this.
 
 #### Upgrading from an earlier version
 
@@ -608,16 +381,13 @@ alone, so move them yourself or point `MOLCHANICA_DATA_DIR` at the old location.
 
 ### Compiling
 
-This application is written in rust, so it compiles normally using
-`cargo build --release`, which produces a
+This application is written in rust, so it compiles normally using `cargo build --release`, which produces a
 standalone executable.
 
 If you're not compiling on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the
 `--no-default-features` to the build command. This will disable GPU support on the executable produced.
 
-The bundled molecule databases are optional. `hmdb.parquet` and `ChEBI.parquet` in the
-project root are embedded when present; missing files are reported in the molecule database
-popup. Add either file and rebuild to bundle it, or use **Load DB** to open a database at runtime.
+The bundled molecule databases are optional. `hmdb.parquet` and `ChEBI.parquet` in the project root are embedded when present; missing files are reported in the molecule database popup. Add either file and rebuild to bundle it, or use **Load DB** to open a database at runtime.
 
 #### Compiling with GPU support
 
@@ -628,33 +398,6 @@ the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed.
 `cl.exe` or
 similar in the path, e.g.:
 `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64`
-
-### Force-field selection
-
-The selector beside the sidebar's "Edit sets" button chooses Amber, CHARMM36m or OPLS-AA/L.
-Each session starts with Amber for proteins, ligands, lipids, DNA and RNA.
-Changing the selector reassigns types and partial charges on open molecules,
-and updates MD's family, cutoffs, LJ convention and default water model. Newly
-loaded molecules use the same selection. The MD panel shares this selector.
-
-Structural atom names, coordinates and atom ordering are preserved. Amber
-templates remain available for hydrogen placement; Amber-specific analysis and
-editing tools use preparation copies. Switching back restores the loaded Amber
-annotations, including supplied ligand charges.
-
-CHARMM currently builds proteins. OPLS builds proteins and organic ligands.
-Ligands outside the bundled rules are submitted automatically to the official
-LigParGen service on a background worker. Generated atom types, charges and
-complete topologies are cached locally for subsequent offline use. Neutral
-creatine (PubChem 586) also has a complete bundled template.
-
-The public LigParGen service accepts at most 200 atoms including hydrogens and
-five submissions per ten minutes. Further requests wait automatically; the
-selector shows "queued / parameterizing" during generation or this wait. Click
-"unparameterized" to see a failed molecule's actual error, then "Retry" to
-resubmit failed requests. Native MD and GROMACS use the same generated parameters.
-Chemistry the generator cannot handle, and non-Amber lipids/nucleic acids, need
-matching explicit parameters through Dynamics' API.
 
 ### Errata
 
