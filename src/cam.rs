@@ -69,6 +69,30 @@ pub fn set_fog(state: &State, cam: &mut Camera) {
         DepthMode::Auto => set_fog_dist(cam, VIEW_DEPTH_DEFAULT, FOG_HALF_DEPTH_DEFAULT),
         DepthMode::Manual((_, far)) => set_fog_dist(cam, far, FOG_HALF_DEPTH_DEFAULT),
     }
+
+    apply_slab(state, cam);
+}
+
+pub fn apply_slab(state: &State, cam: &mut Camera) -> bool {
+    let planes = state.to_save.inspection.slab.as_ref().filter(|s| s.enabled)
+        .map(|s| s.planes(cam));
+    let (near, far) = planes.unwrap_or_else(|| {
+        let near = match state.to_save.depth_mode {
+            DepthMode::Manual((near, _)) if near != VIEW_DEPTH_NEAR_MIN => near as f32 / 10.,
+            _ => RENDER_DIST_NEAR,
+        };
+
+        (near, RENDER_DIST_FAR)
+    });
+    if cam.near == near && cam.far == far {
+        return false;
+    }
+
+    cam.near = near;
+    cam.far = far;
+    cam.update_proj_mat();
+
+    true
 }
 
 /// From a fog-center distance and half-depth, compute where to place the fog start and end

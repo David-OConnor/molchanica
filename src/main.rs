@@ -22,6 +22,7 @@ mod file_io;
 mod force_fields;
 mod inputs;
 mod inspection;
+mod annotations;
 mod pocket_render;
 mod prefs;
 mod project;

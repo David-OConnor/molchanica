@@ -656,7 +656,11 @@ fn draw_labels(
                                 a.lerp(b, i as f32 / steps as f32),
                                 a.lerp(b, (i + 1).min(steps) as f32 / steps as f32),
                             ],
-                            Stroke::new(1.5, color),
+                            Stroke::new(
+                                crate::ui::measurements::MEASUREMENT_LINE_WIDTH
+                                    * settings.label_scale,
+                                color,
+                            ),
                         );
                     }
                 }
@@ -666,14 +670,14 @@ fn draw_labels(
                         4 => points[1].lerp(points[2], 0.5),
                         _ => points[0].lerp(points[1], 0.5),
                     };
-                    painter.text(
+                    crate::ui::measurements::paint_measurement_text(
+                        painter,
                         anchor - egui::vec2(0., 4.),
-                        Align2::CENTER_BOTTOM,
                         m.label
                             .clone()
                             .unwrap_or_else(|| format!("{:.3} Å", (m.b - m.a).magnitude())),
-                        FontId::proportional(16. * settings.label_scale),
                         color,
+                        settings.label_scale,
                     );
                 }
             }

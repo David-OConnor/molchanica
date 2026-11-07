@@ -40,7 +40,8 @@ use crate::{
     state::{CamSnapshot, OperatingMode, State},
 };
 
-const MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x01";
+const MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x02";
+const LEGACY_MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x01";
 const MAX_BYTES: u64 = 1024 * 1024 * 1024;
 
 fn invalid(message: impl ToString) -> io::Error {
@@ -989,7 +990,7 @@ pub fn load(
     let mut file = fs::File::open(path)?;
     let mut magic = vec![0; MAGIC.len()];
     file.read_exact(&mut magic)?;
-    if magic != MAGIC {
+    if magic != MAGIC && magic != LEGACY_MAGIC {
         return Err(invalid("Unsupported Molchanica project version"));
     }
     let mut bytes = Vec::new();
@@ -1133,6 +1134,7 @@ pub fn load(
     scene.camera.far = project.camera.far;
     project.appearance.apply(state, scene, updates);
     state.ui.inspection.colors = state.to_save.inspection.colors.clone();
+    state.ui.inspection.solid_colors = state.to_save.inspection.solid_colors.clone();
     state.volatile.flags.scene_restored = true;
     state.volatile.flags.new_density_loaded = true;
     updates.entities = EntityUpdate::All;

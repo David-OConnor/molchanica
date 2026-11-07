@@ -637,7 +637,7 @@ impl Default for AaSelection {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
-    pub inspection: crate::inspection::InspectionUi,
+    pub inspection: crate::ui::measurements::InspectionUi,
     pub binding: crate::ui::popup::binding::BindingUi,
     pub protein_comparison: crate::ui::popup::protein_comparison::ProteinComparison,
     pub selection_editor: crate::ui::popup::selections::SelectionEditor,

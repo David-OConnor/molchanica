@@ -96,6 +96,7 @@ enum PacketType {
     Misc = 10,
     SelectionsAndRepresentations = 11,
     Inspection = 12,
+    CommandMacros = 13,
 }
 
 impl PacketType {
@@ -114,6 +115,7 @@ impl PacketType {
             10 => Self::Misc,
             11 => Self::SelectionsAndRepresentations,
             12 => Self::Inspection,
+            13 => Self::CommandMacros,
             _ => return None,
         })
     }
@@ -1347,6 +1349,7 @@ impl UiPrefs {
 impl ToSave {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let mut packets: Vec<(PacketType, Vec<u8>)> = Vec::new();
+        packets.push((PacketType::CommandMacros, bincode::encode_to_vec(&self.command_macros, bincode::config::standard()).map_err(io::Error::other)?));
         packets.push((
             PacketType::Inspection,
             bincode::encode_to_vec(&self.inspection, bincode::config::standard())
@@ -1507,6 +1510,9 @@ impl ToSave {
             };
 
             match packet_type {
+                PacketType::CommandMacros => {
+                    to_save.command_macros = bincode::decode_from_slice(payload, bincode::config::standard().with_limit::<16777216>()).map_err(io::Error::other)?.0;
+                }
                 PacketType::Inspection => {
                     to_save.inspection = bincode::decode_from_slice(
                         payload,

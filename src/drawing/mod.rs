@@ -934,6 +934,12 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 color = colors.color(atom.serial_number);
             }
 
+            if !manip_active && color != COLOR_SELECTED
+                && let Some(color_override) = ui.inspection.solid_colors.get(&object_key).and_then(|c| c.get(&atom.serial_number))
+            {
+                color = (*color_override).into();
+            }
+
             if mode == OperatingMode::Primary
                 && !draw_md_mols
                 && atoms_bonds::is_join_anchor(ui, mol.mol_type(), mol_i, i_atom)
@@ -1219,6 +1225,16 @@ pub fn draw_mol_with_pharmacophore_visibility(
         }
 
         // Apply after selection and molecule tinting, including stick-only views.
+        if !manip_active {
+            for (atom, color) in [(atom_0, &mut color_0), (atom_1, &mut color_1)] {
+                if *color != COLOR_SELECTED
+                    && let Some(override_color) = ui.inspection.solid_colors.get(&object_key).and_then(|c| c.get(&atom.serial_number))
+                {
+                    *color = (*override_color).into();
+                }
+            }
+        }
+
         if mode == OperatingMode::Primary && !draw_md_mols {
             if atoms_bonds::is_join_anchor(ui, mol.mol_type(), mol_i, bond.atom_0) {
                 color_0 = atoms_bonds::COLOR_JOIN_ANCHOR;

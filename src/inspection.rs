@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use bincode::{Decode, Encode};
-use egui::{Align2, Color32, ComboBox, FontId, Pos2, Stroke};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{MolGenericRef, MolType, peptide::MoleculePeptide};
@@ -16,7 +15,6 @@ use crate::{
         expression::{self, NamedSelection},
     },
     state::{LabelSizes, ResColoring, State, Visibility},
-    util::RedrawFlags,
 };
 
 #[derive(Clone, Debug, PartialEq, Encode, Decode)]
@@ -80,11 +78,45 @@ impl MeasureKind {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Distance => "Distance",
             Self::Angle => "Angle",
             Self::Dihedral => "Dihedral",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Encode, Decode)]
+pub enum AngleUnit {
+    #[default]
+    Degrees,
+    Radians,
+    Turns,
+}
+
+impl AngleUnit {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Degrees => "Degrees",
+            Self::Radians => "Radians",
+            Self::Turns => "Turns",
+        }
+    }
+
+    fn format(self, kind: MeasureKind, value: f64) -> String {
+        if kind == MeasureKind::Distance {
+            return format!("{value:.2} Å");
+        }
+
+        match self {
+            Self::Degrees => format!("{value:.2}°"),
+            Self::Radians => format!("{:.3} rad", value.to_radians()),
+            Self::Turns => {
+                let turns = value.rem_euclid(360.) / 360.;
+
+                format!("{:.4} turn", if turns == 0. { 0. } else { turns })
+            }
         }
     }
 }
@@ -144,16 +176,7 @@ impl Measurement {
     pub fn label(&self, state: &State) -> String {
         self.points(state)
             .and_then(|p| measure(self.kind, &p))
-            .map(|v| {
-                format!(
-                    "{v:.2}{}",
-                    if self.kind == MeasureKind::Distance {
-                        " Å"
-                    } else {
-                        "°"
-                    }
-                )
-            })
+            .map(|v| state.to_save.inspection.angle_unit.format(self.kind, v))
             .unwrap_or_else(|| "Unavailable".into())
     }
 }
@@ -228,14 +251,92 @@ impl ScalarColor {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Inspection {
     pub measurements: Vec<Measurement>,
     pub colors: Vec<ScalarColor>,
+    pub angle_unit: AngleUnit,
+    pub labels: Vec<crate::annotations::SelectionLabel>,
+    pub slab: Option<crate::annotations::Slab>,
+    pub solid_colors: BTreeMap<String, BTreeMap<u32, [f32; 3]>>,
 }
+
+impl Encode for Inspection {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        u64::MAX.encode(encoder)?;
+        2u8.encode(encoder)?;
+        self.angle_unit.encode(encoder)?;
+        self.measurements.encode(encoder)?;
+
+        self.colors.encode(encoder)?;
+        self.labels.encode(encoder)?;
+        self.slab.encode(encoder)?;
+
+        self.solid_colors.encode(encoder)
+    }
+}
+
+impl<Context> Decode<Context> for Inspection {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let marker = u64::decode(decoder)?;
+        if marker == u64::MAX {
+            let version = u8::decode(decoder)?;
+            if !(1..=2).contains(&version) {
+                return Err(bincode::error::DecodeError::Other(
+                    "Unsupported inspection version",
+                ));
+            }
+
+            let mut result = Self {
+                angle_unit: AngleUnit::decode(decoder)?,
+                measurements: Vec::decode(decoder)?,
+                colors: Vec::decode(decoder)?,
+                ..Default::default()
+            };
+            if version >= 2 {
+                result.labels = Vec::decode(decoder)?;
+                result.slab = Option::decode(decoder)?;
+                result.solid_colors = BTreeMap::decode(decoder)?;
+            }
+
+            return Ok(result);
+        }
+
+        // Legacy inspection data starts with the measurement count.
+        let count = usize::try_from(marker)
+            .map_err(|_| bincode::error::DecodeError::OutsideUsizeRange(marker))?;
+        decoder.claim_container_read::<Measurement>(count)?;
+        let mut measurements = Vec::with_capacity(count);
+        for _ in 0..count {
+            decoder.unclaim_bytes_read(std::mem::size_of::<Measurement>());
+            measurements.push(Measurement::decode(decoder)?);
+        }
+
+        Ok(Self {
+            measurements,
+            colors: Vec::decode(decoder)?,
+            angle_unit: AngleUnit::Degrees,
+            ..Default::default()
+        })
+    }
+}
+
+bincode::impl_borrow_decode!(Inspection);
 
 impl Inspection {
     pub fn validate(&self) -> Result<(), String> {
+        if self.labels.iter().any(|l| l.atoms.is_empty() || l.offset.iter().any(|v| !v.is_finite()))
+            || self.slab.as_ref().is_some_and(|s| !s.anchor.x.is_finite() || !s.anchor.y.is_finite() || !s.anchor.z.is_finite() || !s.offset.is_finite() || !s.thickness.is_finite() || !(0.1..=10000.).contains(&s.thickness))
+            || self.solid_colors.values().flat_map(|m| m.values()).flatten().any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+        {
+            return Err("Invalid labels, slab, or atom colors".into());
+        }
+
         if self
             .measurements
             .iter()
@@ -258,20 +359,6 @@ impl Inspection {
     }
 }
 
-#[derive(Default)]
-pub struct InspectionUi {
-    pub colors: Vec<ScalarColor>,
-    pub open: bool,
-    pub kind: MeasureKind,
-    pub pending: Vec<AtomRef>,
-    pub picking: bool,
-    pub message: String,
-    pub csv: String,
-    pub csv_name: String,
-    pub trajectory_pick: Option<AtomRef>,
-    pub import: egui_file_dialog::FileDialog,
-}
-
 pub fn color_for<'a>(state: &'a State, mol: &MolGenericRef<'_>) -> Option<&'a ScalarColor> {
     let key = expression::object_key(mol);
 
@@ -282,6 +369,32 @@ pub fn color_for<'a>(state: &'a State, mol: &MolGenericRef<'_>) -> Option<&'a Sc
         .iter()
         .rev()
         .find(|c| c.enabled && c.object == key)
+}
+
+pub fn solid_color(state: &State, mol: &MolGenericRef<'_>, serial: u32) -> Option<(f32, f32, f32)> {
+    state.to_save.inspection.solid_colors.get(&expression::object_key(mol))?
+        .get(&serial).copied().map(Into::into)
+}
+
+pub fn color_selection(state: &mut State, input: &str, color: [f32; 3]) -> Result<usize, String> {
+    let selected = expression::evaluate(state, input)?;
+    let mut updates = Vec::new();
+    for s in selected {
+        let Some(mol) = state.get_mol(s.mol_type, s.mol_i) else { continue };
+        let ids: Vec<_> = s.atoms.iter().map(|&i| mol.common().atoms[i].serial_number).collect();
+        updates.push((expression::object_key(&mol), ids));
+    }
+    let count = updates.iter().map(|(_, ids)| ids.len()).sum();
+    for (key, ids) in updates {
+        let colors = state.to_save.inspection.solid_colors.entry(key).or_default();
+        colors.extend(ids.into_iter().map(|id| (id, color)));
+    }
+    state.ui.inspection.solid_colors = state.to_save.inspection.solid_colors.clone();
+    state.volatile.flags.update_ss_mesh = true;
+    state.volatile.flags.update_sas_coloring = true;
+    state.to_save.save_flag = true;
+
+    Ok(count)
 }
 
 pub fn residue_colors(state: &State, mol: &MoleculePeptide) -> Vec<Option<(f32, f32, f32)>> {
@@ -305,19 +418,27 @@ pub fn residue_colors(state: &State, mol: &MoleculePeptide) -> Vec<Option<(f32, 
         }
     }
 
+    if let Some(colors) = state.to_save.inspection.solid_colors.get(&expression::object_key(&MolGenericRef::Peptide(mol))) {
+        result.resize(mol.residues.len(), None);
+        for (i, residue) in mol.residues.iter().enumerate() {
+            if let Some(color) = residue.atoms.iter().filter_map(|&a| colors.get(&mol.common.atoms[a].serial_number)).next() {
+                result[i] = Some((*color).into());
+            }
+        }
+    }
+
     result
 }
 
 pub fn atom_colors(state: &State, mol: &MolGenericRef<'_>) -> Vec<(f32, f32, f32)> {
-    color_for(state, mol)
-        .map(|c| {
-            mol.common()
-                .atoms
-                .iter()
-                .map(|a| c.color(a.serial_number))
-                .collect()
-        })
-        .unwrap_or_default()
+    let scalar = color_for(state, mol);
+    if scalar.is_none() && !state.to_save.inspection.solid_colors.contains_key(&expression::object_key(mol)) {
+        return Vec::new();
+    }
+
+    mol.common().atoms.iter().map(|a| solid_color(state, mol, a.serial_number)
+        .or_else(|| scalar.map(|c| c.color(a.serial_number)))
+        .unwrap_or(a.element.color())).collect()
 }
 
 // CIF tokens retain quoted identifiers and semicolon text fields.
@@ -534,7 +655,7 @@ pub fn import_values(mol: &MolGenericRef<'_>, text: &str) -> Result<BTreeMap<u32
     Ok(result)
 }
 
-fn add_colors(
+pub(crate) fn add_colors(
     state: &mut State,
     title: String,
     values: BTreeMap<u32, f32>,
@@ -586,6 +707,7 @@ fn add_colors(
     });
     state.to_save.save_flag = true;
     state.ui.aa_selection.enabled = false;
+    state.ui.atom_color_by_charge = false;
 
     Ok(())
 }
@@ -737,307 +859,6 @@ pub fn pick_atom(state: &mut State, scene: &Scene, cursor: (f32, f32)) {
             atoms: vec![atom],
         }]);
         capture_pick(state);
-    }
-}
-
-pub fn paint_measurements(
-    measurements: &[Measurement],
-    state: &State,
-    camera: &graphics::Camera,
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    scale: f32,
-) {
-    let project = |p: Vec3| {
-        let (visible, ndc) = camera.in_view(p.into());
-        visible.then_some(Pos2::new(
-            rect.left() + (ndc.0 + 1.) * 0.5 * rect.width(),
-            rect.top() + (1. - ndc.1) * 0.5 * rect.height(),
-        ))
-    };
-    for measurement in measurements.iter().filter(|m| m.visible) {
-        let Some(points) = measurement.points(state) else {
-            continue;
-        };
-        let projected: Option<Vec<_>> = points.iter().map(|&p| project(p)).collect();
-        let Some(projected) = projected else {
-            continue;
-        };
-        let color = Color32::from_rgb(
-            measurement.color[0],
-            measurement.color[1],
-            measurement.color[2],
-        );
-        for pair in projected.windows(2) {
-            let steps = ((pair[1] - pair[0]).length() / 6.).ceil().clamp(1., 2000.) as usize;
-            for i in (0..steps).step_by(2) {
-                painter.line_segment(
-                    [
-                        pair[0].lerp(pair[1], i as f32 / steps as f32),
-                        pair[0].lerp(pair[1], (i + 1).min(steps) as f32 / steps as f32),
-                    ],
-                    Stroke::new(1.5, color),
-                );
-            }
-        }
-        let anchor = match measurement.kind {
-            MeasureKind::Angle => projected[1],
-            MeasureKind::Dihedral => projected[1].lerp(projected[2], 0.5),
-            MeasureKind::Distance => projected[0].lerp(projected[1], 0.5),
-        };
-        painter.text(
-            anchor - egui::vec2(0., 8.),
-            Align2::CENTER_BOTTOM,
-            format!("{}: {}", measurement.name, measurement.label(state)),
-            FontId::proportional(15. * scale),
-            color,
-        );
-    }
-}
-
-pub fn show(state: &mut State, ctx: &egui::Context, redraw: &mut RedrawFlags) {
-    if !state.ui.inspection.open {
-        return;
-    }
-
-    let before = state.to_save.inspection.clone();
-    let mut open = true;
-    egui::Window::new("Measurements / property colors")
-        .open(&mut open)
-        .default_width(520.)
-        .vscroll(true)
-        .show(ctx, |ui| controls(state, ui, ctx));
-    state.ui.inspection.open = open;
-    if before != state.to_save.inspection {
-        if let Err(error) = state.to_save.inspection.validate() {
-            state.ui.inspection.message = error;
-            state.to_save.inspection = before;
-        }
-        state.ui.inspection.colors = state.to_save.inspection.colors.clone();
-        state.to_save.save_flag = true;
-        state.volatile.flags.update_ss_mesh = true;
-        state.volatile.flags.update_sas_coloring = true;
-        redraw.set_all();
-    }
-}
-
-fn controls(state: &mut State, ui: &mut egui::Ui, ctx: &egui::Context) {
-    ui.heading("Live measurements");
-    ui.horizontal(|ui| {
-        for kind in [
-            MeasureKind::Distance,
-            MeasureKind::Angle,
-            MeasureKind::Dihedral,
-        ] {
-            if ui
-                .selectable_value(&mut state.ui.inspection.kind, kind, kind.name())
-                .changed()
-            {
-                state.ui.inspection.pending.clear();
-            }
-        }
-        if ui.button("Pick atoms").clicked() {
-            state.ui.inspection.pending.clear();
-            state.ui.inspection.picking = true;
-            state.ui.view_sel_level = ViewSelLevel::AtomBond;
-        }
-        if ui.button("Cancel").clicked() {
-            state.ui.inspection.pending.clear();
-            state.ui.inspection.picking = false;
-        }
-    });
-    if state.ui.inspection.picking {
-        ui.label(format!(
-            "Right-click atoms in order: {} / {}",
-            state.ui.inspection.pending.len(),
-            state.ui.inspection.kind.count()
-        ));
-    }
-    let labels: Vec<_> = state
-        .to_save
-        .inspection
-        .measurements
-        .iter()
-        .map(|m| m.label(state))
-        .collect();
-    let mut delete = None;
-    for (i, measurement) in state.to_save.inspection.measurements.iter_mut().enumerate() {
-        ui.push_id(i, |ui| {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut measurement.visible, "");
-                ui.add(egui::TextEdit::singleline(&mut measurement.name).desired_width(130.));
-                ui.color_edit_button_srgb(&mut measurement.color);
-                ui.label(&labels[i]);
-                if ui.button("Delete").clicked() {
-                    delete = Some(i);
-                }
-            })
-        });
-    }
-    if let Some(i) = delete {
-        state.to_save.inspection.measurements.remove(i);
-    }
-    ui.separator();
-    ui.heading("Property colors");
-    if let Some(mol) = state.active_mol() {
-        ui.label(mol.name().into_owned());
-    } else {
-        ui.label("Select a molecule to load colors.");
-    }
-    ui.horizontal(|ui| {
-        for (title, confidence) in [("B-factor", false), ("Confidence (pLDDT)", true)] {
-            if ui.button(title).clicked() {
-                let values = state
-                    .active_mol()
-                    .and_then(|m| match m {
-                        MolGenericRef::Peptide(p) => p.source_cif.as_deref().map(b_factors),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                state.ui.inspection.message = add_colors(state, title.into(), values, confidence)
-                    .err()
-                    .unwrap_or_default();
-            }
-        }
-    });
-    ui.small(
-        "Confidence uses the source B column as pLDDT; use it only for prediction confidence.",
-    );
-    ui.collapsing("Import values (CSV / TSV)", |ui| import_controls(state, ui));
-    state.ui.inspection.import.update(ctx);
-    if let Some(path) = state.ui.inspection.import.take_picked() {
-        match std::fs::read_to_string(path) {
-            Ok(text) => state.ui.inspection.csv = text,
-            Err(e) => state.ui.inspection.message = e.to_string(),
-        }
-    }
-    for (i, colors) in state.to_save.inspection.colors.iter_mut().enumerate() {
-        ui.push_id(("colors", i), |ui| {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut colors.enabled, &colors.title);
-                ui.label(format!("{} values", colors.values.len()));
-            });
-            ui.horizontal(|ui| {
-                let previous_palette = colors.palette;
-                ComboBox::from_id_salt("palette")
-                    .selected_text(format!("{:?}", colors.palette))
-                    .show_ui(ui, |ui| {
-                        for p in [Palette::Viridis, Palette::BlueWhiteRed, Palette::Confidence] {
-                            ui.selectable_value(&mut colors.palette, p, format!("{p:?}"));
-                        }
-                    });
-                if previous_palette != colors.palette && colors.palette == Palette::Confidence {
-                    colors.minimum = 0.;
-                    colors.maximum = 100.;
-                }
-
-                let continuous = colors.palette != Palette::Confidence;
-                ui.add_enabled(
-                    continuous,
-                    egui::DragValue::new(&mut colors.minimum).prefix("Min "),
-                );
-                ui.add_enabled(
-                    continuous,
-                    egui::DragValue::new(&mut colors.maximum).prefix("Max "),
-                );
-                if ui
-                    .add_enabled(continuous, egui::Button::new("Auto range"))
-                    .clicked()
-                {
-                    colors.minimum = colors
-                        .values
-                        .values()
-                        .copied()
-                        .fold(f32::INFINITY, f32::min);
-                    colors.maximum = colors
-                        .values
-                        .values()
-                        .copied()
-                        .fold(f32::NEG_INFINITY, f32::max);
-                }
-                ui.color_edit_button_rgb(&mut colors.missing);
-            });
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(240., 12.), egui::Sense::hover());
-            for x in 0..120 {
-                let (r, g, b) = colors.color_value(
-                    colors.minimum + (colors.maximum - colors.minimum) * x as f32 / 119.,
-                );
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_size(
-                        rect.min + egui::vec2(x as f32 * 2., 0.),
-                        egui::vec2(2., 12.),
-                    ),
-                    0.,
-                    Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8),
-                );
-            }
-            ui.label(format!(
-                "{}   {:.2} → {:.2}",
-                colors.object, colors.minimum, colors.maximum
-            ));
-        });
-    }
-    if !state.ui.inspection.message.is_empty() {
-        ui.colored_label(Color32::YELLOW, &state.ui.inspection.message);
-    }
-}
-
-fn import_controls(state: &mut State, ui: &mut egui::Ui) {
-    ui.small("atom_serial,value or chain,residue,value. Use loaded structure numbering.");
-    ui.add(egui::TextEdit::singleline(&mut state.ui.inspection.csv_name).hint_text("Dataset name"));
-    ui.add(
-        egui::TextEdit::multiline(&mut state.ui.inspection.csv)
-            .hint_text("atom_serial,value\n1,25.0\n2,31.5")
-            .desired_rows(5),
-    );
-
-    if ui.button("Load values file").clicked() {
-        state.ui.inspection.import.pick_file();
-    }
-    if ui.button("Apply values").clicked() {
-        let result = state
-            .active_mol()
-            .ok_or_else(|| "Select a molecule first".to_string())
-            .and_then(|mol| import_values(&mol, &state.ui.inspection.csv));
-        let title = if state.ui.inspection.csv_name.trim().is_empty() {
-            "Imported values".into()
-        } else {
-            state.ui.inspection.csv_name.clone()
-        };
-
-        state.ui.inspection.message = result
-            .and_then(|values| add_colors(state, title, values, false))
-            .err()
-            .unwrap_or_default();
-    }
-}
-
-pub fn paint(state: &State, scene: &Scene, ctx: &egui::Context) {
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Background,
-        egui::Id::new("live_measurements"),
-    ));
-    paint_measurements(
-        &state.to_save.inspection.measurements,
-        state,
-        &scene.camera,
-        &painter,
-        ctx.content_rect(),
-        1.,
-    );
-    if state.ui.inspection.picking {
-        painter.text(
-            ctx.content_rect().center_bottom() - egui::vec2(0., 30.),
-            Align2::CENTER_BOTTOM,
-            format!(
-                "{}: right-click atoms ({}/{}) · Esc cancels",
-                state.ui.inspection.kind.name(),
-                state.ui.inspection.pending.len(),
-                state.ui.inspection.kind.count()
-            ),
-            FontId::proportional(17.),
-            Color32::from_rgb(255, 220, 80),
-        );
     }
 }
 
@@ -1230,6 +1051,7 @@ impl SceneState {
         state.to_save.hidden_default_objects = self.hidden_defaults.clone();
         state.to_save.inspection = self.inspection.clone();
         state.ui.inspection.colors = self.inspection.colors.clone();
+        state.ui.inspection.solid_colors = self.inspection.solid_colors.clone();
         state.ui.density_iso_level = self.density_iso;
         state.to_save.depth_mode = if let Some(v) = self.depth {
             DepthMode::Manual(v)

@@ -181,6 +181,10 @@ pub fn add(state: &mut State, expression: &str, view: MoleculeView) -> Result<us
         return Err("Cartoon layers require a protein selection".into());
     }
     let count = atoms.iter().map(|a| a.atoms.len()).sum();
+    if state.to_save.representations.iter().any(|l| l.view == view && l.expression == expression && l.visible) {
+        return Ok(count);
+    }
+
     state
         .to_save
         .representations
@@ -189,11 +193,113 @@ pub fn add(state: &mut State, expression: &str, view: MoleculeView) -> Result<us
     Ok(count)
 }
 
+/// Materialize affected defaults so selection edits also apply to the base view.
+fn materialize_defaults(state: &mut State, selected: &[crate::selection::MoleculeAtoms], view: Option<MoleculeView>) {
+    let mut layers = Vec::new();
+    let mut hidden = Vec::new();
+    for s in selected {
+        let Some(mol) = state.get_mol(s.mol_type, s.mol_i) else { continue };
+        if !default_visible(state, &mol) { continue; }
+
+        let default = if s.mol_type == MolType::Peptide { state.ui.mol_view_peptide } else { state.ui.mol_view };
+        if view.is_some_and(|v| v != default) { continue; }
+
+        let mut members = Vec::new();
+        let mut hetero = Vec::new();
+        for (i, atom) in mol.common().atoms.iter().enumerate() {
+            let vis = &state.ui.visibility;
+            if (vis.hide_hydrogen && atom.element == Element::Hydrogen)
+                || (s.mol_type == MolType::Peptide && ((vis.hide_hetero && atom.hetero)
+                    || (vis.hide_protein && !atom.hetero)
+                    || (vis.hide_water && atom.role == Some(mol_defs::molecules::AtomRole::Water))
+                    || (vis.hide_sidechains && !atom.hetero && !atom.is_backbone()))) {
+                continue;
+            }
+            if let MolGenericRef::Peptide(p) = &mol
+                && atom.chain.and_then(|c| p.chains.get(c)).is_some_and(|c| !c.visible) { continue; }
+
+            if s.mol_type == MolType::Peptide && atom.hetero && default == MoleculeView::Ribbon {
+                hetero.push(i);
+            } else {
+                members.push(i);
+            }
+        }
+        for (atoms, view) in [(members, default), (hetero, state.ui.mol_view)] {
+            if atoms.is_empty() { continue; }
+
+            let expression = expression::snapshot(state, &[crate::selection::MoleculeAtoms { mol_type: s.mol_type, mol_i: s.mol_i, atoms }]);
+            layers.push(Representation::new(expression, view));
+        }
+        hidden.push(object_key(&mol));
+    }
+    state.to_save.hidden_default_objects.extend(hidden);
+    state.to_save.representations.extend(layers);
+}
+
+pub fn hide(state: &mut State, input: &str, view: Option<MoleculeView>) -> Result<usize, String> {
+    let selected = expression::evaluate(state, input)?;
+    let count = selected.iter().map(|s| s.atoms.len()).sum();
+    if count == 0 { return Ok(0); }
+
+    materialize_defaults(state, &selected, view);
+    let target = expression::snapshot(state, &selected);
+    let mut replacements = Vec::new();
+    for (i, layer) in state.to_save.representations.iter().enumerate() {
+        if view.is_some_and(|v| v != layer.view) { continue; }
+
+        let remaining = expression::evaluate(state, &format!("({}) and not ({target})", layer.expression))?;
+        replacements.push((i, expression::snapshot(state, &remaining)));
+    }
+    for (i, expression) in replacements {
+        state.to_save.representations[i].expression = expression;
+    }
+    state.to_save.representations.retain(|l| l.expression != "none");
+    state.volatile.flags.update_ss_mesh = true;
+    state.to_save.save_flag = true;
+
+    Ok(count)
+}
+
+pub fn replace(state: &mut State, input: &str, view: MoleculeView) -> Result<usize, String> {
+    let selected = expression::evaluate(state, input)?;
+    if view == MoleculeView::Ribbon && selected.iter().any(|s| s.mol_type != MolType::Peptide) {
+        return Err("Cartoon layers require a protein selection".into());
+    }
+
+    let snapshot = expression::snapshot(state, &selected);
+    hide(state, &snapshot, None)?;
+
+    add(state, &snapshot, view)
+}
+
+pub fn recolor(state: &mut State, input: &str, color: [f32; 3]) -> Result<usize, String> {
+    let selected = expression::evaluate(state, input)?;
+    let target = expression::snapshot(state, &selected);
+    let mut layers = Vec::new();
+    for layer in &state.to_save.representations {
+        if layer.color.is_none() { layers.push(layer.clone()); continue; }
+
+        for (expr, color) in [(format!("({}) and not ({target})", layer.expression), layer.color), (format!("({}) and ({target})", layer.expression), Some(color))] {
+            let atoms = expression::evaluate(state, &expr)?;
+            if atoms.is_empty() { continue; }
+
+            let mut part = layer.clone();
+            part.expression = expression::snapshot(state, &atoms);
+            part.color = color;
+            layers.push(part);
+        }
+    }
+    state.to_save.representations = layers;
+
+    crate::inspection::color_selection(state, &target, color)
+}
+
 fn fingerprint(state: &State) -> u64 {
     let mut hash = DefaultHasher::new();
     format!("{:?}", state.to_save.named_selections).hash(&mut hash);
     format!("{:?}", state.to_save.representations).hash(&mut hash);
     format!("{:?}", state.to_save.inspection.colors).hash(&mut hash);
+    format!("{:?}", state.to_save.inspection.solid_colors).hash(&mut hash);
     state.to_save.sa_surface_precision.to_bits().hash(&mut hash);
     for (kind, i, mol) in expression::objects(state) {
         (kind as u8).hash(&mut hash);
@@ -318,6 +424,8 @@ fn draw_layer(
             continue;
         }
         let scalar_colors = crate::inspection::color_for(state, &mol);
+        let atom_color = |serial, fallback| crate::inspection::solid_color(state, &mol, serial)
+            .or_else(|| scalar_colors.map(|c| c.color(serial))).unwrap_or(fallback);
         let mut mask = vec![false; common.atoms.len()];
         for &a in &selected.atoms {
             mask[a] = true;
@@ -398,13 +506,13 @@ fn draw_layer(
             }
             let mut mesh = make_sas_mesh(&atoms, SOLVENT_RAD, precision);
             if layer.color.is_none()
-                && let Some(colors) = scalar_colors
+                && (scalar_colors.is_some() || state.to_save.inspection.solid_colors.contains_key(&object_key(&mol)))
             {
                 let subset = common.subset(&selected.atoms).map_err(|e| e.to_string())?;
                 let atom_colors: Vec<_> = subset
                     .atoms
                     .iter()
-                    .map(|a| colors.color(a.serial_number))
+                    .map(|a| atom_color(a.serial_number, a.element.color()))
                     .collect();
                 let mapped = crate::sfc_mesh::get_mesh_colors_with_atoms(
                     &mesh,
@@ -465,10 +573,8 @@ fn draw_layer(
                     ATOM_SHININESS,
                 );
                 style_entity(&mut entity, layer);
-                if layer.color.is_none()
-                    && let Some(colors) = scalar_colors
-                {
-                    entity.color = colors.color(atom.serial_number);
+                if layer.color.is_none() {
+                    entity.color = atom_color(atom.serial_number, atom.element.color());
                 }
                 entities.push(entity);
             }
@@ -499,9 +605,7 @@ fn draw_layer(
                 .unwrap_or(position(a));
             let color = |i: usize| {
                 layer.color.map(|[r, g, b]| (r, g, b)).unwrap_or_else(|| {
-                    scalar_colors
-                        .map(|c| c.color(common.atoms[i].serial_number))
-                        .unwrap_or(common.atoms[i].element.color())
+                    atom_color(common.atoms[i].serial_number, common.atoms[i].element.color())
                 })
             };
             let mut bonds = bond_entities(

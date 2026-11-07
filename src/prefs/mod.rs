@@ -300,6 +300,7 @@ impl Default for UiPrefs {
 /// but are here due to our save mechanic.
 #[derive(Clone, PartialEq)]
 pub struct ToSave {
+    pub command_macros: Vec<crate::cli::scripts::CommandMacro>,
     pub inspection: crate::inspection::Inspection,
     pub named_selections: Vec<crate::selection::expression::NamedSelection>,
     pub representations: Vec<crate::drawing::representations::Representation>,
@@ -335,6 +336,7 @@ pub struct ToSave {
 impl Default for ToSave {
     fn default() -> Self {
         Self {
+            command_macros: Vec::new(),
             named_selections: Vec::new(),
             inspection: Default::default(),
             representations: Vec::new(),
@@ -687,6 +689,7 @@ impl State {
     /// Run this when prefs, or a new molecule are loaded.
     pub fn update_from_prefs(&mut self) {
         self.ui.inspection.colors = self.to_save.inspection.colors.clone();
+        self.ui.inspection.solid_colors = self.to_save.inspection.solid_colors.clone();
         println!("Updating state from prefs data");
         self.reset_selections();
 

@@ -14,6 +14,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
+    thread,
     time::{Duration, Instant},
 };
 
@@ -346,8 +347,9 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
     {
         let (tx, rx) = mpsc::channel();
         p.save_rx = Some(rx);
-        p.status = "Writing PNG…".into();
-        std::thread::spawn(move || {
+        p.status = "Writing PNG...".into();
+
+        thread::spawn(move || {
             let result = figure.save(&path).map(|()| path);
             let _ = tx.send(result);
         });
@@ -531,10 +533,12 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
                         let settings = p.library.settings.clone();
                         let mut measurements = p.measurements.clone();
                         measurements.extend(live_measurements.clone());
+
                         let prefs_path = prefs_dir.join("figure_styles.json");
                         let prefs_bytes = serde_json::to_vec_pretty(&p.library);
                         let (tx, rx) = mpsc::channel();
                         let cancel = Arc::new(AtomicBool::new(false));
+
                         p.render_cancel = Some(cancel.clone());
                         p.render_started = Some(Instant::now());
                         p.render_rx = Some(rx);
@@ -543,12 +547,14 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
                         p.status = "Preparing figure in a separate process…".into();
                         let repaint = ctx.clone();
                         ctx.request_repaint();
+
                         if let Ok(bytes) = prefs_bytes {
-                            std::thread::spawn(move || {
+                           thread::spawn(move || {
                                 let _ = atomic_write(&prefs_path, &bytes);
                             });
                         }
-                        std::thread::spawn(move || {
+
+                        thread::spawn(move || {
                             // Disk sync, serialization, GPU initialization and mesh generation
                             // must never run inside the UI callback.
                             let result = std::panic::catch_unwind(

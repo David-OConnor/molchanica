@@ -522,7 +522,7 @@ fn text_matches(pattern: &str, text: &str) -> bool {
     })
 }
 
-fn atom_name(atom: &Atom) -> String {
+pub(crate) fn atom_name(atom: &Atom) -> String {
     atom.type_in_res_general
         .clone()
         .or_else(|| atom.type_in_res.as_ref().map(ToString::to_string))
@@ -573,7 +573,7 @@ fn polymer_backbone(atom: &Atom, protein: bool, nucleic: bool) -> bool {
         )
 }
 
-fn residue_name(residue: &Residue) -> String {
+pub(crate) fn residue_name(residue: &Residue) -> String {
     match &residue.res_type {
         ResidueType::AminoAcid(aa) => aa.to_str(na_seq::AaIdent::ThreeLetters).to_string(),
         ResidueType::Water => "HOH".into(),
@@ -1373,7 +1373,11 @@ pub fn current_atoms(state: &State) -> Vec<MoleculeAtoms> {
 }
 
 pub fn current_expression(state: &State) -> String {
-    let parts: Vec<_> = current_atoms(state)
+    snapshot(state, &current_atoms(state))
+}
+
+pub fn snapshot(state: &State, atoms: &[MoleculeAtoms]) -> String {
+    let parts: Vec<_> = atoms
         .iter()
         .filter_map(|s| {
             let mol = state.get_mol(s.mol_type, s.mol_i)?;

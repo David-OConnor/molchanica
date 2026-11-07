@@ -54,6 +54,7 @@ use crate::{
     },
 };
 
+pub(crate) mod measurements;
 pub mod misc;
 pub mod mol_editor;
 mod mol_type_tools;
@@ -507,35 +508,7 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
     // Buttons to alter the color profile, e.g. for res position, or partial charge.
     ui.add_space(COL_SPACING / 2.);
     match state.ui.view_sel_level {
-        ViewSelLevel::AtomBond => {
-            let color = if state.ui.atom_color_by_charge {
-                COLOR_ACTIVE
-            } else {
-                COLOR_INACTIVE
-            };
-
-            if ui
-                .button(RichText::new("Color by q").color(color))
-                .on_hover_text(
-                    "Color the atom by partial charge, instead of element-specific colors",
-                )
-                .clicked()
-            {
-                state.ui.atom_color_by_charge = !state.ui.atom_color_by_charge;
-                state.ui.view_sel_level = ViewSelLevel::AtomBond;
-
-                if !state.peptides.is_empty() {
-                    state.volatile.flags.update_sas_coloring = true;
-                }
-
-                if state.ui.mol_view_peptide == MoleculeView::Ribbon {
-                    state.volatile.flags.update_ss_mesh = true;
-                } else {
-                    state.volatile.flags.ss_mesh_dirty = true;
-                }
-                *redraw = true;
-            }
-        }
+        ViewSelLevel::AtomBond => (),
         ViewSelLevel::Residue => {
             let prev = state.ui.res_coloring;
             ComboBox::from_id_salt(11)
@@ -1178,7 +1151,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         updates.lighting = true;
     }
 
-    crate::inspection::show(state, ui.ctx(), &mut redraw);
+    measurements::show(state, ui.ctx(), &mut redraw);
     let scene_restored = std::mem::take(&mut state.volatile.flags.scene_restored);
     if scene_restored {
         redraw.set_all();
@@ -1209,7 +1182,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         crate::md::viewer::draw_mols(state, scene, &mut updates);
     }
     crate::drawing::representations::update(state, scene, &mut updates);
-    crate::inspection::paint(state, scene, ui.ctx());
+    measurements::paint(state, scene, ui.ctx(), updates.ui_reserved_px);
 
     // Capture after pending geometry updates, so the figure reflects this frame's scene.
     crate::publication::show(state, scene, ui.ctx());
