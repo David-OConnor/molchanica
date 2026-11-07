@@ -178,8 +178,9 @@ impl ForceFields {
         for (topology, result) in completed {
             self.gfnff_jobs.remove(&topology);
             self.gfnff_results.insert(topology, result);
-            self.assignments
-                .retain(|_, a| a.family != ForceFieldFamily::Gfnn || (a.topology != topology && !a.pending));
+            self.assignments.retain(|_, a| {
+                a.family != ForceFieldFamily::Gfnn || (a.topology != topology && !a.pending)
+            });
             self.dirty = true;
         }
     }
@@ -742,7 +743,9 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
         .show_ui(ui, |ui| {
             for value in [
                 ForceFieldFamily::Amber,
-                ForceFieldFamily::Charmm36,
+                // Commented out: Charmm currently requires manually-loaded force fields, and I haven't tested it. The
+                // others work in a simple manner.
+                // ForceFieldFamily::Charmm36,
                 ForceFieldFamily::Opls,
                 ForceFieldFamily::Gfnn,
             ] {
