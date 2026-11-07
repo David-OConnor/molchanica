@@ -897,7 +897,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     ViewSelLevel::AtomBond, // Small molecules use element or charge colors.
                     false,
                     ui.res_coloring,
-                    ui.atom_color_by_charge,
+                    ui.atom_color_by_charge
+                        .then_some(ui.inspection.charge_palette),
                     mol.mol_type(),
                     components,
                 );
@@ -1145,7 +1146,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 ViewSelLevel::AtomBond, // Always color ligands by atom.
                 false,
                 ui.res_coloring,
-                ui.atom_color_by_charge,
+                ui.atom_color_by_charge
+                    .then_some(ui.inspection.charge_palette),
                 mol.mol_type(),
                 components,
             );
@@ -1163,7 +1165,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 ViewSelLevel::AtomBond, // Always color ligands by atom.
                 false,
                 ui.res_coloring,
-                ui.atom_color_by_charge,
+                ui.atom_color_by_charge
+                    .then_some(ui.inspection.charge_palette),
                 mol.mol_type(),
                 components,
             );

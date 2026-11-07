@@ -189,6 +189,48 @@ pub enum Palette {
     Confidence,
 }
 
+impl Palette {
+    pub fn color(self, value: f32, minimum: f32, maximum: f32) -> (f32, f32, f32) {
+        if !value.is_finite() {
+            return (0.5, 0.5, 0.5);
+        }
+
+        if self == Self::Confidence {
+            return if value >= 90. {
+                (0.0, 0.32, 0.84)
+            } else if value >= 70. {
+                (0.4, 0.8, 0.95)
+            } else if value >= 50. {
+                (1., 0.86, 0.12)
+            } else {
+                (1., 0.49, 0.08)
+            };
+        }
+
+        let t = if maximum > minimum {
+            ((value - minimum) / (maximum - minimum)).clamp(0., 1.)
+        } else {
+            0.5
+        };
+        if self == Self::Viridis {
+            return crate::drawing::color_viridis_float(t, 0., 1.);
+        }
+        let mix = |a: [f32; 3], b: [f32; 3], t: f32| {
+            (
+                a[0] + (b[0] - a[0]) * t,
+                a[1] + (b[1] - a[1]) * t,
+                a[2] + (b[2] - a[2]) * t,
+            )
+        };
+
+        if t < 0.5 {
+            mix([0.15, 0.3, 0.85], [1.; 3], t * 2.)
+        } else {
+            mix([1.; 3], [0.85, 0.15, 0.15], (t - 0.5) * 2.)
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub struct ScalarColor {
     pub object: String,
@@ -215,39 +257,7 @@ impl ScalarColor {
             return self.missing.into();
         }
 
-        if self.palette == Palette::Confidence {
-            return if value >= 90. {
-                (0.0, 0.32, 0.84)
-            } else if value >= 70. {
-                (0.4, 0.8, 0.95)
-            } else if value >= 50. {
-                (1., 0.86, 0.12)
-            } else {
-                (1., 0.49, 0.08)
-            };
-        }
-
-        let t = if self.maximum > self.minimum {
-            ((value - self.minimum) / (self.maximum - self.minimum)).clamp(0., 1.)
-        } else {
-            0.5
-        };
-        if self.palette == Palette::Viridis {
-            return crate::drawing::color_viridis_float(t, 0., 1.);
-        }
-        let mix = |a: [f32; 3], b: [f32; 3], t: f32| {
-            (
-                a[0] + (b[0] - a[0]) * t,
-                a[1] + (b[1] - a[1]) * t,
-                a[2] + (b[2] - a[2]) * t,
-            )
-        };
-
-        if t < 0.5 {
-            mix([0.15, 0.3, 0.85], [1.; 3], t * 2.)
-        } else {
-            mix([1.; 3], [0.85, 0.15, 0.15], (t - 0.5) * 2.)
-        }
+        self.palette.color(value, self.minimum, self.maximum)
     }
 }
 
@@ -256,6 +266,7 @@ pub struct Inspection {
     pub measurements: Vec<Measurement>,
     pub colors: Vec<ScalarColor>,
     pub angle_unit: AngleUnit,
+    pub charge_palette: Palette,
     pub labels: Vec<crate::annotations::SelectionLabel>,
     pub slab: Option<crate::annotations::Slab>,
     pub solid_colors: BTreeMap<String, BTreeMap<u32, [f32; 3]>>,
@@ -267,7 +278,7 @@ impl Encode for Inspection {
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
         u64::MAX.encode(encoder)?;
-        2u8.encode(encoder)?;
+        3u8.encode(encoder)?;
         self.angle_unit.encode(encoder)?;
         self.measurements.encode(encoder)?;
 
@@ -275,7 +286,9 @@ impl Encode for Inspection {
         self.labels.encode(encoder)?;
         self.slab.encode(encoder)?;
 
-        self.solid_colors.encode(encoder)
+        self.solid_colors.encode(encoder)?;
+
+        self.charge_palette.encode(encoder)
     }
 }
 
@@ -286,7 +299,7 @@ impl<Context> Decode<Context> for Inspection {
         let marker = u64::decode(decoder)?;
         if marker == u64::MAX {
             let version = u8::decode(decoder)?;
-            if !(1..=2).contains(&version) {
+            if !(1..=3).contains(&version) {
                 return Err(bincode::error::DecodeError::Other(
                     "Unsupported inspection version",
                 ));
@@ -302,6 +315,9 @@ impl<Context> Decode<Context> for Inspection {
                 result.labels = Vec::decode(decoder)?;
                 result.slab = Option::decode(decoder)?;
                 result.solid_colors = BTreeMap::decode(decoder)?;
+            }
+            if version >= 3 {
+                result.charge_palette = Palette::decode(decoder)?;
             }
 
             return Ok(result);
@@ -1109,6 +1125,7 @@ impl SceneState {
         state.to_save.hidden_default_objects = self.hidden_defaults.clone();
         state.to_save.inspection = self.inspection.clone();
         state.ui.inspection.colors = self.inspection.colors.clone();
+        state.ui.inspection.charge_palette = self.inspection.charge_palette;
         state.ui.inspection.solid_colors = self.inspection.solid_colors.clone();
         state.ui.density_iso_level = self.density_iso;
         state.to_save.depth_mode = if let Some(v) = self.depth {

@@ -14,6 +14,7 @@ use crate::{
         CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_PEPTIDE_AMT, MESH_BOND_CAP,
         MolTypeExt,
     },
+    inspection::Palette,
     render::{BACKGROUND_COLOR, Color, MESH_BOND},
     selection::{Selection, ViewSelLevel},
     state::ResColoring,
@@ -122,15 +123,15 @@ pub fn atom_color(
     view_sel_level: ViewSelLevel,
     dimmed: bool,
     res_coloring: ResColoring,
-    atom_color_by_q: bool,
+    charge_palette: Option<Palette>,
     mol_type: MolType,
     components: &Option<MolComponents>,
 ) -> Color {
     let mut result = match view_sel_level {
         ViewSelLevel::AtomBond => {
-            if atom_color_by_q {
+            if let Some(palette) = charge_palette {
                 if let Some(q) = atom.partial_charge {
-                    drawing::color_viridis_float(q, CHARGE_MAP_MIN, CHARGE_MAP_MAX)
+                    palette.color(q, CHARGE_MAP_MIN, CHARGE_MAP_MAX)
                 } else {
                     // Don't revert to atom color, as that could be misinterpreted.
                     (0.5, 0.5, 0.5)

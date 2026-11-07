@@ -785,7 +785,8 @@ fn draw_atom(
             ViewSelLevel::AtomBond, // Use element or partial-charge colors.
             false,
             ui.res_coloring,
-            ui.atom_color_by_charge,
+            ui.atom_color_by_charge
+                .then_some(ui.inspection.charge_palette),
             MolType::Ligand,
             components,
         );
@@ -894,7 +895,8 @@ fn draw_bond(
         ViewSelLevel::AtomBond, // Always color ligands by atom.
         false,
         ui.res_coloring,
-        ui.atom_color_by_charge,
+        ui.atom_color_by_charge
+            .then_some(ui.inspection.charge_palette),
         MolType::Ligand,
         components,
     );
@@ -913,7 +915,8 @@ fn draw_bond(
         ViewSelLevel::AtomBond, // Always color ligands by atom.
         false,
         ui.res_coloring,
-        ui.atom_color_by_charge,
+        ui.atom_color_by_charge
+            .then_some(ui.inspection.charge_palette),
         MolType::Ligand,
         components,
     );

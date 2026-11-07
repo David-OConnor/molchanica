@@ -689,6 +689,7 @@ impl State {
     /// Run this when prefs, or a new molecule are loaded.
     pub fn update_from_prefs(&mut self) {
         self.ui.inspection.colors = self.to_save.inspection.colors.clone();
+        self.ui.inspection.charge_palette = self.to_save.inspection.charge_palette;
         self.ui.inspection.solid_colors = self.to_save.inspection.solid_colors.clone();
         println!("Updating state from prefs data");
         self.reset_selections();

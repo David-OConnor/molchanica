@@ -5,24 +5,53 @@ use graphics::Scene;
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::MolGenericRef;
 
+use crate::ui::{COL_SPACING, COLOR_ACTION};
 use crate::{
+    button,
+    drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN},
     inspection::{
         AngleUnit, AtomRef, MeasureKind, Measurement, Palette, ScalarColor, add_colors, b_factors,
         import_values,
     },
-    selection::ViewSelLevel,
+    selection::{ViewSelLevel, expression},
     state::State,
-    ui::ROW_SPACING,
+    ui::{ROW_SPACING, misc},
     util::RedrawFlags,
 };
 
 pub(crate) const MEASUREMENT_LINE_WIDTH: f32 = 3.;
 const MEASUREMENT_FONT_SIZE: f32 = 18.;
 
+#[derive(Clone, Copy, PartialEq)]
+enum PropertyColor {
+    PartialCharge,
+    Confidence,
+    BFactor,
+}
+
+impl PropertyColor {
+    fn title(self) -> &'static str {
+        match self {
+            Self::PartialCharge => "Partial charge",
+            Self::Confidence => "Confidence (pLDDT)",
+            Self::BFactor => "B-factor",
+        }
+    }
+
+    fn for_colors(colors: &ScalarColor) -> Option<Self> {
+        match colors.title.as_str() {
+            "Confidence (pLDDT)" => Some(Self::Confidence),
+            "B-factor" => Some(Self::BFactor),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct InspectionUi {
     pub solid_colors: std::collections::BTreeMap<String, std::collections::BTreeMap<u32, [f32; 3]>>,
     pub colors: Vec<ScalarColor>,
+    pub charge_palette: Palette,
     pub open: bool,
     pub kind: MeasureKind,
     pub pending: Vec<AtomRef>,
@@ -138,6 +167,7 @@ pub fn show(state: &mut State, ctx: &egui::Context, redraw: &mut RedrawFlags) {
             state.to_save.inspection = before;
         }
         state.ui.inspection.colors = state.to_save.inspection.colors.clone();
+        state.ui.inspection.charge_palette = state.to_save.inspection.charge_palette;
         state.to_save.save_flag = true;
         state.volatile.flags.update_ss_mesh = true;
         state.volatile.flags.update_sas_coloring = true;
@@ -146,37 +176,73 @@ pub fn show(state: &mut State, ctx: &egui::Context, redraw: &mut RedrawFlags) {
 }
 
 fn controls(state: &mut State, ui: &mut Ui, ctx: &egui::Context) {
-    ui.heading("Measurements");
     ui.horizontal(|ui| {
+        ui.heading("Measurements");
+
         ui.label("Angle units:");
-        for unit in [AngleUnit::Degrees, AngleUnit::Radians, AngleUnit::Turns] {
-            ui.selectable_value(&mut state.to_save.inspection.angle_unit, unit, unit.label())
-                .on_hover_text(if unit == AngleUnit::Turns {
-                    "One turn is a full circle. Negative dihedrals wrap into 0–1."
-                } else {
-                    "Display units for angles and dihedrals"
-                });
+        let options = [
+            (
+                AngleUnit::Degrees,
+                AngleUnit::Degrees.label(),
+                "Display angles and dihedrals in degrees",
+            ),
+            (
+                AngleUnit::Radians,
+                AngleUnit::Radians.label(),
+                "Display angles and dihedrals in radians",
+            ),
+            (
+                AngleUnit::Turns,
+                AngleUnit::Turns.label(),
+                "One turn is a full circle. Negative dihedrals wrap into 0–1.",
+            ),
+        ];
+
+        if let Some(unit) = misc::selector(ui, state.to_save.inspection.angle_unit, &options) {
+            state.to_save.inspection.angle_unit = unit;
         }
     });
 
+    ui.add_space(ROW_SPACING);
+
     ui.horizontal(|ui| {
-        for kind in [
-            MeasureKind::Distance,
-            MeasureKind::Angle,
-            MeasureKind::Dihedral,
-        ] {
-            if ui
-                .selectable_value(&mut state.ui.inspection.kind, kind, kind.name())
-                .changed()
-            {
-                state.ui.inspection.pending.clear();
-            }
+        let options = [
+            (
+                MeasureKind::Distance,
+                "Distance",
+                "Measure between two atoms",
+            ),
+            (
+                MeasureKind::Angle,
+                "Angle",
+                "Measure an angle using three atoms",
+            ),
+            (
+                MeasureKind::Dihedral,
+                "Dihedral",
+                "Measure a dihedral using four atoms",
+            ),
+        ];
+
+        if let Some(kind) = misc::selector(ui, state.ui.inspection.kind, &options) {
+            state.ui.inspection.kind = kind;
+            state.ui.inspection.pending.clear();
         }
-        if ui.button("Pick atoms").clicked() {
+
+        ui.add_space(COL_SPACING);
+        if button!(
+            ui,
+            "Pick atoms",
+            COLOR_ACTION,
+            "Select atoms in sequence to measure"
+        )
+        .clicked()
+        {
             state.ui.inspection.pending.clear();
             state.ui.inspection.picking = true;
             state.ui.view_sel_level = ViewSelLevel::AtomBond;
         }
+
         if ui.button("Cancel").clicked() {
             state.ui.inspection.pending.clear();
             state.ui.inspection.picking = false;
@@ -195,51 +261,34 @@ fn controls(state: &mut State, ui: &mut Ui, ctx: &egui::Context) {
     ui.separator();
     ui.heading("Property colors");
 
-    if ui
-        .checkbox(
-            &mut state.ui.atom_color_by_charge,
-            "Color by partial charge (q)",
-        )
-        .on_hover_text("Color atoms in all molecules by partial charge instead of element")
-        .changed()
-        && state.ui.atom_color_by_charge
-    {
-        state.set_view_sel_level(ViewSelLevel::AtomBond);
-        state.ui.aa_selection.enabled = false;
-        for colors in &mut state.to_save.inspection.colors {
-            colors.enabled = false;
-        }
-    }
-    ui.add_space(ROW_SPACING);
+    property_controls(state, ui);
 
-    if let Some(mol) = state.active_mol() {
-        ui.label(mol.name().into_owned());
-    } else {
-        ui.label("Select a molecule to load colors.");
-    }
+    if !state.ui.atom_color_by_charge {
+        ui.collapsing("Import values (CSV / TSV)", |ui| {
+            import_controls(state, ui);
 
-    ui.horizontal(|ui| {
-        for (title, confidence) in [("B-factor", false), ("Confidence (pLDDT)", true)] {
-            if ui.button(title).clicked() {
-                let values = state
-                    .active_mol()
-                    .and_then(|m| match m {
-                        MolGenericRef::Peptide(p) => p.source_cif.as_deref().map(b_factors),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                state.ui.inspection.message = add_colors(state, title.into(), values, confidence)
-                    .err()
-                    .unwrap_or_default();
+            let mut enabled = None;
+            for (i, colors) in state.to_save.inspection.colors.iter_mut().enumerate() {
+                if PropertyColor::for_colors(colors).is_some() {
+                    continue;
+                }
+
+                ui.push_id(("colors", i), |ui| {
+                    if ui.checkbox(&mut colors.enabled, &colors.title).changed() && colors.enabled {
+                        enabled = Some(i);
+                    }
+
+                    if colors.enabled {
+                        scalar_color_controls(colors, ui);
+                    }
+                });
             }
-        }
-    });
 
-    ui.small(
-        "Confidence uses the source B column as pLDDT; use it only for prediction confidence.",
-    );
-
-    ui.collapsing("Import values (CSV / TSV)", |ui| import_controls(state, ui));
+            if let Some(i) = enabled {
+                enable_property_color(state, Some(i));
+            }
+        });
+    }
     state.ui.inspection.import.update(ctx);
     if let Some(path) = state.ui.inspection.import.take_picked() {
         match std::fs::read_to_string(path) {
@@ -248,76 +297,222 @@ fn controls(state: &mut State, ui: &mut Ui, ctx: &egui::Context) {
         }
     }
 
-    for (i, colors) in state.to_save.inspection.colors.iter_mut().enumerate() {
-        ui.push_id(("colors", i), |ui| {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut colors.enabled, &colors.title);
-                ui.label(format!("{} values", colors.values.len()));
-            });
-            ui.horizontal(|ui| {
-                let previous_palette = colors.palette;
-                ComboBox::from_id_salt("palette")
-                    .selected_text(format!("{:?}", colors.palette))
-                    .show_ui(ui, |ui| {
-                        for p in [Palette::Viridis, Palette::BlueWhiteRed, Palette::Confidence] {
-                            ui.selectable_value(&mut colors.palette, p, format!("{p:?}"));
-                        }
-                    });
-                if previous_palette != colors.palette && colors.palette == Palette::Confidence {
-                    colors.minimum = 0.;
-                    colors.maximum = 100.;
-                }
-
-                let continuous = colors.palette != Palette::Confidence;
-                ui.add_enabled(
-                    continuous,
-                    egui::DragValue::new(&mut colors.minimum).prefix("Min "),
-                );
-                ui.add_enabled(
-                    continuous,
-                    egui::DragValue::new(&mut colors.maximum).prefix("Max "),
-                );
-                if ui
-                    .add_enabled(continuous, egui::Button::new("Auto range"))
-                    .clicked()
-                {
-                    colors.minimum = colors
-                        .values
-                        .values()
-                        .copied()
-                        .fold(f32::INFINITY, f32::min);
-                    colors.maximum = colors
-                        .values
-                        .values()
-                        .copied()
-                        .fold(f32::NEG_INFINITY, f32::max);
-                }
-                ui.color_edit_button_rgb(&mut colors.missing);
-            });
-
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(240., 12.), egui::Sense::hover());
-            for x in 0..120 {
-                let (r, g, b) = colors.color_value(
-                    colors.minimum + (colors.maximum - colors.minimum) * x as f32 / 119.,
-                );
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_size(
-                        rect.min + egui::vec2(x as f32 * 2., 0.),
-                        egui::vec2(2., 12.),
-                    ),
-                    0.,
-                    Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8),
-                );
-            }
-            ui.label(format!(
-                "{}   {:.2} → {:.2}",
-                colors.object, colors.minimum, colors.maximum
-            ));
-        });
-    }
-
     if !state.ui.inspection.message.is_empty() {
         ui.colored_label(Color32::YELLOW, &state.ui.inspection.message);
+    }
+}
+
+fn property_controls(state: &mut State, ui: &mut Ui) {
+    let current = if state.ui.atom_color_by_charge {
+        Some(PropertyColor::PartialCharge)
+    } else {
+        state
+            .to_save
+            .inspection
+            .colors
+            .iter()
+            .rev()
+            .filter(|c| c.enabled)
+            .find_map(PropertyColor::for_colors)
+    };
+
+    ui.horizontal(|ui| {
+        let options = [
+            (
+                Some(PropertyColor::PartialCharge),
+                "Partial charge",
+                "Color atoms in all molecules by partial charge instead of element",
+            ),
+            (
+                Some(PropertyColor::Confidence),
+                "Confidence",
+                "Use the source B column as pLDDT prediction confidence",
+            ),
+            (
+                Some(PropertyColor::BFactor),
+                "B-factor",
+                "Color the selected molecule by its source B-factors",
+            ),
+        ];
+
+        if let Some(Some(mode)) = misc::selector(ui, current, &options) {
+            state.ui.inspection.message =
+                select_property_color(state, mode).err().unwrap_or_default();
+        }
+
+        if ui.button("Disable").clicked() {
+            state.ui.atom_color_by_charge = false;
+            for colors in &mut state.to_save.inspection.colors {
+                colors.enabled = false;
+            }
+        }
+    });
+    ui.add_space(ROW_SPACING);
+
+    if state.ui.atom_color_by_charge {
+        let palette = &mut state.to_save.inspection.charge_palette;
+        palette_selector(palette, &[Palette::Viridis, Palette::BlueWhiteRed], ui);
+        color_preview(*palette, CHARGE_MAP_MIN, CHARGE_MAP_MAX, ui);
+        ui.label(format!("{CHARGE_MAP_MIN:.2} – {CHARGE_MAP_MAX:.2}"));
+
+        return;
+    }
+
+    if let Some(mol) = state.active_mol() {
+        ui.label(mol.name().into_owned());
+    } else {
+        ui.label("Select a molecule to load colors.");
+    }
+
+    let selected = state
+        .to_save
+        .inspection
+        .colors
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, c)| c.enabled)
+        .find_map(|(i, c)| PropertyColor::for_colors(c).map(|m| (i, m)));
+
+    let Some((i, mode)) = selected else {
+        return;
+    };
+
+    if mode == PropertyColor::Confidence {
+        ui.small(
+            "Confidence uses the source B column as pLDDT; use it only for prediction confidence.",
+        );
+    }
+
+    if let Some(mol) = state.active_mol()
+        && state.to_save.inspection.colors[i].object != expression::object_key(&mol)
+        && ui.button("Load for selected molecule").clicked()
+    {
+        state.ui.inspection.message = select_property_color(state, mode).err().unwrap_or_default();
+    }
+
+    for (i, colors) in state.to_save.inspection.colors.iter_mut().enumerate() {
+        if colors.enabled && PropertyColor::for_colors(colors) == Some(mode) {
+            ui.push_id(("colors", i), |ui| scalar_color_controls(colors, ui));
+        }
+    }
+}
+
+fn select_property_color(state: &mut State, mode: PropertyColor) -> Result<(), String> {
+    if mode == PropertyColor::PartialCharge {
+        enable_property_color(state, None);
+        state.ui.atom_color_by_charge = true;
+        state.set_view_sel_level(ViewSelLevel::AtomBond);
+
+        return Ok(());
+    }
+
+    let mol = state.active_mol().ok_or("Select a molecule first")?;
+    let object = expression::object_key(&mol);
+    let existing = state
+        .to_save
+        .inspection
+        .colors
+        .iter()
+        .position(|c| c.object == object && PropertyColor::for_colors(c) == Some(mode));
+
+    let index = if let Some(i) = existing {
+        i
+    } else {
+        let values = match mol {
+            MolGenericRef::Peptide(p) => p.source_cif.as_deref().map(b_factors),
+            _ => None,
+        }
+        .unwrap_or_default();
+        add_colors(
+            state,
+            mode.title().into(),
+            values,
+            mode == PropertyColor::Confidence,
+        )?;
+
+        state.to_save.inspection.colors.len() - 1
+    };
+    enable_property_color(state, Some(index));
+
+    Ok(())
+}
+
+fn enable_property_color(state: &mut State, index: Option<usize>) {
+    state.ui.atom_color_by_charge = false;
+    state.ui.aa_selection.enabled = false;
+    for (i, colors) in state.to_save.inspection.colors.iter_mut().enumerate() {
+        colors.enabled = Some(i) == index;
+    }
+}
+
+fn scalar_color_controls(colors: &mut ScalarColor, ui: &mut Ui) {
+    ui.label(format!("{} values", colors.values.len()));
+    ui.horizontal(|ui| {
+        let previous_palette = colors.palette;
+        palette_selector(
+            &mut colors.palette,
+            &[Palette::Viridis, Palette::BlueWhiteRed, Palette::Confidence],
+            ui,
+        );
+        if previous_palette != colors.palette && colors.palette == Palette::Confidence {
+            colors.minimum = 0.;
+            colors.maximum = 100.;
+        }
+
+        if colors.palette != Palette::Confidence {
+            ui.add(egui::DragValue::new(&mut colors.minimum).prefix("Min "));
+            ui.add(egui::DragValue::new(&mut colors.maximum).prefix("Max "));
+            if ui.button("Auto range").clicked() {
+                colors.minimum = colors
+                    .values
+                    .values()
+                    .copied()
+                    .fold(f32::INFINITY, f32::min);
+                colors.maximum = colors
+                    .values
+                    .values()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max);
+            }
+        }
+
+        ui.color_edit_button_rgb(&mut colors.missing);
+    });
+
+    color_preview(colors.palette, colors.minimum, colors.maximum, ui);
+    ui.label(format!(
+        "{}   {:.2} – {:.2}",
+        colors.object, colors.minimum, colors.maximum
+    ));
+}
+
+fn palette_selector(palette: &mut Palette, options: &[Palette], ui: &mut Ui) {
+    ComboBox::from_id_salt("palette")
+        .selected_text(format!("{palette:?}"))
+        .show_ui(ui, |ui| {
+            for &option in options {
+                ui.selectable_value(palette, option, format!("{option:?}"));
+            }
+        });
+}
+
+fn color_preview(palette: Palette, minimum: f32, maximum: f32, ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(240., 12.), egui::Sense::hover());
+    for x in 0..120 {
+        let (r, g, b) = palette.color(
+            minimum + (maximum - minimum) * x as f32 / 119.,
+            minimum,
+            maximum,
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(
+                rect.min + egui::vec2(x as f32 * 2., 0.),
+                egui::vec2(2., 12.),
+            ),
+            0.,
+            Color32::from_rgb((r * 255.) as u8, (g * 255.) as u8, (b * 255.) as u8),
+        );
     }
 }
 
@@ -393,7 +588,12 @@ fn import_controls(state: &mut State, ui: &mut Ui) {
         };
 
         state.ui.inspection.message = result
-            .and_then(|values| add_colors(state, title, values, false))
+            .and_then(|values| {
+                add_colors(state, title, values, false)?;
+                enable_property_color(state, Some(state.to_save.inspection.colors.len() - 1));
+
+                Ok(())
+            })
             .err()
             .unwrap_or_default();
     }

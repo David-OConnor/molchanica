@@ -700,7 +700,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                         state.ui.view_sel_level,
                         false,
                         ResColoring::default(),
-                        false,
+                        None,
                         MolType::Peptide,
                         &None,
                     );
@@ -829,7 +829,10 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 state.ui.view_sel_level,
                 dim_peptide,
                 state.ui.res_coloring,
-                state.ui.atom_color_by_charge,
+                state
+                    .ui
+                    .atom_color_by_charge
+                    .then_some(state.ui.inspection.charge_palette),
                 MolType::Peptide,
                 &None,
             );
@@ -1074,7 +1077,10 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 state.ui.view_sel_level,
                 dim_peptide_0,
                 state.ui.res_coloring,
-                state.ui.atom_color_by_charge,
+                state
+                    .ui
+                    .atom_color_by_charge
+                    .then_some(state.ui.inspection.charge_palette),
                 MolType::Peptide,
                 &None,
             );
@@ -1092,7 +1098,10 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 state.ui.view_sel_level,
                 dim_peptide_1,
                 state.ui.res_coloring,
-                state.ui.atom_color_by_charge,
+                state
+                    .ui
+                    .atom_color_by_charge
+                    .then_some(state.ui.inspection.charge_palette),
                 MolType::Peptide,
                 &None,
             );

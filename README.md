@@ -180,12 +180,21 @@ Overview of MD components:
 We provide an editor for small organic molecules. This is fully-3D, and has integrated dynamics, which can be run continuously while you edit. It ensures the molecules you create are realistic, and take the appropriate shape. See the documentation for details on how the editor works.
 
 
+## Molecule manipulation
+Press the "M" key to move the current molecule, or the "R" key to rotate. (Or use the associated UI buttons). From here, you can drag the molecule around on the plane of the screen, or rotate it. You can also use the syntax "m x 2" to move 2 angstroms on the X axis. You can also click and drag arrows drawn in the molecule to confine movement or rotation to a specific axis, and click plane icons to move it along different planes. Controls here are inspired by both PyMol's and Blender's.
+
+
+## Measurements
+You can measure dihedral angle, 3-atom angle, and distances using the Measurements window. These are labeled,a and you can change their displayed color. These are overlayed on the atoms, and displayed in a list.
+
+
 ## The camera
 
 The camera is set up with 6 degrees of freedom, using either keyboard + mouse, or mouse only. This makes
 it easy to get any view of the system you want.
 
 There are two camera control schemes, selectable using buttons in the *camera* section of the GUI.
+
 
 ### Free camera
 

@@ -1134,6 +1134,7 @@ pub fn load(
     scene.camera.far = project.camera.far;
     project.appearance.apply(state, scene, updates);
     state.ui.inspection.colors = state.to_save.inspection.colors.clone();
+    state.ui.inspection.charge_palette = state.to_save.inspection.charge_palette;
     state.ui.inspection.solid_colors = state.to_save.inspection.solid_colors.clone();
     state.volatile.flags.scene_restored = true;
     state.volatile.flags.new_density_loaded = true;
