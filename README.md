@@ -5,11 +5,13 @@
 [Home page](https://www.athanorlab.com/molchanica)
 [Documentation](https://www.athanorlab.com/docs)
 
-[Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. it integrates with machine-learning tools for protein engineering, including RFDiffusion3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
+[Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. It integrates with machine-learning tools for protein engineering, including RFDiffusion3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
 
 Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on pharmacophores, machine-learning from empirical binding data and more. It automatically estimates ADME and toxicity parameters using a neural network trained on [Therapeutic data commons (TDC)](https://tdcommons.ai/) data.
 
 We hope that Molchanica is intuitive enough that formal documentation isn't required; installing, running, opening, and viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI. That said, see [the documentation](https://www.athanorlab.com/docs) for details.
+
+We draw UI inspiration from [PyMol](https://pymol.org/) and [Blender](https://www.blender.org/), and include a breadth of original idiosyncracies.
 
 
 ## Installation
@@ -24,9 +26,7 @@ useful for setting up shortcuts in your OS.
 - **Linux**: Run `setup_molchanica.sh`, included in the zip. (Do not run this with `sudo`.)
 - **Windows**: Run `setup_molchanica.ps1`. The first time you run the program, you may get the message
   *"  Microsoft Defender prevented an unrecognized app from starting"*. To bypass this, click *More
-  info*, then *Run
-  Anyway*. A similar obstacle may be encountered on Windows: If it refuses to launch, with an error about "Smart App Control", you may disable "Smart App Control" in
-  *Windows Settings*.
+  info*, then *Run Anyway*. A similar obstacle may be encountered on Windows: If it refuses to launch, with an error about "Smart App Control", you may disable "Smart App Control" in *Windows Settings*.
 
 ![Ligand dynamics](screenshots/docked_2.png)
 
@@ -45,10 +45,10 @@ Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, 
 - **Structure prediction** using OpenDDE, Boltz-2, Chai-1, and EsmFold2
 - **Sequence prediction** using ProteinMPNN and LigandMPNN
 
+
 ## Functionality
 
-
-- View the 3D structure of proteins and small molecules
+- View the structure of proteins and small molecules
 - Create figures for publication
 - Pymol-like selection syntax
 - Molecular dynamics, using Amber, OPLS, or GFN-FF force fields, and the OPC water model
@@ -70,6 +70,7 @@ Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, 
 - Screen molecules based on binding affinity and desired properties
 - Pharmacophore based modeling and screening
 
+
 ## Molecule types supported for viewing and dynamics
 
 - Proteins
@@ -77,14 +78,12 @@ Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, 
 - DNA and RNA; double and single stranded
 - Lipids
 
+
 ## Getting started
 
 Launch the program. Either open a molecule using the "Open" or "Open Lig" buttons, drag the file into the program
-window,
-enter a protein identifier in the *Query databases* field, or click *I'm feeling
-lucky*, to load a recently-uploaded
-protein
-from the [RCSB PDB](https://www.rcsb.org/).
+window, enter a protein identifier in the *Query databases* field, or click *I'm feeling lucky*, to load a recently-uploaded
+protein from the [RCSB PDB](https://www.rcsb.org/).
 
 **Most UI items provide tooltip descriptions, when you hover the mouse over them.**
 
@@ -95,7 +94,9 @@ from the [RCSB PDB](https://www.rcsb.org/).
 - Practical workflow
 - Updates responsive to user feedback
 
+
 ## File formats
+See [Bio Files](https://github.com/David-OConnor/bio_files) for details; we use it as a dependency, and keep it in sync.
 
 - **Proteins**: mmCIF (aka PDBx)
 - **Small molecules**: SDF, Mol2, GRO, XYZ, and PDBQT
@@ -106,9 +107,7 @@ from the [RCSB PDB](https://www.rcsb.org/).
 
 ## Third-party tool integrations
 
-Molchanica integrates with a number of third-party tools, acting on the molecules Molchanica has open,
-or creating them. See [the docs page for details, and a full list of tools](https://www.athanorlab.com/docs/third_party_tools.html). These can be accessed directly from the computer if you have them installed,
-or installed within the application's UI.
+Molchanica integrates with a number of third-party tools, acting on the molecules Molchanica has open, or creating them. See [the docs page for details, and a full list of tools](https://www.athanorlab.com/docs/third_party_tools.html). These can be accessed directly from the computer if you have them installed, or installed within the application's UI.
 
 
 ### Example tools supported:
@@ -120,6 +119,8 @@ or installed within the application's UI.
 - RfDiffusion3
 - Chai-1
 - OpenDDE
+- xTB
+- rdkit
 - Boltz-2
 - MPNN (Protein, ligand etc)
 
@@ -153,8 +154,7 @@ downloads are smaller, and are otherwise equivalent on such machines.
 
 ## Molecular dynamics
 
-This application integrates classical molecular dynamics setup and playback into the GUI.
-For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), or GROMACS (if the latter is installed). It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization.
+This application integrates classical molecular dynamics setup and playback into the GUI. For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), or GROMACS (if the latter is installed). It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization. The *Dynamics* readme is also a good reference for this.
 
 It supports running MD directly on the following molecule types, without loading any other data:
 
@@ -162,7 +162,7 @@ It supports running MD directly on the following molecule types, without loading
 - Small organic molecules
 - DNA and RNA
 - Lipids
-- Carbohydrates (WIP)
+- Carbohydrates
 
 
 Overview of MD components:
@@ -172,7 +172,9 @@ Overview of MD components:
 - [CSVR](https://arxiv.org/pdf/0803.4060) or Langevin Middle thermostats
 - Explicit OPC water model
 - SPME Coulomb forces
-- AM1-BCC partial charges (MBIS if you have ORCA installed)
+- Lennard Jones potentials
+- AM1-BCC partial charges, if using Amber parameters (MBIS if you have ORCA installed; OPLS and GFN have their own charge systems)
+- For GNF-FF, it uses repulsion, dispersion, and hydrogen bond terms, and does not use Lennard Jone potentials
 
 
 ## Editing molecules
@@ -189,9 +191,7 @@ You can measure dihedral angle, 3-atom angle, and distances using the Measuremen
 
 
 ## The camera
-
-The camera is set up with 6 degrees of freedom, using either keyboard + mouse, or mouse only. This makes
-it easy to get any view of the system you want.
+The camera is set up with 6 degrees of freedom, using either keyboard + mouse, or mouse only. This makes it easy to get any view of the system you want.
 
 There are two camera control schemes, selectable using buttons in the *camera* section of the GUI.
 
@@ -199,17 +199,13 @@ There are two camera control schemes, selectable using buttons in the *camera* s
 ### Free camera
 
 The *free
-camera* mode is intended to be used with a keyboard and mouse together. They operate on the perspective of
-the viewer, vice the molecule. You can move and rotate and move the camera
-in 6 degrees of freedom, allowing you to easily view the molecule from any perspective.
+camera* mode is intended to be used with a keyboard and mouse together. They operate on the perspective of the viewer, vice the molecule. You can move and rotate and move the camera in 6 degrees of freedom, allowing you to easily view the molecule from any perspective.
 
 ### Arc camera
 
-Similar to traditional molecular viewing software. The camera arcs (or orbits) around the molecule, when holding the
-left
-mouse button and dragging. Other controls, like scroll wheel and middle mouse, operate similar to the free camera.
-If *orbit
-sel* is set in the GUI, the orbit center will be the selected atom or residue, vice the molecule center.
+Similar to traditional molecular viewing software. The camera arcs (or orbits) around the molecule, when holding the left mouse button and dragging. Other controls, like scroll wheel and middle mouse, operate similar to the free camera.
+
+If *orbit sel* is set in the GUI, the orbit center will be the selected atom or residue, vice the molecule center.
 
 ![Surface example](screenshots/surface_a.png)
 
@@ -380,7 +376,8 @@ Molchanica keeps its data in one folder: the one its executable is in.
 
 ![ELectron density](screenshots/iso_a.png)
 
-### Compiling
+
+## Compiling
 
 This application is written in rust, so it compiles normally using `cargo build --release`, which produces a
 standalone executable.
