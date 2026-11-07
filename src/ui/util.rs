@@ -12,12 +12,13 @@ use std::{
 
 use bio_apis::{amber_geostd, chebi, pubchem::find_cids_from_search, uniprot};
 use bio_files::MmCif;
-use egui::{Color32, Response, RichText, TextEdit, Ui};
+use egui::{Color32, FontId, Response, RichText, TextEdit, TextFormat, Ui, text::LayoutJob};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
     molecules::{MolIdent, MolType, MoleculeGeneric, PeptideIdent, small::MoleculeSmall},
     smiles::is_smiles,
 };
+use na_seq::Element;
 
 use crate::{
     cam::{VIEW_DIR_FRONT, reset_camera},
@@ -46,6 +47,9 @@ use crate::{
     ui::{COLOR_ACTION, COLOR_HIGHLIGHT, misc, set_window_title},
     util::{RedrawFlags, handle_err, handle_success, parse_smiles, reset_orbit_center},
 };
+
+/// For long identifiers, e.g. SMILES.
+const LONG_IDENT_FONT_SIZE: f32 = 10.;
 
 /// A path formatted for display: the home directory abbreviated to "~", and forward slashes on all
 /// platforms, e.g. "~/Desktop/4091.mol2".
@@ -162,12 +166,14 @@ pub(in crate::ui) fn list_idents(
     match idents {
         Idents::Small(idents) => {
             for ident in idents {
+                if let MolIdent::Smiles(smiles) = ident {
+                    draw_smiles(smiles, ui);
+                    continue;
+                }
+
                 let long = matches!(
                     ident,
-                    MolIdent::InchIKey(_)
-                        | MolIdent::InchI(_)
-                        | MolIdent::Smiles(_)
-                        | MolIdent::IupacName(_)
+                    MolIdent::InchIKey(_) | MolIdent::InchI(_) | MolIdent::IupacName(_)
                 );
                 ident_row(ident.ident_type(), ident.ident_inner(), long, ui);
             }
@@ -182,7 +188,7 @@ pub(in crate::ui) fn list_idents(
     name_change
 }
 
-/// One identifier, labeled with its type. `long` ones, e.g. SMILES, are drawn in a smaller font.
+/// One identifier, labeled with its type. `long` ones, e.g. InChI, are drawn in a smaller font.
 fn ident_row(ident_type: impl Display, ident: String, long: bool, ui: &mut Ui) {
     // Wrap long identifiers instead of expanding the containing panel.
     ui.horizontal_wrapped(|ui| {
@@ -190,10 +196,58 @@ fn ident_row(ident_type: impl Display, ident: String, long: bool, ui: &mut Ui) {
 
         let mut ident_text = RichText::new(ident).color(Color32::WHITE);
         if long {
-            ident_text = ident_text.font(egui::FontId::proportional(10.0));
+            ident_text = ident_text.font(FontId::proportional(LONG_IDENT_FONT_SIZE));
         }
 
         ui.label(ident_text);
+    });
+}
+
+/// A SMILES identifier row, color-coded per character for readability.
+fn draw_smiles(v: &str, ui: &mut Ui) {
+    // Wrap long identifiers instead of expanding the containing panel.
+    ui.horizontal_wrapped(|ui| {
+        crate::label!(ui, "SMILES:", Color32::GRAY);
+
+        let font_id = FontId::proportional(LONG_IDENT_FONT_SIZE);
+        let valign = ui.text_valign();
+
+        let mut job = LayoutJob::default();
+        for ch in v.chars() {
+            let mut encoded = [0; 4];
+            let ch_text = ch.encode_utf8(&mut encoded);
+            let mut color = match Element::from_letter(ch_text) {
+                Ok(element) => {
+                    // Lighter color; N is otherwise too dark.
+                    if element == Element::Nitrogen {
+                        Color32::from_rgb(110, 110, 255)
+                    } else {
+                        color_egui_from_f32(element.color())
+                    }
+                }
+                _ => Color32::GRAY,
+            };
+
+            if ch.is_ascii_digit() {
+                color = Color32::from_rgb(255, 180, 50);
+            } else if ch == '@' {
+                color = Color32::from_rgb(150, 170, 255);
+            }
+
+            job.append(
+                ch_text,
+                0.0,
+                TextFormat {
+                    font_id: font_id.clone(),
+                    color,
+                    valign,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // A job, not a pre-built galley: `Label` only wraps the former.
+        ui.label(job);
     });
 }
 

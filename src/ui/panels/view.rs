@@ -1,6 +1,6 @@
 use egui::{ComboBox, RichText, Slider, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
-use mol_defs::{molecules::MolType, sfc_mesh::MeshColoring};
+use mol_defs::sfc_mesh::MeshColoring;
 
 use crate::{
     drawing::{
@@ -388,17 +388,6 @@ pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
                     as single-letter identifiers. When in this mode, click the AA letter to select its residue.";
 
         vis_helper(&mut state.ui.ui_vis.aa_seq, "Seq", tooltip, ui);
-    }
-
-    if let Some(mol) = &state.active_mol()
-        && mol.mol_type() == MolType::Ligand
-    {
-        vis_helper(
-            &mut state.ui.ui_vis.smiles,
-            "SMILES",
-            "Show or hide the SMILES text representation of the molecular formula",
-            ui,
-        );
     }
 
     let tooltip = "Show or hide tools for creating lipids";

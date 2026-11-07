@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 pub mod workflows;
 
@@ -9,11 +6,10 @@ use bio_apis::{pdbe, rcsb};
 use chrono::Local;
 use egui::{
     Color32, ComboBox, CornerRadius, Event, FocusDirection, Frame, Key, Margin, Panel, RichText,
-    Sense, Slider, Stroke, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
+    Sense, Slider, Stroke, TextEdit, Ui,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
-use mol_defs::molecules::{MolGenericRef, MolIdent, MolType};
-use na_seq::Element;
+use mol_defs::molecules::MolType;
 use panels::{
     md::md_setup,
     mol_data,
@@ -39,7 +35,7 @@ use crate::{
     prefs::{ControlSchemeType, DepthMode},
     render::set_flashlight,
     selection::{Selection, ViewSelLevel, cycle_selected, select_from_search},
-    state::{CamSnapshot, DistFilter, OperatingMode, ResColoring, SmilesDisplayCache, State},
+    state::{CamSnapshot, DistFilter, OperatingMode, ResColoring, State},
     threads::{handle_thread_rx, start_session_restore},
     ui::{
         misc::section_box,
@@ -47,8 +43,8 @@ use crate::{
         panels::aa_seq,
         sidebar::sidebar,
         util::{
-            QUERY_ENTER_LEN_MIN, chain_selector, color_egui_from_f32, handle_redraw,
-            load_mol_from_query, update_file_dialogs,
+            QUERY_ENTER_LEN_MIN, chain_selector, handle_redraw, load_mol_from_query,
+            update_file_dialogs,
         },
     },
     util::{
@@ -913,7 +909,8 @@ fn top_controls(
 pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUpdates {
     let selection_before = crate::edit_history::SelectionState::capture(state);
     let history_revision = state.volatile.history.revision;
-    let editor_before = ui.input(|input| !input.events.is_empty())
+    let editor_before = ui
+        .input(|input| !input.events.is_empty())
         .then(|| crate::edit_history::EditorSnapshot::capture(state))
         .flatten();
     let mut updates = EngineUpdates::default();
@@ -1072,12 +1069,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             orca_input(state, ui);
         }
 
-        // if state.ui.show_docking_tools {
-        //     ui.add_space(ROW_SPACING);
-        //
-        //     docking(state, scene, &mut redraw.ligand, &mut engine_updates, ui);
-        // }
-
         // todo: Allow switching between chains and secondary-structure features here.
 
         ui.add_space(ROW_SPACING / 2.);
@@ -1109,18 +1100,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             }
         }
 
-        let mut smiles_cache = std::mem::take(&mut state.ui.smiles_display_cache);
-        if state.ui.ui_vis.smiles
-            && let Some(MolGenericRef::Small(molecule)) = state.active_mol()
-            && let Some(smiles) = molecule.idents.iter().find_map(|ident| match ident {
-            MolIdent::Smiles(smiles) => Some(smiles.as_str()),
-            _ => None,
-        })
-        {
-            draw_smiles(smiles, &mut smiles_cache, ui);
-        }
-        state.ui.smiles_display_cache = smiles_cache;
-
         draw_cli(
             state,
             scene,
@@ -1128,20 +1107,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             &mut redraw,
             ui,
         );
-
-        // todo: Render area here (Dec 2025) for the 3D part?
-        // {
-        //     let avail = ui.available_size();
-        //     let (rect, _resp) = ui.allocate_exact_size(avail, egui::Sense::hover());
-        //
-        //     // Important: attach your WGPU rendering to *this* rect.
-        //     // ui.painter().add(egui::Shape::Callback(egui::epaint::PaintCallback {
-        //     //     rect,
-        //     //     callback: std::sync::Arc::new(MyWgpuCallback {
-        //     //         // whatever handles/resources you need
-        //     //     }),
-        //     // }));
-        // }
 
         load_popups(state, scene, ui, &mut redraw, &mut updates);
 
@@ -1235,64 +1200,6 @@ pub fn flag_btn(val: &mut bool, label: &str, hover_text: &str, ui: &mut Ui) {
     {
         *val = !(*val);
     }
-}
-
-fn draw_smiles(v: &str, cache: &mut SmilesDisplayCache, ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        ui.label("SMILES: ");
-
-        let font_id = TextStyle::Body.resolve(ui.style());
-        let pixels_per_point = ui.ctx().pixels_per_point();
-        let rebuild = cache.source != v
-            || cache.font_id.as_ref() != Some(&font_id)
-            || cache.pixels_per_point.to_bits() != pixels_per_point.to_bits()
-            || cache.galley.is_none();
-
-        if rebuild {
-            let mut job = LayoutJob::default();
-            for ch in v.chars() {
-                let mut encoded = [0; 4];
-                let ch_text = ch.encode_utf8(&mut encoded);
-                let mut color = match Element::from_letter(ch_text) {
-                    Ok(element) => {
-                        // Lighter color; N is otherwise too dark.
-                        if element == Element::Nitrogen {
-                            Color32::from_rgb(110, 110, 255)
-                        } else {
-                            color_egui_from_f32(element.color())
-                        }
-                    }
-                    _ => Color32::GRAY,
-                };
-
-                if ch.is_ascii_digit() {
-                    color = Color32::from_rgb(255, 180, 50);
-                } else if ch == '@' {
-                    color = Color32::from_rgb(150, 170, 255);
-                }
-
-                job.append(
-                    ch_text,
-                    0.0,
-                    TextFormat {
-                        font_id: font_id.clone(),
-                        color,
-                        ..Default::default()
-                    },
-                );
-            }
-
-            cache.source.clear();
-            cache.source.push_str(v);
-            cache.font_id = Some(font_id);
-            cache.pixels_per_point = pixels_per_point;
-            cache.galley = Some(ui.fonts_mut(|fonts| fonts.layout_job(job)));
-        }
-
-        if let Some(galley) = &cache.galley {
-            ui.label(Arc::clone(galley));
-        }
-    });
 }
 
 pub(crate) fn cam_controls(

@@ -658,7 +658,6 @@ pub struct StateUi {
     pub db_input: String,
     pub db_input_trimmed: String,
     pub db_input_lowercase: String,
-    pub smiles_display_cache: SmilesDisplayCache,
     pub cam_snapshot_name: String,
     pub atom_res_search: String,
     /// `atom_res_search` matches nothing in the active molecule; shown by coloring the query.
@@ -828,15 +827,6 @@ impl Default for AaSeqDisplayCache {
             drag_anchor: None,
         }
     }
-}
-
-/// Cached egui layout for the active molecule's SMILES string.
-#[derive(Default)]
-pub struct SmilesDisplayCache {
-    pub source: String,
-    pub font_id: Option<FontId>,
-    pub pixels_per_point: f32,
-    pub galley: Option<Arc<Galley>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
@@ -1251,14 +1241,12 @@ impl Display for ResColoring {
 /// For showing and hiding UI sections.
 pub struct UiVisibility {
     pub aa_seq: bool,
-    pub smiles: bool,
     pub selfies: bool,
     pub lipids: bool,
     pub nucleic_acids: bool,
     pub amino_acids: bool,
     pub dynamics: bool,
     pub orca: bool,
-    // pub strucutre_prediction: bool,
     pub sidebar_mol_properties: bool,
     pub mol_picker_details: bool,
     pub pharmacophore_list: bool,
@@ -1271,7 +1259,6 @@ impl Default for UiVisibility {
     fn default() -> Self {
         Self {
             aa_seq: false,
-            smiles: false,
             selfies: false,
             lipids: false,
             nucleic_acids: false,

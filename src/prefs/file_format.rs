@@ -499,7 +499,7 @@ impl UiVisibility {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         vec![
             self.aa_seq as u8,
-            self.smiles as u8,
+            0, // Reserved; formerly `smiles`. Later fields are positional.
             self.selfies as u8,
             self.lipids as u8,
             self.nucleic_acids as u8,
@@ -516,7 +516,7 @@ impl UiVisibility {
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
         Ok(Self {
             aa_seq: data[0] != 0,
-            smiles: data[1] != 0,
+            // `data[1]` is reserved; formerly `smiles`.
             selfies: data[2] != 0,
             lipids: data[3] != 0,
             nucleic_acids: data[4] != 0,
