@@ -352,6 +352,13 @@ pub struct FfParamsUi {
     pub last_dir: Option<std::path::PathBuf>,
     /// The result of the last load, save, or restore: (message, is error).
     pub status: Option<(String, bool)>,
+    pub gfnff_executable: Option<String>,
+    pub gfnff_molecule: usize,
+    pub gfnff_report: Option<dynamics::params::potential::PotentialEvaluation>,
+    pub gfnff_job: Option<
+        std::sync::mpsc::Receiver<Result<dynamics::params::potential::PotentialEvaluation, String>>,
+    >,
+    pub gfnff_error: Option<String>,
 }
 
 /// Lays out the value cells of a table: text fields while editing is enabled, and labels
@@ -1464,6 +1471,12 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
 
     let family = state.force_fields.family;
 
+    if family == ForceFieldFamily::Gfnn {
+        gfnff_parameters(state, ui);
+
+        return;
+    }
+
     // Sets that aren't loaded are shown dimmed, but can be selected, so they can be loaded from
     // a file, or restored.
     let cats: Vec<(FfCat, bool)> = match family {
@@ -1600,4 +1613,216 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
             }
         }
     }
+}
+
+fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
+    ui.label("GFN-FF · xTB whole-system potential");
+    ui.label(
+        "Native Dynamics: nonperiodic atoms, flexible hydrogens, no generated solvent or barostat.",
+    );
+    ui.label("Explicit water and ions may be loaded as ordinary molecules.");
+    ui.add_space(ROW_SPACING);
+
+    let Some(set) = state
+        .force_fields
+        .params
+        .as_mut()
+        .and_then(|p| p.gfnff_mut())
+    else {
+        return;
+    };
+    let path = state.ui.ff_params.gfnff_executable.get_or_insert_with(|| {
+        set.executable
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    ui.horizontal(|ui| {
+        ui.label("xTB executable:");
+        if ui.text_edit_singleline(path).lost_focus() {
+            let updated = (!path.trim().is_empty()).then(|| std::path::PathBuf::from(path.trim()));
+            if updated != set.executable {
+                set.executable = updated;
+            }
+        }
+    });
+    ui.small("Leave blank to use XTB_EXECUTABLE or xtb on PATH. Each step runs xTB with the cached topology.");
+    let mut override_charge = set.total_charge.is_some();
+    if ui
+        .checkbox(&mut override_charge, "Override total simulation charge (e)")
+        .changed()
+    {
+        set.total_charge = override_charge.then_some(0.);
+    }
+    if let Some(charge) = &mut set.total_charge {
+        ui.add(egui::DragValue::new(charge).speed(1.).max_decimals(0));
+    } else {
+        ui.small(
+            "Infer total charge from complete input charges; uncharged input defaults to neutral.",
+        );
+    }
+    let backend = set.clone();
+    if ui.button("Reload xTB and reassign").clicked() {
+        state.force_fields.invalidate();
+        state.ui.ff_params.gfnff_report = None;
+        state.ui.ff_params.gfnff_job = None;
+    }
+
+    if let Some(job) = &state.ui.ff_params.gfnff_job {
+        let result = match job.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("xTB inspection worker stopped".into()))
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        };
+        if let Some(result) = result {
+            state.ui.ff_params.gfnff_job = None;
+            match result {
+                Ok(report) => state.ui.ff_params.gfnff_report = Some(report),
+                Err(error) => state.ui.ff_params.gfnff_error = Some(error),
+            }
+        }
+    }
+
+    let molecules: Vec<_> = state
+        .peptides
+        .iter()
+        .map(|m| &m.common)
+        .chain(state.ligands.iter().map(|m| &m.common))
+        .chain(state.lipids.iter().map(|m| &m.common))
+        .chain(state.nucleic_acids.iter().map(|m| &m.common))
+        .collect();
+    let st = &mut state.ui.ff_params;
+    st.gfnff_molecule = st.gfnff_molecule.min(molecules.len().saturating_sub(1));
+    if let Some(molecule) = molecules.get(st.gfnff_molecule) {
+        ui.horizontal(|ui| {
+            let old = st.gfnff_molecule;
+            egui::ComboBox::from_id_salt("gfnff_inspect_molecule")
+                .selected_text(&molecule.ident)
+                .show_ui(ui, |ui| {
+                    for (index, molecule) in molecules.iter().enumerate() {
+                        ui.selectable_value(&mut st.gfnff_molecule, index, &molecule.ident);
+                    }
+                });
+            if old != st.gfnff_molecule {
+                st.gfnff_report = None;
+                st.gfnff_error = None;
+                st.gfnff_job = None;
+            }
+            if ui
+                .add_enabled(st.gfnff_job.is_none(), egui::Button::new("Evaluate terms"))
+                .clicked()
+            {
+                let molecule = molecules[st.gfnff_molecule];
+                let input = dynamics::MolDynamics {
+                    atoms: molecule.atoms.iter().map(|a| a.to_generic()).collect(),
+                    atom_posits: Some(molecule.atom_posits.clone()),
+                    ..Default::default()
+                };
+                let (tx, rx) = std::sync::mpsc::channel();
+                st.gfnff_job = Some(rx);
+                st.gfnff_report = None;
+                st.gfnff_error = None;
+                std::thread::spawn(move || {
+                    let _ = tx.send(backend.inspect(&input).map_err(|e| e.to_string()));
+                });
+            }
+        });
+        ui.small("Evaluation uses the selected molecule's current geometry and charge override. Results remain until reevaluated.");
+    }
+    if st.gfnff_job.is_some() {
+        ui.spinner();
+        ui.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    if let Some(error) = &st.gfnff_error {
+        ui.colored_label(Color32::LIGHT_RED, error);
+    }
+    if st.gfnff_report.is_some() && ui.small_button("Show native MD values").clicked() {
+        st.gfnff_report = None;
+    }
+
+    ui.separator();
+    egui::Grid::new("gfnff_terms").striped(true).show(ui, |ui| {
+        ui.strong("Energy term");
+        ui.strong("GFN-FF model");
+        ui.strong("kcal/mol");
+        ui.end_row();
+        for &(name, description) in dynamics::params::gfnff::TERMS {
+            ui.label(name);
+            ui.label(description);
+            let components = state
+                .ui
+                .ff_params
+                .gfnff_report
+                .as_ref()
+                .map(|r| &r.components)
+                .or_else(|| {
+                    state
+                        .volatile
+                        .md_local
+                        .mol_dynamics
+                        .as_ref()
+                        .filter(|md| {
+                            md.cfg.ff_family == ForceFieldFamily::Gfnn && md.force_error.is_none()
+                        })
+                        .map(|md| &md.potential_components)
+                });
+            let value = components.and_then(|c| c.iter().find(|c| c.name == name));
+            ui.label(value.map_or_else(|| "—".into(), |v| format!("{:.6}", v.energy)));
+            ui.end_row();
+        }
+    });
+    ui.add_space(ROW_SPACING);
+    ui.label("xTB derives topology and coefficients from the initial geometry and elements. All terms above contribute to every force evaluation.");
+    ui.label("Read only: energy terms and EEQ charges come from xTB. Coefficients are owned by xTB; LJ σ/ε and Amber PME settings do not apply.");
+    if let Some(report) = &state.ui.ff_params.gfnff_report {
+        ui.label(format!(
+            "Inspected molecule total: {:.6} kcal/mol",
+            report.energy
+        ));
+        if let Some(charges) = &report.charges {
+            egui::ScrollArea::vertical()
+                .id_salt("gfnff_inspect_charges")
+                .max_height(180.)
+                .show(ui, |ui| {
+                    for (i, charge) in charges.iter().enumerate() {
+                        ui.label(format!("Atom {} · EEQ charge {charge:.5} e", i + 1));
+                    }
+                });
+        }
+    }
+    if let Some(md) = &state.volatile.md_local.mol_dynamics
+        && md.cfg.ff_family == ForceFieldFamily::Gfnn
+    {
+        ui.label(format!(
+            "Total potential energy: {:.6} kcal/mol",
+            md.potential_energy
+        ));
+        if let Err(error) = md.check_force_error() {
+            ui.colored_label(Color32::LIGHT_RED, error.to_string());
+        }
+        egui::ScrollArea::vertical()
+            .max_height(220.)
+            .show(ui, |ui| {
+                egui::Grid::new("gfnff_atoms").striped(true).show(ui, |ui| {
+                    ui.strong("Atom");
+                    ui.strong("Element");
+                    ui.strong("Force (kcal/mol/Å)");
+                    ui.strong("EEQ charge (e)");
+                    ui.end_row();
+                    for (i, atom) in md.atoms.iter().enumerate() {
+                        ui.label((i + 1).to_string());
+                        ui.label(atom.element.to_letter());
+                        ui.label(format!("{:.5}", atom.force.magnitude()));
+                        ui.label(format!("{:.5}", md.atom_charge(i).unwrap()));
+                        ui.end_row();
+                    }
+                });
+            });
+    }
+    ui.hyperlink_to(
+        "GFN-FF model and parameters",
+        "https://xtb-docs.readthedocs.io/en/latest/gfnff.html",
+    );
 }

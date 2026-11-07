@@ -40,6 +40,8 @@ pub struct ForceFields {
     dirty: bool,
     opls_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
     opls_results: HashMap<u64, Result<MolDynamics, String>>,
+    gfnff_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
+    gfnff_results: HashMap<u64, Result<MolDynamics, String>>,
 }
 
 pub fn family_name(family: ForceFieldFamily) -> &'static str {
@@ -47,6 +49,7 @@ pub fn family_name(family: ForceFieldFamily) -> &'static str {
         ForceFieldFamily::Amber => "Amber",
         ForceFieldFamily::Charmm36 => "CHARMM36m",
         ForceFieldFamily::Opls => "OPLS-AA/L",
+        ForceFieldFamily::Gfnn => "GFN-FF",
         ForceFieldFamily::Custom => "Custom",
     }
 }
@@ -128,14 +131,36 @@ fn amber_annotations(
 
 impl ForceFields {
     pub fn has_pending(&self) -> bool {
-        !self.opls_jobs.is_empty()
+        !self.opls_jobs.is_empty() || !self.gfnff_jobs.is_empty()
     }
 
     /// Re-assign atom types and charges to all molecules on the next refresh. E.g. after editing
     /// the selected family's parameters.
     pub fn invalidate(&mut self) {
         self.assignments.clear();
+        self.gfnff_jobs.clear();
+        self.gfnff_results.clear();
         self.dirty = true;
+    }
+
+    fn poll_gfnff(&mut self) {
+        let mut completed = Vec::new();
+        for (&topology, rx) in &self.gfnff_jobs {
+            match rx.try_recv() {
+                Ok(result) => completed.push((topology, result)),
+                Err(TryRecvError::Disconnected) => {
+                    completed.push((topology, Err("GFN-FF worker stopped".into())))
+                }
+                Err(TryRecvError::Empty) => (),
+            }
+        }
+        for (topology, result) in completed {
+            self.gfnff_jobs.remove(&topology);
+            self.gfnff_results.insert(topology, result);
+            self.assignments
+                .retain(|_, a| a.family != ForceFieldFamily::Gfnn || (a.topology != topology && !a.pending));
+            self.dirty = true;
+        }
     }
 
     fn poll_opls(&mut self) {
@@ -302,8 +327,25 @@ impl ForceFields {
                     .collect(),
                 ..input
             };
-            let result = if self.family == ForceFieldFamily::Opls && kind == FfMolType::SmallOrganic
-            {
+            let result = if self.family == ForceFieldFamily::Gfnn {
+                if let Some(result) = self.gfnff_results.get(&topology) {
+                    Some(result.clone())
+                } else if self.gfnff_jobs.contains_key(&topology) || self.gfnff_jobs.len() >= 2 {
+                    None
+                } else {
+                    let mut backend = self.params.as_ref().unwrap().gfnff().unwrap().clone();
+                    // The override is for the combined simulation, not each displayed molecule.
+                    backend.total_charge = None;
+                    let (tx, rx) = mpsc::channel();
+                    self.gfnff_jobs.insert(topology, rx);
+                    thread::spawn(move || {
+                        use dynamics::params::potential::SystemPotentialBackend;
+
+                        let _ = tx.send(backend.prepare(&input).map_err(|e| e.descrip));
+                    });
+                    None
+                }
+            } else if self.family == ForceFieldFamily::Opls && kind == FfMolType::SmallOrganic {
                 if let Some(result) = self.opls_results.get(&topology) {
                     if let Ok(prepared) = result {
                         self.params
@@ -350,7 +392,9 @@ impl ForceFields {
             // attached to a molecule presented as CHARMM or OPLS.
             for a in &mut mol.atoms {
                 a.force_field_type = None;
-                a.partial_charge = None;
+                if self.family != ForceFieldFamily::Gfnn {
+                    a.partial_charge = None;
+                }
             }
             match result {
                 Some(Ok(prepared)) => {
@@ -473,7 +517,10 @@ impl State {
     /// Avoid starting synchronous network work from MD/energy/export UI paths.
     /// Only molecules actually selected for this simulation can block it.
     pub fn check_md_force_fields(&self) -> Result<(), String> {
-        if self.force_fields.family == ForceFieldFamily::Amber {
+        if matches!(
+            self.force_fields.family,
+            ForceFieldFamily::Amber | ForceFieldFamily::Gfnn
+        ) {
             return Ok(());
         }
         let molecules = self
@@ -512,7 +559,7 @@ impl State {
                 .ok_or_else(|| format!("{}: force field assignment is not ready yet", mol.ident))?;
             if assignment.pending {
                 return Err(format!(
-                    "{}: generating OPLS parameters with LigParGen; wait for parameterization to finish",
+                    "{}: force field assignment is still running",
                     mol.ident
                 ));
             }
@@ -542,6 +589,8 @@ impl State {
             Some(FfParamSet::from_family(family).map_err(|e| e.to_string())?)
         };
         self.force_fields.params = params;
+        self.ui.ff_params.gfnff_executable = None;
+        let previous_family = self.force_fields.family;
         self.force_fields.family = family;
         if family == ForceFieldFamily::Opls {
             self.force_fields.retry_opls();
@@ -553,6 +602,16 @@ impl State {
         cfg.lj_cutoff = preset.lj_cutoff;
         cfg.lj_modifier = preset.lj_modifier;
         cfg.water_model = None;
+        if family == ForceFieldFamily::Gfnn {
+            cfg.solvent = preset.solvent;
+            cfg.barostat_cfg = None;
+            cfg.hydrogen_constraint = preset.hydrogen_constraint;
+            cfg.overrides.skip_counterion_insertion = true;
+            self.to_save.md.dt = self.to_save.md.dt.min(0.0005);
+            self.to_save.md.backend = crate::md::MdBackend::Dynamics;
+        } else if previous_family == ForceFieldFamily::Gfnn {
+            cfg.overrides.skip_counterion_insertion = false;
+        }
         self.ui.md.sync(cfg, self.to_save.md.dt);
 
         self.volatile.md_local.running = false;
@@ -573,6 +632,7 @@ impl State {
     /// every molecule source, copies, and topology edits.
     pub fn refresh_force_fields(&mut self) -> bool {
         self.force_fields.poll_opls();
+        self.force_fields.poll_gfnff();
         let mut changed = std::mem::take(&mut self.force_fields.dirty);
         for (i, mol) in self.peptides.iter_mut().enumerate() {
             changed |= self.force_fields.assign(
@@ -662,6 +722,7 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
                 ForceFieldFamily::Amber,
                 ForceFieldFamily::Charmm36,
                 ForceFieldFamily::Opls,
+                ForceFieldFamily::Gfnn,
             ] {
                 ui.selectable_value(&mut family, value, family_name(value));
             }
@@ -678,6 +739,7 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
         ui.request_repaint();
     }
     let errors: Vec<_> = state.force_fields.errors().collect();
+    let has_errors = !errors.is_empty();
     if !errors.is_empty() {
         ui.menu_button(
             RichText::new(format!("{} unparameterized", errors.len())).color(Color32::YELLOW),
@@ -705,7 +767,18 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
             state.force_fields.retry_opls();
         }
     }
-    if state.force_fields.has_pending() {
+    if !state.force_fields.gfnff_jobs.is_empty() {
+        ui.spinner();
+        ui.label("Preparing GFN-FF…");
+        ui.request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    if state.force_fields.family == ForceFieldFamily::Gfnn
+        && has_errors
+        && ui.small_button("Retry GFN-FF").clicked()
+    {
+        state.force_fields.invalidate();
+    }
+    if !state.force_fields.opls_jobs.is_empty() {
         ui.spinner();
         ui.label(format!(
             "{} queued / parameterizing",

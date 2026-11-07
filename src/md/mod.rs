@@ -747,6 +747,10 @@ pub fn run_dynamics_blocking(
         }
 
         md_state.step(dev, dt, None);
+        if let Err(error) = md_state.check_force_error() {
+            eprintln!("MD stopped: {error}");
+            break;
+        }
     }
 
     let elapsed = start.elapsed();
@@ -767,7 +771,12 @@ impl State {
             return;
         };
 
-        for _ in 0..MD_STEPS_PER_APPLICATION_FRAME {
+        let steps = if md.cfg.ff_family == ForceFieldFamily::Gfnn {
+            1
+        } else {
+            MD_STEPS_PER_APPLICATION_FRAME
+        };
+        for _ in 0..steps {
             if md.step_count >= self.to_save.md.num_steps as usize {
                 println!(
                     "\nMD computation time: {} \n Total run time: {} ms",
@@ -779,6 +788,11 @@ impl State {
                 break;
             }
             md.step(&self.dev, self.to_save.md.dt, None);
+            if let Err(error) = md.check_force_error() {
+                self.volatile.md_local.running = false;
+                handle_err(&mut self.ui, format!("MD stopped: {error}"));
+                break;
+            }
         }
     }
 }
@@ -1303,6 +1317,17 @@ fn ready_to_run_helper(state: &mut State) -> bool {
 }
 /// Launched from the UI; initiates MD.
 pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    if state.force_fields.family == ForceFieldFamily::Gfnn
+        && state.to_save.md.backend != MdBackend::Dynamics
+    {
+        handle_err(
+            &mut state.ui,
+            "GFN-FF requires the Dynamics backend.".into(),
+        );
+
+        return;
+    }
+
     if !ready_to_run_helper(state) {
         return;
     }
@@ -1345,10 +1370,19 @@ pub fn start_md_energy_computation(state: &mut State) {
     match launch_md_energy_computation(state) {
         Ok(snap) => {
             if let Some(en) = &snap.energy_data {
-                let data = format!(
-                    "E result. PE: {:.2}, PE NB: {:.3} PE Bonded: {:.2}",
-                    en.energy_potential, en.energy_potential_nonbonded, en.energy_potential_bonded
-                );
+                let data = if state.force_fields.family == ForceFieldFamily::Gfnn {
+                    format!(
+                        "GFN-FF potential energy: {:.6} kcal/mol",
+                        en.energy_potential
+                    )
+                } else {
+                    format!(
+                        "E result. PE: {:.2}, PE NB: {:.3} PE Bonded: {:.2}",
+                        en.energy_potential,
+                        en.energy_potential_nonbonded,
+                        en.energy_potential_bonded
+                    )
+                };
                 println!("{data}");
                 handle_success(&mut state.ui, data);
 

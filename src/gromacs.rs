@@ -61,6 +61,12 @@ pub fn make_gromacs_input(
     solvent: &Solvent,
     minimize_energy: bool,
 ) -> io::Result<GromacsInput> {
+    if ff_param_set.backend.system_potential().is_some() {
+        return Err(io::Error::other(
+            "GFN-FF requires Dynamics; GROMACS export is unavailable",
+        ));
+    }
+
     let ff_global = ForceFieldParams::default();
 
     // Determine simulation box dimensions (nm).
@@ -226,6 +232,17 @@ pub fn gromacs_input_from_state(
     // ) -> io::Result<(GromacsInput, Vec<(FfMolType, MoleculeCommon, usize)>)> {
 ) -> io::Result<GromacsInput> {
     state.check_md_force_fields().map_err(io::Error::other)?;
+    if state
+        .selected_force_field()
+        .backend
+        .system_potential()
+        .is_some()
+    {
+        return Err(io::Error::other(
+            "GFN-FF requires Dynamics; GROMACS export is unavailable",
+        ));
+    }
+
     // Filter molecules for docking by if they're selected.
     // mut so we can move their posits in the initial snapshot change.
 
