@@ -20,7 +20,7 @@ use cudarc::{
 #[cfg(feature = "cuda")]
 use dynamics::ComputationDevice;
 use egui::Color32;
-use graphics::{Camera, ControlScheme, EngineUpdates, EntityUpdate, Scene};
+use graphics::{ControlScheme, EngineUpdates, EntityUpdate, Scene};
 use lin_alg::{
     f32::Vec3 as Vec3F32,
     f64::{Quaternion, Vec3},
@@ -446,19 +446,38 @@ pub fn find_atom<'a>(atoms: &'a [Atom], indices: &[usize], i_to_find: usize) -> 
     None
 }
 
-pub fn save_snap(state: &mut State, cam: &Camera, name: &str) {
-    state
+pub fn save_snap(state: &mut State, scene: &Scene, name: &str) {
+    let mut snapshot = CamSnapshot::from_cam(&scene.camera, name.to_owned());
+    snapshot.scene = Some(crate::inspection::SceneState::capture(state, scene));
+    let index = state
         .cam_snapshots
-        .push(CamSnapshot::from_cam(cam, name.to_owned()));
+        .iter()
+        .position(|s| s.name.eq_ignore_ascii_case(name.trim()));
+    let index = if let Some(index) = index {
+        state.cam_snapshots[index] = snapshot;
+        index
+    } else {
+        state.cam_snapshots.push(snapshot);
+        state.cam_snapshots.len() - 1
+    };
     state.ui.cam_snapshot_name = String::new();
 
-    state.ui.cam_snapshot = Some(state.cam_snapshots.len() - 1);
+    state.ui.cam_snapshot = Some(index);
 
     state.update_save_prefs();
 }
 
 // The snap must be set in state.ui.cam_snapshot ahead of calling this.
 pub fn load_snap(state: &mut State, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
+    if let Some(appearance) = state
+        .ui
+        .cam_snapshot
+        .and_then(|i| state.cam_snapshots.get(i))
+        .and_then(|s| s.scene.clone())
+    {
+        appearance.apply(state, scene, engine_updates);
+        state.volatile.flags.scene_restored = true;
+    }
     if let Some(snap_i) = state.ui.cam_snapshot {
         match state.cam_snapshots.get(snap_i) {
             Some(snap) => {
@@ -469,7 +488,9 @@ pub fn load_snap(state: &mut State, scene: &mut Scene, engine_updates: &mut Engi
                 scene.camera.update_proj_mat(); // In case `far` etc changed.
                 engine_updates.camera = true;
 
-                set_flashlight(scene);
+                if snap.scene.is_none() {
+                    set_flashlight(scene);
+                }
                 engine_updates.lighting = true;
             }
             None => {
@@ -778,7 +799,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &state.ui.selection,
-                &state.ui.aa_selection.residue_colors(mol),
+                &crate::inspection::residue_colors(state, mol),
                 mol.sifts_mapping.as_deref(),
             );
         }
@@ -807,7 +828,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &Selection::None,
-                &state.ui.aa_selection.residue_colors(mol),
+                &crate::inspection::residue_colors(state, mol),
                 mol.sifts_mapping.as_deref(),
             );
             let vertex_offset = other_ribbons.vertices.len();
@@ -877,15 +898,20 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                     let mesh_for_thread = scene.meshes[MESH_PEP_SOLVENT_SURFACE].clone();
                     let mol_for_thread = mol.common.clone();
                     let coloring = state.ui.mesh_coloring;
-                    let residue_colors = state.ui.aa_selection.residue_colors(mol);
+                    let residue_colors = crate::inspection::residue_colors(state, mol);
+                    let atom_colors = crate::inspection::atom_colors(
+                        state,
+                        &mol_defs::molecules::MolGenericRef::Peptide(mol),
+                    );
 
                     thread::spawn(move || {
                         let mut updates = EngineUpdates::default();
-                        let colors = sfc_mesh::get_mesh_colors_with_residues(
+                        let colors = sfc_mesh::get_mesh_colors_with_atoms(
                             &mesh_for_thread,
                             &mol_for_thread,
                             coloring,
                             &residue_colors,
+                            &atom_colors,
                             &mut updates,
                         );
                         let _ = tx.send(colors);
@@ -923,15 +949,20 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         );
         let mol_for_thread = mol.common.clone();
         let coloring = state.ui.mesh_coloring;
-        let residue_colors = state.ui.aa_selection.residue_colors(mol);
+        let residue_colors = crate::inspection::residue_colors(state, mol);
+        let atom_colors = crate::inspection::atom_colors(
+            state,
+            &mol_defs::molecules::MolGenericRef::Peptide(mol),
+        );
 
         thread::spawn(move || {
             let mut eu = EngineUpdates::default();
-            let colors = sfc_mesh::get_mesh_colors_with_residues(
+            let colors = sfc_mesh::get_mesh_colors_with_atoms(
                 &mesh_for_thread,
                 &mol_for_thread,
                 coloring,
                 &residue_colors,
+                &atom_colors,
                 &mut eu,
             );
             let _ = tx.send(colors);

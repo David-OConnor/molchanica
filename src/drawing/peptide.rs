@@ -603,7 +603,16 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         .count();
 
     let ui = &state.ui;
-    let residue_colors = ui.aa_selection.residue_colors(mol);
+    let residue_colors = crate::inspection::residue_colors(state, mol);
+    let object_key =
+        crate::selection::expression::object_key(&mol_defs::molecules::MolGenericRef::Peptide(mol));
+    let scalar_colors = state
+        .to_save
+        .inspection
+        .colors
+        .iter()
+        .rev()
+        .find(|c| c.enabled && c.object == object_key);
     let owns_shared_mesh = state.peptide_for_tools_i() == Some(mol_i);
     // Dots and solvent-surface views still use shared mesh slots. Ribbons for other peptides
     // are collected into a second mesh by the scene flag handler.
@@ -832,6 +841,14 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
 
         if !manip_active
             && color_atom != COLOR_SELECTED
+            && let Some(colors) = scalar_colors
+        {
+            color_atom = colors.color(atom.serial_number);
+        }
+
+        if !manip_active
+            && color_atom != COLOR_SELECTED
+            && (scalar_colors.is_none() || ui.aa_selection.enabled)
             && let Some(color) = atom
                 .residue
                 .and_then(|r| residue_colors.get(r))
@@ -1089,6 +1106,12 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         if !manip_active {
             for (atom, color) in [(atom_0, &mut color_0), (atom_1, &mut color_1)] {
                 if *color != COLOR_SELECTED
+                    && let Some(colors) = scalar_colors
+                {
+                    *color = colors.color(atom.serial_number);
+                }
+                if *color != COLOR_SELECTED
+                    && (scalar_colors.is_none() || ui.aa_selection.enabled)
                     && let Some(highlight) = atom
                         .residue
                         .and_then(|r| residue_colors.get(r))

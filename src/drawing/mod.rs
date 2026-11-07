@@ -790,6 +790,13 @@ pub fn draw_mol_with_pharmacophore_visibility(
     };
 
     let compact_md_solvent_style = use_md_compact_solvent_style(draw_md_mols, &mol.common().ident);
+    let object_key = crate::selection::expression::object_key(&mol);
+    let scalar_colors = ui
+        .inspection
+        .colors
+        .iter()
+        .rev()
+        .find(|c| c.enabled && c.object == object_key);
 
     // Keep MD solvents compact while solute molecules follow the selected view.
     let mol_view = if compact_md_solvent_style {
@@ -918,6 +925,13 @@ pub fn draw_mol_with_pharmacophore_visibility(
                         _ => (),
                     }
                 }
+            }
+
+            if !manip_active
+                && color != COLOR_SELECTED
+                && let Some(colors) = scalar_colors
+            {
+                color = colors.color(atom.serial_number);
             }
 
             if mode == OperatingMode::Primary
@@ -1193,6 +1207,15 @@ pub fn draw_mol_with_pharmacophore_visibility(
 
             helper(atom_0, &mut color_0);
             helper(atom_1, &mut color_1);
+        }
+
+        if !manip_active && let Some(colors) = scalar_colors {
+            if color_0 != COLOR_SELECTED {
+                color_0 = colors.color(atom_0.serial_number);
+            }
+            if color_1 != COLOR_SELECTED {
+                color_1 = colors.color(atom_1.serial_number);
+            }
         }
 
         // Apply after selection and molecule tinting, including stick-only views.

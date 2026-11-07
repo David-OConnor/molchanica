@@ -328,7 +328,13 @@ fn handle_mouse_button(
         MouseButton::Right => match btn_state {
             ElementState::Pressed => match state.volatile.operating_mode {
                 OperatingMode::Primary => {
-                    selection::handle_selection_attempt(state, scene, redraw);
+                    if state.ui.inspection.picking {
+                        if let Some(cursor) = state.ui.cursor_pos {
+                            crate::inspection::pick_atom(state, scene, cursor);
+                        }
+                    } else {
+                        selection::handle_selection_attempt(state, scene, redraw);
+                    }
                 }
                 OperatingMode::MolEditor => {
                     selection::handle_selection_attempt_mol_editor(
@@ -489,6 +495,12 @@ fn handle_physical_key(
                     }
                 }
                 KeyCode::Escape => {
+                    if state.ui.inspection.picking {
+                        state.ui.inspection.picking = false;
+                        state.ui.inspection.pending.clear();
+
+                        return true;
+                    }
                     // If in manip mode, exit that, but don't remove selections.
                     if matches!(
                         state.volatile.mol_manip.mode,

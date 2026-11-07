@@ -766,6 +766,12 @@ fn top_controls(
             if ui.button(RichText::new("Editor").color(COLOR_HIGHLIGHT)).clicked() {
                 enter_edit_mode(state, scene, updates);
             }
+            if ui.button("Open project").clicked() {
+                state.volatile.dialogs.project_load.pick_file();
+            }
+            if ui.button("Save project").clicked() {
+                state.volatile.dialogs.project_save.save_file();
+            }
 
             if button!(
                     ui,
@@ -1045,6 +1051,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 if ui.button("Selections / layers").clicked() {
                     state.ui.popup.selections = true;
                 }
+                if ui.button("Measurements / colors").clicked() {
+                    state.ui.inspection.open = true;
+                }
                 if ui.button("Publication figure").clicked() {
                     state.publication.open = true;
                 }
@@ -1169,6 +1178,11 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         updates.lighting = true;
     }
 
+    crate::inspection::show(state, ui.ctx(), &mut redraw);
+    let scene_restored = std::mem::take(&mut state.volatile.flags.scene_restored);
+    if scene_restored {
+        redraw.set_all();
+    }
     handle_scene_flags(state, scene, &mut updates);
     let query_was_pending = state.volatile.thread_receivers.query.is_some();
     handle_thread_rx(state, scene, &mut redraw, &mut updates);
@@ -1191,7 +1205,11 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     // Run one or more MD steps, if a MD computation is in progress.
     state.md_step(scene, &mut updates);
+    if scene_restored && state.volatile.md_local.draw_md_mols {
+        crate::md::viewer::draw_mols(state, scene, &mut updates);
+    }
     crate::drawing::representations::update(state, scene, &mut updates);
+    crate::inspection::paint(state, scene, ui.ctx());
 
     // Capture after pending geometry updates, so the figure reflects this frame's scene.
     crate::publication::show(state, scene, ui.ctx());
@@ -1433,7 +1451,9 @@ pub(crate) fn cam_snapshots(
 
     if ui
         .button("Save")
-        .on_hover_text("Save the current camera position and orientation to a scene.")
+        .on_hover_text(
+            "Save camera, representations, colors, labels, visibility, measurements, and frame.",
+        )
         .clicked()
     {
         let name = if !state.ui.cam_snapshot_name.is_empty() {
@@ -1442,7 +1462,7 @@ pub(crate) fn cam_snapshots(
             format!("Scene {}", state.cam_snapshots.len() + 1)
         };
 
-        crate::util::save_snap(state, &scene.camera, &name);
+        crate::util::save_snap(state, scene, &name);
     }
 
     let prev_snap = state.ui.cam_snapshot;
@@ -1462,7 +1482,15 @@ pub(crate) fn cam_snapshots(
             }
         })
         .response
-        .on_hover_text("Set the camera to a previously-saved scene.");
+        .on_hover_text("Restore the saved scene appearance and camera.");
+
+    if let Some(index) = state.ui.cam_snapshot
+        && ui.button("Update scene").clicked()
+    {
+        if let Some(name) = state.cam_snapshots.get(index).map(|s| s.name.clone()) {
+            crate::util::save_snap(state, scene, &name);
+        }
+    }
 
     if let Some(i) = state.ui.cam_snapshot
         && ui.button(RichText::new("❌").color(Color32::RED)).clicked()

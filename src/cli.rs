@@ -180,7 +180,14 @@ pub fn handle_cmd(
         let filename = &caps[1];
         let path = PathBuf::from_str(filename).unwrap();
 
-        state.save(&path)?;
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("mcproj"))
+        {
+            crate::project::save(state, scene, &path)?;
+        } else {
+            state.save(&path)?;
+        }
 
         return Ok(format!("Saved {filename}"));
     }
@@ -190,7 +197,7 @@ pub fn handle_cmd(
         let filename = &caps[1];
         let path = PathBuf::from_str(filename).unwrap();
 
-        state.open_mol_from_file(&path, scene, updates)?;
+        state.open_file(&path, scene, updates)?;
 
         set_flashlight(scene);
         updates.lighting = true;
@@ -218,7 +225,7 @@ pub fn handle_cmd(
         match caps.get(2) {
             Some(action) => {
                 if action.as_str().eq_ignore_ascii_case("store") {
-                    util::save_snap(state, &scene.camera, name);
+                    util::save_snap(state, scene, name);
                 } else {
                     recall = true;
                 }

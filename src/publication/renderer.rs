@@ -139,11 +139,12 @@ pub(super) fn render(
     let height = settings.height * settings.samples;
     scene.camera.aspect = width as f32 / height as f32;
     scene.camera.update_proj_mat();
-    if measurements
-        .iter()
-        .any(|m| !scene.camera.in_view(m.a).0 || !scene.camera.in_view(m.b).0)
-    {
-        return Err("A distance endpoint is outside the figure. Reframe the scene or change the aspect ratio to include both endpoints.".into());
+    if measurements.iter().any(|m| {
+        !scene.camera.in_view(m.a).0
+            || !scene.camera.in_view(m.b).0
+            || m.extra.iter().any(|p| !scene.camera.in_view(*p).0)
+    }) {
+        return Err("A measurement endpoint is outside the figure. Reframe the scene or change its aspect ratio.".into());
     }
 
     progress("Initializing offscreen GPU…");
@@ -636,7 +637,17 @@ fn draw_labels(
                 }
             }
             for m in measurements {
-                if let (Some(a), Some(b)) = (project(m.a), project(m.b)) {
+                let color = m
+                    .color
+                    .map(|[r, g, b]| Color32::from_rgb(r, g, b))
+                    .unwrap_or(color);
+                let points: Vec<_> = std::iter::once(m.a)
+                    .chain(std::iter::once(m.b))
+                    .chain(m.extra.iter().copied())
+                    .filter_map(project)
+                    .collect();
+                for pair in points.windows(2) {
+                    let (a, b) = (pair[0], pair[1]);
                     let length = a.distance(b);
                     let steps = (length / 7.).ceil().max(1.) as usize;
                     for i in (0..steps).step_by(2) {
@@ -648,10 +659,19 @@ fn draw_labels(
                             Stroke::new(1.5, color),
                         );
                     }
+                }
+                if points.len() >= 2 {
+                    let anchor = match points.len() {
+                        3 => points[1],
+                        4 => points[1].lerp(points[2], 0.5),
+                        _ => points[0].lerp(points[1], 0.5),
+                    };
                     painter.text(
-                        a.lerp(b, 0.5) - egui::vec2(0., 4.),
+                        anchor - egui::vec2(0., 4.),
                         Align2::CENTER_BOTTOM,
-                        format!("{:.3} Å", (m.b - m.a).magnitude()),
+                        m.label
+                            .clone()
+                            .unwrap_or_else(|| format!("{:.3} Å", (m.b - m.a).magnitude())),
                         FontId::proportional(16. * settings.label_scale),
                         color,
                     );

@@ -146,6 +146,9 @@ impl Settings {
 pub(super) struct Measurement {
     a: Vec3,
     b: Vec3,
+    extra: Vec<Vec3>,
+    label: Option<String>,
+    color: Option<[u8; 3]>,
 }
 
 pub(super) struct Figure {
@@ -304,6 +307,29 @@ impl Publication {
 }
 
 pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
+    let live_measurements: Vec<_> = if state.publication.open {
+        state
+            .to_save
+            .inspection
+            .measurements
+            .iter()
+            .filter(|m| m.visible)
+            .filter_map(|m| {
+                let points = m.points(state)?;
+                crate::inspection::measure(m.kind, &points)?;
+
+                Some(Measurement {
+                    a: points[0].into(),
+                    b: points[1].into(),
+                    extra: points[2..].iter().map(|p| (*p).into()).collect(),
+                    label: Some(format!("{}: {}", m.name, m.label(state))),
+                    color: Some(m.color),
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let selected = if state.publication.open {
         let points = expression::positions(state);
         (points.len() == 1)
@@ -465,6 +491,9 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
                             p.measurements.push(Measurement {
                                 a: p.endpoint.take().unwrap(),
                                 b: selected.unwrap(),
+                                extra: Vec::new(),
+                                label: None,
+                                color: None,
                             });
                             p.figure = None;
                             p.preview = None;
@@ -500,7 +529,8 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
                             }
                         };
                         let settings = p.library.settings.clone();
-                        let measurements = p.measurements.clone();
+                        let mut measurements = p.measurements.clone();
+                        measurements.extend(live_measurements.clone());
                         let prefs_path = prefs_dir.join("figure_styles.json");
                         let prefs_bytes = serde_json::to_vec_pretty(&p.library);
                         let (tx, rx) = mpsc::channel();

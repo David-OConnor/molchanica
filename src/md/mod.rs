@@ -1065,7 +1065,9 @@ pub fn custom_solvents_to_mol_commons(
 /// Called directly from the UI; computes energy.
 // pub fn launch_md_energy_computation(state: &mut State) -> Result<Snapshot, ParamError> {
 pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamError> {
-    state.check_md_force_fields().map_err(|e| ParamError::new(&e))?;
+    state
+        .check_md_force_fields()
+        .map_err(|e| ParamError::new(&e))?;
     let mols_in = get_mols_sel_for_md(state);
 
     let peptide_only_near_lig = if state.ui.md.peptide_only_near_ligs {

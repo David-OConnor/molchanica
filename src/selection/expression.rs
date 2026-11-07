@@ -13,7 +13,7 @@ use crate::{
     state::State,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
 pub struct NamedSelection {
     pub name: String,
     pub expression: String,

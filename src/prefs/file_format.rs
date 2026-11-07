@@ -95,6 +95,7 @@ enum PacketType {
     /// Loose scalar fields that don't warrant their own packet.
     Misc = 10,
     SelectionsAndRepresentations = 11,
+    Inspection = 12,
 }
 
 impl PacketType {
@@ -112,6 +113,7 @@ impl PacketType {
             9 => Self::NucleicAcid,
             10 => Self::Misc,
             11 => Self::SelectionsAndRepresentations,
+            12 => Self::Inspection,
             _ => return None,
         })
     }
@@ -543,6 +545,9 @@ impl CamSnapshot {
         out.extend_from_slice(&self.far.to_le_bytes());
         out.extend_from_slice(&(self.name.len() as u32).to_le_bytes());
         out.extend_from_slice(self.name.as_bytes());
+        out.extend_from_slice(
+            &bincode::encode_to_vec(&self.scene, bincode::config::standard()).unwrap_or_default(),
+        );
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -565,11 +570,23 @@ impl CamSnapshot {
         let len = parse_le!(data, u32, i..i + 4) as usize;
         i += 4;
         let name = String::from_utf8(data[i..i + len].to_vec()).unwrap();
+        i += len;
+        let scene = if i < data.len() {
+            bincode::decode_from_slice(
+                &data[i..],
+                bincode::config::standard().with_limit::<268435456>(),
+            )
+            .map_err(io::Error::other)?
+            .0
+        } else {
+            None
+        };
         Ok(Self {
             position,
             orientation,
             far,
             name,
+            scene,
         })
     }
 }
@@ -1330,6 +1347,11 @@ impl UiPrefs {
 impl ToSave {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let mut packets: Vec<(PacketType, Vec<u8>)> = Vec::new();
+        packets.push((
+            PacketType::Inspection,
+            bincode::encode_to_vec(&self.inspection, bincode::config::standard())
+                .map_err(io::Error::other)?,
+        ));
 
         // PerMol: u32 count, then (u32 key len, key, u32 val len, val) per entry.
         {
@@ -1485,6 +1507,15 @@ impl ToSave {
             };
 
             match packet_type {
+                PacketType::Inspection => {
+                    to_save.inspection = bincode::decode_from_slice(
+                        payload,
+                        bincode::config::standard().with_limit::<268435456>(),
+                    )
+                    .map_err(io::Error::other)?
+                    .0;
+                    to_save.inspection.validate().map_err(io::Error::other)?;
+                }
                 PacketType::PerMol => {
                     let mut j = 0;
                     let n = parse_le!(payload, u32, j..j + 4) as usize;

@@ -93,7 +93,9 @@ pub(in crate::ui) fn load_popups(
     binding::poll(state, ui);
     if state.ui.popup.binding {
         state.ui.popup.binding = show_popup(
-            popup("Protein–ligand binding").default_width(760.).vscroll(true),
+            popup("Protein–ligand binding")
+                .default_width(760.)
+                .vscroll(true),
             ui.ctx(),
             |ui| binding::editor(state, scene, ui, redraw, updates),
         );

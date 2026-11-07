@@ -607,7 +607,7 @@ pub enum DbSel {
 
 /// Holds data related to filters, selections, etc used to help with amino acid-specific
 /// visualizations.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub struct AaSelection {
     pub enabled: bool,
     pub amino_acids: HashSet<AminoAcid>,
@@ -637,6 +637,7 @@ impl Default for AaSelection {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
+    pub inspection: crate::inspection::InspectionUi,
     pub binding: crate::ui::popup::binding::BindingUi,
     pub protein_comparison: crate::ui::popup::protein_comparison::ProteinComparison,
     pub selection_editor: crate::ui::popup::selections::SelectionEditor,
@@ -860,7 +861,7 @@ impl Default for LabelVis {
 
 /// Font sizes of the text labels drawn over the 3D render. (`TextOverlay` has no separate stroke
 /// weight; the size is also what controls thickness.)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
 pub struct LabelSizes {
     /// Small molecule, lipid, and nucleic acid names.
     pub mol: f32,
@@ -1201,7 +1202,7 @@ impl MsaaSetting {
 }
 
 /// Hides protein atoms based on their distance to something.
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Default, Debug, Encode, Decode)]
 pub enum DistFilter {
     #[default]
     None,
@@ -1311,6 +1312,7 @@ pub struct CamSnapshot {
     pub orientation: Quaternion,
     pub far: f32,
     pub name: String,
+    pub scene: Option<crate::inspection::SceneState>,
 }
 
 impl CamSnapshot {
@@ -1320,6 +1322,7 @@ impl CamSnapshot {
             orientation: cam.orientation,
             far: cam.far,
             name,
+            scene: None,
         }
     }
 }
@@ -1340,6 +1343,7 @@ pub struct Templates {
 /// Flags to accomplish things that must be done somewhere with access to `Scene`.
 #[derive(Default)]
 pub struct SceneFlags {
+    pub scene_restored: bool,
     /// Secondary structure
     pub update_ss_mesh: bool,
     /// Selection whose colors are currently baked into the ribbon mesh.

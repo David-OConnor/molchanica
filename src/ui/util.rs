@@ -217,6 +217,16 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.save_gro.update(ctx);
     state.volatile.dialogs.save_seq.update(ctx);
     state.volatile.dialogs.ff_params.update(ctx);
+    state.volatile.dialogs.project_load.update(ctx);
+    state.volatile.dialogs.project_save.update(ctx);
+    if let Some(path) = state.volatile.dialogs.project_save.take_picked() {
+        crate::project::save(state, scene, &path)?;
+        handle_success(&mut state.ui, format!("Saved project: {}", path.display()));
+    }
+    if let Some(path) = state.volatile.dialogs.project_load.take_picked() {
+        crate::project::load(state, scene, engine_updates, &path)?;
+        handle_success(&mut state.ui, format!("Opened project: {}", path.display()));
+    }
     state.ui.synthesis_reactions.protocol_export.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {

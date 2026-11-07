@@ -387,6 +387,7 @@ impl State {
         }
 
         match ext.as_str() {
+            "mcproj" => crate::project::load(self, scene, engine_updates, path)?,
             // The cif branch here also handles 2fo-fc mmCIF files.
             // Note: `mol` is ChEBI's SDF; same or similar in most or all cases?
             "sdf" | "mol" | "mol2" | "xyz" | "pdbqt" | "pdb" | "cif" => {
@@ -1428,6 +1429,8 @@ pub fn save_trajectory(dialog: &mut FileDialog) -> io::Result<()> {
 pub struct FileDialogs {
     pub load: FileDialog,
     pub save: FileDialog,
+    pub project_load: FileDialog,
+    pub project_save: FileDialog,
     /// This is for selecting a folder containing molecule files. This is for workflows that don't involve
     /// a database. Note: Currently unused and being deprecated in favor of databases (e.g. Parquet)
     pub screening: FileDialog,
@@ -1458,12 +1461,13 @@ impl Default for FileDialogs {
         let parquet_descrip = "Parquet mol DB".to_owned();
 
         let mut exts_all = vec![
-            "cif", "mol", "mol2", "sdf", "xyz", "pdbqt", "gro", "map", "mtz", "frcmod", "dat",
-            "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
+            "mcproj", "cif", "mol", "mol2", "sdf", "xyz", "pdbqt", "gro", "map", "mtz", "frcmod",
+            "dat", "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
         ];
         exts_all.extend(sequence::seq_exts_open());
 
         let cfg_all = FileDialogConfig::default()
+            .add_file_filter_extensions("Molchanica project", vec!["mcproj"])
             .add_file_filter_extensions("All", exts_all)
             .add_file_filter_extensions(
                 "Molecule (small)",
@@ -1553,6 +1557,14 @@ impl Default for FileDialogs {
         Self {
             load,
             save,
+            project_load: FileDialog::with_config(
+                FileDialogConfig::default()
+                    .add_file_filter_extensions("Molchanica project", vec!["mcproj"]),
+            ),
+            project_save: FileDialog::with_config(
+                FileDialogConfig::default().add_save_extension("Molchanica project", "mcproj"),
+            )
+            .default_save_extension("Molchanica project"),
             screening,
             parquet_db_save,
             parquet_db_load,

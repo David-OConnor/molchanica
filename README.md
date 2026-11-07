@@ -369,14 +369,6 @@ You can add DNA, RNA, and lipids in various configurations without loading files
 Molchanica keeps its data in one folder: the one its executable is in.
 
 
-#### Upgrading from an earlier version
-
-Versions before this change always kept `process_executables/` and `datasets/` in the OS per-user
-data directory, separate from the executable. On first launch, Molchanica moves them into the
-install folder — a rename, so it's instant and doesn't re-download anything. If the two are on
-different drives the rename can't work; Molchanica then prints both paths and leaves the files
-alone, so move them yourself or point `MOLCHANICA_DATA_DIR` at the old location.
-
 ![ELectron density](screenshots/iso_a.png)
 
 ### Compiling

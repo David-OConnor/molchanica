@@ -29,7 +29,7 @@ use crate::{
     util::clear_mol_entity_indices,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, bincode::Encode, bincode::Decode)]
 pub struct Representation {
     pub name: String,
     pub expression: String,
@@ -193,6 +193,7 @@ fn fingerprint(state: &State) -> u64 {
     let mut hash = DefaultHasher::new();
     format!("{:?}", state.to_save.named_selections).hash(&mut hash);
     format!("{:?}", state.to_save.representations).hash(&mut hash);
+    format!("{:?}", state.to_save.inspection.colors).hash(&mut hash);
     state.to_save.sa_surface_precision.to_bits().hash(&mut hash);
     for (kind, i, mol) in expression::objects(state) {
         (kind as u8).hash(&mut hash);
@@ -316,6 +317,7 @@ fn draw_layer(
         if !common.visible {
             continue;
         }
+        let scalar_colors = crate::inspection::color_for(state, &mol);
         let mut mask = vec![false; common.atoms.len()];
         for &a in &selected.atoms {
             mask[a] = true;
@@ -361,7 +363,7 @@ fn draw_layer(
                 ResColoring::Chain,
                 ViewSelLevel::Residue,
                 &Selection::None,
-                &[],
+                &crate::inspection::residue_colors(state, pep),
                 pep.sifts_mapping.as_deref(),
             );
             mesh_entity(mesh, layer, meshes, entities, mesh_start);
@@ -394,7 +396,26 @@ fn draw_layer(
             {
                 return Err("Surface selection spans too much space; use a smaller selection or coarser surface precision".into());
             }
-            let mesh = make_sas_mesh(&atoms, SOLVENT_RAD, precision);
+            let mut mesh = make_sas_mesh(&atoms, SOLVENT_RAD, precision);
+            if layer.color.is_none()
+                && let Some(colors) = scalar_colors
+            {
+                let subset = common.subset(&selected.atoms).map_err(|e| e.to_string())?;
+                let atom_colors: Vec<_> = subset
+                    .atoms
+                    .iter()
+                    .map(|a| colors.color(a.serial_number))
+                    .collect();
+                let mapped = crate::sfc_mesh::get_mesh_colors_with_atoms(
+                    &mesh,
+                    &subset,
+                    mol_defs::sfc_mesh::MeshColoring::Solid,
+                    &[],
+                    &atom_colors,
+                    &mut EngineUpdates::default(),
+                );
+                crate::sfc_mesh::apply_mesh_colors(&mut mesh, &mapped);
+            }
             if layer.view == MoleculeView::Dots {
                 for vertex in mesh.vertices {
                     let mut entity = Entity::new(
@@ -406,6 +427,11 @@ fn draw_layer(
                         ATOM_SHININESS,
                     );
                     style_entity(&mut entity, layer);
+                    if layer.color.is_none()
+                        && let Some((r, g, b, _)) = vertex.color
+                    {
+                        entity.color = (r as f32 / 255., g as f32 / 255., b as f32 / 255.);
+                    }
                     entities.push(entity);
                 }
             } else {
@@ -439,6 +465,11 @@ fn draw_layer(
                     ATOM_SHININESS,
                 );
                 style_entity(&mut entity, layer);
+                if layer.color.is_none()
+                    && let Some(colors) = scalar_colors
+                {
+                    entity.color = colors.color(atom.serial_number);
+                }
                 entities.push(entity);
             }
         }
@@ -467,10 +498,11 @@ fn draw_layer(
                 .map(position)
                 .unwrap_or(position(a));
             let color = |i: usize| {
-                layer
-                    .color
-                    .map(|[r, g, b]| (r, g, b))
-                    .unwrap_or(common.atoms[i].element.color())
+                layer.color.map(|[r, g, b]| (r, g, b)).unwrap_or_else(|| {
+                    scalar_colors
+                        .map(|c| c.color(common.atoms[i].serial_number))
+                        .unwrap_or(common.atoms[i].element.color())
+                })
             };
             let mut bonds = bond_entities(
                 position(a),

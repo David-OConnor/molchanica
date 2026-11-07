@@ -756,6 +756,9 @@ pub(crate) fn handle_selection_attempt(
     // todo: Handle MD viewer selection, but it will take some work.
     // todo: For now, abort.
     if state.volatile.md_local.draw_md_mols {
+        if state.ui.inspection.picking {
+            crate::inspection::pick_trajectory(state, scene, cursor);
+        }
         return;
     }
 
