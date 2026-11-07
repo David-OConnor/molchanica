@@ -75,7 +75,7 @@ pub fn get_mesh_colors_with_atoms(
     mol: &MoleculeCommon,
     coloring: MeshColoring,
     residue_colors: &[Option<(f32, f32, f32)>],
-    atom_colors: &[(f32, f32, f32)],
+    atom_colors: &[Option<(f32, f32, f32)>],
     engine_updates: &mut EngineUpdates,
 ) -> Option<MeshColors> {
     if coloring == MeshColoring::Solid && residue_colors.is_empty() && atom_colors.is_empty() {
@@ -146,7 +146,7 @@ pub fn get_mesh_colors_with_atoms(
             if let Some(i) = closest_atom {
                 let atom = &mol.atoms[i];
 
-                if let Some(&(r, g, b)) = atom_colors.get(i) {
+                if let Some((r, g, b)) = atom_colors.get(i).copied().flatten() {
                     return Some((
                         (r * 255.) as u8,
                         (g * 255.) as u8,

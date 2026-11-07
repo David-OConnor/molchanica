@@ -16,16 +16,18 @@
 //! [S3 Gemmi link](https://daedalus-mols.s3.us-east-1.amazonaws.com/gemmi.exe)
 //! [S3 Geostd link](https://daedalus-mols.s3.us-east-1.amazonaws.com/amber_geostd)
 
+mod annotations;
 mod docking;
 mod drawing;
+mod edit_history;
 mod file_io;
 mod force_fields;
 mod inputs;
 mod inspection;
-mod annotations;
 mod pocket_render;
 mod prefs;
 mod project;
+mod region_select;
 mod publication;
 mod render;
 mod sfc_mesh;

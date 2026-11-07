@@ -858,8 +858,13 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             color_atom = color;
         }
 
-        if !manip_active && color_atom != COLOR_SELECTED
-            && let Some(color) = crate::inspection::solid_color(state, &mol_defs::molecules::MolGenericRef::Peptide(mol), atom.serial_number)
+        if !manip_active
+            && color_atom != COLOR_SELECTED
+            && let Some(color) = crate::inspection::solid_color(
+                state,
+                &mol_defs::molecules::MolGenericRef::Peptide(mol),
+                atom.serial_number,
+            )
         {
             color_atom = color;
         }
@@ -1127,7 +1132,12 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                     *color = highlight;
                 }
                 if *color != COLOR_SELECTED
-                    && let Some(override_color) = state.to_save.inspection.solid_colors.get(&object_key).and_then(|c| c.get(&atom.serial_number))
+                    && let Some(override_color) = state
+                        .to_save
+                        .inspection
+                        .solid_colors
+                        .get(&object_key)
+                        .and_then(|c| c.get(&atom.serial_number))
                 {
                     *color = (*override_color).into();
                 }

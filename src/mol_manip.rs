@@ -2,13 +2,15 @@
 //! This is for both primary mode, and the mol editor. In the latter, it
 //! can move individual atoms, and rotate parts of molecules around bonds.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use graphics::{
-    Camera, ControlScheme, EngineUpdates, FWD_VEC, Mesh, RIGHT_VEC, Scene, UP_VEC,
-    event::MouseScrollDelta,
+    ControlScheme, EngineUpdates, FWD_VEC, Mesh, RIGHT_VEC, Scene, UP_VEC, event::MouseScrollDelta,
+    winit::keyboard::KeyCode,
 };
 use lin_alg::{
     f32::{Quaternion, Vec3},
-    f64::Vec3 as Vec3F64,
+    f64::{Quaternion as QuaternionF64, Vec3 as Vec3F64},
 };
 use mol_defs::molecules::{MolType, common::MoleculeCommon};
 use na_seq::Element;
@@ -190,812 +192,128 @@ pub fn finish_peptide_mesh_manipulation(state: &mut State, redraw: &mut RedrawFl
     }
 }
 
-/// Blender-style mouse dragging of the molecule. For movement, creates a plane of the camera view,
-/// at the molecule's depth. The mouse cursor projects to this plane, moving the molecule
-/// along it. (Movement). Handles rotation in a straightforward manner. This is for motion relative
-/// to the 2D screen, e.g. from mouse movement.
-pub fn handle_mol_manip_in_plane(
-    state: &mut State,
-    scene: &mut Scene,
-    delta: (f64, f64),
-    redraw: &mut RedrawFlags,
-    updates: &mut EngineUpdates,
-) {
-    if state.volatile.mol_manip.mode == ManipMode::None {
-        return;
-    }
-
-    // We skip renders, as they are relatively slow. This produces choppy dragging,
-    // but I don't have a better plan yet.
-    static mut I: u16 = 0;
-
-    let Some(cursor) = state.ui.cursor_pos else {
-        return;
-    };
-
-    let op_mode = state.volatile.operating_mode;
-    let peptide_meshes_are_target = op_mode == OperatingMode::Primary
-        && matches!(
-            state.volatile.mol_manip.mode,
-            ManipMode::Move((MolType::Peptide, i)) | ManipMode::Rotate((MolType::Peptide, i))
-                if state.peptide_for_tools_i() == Some(i)
-        );
-    let ss_mesh_created = peptide_meshes_are_target && state.volatile.flags.ss_mesh_created;
-    let sas_mesh_created = peptide_meshes_are_target && state.volatile.flags.sas_mesh_created;
-
-    let mut rebuild_pocket = None; // Avoids double borrow.
-
-    match state.volatile.mol_manip.mode {
-        ManipMode::Move((mol_type, mol_i)) => {
-            let mol = match op_mode {
-                OperatingMode::Primary => match mol_type {
-                    MolType::Peptide => {
-                        if let Some(p) = state.peptides.get_mut(mol_i) {
-                            &mut p.common
-                        } else {
-                            eprintln!("Error: No peptide in state for mol manip");
-                            return;
-                        }
-                    }
-                    MolType::Ligand => &mut state.ligands[mol_i].common,
-                    MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
-                    MolType::Lipid => &mut state.lipids[mol_i].common,
-                    MolType::Pocket => &mut state.pockets[mol_i].common,
-                    _ => unimplemented!(),
-                },
-                OperatingMode::MolEditor => match mol_type {
-                    MolType::Ligand => &mut state.mol_editor.mol.common,
-                    MolType::Pocket => {
-                        &mut state
-                            .mol_editor
-                            .mol
-                            .pharmacophore
-                            .pocket
-                            .as_mut()
-                            .unwrap()
-                            .common
-                    }
-                    _ => unimplemented!(),
-                },
-                OperatingMode::ProteinEditor => unimplemented!(),
-            };
-
-            // Ray from screen
-            let (ray_origin, ray_point) = scene.screen_to_render(cursor);
-            let ray_dir = (ray_point - ray_origin).to_normalized();
-
-            state.volatile.mol_manip.setup_params(
-                &scene.camera,
-                mol,
-                mol_type,
-                ray_origin,
-                ray_dir,
-                op_mode,
-                mol_i,
-            );
-
-            // Cached at drag start
-            let pivot = state.volatile.mol_manip.pivot.unwrap();
-            let pivot_norm = state.volatile.mol_manip.view_dir.unwrap();
-            let prev_offset = state.volatile.mol_manip.offset;
-
-            let denom = ray_dir.dot(pivot_norm);
-            if denom.abs() > 1e-6 {
-                // Fixed plane: n · (X - pivot) = 0
-                let t = pivot_norm.dot(pivot - ray_origin) / denom;
-
-                let hit = ray_origin + ray_dir * t;
-
-                let offset = hit - pivot;
-                let delta_ = offset - prev_offset;
-
-                let movement_vec: Vec3F64 = delta_.into();
-
-                match op_mode {
-                    OperatingMode::Primary => {
-                        for p in &mut mol.atom_posits {
-                            *p += movement_vec;
-                        }
-                    }
-                    OperatingMode::MolEditor => {
-                        if mol_type == MolType::Pocket {
-                            // Move the whole pocket.
-                            // println!(
-                            //     "Moving pocket!. Centroid: {:?} len: {:?}",
-                            //     mol.centroid(),
-                            //     mol.atom_posits.len()
-                            // ); // todo temp
-
-                            for p in &mut mol.atom_posits {
-                                *p += movement_vec;
-                            }
-                        } else {
-                            // `mol_i` = atom_i here.
-                            mol.atom_posits[mol_i] += movement_vec;
-                            mol.atoms[mol_i].posit = mol.atom_posits[mol_i];
-
-                            // Move all hydrogens bonded to the atom too.
-                            for i in &mol.adjacency_list[mol_i] {
-                                if mol.atoms[*i].element == Element::Hydrogen {
-                                    mol.atom_posits[*i] += movement_vec;
-                                }
-                            }
-                        }
-                    }
-                    OperatingMode::ProteinEditor => (),
-                }
-
-                if peptide_meshes_are_target {
-                    handle_cached_peptide_mesh_delta(
-                        state,
-                        scene,
-                        ss_mesh_created,
-                        sas_mesh_created,
-                        PeptideMeshDelta::Translate(delta_),
-                        redraw,
-                        updates,
-                    );
-                }
-                state.volatile.mol_manip.offset = offset;
-
-                let ratio = 8;
-                unsafe {
-                    I += 1;
-                    if I.is_multiple_of(ratio)
-                        || (op_mode == OperatingMode::MolEditor && mol_type == MolType::Ligand)
-                    {
-                        redraw.set(mol_type);
-
-                        // todo: Only regen upon exiting manip
-                        if mol_type == MolType::Pocket {
-                            rebuild_pocket = Some(mol_i);
-                        }
-                    }
-                }
-            }
-        }
-        ManipMode::Rotate((mol_type, mol_i)) => {
-            // todo: DRY with above
-            // And note that we will likely get a borrow error if we use `get_mol()` here.
-            let mol = match op_mode {
-                OperatingMode::Primary => match mol_type {
-                    MolType::Peptide => {
-                        if let Some(p) = state.peptides.get_mut(mol_i) {
-                            &mut p.common
-                        } else {
-                            eprintln!("Error: No peptide in state for mol manip");
-                            return;
-                        }
-                    }
-                    MolType::Ligand => &mut state.ligands[mol_i].common,
-                    MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
-                    MolType::Lipid => &mut state.lipids[mol_i].common,
-                    MolType::Pocket => &mut state.pockets[mol_i].common,
-                    MolType::Water => unimplemented!(),
-                },
-                OperatingMode::MolEditor => match mol_type {
-                    MolType::Ligand => &mut state.mol_editor.mol.common,
-                    MolType::Pocket => {
-                        if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
-                            &mut p.common
-                        } else {
-                            return;
-                        }
-                    }
-                    _ => unimplemented!(),
-                },
-                OperatingMode::ProteinEditor => unimplemented!(),
-            };
-
-            match op_mode {
-                OperatingMode::Primary => {
-                    // We handle rotation around the fwd/z axis using the scroll wheel.
-                    // let fwd = scene.camera.orientation.rotate_vec(FWD_VEC);
-                    let right = scene
-                        .camera
-                        .orientation
-                        .rotate_vec(RIGHT_VEC)
-                        .to_normalized();
-                    let up = scene.camera.orientation.rotate_vec(UP_VEC).to_normalized();
-
-                    // The sign keeps horizontal drags intuitive if the view is mirrored.
-                    let x_sign = scene.camera.screen_x_sign();
-
-                    let rot_x =
-                        Quaternion::from_axis_angle(right, -delta.1 as f32 * SENS_MOL_ROT_MOUSE);
-                    let rot_y = Quaternion::from_axis_angle(
-                        up,
-                        -delta.0 as f32 * SENS_MOL_ROT_MOUSE * x_sign,
-                    );
-
-                    let rot = rot_y * rot_x; // Note: Can swap the order for a slightly different effect.
-                    let pivot = mol.centroid().into();
-
-                    mol.rotate(rot.into(), None);
-                    state.volatile.mol_manip.apply_gizmo_rotation(rot);
-                    if peptide_meshes_are_target {
-                        handle_cached_peptide_mesh_delta(
-                            state,
-                            scene,
-                            ss_mesh_created,
-                            sas_mesh_created,
-                            PeptideMeshDelta::Rotate {
-                                rotation: rot,
-                                pivot,
-                            },
-                            redraw,
-                            updates,
-                        );
-                    }
-
-                    // // Pockets: We rotate a single mesh, instead of a collection of point-based items.
-                    // // Update it.
-                    // if mol_type == MolType::Pocket {
-                    //     state.pockets[mol_i].mesh_orientation =
-                    //         (rot * state.pockets[mol_i].mesh_orientation).to_normalized();
-                    // }
-                }
-                OperatingMode::MolEditor => {
-                    if mol_type == MolType::Pocket {
-                        // Rotate the whole pocket, like Primary mode.
-                        let right = scene
-                            .camera
-                            .orientation
-                            .rotate_vec(RIGHT_VEC)
-                            .to_normalized();
-                        let up = scene.camera.orientation.rotate_vec(UP_VEC).to_normalized();
-
-                        let x_sign = scene.camera.screen_x_sign();
-
-                        let rot_x = Quaternion::from_axis_angle(
-                            right,
-                            -delta.1 as f32 * SENS_MOL_ROT_MOUSE,
-                        );
-                        let rot_y = Quaternion::from_axis_angle(
-                            up,
-                            -delta.0 as f32 * SENS_MOL_ROT_MOUSE * x_sign,
-                        );
-
-                        let rot = rot_y * rot_x;
-
-                        mol.rotate(rot.into(), None);
-                        state.volatile.mol_manip.apply_gizmo_rotation(rot);
-                    } else {
-                        const ROT_FACTOR: f64 = 0.008;
-                        mol.rotate_around_bond(mol_i, ROT_FACTOR * delta.0, None);
-                    }
-                }
-                OperatingMode::ProteinEditor => (),
-            }
-
-            let ratio = 8;
-            unsafe {
-                I += 1;
-                if I.is_multiple_of(ratio)
-                    || (op_mode == OperatingMode::MolEditor && mol_type == MolType::Ligand)
-                {
-                    redraw.set(mol_type);
-
-                    // todo: Only regen upon exiting manip
-                    if mol_type == MolType::Pocket {
-                        rebuild_pocket = Some(mol_i);
-                    }
-                }
-            }
-        }
-        ManipMode::None => (),
-    }
-
-    // Rebuild H bonds if either the ligand or pocket is changed.
-    if op_mode == OperatingMode::MolEditor && (rebuild_pocket.is_some() || redraw.ligand) {
-        state.mol_editor.update_h_bonds();
-    }
-
-    if let Some(mol_i) = rebuild_pocket {
-        if op_mode == OperatingMode::MolEditor {
-            if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
-                p.rebuild_spheres();
-            }
-        } else {
-            state.pockets[mol_i].rebuild_spheres();
-        }
-    }
-}
-
-/// Forward and backwards, with 0 line of sight to the camera. E.g. with the scroll wheel.
-pub fn handle_mol_manip_in_out(
-    state: &mut State,
-    scene: &mut Scene,
-    delta: MouseScrollDelta,
-    redraw: &mut RedrawFlags,
-    updates: &mut EngineUpdates,
-) {
-    let mut rebuild_pocket = None; // Avoids double borrow.
-    let op_mode = state.volatile.operating_mode;
-    let peptide_meshes_are_target = op_mode == OperatingMode::Primary
-        && matches!(
-            state.volatile.mol_manip.mode,
-            ManipMode::Move((MolType::Peptide, i)) | ManipMode::Rotate((MolType::Peptide, i))
-                if state.peptide_for_tools_i() == Some(i)
-        );
-    let ss_mesh_created = peptide_meshes_are_target && state.volatile.flags.ss_mesh_created;
-    let sas_mesh_created = peptide_meshes_are_target && state.volatile.flags.sas_mesh_created;
-
-    // Move the molecule forward and backwards relative to the camera on scroll.
-    match state.volatile.mol_manip.mode {
-        ManipMode::Move((mol_type, mol_i)) => {
-            // Note: We can't use `get_mol` here due to borrow errors I don't understand.
-            let mol = match op_mode {
-                OperatingMode::Primary => match mol_type {
-                    MolType::Peptide => {
-                        if let Some(p) = state.peptides.get_mut(mol_i) {
-                            &mut p.common
-                        } else {
-                            eprintln!("Error: No peptide in state for mol manip");
-                            return;
-                        }
-                    }
-                    MolType::Ligand => {
-                        if mol_i >= state.ligands.len() {
-                            eprintln!("Error: Index out of bounds on ligand for mol manip");
-                            return;
-                        }
-                        &mut state.ligands[mol_i].common
-                    }
-                    MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
-                    MolType::Lipid => &mut state.lipids[mol_i].common,
-                    MolType::Pocket => &mut state.pockets[mol_i].common,
-                    MolType::Water => return,
-                },
-                OperatingMode::MolEditor => match mol_type {
-                    MolType::Ligand => &mut state.mol_editor.mol.common,
-                    MolType::Pocket => {
-                        if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
-                            &mut p.common
-                        } else {
-                            return;
-                        }
-                    }
-                    _ => return,
-                },
-                OperatingMode::ProteinEditor => unimplemented!(),
-            };
-
-            let scroll: f32 = match delta {
-                MouseScrollDelta::LineDelta(_, y) => y,
-                MouseScrollDelta::PixelDelta(p) => p.y as f32 / 120.0,
-            };
-            if scroll == 0.0 {
-                return;
-            }
-
-            // todo: DRY.
-            // Note: This mol manip state is relevant when scrolling with the mouse button down.
-            // If not also supporting zooming in and out, we'd cache these values at the drag start.
-            // If we do that, moving the mol and and out would be wonky mid-drag.
-            {
-                let pivot: Vec3 = match op_mode {
-                    OperatingMode::Primary => mol.centroid().into(),
-                    OperatingMode::MolEditor => {
-                        if mol_i < mol.atom_posits.len() {
-                            mol.atom_posits[mol_i].into()
-                        } else {
-                            mol.centroid().into()
-                        }
-                    }
-                    OperatingMode::ProteinEditor => unimplemented!(),
-                };
-
-                let cam_pos32: Vec3 = scene.camera.position.into();
-                let view_dir = (pivot - cam_pos32).to_normalized();
-
-                state.volatile.mol_manip.pivot = Some(pivot);
-                state.volatile.mol_manip.view_dir = Some(view_dir);
-                state.volatile.mol_manip.offset = Vec3::new_zero();
-            }
-
-            if let (Some(pivot), _) = (
-                state.volatile.mol_manip.pivot,
-                state.volatile.mol_manip.view_dir,
-            ) {
-                let view_dir = (pivot - scene.camera.position).to_normalized();
-                state.volatile.mol_manip.view_dir = Some(view_dir);
-
-                let dist = (pivot - scene.camera.position).magnitude();
-                let step = state.to_save.control_settings.mol_move_sens as f32 / 1_000. * dist;
-
-                let dv = view_dir * (scroll * step);
-                let movement_vec: Vec3F64 = dv.into();
-
-                match op_mode {
-                    OperatingMode::Primary => {
-                        for p in &mut mol.atom_posits {
-                            *p += movement_vec;
-                        }
-                    }
-                    OperatingMode::MolEditor => {
-                        if mol_type == MolType::Pocket {
-                            for p in &mut mol.atom_posits {
-                                *p += movement_vec;
-                            }
-                        } else {
-                            mol.atom_posits[mol_i] += movement_vec;
-                            mol.atoms[mol_i].posit = mol.atom_posits[mol_i];
-
-                            // Move all hydrogens bonded to the atom too.
-                            for i in &mol.adjacency_list[mol_i] {
-                                if mol.atoms[*i].element == Element::Hydrogen {
-                                    mol.atom_posits[*i] += movement_vec;
-                                }
-                            }
-                        }
-                    }
-                    OperatingMode::ProteinEditor => (),
-                }
-
-                if peptide_meshes_are_target {
-                    handle_cached_peptide_mesh_delta(
-                        state,
-                        scene,
-                        ss_mesh_created,
-                        sas_mesh_created,
-                        PeptideMeshDelta::Translate(dv),
-                        redraw,
-                        updates,
-                    );
-                }
-
-                let new_pivot = pivot + dv;
-                state.volatile.mol_manip.pivot = Some(new_pivot);
-                state.volatile.mol_manip.depth_bias += scroll * step;
-
-                // todo: QC if you need/want this.
-                // recompute intersection on the shifted plane to maintain stable drag
-                if let Some(cursor) = state.ui.cursor_pos {
-                    let (ray_origin, ray_point) = scene.screen_to_render(cursor);
-                    let rd = (ray_point - ray_origin).to_normalized();
-
-                    let denom = rd.dot(view_dir);
-                    if denom.abs() > 1e-6 {
-                        let t = view_dir.dot(new_pivot - ray_origin) / denom;
-                        if t > 0.0 {
-                            let hit = ray_origin + rd * t;
-                            state.volatile.mol_manip.offset = hit - new_pivot;
-                        }
-                    }
-                }
-            }
-            redraw.set(mol_type);
-            // todo: Only regen upon exiting manip
-            if mol_type == MolType::Pocket {
-                rebuild_pocket = Some(mol_i);
-            }
-        }
-        ManipMode::Rotate((mol_type, mol_i)) => {
-            let scroll: f32 = match delta {
-                MouseScrollDelta::LineDelta(_, y) => y,
-                MouseScrollDelta::PixelDelta(p) => p.y as f32 / 120.0,
-            };
-            if scroll == 0.0 {
-                return;
-            }
-
-            // todo: C+P with slight changes from the mouse-move variant.
-            let mol = match mol_type {
-                MolType::Peptide => {
-                    if let Some(p) = state.peptides.get_mut(mol_i) {
-                        &mut p.common
-                    } else {
-                        eprintln!("Error: No peptide in state for mol manip");
-                        return;
-                    }
-                }
-                MolType::Ligand => {
-                    if mol_i >= state.ligands.len() {
-                        eprintln!("Error: Index out of bounds on ligand for mol manip");
-                        return;
-                    }
-
-                    &mut state.ligands[mol_i].common
-                }
-                MolType::NucleicAcid => &mut state.nucleic_acids[mol_i].common,
-                MolType::Lipid => &mut state.lipids[mol_i].common,
-                MolType::Pocket => match op_mode {
-                    OperatingMode::Primary => &mut state.pockets[mol_i].common,
-                    OperatingMode::MolEditor => {
-                        if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
-                            &mut p.common
-                        } else {
-                            return;
-                        }
-                    }
-                    _ => return,
-                },
-                MolType::Water => unimplemented!(),
-            };
-
-            let fwd = scene.camera.orientation.rotate_vec(FWD_VEC).to_normalized();
-
-            // Roll direction on screen flips if the view is mirrored; the sign compensates.
-            let rot = Quaternion::from_axis_angle(
-                fwd,
-                scroll * SENS_MOL_ROT_SCROLL * scene.camera.screen_x_sign(),
-            );
-            let pivot = mol.centroid().into();
-            mol.rotate(rot.into(), None);
-            state.volatile.mol_manip.apply_gizmo_rotation(rot);
-
-            if peptide_meshes_are_target {
-                handle_cached_peptide_mesh_delta(
-                    state,
-                    scene,
-                    ss_mesh_created,
-                    sas_mesh_created,
-                    PeptideMeshDelta::Rotate {
-                        rotation: rot,
-                        pivot,
-                    },
-                    redraw,
-                    updates,
-                );
-            }
-
-            // Pockets: We rotate a single mesh, instead of a collection of point-based items.
-            // Update it.
-            if mol_type == MolType::Pocket {
-                // state.pockets[mol_i].mesh_orientation =
-                //     (rot * state.pockets[mol_i].mesh_orientation).to_normalized();
-                rebuild_pocket = Some(mol_i);
-            }
-
-            redraw.set(mol_type);
-        }
-        ManipMode::None => (),
-    }
-
-    // Rebuild H bonds if either the ligand or pocket is changed.
-    if op_mode == OperatingMode::MolEditor && (rebuild_pocket.is_some() || redraw.ligand) {
-        state.mol_editor.update_h_bonds();
-    }
-
-    if let Some(mol_i) = rebuild_pocket {
-        if op_mode == OperatingMode::MolEditor {
-            if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
-                p.rebuild_spheres();
-            }
-        } else {
-            state.pockets[mol_i].rebuild_spheres();
-        }
-    }
-}
-
-/// Sets the manipulation mode, and adjusts camera controls A/R. Called from inputs, or the UI.
-/// Toggles as required, or switches mode. Performs cleanup as required.
-pub fn set_manip(
-    state: &mut State,
-    scene: &mut Scene,
-    redraw: &mut RedrawFlags,
-    rebuild_md_editor: &mut bool,
-    // Note: The mol itself is overwritten but this sets move/rotate,
-    mode: ManipMode,
-    updates: &mut EngineUpdates,
-) {
-    // Finish any previous peptide drag before toggling or switching manipulation tools. This is
-    // especially important for regenerating a deferred Dots representation.
-    finish_peptide_mesh_manipulation(state, redraw);
-
-    let vol = &mut state.volatile;
-    if mode == ManipMode::None {
-        vol.mol_manip.mode = ManipMode::None;
-        vol.mol_manip.pivot = None;
-        return;
-    }
-
-    let op_mode = vol.operating_mode;
-
-    // If in primary mode, the item to move is an entire molecule, indexec by the appropriate molecule set.
-    // In the mol editor, we are interested in the selected atom or bond. (Or the pocket)
-    let (mol_type_active, item_to_move_i) = match op_mode {
-        OperatingMode::Primary => match vol.active_mol {
-            Some(v) => v,
-            None => return,
-        },
-        // In the editor mode, select the selected atom as the one to move.
-        OperatingMode::MolEditor => {
-            if matches!(vol.active_mol, Some((MolType::Pocket, _))) {
-                (MolType::Pocket, 0)
-            } else {
-                match &state.ui.selection {
-                    Selection::AtomLig((_, i)) => (MolType::Ligand, *i),
-                    Selection::AtomsLig((_, i)) => {
-                        // todo: How should we handle this?
-                        (MolType::Ligand, i[0])
-                    }
-                    // Rotating around a bond.
-                    Selection::BondLig((_, i)) => (MolType::Ligand, *i),
-                    _ => return,
-                    // Allow pocket manip without requiring a pocket atom selection.
-                    // _ => match mode {
-                    //     ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _)) => {
-                    //         (MolType::Pocket, 0)
-                    //     }
-                    //     _ => return,
-                    // },
-                }
-            }
-        }
-        OperatingMode::ProteinEditor => unimplemented!(),
-    };
-
-    vol.mol_manip
-        .set_gizmo_target((op_mode, mol_type_active, item_to_move_i));
-
-    // if matches!(
-    //     mode,
-    //     ManipMode::Move((MolType::Pocket, _)) | ManipMode::Rotate((MolType::Pocket, _))
-    // ) && op_mode == OperatingMode::MolEditor
-    // {
-    //     println!("Override: manip pocket in editor");
-    //     mol_type_active = MolType::Pocket;
-    //     i_active = 0;
-    // }
-
-    let (move_active, rotate_active) = {
-        let mut move_ = false;
-        let mut rotate = false;
-
-        match vol.mol_manip.mode {
-            ManipMode::None => (),
-            ManipMode::Move((mol_type, mol_i)) => {
-                if mol_type == mol_type_active && mol_i == item_to_move_i {
-                    move_ = true;
-                }
-            }
-            ManipMode::Rotate((mol_type, mol_i)) => {
-                if mol_type == mol_type_active && mol_i == item_to_move_i {
-                    rotate = true;
-                }
-            }
-        }
-
-        (move_, rotate)
-    };
-
-    match mode {
-        ManipMode::Move(_) => {
-            if move_active {
-                // Exiting a move
-                scene.input_settings.control_scheme = vol.control_scheme_prev;
-                vol.mol_manip.mode = ManipMode::None;
-                vol.mol_manip.pivot = None;
-
-                if op_mode == OperatingMode::MolEditor {
-                    *rebuild_md_editor = true;
-                }
-            } else if rotate_active {
-                // Entering a move from rotation
-                vol.mol_manip.mode = ManipMode::Move((mol_type_active, item_to_move_i));
-            } else {
-                // Entering a move from no manip prior.
-
-                if scene.input_settings.control_scheme != ControlScheme::None {
-                    vol.control_scheme_prev = scene.input_settings.control_scheme;
-                }
-                scene.input_settings.control_scheme = ControlScheme::None;
-                vol.mol_manip.mode = ManipMode::Move((mol_type_active, item_to_move_i));
-            };
-        }
-        ManipMode::Rotate(_) => {
-            if rotate_active {
-                scene.input_settings.control_scheme = vol.control_scheme_prev;
-                vol.mol_manip.mode = ManipMode::None;
-                vol.mol_manip.pivot = None;
-
-                if op_mode == OperatingMode::MolEditor {
-                    *rebuild_md_editor = true;
-                }
-            } else if move_active {
-                vol.mol_manip.mode = ManipMode::Rotate((mol_type_active, item_to_move_i));
-            } else {
-                if scene.input_settings.control_scheme != ControlScheme::None {
-                    vol.control_scheme_prev = scene.input_settings.control_scheme;
-                }
-                scene.input_settings.control_scheme = ControlScheme::None;
-                vol.mol_manip.mode = ManipMode::Rotate((mol_type_active, item_to_move_i));
-            };
-        }
-        ManipMode::None => unreachable!(),
-    }
-
-    // Once complete with manip on a pocket, rebuild the volume, representation.
-    if let Some((mol_type, i)) = vol.active_mol
-        && mol_type == MolType::Pocket
-    {
-        let p = if op_mode == OperatingMode::MolEditor {
-            if let Some(p_) = &mut state.mol_editor.mol.pharmacophore.pocket {
-                p_
-            } else {
-                eprintln!("Missing pocket tos set manip on");
-                return;
-            }
-        } else {
-            &mut state.pockets[i]
-        };
-
-        p.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
-        redraw.pocket = true;
-    }
-
-    if op_mode == OperatingMode::MolEditor {
-        state.mol_editor.update_h_bonds();
-    }
-
-    redraw.set(mol_type_active);
-}
-
-/// Chooses the atom closest to the cursor ray as the pivot.
-/// This helps ensure, while drag-moving, that the molecule stays anchored to the cursor in
-/// a way that feels intuitive; the part moving to the cursor's position is the part originally
-/// under the cursor at drag start.
-fn pick_movement_pivot(mol: &MoleculeCommon, ray_origin: Vec3, ray_dir: Vec3) -> Vec3 {
-    const PICK_RADIUS: f64 = 4.0; // Å-ish // A/R
-    let pick_r2 = PICK_RADIUS * PICK_RADIUS;
-
-    let ro: Vec3F64 = ray_origin.into();
-    let rd: Vec3F64 = ray_dir.into();
-
-    let mut best_d2 = f64::INFINITY;
-    let mut best_p: Option<Vec3F64> = None;
-
-    for p in &mol.atom_posits {
-        let w = *p - ro;
-        let t = w.dot(rd); // rd assumed normalized
-        if t < 0.0 {
-            continue;
-        }
-        let closest = ro + rd * t;
-        let d2 = (*p - closest).magnitude_squared();
-        if d2 < best_d2 {
-            best_d2 = d2;
-            best_p = Some(*p);
-        }
-    }
-
-    if best_d2 <= pick_r2 {
-        best_p.unwrap().into()
-    } else {
-        mol.centroid().into()
-    }
-}
-
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub enum ManipMode {
     #[default]
     None,
-    Move((MolType, usize)), // Index of mol
+    Move((MolType, usize)),
     Rotate((MolType, usize)),
 }
 
-/// State for dragging and rotating molecules.
+impl ManipMode {
+    pub(crate) fn target(self) -> Option<(MolType, usize)> {
+        match self {
+            Self::Move(target) | Self::Rotate(target) => Some(target),
+            Self::None => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+impl Axis {
+    pub(crate) const ALL: [Self; 3] = [Self::X, Self::Y, Self::Z];
+
+    pub(crate) fn vector(self) -> Vec3 {
+        match self {
+            Self::X => RIGHT_VEC,
+            Self::Y => UP_VEC,
+            Self::Z => FWD_VEC,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Z => "Z",
+        }
+    }
+
+    pub(crate) fn plane_axes(self) -> (Vec3, Vec3) {
+        match self {
+            Self::X => (UP_VEC, FWD_VEC),
+            Self::Y => (FWD_VEC, RIGHT_VEC),
+            Self::Z => (RIGHT_VEC, UP_VEC),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum Constraint {
+    #[default]
+    Free,
+    Axis(Axis),
+    Plane(Axis),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Handle {
+    MoveAxis(Axis),
+    MovePlane(Axis),
+    Rotate(Axis),
+    Camera(Axis, bool),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Pose {
+    pub(crate) mode: ManipMode,
+    pub(crate) operating_mode: OperatingMode,
+    pub(crate) positions: Vec<Vec3F64>,
+    atom_positions: Vec<Vec3F64>,
+    topology: u64,
+    object_key: String,
+    gizmo_orientation: Quaternion,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TransformValues {
+    pub(crate) translation: Vec3F64,
+    pub(crate) axis: Vec3F64,
+    pub(crate) angle: f64,
+    pub(crate) rotation: QuaternionF64,
+}
+
+impl Default for TransformValues {
+    fn default() -> Self {
+        Self {
+            translation: Vec3F64::new_zero(),
+            axis: Vec3F64::new(0., 0., 1.),
+            angle: 0.,
+            rotation: QuaternionF64::new_identity(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TransformSession {
+    before: Pose,
+    values: TransformValues,
+    raw_translation: Vec3F64,
+    raw_angle: f64,
+    raw_rotation: QuaternionF64,
+}
+
 #[derive(Debug)]
 pub struct MolManip {
-    /// Allows the user to move a molecule around with mouse or keyboard.
     pub mode: ManipMode,
-    /// For maintaining the screen plane when dragging the mol.
     pub pivot: Option<Vec3>,
-    pub view_dir: Option<Vec3>,
-    pub offset: Vec3,
-    pub depth_bias: f32,
-    /// Accumulated local frame for the view-only object gizmo. Molecule coordinates are transformed
-    /// destructively, so this preserves the equivalent rigid orientation while a target is edited.
     pub(crate) gizmo_orientation: Quaternion,
-    gizmo_target: Option<(OperatingMode, MolType, usize)>,
-    /// Persistent transforms from the cached world-space mesh vertices to current peptide
-    /// coordinates. They reset only when their corresponding mesh is regenerated.
+    pub(crate) constraint: Constraint,
+    pub(crate) hovered: Option<Handle>,
+    pub(crate) dragged: Option<Handle>,
+    pub(crate) ring_tangent: Option<(f32, f32)>,
+    pub(crate) numeric: String,
+    pub(crate) snap: bool,
+    pub(crate) pixels_per_point: f32,
+    session: Option<TransformSession>,
     pub(crate) ribbon_mesh_transform: PeptideMeshTransform,
     pub(crate) surface_mesh_transform: PeptideMeshTransform,
-    /// Dots expand a surface mesh into many entities, so defer rebuilding them until the current
-    /// drag/tool interaction completes.
     pub(crate) peptide_mesh_manip_pending: bool,
 }
 
@@ -1004,11 +322,15 @@ impl Default for MolManip {
         Self {
             mode: ManipMode::None,
             pivot: None,
-            view_dir: None,
-            offset: Vec3::new_zero(),
-            depth_bias: 0.,
             gizmo_orientation: Quaternion::new_identity(),
-            gizmo_target: None,
+            constraint: Constraint::Free,
+            hovered: None,
+            dragged: None,
+            ring_tangent: None,
+            numeric: String::new(),
+            snap: false,
+            pixels_per_point: 1.,
+            session: None,
             ribbon_mesh_transform: PeptideMeshTransform::default(),
             surface_mesh_transform: PeptideMeshTransform::default(),
             peptide_mesh_manip_pending: false,
@@ -1016,59 +338,849 @@ impl Default for MolManip {
     }
 }
 
-/// Set pivot, view_dir, and offset based on mol positions and other data.
-/// Run this whenever the position in plane is changed.
-impl MolManip {
-    fn set_gizmo_target(&mut self, target: (OperatingMode, MolType, usize)) {
-        if self.gizmo_target != Some(target) {
-            self.gizmo_target = Some(target);
-            self.gizmo_orientation = Quaternion::new_identity();
+fn target_mol(state: &State, mode: ManipMode, op: OperatingMode) -> Option<&MoleculeCommon> {
+    let (kind, i) = mode.target()?;
+
+    match op {
+        OperatingMode::Primary => match kind {
+            MolType::Peptide => state.peptides.get(i).map(|m| &m.common),
+            MolType::Ligand => state.ligands.get(i).map(|m| &m.common),
+            MolType::NucleicAcid => state.nucleic_acids.get(i).map(|m| &m.common),
+            MolType::Lipid => state.lipids.get(i).map(|m| &m.common),
+            MolType::Pocket => state.pockets.get(i).map(|m| &m.common),
+            MolType::Water => None,
+        },
+        OperatingMode::MolEditor => match kind {
+            MolType::Ligand => Some(&state.mol_editor.mol.common),
+            MolType::Pocket => state
+                .mol_editor
+                .mol
+                .pharmacophore
+                .pocket
+                .as_ref()
+                .map(|p| &p.common),
+            _ => None,
+        },
+        OperatingMode::ProteinEditor => None,
+    }
+}
+
+fn target_mol_mut(
+    state: &mut State,
+    mode: ManipMode,
+    op: OperatingMode,
+) -> Option<&mut MoleculeCommon> {
+    let (kind, i) = mode.target()?;
+
+    match op {
+        OperatingMode::Primary => match kind {
+            MolType::Peptide => state.peptides.get_mut(i).map(|m| &mut m.common),
+            MolType::Ligand => state.ligands.get_mut(i).map(|m| &mut m.common),
+            MolType::NucleicAcid => state.nucleic_acids.get_mut(i).map(|m| &mut m.common),
+            MolType::Lipid => state.lipids.get_mut(i).map(|m| &mut m.common),
+            MolType::Pocket => state.pockets.get_mut(i).map(|m| &mut m.common),
+            MolType::Water => None,
+        },
+        OperatingMode::MolEditor => match kind {
+            MolType::Ligand => Some(&mut state.mol_editor.mol.common),
+            MolType::Pocket => state
+                .mol_editor
+                .mol
+                .pharmacophore
+                .pocket
+                .as_mut()
+                .map(|p| &mut p.common),
+            _ => None,
+        },
+        OperatingMode::ProteinEditor => None,
+    }
+}
+
+impl Pose {
+    fn topology(mol: &MoleculeCommon) -> u64 {
+        let mut hash = DefaultHasher::new();
+        for atom in &mol.atoms {
+            atom.serial_number.hash(&mut hash);
+            atom.element.hash(&mut hash);
+            atom.residue.hash(&mut hash);
+        }
+        for bond in &mol.bonds {
+            bond.atom_0.hash(&mut hash);
+            bond.atom_1.hash(&mut hash);
+        }
+
+        hash.finish()
+    }
+
+    pub(crate) fn capture(state: &State, mode: ManipMode) -> Option<Self> {
+        let op = state.volatile.operating_mode;
+        let mol = target_mol(state, mode, op)?;
+        if mol.atom_posits.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            mode,
+            operating_mode: op,
+            positions: mol.atom_posits.clone(),
+            atom_positions: if op == OperatingMode::MolEditor {
+                mol.atoms.iter().map(|a| a.posit).collect()
+            } else {
+                Vec::new()
+            },
+            topology: Self::topology(mol),
+            object_key: mol.ident.clone(),
+            gizmo_orientation: state.volatile.mol_manip.gizmo_orientation,
+        })
+    }
+
+    pub(crate) fn matches(&self, state: &State) -> bool {
+        state.volatile.operating_mode == self.operating_mode
+            && target_mol(state, self.mode, self.operating_mode).is_some_and(|m| {
+                m.ident == self.object_key
+                    && m.atom_posits == self.positions
+                    && Self::topology(m) == self.topology
+            })
+    }
+
+    pub(crate) fn memory_bytes(&self) -> usize {
+        (self.positions.len() + self.atom_positions.len()) * std::mem::size_of::<Vec3F64>()
+    }
+
+    fn pivot(&self) -> Vec3F64 {
+        self.positions
+            .iter()
+            .copied()
+            .fold(Vec3F64::new_zero(), |sum, p| sum + p)
+            / self.positions.len() as f64
+    }
+}
+
+fn ensure_session(state: &mut State) -> bool {
+    let mode = state.volatile.mol_manip.mode;
+    if mode == ManipMode::None {
+        state.volatile.mol_manip.session = None;
+
+        return false;
+    }
+    if state.volatile.mol_manip.session.as_ref().is_some_and(|s| {
+        s.before.mode == mode && s.before.operating_mode == state.volatile.operating_mode
+    }) {
+        return true;
+    }
+
+    let Some(before) = Pose::capture(state, mode) else {
+        return false;
+    };
+    state.volatile.mol_manip.session = Some(TransformSession {
+        before,
+        values: TransformValues::default(),
+        raw_translation: Vec3F64::new_zero(),
+        raw_angle: 0.,
+        raw_rotation: QuaternionF64::new_identity(),
+    });
+
+    true
+}
+
+fn update_pocket_and_bonds(state: &mut State, mode: ManipMode) {
+    if let Some((MolType::Pocket, i)) = mode.target() {
+        match state.volatile.operating_mode {
+            OperatingMode::Primary => {
+                if let Some(p) = state.pockets.get_mut(i) {
+                    p.rebuild_spheres();
+                }
+            }
+            OperatingMode::MolEditor => {
+                if let Some(p) = &mut state.mol_editor.mol.pharmacophore.pocket {
+                    p.rebuild_spheres();
+                }
+            }
+            _ => (),
         }
     }
+    if state.volatile.operating_mode == OperatingMode::MolEditor {
+        state.mol_editor.update_h_bonds();
+    }
+}
 
-    fn apply_gizmo_rotation(&mut self, rotation: Quaternion) {
-        self.gizmo_orientation = (rotation * self.gizmo_orientation).to_normalized();
+pub(crate) fn restore_pose(state: &mut State, pose: &Pose, redraw: &mut RedrawFlags) {
+    if let Some(mol) = target_mol_mut(state, pose.mode, pose.operating_mode) {
+        if mol.ident != pose.object_key || Pose::topology(mol) != pose.topology {
+            return;
+        }
+
+        mol.atom_posits.clone_from(&pose.positions);
+        for (atom, position) in mol.atoms.iter_mut().zip(&pose.atom_positions) {
+            atom.posit = *position;
+        }
+    }
+    state.volatile.mol_manip.gizmo_orientation = pose.gizmo_orientation;
+    if matches!(pose.mode.target(), Some((MolType::Peptide, _))) {
+        state.volatile.mol_manip.ribbon_mesh_transform = PeptideMeshTransform::default();
+        state.volatile.mol_manip.surface_mesh_transform = PeptideMeshTransform::default();
+        state.volatile.flags.ss_mesh_created = false;
+        state.volatile.flags.sas_mesh_created = false;
+        state.volatile.flags.update_ss_mesh = true;
+        state.volatile.flags.update_sas_mesh = matches!(
+            state.ui.mol_view_peptide,
+            MoleculeView::Surface | MoleculeView::Dots
+        );
+        state.volatile.thread_receivers.peptide_mesh_coloring = None;
+    }
+    update_pocket_and_bonds(state, pose.mode);
+    if let Some((kind, _)) = pose.mode.target() {
+        redraw.set(kind);
+    }
+}
+
+pub(crate) fn apply_values(state: &mut State, before: &Pose, values: &TransformValues) -> bool {
+    let Some(mol) = target_mol_mut(state, before.mode, before.operating_mode) else {
+        return false;
+    };
+    if mol.ident != before.object_key
+        || mol.atom_posits.len() != before.positions.len()
+        || Pose::topology(mol) != before.topology
+    {
+        return false;
     }
 
-    fn setup_params(
-        &mut self,
-        cam: &Camera,
-        mol: &MoleculeCommon,
-        mol_type: MolType,
-        ray_origin: Vec3,
-        ray_dir: Vec3,
-        mode: OperatingMode,
-        atom_i: usize, // For edit mode, of the atom being moved.
-    ) {
-        if self.pivot.is_none() {
-            // We set the pivot to be the coordinates of the molecule (e.g. nearest atom)
-            // to the cursor. We're moving this pivot with the mouse cursor, so we take
-            // this approach to prevent the mol jumping; this part *snaps* to the cursor.
-            let pivot: Vec3 = match mode {
-                OperatingMode::Primary => pick_movement_pivot(mol, ray_origin, ray_dir),
-                OperatingMode::MolEditor => {
-                    match mol_type {
-                        MolType::Ligand => {
-                            if atom_i < mol.atom_posits.len() {
-                                mol.atom_posits[atom_i].into()
-                            } else {
-                                // Pocket manip uses index 0 as a placeholder; fall back to centroid.
-                                pick_movement_pivot(mol, ray_origin, ray_dir)
-                            }
-                        }
-                        MolType::Pocket => pick_movement_pivot(mol, ray_origin, ray_dir),
-                        _ => unimplemented!(),
+    mol.atom_posits.clone_from(&before.positions);
+    let (kind, index) = before.mode.target().unwrap();
+    match before.mode {
+        ManipMode::Move(_) => {
+            if before.operating_mode == OperatingMode::MolEditor && kind == MolType::Ligand {
+                if index >= mol.atom_posits.len() {
+                    return false;
+                }
+
+                mol.atom_posits[index] += values.translation;
+                for &i in &mol.adjacency_list[index] {
+                    if mol.atoms[i].element == Element::Hydrogen {
+                        mol.atom_posits[i] += values.translation;
                     }
                 }
-                OperatingMode::ProteinEditor => unimplemented!(),
-            };
-
-            let n = cam.orientation.rotate_vec(FWD_VEC).to_normalized();
-
-            self.pivot = Some(pivot);
-            self.view_dir = Some(n);
-            self.offset = Vec3::new_zero();
+            } else {
+                for p in &mut mol.atom_posits {
+                    *p += values.translation;
+                }
+            }
         }
+        ManipMode::Rotate(_) => {
+            if before.operating_mode == OperatingMode::MolEditor && kind == MolType::Ligand {
+                mol.rotate_around_bond(index, values.angle, None);
+            } else {
+                let pivot = before.pivot();
+                for p in &mut mol.atom_posits {
+                    *p = pivot + values.rotation.rotate_vec(*p - pivot);
+                }
+            }
+        }
+        ManipMode::None => return false,
+    }
+    if before.operating_mode == OperatingMode::MolEditor {
+        for (atom, position) in mol.atoms.iter_mut().zip(&mol.atom_posits) {
+            atom.posit = *position;
+        }
+    }
+    state.volatile.mol_manip.gizmo_orientation =
+        (Quaternion::from(values.rotation) * before.gizmo_orientation).to_normalized();
+
+    true
+}
+
+fn snapping(state: &State) -> bool {
+    state.volatile.mol_manip.snap || state.volatile.key_modifiers.state().control_key()
+}
+
+fn fine_factor(state: &State) -> f64 {
+    if state.volatile.key_modifiers.state().shift_key() {
+        0.1
+    } else {
+        1.
+    }
+}
+
+fn quantize(value: f64, step: f64, snap: bool) -> f64 {
+    if snap {
+        (value / step).round() * step
+    } else {
+        value
+    }
+}
+
+fn preview(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    let snap = snapping(state);
+    let constraint = state.volatile.mol_manip.constraint;
+    let numeric = state
+        .volatile
+        .mol_manip
+        .numeric
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite() && v.abs() <= 1.0e9);
+    let bond = state.volatile.operating_mode == OperatingMode::MolEditor
+        && matches!(
+            state.volatile.mol_manip.mode,
+            ManipMode::Rotate((MolType::Ligand, _))
+        );
+    let Some(mut session) = state.volatile.mol_manip.session.take() else {
+        return;
+    };
+    let old = session.values.clone();
+    let values = &mut session.values;
+
+    match session.before.mode {
+        ManipMode::Move(_) => {
+            let mut movement = session.raw_translation;
+            if let Some(number) = numeric {
+                let direction: Vec3F64 = match constraint {
+                    Constraint::Axis(axis) => axis.vector().into(),
+                    _ => RIGHT_VEC.into(),
+                };
+                movement = direction * number;
+            } else {
+                movement = Vec3F64::new(
+                    quantize(movement.x, 1., snap),
+                    quantize(movement.y, 1., snap),
+                    quantize(movement.z, 1., snap),
+                );
+            }
+            values.translation = match constraint {
+                Constraint::Free => movement,
+                Constraint::Axis(axis) => {
+                    let axis: Vec3F64 = axis.vector().into();
+                    axis * movement.dot(axis)
+                }
+                Constraint::Plane(axis) => {
+                    let axis: Vec3F64 = axis.vector().into();
+                    movement - axis * movement.dot(axis)
+                }
+            };
+        }
+        ManipMode::Rotate(_) => {
+            let axis: Vec3F64 = match constraint {
+                Constraint::Axis(axis) | Constraint::Plane(axis) => axis.vector().into(),
+                Constraint::Free => scene.camera.orientation.rotate_vec(FWD_VEC).into(),
+            };
+            if constraint != Constraint::Free || numeric.is_some() || bond {
+                values.angle = numeric
+                    .map(f64::to_radians)
+                    .unwrap_or_else(|| quantize(session.raw_angle, 5_f64.to_radians(), snap));
+                values.axis = axis;
+                values.rotation = QuaternionF64::from_axis_angle(axis, values.angle);
+            } else {
+                let q = session.raw_rotation.to_normalized();
+                let sin_half = (q.x * q.x + q.y * q.y + q.z * q.z).sqrt();
+                values.axis = if sin_half > 1.0e-12 {
+                    Vec3F64::new(q.x, q.y, q.z) / sin_half
+                } else {
+                    axis
+                };
+                values.angle = quantize(2. * sin_half.atan2(q.w), 5_f64.to_radians(), snap);
+                values.rotation = QuaternionF64::from_axis_angle(values.axis, values.angle);
+            }
+        }
+        ManipMode::None => (),
+    }
+    if apply_values(state, &session.before, values) {
+        let (kind, i) = session.before.mode.target().unwrap();
+        if kind == MolType::Peptide && state.peptide_for_tools_i() == Some(i) {
+            let delta = match session.before.mode {
+                ManipMode::Move(_) => {
+                    PeptideMeshDelta::Translate((values.translation - old.translation).into())
+                }
+                _ => PeptideMeshDelta::Rotate {
+                    rotation: (values.rotation * old.rotation.inverse()).into(),
+                    pivot: session.before.pivot().into(),
+                },
+            };
+            handle_cached_peptide_mesh_delta(
+                state,
+                scene,
+                state.volatile.flags.ss_mesh_created,
+                state.volatile.flags.sas_mesh_created,
+                delta,
+                redraw,
+                updates,
+            );
+        }
+        state.volatile.mol_manip.gizmo_orientation =
+            (Quaternion::from(values.rotation) * session.before.gizmo_orientation).to_normalized();
+        redraw.set(kind);
+        update_pocket_and_bonds(state, session.before.mode);
+    }
+    state.volatile.mol_manip.session = Some(session);
+}
+
+fn plane_hit(scene: &Scene, cursor: (f32, f32), pivot: Vec3, normal: Vec3) -> Option<Vec3> {
+    let (origin, point) = scene.screen_to_render(cursor);
+    let direction = point - origin;
+    let denominator = normal.dot(direction);
+    if denominator.abs() < 1.0e-6 {
+        return None;
+    }
+
+    let t = normal.dot(pivot - origin) / denominator;
+
+    (t >= 0.).then_some(origin + direction * t)
+}
+
+pub(crate) fn begin_drag(state: &mut State, scene: &Scene, handle: Option<Handle>) {
+    if state.volatile.mol_manip.mode == ManipMode::None || !ensure_session(state) {
+        return;
+    }
+
+    let tangent = match (handle, state.ui.cursor_pos) {
+        (Some(Handle::Rotate(axis)), Some(cursor)) => {
+            crate::gizmo::ring_tangent_at(state, scene, axis, cursor)
+        }
+        _ => None,
+    };
+    let manip = &mut state.volatile.mol_manip;
+    manip.ring_tangent = tangent;
+    manip.dragged = handle;
+    manip.numeric.clear();
+    match handle {
+        Some(Handle::MoveAxis(axis) | Handle::Rotate(axis)) => {
+            manip.constraint = Constraint::Axis(axis)
+        }
+        Some(Handle::MovePlane(axis)) => manip.constraint = Constraint::Plane(axis),
+        _ => (),
+    }
+    let before = &manip.session.as_ref().unwrap().before;
+    manip.pivot = Some(before.pivot().into());
+}
+
+pub fn handle_mol_manip_in_plane(
+    state: &mut State,
+    scene: &mut Scene,
+    delta: (f64, f64),
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    if !ensure_session(state) || !state.volatile.mol_manip.numeric.is_empty() {
+        return;
+    }
+    let Some(cursor) = state.ui.cursor_pos else {
+        return;
+    };
+    let previous = (cursor.0 - delta.0 as f32, cursor.1 - delta.1 as f32);
+    let factor = fine_factor(state);
+    let constraint = state.volatile.mol_manip.constraint;
+    let mode = state.volatile.mol_manip.mode;
+
+    match mode {
+        ManipMode::Move(_) => {
+            let pivot = state.volatile.mol_manip.pivot.unwrap_or_else(|| {
+                state
+                    .volatile
+                    .mol_manip
+                    .session
+                    .as_ref()
+                    .unwrap()
+                    .before
+                    .pivot()
+                    .into()
+            });
+            let view = scene.camera.orientation.rotate_vec(FWD_VEC);
+            let normal = match constraint {
+                Constraint::Plane(axis) => axis.vector(),
+                Constraint::Axis(axis) => {
+                    let a = axis.vector();
+                    let n = view - a * view.dot(a);
+                    if n.magnitude_squared() < 0.01 {
+                        view
+                    } else {
+                        n.to_normalized()
+                    }
+                }
+                Constraint::Free => view,
+            };
+            let (Some(start), Some(end)) = (
+                plane_hit(scene, previous, pivot, normal),
+                plane_hit(scene, cursor, pivot, normal),
+            ) else {
+                return;
+            };
+            let mut movement = end - start;
+            if let Constraint::Axis(axis) = constraint {
+                let a = axis.vector();
+                if a.dot(view).abs() > 0.99 {
+                    let distance = (pivot - scene.camera.position).magnitude();
+                    movement = a * (-delta.1 as f32 * distance / scene.window_size.1.max(1.));
+                } else {
+                    movement = a * movement.dot(a);
+                }
+            }
+            state
+                .volatile
+                .mol_manip
+                .session
+                .as_mut()
+                .unwrap()
+                .raw_translation += Vec3F64::from(movement) * factor;
+        }
+        ManipMode::Rotate(_) => {
+            let angle = if let Some(Handle::Rotate(axis)) = state.volatile.mol_manip.dragged {
+                crate::gizmo::ring_drag_delta(state, scene, axis, previous, cursor) as f64
+            } else {
+                -delta.0 * SENS_MOL_ROT_MOUSE as f64 * scene.camera.screen_x_sign() as f64
+            } * factor;
+            let session = state.volatile.mol_manip.session.as_mut().unwrap();
+            session.raw_angle += angle;
+            let right = Vec3F64::from(scene.camera.orientation.rotate_vec(RIGHT_VEC));
+            let up = Vec3F64::from(scene.camera.orientation.rotate_vec(UP_VEC));
+            let x = QuaternionF64::from_axis_angle(
+                right,
+                -delta.1 * SENS_MOL_ROT_MOUSE as f64 * factor,
+            );
+            let y = QuaternionF64::from_axis_angle(up, angle);
+            session.raw_rotation = (y * x * session.raw_rotation).to_normalized();
+        }
+        ManipMode::None => return,
+    }
+    preview(state, scene, redraw, updates);
+}
+
+pub fn handle_mol_manip_in_out(
+    state: &mut State,
+    scene: &mut Scene,
+    delta: MouseScrollDelta,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    if !ensure_session(state) || !state.volatile.mol_manip.numeric.is_empty() {
+        return;
+    }
+
+    let scroll = match delta {
+        MouseScrollDelta::LineDelta(_, y) => y as f64,
+        MouseScrollDelta::PixelDelta(p) => p.y / 120.,
+    } * fine_factor(state);
+    let session = state.volatile.mol_manip.session.as_mut().unwrap();
+    let fwd: Vec3F64 = scene.camera.orientation.rotate_vec(FWD_VEC).into();
+    match session.before.mode {
+        ManipMode::Move(_) => {
+            let direction = match state.volatile.mol_manip.constraint {
+                Constraint::Axis(axis) => Vec3F64::from(axis.vector()),
+                _ => fwd,
+            };
+            let distance =
+                (session.before.pivot() - Vec3F64::from(scene.camera.position)).magnitude();
+            let step = state.to_save.control_settings.mol_move_sens as f64 / 1_000. * distance;
+            session.raw_translation += direction * (scroll * step);
+        }
+        ManipMode::Rotate(_) => {
+            let angle = scroll * SENS_MOL_ROT_SCROLL as f64 * scene.camera.screen_x_sign() as f64;
+            session.raw_angle += angle;
+            session.raw_rotation =
+                (QuaternionF64::from_axis_angle(fwd, angle) * session.raw_rotation).to_normalized();
+        }
+        ManipMode::None => return,
+    }
+    preview(state, scene, redraw, updates);
+}
+
+pub(crate) fn finish_drag(state: &mut State, redraw: &mut RedrawFlags) {
+    if let Some(session) = state.volatile.mol_manip.session.take()
+        && session.before.mode == state.volatile.mol_manip.mode
+        && session.before.operating_mode == state.volatile.operating_mode
+        && let Some(after) = Pose::capture(state, session.before.mode)
+        && after.positions != session.before.positions
+    {
+        state
+            .volatile
+            .history
+            .push(crate::edit_history::Operation::Transform {
+                before: session.before,
+                after,
+                values: session.values,
+            });
+    }
+    state.volatile.mol_manip.pivot = None;
+    state.volatile.mol_manip.dragged = None;
+    state.volatile.mol_manip.ring_tangent = None;
+    finish_peptide_mesh_manipulation(state, redraw);
+}
+
+fn finish_pocket(
+    state: &mut State,
+    scene: &mut Scene,
+    mode: ManipMode,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    let Some((MolType::Pocket, i)) = mode.target() else {
+        return;
+    };
+    let pocket = if state.volatile.operating_mode == OperatingMode::MolEditor {
+        state.mol_editor.mol.pharmacophore.pocket.as_mut()
+    } else {
+        state.pockets.get_mut(i)
+    };
+    if let Some(pocket) = pocket {
+        pocket.reset_post_manip(&mut scene.meshes, state.ui.mesh_coloring, updates);
+        redraw.pocket = true;
+    }
+}
+
+pub(crate) fn refresh_after_history(
+    state: &mut State,
+    scene: &mut Scene,
+    mode: ManipMode,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    finish_pocket(state, scene, mode, redraw, updates);
+    if state.volatile.operating_mode == OperatingMode::MolEditor {
+        crate::mol_editor::sync_md(state);
+    }
+}
+
+pub(crate) fn end_transform(
+    state: &mut State,
+    scene: &mut Scene,
+    cancel: bool,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    let mode = state.volatile.mol_manip.mode;
+    if cancel {
+        if let Some(session) = state.volatile.mol_manip.session.take()
+            && !session.before.matches(state)
+        {
+            restore_pose(state, &session.before, redraw);
+        }
+    } else {
+        finish_drag(state, redraw);
+    }
+    finish_peptide_mesh_manipulation(state, redraw);
+    state.volatile.mol_manip.mode = ManipMode::None;
+    state.volatile.mol_manip.pivot = None;
+    state.volatile.mol_manip.dragged = None;
+    state.volatile.mol_manip.constraint = Constraint::Free;
+    state.volatile.mol_manip.numeric.clear();
+    state.ui.left_click_down = false;
+    scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
+    finish_pocket(state, scene, mode, redraw, updates);
+    if state.volatile.operating_mode == OperatingMode::MolEditor {
+        crate::mol_editor::sync_md(state);
+    }
+}
+
+pub(crate) fn has_preview(state: &State) -> bool {
+    state
+        .volatile
+        .mol_manip
+        .session
+        .as_ref()
+        .is_some_and(|s| !s.before.matches(state))
+}
+
+pub(crate) fn handle_key(
+    state: &mut State,
+    scene: &mut Scene,
+    code: KeyCode,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) -> bool {
+    if state.volatile.mol_manip.mode == ManipMode::None {
+        return false;
+    }
+    if code == KeyCode::Escape || code == KeyCode::Enter || code == KeyCode::NumpadEnter {
+        let numeric = &state.volatile.mol_manip.numeric;
+        if code != KeyCode::Escape
+            && !numeric.is_empty()
+            && numeric
+                .parse::<f64>()
+                .ok()
+                .is_none_or(|n| !n.is_finite() || n.abs() > 1.0e9)
+        {
+            return true;
+        }
+
+        end_transform(state, scene, code == KeyCode::Escape, redraw, updates);
+
+        return true;
+    }
+    if !ensure_session(state) {
+        return false;
+    }
+
+    let axis = match code {
+        KeyCode::KeyX => Some(Axis::X),
+        KeyCode::KeyY => Some(Axis::Y),
+        KeyCode::KeyZ => Some(Axis::Z),
+        _ => None,
+    };
+    if let Some(axis) = axis {
+        let plane = state.volatile.key_modifiers.state().shift_key()
+            && matches!(state.volatile.mol_manip.mode, ManipMode::Move(_));
+        let constraint = if plane {
+            Constraint::Plane(axis)
+        } else {
+            Constraint::Axis(axis)
+        };
+        let manip = &mut state.volatile.mol_manip;
+        manip.constraint = if manip.constraint == constraint {
+            Constraint::Free
+        } else {
+            constraint
+        };
+        manip.dragged = None;
+    } else {
+        let ch = match code {
+            KeyCode::Digit0 | KeyCode::Numpad0 => Some('0'),
+            KeyCode::Digit1 | KeyCode::Numpad1 => Some('1'),
+            KeyCode::Digit2 | KeyCode::Numpad2 => Some('2'),
+            KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
+            KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
+            KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
+            KeyCode::Digit6 | KeyCode::Numpad6 => Some('6'),
+            KeyCode::Digit7 | KeyCode::Numpad7 => Some('7'),
+            KeyCode::Digit8 | KeyCode::Numpad8 => Some('8'),
+            KeyCode::Digit9 | KeyCode::Numpad9 => Some('9'),
+            KeyCode::Period | KeyCode::NumpadDecimal => Some('.'),
+            _ => None,
+        };
+        let numeric = &mut state.volatile.mol_manip.numeric;
+        if let Some(ch) = ch {
+            if numeric.len() < 24 && (ch != '.' || !numeric.contains('.')) {
+                numeric.push(ch);
+            }
+        } else if matches!(code, KeyCode::Minus | KeyCode::NumpadSubtract) {
+            if numeric.starts_with('-') {
+                numeric.remove(0);
+            } else {
+                numeric.insert(0, '-');
+            }
+        } else if code == KeyCode::Backspace {
+            numeric.pop();
+        } else {
+            return false;
+        }
+    }
+    preview(state, scene, redraw, updates);
+
+    true
+}
+
+pub(crate) fn status(state: &State) -> String {
+    let manip = &state.volatile.mol_manip;
+    let constraint = match manip.constraint {
+        Constraint::Free => "Free".to_owned(),
+        Constraint::Axis(axis) => axis.label().to_owned(),
+        Constraint::Plane(axis) => format!(
+            "{} plane",
+            match axis {
+                Axis::X => "YZ",
+                Axis::Y => "XZ",
+                Axis::Z => "XY",
+            }
+        ),
+    };
+    let amount = if !manip.numeric.is_empty() {
+        manip.numeric.clone()
+    } else if let Some(session) = &manip.session {
+        match manip.mode {
+            ManipMode::Move(_) => {
+                let v = session.values.translation;
+                format!("Δ ({:+.3}, {:+.3}, {:+.3})", v.x, v.y, v.z)
+            }
+            _ => format!("{:+.2}", session.values.angle.to_degrees()),
+        }
+    } else {
+        "0".to_owned()
+    };
+    let unit = if matches!(manip.mode, ManipMode::Move(_)) {
+        "Å"
+    } else {
+        "°"
+    };
+
+    format!(
+        "{constraint}  {amount} {unit}{}",
+        if snapping(state) { "  SNAP" } else { "" }
+    )
+}
+
+pub fn set_manip(
+    state: &mut State,
+    scene: &mut Scene,
+    redraw: &mut RedrawFlags,
+    rebuild_md_editor: &mut bool,
+    requested: ManipMode,
+    updates: &mut EngineUpdates,
+) {
+    if state.volatile.region_selection.tool != crate::region_select::RegionTool::Off {
+        crate::region_select::cancel(state, scene);
+    }
+    let previous = state.volatile.mol_manip.mode;
+    let op = state.volatile.operating_mode;
+    let target = match op {
+        OperatingMode::Primary => state.volatile.active_mol,
+        OperatingMode::MolEditor => {
+            if matches!(state.volatile.active_mol, Some((MolType::Pocket, _))) {
+                Some((MolType::Pocket, 0))
+            } else {
+                match &state.ui.selection {
+                    Selection::AtomLig((_, i)) if matches!(requested, ManipMode::Move(_)) => {
+                        Some((MolType::Ligand, *i))
+                    }
+                    Selection::AtomsLig((_, indices))
+                        if matches!(requested, ManipMode::Move(_)) =>
+                    {
+                        indices.first().map(|i| (MolType::Ligand, *i))
+                    }
+                    Selection::BondLig((_, i)) if matches!(requested, ManipMode::Rotate(_)) => {
+                        state
+                            .mol_editor
+                            .mol
+                            .common
+                            .bonds
+                            .get(*i)
+                            .filter(|b| !b.in_a_cycle(&state.mol_editor.mol.common.adjacency_list))
+                            .map(|_| (MolType::Ligand, *i))
+                    }
+                    _ => None,
+                }
+            }
+        }
+        OperatingMode::ProteinEditor => None,
+    };
+    let mode = match (requested, target) {
+        (ManipMode::Move(_), Some(target)) => ManipMode::Move(target),
+        (ManipMode::Rotate(_), Some(target)) => ManipMode::Rotate(target),
+        _ => ManipMode::None,
+    };
+    if previous != ManipMode::None {
+        end_transform(state, scene, false, redraw, updates);
+        *rebuild_md_editor = op == OperatingMode::MolEditor;
+    }
+    if mode == ManipMode::None || mode == previous {
+        return;
+    }
+    if state.volatile.md_local.running || state.mol_editor.md.running {
+        return;
+    }
+
+    if scene.input_settings.control_scheme != ControlScheme::None {
+        state.volatile.control_scheme_prev = scene.input_settings.control_scheme;
+    }
+    scene.input_settings.control_scheme = ControlScheme::None;
+    state.volatile.mol_manip.mode = mode;
+    state.volatile.mol_manip.session = None;
+    state.volatile.mol_manip.constraint = Constraint::Free;
+    state.volatile.mol_manip.numeric.clear();
+    ensure_session(state);
+    if let Some((kind, _)) = mode.target() {
+        redraw.set(kind);
     }
 }
 

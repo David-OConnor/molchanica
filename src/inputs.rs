@@ -60,7 +60,7 @@ pub fn event_dev_handler(
     // to change various modes.
 
     let redraw = RedrawFlags::default();
-    let mut redraw_in_place = RedrawFlags::default();
+    let redraw_in_place = RedrawFlags::default();
     let redraw_mol_editor = false;
 
     match event {
@@ -89,20 +89,6 @@ pub fn event_dev_handler(
                 set_flashlight(scene);
                 updates.lighting = true;
             }
-
-            if state_.ui.left_click_down {
-                mol_manip::handle_mol_manip_in_plane(
-                    state_,
-                    scene,
-                    delta,
-                    &mut redraw_in_place,
-                    &mut updates,
-                );
-                state_.volatile.inputs_commanded.panning = true;
-
-                set_flashlight(scene);
-                updates.lighting = true;
-            }
         }
         _ => (),
     }
@@ -127,6 +113,19 @@ pub fn event_win_handler(
 ) -> EngineUpdates {
     let mut updates = EngineUpdates::default();
 
+    let selection_before = matches!(
+        event,
+        WindowEvent::KeyboardInput { .. } | WindowEvent::MouseInput { .. }
+    )
+    .then(|| crate::edit_history::SelectionState::capture(state_));
+    let history_revision = state_.volatile.history.revision;
+    let editor_before = matches!(
+        event,
+        WindowEvent::KeyboardInput { .. } | WindowEvent::MouseInput { .. }
+    )
+    .then(|| crate::edit_history::EditorSnapshot::capture(state_))
+    .flatten();
+
     let mut redraw = RedrawFlags::default();
     let mut redraw_in_place = RedrawFlags::default();
     let mut redraw_mol_editor = false;
@@ -135,7 +134,25 @@ pub fn event_win_handler(
         WindowEvent::CursorMoved {
             device_id: _,
             position,
-        } => state_.ui.cursor_pos = Some((position.x as f32, position.y as f32)),
+        } => {
+            let previous = state_.ui.cursor_pos;
+            state_.ui.cursor_pos = Some((position.x as f32, position.y as f32));
+            if state_.ui.left_click_down
+                && !crate::region_select::motion(state_)
+                && let Some(previous) = previous
+            {
+                mol_manip::handle_mol_manip_in_plane(
+                    state_,
+                    scene,
+                    (
+                        position.x - previous.0 as f64,
+                        position.y - previous.1 as f64,
+                    ),
+                    &mut redraw_in_place,
+                    &mut updates,
+                );
+            }
+        }
         WindowEvent::CursorEntered { device_id: _ } => {
             state_.ui.mouse_in_window = true;
         }
@@ -147,6 +164,12 @@ pub fn event_win_handler(
         }
         WindowEvent::Focused(val) => {
             state_.ui.mouse_in_window = val;
+            if !val {
+                if state_.volatile.mol_manip.mode != ManipMode::None {
+                    mol_manip::end_transform(state_, scene, true, &mut redraw, &mut updates);
+                }
+                crate::region_select::cancel(state_, scene);
+            }
         }
         WindowEvent::ModifiersChanged(val) => {
             state_.volatile.key_modifiers = val;
@@ -157,8 +180,19 @@ pub fn event_win_handler(
             event,
             is_synthetic: _,
         } => {
-            if let Code(code) = event.physical_key
-                && handle_physical_key(
+            if let Code(code) = event.physical_key {
+                if event.state == ElementState::Pressed {
+                    state_.volatile.handled_window_keys.push(code);
+                }
+                if event.repeat
+                    && matches!(
+                        code,
+                        KeyCode::KeyM | KeyCode::KeyR | KeyCode::KeyB | KeyCode::KeyL
+                    )
+                {
+                    return updates;
+                }
+                handle_physical_key(
                     state_,
                     scene,
                     &mut redraw,
@@ -167,9 +201,7 @@ pub fn event_win_handler(
                     &mut updates,
                     code,
                     event.state,
-                )
-            {
-                return updates;
+                );
             }
         }
         WindowEvent::MouseInput {
@@ -197,6 +229,11 @@ pub fn event_win_handler(
         _ => (),
     }
 
+    crate::edit_history::record_editor(state_, editor_before, history_revision);
+    if let Some(selection_before) = selection_before {
+        crate::edit_history::record_selection(state_, selection_before, history_revision);
+    }
+
     post_event_cleanup(
         state_,
         scene,
@@ -207,6 +244,146 @@ pub fn event_win_handler(
     );
 
     updates
+}
+
+pub(crate) fn handle_ui_interactions(
+    state: &mut State,
+    scene: &mut Scene,
+    ctx: &egui::Context,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    use egui::Key;
+    use graphics::winit::keyboard::ModifiersState;
+
+    let frame = ctx.cumulative_frame_nr();
+    if state.volatile.last_interaction_frame == Some(frame) {
+        return;
+    }
+    state.volatile.last_interaction_frame = Some(frame);
+
+    let (modifiers, focused, cursor, primary_down, events) = ctx.input(|input| {
+        (
+            input.modifiers,
+            input.focused,
+            input.pointer.latest_pos(),
+            input.pointer.primary_down(),
+            input.events.clone(),
+        )
+    });
+    let mut flags = ModifiersState::empty();
+    flags.set(ModifiersState::SHIFT, modifiers.shift);
+    flags.set(ModifiersState::CONTROL, modifiers.ctrl);
+    flags.set(ModifiersState::ALT, modifiers.alt);
+    flags.set(ModifiersState::SUPER, modifiers.mac_cmd);
+    state.volatile.key_modifiers = flags.into();
+
+    if !focused {
+        if state.volatile.mol_manip.mode != ManipMode::None {
+            mol_manip::end_transform(state, scene, true, redraw, updates);
+        }
+        crate::region_select::cancel(state, scene);
+    } else if state.ui.left_click_down {
+        if let Some(cursor) = cursor {
+            let scale = ctx.pixels_per_point();
+            let cursor = (cursor.x * scale, cursor.y * scale);
+            let previous = state.ui.cursor_pos.replace(cursor);
+            if !crate::region_select::motion(state)
+                && let Some(previous) = previous
+                && cursor != previous
+            {
+                mol_manip::handle_mol_manip_in_plane(
+                    state,
+                    scene,
+                    (
+                        (cursor.0 - previous.0) as f64,
+                        (cursor.1 - previous.1) as f64,
+                    ),
+                    redraw,
+                    updates,
+                );
+            }
+        }
+        if !primary_down {
+            if !crate::region_select::finish(state, scene, redraw) {
+                mol_manip::finish_drag(state, redraw);
+            }
+            state.ui.left_click_down = false;
+        }
+    }
+
+    let handled = std::mem::take(&mut state.volatile.handled_window_keys);
+    if ctx.text_edit_focused() {
+        return;
+    }
+
+    for event in events {
+        let egui::Event::Key {
+            key,
+            physical_key,
+            pressed: true,
+            repeat,
+            ..
+        } = event
+        else {
+            continue;
+        };
+        let code = match physical_key.unwrap_or(key) {
+            Key::Escape => KeyCode::Escape,
+            Key::Enter => KeyCode::Enter,
+            Key::Backspace => KeyCode::Backspace,
+            Key::Minus => KeyCode::Minus,
+            Key::Period => KeyCode::Period,
+            Key::Num0 => KeyCode::Digit0,
+            Key::Num1 => KeyCode::Digit1,
+            Key::Num2 => KeyCode::Digit2,
+            Key::Num3 => KeyCode::Digit3,
+            Key::Num4 => KeyCode::Digit4,
+            Key::Num5 => KeyCode::Digit5,
+            Key::Num6 => KeyCode::Digit6,
+            Key::Num7 => KeyCode::Digit7,
+            Key::Num8 => KeyCode::Digit8,
+            Key::Num9 => KeyCode::Digit9,
+            Key::X => KeyCode::KeyX,
+            Key::Y => KeyCode::KeyY,
+            Key::Z => KeyCode::KeyZ,
+            Key::M => KeyCode::KeyM,
+            Key::R => KeyCode::KeyR,
+            Key::B => KeyCode::KeyB,
+            Key::L => KeyCode::KeyL,
+            _ => continue,
+        };
+        if handled.contains(&code)
+            || (repeat
+                && matches!(
+                    code,
+                    KeyCode::KeyM | KeyCode::KeyR | KeyCode::KeyB | KeyCode::KeyL
+                ))
+        {
+            continue;
+        }
+
+        let mut in_place = RedrawFlags::default();
+        let mut editor = false;
+        handle_physical_key(
+            state,
+            scene,
+            redraw,
+            &mut in_place,
+            &mut editor,
+            updates,
+            code,
+            ElementState::Pressed,
+        );
+        redraw.peptide |= in_place.peptide;
+        redraw.ligand |= in_place.ligand || editor;
+        redraw.na |= in_place.na;
+        redraw.lipid |= in_place.lipid;
+        redraw.pocket |= in_place.pocket;
+        ctx.input_mut(|input| {
+            input.consume_key(modifiers, key);
+        });
+    }
 }
 
 #[allow(unused)]
@@ -316,11 +493,29 @@ fn handle_mouse_button(
     match button {
         MouseButton::Left => {
             state.ui.left_click_down = match btn_state {
-                ElementState::Pressed => true,
+                ElementState::Pressed => {
+                    if crate::region_select::begin(state) {
+                        true
+                    } else {
+                        let handle = state
+                            .ui
+                            .cursor_pos
+                            .and_then(|p| crate::gizmo::hit_test(state, scene, p));
+                        if let Some(mol_manip::Handle::Camera(axis, positive)) = handle {
+                            let direction = axis.vector() * if positive { -1. } else { 1. };
+                            cam::reset_camera(state, scene, updates, direction);
+                            state.ui.cam_snapshot = None;
+                            false
+                        } else {
+                            mol_manip::begin_drag(state, scene, handle);
+                            true
+                        }
+                    }
+                }
                 ElementState::Released => {
-                    mol_manip::finish_peptide_mesh_manipulation(state, redraw);
-                    // Part of our move logic.
-                    state.volatile.mol_manip.pivot = None;
+                    if !crate::region_select::finish(state, scene, redraw) {
+                        mol_manip::finish_drag(state, redraw);
+                    }
                     false
                 }
             }
@@ -443,6 +638,62 @@ fn handle_physical_key(
     key_state: ElementState,
 ) -> bool {
     let op_mode = state.volatile.operating_mode;
+    if key_state == ElementState::Pressed {
+        let modifiers = state.volatile.key_modifiers.state();
+        if modifiers.control_key() && matches!(code, KeyCode::KeyZ | KeyCode::KeyY) {
+            crate::edit_history::undo_redo(
+                state,
+                scene,
+                code == KeyCode::KeyY || modifiers.shift_key(),
+                redraw,
+                updates,
+            );
+
+            return true;
+        }
+        if state.volatile.region_selection.tool != crate::region_select::RegionTool::Off
+            && code == KeyCode::Escape
+        {
+            crate::region_select::cancel(state, scene);
+
+            return true;
+        }
+        if mol_manip::handle_key(state, scene, code, redraw, updates) {
+            return true;
+        }
+        if state.volatile.mol_manip.mode != ManipMode::None
+            && !matches!(
+                code,
+                KeyCode::KeyM
+                    | KeyCode::KeyR
+                    | KeyCode::ShiftLeft
+                    | KeyCode::ShiftRight
+                    | KeyCode::ControlLeft
+                    | KeyCode::ControlRight
+                    | KeyCode::AltLeft
+                    | KeyCode::AltRight
+            )
+        {
+            return true;
+        }
+        if op_mode == OperatingMode::Primary
+            && matches!(code, KeyCode::KeyB | KeyCode::KeyL)
+            && !modifiers.control_key()
+        {
+            crate::region_select::arm(
+                state,
+                scene,
+                if code == KeyCode::KeyB {
+                    crate::region_select::RegionTool::Box
+                } else {
+                    crate::region_select::RegionTool::Lasso
+                },
+            );
+
+            return true;
+        }
+    }
+
     match key_state {
         ElementState::Pressed => {
             match code {
@@ -583,9 +834,13 @@ fn handle_physical_key(
                     }
                 }
                 KeyCode::KeyR => {
-                    let mol_type = match state.active_mol() {
-                        Some(m) => m.mol_type(),
-                        None => return true,
+                    let mol_type = if op_mode == OperatingMode::MolEditor {
+                        MolType::Ligand
+                    } else {
+                        match state.active_mol() {
+                            Some(m) => m.mol_type(),
+                            None => return true,
+                        }
                     };
 
                     let mut rebuild_md_editor = false;
@@ -723,6 +978,11 @@ fn handle_scroll(
     redraw_in_place: &mut RedrawFlags,
     delta: MouseScrollDelta,
 ) -> bool {
+    if state.volatile.mol_manip.mode != ManipMode::None {
+        mol_manip::handle_mol_manip_in_out(state, scene, delta, redraw_in_place, updates);
+
+        return false;
+    }
     let scroll = match delta {
         MouseScrollDelta::LineDelta(_, y) => y,
         MouseScrollDelta::PixelDelta(p) => p.y as f32 / 120.,

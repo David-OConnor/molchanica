@@ -330,9 +330,24 @@ bincode::impl_borrow_decode!(Inspection);
 
 impl Inspection {
     pub fn validate(&self) -> Result<(), String> {
-        if self.labels.iter().any(|l| l.atoms.is_empty() || l.offset.iter().any(|v| !v.is_finite()))
-            || self.slab.as_ref().is_some_and(|s| !s.anchor.x.is_finite() || !s.anchor.y.is_finite() || !s.anchor.z.is_finite() || !s.offset.is_finite() || !s.thickness.is_finite() || !(0.1..=10000.).contains(&s.thickness))
-            || self.solid_colors.values().flat_map(|m| m.values()).flatten().any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+        if self
+            .labels
+            .iter()
+            .any(|l| l.atoms.is_empty() || l.offset.iter().any(|v| !v.is_finite()))
+            || self.slab.as_ref().is_some_and(|s| {
+                !s.anchor.x.is_finite()
+                    || !s.anchor.y.is_finite()
+                    || !s.anchor.z.is_finite()
+                    || !s.offset.is_finite()
+                    || !s.thickness.is_finite()
+                    || !(0.1..=10000.).contains(&s.thickness)
+            })
+            || self
+                .solid_colors
+                .values()
+                .flat_map(|m| m.values())
+                .flatten()
+                .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
         {
             return Err("Invalid labels, slab, or atom colors".into());
         }
@@ -372,21 +387,38 @@ pub fn color_for<'a>(state: &'a State, mol: &MolGenericRef<'_>) -> Option<&'a Sc
 }
 
 pub fn solid_color(state: &State, mol: &MolGenericRef<'_>, serial: u32) -> Option<(f32, f32, f32)> {
-    state.to_save.inspection.solid_colors.get(&expression::object_key(mol))?
-        .get(&serial).copied().map(Into::into)
+    state
+        .to_save
+        .inspection
+        .solid_colors
+        .get(&expression::object_key(mol))?
+        .get(&serial)
+        .copied()
+        .map(Into::into)
 }
 
 pub fn color_selection(state: &mut State, input: &str, color: [f32; 3]) -> Result<usize, String> {
     let selected = expression::evaluate(state, input)?;
     let mut updates = Vec::new();
     for s in selected {
-        let Some(mol) = state.get_mol(s.mol_type, s.mol_i) else { continue };
-        let ids: Vec<_> = s.atoms.iter().map(|&i| mol.common().atoms[i].serial_number).collect();
+        let Some(mol) = state.get_mol(s.mol_type, s.mol_i) else {
+            continue;
+        };
+        let ids: Vec<_> = s
+            .atoms
+            .iter()
+            .map(|&i| mol.common().atoms[i].serial_number)
+            .collect();
         updates.push((expression::object_key(&mol), ids));
     }
     let count = updates.iter().map(|(_, ids)| ids.len()).sum();
     for (key, ids) in updates {
-        let colors = state.to_save.inspection.solid_colors.entry(key).or_default();
+        let colors = state
+            .to_save
+            .inspection
+            .solid_colors
+            .entry(key)
+            .or_default();
         colors.extend(ids.into_iter().map(|id| (id, color)));
     }
     state.ui.inspection.solid_colors = state.to_save.inspection.solid_colors.clone();
@@ -418,10 +450,25 @@ pub fn residue_colors(state: &State, mol: &MoleculePeptide) -> Vec<Option<(f32, 
         }
     }
 
-    if let Some(colors) = state.to_save.inspection.solid_colors.get(&expression::object_key(&MolGenericRef::Peptide(mol))) {
+    result
+}
+
+pub fn ribbon_colors(state: &State, mol: &MoleculePeptide) -> Vec<Option<(f32, f32, f32)>> {
+    let mut result = residue_colors(state, mol);
+    if let Some(colors) = state
+        .to_save
+        .inspection
+        .solid_colors
+        .get(&expression::object_key(&MolGenericRef::Peptide(mol)))
+    {
         result.resize(mol.residues.len(), None);
         for (i, residue) in mol.residues.iter().enumerate() {
-            if let Some(color) = residue.atoms.iter().filter_map(|&a| colors.get(&mol.common.atoms[a].serial_number)).next() {
+            if let Some(color) = residue
+                .atoms
+                .iter()
+                .filter_map(|&a| colors.get(&mol.common.atoms[a].serial_number))
+                .next()
+            {
                 result[i] = Some((*color).into());
             }
         }
@@ -430,15 +477,26 @@ pub fn residue_colors(state: &State, mol: &MoleculePeptide) -> Vec<Option<(f32, 
     result
 }
 
-pub fn atom_colors(state: &State, mol: &MolGenericRef<'_>) -> Vec<(f32, f32, f32)> {
+pub fn atom_colors(state: &State, mol: &MolGenericRef<'_>) -> Vec<Option<(f32, f32, f32)>> {
     let scalar = color_for(state, mol);
-    if scalar.is_none() && !state.to_save.inspection.solid_colors.contains_key(&expression::object_key(mol)) {
+    if scalar.is_none()
+        && !state
+            .to_save
+            .inspection
+            .solid_colors
+            .contains_key(&expression::object_key(mol))
+    {
         return Vec::new();
     }
 
-    mol.common().atoms.iter().map(|a| solid_color(state, mol, a.serial_number)
-        .or_else(|| scalar.map(|c| c.color(a.serial_number)))
-        .unwrap_or(a.element.color())).collect()
+    mol.common()
+        .atoms
+        .iter()
+        .map(|a| {
+            solid_color(state, mol, a.serial_number)
+                .or_else(|| scalar.map(|c| c.color(a.serial_number)))
+        })
+        .collect()
 }
 
 // CIF tokens retain quoted identifiers and semicolon text fields.
@@ -842,7 +900,7 @@ pub fn pick_atom(state: &mut State, scene: &Scene, cursor: (f32, f32)) {
                 continue;
             };
             let along = (p - origin).dot(direction);
-            if along <= scene.camera.near as f64 || !scene.camera.in_view(p.into()).0 {
+            if along < 0. || !scene.camera.in_view(p.into()).0 {
                 continue;
             }
             let distance = (p - origin - direction * along).magnitude();

@@ -670,12 +670,22 @@ impl Comparison {
         if undo != self.applied {
             return Err("This fit is already in the requested state".into());
         }
+        let before = crate::mol_manip::Pose::capture(state, ManipMode::Move((MolType::Peptide, m)));
         state.peptides[m].common.atom_posits = if undo {
             self.mobile.positions.clone()
         } else {
             self.transformed.clone()
         };
         self.applied = !undo;
+        if let Some(before) = before
+            && let Some(after) = crate::mol_manip::Pose::capture(state, before.mode)
+        {
+            state.volatile.history.push(crate::edit_history::Operation::Pose {
+                before,
+                after,
+                label: if undo { "Undo protein fit" } else { "Protein fit" },
+            });
+        }
         state.volatile.mol_manip.mode = ManipMode::None;
         state.volatile.mol_manip.ribbon_mesh_transform = PeptideMeshTransform::default();
         state.volatile.mol_manip.surface_mesh_transform = PeptideMeshTransform::default();

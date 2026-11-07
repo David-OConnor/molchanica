@@ -366,6 +366,7 @@ fn view_picker(ui: &mut Ui, id: &str, view: &mut MoleculeView) {
 }
 
 pub fn editor(state: &mut State, ui: &mut Ui, redraw: &mut RedrawFlags) {
+    crate::ui::workflows::label_controls(state, ui);
     let mut edit = std::mem::take(&mut state.ui.selection_editor);
 
     ui.horizontal_wrapped(|ui| {

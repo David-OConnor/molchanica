@@ -3,6 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod workflows;
+
 use bio_apis::{pdbe, rcsb};
 use chrono::Local;
 use egui::{
@@ -206,7 +208,10 @@ pub fn handle_input(
 
     // Enter also acts as a click on focused buttons. Keep it available to text
     // fields, which use Enter to submit commands and queries.
-    if ui.input(|input| input.key_pressed(Key::Enter)) && !ui.ctx().text_edit_focused() {
+    if ui.input(|input| input.key_pressed(Key::Enter))
+        && !ui.ctx().text_edit_focused()
+        && state.volatile.mol_manip.mode == crate::mol_manip::ManipMode::None
+    {
         ui.input_mut(|input| {
             let modifiers = input.modifiers;
             input.consume_key(modifiers, Key::Enter);
@@ -339,7 +344,9 @@ fn draw_cli(
         }
 
         if dn_pressed {
-            if state.volatile.cli_input_selected < state.volatile.cli_input_history.len() - 1 {
+            if state.volatile.cli_input_selected
+                < state.volatile.cli_input_history.len().saturating_sub(1)
+            {
                 state.volatile.cli_input_selected += 1;
             }
             if state.volatile.cli_input_history.len() > state.volatile.cli_input_selected {
@@ -363,12 +370,17 @@ fn draw_cli(
                     }
                 };
 
+            redraw.set_all();
+
             state.ui.cmd_line_input = String::new();
             // Compensates for the default lose focus behavior; we still want the cursor to remain here.
             edit_resp.request_focus();
         }
 
         ui.add_space(COL_SPACING);
+        if ui.button("Command files / macros").clicked() {
+            state.ui.workflows.commands_open = true;
+        }
         search_in_mol(state, scene, redraw, ui);
     });
 }
@@ -899,6 +911,11 @@ fn top_controls(
 /// This function draws the (immediate-mode) GUI.
 /// [UI items](https://docs.rs/egui/latest/egui/struct.Ui.html)
 pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUpdates {
+    let selection_before = crate::edit_history::SelectionState::capture(state);
+    let history_revision = state.volatile.history.revision;
+    let editor_before = ui.input(|input| !input.events.is_empty())
+        .then(|| crate::edit_history::EditorSnapshot::capture(state))
+        .flatten();
     let mut updates = EngineUpdates::default();
     // Some molecule-opening paths set `active_mol` directly. Keep the two pickers exclusive.
     if state.volatile.active_mol.is_some() && state.volatile.active_seq.is_some() {
@@ -912,6 +929,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     handle_input(state, ui, &mut updates, scene);
 
     let mut redraw = RedrawFlags::default();
+    crate::inputs::handle_ui_interactions(state, scene, ui.ctx(), &mut redraw, &mut updates);
 
     if state.refresh_force_fields() {
         ui.request_repaint();
@@ -1152,6 +1170,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     }
 
     measurements::show(state, ui.ctx(), &mut redraw);
+    workflows::command_window(state, scene, &mut updates, &mut redraw, ui.ctx());
     let scene_restored = std::mem::take(&mut state.volatile.flags.scene_restored);
     if scene_restored {
         redraw.set_all();
@@ -1182,7 +1201,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         crate::md::viewer::draw_mols(state, scene, &mut updates);
     }
     crate::drawing::representations::update(state, scene, &mut updates);
+    updates.camera |= cam::apply_slab(state, &mut scene.camera);
     measurements::paint(state, scene, ui.ctx(), updates.ui_reserved_px);
+    workflows::paint_labels(state, scene, ui.ctx(), updates.ui_reserved_px);
 
     // Capture after pending geometry updates, so the figure reflects this frame's scene.
     crate::publication::show(state, scene, ui.ctx());
@@ -1197,7 +1218,10 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.request_repaint();
     }
 
-    crate::gizmo::update_overlays(state, scene);
+    crate::edit_history::record_editor(state, editor_before, history_revision);
+    crate::edit_history::record_selection(state, selection_before, history_revision);
+    crate::gizmo::update_overlays(state, scene, ui.ctx());
+    crate::region_select::paint(state, scene, ui.ctx());
 
     updates
 }
@@ -1349,6 +1373,7 @@ pub(crate) fn cam_controls(
 
     ui.add_space(COL_SPACING);
     ui.label("Depth:");
+    workflows::slab_controls(state, scene, engine_updates, ui);
     let depth_mode = state.to_save.depth_mode;
     let depth_options = [
         (

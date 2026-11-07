@@ -130,6 +130,7 @@ pub fn pick(state: &State, ray: (Vec3, Vec3)) -> Option<(Selection, f32, (MolTyp
                 let depth = offset.dot(direction);
                 let distance = (offset - direction * depth).magnitude();
                 if depth >= 0.
+                    && depth <= (ray.1 - ray.0).magnitude()
                     && distance < radius
                     && (distance < best_distance - 1e-4
                         || ((distance - best_distance).abs() <= 1e-4 && depth < best_depth))
@@ -181,7 +182,16 @@ pub fn add(state: &mut State, expression: &str, view: MoleculeView) -> Result<us
         return Err("Cartoon layers require a protein selection".into());
     }
     let count = atoms.iter().map(|a| a.atoms.len()).sum();
-    if state.to_save.representations.iter().any(|l| l.view == view && l.expression == expression && l.visible) {
+    if count == 0 {
+        return Ok(0);
+    }
+
+    if state
+        .to_save
+        .representations
+        .iter()
+        .any(|l| l.view == view && l.expression == expression && l.visible)
+    {
         return Ok(count);
     }
 
@@ -190,44 +200,82 @@ pub fn add(state: &mut State, expression: &str, view: MoleculeView) -> Result<us
         .representations
         .push(Representation::new(expression, view));
     state.to_save.save_flag = true;
+
     Ok(count)
 }
 
 /// Materialize affected defaults so selection edits also apply to the base view.
-fn materialize_defaults(state: &mut State, selected: &[crate::selection::MoleculeAtoms], view: Option<MoleculeView>) {
+fn materialize_defaults(
+    state: &mut State,
+    selected: &[crate::selection::MoleculeAtoms],
+    view: Option<MoleculeView>,
+) {
     let mut layers = Vec::new();
     let mut hidden = Vec::new();
     for s in selected {
-        let Some(mol) = state.get_mol(s.mol_type, s.mol_i) else { continue };
-        if !default_visible(state, &mol) { continue; }
+        let Some(mol) = state.get_mol(s.mol_type, s.mol_i) else {
+            continue;
+        };
+        if !default_visible(state, &mol) {
+            continue;
+        }
 
-        let default = if s.mol_type == MolType::Peptide { state.ui.mol_view_peptide } else { state.ui.mol_view };
-        if view.is_some_and(|v| v != default) { continue; }
+        let default = if s.mol_type == MolType::Peptide {
+            crate::drawing::effective_mol_view_peptide(state, s.mol_i)
+        } else {
+            state.ui.mol_view
+        };
+        if view.is_some_and(|v| {
+            v != default && !(s.mol_type == MolType::Peptide && v == state.ui.mol_view)
+        }) {
+            continue;
+        }
 
         let mut members = Vec::new();
         let mut hetero = Vec::new();
         for (i, atom) in mol.common().atoms.iter().enumerate() {
             let vis = &state.ui.visibility;
             if (vis.hide_hydrogen && atom.element == Element::Hydrogen)
-                || (s.mol_type == MolType::Peptide && ((vis.hide_hetero && atom.hetero)
-                    || (vis.hide_protein && !atom.hetero)
-                    || (vis.hide_water && atom.role == Some(mol_defs::molecules::AtomRole::Water))
-                    || (vis.hide_sidechains && !atom.hetero && !atom.is_backbone()))) {
+                || (s.mol_type == MolType::Peptide
+                    && ((vis.hide_hetero && atom.hetero)
+                        || (vis.hide_protein && !atom.hetero)
+                        || (vis.hide_water
+                            && atom.role == Some(mol_defs::molecules::AtomRole::Water))
+                        || (vis.hide_sidechains && !atom.hetero && !atom.is_backbone())))
+            {
                 continue;
             }
             if let MolGenericRef::Peptide(p) = &mol
-                && atom.chain.and_then(|c| p.chains.get(c)).is_some_and(|c| !c.visible) { continue; }
+                && atom
+                    .chain
+                    .and_then(|c| p.chains.get(c))
+                    .is_some_and(|c| !c.visible)
+            {
+                continue;
+            }
 
-            if s.mol_type == MolType::Peptide && atom.hetero && default == MoleculeView::Ribbon {
+            if s.mol_type == MolType::Peptide
+                && atom.hetero
+                && atom.role != Some(mol_defs::molecules::AtomRole::Water)
+            {
                 hetero.push(i);
             } else {
                 members.push(i);
             }
         }
         for (atoms, view) in [(members, default), (hetero, state.ui.mol_view)] {
-            if atoms.is_empty() { continue; }
+            if atoms.is_empty() {
+                continue;
+            }
 
-            let expression = expression::snapshot(state, &[crate::selection::MoleculeAtoms { mol_type: s.mol_type, mol_i: s.mol_i, atoms }]);
+            let expression = expression::snapshot(
+                state,
+                &[crate::selection::MoleculeAtoms {
+                    mol_type: s.mol_type,
+                    mol_i: s.mol_i,
+                    atoms,
+                }],
+            );
             layers.push(Representation::new(expression, view));
         }
         hidden.push(object_key(&mol));
@@ -239,21 +287,46 @@ fn materialize_defaults(state: &mut State, selected: &[crate::selection::Molecul
 pub fn hide(state: &mut State, input: &str, view: Option<MoleculeView>) -> Result<usize, String> {
     let selected = expression::evaluate(state, input)?;
     let count = selected.iter().map(|s| s.atoms.len()).sum();
-    if count == 0 { return Ok(0); }
+    if count == 0 {
+        return Ok(0);
+    }
+
+    for layer in &state.to_save.representations {
+        if view.is_none_or(|v| v == layer.view) {
+            expression::evaluate(state, &layer.expression)?;
+        }
+    }
 
     materialize_defaults(state, &selected, view);
     let target = expression::snapshot(state, &selected);
     let mut replacements = Vec::new();
     for (i, layer) in state.to_save.representations.iter().enumerate() {
-        if view.is_some_and(|v| v != layer.view) { continue; }
+        if view.is_some_and(|v| v != layer.view) {
+            continue;
+        }
 
-        let remaining = expression::evaluate(state, &format!("({}) and not ({target})", layer.expression))?;
+        let target = if layer.view == MoleculeView::Ribbon {
+            format!("byres ({target})")
+        } else {
+            target.clone()
+        };
+        let overlap =
+            expression::evaluate(state, &format!("({}) and ({target})", layer.expression))?;
+        if overlap.is_empty() {
+            continue;
+        }
+
+        let remaining =
+            expression::evaluate(state, &format!("({}) and not ({target})", layer.expression))?;
         replacements.push((i, expression::snapshot(state, &remaining)));
     }
     for (i, expression) in replacements {
         state.to_save.representations[i].expression = expression;
     }
-    state.to_save.representations.retain(|l| l.expression != "none");
+    state
+        .to_save
+        .representations
+        .retain(|l| l.expression != "none");
     state.volatile.flags.update_ss_mesh = true;
     state.to_save.save_flag = true;
 
@@ -274,14 +347,39 @@ pub fn replace(state: &mut State, input: &str, view: MoleculeView) -> Result<usi
 
 pub fn recolor(state: &mut State, input: &str, color: [f32; 3]) -> Result<usize, String> {
     let selected = expression::evaluate(state, input)?;
+    if selected.is_empty() {
+        return Ok(0);
+    }
+
     let target = expression::snapshot(state, &selected);
     let mut layers = Vec::new();
     for layer in &state.to_save.representations {
-        if layer.color.is_none() { layers.push(layer.clone()); continue; }
+        if layer.color.is_none() {
+            layers.push(layer.clone());
+            continue;
+        }
 
-        for (expr, color) in [(format!("({}) and not ({target})", layer.expression), layer.color), (format!("({}) and ({target})", layer.expression), Some(color))] {
+        if expression::evaluate(state, &format!("({}) and ({target})", layer.expression))?
+            .is_empty()
+        {
+            layers.push(layer.clone());
+            continue;
+        }
+
+        for (expr, color) in [
+            (
+                format!("({}) and not ({target})", layer.expression),
+                layer.color,
+            ),
+            (
+                format!("({}) and ({target})", layer.expression),
+                Some(color),
+            ),
+        ] {
             let atoms = expression::evaluate(state, &expr)?;
-            if atoms.is_empty() { continue; }
+            if atoms.is_empty() {
+                continue;
+            }
 
             let mut part = layer.clone();
             part.expression = expression::snapshot(state, &atoms);
@@ -424,8 +522,15 @@ fn draw_layer(
             continue;
         }
         let scalar_colors = crate::inspection::color_for(state, &mol);
-        let atom_color = |serial, fallback| crate::inspection::solid_color(state, &mol, serial)
-            .or_else(|| scalar_colors.map(|c| c.color(serial))).unwrap_or(fallback);
+        let solid_colors = state.to_save.inspection.solid_colors.get(&object_key(&mol));
+        let atom_color = |serial, fallback| {
+            solid_colors
+                .and_then(|c| c.get(&serial))
+                .copied()
+                .map(Into::into)
+                .or_else(|| scalar_colors.map(|c| c.color(serial)))
+                .unwrap_or(fallback)
+        };
         let mut mask = vec![false; common.atoms.len()];
         for &a in &selected.atoms {
             mask[a] = true;
@@ -471,7 +576,7 @@ fn draw_layer(
                 ResColoring::Chain,
                 ViewSelLevel::Residue,
                 &Selection::None,
-                &crate::inspection::residue_colors(state, pep),
+                &crate::inspection::ribbon_colors(state, pep),
                 pep.sifts_mapping.as_deref(),
             );
             mesh_entity(mesh, layer, meshes, entities, mesh_start);
@@ -506,13 +611,18 @@ fn draw_layer(
             }
             let mut mesh = make_sas_mesh(&atoms, SOLVENT_RAD, precision);
             if layer.color.is_none()
-                && (scalar_colors.is_some() || state.to_save.inspection.solid_colors.contains_key(&object_key(&mol)))
+                && (scalar_colors.is_some()
+                    || state
+                        .to_save
+                        .inspection
+                        .solid_colors
+                        .contains_key(&object_key(&mol)))
             {
                 let subset = common.subset(&selected.atoms).map_err(|e| e.to_string())?;
                 let atom_colors: Vec<_> = subset
                     .atoms
                     .iter()
-                    .map(|a| atom_color(a.serial_number, a.element.color()))
+                    .map(|a| Some(atom_color(a.serial_number, a.element.color())))
                     .collect();
                 let mapped = crate::sfc_mesh::get_mesh_colors_with_atoms(
                     &mesh,
@@ -605,7 +715,10 @@ fn draw_layer(
                 .unwrap_or(position(a));
             let color = |i: usize| {
                 layer.color.map(|[r, g, b]| (r, g, b)).unwrap_or_else(|| {
-                    atom_color(common.atoms[i].serial_number, common.atoms[i].element.color())
+                    atom_color(
+                        common.atoms[i].serial_number,
+                        common.atoms[i].element.color(),
+                    )
                 })
             };
             let mut bonds = bond_entities(

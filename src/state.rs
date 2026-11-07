@@ -522,6 +522,10 @@ pub struct StateVolatile {
     /// in the future, and I'm not sure what it's used for (2026-09-23).
     pub active_peptide: Option<usize>,
     pub mol_manip: MolManip,
+    pub(crate) history: crate::edit_history::EditHistory,
+    pub(crate) region_selection: crate::region_select::RegionSelection,
+    pub(crate) handled_window_keys: Vec<graphics::winit::keyboard::KeyCode>,
+    pub(crate) last_interaction_frame: Option<u64>,
     /// For restoring after temprarily disabling mouse look.
     pub control_scheme_prev: ControlScheme,
     pub orbit_center_prev: Option<(MolType, usize)>,
@@ -637,6 +641,7 @@ impl Default for AaSelection {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
+    pub workflows: crate::ui::workflows::WorkflowUi,
     pub inspection: crate::ui::measurements::InspectionUi,
     pub binding: crate::ui::popup::binding::BindingUi,
     pub protein_comparison: crate::ui::popup::protein_comparison::ProteinComparison,

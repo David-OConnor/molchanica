@@ -934,8 +934,13 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 color = colors.color(atom.serial_number);
             }
 
-            if !manip_active && color != COLOR_SELECTED
-                && let Some(color_override) = ui.inspection.solid_colors.get(&object_key).and_then(|c| c.get(&atom.serial_number))
+            if !manip_active
+                && color != COLOR_SELECTED
+                && let Some(color_override) = ui
+                    .inspection
+                    .solid_colors
+                    .get(&object_key)
+                    .and_then(|c| c.get(&atom.serial_number))
             {
                 color = (*color_override).into();
             }
@@ -1228,7 +1233,11 @@ pub fn draw_mol_with_pharmacophore_visibility(
         if !manip_active {
             for (atom, color) in [(atom_0, &mut color_0), (atom_1, &mut color_1)] {
                 if *color != COLOR_SELECTED
-                    && let Some(override_color) = ui.inspection.solid_colors.get(&object_key).and_then(|c| c.get(&atom.serial_number))
+                    && let Some(override_color) = ui
+                        .inspection
+                        .solid_colors
+                        .get(&object_key)
+                        .and_then(|c| c.get(&atom.serial_number))
                 {
                     *color = (*override_color).into();
                 }

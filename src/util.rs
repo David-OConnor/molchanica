@@ -799,7 +799,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &state.ui.selection,
-                &crate::inspection::residue_colors(state, mol),
+                &crate::inspection::ribbon_colors(state, mol),
                 mol.sifts_mapping.as_deref(),
             );
         }
@@ -828,7 +828,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &Selection::None,
-                &crate::inspection::residue_colors(state, mol),
+                &crate::inspection::ribbon_colors(state, mol),
                 mol.sifts_mapping.as_deref(),
             );
             let vertex_offset = other_ribbons.vertices.len();

@@ -574,6 +574,10 @@ pub fn points_along_ray_inner(
     // Compute the closest point on the ray to the atom position
     let to_atom: Vec3F32 = posit - ray.0;
     let t = to_atom.dot(ray_dir);
+    if t < 0. || t > (ray.1 - ray.0).magnitude() {
+        return;
+    }
+
     let closest_point = ray.0 + ray_dir * t;
 
     // Compute the perpendicular distance to the ray
@@ -749,7 +753,15 @@ pub(crate) fn handle_selection_attempt(
     // to be behind the camera.
     let diff = selected_ray.1 - selected_ray.0;
 
-    selected_ray.0 += diff.to_normalized() * SEL_NEAR_PAD;
+    if !state
+        .to_save
+        .inspection
+        .slab
+        .as_ref()
+        .is_some_and(|s| s.enabled)
+    {
+        selected_ray.0 += diff.to_normalized() * SEL_NEAR_PAD;
+    }
 
     // todo: Lots of DRY here!
 

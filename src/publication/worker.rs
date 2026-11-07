@@ -115,6 +115,7 @@ struct Instance {
 struct Job {
     settings: Settings,
     measurements: Vec<Measurement>,
+    labels: Vec<super::Annotation>,
     meshes: Vec<Mesh>,
     entities: Vec<Instance>,
     camera_position: Vec3,
@@ -126,10 +127,16 @@ struct Job {
 }
 
 impl Job {
-    fn new(scene: Scene, settings: Settings, measurements: Vec<Measurement>) -> Self {
+    fn new(
+        scene: Scene,
+        settings: Settings,
+        measurements: Vec<Measurement>,
+        labels: Vec<super::Annotation>,
+    ) -> Self {
         Self {
             settings,
             measurements,
+            labels,
             meshes: scene.meshes,
             entities: scene
                 .entities
@@ -241,6 +248,7 @@ pub(super) fn run(
     scene: Scene,
     settings: Settings,
     measurements: Vec<Measurement>,
+    labels: Vec<super::Annotation>,
     cancel: &AtomicBool,
     events: &Sender<RenderEvent>,
 ) -> Result<Figure, String> {
@@ -250,7 +258,7 @@ pub(super) fn run(
     if cancel.load(Ordering::Relaxed) {
         return Err("Render cancelled.".into());
     }
-    let job = Job::new(scene, settings.clone(), measurements);
+    let job = Job::new(scene, settings.clone(), measurements, labels);
     let mut input =
         BufWriter::new(fs::File::create(workspace.0.join("scene.bin")).map_err(|e| e.to_string())?);
     bincode::encode_into_std_write(&job, &mut input, bincode::config::standard())
@@ -370,12 +378,18 @@ fn render_job(root: &Path) -> Result<(), String> {
         };
     }
     let mut last_update = Instant::now() - Duration::from_secs(1);
-    let figure = renderer::render(scene, job.settings, &job.measurements, |progress| {
-        if last_update.elapsed() >= Duration::from_millis(100) {
-            let _ = fs::write(root.join("progress.txt"), progress);
-            last_update = Instant::now();
-        }
-    })?;
+    let figure = renderer::render(
+        scene,
+        job.settings,
+        &job.measurements,
+        &job.labels,
+        |progress| {
+            if last_update.elapsed() >= Duration::from_millis(100) {
+                let _ = fs::write(root.join("progress.txt"), progress);
+                last_update = Instant::now();
+            }
+        },
+    )?;
     fs::write(root.join("pixels.rgba"), figure.rgba).map_err(|e| e.to_string())
 }
 

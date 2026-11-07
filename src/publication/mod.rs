@@ -152,6 +152,13 @@ pub(super) struct Measurement {
     color: Option<[u8; 3]>,
 }
 
+#[derive(Clone, bincode::Encode, bincode::Decode)]
+pub(super) struct Annotation {
+    position: Vec3,
+    text: String,
+    offset: [f32; 2],
+}
+
 pub(super) struct Figure {
     settings: Settings,
     rgba: Vec<u8>,
@@ -308,6 +315,24 @@ impl Publication {
 }
 
 pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
+    let labels: Vec<_> = if state.publication.open {
+        state
+            .to_save
+            .inspection
+            .labels
+            .iter()
+            .filter(|l| l.visible)
+            .filter_map(|l| {
+                Some(Annotation {
+                    position: l.position(state)?.into(),
+                    text: l.text.clone(),
+                    offset: l.offset,
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let live_measurements: Vec<_> = if state.publication.open {
         state
             .to_save
@@ -533,6 +558,7 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
                         let settings = p.library.settings.clone();
                         let mut measurements = p.measurements.clone();
                         measurements.extend(live_measurements.clone());
+                        let labels = labels.clone();
 
                         let prefs_path = prefs_dir.join("figure_styles.json");
                         let prefs_bytes = serde_json::to_vec_pretty(&p.library);
@@ -559,7 +585,7 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
                             // must never run inside the UI callback.
                             let result = std::panic::catch_unwind(
                                 std::panic::AssertUnwindSafe(|| {
-                                    worker::run(snapshot, settings, measurements, &cancel, &tx)
+                                    worker::run(snapshot, settings, measurements, labels, &cancel, &tx)
                                 }),
                             ).unwrap_or_else(|_| {
                                 Err("GPU rendering failed. Try a smaller image.".into())

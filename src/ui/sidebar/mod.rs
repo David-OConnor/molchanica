@@ -187,8 +187,7 @@ fn manip_toolbar(
                 ui,
                 "↔",
                 color_move,
-                "(Hotkey: M. M or Esc to stop)) Move the active molecule by clicking and dragging with /
-                the mouse. Scroll to move it forward and back."
+                "M: move. Drag an axis or plane. X/Y/Z and a number: Å. Shift: fine. Ctrl: snap. Enter: accept. Esc: cancel."
             ).clicked() {
                 set_manip(state, scene, redraw, &mut false,
                           ManipMode::Move((active_mol_type, active_mol_i)), engine_updates);
@@ -198,7 +197,7 @@ fn manip_toolbar(
                 ui,
                 "⟳",
                 color_rotate,
-                "(Hotkey: R. R or Esc to stop) Rotate the active molecule by clicking and dragging with the mouse. Scroll to roll."
+                "R: rotate. Drag a ring. X/Y/Z and a number: degrees. Shift: fine. Ctrl: snap. Enter: accept. Esc: cancel."
             ).clicked() {
                 set_manip(state,
                           scene, redraw, &mut false,
@@ -482,6 +481,9 @@ pub(in crate::ui) fn sidebar(
             if !edit_mode {
                 manip_toolbar(state, scene, redraw, ui, updates);
             }
+
+            crate::edit_history::show(state, scene, ui, redraw, updates);
+            crate::region_select::show(state, scene, ui, redraw);
 
             ui.add_space(ROW_SPACING / 2.);
             ui.separator();

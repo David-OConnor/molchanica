@@ -74,7 +74,12 @@ pub fn set_fog(state: &State, cam: &mut Camera) {
 }
 
 pub fn apply_slab(state: &State, cam: &mut Camera) -> bool {
-    let planes = state.to_save.inspection.slab.as_ref().filter(|s| s.enabled)
+    let planes = state
+        .to_save
+        .inspection
+        .slab
+        .as_ref()
+        .filter(|s| s.enabled)
         .map(|s| s.planes(cam));
     let (near, far) = planes.unwrap_or_else(|| {
         let near = match state.to_save.depth_mode {
@@ -559,6 +564,62 @@ fn frame_dist(cam: &Camera, radius: f32) -> f32 {
     };
 
     (radius / half_y.min(half_x).sin()).max(FRAME_DIST_MIN)
+}
+
+pub fn zoom_selection(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    input: &str,
+    buffer: f32,
+) -> Result<(), String> {
+    let selected = crate::selection::expression::evaluate(state, input)?;
+    let points: Vec<Vec3> = selected
+        .iter()
+        .flat_map(|s| {
+            state
+                .get_mol(s.mol_type, s.mol_i)
+                .map(|m| {
+                    s.atoms
+                        .iter()
+                        .map(|&i| {
+                            m.common()
+                                .atom_posits
+                                .get(i)
+                                .copied()
+                                .unwrap_or(m.common().atoms[i].posit)
+                                .into()
+                        })
+                        .collect::<Vec<Vec3>>()
+                })
+                .unwrap_or_default()
+        })
+        .collect();
+    if points.is_empty() {
+        return Err("Selection contains no atoms".into());
+    }
+
+    let center = mean_position(points.iter().copied());
+    let radius = points
+        .iter()
+        .map(|p| (*p - center).magnitude())
+        .fold(0., f32::max)
+        + buffer;
+    let distance = frame_dist(&scene.camera, radius);
+    scene.camera.position = center - scene.camera.orientation.rotate_vec(FWD_VEC) * distance;
+    if matches!(
+        scene.input_settings.control_scheme,
+        ControlScheme::Arc { .. }
+    ) {
+        scene.input_settings.control_scheme = ControlScheme::Arc { center };
+    }
+    set_fog(state, &mut scene.camera);
+    updates.camera = true;
+    set_flashlight(scene);
+    updates.lighting = true;
+    state.ui.cam_snapshot = None;
+
+    Ok(())
 }
 
 /// Heavy-atom positions of visible molecules, other than `exclude`. Omits water, which is

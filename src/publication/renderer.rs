@@ -129,6 +129,7 @@ pub(super) fn render(
     mut scene: Scene,
     settings: Settings,
     measurements: &[Measurement],
+    labels: &[super::Annotation],
     mut progress: impl FnMut(&str),
 ) -> Result<Figure, String> {
     settings.validate()?;
@@ -523,6 +524,7 @@ pub(super) fn render(
         &scene,
         &settings,
         measurements,
+        labels,
         &device,
         &queue,
         &mut encoder,
@@ -584,6 +586,7 @@ fn draw_labels(
     scene: &Scene,
     settings: &Settings,
     measurements: &[Measurement],
+    labels: &[super::Annotation],
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
@@ -619,6 +622,18 @@ fn draw_labels(
         |ui| {
             let painter = ui.painter();
             if settings.labels {
+                for label in labels {
+                    if let Some(anchor) = project(label.position) {
+                        crate::ui::workflows::paint_label(
+                            painter,
+                            anchor,
+                            &label.text,
+                            label.offset,
+                            settings.label_scale,
+                            color,
+                        );
+                    }
+                }
                 for e in &scene.entities {
                     if let Some(label) = &e.overlay_text
                         && let Some(pos) = project(e.position + Vec3::new(0., 0.05 * e.scale, 0.))
