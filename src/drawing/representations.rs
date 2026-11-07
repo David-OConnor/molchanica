@@ -92,7 +92,7 @@ pub fn pick(state: &State, ray: (Vec3, Vec3)) -> Option<(Selection, f32, (MolTyp
                 continue;
             };
             let common = mol.common();
-            if !common.visible {
+            if !common.visible() {
                 continue;
             }
             if layer.view == MoleculeView::Ribbon && selected.mol_type != MolType::Peptide {
@@ -404,7 +404,7 @@ fn fingerprint(state: &State) -> u64 {
         i.hash(&mut hash);
         object_key(&mol).hash(&mut hash);
         let common = mol.common();
-        common.visible.hash(&mut hash);
+        common.visibility.hash(&mut hash);
         common.name.hash(&mut hash);
         common.filename.hash(&mut hash);
         common.ident.hash(&mut hash);
@@ -518,7 +518,7 @@ fn draw_layer(
             continue;
         };
         let common = mol.common();
-        if !common.visible {
+        if !common.visible() {
             continue;
         }
         let scalar_colors = crate::inspection::color_for(state, &mol);
@@ -845,7 +845,7 @@ fn update_highlight(
             let Some(mol) = state.get_mol(selected.mol_type, selected.mol_i) else {
                 continue;
             };
-            if !mol.common().visible {
+            if !mol.common().visible() {
                 continue;
             }
             for &i in &selected.atoms {

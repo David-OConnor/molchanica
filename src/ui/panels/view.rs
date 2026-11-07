@@ -289,22 +289,6 @@ pub fn view_settings(
         );
     }
 
-    // vis_check(&mut state.ui.visibility.dim_peptide, "Dim peptide", ui, redraw);
-
-    if !state.peptides.is_empty() {
-        ui.add_space(COL_SPACING / 2.);
-        // Not using `vis_check` for this because its semantics are inverted.
-        let color = misc::active_color(state.ui.visibility.dim_peptide);
-        if ui
-            .button(RichText::new("Dim peptide").color(color))
-            .on_hover_text("Dim the peptide, so that it's easier to see small molecules.")
-            .clicked()
-        {
-            state.ui.visibility.dim_peptide = !state.ui.visibility.dim_peptide;
-            redraw.peptide = true;
-        }
-    }
-
     if let Some(mol) = state
         .peptide_for_tools_i()
         .and_then(|i| state.peptides.get(i))

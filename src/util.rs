@@ -785,7 +785,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         state.volatile.flags.ss_mesh_visible = state
             .peptides
             .iter()
-            .map(|mol| mol.common.visible)
+            .map(|mol| mol.common.visible())
             .collect();
 
         if let Some(mol) = selected_peptide.and_then(|i| state.peptides.get(i)) {
@@ -808,7 +808,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
         let mut other_ribbons = graphics::Mesh::default();
         for (mol_i, mol) in state.peptides.iter().enumerate() {
             if Some(mol_i) == selected_peptide
-                || !mol.common.visible
+                || !mol.common.visible()
                 || !crate::drawing::representations::default_visible(
                     state,
                     &mol_defs::molecules::MolGenericRef::Peptide(mol),

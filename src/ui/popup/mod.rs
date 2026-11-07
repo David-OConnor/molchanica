@@ -24,7 +24,10 @@ use bio_files::ResidueType;
 use egui::{Color32, Context, Pos2, RichText, ScrollArea, TextEdit, Ui, Window};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
-use mol_defs::molecules::{MolGenericRef, MolType, common::MoleculeCommon};
+use mol_defs::molecules::{
+    MolGenericRef, MolType,
+    common::{MolVisibility, MoleculeCommon},
+};
 use na_seq::AaIdent;
 use tool_runner::{ToolWindowKind, tool_window};
 
@@ -848,11 +851,11 @@ fn alignment(
         // Set visualization settings to view the result.
         state.ligands[state.volatile.alignment.mols_to_align[0]]
             .common
-            .visible = true;
+            .visibility = MolVisibility::Visible;
 
         state.ligands[state.volatile.alignment.mols_to_align[1]]
             .common
-            .visible = true;
+            .visibility = MolVisibility::Visible;
 
         state.ui.color_by_mol = true;
 

@@ -114,7 +114,7 @@ const COLOR_POCKET_SPHERES: Color = (1., 1., 0.);
 
 pub const SIZE_SFC_DOT: f32 = 0.03;
 
-const DIMMED_PEPTIDE_AMT: f32 = 0.92; // Higher value means more dim.
+const DIMMED_AMT: f32 = 0.92; // Higher value means more dim.
 
 pub const DENSITY_ISO_OPACITY: f32 = 0.5;
 pub const SAS_ISO_OPACITY: f32 = 0.75;
@@ -779,7 +779,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
 ) -> Vec<Entity> {
     let mut result = Vec::new();
 
-    if !mol.common().visible {
+    if !mol.common().visible() {
         return result;
     }
 
@@ -895,7 +895,6 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     &[],
                     sel,
                     ViewSelLevel::AtomBond, // Small molecules use element or charge colors.
-                    false,
                     ui.res_coloring,
                     ui.atom_color_by_charge
                         .then_some(ui.inspection.charge_palette),
@@ -944,6 +943,10 @@ pub fn draw_mol_with_pharmacophore_visibility(
                     .and_then(|c| c.get(&atom.serial_number))
             {
                 color = (*color_override).into();
+            }
+
+            if !manip_active && mol.common().dimmed() {
+                color = atoms_bonds::dim_color(color);
             }
 
             if mode == OperatingMode::Primary
@@ -1144,7 +1147,6 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 &[],
                 sel,
                 ViewSelLevel::AtomBond, // Always color ligands by atom.
-                false,
                 ui.res_coloring,
                 ui.atom_color_by_charge
                     .then_some(ui.inspection.charge_palette),
@@ -1163,7 +1165,6 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 &[],
                 sel,
                 ViewSelLevel::AtomBond, // Always color ligands by atom.
-                false,
                 ui.res_coloring,
                 ui.atom_color_by_charge
                     .then_some(ui.inspection.charge_palette),
@@ -1243,6 +1244,10 @@ pub fn draw_mol_with_pharmacophore_visibility(
                         .and_then(|c| c.get(&atom.serial_number))
                 {
                     *color = (*override_color).into();
+                }
+
+                if mol.common().dimmed() {
+                    *color = atoms_bonds::dim_color(*color);
                 }
             }
         }
@@ -1433,7 +1438,7 @@ pub fn draw_pocket(
         return res;
     }
 
-    if !pocket.common.visible {
+    if !pocket.common.visible() {
         return res;
     }
 
@@ -1472,6 +1477,8 @@ pub fn draw_pocket(
         Selection::AtomPocket(_) | Selection::BondPocket(_)
     ) {
         COLOR_SELECTED
+    } else if pocket.common.dimmed() {
+        atoms_bonds::dim_color(COLOR_POCKET)
     } else {
         COLOR_POCKET
     };

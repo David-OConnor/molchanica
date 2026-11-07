@@ -515,7 +515,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
         let visible: Vec<bool> = state
             .peptides
             .iter()
-            .map(|mol| mol.common.visible)
+            .map(|mol| mol.common.visible())
             .collect();
         if state.volatile.flags.ss_mesh_visible != visible {
             state.volatile.flags.update_ss_mesh = true;
@@ -544,7 +544,7 @@ pub fn draw_peptide(state: &mut State, scene: &mut Scene, updates: &mut EngineUp
     let selected_peptide = state.peptide_for_tools_i();
     let has_other_ribbons = state.peptides.iter().enumerate().any(|(mol_i, mol)| {
         Some(mol_i) != selected_peptide
-            && mol.common.visible
+            && mol.common.visible()
             && crate::drawing::representations::default_visible(
                 state,
                 &mol_defs::molecules::MolGenericRef::Peptide(mol),
@@ -581,7 +581,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
     let Some(mol) = state.peptides.get(mol_i) else {
         return;
     };
-    if !mol.common.visible
+    if !mol.common.visible()
         || !crate::drawing::representations::default_visible(
             state,
             &mol_defs::molecules::MolGenericRef::Peptide(mol),
@@ -698,7 +698,6 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                         &mol.chains,
                         sel,
                         state.ui.view_sel_level,
-                        false,
                         ResColoring::default(),
                         None,
                         MolType::Peptide,
@@ -793,8 +792,6 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             radius = BALL_RADIUS_WATER_O
         }
 
-        let dim_peptide = state.ui.visibility.dim_peptide && !atom.hetero;
-
         let mut color_atom = (0., 0., 0.);
         let mut manip_active = false;
 
@@ -827,7 +824,6 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 &mol.chains,
                 sel,
                 state.ui.view_sel_level,
-                dim_peptide,
                 state.ui.res_coloring,
                 state
                     .ui
@@ -870,6 +866,11 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             )
         {
             color_atom = color;
+        }
+
+        // Hetero atoms (e.g. ligands) stay bright, so they stand out.
+        if !manip_active && mol.common.dimmed() && !atom.hetero {
+            color_atom = atoms_bonds::dim_color(color_atom);
         }
 
         // todo: Come back to this.
@@ -1034,11 +1035,6 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             }
         };
 
-        let dim_peptide_0 =
-            state.ui.visibility.dim_peptide && !mol.common.atoms[bond.atom_0].hetero;
-        let dim_peptide_1 =
-            state.ui.visibility.dim_peptide && !mol.common.atoms[bond.atom_1].hetero;
-
         let mut color_0 = (0., 0., 0.);
         let mut color_1 = (0., 0., 0.);
 
@@ -1075,7 +1071,6 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 &mol.chains,
                 sel,
                 state.ui.view_sel_level,
-                dim_peptide_0,
                 state.ui.res_coloring,
                 state
                     .ui
@@ -1096,7 +1091,6 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                 &mol.chains,
                 sel,
                 state.ui.view_sel_level,
-                dim_peptide_1,
                 state.ui.res_coloring,
                 state
                     .ui
@@ -1149,6 +1143,10 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
                         .and_then(|c| c.get(&atom.serial_number))
                 {
                     *color = (*override_color).into();
+                }
+
+                if mol.common.dimmed() && !atom.hetero {
+                    *color = atoms_bonds::dim_color(*color);
                 }
             }
         }

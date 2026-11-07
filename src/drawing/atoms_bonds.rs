@@ -11,8 +11,7 @@ use na_seq::Element;
 use crate::{
     drawing,
     drawing::{
-        CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_PEPTIDE_AMT, MESH_BOND_CAP,
-        MolTypeExt,
+        CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_SELECTED, DIMMED_AMT, MESH_BOND_CAP, MolTypeExt,
     },
     inspection::Palette,
     render::{BACKGROUND_COLOR, Color, MESH_BOND},
@@ -121,7 +120,6 @@ pub fn atom_color(
     chains: &[Chain],
     selection: &Selection,
     view_sel_level: ViewSelLevel,
-    dimmed: bool,
     res_coloring: ResColoring,
     charge_palette: Option<Palette>,
     mol_type: MolType,
@@ -231,13 +229,19 @@ pub fn atom_color(
         _ => (),
     }
 
-    if dimmed && result != COLOR_SELECTED {
-        // Desaturate first; otherwise the more saturated initial colors will be relatively visible, while unsaturated
-        // ones will appear blackish.
-        result = drawing::blend_color(result, BACKGROUND_COLOR, DIMMED_PEPTIDE_AMT)
+    result
+}
+
+/// For dimmed molecules: blends toward the background. Selected atoms stay highlighted.
+/// Apply after other coloring, so it isn't overridden.
+pub fn dim_color(color: Color) -> Color {
+    if color == COLOR_SELECTED {
+        return color;
     }
 
-    result
+    // Desaturate first; otherwise the more saturated initial colors will be relatively visible, while unsaturated
+    // ones will appear blackish.
+    drawing::blend_color(color, BACKGROUND_COLOR, DIMMED_AMT)
 }
 
 /// Adds a cylindrical bond. This is divided into two halves, so they can be color-coded by their side's

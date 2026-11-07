@@ -16,7 +16,7 @@ use lin_alg::f64::Vec3;
 use mol_defs::{
     molecules::{
         Atom, AtomRole, Bond, Chain, MolGenericRef, MolIdent, MolType, PeptideIdent, Residue,
-        common::MoleculeCommon,
+        common::{MolVisibility, MoleculeCommon},
         lipid::MoleculeLipid,
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
         peptide::MoleculePeptide,
@@ -46,6 +46,23 @@ const MAX_BYTES: u64 = 1024 * 1024 * 1024;
 
 fn invalid(message: impl ToString) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.to_string())
+}
+
+/// 0 and 1 match the bool this replaced, so older projects load.
+pub(crate) fn vis_to_byte(vis: MolVisibility) -> u8 {
+    match vis {
+        MolVisibility::Hidden => 0,
+        MolVisibility::Visible => 1,
+        MolVisibility::Dimmed => 2,
+    }
+}
+
+pub(crate) fn vis_from_byte(v: u8) -> MolVisibility {
+    match v {
+        0 => MolVisibility::Hidden,
+        2 => MolVisibility::Dimmed,
+        _ => MolVisibility::Visible,
+    }
 }
 
 struct Temporary(PathBuf);
@@ -92,7 +109,8 @@ struct Common {
     positions: Vec<Vec3>,
     bonds: Vec<(usize, usize, u8, bool)>,
     metadata: HashMap<String, String>,
-    visible: bool,
+    /// See `vis_to_byte`.
+    visible: u8,
     md_copies: Option<usize>,
     is_2d: bool,
 }
@@ -106,7 +124,7 @@ impl Common {
             filename: m.filename.clone(),
             positions: m.atom_posits.clone(),
             metadata: m.metadata.clone(),
-            visible: m.visible,
+            visible: vis_to_byte(m.visibility),
             md_copies: m.selected_for_md,
             is_2d: m.is_2d,
             atoms: m
@@ -235,7 +253,7 @@ impl Common {
         common.name = self.name;
         common.filename = self.filename;
         common.atom_posits = self.positions;
-        common.visible = self.visible;
+        common.visibility = vis_from_byte(self.visible);
         common.selected_for_md = self.md_copies;
         common.is_2d = self.is_2d;
         common.update_next_sn();

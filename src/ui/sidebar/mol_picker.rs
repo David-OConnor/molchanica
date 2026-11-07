@@ -3,7 +3,9 @@ use egui::{Color32, ComboBox, Id, Response, RichText, Sense, Stroke, TextEdit, U
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
-    MolGenericRef, MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType,
+    MolGenericRef, MolType,
+    common::{MolVisibility, MoleculeCommon},
+    nucleic_acid::NucleicAcidType,
 };
 use na_seq::SeqType;
 
@@ -44,6 +46,9 @@ const SORTS: [(MolSort, &str); 11] = [
 
 /// Width of a row's drag handle. Sequence rows, which have none, pad by this to stay aligned.
 const DRAG_HANDLE_WIDTH: f32 = 8.;
+
+/// The eye button's color when its molecule is dimmed.
+const COLOR_DIMMED: Color32 = Color32::from_rgb(70, 130, 70);
 
 /// Width of the type-indicator letter at the start of each row; fixed, so names line up.
 const TYPE_INDICATOR_WIDTH: f32 = 12.;
@@ -207,14 +212,20 @@ fn mol_picker_one(
                     }
                 }
 
-                let color_vis = if mol.visible {
-                    COLOR_ACTIVE
-                } else {
-                    COLOR_INACTIVE
+                let (color_vis, vis_text) = match mol.visibility {
+                    MolVisibility::Visible => (COLOR_ACTIVE, "Visible"),
+                    MolVisibility::Dimmed => (COLOR_DIMMED, "Dimmed"),
+                    MolVisibility::Hidden => (COLOR_INACTIVE, "Hidden"),
                 };
 
-                if ui.button(RichText::new("👁").color(color_vis)).clicked() {
-                    mol.visible = !mol.visible;
+                if ui
+                    .button(RichText::new("👁").color(color_vis))
+                    .on_hover_text(format!(
+                        "{vis_text}. Click to cycle between visible, dimmed, and hidden."
+                    ))
+                    .clicked()
+                {
+                    mol.visibility = mol.visibility.next();
 
                     redraw.set(mol_type); // todo Overkill; only need to redraw (or even just clear) one.
                 }

@@ -152,7 +152,7 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
     let peptide_positions = state
         .peptides
         .iter()
-        .filter(|p| p.common.visible)
+        .filter(|p| p.common.visible())
         .flat_map(|p| {
             p.common
                 .atoms
@@ -169,7 +169,7 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
         .map(|m| &m.common)
         .chain(state.nucleic_acids.iter().map(|m| &m.common))
         .chain(state.lipids.iter().map(|m| &m.common))
-        .filter(|m| m.visible)
+        .filter(|m| m.visible())
         .flat_map(|m| m.atom_posits.iter().map(|p| (*p).into()));
 
     if let Some((nearest, farthest)) =
@@ -649,7 +649,7 @@ fn obstacle_posits(state: &State, exclude: Option<(MolType, usize)>) -> Vec<Vec3
             MolType::Pocket,
             state.pockets.iter().map(|m| &m.common),
         ))
-        .filter(|(id, mol)| mol.visible && Some(*id) != exclude)
+        .filter(|(id, mol)| mol.visible() && Some(*id) != exclude)
         .flat_map(|(_, mol)| mol.atoms.iter().zip(&mol.atom_posits))
         .filter(|(atom, _)| atom.element != Element::Hydrogen && atom.role != Some(AtomRole::Water))
         .map(|(_, posit)| (*posit).into())

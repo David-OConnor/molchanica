@@ -783,7 +783,6 @@ fn draw_atom(
             &[],
             &ui.selection,
             ViewSelLevel::AtomBond, // Use element or partial-charge colors.
-            false,
             ui.res_coloring,
             ui.atom_color_by_charge
                 .then_some(ui.inspection.charge_palette),
@@ -893,7 +892,6 @@ fn draw_bond(
         &[],
         &ui.selection,
         ViewSelLevel::AtomBond, // Always color ligands by atom.
-        false,
         ui.res_coloring,
         ui.atom_color_by_charge
             .then_some(ui.inspection.charge_palette),
@@ -913,7 +911,6 @@ fn draw_bond(
         &[],
         &ui.selection,
         ViewSelLevel::AtomBond, // Always color ligands by atom.
-        false,
         ui.res_coloring,
         ui.atom_color_by_charge
             .then_some(ui.inspection.charge_palette),

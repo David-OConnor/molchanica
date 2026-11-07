@@ -462,7 +462,7 @@ impl Visibility {
             self.hide_hydrogen as u8,
             self.hide_pharmacophore as u8,
             self.hide_h_bonds as u8,
-            self.dim_peptide as u8,
+            0, // Reserved; formerly `dim_peptide`. Later fields are positional.
             self.hide_density_point_cloud as u8,
             self.hide_density_surface as u8,
             self.hide_pockets as u8,
@@ -486,7 +486,7 @@ impl Visibility {
             hide_hydrogen: data[7] != 0,
             hide_pharmacophore: data[8] != 0,
             hide_h_bonds: data[9] != 0,
-            dim_peptide: data[10] != 0,
+            reserved_0: false,
             hide_density_point_cloud: data[11] != 0,
             hide_density_surface: data[12] != 0,
             hide_pockets: data[13] != 0,

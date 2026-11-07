@@ -342,7 +342,7 @@ pub(crate) fn finish(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFl
         }
     }
     let mut hits = BTreeSet::new();
-    if shape.len() >= 3 && peptide.common.visible {
+    if shape.len() >= 3 && peptide.common.visible() {
         for (i, atom) in peptide.common.atoms.iter().enumerate() {
             let Some(residue) = atom.residue else {
                 continue;

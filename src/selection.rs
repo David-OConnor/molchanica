@@ -830,7 +830,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Peptide, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -839,7 +839,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Ligand, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -848,7 +848,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::NucleicAcid, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -857,7 +857,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Lipid, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -866,7 +866,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Pocket, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -936,7 +936,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Peptide, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -945,7 +945,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Ligand, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -954,7 +954,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::NucleicAcid, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -963,7 +963,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Lipid, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })
@@ -972,7 +972,7 @@ pub(crate) fn handle_selection_attempt(
             .into_iter()
             .filter(|(i, _)| {
                 state.get_mol(MolType::Pocket, *i).is_some_and(|m| {
-                    m.common().visible
+                    m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
                 })
             })

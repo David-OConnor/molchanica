@@ -900,7 +900,8 @@ pub struct Visibility {
     pub hide_hydrogen: bool,
     pub hide_pharmacophore: bool,
     pub hide_h_bonds: bool,
-    pub dim_peptide: bool,
+    /// Unused; formerly `dim_peptide`. Keeps the encoded layout of saved projects.
+    pub(crate) reserved_0: bool,
     pub hide_density_point_cloud: bool,
     pub hide_density_surface: bool,
     pub hide_pockets: bool,
@@ -920,7 +921,7 @@ impl Default for Visibility {
             hide_hydrogen: true,
             hide_pharmacophore: true,
             hide_h_bonds: false,
-            dim_peptide: false,
+            reserved_0: false,
             hide_density_point_cloud: false,
             hide_density_surface: false,
             hide_pockets: false,

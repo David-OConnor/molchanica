@@ -7,7 +7,9 @@ use std::{
 
 use bio_files::ResidueType;
 use lin_alg::f64::{Quaternion, Vec3};
-use mol_defs::molecules::{AtomRole, MolGenericRef, MolType, peptide::MoleculePeptide};
+use mol_defs::molecules::{
+    AtomRole, MolGenericRef, MolType, common::MolVisibility, peptide::MoleculePeptide,
+};
 use na_seq::{AaIdent, AtomTypeInRes};
 
 use crate::{
@@ -768,7 +770,7 @@ impl Comparison {
             if !state.to_save.hidden_default_objects.contains(&key) {
                 state.to_save.hidden_default_objects.push(key);
             }
-            state.peptides[i].common.visible = true;
+            state.peptides[i].common.visibility = MolVisibility::Visible;
         }
         state.volatile.flags.update_ss_mesh = true;
         state.to_save.save_flag = true;

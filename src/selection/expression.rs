@@ -1013,7 +1013,7 @@ impl Context<'_> {
                             "all" => true,
                             "none" => false,
                             "present" => true,
-                            "enabled" => mol.common().visible,
+                            "enabled" => mol.common().visible(),
                             "model" | "object" => matching_objects[o],
                             "chain" => text_matches(value, self.chain(o, a)),
                             "resi" => residue.is_some_and(|r| numeric(r.serial_number)),

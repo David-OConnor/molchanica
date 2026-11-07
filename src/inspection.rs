@@ -843,7 +843,7 @@ pub fn pick_trajectory(state: &mut State, scene: &Scene, cursor: (f32, f32)) {
     };
     let mut hit = None;
     for (i, mol) in set.mols.iter().enumerate() {
-        if !mol.mol.visible
+        if !mol.mol.visible()
             || !set
                 .groups
                 .iter()
@@ -885,7 +885,7 @@ pub fn pick_atom(state: &mut State, scene: &Scene, cursor: (f32, f32)) {
     let direction = (end - origin).to_normalized();
     let mut hit = None;
     for (kind, index, mol) in expression::objects(state) {
-        if !mol.common().visible {
+        if !mol.common().visible() {
             continue;
         }
         if matches!(kind, MolType::Peptide) && state.ui.visibility.hide_protein {
@@ -965,7 +965,8 @@ pub struct SceneState {
     pub selections: Vec<NamedSelection>,
     pub hidden_defaults: Vec<String>,
     pub inspection: Inspection,
-    pub objects: Vec<(String, bool, Vec<bool>)>,
+    /// (Object key, visibility per `project::vis_to_byte`, chain visibility)
+    pub objects: Vec<(String, u8, Vec<bool>)>,
     pub selection: String,
     pub density_iso: f32,
     pub frame: Option<usize>,
@@ -1062,7 +1063,7 @@ impl SceneState {
                 .map(|(_, _, m)| {
                     (
                         expression::object_key(m),
-                        m.common().visible,
+                        crate::project::vis_to_byte(m.common().visibility),
                         match m {
                             MolGenericRef::Peptide(p) => {
                                 p.chains.iter().map(|c| c.visible).collect()
@@ -1147,7 +1148,7 @@ impl SceneState {
             if let Some((_, visible, chains)) = self.objects.iter().find(|(k, _, _)| *k == key)
                 && let Some(mut mol) = state.get_mol_mut(kind, index)
             {
-                mol.common_mut().visible = *visible;
+                mol.common_mut().visibility = crate::project::vis_from_byte(*visible);
                 if let mol_defs::molecules::MolGenericRefMut::Peptide(p) = mol {
                     for (chain, visible) in p.chains.iter_mut().zip(chains) {
                         chain.visible = *visible;
