@@ -51,7 +51,7 @@ Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, 
 - View the 3D structure of proteins and small molecules
 - Create figures for publication
 - Pymol-like selection syntax
-- Molecular dynamics, using Amber force fields, and the OPC water model
+- Molecular dynamics, using Amber, OPLS, or GFN-FF force fields, and the OPC water model
 - Visualize ligand docking
 - Edit small molecules in 3D with integrated dynamics
 - Visualize electron density from crystallography and Cryo-Em data
@@ -154,7 +154,7 @@ downloads are smaller, and are otherwise equivalent on such machines.
 ## Molecular dynamics
 
 This application integrates classical molecular dynamics setup and playback into the GUI.
-For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), or GROMACS (if the latter is installed). It uses AMBER, CHARMM, or OPLS force fields, with automatic parameterization.
+For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), or GROMACS (if the latter is installed). It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization.
 
 It supports running MD directly on the following molecule types, without loading any other data:
 
@@ -167,7 +167,7 @@ It supports running MD directly on the following molecule types, without loading
 
 Overview of MD components:
 
-- [Amber, CHARMM, or OPLS parameters](https://ambermd.org/AmberModels.php)
+- [Amber, CHARMM, OPLS, or GFN-FF parameters](https://ambermd.org/AmberModels.php)
 - Velocity Verlet integrator
 - [CSVR](https://arxiv.org/pdf/0803.4060) or Langevin Middle thermostats
 - Explicit OPC water model

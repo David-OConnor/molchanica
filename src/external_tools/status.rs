@@ -179,7 +179,7 @@ pub fn check(tool: Tool) -> ToolStatus {
     ToolStatus {
         tool,
         result: CheckResult::Pass,
-        detail: first_line(&output).to_owned(),
+        detail: version_line(&output, spec.version_marker).to_owned(),
         path: Some(executable),
     }
 }
@@ -268,6 +268,17 @@ fn probe(executable: &Path, args: &[&str], timeout: Duration) -> io::Result<Stri
             None => sleep(Duration::from_millis(20)),
         }
     }
+}
+
+/// The line a probe matched on, which xTB, GROMACS, and ORCA print after a banner.
+fn version_line<'a>(output: &'a str, marker: &str) -> &'a str {
+    let marker = marker.to_lowercase();
+
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| line.to_lowercase().contains(&marker))
+        .unwrap_or_else(|| first_line(output))
 }
 
 fn first_line(text: &str) -> &str {

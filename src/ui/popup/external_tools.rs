@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+use dynamics::ForceFieldFamily;
 use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::{
@@ -439,6 +440,14 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
             // A Python executable can exist before pip finishes. Revisit any diagrams that
             // fell back to ChEBI during installation, including reinstalls at the same path.
             state.ui.reactions.diagrams = Default::default();
+        }
+
+        if finished.iter().any(|job| job.tool == Tool::Xtb)
+            && state.force_fields.family == ForceFieldFamily::Gfnn
+        {
+            // Re-resolves xTB, so GFN-FF sees the install or removal.
+            state.force_fields.invalidate();
+            state.ui.ff_params.gfnff_executable = None;
         }
 
         if tools.queue.snapshot().is_empty() {

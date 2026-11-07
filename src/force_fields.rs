@@ -5,6 +5,7 @@
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
+    path::PathBuf,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
 };
@@ -16,7 +17,11 @@ use dynamics::{
 use egui::{Color32, ComboBox, RichText, Ui};
 use mol_defs::molecules::{MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType};
 
-use crate::{state::State, util::handle_err};
+use crate::{
+    external_tools::{Tool, find_executable},
+    state::State,
+    util::handle_err,
+};
 
 type Annotation = (Option<String>, Option<f32>);
 
@@ -42,6 +47,8 @@ pub struct ForceFields {
     opls_results: HashMap<u64, Result<MolDynamics, String>>,
     gfnff_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
     gfnff_results: HashMap<u64, Result<MolDynamics, String>>,
+    /// The xTB last found by [`Self::sync_xtb`], to tell it from a path the user typed.
+    resolved_xtb: Option<PathBuf>,
 }
 
 pub fn family_name(family: ForceFieldFamily) -> &'static str {
@@ -141,6 +148,20 @@ impl ForceFields {
         self.gfnff_jobs.clear();
         self.gfnff_results.clear();
         self.dirty = true;
+        self.sync_xtb();
+    }
+
+    /// Point GFN-FF at the xTB from the Tools panel, or on PATH. A typed path stays.
+    fn sync_xtb(&mut self) {
+        let Some(set) = self.params.as_mut().and_then(|p| p.gfnff_mut()) else {
+            return;
+        };
+        if set.executable.is_some() && set.executable != self.resolved_xtb {
+            return;
+        }
+
+        self.resolved_xtb = find_executable(Tool::Xtb).ok();
+        set.executable = self.resolved_xtb.clone();
     }
 
     fn poll_gfnff(&mut self) {
@@ -589,6 +610,7 @@ impl State {
             Some(FfParamSet::from_family(family).map_err(|e| e.to_string())?)
         };
         self.force_fields.params = params;
+        self.force_fields.sync_xtb();
         self.ui.ff_params.gfnff_executable = None;
         let previous_family = self.force_fields.family;
         self.force_fields.family = family;

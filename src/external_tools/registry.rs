@@ -31,13 +31,14 @@ pub enum Tool {
     RfDiffusion3,
     Gromacs,
     Orca,
+    Xtb,
     Gemmi,
 }
 
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::OpenDde,
         Self::Boltz2,
         Self::Chai1,
@@ -50,6 +51,7 @@ impl Tool {
         Self::RdKit,
         Self::Gromacs,
         Self::Orca,
+        Self::Xtb,
         Self::Gemmi,
     ];
 
@@ -649,6 +651,25 @@ pub static REGISTRY: &[ToolSpec] = &[
         // banner check matters: `orca` on Linux is often the GNOME screen reader.
         version_args: &["--help"],
         version_marker: "O   R   C   A",
+        slow_probe: false,
+    },
+    // Runs GFN-FF; see `force_fields`.
+    ToolSpec {
+        tool: Tool::Xtb,
+        identity: ToolIdentity::Shared("xtb"),
+        kind: ToolKind::Executable,
+        adapter: ToolAdapter::External,
+        executable: "xtb",
+        exe_override_env: "XTB_EXECUTABLE",
+        root_override_env: None,
+        bundle_root_override_env: None,
+        bundle_subdir: Some("xtb"),
+        colocated: false,
+        required_assets: &[],
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
+        version_args: &["--version"],
+        version_marker: "xtb version",
         slow_probe: false,
     },
     ToolSpec {

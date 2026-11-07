@@ -28,6 +28,7 @@ use na_seq::AminoAcidGeneral;
 
 use crate::{
     button,
+    external_tools::{Tool, find_executable},
     file_io::ff_params::{self as ff_io, ParamsFileOp, ParamsTarget},
     force_fields::family_name,
     label,
@@ -1640,13 +1641,17 @@ fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label("xTB executable:");
         if ui.text_edit_singleline(path).lost_focus() {
-            let updated = (!path.trim().is_empty()).then(|| std::path::PathBuf::from(path.trim()));
+            let updated = (!path.trim().is_empty())
+                .then(|| std::path::PathBuf::from(path.trim()))
+                .or_else(|| find_executable(Tool::Xtb).ok());
             if updated != set.executable {
                 set.executable = updated;
             }
         }
     });
-    ui.small("Leave blank to use XTB_EXECUTABLE or xtb on PATH. Each step runs xTB with the cached topology.");
+    ui.small(
+        "Leave blank to use XTB_EXECUTABLE, the xTB installed from Third-party tools, or xtb on          PATH. Each step runs xTB with the cached topology.",
+    );
     let mut override_charge = set.total_charge.is_some();
     if ui
         .checkbox(&mut override_charge, "Override total simulation charge (e)")
@@ -1664,6 +1669,7 @@ fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
     let backend = set.clone();
     if ui.button("Reload xTB and reassign").clicked() {
         state.force_fields.invalidate();
+        state.ui.ff_params.gfnff_executable = None;
         state.ui.ff_params.gfnff_report = None;
         state.ui.ff_params.gfnff_job = None;
     }
