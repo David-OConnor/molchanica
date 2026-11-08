@@ -746,7 +746,7 @@ pub(in crate::ui) fn viewer_mol_set(
 
         ui.add_space(COL_SPACING);
         ui.label("Force field:");
-        crate::force_fields::selector(state, ui, "sidebar_force_field");
+        crate::force_fields::selector(state, ui, "sidebar_force_field", true);
     });
 
     if empty {

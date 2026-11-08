@@ -19,9 +19,10 @@ use dynamics::ForceFieldFamily;
 use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::{
+    button,
     external_tools::{self, CheckResult, Tool, ToolCheckUpdate, ToolStatus},
     state::{ComputationType, Computations},
-    ui::{COLOR_ACTION, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, util::open_dir},
+    ui::{COLOR_ACTION, COLOR_AMBER, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, util::open_dir},
 };
 
 type DiskUsage = Result<Option<u64>, String>;
@@ -428,38 +429,89 @@ fn open_install_folder() -> io::Result<()> {
     open_dir(&folder)
 }
 
+/// Record finished jobs, and apply what they change elsewhere in the app. Runs every frame, since
+/// jobs also finish with the window closed.
+pub(in crate::ui) fn process_finished_jobs(state: &mut crate::state::State) {
+    let tools = &mut state.ui.external_tools;
+
+    let finished = tools.collect_finished();
+    if finished.is_empty() {
+        return;
+    }
+
+    if finished.iter().any(|job| job.tool == Tool::RdKit) {
+        // A Python executable can exist before pip finishes. Revisit any diagrams that
+        // fell back to ChEBI during installation, including reinstalls at the same path.
+        state.ui.reactions.diagrams = Default::default();
+    }
+
+    if finished.iter().any(|job| job.tool == Tool::Xtb)
+        && state.force_fields.family == ForceFieldFamily::Gfnn
+    {
+        // Re-resolves xTB, so GFN-FF sees the install or removal.
+        state.force_fields.invalidate();
+        state.ui.ff_params.gfnff_executable = None;
+    }
+
+    if !state.ui.popup.external_tools {
+        // Probes are polled only with the window open, so probe when it next opens.
+        tools.probed_once = false;
+
+        return;
+    }
+
+    if tools.queue.snapshot().is_empty() {
+        tools.start_probe();
+    } else {
+        // While the queue still runs, re-probe only the finished tools, so their rows stop
+        // offering the action just taken; the full probe waits until the queue is empty.
+        for job in &finished {
+            tools.recheck(job.tool);
+        }
+    }
+}
+
+/// The window's Install button, for use beside a feature that needs the tool. Shows queue progress
+/// once clicked.
+pub fn install_btn(state: &mut crate::state::State, tool: Tool, ui: &mut Ui) {
+    let computations = &state.volatile.ongoing_computations;
+    let tools = &mut state.ui.external_tools;
+    let spec = tool.spec();
+
+    if !spec.can_install_here() {
+        ui.label(RichText::new(spec.install_command()).color(COLOR_INACTIVE));
+
+        return;
+    }
+
+    if let Some(place) = tools.queue.snapshot().place(tool) {
+        queue_place_ui(ui, &tools.queue, &place, tool);
+
+        return;
+    }
+
+    if button!(
+        ui,
+        format!("{} isn't installed. Click here to install it", spec.name()),
+        COLOR_AMBER,
+        spec.summary()
+    )
+    .clicked()
+    {
+        tools.queue_install(tool, ui.ctx(), computations);
+    }
+
+    if let Some(InstallResult::Failed(error)) = tools.install_results.get(&tool) {
+        ui.label(RichText::new("Install failed").color(Color32::ORANGE))
+            .on_hover_text(error);
+    }
+}
+
 pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
     let context = ui.ctx().clone();
     let computations = &state.volatile.ongoing_computations;
     let tools = &mut state.ui.external_tools;
     tools.poll();
-
-    let finished = tools.collect_finished();
-    if !finished.is_empty() {
-        if finished.iter().any(|job| job.tool == Tool::RdKit) {
-            // A Python executable can exist before pip finishes. Revisit any diagrams that
-            // fell back to ChEBI during installation, including reinstalls at the same path.
-            state.ui.reactions.diagrams = Default::default();
-        }
-
-        if finished.iter().any(|job| job.tool == Tool::Xtb)
-            && state.force_fields.family == ForceFieldFamily::Gfnn
-        {
-            // Re-resolves xTB, so GFN-FF sees the install or removal.
-            state.force_fields.invalidate();
-            state.ui.ff_params.gfnff_executable = None;
-        }
-
-        if tools.queue.snapshot().is_empty() {
-            tools.start_probe();
-        } else {
-            // While the queue still runs, re-probe only the finished tools, so their rows stop
-            // offering the action just taken; the full probe waits until the queue is empty.
-            for job in &finished {
-                tools.recheck(job.tool);
-            }
-        }
-    }
 
     if !tools.probed_once {
         tools.start_probe();

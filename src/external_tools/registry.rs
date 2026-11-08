@@ -339,7 +339,7 @@ impl ToolSpec {
     /// `bio_tools` already answers with [`InstallableTool::is_supported`] -- whether upstream
     /// publishes the wheels and binaries the recipe needs here -- and duplicating the answer in
     /// the table only creates somewhere for the two to disagree. A tool the user installs
-    /// themselves (GROMACS, ORCA, Gemmi) is never gated: `bio_tools` may well have no recipe for
+    /// themselves (ORCA, Gemmi) is never gated: `bio_tools` may well have no recipe for
     /// this platform while the vendor ships a perfectly good build of it.
     pub fn is_supported(&self) -> bool {
         match self.recipe() {
@@ -622,15 +622,15 @@ pub static REGISTRY: &[ToolSpec] = &[
         exe_override_env: "MOLCHANICA_GROMACS_EXECUTABLE",
         root_override_env: None,
         bundle_root_override_env: None,
-        bundle_subdir: None,
+        bundle_subdir: Some("gromacs"),
         colocated: false,
         required_assets: &[],
-        molchanica_managed: false,
-        install_hint: "Install GROMACS from https://www.gromacs.org/ and put `gmx` on PATH, \
-                       or set MOLCHANICA_GROMACS_EXECUTABLE.",
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
         version_args: &["-version"],
         version_marker: "GROMACS version",
-        slow_probe: false,
+        // Loads hundreds of MB of CUDA libraries, which a virus scan can hold up for seconds.
+        slow_probe: true,
     },
     ToolSpec {
         tool: Tool::Orca,
@@ -729,10 +729,10 @@ mod tests {
     }
 
     /// The tools the user installs themselves are never gated, whatever `bio_tools` says about a
-    /// recipe for them: GROMACS and ORCA ship vendor builds for every platform Molchanica runs on.
+    /// recipe for them: ORCA ships vendor builds for every platform Molchanica runs on.
     #[test]
     fn user_supplied_tools_are_never_gated() {
-        for tool in [Tool::Gromacs, Tool::Orca, Tool::Gemmi] {
+        for tool in [Tool::Orca, Tool::Gemmi] {
             assert!(tool.spec().is_supported(), "{tool} should never be gated");
         }
     }

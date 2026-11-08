@@ -20,8 +20,10 @@ use egui::{Color32, ComboBox, RichText, Ui};
 use mol_defs::molecules::{MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType};
 
 use crate::{
-    external_tools::{Tool, find_executable},
+    external_tools::{Tool, find_executable, is_installed},
+    md::MdBackend,
     state::State,
+    ui::popup::external_tools::install_btn,
     util::handle_err,
 };
 
@@ -853,8 +855,21 @@ impl State {
     }
 }
 
-/// Shared by the sidebar and the MD panel, so the two cannot diverge.
-pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
+/// Whether GFN-FF has an xTB executable: installed, or a path typed into the parameters window.
+fn xtb_available(state: &State) -> bool {
+    let set_path = state
+        .force_fields
+        .params
+        .as_ref()
+        .and_then(|p| p.gfnff())
+        .and_then(|set| set.executable.as_ref());
+
+    set_path.is_some_and(|path| path.is_file()) || is_installed(Tool::Xtb)
+}
+
+/// Shared by the sidebar and the MD panel, so the two cannot diverge. `compact` shows only the
+/// combobox, as the rest is too wide for the sidebar.
+pub fn selector(state: &mut State, ui: &mut Ui, id: &str, compact: bool) {
     let mut family = state.force_fields.family;
     ComboBox::from_id_salt(id)
         .selected_text(family_name(family))
@@ -881,6 +896,22 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str) {
         }
         ui.request_repaint();
     }
+
+    if compact {
+        // Keep polling background jobs, as the progress indicators below do.
+        if !state.force_fields.gfnff_jobs.is_empty() || !state.force_fields.opls_jobs.is_empty() {
+            ui.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+
+        return;
+    }
+
+    let needs_xtb = state.force_fields.family == ForceFieldFamily::Gfnn
+        || state.to_save.md.backend == MdBackend::xTb;
+    if needs_xtb && !xtb_available(state) {
+        install_btn(state, Tool::Xtb, ui);
+    }
+
     let errors: Vec<_> = state.force_fields.errors().collect();
     let has_errors = !errors.is_empty();
     if !errors.is_empty() {

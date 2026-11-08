@@ -21,7 +21,7 @@ use std::{
 
 use bio_apis::{amber_geostd, rcsb};
 use bio_files::ResidueType;
-use egui::{Color32, Context, Pos2, RichText, ScrollArea, TextEdit, Ui, Window};
+use egui::{Color32, Context, Id, Pos2, RichText, ScrollArea, TextEdit, Ui, Window};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
@@ -43,6 +43,7 @@ use crate::{
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         load_all_idents_button,
+        misc::selector,
         panels::{
             md_viewer,
             mol_data::{metadata, seq_metadata},
@@ -70,6 +71,16 @@ const VAL_EDIT_WIDTH: f32 = 340.;
 /// Initial width of the force-field parameter editor.
 const FF_PARAMS_WIDTH: f32 = 550.;
 
+/// The tool shown in the "Protein design" window.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ProteinToolsTab {
+    #[default]
+    Rfd3,
+    PredictSequence,
+    PredictStructure,
+    Binding,
+}
+
 /// Show one popup window, returning whether it should stay open.
 ///
 /// The close button is egui's own, drawn at the right of the title bar of any window given an
@@ -93,6 +104,8 @@ pub(in crate::ui) fn load_popups(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
+    external_tools::process_finished_jobs(state);
+
     if state.ui.popup.parquet_db
         || state.ui.popup.pharmacophore_screening
         || state.ui.popup.alignment_screening
@@ -100,15 +113,6 @@ pub(in crate::ui) fn load_popups(
         crate::threads::start_builtin_mol_db_load(state);
     }
     binding::poll(state, ui);
-    if state.ui.popup.binding {
-        state.ui.popup.binding = show_popup(
-            popup("Protein–ligand binding")
-                .default_width(760.)
-                .vscroll(true),
-            ui.ctx(),
-            |ui| binding::editor(state, scene, ui, redraw, updates),
-        );
-    }
     protein_comparison::poll(state, ui, redraw);
     if state.ui.popup.protein_comparison {
         state.ui.popup.protein_comparison = show_popup(
@@ -304,49 +308,17 @@ pub(in crate::ui) fn load_popups(
         state.ui.popup.ff_params &= open;
     }
 
-    if state.ui.popup.structure_pred {
+    if state.ui.popup.protein_tools {
+        // An explicit ID, as the dormant `protein_design` window has the same title.
         let open = show_popup(
-            popup("Structure prediction")
-                .default_width(680.0)
+            popup("Protein design")
+                .id(Id::new("protein_tools"))
+                .default_width(760.0)
                 .max_height(1000.0),
             ui.ctx(),
-            |ui| {
-                tool_window(
-                    state,
-                    ToolWindowKind::StructurePrediction,
-                    scene,
-                    updates,
-                    ui,
-                );
-            },
+            |ui| protein_tools(state, scene, ui, redraw, updates),
         );
-        state.ui.popup.structure_pred &= open;
-    }
-
-    if state.ui.popup.rfd3 {
-        let open = show_popup(
-            popup("RFdiffusion3")
-                .default_width(680.0)
-                .max_height(1000.0),
-            ui.ctx(),
-            |ui| {
-                tool_window(state, ToolWindowKind::BackboneDesign, scene, updates, ui);
-            },
-        );
-        state.ui.popup.rfd3 &= open;
-    }
-
-    if state.ui.popup.sequence_pred {
-        let open = show_popup(
-            popup("Sequence prediction")
-                .default_width(620.0)
-                .max_height(1000.0),
-            ui.ctx(),
-            |ui| {
-                tool_window(state, ToolWindowKind::SequenceDesign, scene, updates, ui);
-            },
-        );
-        state.ui.popup.sequence_pred &= open;
+        state.ui.popup.protein_tools &= open;
     }
 
     if state.ui.popup.external_tools {
@@ -374,6 +346,76 @@ pub(in crate::ui) fn load_popups(
             about::about_window(state, ui);
         });
         state.ui.popup.about &= open;
+    }
+}
+
+/// The "Protein design" window's contents: a tab selector, then the selected tool.
+fn protein_tools(
+    state: &mut State,
+    scene: &mut Scene,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    ui.horizontal(|ui| {
+        if let Some(tab) = selector(
+            ui,
+            state.ui.popup.protein_tools_tab,
+            &[
+                (
+                    ProteinToolsTab::Rfd3,
+                    "RFDiffusion3",
+                    "Generate protein backbones with RFdiffusion3: unconditional, around a \
+                    target, ligand, nucleic acid, or motif, or under a point group. Feed the \
+                    result to ProteinMPNN to get a sequence.",
+                ),
+                (
+                    ProteinToolsTab::PredictSequence,
+                    "Predict sequence",
+                    "Predict amino-acid sequences for a protein backbone using ProteinMPNN.",
+                ),
+                (
+                    ProteinToolsTab::PredictStructure,
+                    "Predict structure",
+                    "Predict a structure from an amino-acid or nucleotide sequence.",
+                ),
+                (
+                    ProteinToolsTab::Binding,
+                    "Binding",
+                    "Inspect protein–ligand contacts and clashes, or predict a complex and \
+                    affinity with Boltz-2.",
+                ),
+            ],
+        ) {
+            state.ui.popup.protein_tools_tab = tab;
+        }
+    });
+
+    ui.separator();
+
+    match state.ui.popup.protein_tools_tab {
+        ProteinToolsTab::Rfd3 => {
+            tool_window(state, ToolWindowKind::BackboneDesign, scene, updates, ui);
+        }
+        ProteinToolsTab::PredictSequence => {
+            tool_window(state, ToolWindowKind::SequenceDesign, scene, updates, ui);
+        }
+        ProteinToolsTab::PredictStructure => {
+            tool_window(
+                state,
+                ToolWindowKind::StructurePrediction,
+                scene,
+                updates,
+                ui,
+            );
+        }
+        ProteinToolsTab::Binding => {
+            // The tall one. Scrolled here, not by the window, to keep the tabs in view.
+            ScrollArea::vertical()
+                .id_salt("protein_tools_binding")
+                .auto_shrink(false)
+                .show(ui, |ui| binding::editor(state, scene, ui, redraw, updates));
+        }
     }
 }
 

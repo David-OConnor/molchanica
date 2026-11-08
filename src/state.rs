@@ -974,7 +974,6 @@ pub struct MolDbTableView {
 /// Defines which UI popups are displayed.
 #[derive(Default, Debug)]
 pub struct PopupState {
-    pub binding: bool,
     pub protein_comparison: bool,
     pub selections: bool,
     pub reactions: bool,
@@ -1014,10 +1013,9 @@ pub struct PopupState {
     pub parquet_db_view: MolDbTableView,
     pub md_mol_set_editor: bool,
     pub ff_params: bool,
-    pub structure_pred: bool,
-    pub sequence_pred: bool,
-    /// RFdiffusion3 backbone generation.
-    pub rfd3: bool,
+    /// The tabbed "Protein design" window.
+    pub protein_tools: bool,
+    pub protein_tools_tab: crate::ui::popup::ProteinToolsTab,
     /// The third-party tools status panel.
     pub external_tools: bool,
     /// Sequence design, ΔΔG scanning, and antibody annotation.

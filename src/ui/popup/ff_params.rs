@@ -1468,7 +1468,7 @@ pub(in crate::ui) fn ff_param_editor(state: &mut State, ui: &mut Ui) {
     // The same selector as in the sidebar, and MD panel.
     ui.horizontal_wrapped(|ui| {
         ui.label("Force field:");
-        crate::force_fields::selector(state, ui, "ff_params_force_field");
+        crate::force_fields::selector(state, ui, "ff_params_force_field", false);
     });
 
     let family = state.force_fields.family;

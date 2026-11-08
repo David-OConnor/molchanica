@@ -14,6 +14,7 @@ use crate::{
     ui::{
         COLOR_ACTION, COLOR_HIGHLIGHT,
         misc::{section_box, selector},
+        popup::ProteinToolsTab,
     },
     util::{handle_err, handle_success, make_egui_color},
 };
@@ -100,7 +101,7 @@ pub(in crate::ui) fn create_peptide_button(ui: &mut Ui) -> bool {
 
 pub(in crate::ui) fn create_folded_button(ui: &mut Ui) -> bool {
     ui.button(RichText::new("Create folded").color(COLOR_HIGHLIGHT))
-        .on_hover_text("Open the structure prediction window, with this sequence as its input.")
+        .on_hover_text("Open the Predict structure tab, with this sequence as its input.")
         .clicked()
 }
 
@@ -150,7 +151,7 @@ pub(in crate::ui) fn create_peptide(
     }
 }
 
-/// Open the structure prediction window, with this sequence as its input.
+/// Open the Predict structure tab, with this sequence as its input.
 pub(in crate::ui) fn create_folded(sequence: Sequence, state: &mut State) {
     let job_name = job_name(&sequence);
 
@@ -158,7 +159,8 @@ pub(in crate::ui) fn create_folded(sequence: Sequence, state: &mut State) {
         .ui
         .tool_windows
         .load_structure_pred_seq(sequence, job_name);
-    state.ui.popup.structure_pred = true;
+    state.ui.popup.protein_tools = true;
+    state.ui.popup.protein_tools_tab = ProteinToolsTab::PredictStructure;
 }
 
 /// Add and manage amino acids

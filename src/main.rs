@@ -156,6 +156,11 @@ fn main() {
     // per-user data directory instead of beside the executable.
     external_tools::migrate_legacy_data();
 
+    // Managed GROMACS installs aren't on PATH.
+    bio_files::gromacs::set_gmx_resolver(|| {
+        external_tools::find_executable(external_tools::Tool::Gromacs).ok()
+    });
+
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512f") {

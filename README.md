@@ -112,7 +112,6 @@ Molchanica integrates with a number of third-party tools, acting on the molecule
 
 ### Example tools supported:
 
-
 - GROMACS
 - ORCA
 - RDKit
@@ -154,7 +153,7 @@ downloads are smaller, and are otherwise equivalent on such machines.
 
 ## Molecular dynamics
 
-This application integrates classical molecular dynamics setup and playback into the GUI. For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), GROMACS, or xTB, and can automatically install those baackends. It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization. The *Dynamics* readme is also a good reference for this.
+This application integrates classical molecular dynamics setup and playback into the GUI. For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), GROMACS, or xTB, and can automatically install those backends. It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization. The *Dynamics* readme is also a good reference for this.
 
 It supports running MD directly on the following molecule types, without loading any other data:
 

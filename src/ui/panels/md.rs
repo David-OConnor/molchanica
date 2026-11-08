@@ -18,7 +18,8 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        flag_btn, misc, num_field, panels::md_viewer, sidebar::mol_picker::mol_type_color,
+        flag_btn, misc, num_field, panels::md_viewer, popup::external_tools::install_btn,
+        sidebar::mol_picker::mol_type_color,
     },
     util::RedrawFlags,
 };
@@ -179,40 +180,42 @@ pub fn md_setup(
             ui.add_space(COL_SPACING / 2.);
             force_field_cfg(state, ui);
 
-            let gromacs_available = external_tools::is_installed(Tool::Gromacs);
-            let orca_available = external_tools::is_installed(Tool::Orca);
             let gfnff = state.force_fields.family == ForceFieldFamily::Gfnn;
-            if gfnff || gromacs_available || orca_available {
-                ui.add_space(COL_SPACING / 2.);
-                ui.label("Backend:");
 
-                let mut backends = vec![MdBackend::Dynamics];
-                if gfnff {
-                    backends.push(MdBackend::xTb);
-                } else if gromacs_available {
-                    backends.push(MdBackend::Gromacs);
-                }
+            ui.add_space(COL_SPACING / 2.);
+            ui.label("Backend:");
 
-                // todo: For now, we launch Orca MD from its own UI section, but we may
-                // todo wish to move it here.
-                // if orca_available {
-                //     backends.push(MdBackend::Orca);
-                // }
+            // GROMACS can't run GFN-FF.
+            let mut backends = vec![MdBackend::Dynamics];
+            if gfnff {
+                backends.push(MdBackend::xTb);
+            } else {
+                backends.push(MdBackend::Gromacs);
+            }
 
-                ComboBox::from_id_salt(523)
-                    .width(80.)
-                    .selected_text(state.to_save.md.backend.to_string())
-                    .show_ui(ui, |ui| {
-                        for v in backends {
-                            ui.selectable_value(&mut state.to_save.md.backend, v.clone(), v.to_string());
-                        }
-                    })
-                    .response
-                    .on_hover_text(if gfnff {
-                        "Use the Dynamics integrator or xTB's native MD engine."
-                    } else {
-                        "Select the MD engine. GROMACS requires an installed executable."
-                    });
+            // todo: For now, we launch Orca MD from its own UI section, but we may
+            // todo wish to move it here.
+            // if orca_available {
+            //     backends.push(MdBackend::Orca);
+            // }
+
+            ComboBox::from_id_salt(523)
+                .width(80.)
+                .selected_text(state.to_save.md.backend.to_string())
+                .show_ui(ui, |ui| {
+                    for v in backends {
+                        ui.selectable_value(&mut state.to_save.md.backend, v.clone(), v.to_string());
+                    }
+                })
+                .response
+                .on_hover_text(if gfnff {
+                    "Use the Dynamics integrator or xTB's native MD engine."
+                } else {
+                    "Select the MD engine. GROMACS requires an installed executable."
+                });
+
+            if !gfnff && !external_tools::is_installed(Tool::Gromacs) {
+                install_btn(state, Tool::Gromacs, ui);
             }
 
 
@@ -328,7 +331,7 @@ pub fn md_setup(
 
 fn force_field_cfg(state: &mut State, ui: &mut Ui) {
     ui.label("Force field:");
-    crate::force_fields::selector(state, ui, "md_force_field");
+    crate::force_fields::selector(state, ui, "md_force_field", false);
 }
 
 /// Counts molecule copies using the same selection as the simulation.

@@ -83,8 +83,10 @@ pub(in crate::ui) const _COLOR_ATTENTION: Color32 = Color32::ORANGE;
 // Creation, simulation runs etc.
 pub(in crate::ui) const COLOR_ACTION: Color32 = Color32::GOLD;
 
+pub(in crate::ui) const COLOR_AMBER: Color32 = Color32::from_rgb(255, 176, 0);
+
 /// The status light, and text, while background computations are running. Amber.
-const COLOR_COMPUTING: Color32 = Color32::from_rgb(255, 176, 0);
+const COLOR_COMPUTING: Color32 = COLOR_AMBER;
 
 /// Shared trigger for the small-molecule identifier lookup. The lookup itself and its receiver
 /// are shared in `threads`; this keeps its two UI entry points consistent as well.
@@ -791,47 +793,14 @@ fn top_controls(
 
             if button!(
                     ui,
-                    "RFD3",
+                    "Protein design",
                     COLOR_HIGHLIGHT,
-                    "Generate protein backbones with RFdiffusion3: unconditional, around a \
-                    target, ligand, nucleic acid, or motif, or under a point group. Feed the \
-                    result to ProteinMPNN to get a sequence."
+                    "Generate backbones with RFdiffusion3, predict sequences and structures, and \
+                    inspect or predict protein–ligand binding."
                 )
                 .clicked()
             {
-                state.ui.popup.rfd3 = !state.ui.popup.rfd3;
-            }
-
-            if button!(
-                    ui,
-                    "Pred struct",
-                    COLOR_HIGHLIGHT,
-                    "Predict a structure from an amino-acid or nucleotide sequence."
-                )
-                .clicked()
-            {
-                state.ui.popup.structure_pred = !state.ui.popup.structure_pred;
-            }
-
-            if button!(
-                    ui,
-                    "Binding",
-                    COLOR_HIGHLIGHT,
-                    "Inspect protein–ligand contacts and clashes, or predict a complex and affinity with Boltz-2."
-                ).clicked()
-            {
-                state.ui.popup.binding = !state.ui.popup.binding;
-            }
-
-            if button!(
-                    ui,
-                    "Pred seq",
-                    COLOR_HIGHLIGHT,
-                    "Predict amino-acid sequences for a protein backbone using ProteinMPNN."
-                )
-                .clicked()
-            {
-                state.ui.popup.sequence_pred = !state.ui.popup.sequence_pred;
+                state.ui.popup.protein_tools = !state.ui.popup.protein_tools;
             }
 
             // todo: Sort out the intent behind this "Design" button. If we don't end up
