@@ -1622,6 +1622,9 @@ fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
         "Native Dynamics: nonperiodic atoms, flexible hydrogens, no generated solvent or barostat.",
     );
     ui.label("Explicit water and ions may be loaded as ordinary molecules.");
+    ui.horizontal(|ui| {
+        crate::force_fields::gfnff_solvent_selector(state, ui, "gfnff_parameter_solvent");
+    });
     ui.add_space(ROW_SPACING);
 
     let Some(set) = state

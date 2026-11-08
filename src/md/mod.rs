@@ -701,7 +701,7 @@ fn build_dynamics_with_residues(
     *pep_atom_set = pep_set;
 
     // Uncomment as required for validating individual processes.
-    let cfg = MdConfig {
+    let mut cfg = MdConfig {
         overrides: MdOverrides {
             // skip_water: true,
             // skip_water_relaxation: false,
@@ -718,8 +718,19 @@ fn build_dynamics_with_residues(
         ..cfg.clone()
     };
 
+    let mut gfnff_params = param_set.gfnff().map(|backend| {
+        let mut set = FfParamSet::new_gfnff();
+        *set.gfnff_mut().unwrap() = backend.clone();
+
+        set
+    });
+    if let Some(set) = &mut gfnff_params {
+        crate::force_fields::configure_gfnff_md(&mut cfg, set.gfnff_mut().unwrap())
+            .map_err(|e| ParamError::new(&e))?;
+    }
+
     println!("Initializing MD state...");
-    let res = MdState::new(dev, &cfg, &mols, param_set)?;
+    let res = MdState::new(dev, &cfg, &mols, gfnff_params.as_ref().unwrap_or(param_set))?;
     println!("MD init done.");
 
     Ok(res)
@@ -800,6 +811,13 @@ impl State {
 /// Called directly from the UI; non-blocking if run = false. E.g., can launch here to load to state,
 /// then call `md_step`.
 pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
+    if let Err(error) = state.sync_gfnff_md_config() {
+        state.volatile.md_local.launching = false;
+        handle_err(&mut state.ui, error);
+
+        return;
+    }
+
     state.refresh_force_fields();
     if let Err(error) = state.check_md_force_fields() {
         state.volatile.md_local.launching = false;
@@ -1317,6 +1335,12 @@ fn ready_to_run_helper(state: &mut State) -> bool {
 }
 /// Launched from the UI; initiates MD.
 pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    if let Err(error) = state.sync_gfnff_md_config() {
+        handle_err(&mut state.ui, error);
+
+        return;
+    }
+
     if state.force_fields.family == ForceFieldFamily::Gfnn
         && state.to_save.md.backend != MdBackend::Dynamics
     {
@@ -1342,10 +1366,12 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
 
     match state.to_save.md.backend {
         MdBackend::Dynamics => {
-            handle_success(
-                &mut state.ui,
-                "Running MD. Initializing water, and relaxing the molecules...".to_string(),
-            );
+            let message = if state.force_fields.family == ForceFieldFamily::Gfnn {
+                "Running MD. Initializing GFN-FF and relaxing the molecules..."
+            } else {
+                "Running MD. Initializing water, and relaxing the molecules..."
+            };
+            handle_success(&mut state.ui, message.to_string());
 
             // We will wait a frame so we can display the message above.
             state.volatile.md_local.launching = true;

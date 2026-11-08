@@ -12,7 +12,9 @@ use std::{
 
 use bio_files::ResidueGeneric;
 use dynamics::{
-    ExplicitParams, FfMolType, ForceFieldFamily, MdConfig, MolDynamics, params::FfParamSet,
+    ExplicitParams, FfMolType, ForceFieldFamily, HydrogenConstraint, MdConfig, MolDynamics,
+    Solvent,
+    params::{FfParamSet, gfnff::GfnffSet},
 };
 use egui::{Color32, ComboBox, RichText, Ui};
 use mol_defs::molecules::{MolType, common::MoleculeCommon, nucleic_acid::NucleicAcidType};
@@ -58,6 +60,77 @@ pub fn family_name(family: ForceFieldFamily) -> &'static str {
         ForceFieldFamily::Opls => "OPLS-AA/L",
         ForceFieldFamily::Gfnn => "GFN-FF",
         ForceFieldFamily::Custom => "Custom",
+    }
+}
+
+/// Translate legacy solvent choices to ALPB and apply GFN-FF constraints.
+pub fn configure_gfnff_md(cfg: &mut MdConfig, set: &mut GfnffSet) -> Result<(), String> {
+    match &cfg.solvent {
+        Solvent::None => (),
+        Solvent::WaterOpc
+        | Solvent::WaterOpcSpecifyMolCount(_)
+        | Solvent::WaterOpcCustomRegions(_) => set.alpb_solvent = Some("water".into()),
+        Solvent::OctanolWithWater => set.alpb_solvent = Some("woctanol".into()),
+        Solvent::Custom(_) => {
+            return Err("GFN-FF requires a named ALPB solvent. Select it in MD setup.".into());
+        }
+    }
+
+    cfg.ff_family = ForceFieldFamily::Gfnn;
+    cfg.solvent = Solvent::None;
+    cfg.barostat_cfg = None;
+    cfg.hydrogen_constraint = HydrogenConstraint::Flexible;
+    cfg.overrides.skip_counterion_insertion = true;
+
+    Ok(())
+}
+
+pub fn gfnff_solvent_selector(state: &mut State, ui: &mut Ui, id: &str) {
+    let Some(set) = state
+        .force_fields
+        .params
+        .as_mut()
+        .and_then(|p| p.gfnff_mut())
+    else {
+        return;
+    };
+    let previous = set.alpb_solvent.clone();
+    ui.label("Implicit solvent (ALPB):");
+    ComboBox::from_id_salt(id)
+        .selected_text(set.alpb_solvent.as_deref().unwrap_or("None (vacuum)"))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut set.alpb_solvent, None, "None (vacuum)");
+
+            for (name, label) in [
+                ("water", "Water"),
+                ("methanol", "Methanol"),
+                ("ethanol", "Ethanol"),
+                ("acetone", "Acetone"),
+                ("acetonitrile", "Acetonitrile"),
+                ("dmso", "DMSO"),
+                ("dmf", "DMF"),
+                ("benzene", "Benzene"),
+                ("toluene", "Toluene"),
+                ("ether", "Ether"),
+                ("thf", "THF"),
+                ("hexane", "Hexane"),
+                ("octanol", "Octanol"),
+                ("woctanol", "Octanol saturated with water"),
+            ] {
+                ui.selectable_value(&mut set.alpb_solvent, Some(name.into()), label);
+            }
+        })
+        .response
+        .on_hover_text(
+            "Solvent effects on energies and forces without generating solvent molecules.",
+        );
+
+    if set.alpb_solvent != previous {
+        state.to_save.md.config.solvent = Solvent::None;
+        state.force_fields.invalidate();
+        state.ui.ff_params.gfnff_report = None;
+        state.ui.ff_params.gfnff_error = None;
+        state.ui.ff_params.gfnff_job = None;
     }
 }
 
@@ -536,6 +609,37 @@ impl ForceFields {
 }
 
 impl State {
+    pub fn sync_gfnff_md_config(&mut self) -> Result<(), String> {
+        if self.force_fields.family != ForceFieldFamily::Gfnn {
+            return Ok(());
+        }
+
+        let set = self
+            .force_fields
+            .params
+            .as_mut()
+            .and_then(|p| p.gfnff_mut())
+            .ok_or("GFN-FF parameters are not loaded")?;
+        let previous = set.alpb_solvent.clone();
+        configure_gfnff_md(&mut self.to_save.md.config, set)?;
+
+        if set.alpb_solvent != previous {
+            self.force_fields.invalidate();
+            self.ui.ff_params.gfnff_report = None;
+            self.ui.ff_params.gfnff_error = None;
+            self.ui.ff_params.gfnff_job = None;
+        }
+
+        if self.to_save.md.dt > 0.0005 {
+            self.to_save.md.dt = 0.0005;
+            self.ui.md.dt_input = self.to_save.md.dt.to_string();
+            self.volatile.md_local.run_time = self.to_save.md.num_steps as f32 * self.to_save.md.dt;
+        }
+        self.to_save.md.backend = crate::md::MdBackend::Dynamics;
+
+        Ok(())
+    }
+
     /// Avoid starting synchronous network work from MD/energy/export UI paths.
     /// Only molecules actually selected for this simulation can block it.
     pub fn check_md_force_fields(&self) -> Result<(), String> {
@@ -605,11 +709,15 @@ impl State {
         }
         // Capture newly loaded Amber annotations before changing the family.
         self.refresh_force_fields();
-        let params = if family == ForceFieldFamily::Amber {
+        let mut params = if family == ForceFieldFamily::Amber {
             None
         } else {
             Some(FfParamSet::from_family(family).map_err(|e| e.to_string())?)
         };
+        if let Some(set) = params.as_mut().and_then(|p| p.gfnff_mut()) {
+            configure_gfnff_md(&mut self.to_save.md.config, set)?;
+        }
+
         self.force_fields.params = params;
         self.force_fields.sync_xtb();
         self.ui.ff_params.gfnff_executable = None;

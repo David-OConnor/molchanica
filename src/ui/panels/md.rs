@@ -1,7 +1,7 @@
 use dynamics::{
-    ComputationDevice, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
-    LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
-    snapshot::SnapshotHandlers,
+    ComputationDevice, ForceFieldFamily, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT,
+    LINCS_ITER_DEFAULT, LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent,
+    TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
 };
 use egui::{Color32, ComboBox, RichText, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
@@ -30,6 +30,10 @@ pub fn md_setup(
     ui: &mut Ui,
     redraw: &mut RedrawFlags,
 ) {
+    if let Err(error) = state.sync_gfnff_md_config() {
+        crate::util::handle_err(&mut state.ui, error);
+    }
+
     // This sequencing code is above the UI code below, so it's deferred a frame after any actions.
     if state.volatile.md_local.launching {
         state.volatile.md_local.launching = false;
@@ -123,12 +127,22 @@ pub fn md_setup(
             if ui.button(RichText::new("Reset").color(Color32::LIGHT_RED))
                 .on_hover_text("Reset all MD settings to defaults.")
                 .clicked() {
-                state.to_save.md.config = Default::default();
+                state.to_save.md.config = MdConfig::for_family(state.force_fields.family);
+                if let Some(set) = state.force_fields.params.as_mut().and_then(|p| p.gfnff_mut()) {
+                    set.alpb_solvent = None;
+                    state.force_fields.invalidate();
+                    state.ui.ff_params.gfnff_report = None;
+                    state.ui.ff_params.gfnff_job = None;
+                }
 
                 let to_save_default = ToSave::default();
 
                 state.to_save.md.dt = to_save_default.md.dt;
                 state.to_save.md.num_steps = to_save_default.md.num_steps;
+
+                if state.force_fields.family == ForceFieldFamily::Gfnn {
+                    state.to_save.md.dt = state.to_save.md.dt.min(0.0005);
+                }
 
                 state.ui.md.sync(&state.to_save.md.config, state.to_save.md.dt);
             }
@@ -158,7 +172,7 @@ pub fn md_setup(
 
             let gromacs_available = external_tools::is_installed(Tool::Gromacs);
             let orca_available = external_tools::is_installed(Tool::Orca);
-            if gromacs_available || orca_available {
+            if state.force_fields.family != ForceFieldFamily::Gfnn && (gromacs_available || orca_available) {
                 ui.add_space(COL_SPACING / 2.);
                 ui.label("Backend:");
 
@@ -267,10 +281,12 @@ pub fn md_setup(
             ui.add_space(COL_SPACING / 2.);
             integrator_cfg(state, ui);
 
-            ui.add_space(COL_SPACING / 2.);
-            ui.label("Cutoffs (Å).").on_hover_text(help);
-            num_field(&mut state.to_save.md.config.coulomb_cutoff, "Coulomb:", 34, ui);
-            num_field(&mut state.to_save.md.config.lj_cutoff, "LJ:", 34, ui);
+            if state.force_fields.family != ForceFieldFamily::Gfnn {
+                ui.add_space(COL_SPACING / 2.);
+                ui.label("Cutoffs (Å).").on_hover_text(help);
+                num_field(&mut state.to_save.md.config.coulomb_cutoff, "Coulomb:", 34, ui);
+                num_field(&mut state.to_save.md.config.lj_cutoff, "LJ:", 34, ui);
+            }
         });
 
         ui.add_space(ROW_SPACING / 2.);
@@ -348,6 +364,7 @@ fn selected_mols_summary(state: &State, ui: &mut Ui) {
 
 /// Section for integrator config, various modelling parameters etc
 fn integrator_cfg(state: &mut State, ui: &mut Ui) {
+    let gfnff = state.force_fields.family == ForceFieldFamily::Gfnn;
     ui.label(RichText::new("Integrator:").color(Color32::WHITE));
     ui.add_space(COL_SPACING / 2.);
 
@@ -401,7 +418,11 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
 
     ui.add_space(COL_SPACING / 2.);
 
-    let help = "The simulation time step, in picoseconds. 0.001 to 0.002 are good defaults. Higher than 0.002 is risky.";
+    let help = if gfnff {
+        "The simulation time step, in picoseconds. GFN-FF uses at most 0.0005 ps with flexible hydrogens."
+    } else {
+        "The simulation time step, in picoseconds. 0.001 to 0.002 are good defaults. Higher than 0.002 is risky."
+    };
     ui.label("dt (ps):").on_hover_text(help);
     if ui
         .add_sized(
@@ -412,13 +433,18 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
         .changed()
         && let Ok(v) = state.ui.md.dt_input.parse::<f32>()
     {
-        state.to_save.md.dt = v;
-        state.volatile.md_local.run_time = state.to_save.md.num_steps as f32 * v;
+        state.to_save.md.dt = if gfnff { v.min(0.0005) } else { v };
+        if gfnff && v > 0.0005 {
+            state.ui.md.dt_input = state.to_save.md.dt.to_string();
+        }
+        state.volatile.md_local.run_time = state.to_save.md.num_steps as f32 * state.to_save.md.dt;
     }
 
     ui.add_space(COL_SPACING / 2.);
 
-    {
+    if gfnff {
+        ui.label("H: Flexible");
+    } else {
         let help_text =
             "Set to Constrained to allow higher time steps; Flexible may more more accurate.";
         ui.label("H:").on_hover_text(help_text);
@@ -448,7 +474,9 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
             .on_hover_text(help_text);
     }
 
-    {
+    if gfnff {
+        crate::force_fields::gfnff_solvent_selector(state, ui, "md_gfnff_solvent");
+    } else {
         let help_text = "Set the solvent";
         ui.label("Solvent:").on_hover_text(help_text);
         ComboBox::from_id_salt(6)
@@ -591,6 +619,12 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     // todo: A/R
     // ui.checkbox(&mut state.to_save.md.config.zero_com_drift, "Zero drift")
     //     .on_hover_text("Zero the center-of-mass of items in the simulation.");
+
+    if state.force_fields.family == ForceFieldFamily::Gfnn {
+        ui.label("Nonperiodic; no barostat");
+
+        return;
+    }
 
     let help = "Enable or disable the barostat";
     ui.label("Baro:").on_hover_text(help);
