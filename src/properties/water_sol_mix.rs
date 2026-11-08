@@ -609,7 +609,7 @@ pub fn run_boundary_layer_sol_sim(
     match backend {
         MdBackend::Dynamics => run_dynamics(&solute_mols, water_cell, &param_set, setup, dev),
         MdBackend::Gromacs => run_gromacs(&solute_mols, water_cell, &mol, &param_set, setup),
-        MdBackend::Orca => Err(io::Error::new(
+        MdBackend::xTb | MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Boundary-layer water/solute MD supports the Dynamics and GROMACS backends.",
         )),

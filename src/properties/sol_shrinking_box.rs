@@ -1514,7 +1514,7 @@ pub fn run_shrinking_box_sim(
     let mut result = match backend {
         MdBackend::Dynamics => run_dynamics(setup, &placed_solutes, param_set, dev),
         MdBackend::Gromacs => run_gromacs(&mol, setup, &placed_solutes, param_set, dev),
-        MdBackend::Orca => Err(io::Error::new(
+        MdBackend::xTb | MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Shrinking-box MD supports the Dynamics and GROMACS backends.",
         )),

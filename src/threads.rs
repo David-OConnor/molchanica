@@ -85,6 +85,7 @@ pub struct ThreadReceivers {
     /// GROMACS MD run. Carries `(out, mol_start_indices, elapsed_ms)`.
     // pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<usize>, u128)>>,
     pub gromacs_md_avail: Option<Receiver<(GromacsOutput, u128)>>,
+    pub xtb_md: Option<crate::xtb::XtbRun>,
     /// An ORCA run, e.g. geometry optimization or charges; see `orca::launch`.
     pub orca_run: Option<OrcaRun>,
 }
@@ -117,6 +118,7 @@ impl ThreadReceivers {
             || self.peptide_mesh_coloring.is_some()
             || self.ph_screening.is_some()
             || self.gromacs_md_avail.is_some()
+            || self.xtb_md.is_some()
             || self.orca_run.is_some()
     }
 }
@@ -1127,6 +1129,8 @@ pub fn handle_thread_rx(
         on_gromacs_md_complete(state, &out, elapsed_ms);
         state.volatile.md_local.gromacs_output = Some(out);
     }
+
+    crate::xtb::poll_md(state, scene, updates);
 
     let orca_result = state
         .volatile

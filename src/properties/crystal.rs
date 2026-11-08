@@ -741,7 +741,7 @@ pub fn run_crystal_sim(
             run_dynamics(&mol, &param_set, &mol_specific_params, &char, setup, dev)
         }
         MdBackend::Gromacs => run_gromacs(&mol, &param_set, &mol_specific_params, &char, setup),
-        MdBackend::Orca => Err(io::Error::new(
+        MdBackend::xTb | MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Crystal MD estimation supports the Dynamics and GROMACS backends.",
         )),

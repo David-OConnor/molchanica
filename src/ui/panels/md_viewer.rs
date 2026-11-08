@@ -191,14 +191,15 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     ui.label(RichText::new("Energy (current snap):").color(Color32::WHITE));
     ui.add_space(COL_SPACING / 2.);
 
-    ui.label("E (kcal/mol) KE: ");
-    ui.label(RichText::new(format!("{:.1}", en.energy_kinetic)).color(Color32::GOLD));
-
-    ui.label("KE/atom: ");
-    // todo: Don't continuously run these computations!
     let atom_count = (snap.water_o_posits.len() * 3) as f32 + snap.atom_posits.len() as f32;
-    let ke_per_atom = en.energy_kinetic / atom_count;
-    label!(ui, format!("{:.2}", ke_per_atom), Color32::GOLD);
+    if en.energy_kinetic.is_finite() {
+        ui.label("E (kcal/mol) KE: ");
+        ui.label(RichText::new(format!("{:.1}", en.energy_kinetic)).color(Color32::GOLD));
+
+        ui.label("KE/atom: ");
+        let ke_per_atom = en.energy_kinetic / atom_count;
+        label!(ui, format!("{:.2}", ke_per_atom), Color32::GOLD);
+    }
 
     ui.label("PE: ");
     label!(ui, format!("{:.2}", en.energy_potential), Color32::GOLD);
@@ -217,10 +218,11 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     let pe_per_atom = en.energy_potential / atom_count;
     label!(ui, format!("{:.3}", pe_per_atom), Color32::GOLD);
 
-    ui.label("E tot: ");
-    // todo: Don't continuously run this!
-    let e = en.energy_potential + en.energy_kinetic;
-    label!(ui, format!("{:.2}", e), Color32::GOLD);
+    if en.energy_kinetic.is_finite() {
+        ui.label("E tot: ");
+        let e = en.energy_potential + en.energy_kinetic;
+        label!(ui, format!("{:.2}", e), Color32::GOLD);
+    }
 
     // ui.label("PE between mols:");
     // // todo: One pair only for now
@@ -232,21 +234,29 @@ pub(in crate::ui) fn energy_disp(snap: &Snapshot, ui: &mut Ui) {
     //     );
     // }
 
-    ui.label("Temp: ");
-    label!(ui, format!("{:.1} K", en.temperature), Color32::GOLD);
+    if en.temperature.is_finite() {
+        ui.label("Temp: ");
+        label!(ui, format!("{:.1} K", en.temperature), Color32::GOLD);
+    }
 
-    ui.label("P: ");
-    label!(ui, format!("{:.1} bar", en.pressure), Color32::GOLD);
+    if en.pressure.is_finite() {
+        ui.label("P: ");
+        label!(ui, format!("{:.1} bar", en.pressure), Color32::GOLD);
+    }
 
-    ui.label("Vol: ");
-    label!(
-        ui,
-        format!("{:.1} k Å^3", en.volume / 1_000.),
-        Color32::GOLD
-    );
+    if en.volume.is_finite() {
+        ui.label("Vol: ");
+        label!(
+            ui,
+            format!("{:.1} k Å^3", en.volume / 1_000.),
+            Color32::GOLD
+        );
+    }
 
-    ui.label("Dens: ");
-    label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
+    if en.density.is_finite() {
+        ui.label("Dens: ");
+        label!(ui, format!("{:.2} amu/Å^3", en.density), Color32::GOLD);
+    }
 }
 
 /// Build a single water `ViewerMolecule` whose range starts at `start_i`.
@@ -922,7 +932,10 @@ pub(in crate::ui) fn viewer_mol_set(
 
                 viewer::draw_mols(state, scene, updates);
             } else {
-                state.volatile.md_local.clear_snaps(&mut scene.entities, redraw);
+                state
+                    .volatile
+                    .md_local
+                    .clear_snaps(&mut scene.entities, redraw);
                 updates.entities = EntityUpdate::All;
             }
         }

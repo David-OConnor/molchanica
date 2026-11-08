@@ -635,7 +635,12 @@ impl State {
             self.ui.md.dt_input = self.to_save.md.dt.to_string();
             self.volatile.md_local.run_time = self.to_save.md.num_steps as f32 * self.to_save.md.dt;
         }
-        self.to_save.md.backend = crate::md::MdBackend::Dynamics;
+        if !matches!(
+            self.to_save.md.backend,
+            crate::md::MdBackend::Dynamics | crate::md::MdBackend::xTb
+        ) {
+            self.to_save.md.backend = crate::md::MdBackend::Dynamics;
+        }
 
         Ok(())
     }
@@ -742,10 +747,14 @@ impl State {
             self.to_save.md.backend = crate::md::MdBackend::Dynamics;
         } else if previous_family == ForceFieldFamily::Gfnn {
             cfg.overrides.skip_counterion_insertion = false;
+            if self.to_save.md.backend == crate::md::MdBackend::xTb {
+                self.to_save.md.backend = crate::md::MdBackend::Dynamics;
+            }
         }
         self.ui.md.sync(cfg, self.to_save.md.dt);
 
         self.volatile.md_local.running = false;
+        self.volatile.thread_receivers.xtb_md = None;
         self.volatile.md_local.launching = false;
         self.volatile.md_local.mol_dynamics = None;
         self.volatile.md_local.computation = None;

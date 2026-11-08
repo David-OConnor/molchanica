@@ -68,6 +68,7 @@ mod state;
 mod tests;
 mod therapeutic_misc;
 mod threads;
+mod xtb;
 
 use std::time::Instant;
 

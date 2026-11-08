@@ -706,7 +706,7 @@ pub fn run_sol_sim(
     match backend {
         MdBackend::Dynamics => run_dynamics(&mol, &param_set, &mol_specific_params, &char, dev),
         MdBackend::Gromacs => run_gromacs(&mol, &param_set, &mol_specific_params, &char),
-        MdBackend::Orca => Err(io::Error::new(
+        MdBackend::xTb | MdBackend::Orca => Err(io::Error::new(
             ErrorKind::Unsupported,
             "Water-solvation MD estimation supports the Dynamics and GROMACS backends.",
         )),

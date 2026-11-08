@@ -31,6 +31,7 @@ use crate::{
     md::trajectory::{TrajFormat, Trajectory},
     state::{ComputationGuard, ComputationType, State},
     util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
+    xtb,
 };
 
 pub mod trajectory;
@@ -1056,7 +1057,9 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
 
             if let Some(lambda) = alchemical {
                 // Decouple the first molecule, matching the water_sol.rs convention.
-                if let Err(e) = md.configure_alchemical_window(&state.computation_device(), 0, lambda) {
+                if let Err(e) =
+                    md.configure_alchemical_window(&state.computation_device(), 0, lambda)
+                {
                     handle_err(
                         &mut state.ui,
                         format!("Unable to configure alchemical window: {e}"),
@@ -1226,7 +1229,7 @@ pub(crate) fn setup_mols_dyn(
     )
 }
 
-fn setup_mols_dyn_with_residues(
+pub(crate) fn setup_mols_dyn_with_residues(
     mols: &[(FfMolType, &MoleculeCommon, usize)],
     mol_specific_params: &HashMap<String, ForceFieldParams>,
     static_peptide: bool,
@@ -1320,6 +1323,7 @@ pub enum MdBackend {
     #[default]
     Dynamics,
     Gromacs,
+    xTb,
     Orca,
 }
 
@@ -1328,6 +1332,7 @@ impl Display for MdBackend {
         let v = match self {
             Self::Dynamics => "Dynamics",
             Self::Gromacs => "GROMACS",
+            Self::xTb => "xTB",
             Self::Orca => "ORCA",
         };
 
@@ -1368,18 +1373,29 @@ fn ready_to_run_helper(state: &mut State) -> bool {
 }
 /// Launched from the UI; initiates MD.
 pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    if state.volatile.thread_receivers.xtb_md.is_some() {
+        handle_err(&mut state.ui, "An xTB MD run is already active.".into());
+
+        return;
+    }
+
     if let Err(error) = state.sync_gfnff_md_config() {
         handle_err(&mut state.ui, error);
 
         return;
     }
 
-    if state.force_fields.family == ForceFieldFamily::Gfnn
-        && state.to_save.md.backend != MdBackend::Dynamics
+    if (state.force_fields.family == ForceFieldFamily::Gfnn
+        && !matches!(
+            state.to_save.md.backend,
+            MdBackend::Dynamics | MdBackend::xTb
+        ))
+        || (state.to_save.md.backend == MdBackend::xTb
+            && state.force_fields.family != ForceFieldFamily::Gfnn)
     {
         handle_err(
             &mut state.ui,
-            "GFN-FF requires the Dynamics backend.".into(),
+            "xTB supports GFN-FF only; GFN-FF supports the Dynamics and xTB backends.".into(),
         );
 
         return;
@@ -1414,6 +1430,7 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
             // We will wait a frame so we can display the message above.
             gromacs::launch_md(state)
         }
+        MdBackend::xTb => xtb::launch_md(state),
         // todo: For now, we launch ORCA MD from the ORCA UI.
         MdBackend::Orca => {}
     }

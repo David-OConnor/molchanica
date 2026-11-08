@@ -63,7 +63,7 @@ pub fn make_gromacs_input(
 ) -> io::Result<GromacsInput> {
     if ff_param_set.backend.system_potential().is_some() {
         return Err(io::Error::other(
-            "GFN-FF requires Dynamics; GROMACS export is unavailable",
+            "GFN-FF requires Dynamics or xTB; GROMACS export is unavailable",
         ));
     }
 
@@ -239,7 +239,7 @@ pub fn gromacs_input_from_state(
         .is_some()
     {
         return Err(io::Error::other(
-            "GFN-FF requires Dynamics; GROMACS export is unavailable",
+            "GFN-FF requires Dynamics or xTB; GROMACS export is unavailable",
         ));
     }
 

@@ -399,11 +399,20 @@ pub fn update_file_dialogs(
     }
 
     if let Some(path) = &state.volatile.dialogs.save_md.take_picked() {
-        match gromacs::save_input_files(state, path) {
+        let native_xtb = state.to_save.md.backend == crate::md::MdBackend::xTb;
+        let result = if native_xtb {
+            crate::xtb::save_input_files(state, path)
+        } else {
+            gromacs::save_input_files(state, path)
+        };
+        match result {
             Ok(_) => {
                 handle_success(
                     &mut state.ui,
-                    "Saved MD files in GROMACS format".to_string(),
+                    format!(
+                        "Saved MD files in {} format",
+                        if native_xtb { "xTB" } else { "GROMACS" }
+                    ),
                 );
             }
             Err(e) => handle_err(&mut state.ui, format!("Error saving MD files: {e}")),

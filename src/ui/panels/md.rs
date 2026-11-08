@@ -121,8 +121,11 @@ pub fn md_setup(
             // ui.add_space(COL_SPACING / 2.);
 
             if ui.button("Save Cfg")
-                .on_hover_text("Save MD configuration in GROMACS format: .gro (Molecules used for MD), \
-                .mdp (MD configuration), and .top (Force field parameters / topology) files")
+                .on_hover_text(if state.to_save.md.backend == MdBackend::xTb {
+                    "Save xTB geometry, MD settings, and command"
+                } else {
+                    "Save GROMACS .gro, .mdp, and .top files"
+                })
                 .clicked() {
                 state.volatile.dialogs.save_md.pick_directory();
             }
@@ -175,12 +178,15 @@ pub fn md_setup(
 
             let gromacs_available = external_tools::is_installed(Tool::Gromacs);
             let orca_available = external_tools::is_installed(Tool::Orca);
-            if state.force_fields.family != ForceFieldFamily::Gfnn && (gromacs_available || orca_available) {
+            let gfnff = state.force_fields.family == ForceFieldFamily::Gfnn;
+            if gfnff || gromacs_available || orca_available {
                 ui.add_space(COL_SPACING / 2.);
                 ui.label("Backend:");
 
                 let mut backends = vec![MdBackend::Dynamics];
-                if gromacs_available {
+                if gfnff {
+                    backends.push(MdBackend::xTb);
+                } else if gromacs_available {
                     backends.push(MdBackend::Gromacs);
                 }
 
@@ -199,8 +205,11 @@ pub fn md_setup(
                         }
                     })
                     .response
-                    .on_hover_text("Select the backend to perform MD: Dynamics (Native), GROMACS, or ORCA. If GROMACS or ORCA is \
-                showing, it means we've found their program on the system path.");
+                    .on_hover_text(if gfnff {
+                        "Use the Dynamics integrator or xTB's native MD engine."
+                    } else {
+                        "Select the MD engine. GROMACS requires an installed executable."
+                    });
             }
 
 
@@ -233,6 +242,13 @@ pub fn md_setup(
                         ))
                             .color(COLOR_HIGHLIGHT),
                     );
+                }
+            }
+
+            if let Some(run) = &state.volatile.thread_receivers.xtb_md {
+                ui.label("xTB MD running");
+                if ui.button(RichText::new("Abort xTB").color(Color32::LIGHT_RED)).clicked() {
+                    run.cancel();
                 }
             }
 
@@ -371,7 +387,9 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
     ui.label(RichText::new("Integrator:").color(Color32::WHITE));
     ui.add_space(COL_SPACING / 2.);
 
-    {
+    if state.to_save.md.backend == MdBackend::xTb {
+        ui.label("xTB native");
+    } else {
         let help_text =
             "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
         ui.label("Integrator:").on_hover_text(help_text);
@@ -545,61 +563,76 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
     ui.add_space(COL_SPACING / 2.);
 
     let mut therm_en_ = false;
-    match &mut state.to_save.md.config.integrator {
-        Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
-            let help_text = "Enable or disable the thermostat";
-            ui.label("Therm:").on_hover_text(help_text);
-            let mut therm_en = thermostat.is_some();
-            if ui
-                .checkbox(&mut therm_en, "")
-                .on_hover_text(help_text)
-                .changed()
-            {
-                *thermostat = if therm_en {
-                    Some(TAU_TEMP_DEFAULT)
-                } else {
-                    None
-                };
+    if state.to_save.md.backend == MdBackend::xTb {
+        let mut enabled = match state.to_save.md.config.integrator {
+            Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
+                thermostat.is_some()
             }
+            Integrator::LangevinMiddle { .. } => true,
+        };
+        if ui.checkbox(&mut enabled, "Berendsen (xTB)").changed() {
+            state.to_save.md.config.integrator = Integrator::VerletVelocity {
+                thermostat: enabled.then_some(TAU_TEMP_DEFAULT),
+            };
+        }
+        therm_en_ = true;
+    } else {
+        match &mut state.to_save.md.config.integrator {
+            Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
+                let help_text = "Enable or disable the thermostat";
+                ui.label("Therm:").on_hover_text(help_text);
+                let mut therm_en = thermostat.is_some();
+                if ui
+                    .checkbox(&mut therm_en, "")
+                    .on_hover_text(help_text)
+                    .changed()
+                {
+                    *thermostat = if therm_en {
+                        Some(TAU_TEMP_DEFAULT)
+                    } else {
+                        None
+                    };
+                }
 
-            if let Some(tau) = thermostat {
-                let help_text = "Thermostat time constant for use with a non-Langevin integrator. \
+                if let Some(tau) = thermostat {
+                    let help_text = "Thermostat time constant for use with a non-Langevin integrator. \
                 0.1ps is a good default.";
 
-                ui.label("Therm tau (ps):").on_hover_text(help_text);
+                    ui.label("Therm tau (ps):").on_hover_text(help_text);
+                    if ui
+                        .add_sized(
+                            [22., Ui::available_height(ui)],
+                            TextEdit::singleline(&mut state.ui.md.temp_tau),
+                        )
+                        .on_hover_text(help_text)
+                        .changed()
+                        && let Ok(v) = &mut state.ui.md.temp_tau.parse::<f64>()
+                    {
+                        *tau = *v;
+                    }
+                }
+
+                therm_en_ = therm_en;
+            }
+            Integrator::LangevinMiddle { gamma } => {
+                let help_text = "Thermostat time constant for use with the Langevin (stochastic) integrator. \
+            0.5 1/ps is a good default.";
+
+                ui.label("Therm γ (1/ps):").on_hover_text(help_text);
                 if ui
                     .add_sized(
                         [22., Ui::available_height(ui)],
-                        TextEdit::singleline(&mut state.ui.md.temp_tau),
+                        TextEdit::singleline(&mut state.ui.md.langevin_γ),
                     )
                     .on_hover_text(help_text)
                     .changed()
-                    && let Ok(v) = &mut state.ui.md.temp_tau.parse::<f64>()
+                    && let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>()
                 {
-                    *tau = *v;
+                    *gamma = *v;
                 }
+
+                therm_en_ = true;
             }
-
-            therm_en_ = therm_en;
-        }
-        Integrator::LangevinMiddle { gamma } => {
-            let help_text = "Thermostat time constant for use with the Langevin (stochastic) integrator. \
-            0.5 1/ps is a good default.";
-
-            ui.label("Therm γ (1/ps):").on_hover_text(help_text);
-            if ui
-                .add_sized(
-                    [22., Ui::available_height(ui)],
-                    TextEdit::singleline(&mut state.ui.md.langevin_γ),
-                )
-                .on_hover_text(help_text)
-                .changed()
-                && let Ok(v) = &mut state.ui.md.langevin_γ.parse::<f32>()
-            {
-                *gamma = *v;
-            }
-
-            therm_en_ = true;
         }
     }
 
@@ -868,6 +901,19 @@ fn alchemical_cfg(state: &mut State, ui: &mut Ui) {
 }
 
 fn output_control(state: &mut State, ui: &mut Ui) {
+    if state.to_save.md.backend == MdBackend::xTb {
+        let interval = state
+            .to_save
+            .md
+            .config
+            .snapshot_handlers
+            .memory
+            .get_or_insert(10);
+        num_field(interval, "Frames every (steps):", 44, ui);
+
+        return;
+    }
+
     ui.label("Out.").on_hover_text("These settings control which formats, and how often \
     to save the output trajectory to. 'Mem' only affects the Dynamics backend. TRR positions are required to display \
     GROMACS trajectories in the UI automatically");

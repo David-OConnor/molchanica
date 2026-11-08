@@ -310,6 +310,7 @@ impl MdBackend {
             Self::Dynamics => 0,
             Self::Gromacs => 1,
             Self::Orca => 2,
+            Self::xTb => 3,
         }
     }
     fn from_u8(v: u8) -> Self {
@@ -317,6 +318,7 @@ impl MdBackend {
             0 => Self::Dynamics,
             1 => Self::Gromacs,
             2 => Self::Orca,
+            3 => Self::xTb,
             _ => Self::default(),
         }
     }
