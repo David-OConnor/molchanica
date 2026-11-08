@@ -5,7 +5,7 @@ use std::{
     env, fmt,
     fmt::{Display, Formatter},
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError},
     time::Instant,
 };
 
@@ -59,6 +59,12 @@ use crate::{
     },
 };
 
+pub struct ComputationResources {
+    pub device: ComputationDevice,
+    #[cfg(feature = "cuda")]
+    pub kernel_reflections: Option<CudaFunction>,
+}
+
 pub struct State {
     pub publication: crate::publication::Publication,
     pub ui: StateUi,
@@ -76,10 +82,8 @@ pub struct State {
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
     pub to_save: ToSave,
-    pub dev: ComputationDevice,
-    /// This is None if Computation Device is CPU.
-    #[cfg(feature = "cuda")]
-    pub kernel_reflections: Option<CudaFunction>,
+    /// Initialized on first computation.
+    pub computation: OnceLock<ComputationResources>,
     /// Amber templates and GAFF2 data used for structural preparation and
     /// Amber-trained analysis. The selected display/MD family is separate.
     pub ff_param_set: FfParamSet,
@@ -137,9 +141,7 @@ impl Default for State {
             trajectories: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),
-            dev: Default::default(),
-            #[cfg(feature = "cuda")]
-            kernel_reflections: None,
+            computation: Default::default(),
             ff_param_set: Default::default(),
             force_fields: Default::default(),
             mol_specific_params: Default::default(),
@@ -159,6 +161,27 @@ impl Default for State {
 }
 
 impl State {
+    pub fn computation_resources(&self) -> &ComputationResources {
+        self.computation.get_or_init(|| {
+            #[cfg(feature = "cuda")]
+            let (device, kernel_reflections) = crate::util::get_computation_device();
+            #[cfg(not(feature = "cuda"))]
+            let device = ComputationDevice::Cpu;
+
+            println!("Using computing device: {device:?}");
+
+            ComputationResources {
+                device,
+                #[cfg(feature = "cuda")]
+                kernel_reflections,
+            }
+        })
+    }
+
+    pub fn computation_device(&self) -> ComputationDevice {
+        self.computation_resources().device.clone()
+    }
+
     /// E.g. when loading a new molecule.
     pub fn reset_selections(&mut self) {
         self.ui.selection = Selection::None;

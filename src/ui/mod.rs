@@ -951,8 +951,15 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 handle_err(&mut state.ui, format!("Problem saving file: {e:?}"));
             }
 
-            state.mol_editor.md_step(&state.dev, &mut scene.entities, &state.ui,
-                                     &mut updates, state.volatile.mol_manip.mode);
+            if state.mol_editor.md.running {
+                state.mol_editor.md_step(
+                    &state.computation_device(),
+                    &mut scene.entities,
+                    &state.ui,
+                    &mut updates,
+                    state.volatile.mol_manip.mode,
+                );
+            }
 
             load_popups(state, scene, ui, &mut redraw, &mut updates);
 
@@ -1169,6 +1176,8 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         crate::md::viewer::draw_mols(state, scene, &mut updates);
     }
     crate::drawing::representations::update(state, scene, &mut updates);
+    crate::util::release_unused_scene_memory(state, scene, &mut updates);
+    state.release_mol_db_caches();
     updates.camera |= cam::apply_slab(state, &mut scene.camera);
     measurements::paint(state, scene, ui.ctx(), updates.ui_reserved_px);
     workflows::paint_labels(state, scene, ui.ctx(), updates.ui_reserved_px);

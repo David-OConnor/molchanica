@@ -6,6 +6,7 @@ use std::{
     io,
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use bio_files::{AtomGeneric, bond_inference, gromacs::gro::Gro};
@@ -228,7 +229,7 @@ pub struct SnapshotViewer {
     // pub struct SnapshotViewer<M: MolGeneric> {
     /// Snapshots currently active and loaded in memory; from an MD run, or loading
     /// a trajectory file.
-    pub snapshots: Vec<Snapshot>,
+    pub snapshots: Vec<Arc<Snapshot>>,
     pub current_snapshot: Option<usize>,
     /// We maintain independent copies of these from the primary state. These are what we display
     /// after an MD run. They may be created as copies of molecules in the primary state, or loaded
@@ -269,19 +270,11 @@ impl SnapshotViewer {
     }
 
     pub fn get_snap(&self, i: usize) -> Option<&Snapshot> {
-        if i < self.snapshots.len() {
-            Some(&self.snapshots[i])
-        } else {
-            None
-        }
+        self.snapshots.get(i).map(Arc::as_ref)
     }
 
     pub fn get_snap_mut(&mut self, i: usize) -> Option<&mut Snapshot> {
-        if i < self.snapshots.len() {
-            Some(&mut self.snapshots[i])
-        } else {
-            None
-        }
+        self.snapshots.get_mut(i).map(Arc::make_mut)
     }
 
     pub fn get_active_mol_set(&self) -> Option<&ViewerMolSet> {
@@ -373,7 +366,7 @@ impl SnapshotViewer {
 
         if !reconstructed_water.is_empty() {
             if snap_i < self.snapshots.len() {
-                let snap = &mut self.snapshots[snap_i];
+                let snap = Arc::make_mut(&mut self.snapshots[snap_i]);
                 for (o, h0, h1) in reconstructed_water {
                     snap.water_o_posits.push(o.into());
                     snap.water_h0_posits.push(h0.into());

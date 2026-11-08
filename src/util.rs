@@ -532,6 +532,7 @@ pub fn close_peptide(
 
     let path = state.peptides[i].common.path.clone();
     state.peptides.remove(i);
+    clear_peptide_meshes(state, scene, engine_updates);
     state
         .volatile
         .thread_receivers
@@ -605,6 +606,89 @@ pub fn close_peptide(
     }
 }
 
+fn clear_peptide_meshes(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    for slot in [
+        MESH_PEP_SOLVENT_SURFACE,
+        crate::render::MESH_DENSITY_SURFACE,
+        MESH_SECONDARY_STRUCTURE,
+        MESH_OTHER_RIBBONS,
+    ] {
+        scene.meshes[slot] = graphics::Mesh::default();
+    }
+    state.volatile.flags.ss_mesh_created = false;
+    state.volatile.flags.sas_mesh_created = false;
+    state.volatile.thread_receivers.peptide_mesh_coloring = None;
+    updates.meshes = true;
+}
+
+pub fn release_unused_scene_memory(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+) {
+    if !updates.meshes && !matches!(updates.entities, EntityUpdate::All) {
+        return;
+    }
+
+    let mut occupied = vec![false; scene.meshes.len()];
+    for pocket in state
+        .pockets
+        .iter()
+        .chain(
+            state
+                .ligands
+                .iter()
+                .filter_map(|lig| lig.pharmacophore.pocket.as_ref()),
+        )
+    {
+        if let Some(slot) = occupied.get_mut(crate::render::MESH_POCKET_START + pocket.mesh_i_rel) {
+            *slot = true;
+        }
+    }
+    for entity in &scene.entities {
+        if let Some(slot) = occupied.get_mut(entity.mesh) {
+            *slot = true;
+        }
+    }
+    for (slot, mesh) in scene
+        .meshes
+        .iter_mut()
+        .enumerate()
+        .skip(crate::render::MESH_POCKET_START)
+    {
+        if !occupied[slot]
+            && (mesh.vertices.capacity() != 0 || mesh.indices.capacity() != 0)
+        {
+            *mesh = graphics::Mesh::default();
+            updates.meshes = true;
+        }
+    }
+
+    if state.peptides.is_empty()
+        && [
+            MESH_PEP_SOLVENT_SURFACE,
+            crate::render::MESH_DENSITY_SURFACE,
+            MESH_SECONDARY_STRUCTURE,
+            MESH_OTHER_RIBBONS,
+        ]
+        .iter()
+        .any(|&slot| !scene.meshes[slot].vertices.is_empty())
+    {
+        clear_peptide_meshes(state, scene, updates);
+    }
+
+    if scene.entities.capacity() > scene.entities.len().saturating_mul(4).max(1024) {
+        scene
+            .entities
+            .shrink_to(scene.entities.len().saturating_mul(2));
+    }
+    if scene.gaussians.capacity() > scene.gaussians.len().saturating_mul(4).max(1024) {
+        scene
+            .gaussians
+            .shrink_to(scene.gaussians.len().saturating_mul(2));
+    }
+}
+
 /// Close the active molecule.
 pub fn close_mol(
     mol_type: MolType,
@@ -646,6 +730,7 @@ pub fn close_mol(
         }
         MolType::Ligand => {
             state.ligands.remove(i);
+            crate::drawing::wrappers::draw_all_pockets(state, scene, updates);
 
             if state.ligands.is_empty() {
                 state.volatile.active_mol = None;
@@ -677,6 +762,7 @@ pub fn close_mol(
         }
         MolType::Pocket => {
             state.pockets.remove(i);
+            crate::drawing::wrappers::draw_all_pockets(state, scene, updates);
 
             if state.pockets.is_empty() {
                 state.volatile.active_mol = None;
@@ -802,6 +888,8 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 &crate::inspection::ribbon_colors(state, mol),
                 mol.sifts_mapping.as_deref(),
             );
+        } else {
+            scene.meshes[MESH_SECONDARY_STRUCTURE] = graphics::Mesh::default();
         }
         state.volatile.flags.ss_mesh_selection = state.ui.selection.clone();
 

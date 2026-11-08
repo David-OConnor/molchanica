@@ -93,6 +93,12 @@ pub(in crate::ui) fn load_popups(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
+    if state.ui.popup.parquet_db
+        || state.ui.popup.pharmacophore_screening
+        || state.ui.popup.alignment_screening
+    {
+        crate::threads::start_builtin_mol_db_load(state);
+    }
     binding::poll(state, ui);
     if state.ui.popup.binding {
         state.ui.popup.binding = show_popup(

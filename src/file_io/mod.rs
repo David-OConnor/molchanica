@@ -563,6 +563,9 @@ impl State {
     }
 
     pub fn load_density(&mut self, dens_map: DensityMap) {
+        let dev = self.computation_device();
+        #[cfg(feature = "cuda")]
+        let kernel = self.computation_resources().kernel_reflections.clone();
         let peptide_i = self.peptide_for_tools_i();
         if let Some(mol) = peptide_i.and_then(|i| self.peptides.get_mut(i)) {
             // Sample atoms, so we know where to draw the (periodic) density data.
@@ -581,8 +584,8 @@ impl State {
 
             #[cfg(feature = "cuda")]
             let dens = dens_rect.make_densities(
-                &self.dev,
-                &self.kernel_reflections,
+                &dev,
+                &kernel,
                 &atom_posits,
                 &dens_map.hdr.inner.cell,
                 DENSITY_MAX_DIST,
@@ -590,7 +593,7 @@ impl State {
 
             #[cfg(not(feature = "cuda"))]
             let dens = dens_rect.make_densities(
-                &self.dev,
+                &dev,
                 &atom_posits,
                 &dens_map.hdr.inner.cell,
                 DENSITY_MAX_DIST,

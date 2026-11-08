@@ -300,7 +300,7 @@ pub(in crate::ui) fn editor(
 
             if started && (state.mol_editor.md.rebuild_required || state.mol_editor.md.md.is_none()) {
                 let build_result = mol_editor::build_dynamics(
-                    &state.dev,
+                    &state.computation_device(),
                     &mut state.mol_editor,
                     &state.ff_param_set,
                     &state.to_save.md.config,
@@ -411,7 +411,7 @@ pub(in crate::ui) fn editor(
 
             if state.mol_editor.md.rebuild_required || state.mol_editor.md.md.is_none() {
                 let build_result = mol_editor::build_dynamics(
-                    &state.dev,
+                    &state.computation_device(),
                     &mut state.mol_editor,
                     &state.ff_param_set,
                     &state.to_save.md.config,
@@ -430,8 +430,9 @@ pub(in crate::ui) fn editor(
                 }
             }
 
+            let dev = state.computation_device();
             if let Some(md) = &mut state.mol_editor.md.md {
-                md.minimize_energy(&state.dev, MAX_RELAX_ITERS, None); // todo: Iters A/R.
+                md.minimize_energy(&dev, MAX_RELAX_ITERS, None); // todo: Iters A/R.
                 state.mol_editor.load_atom_posits_from_md(&mut scene.entities, &state.ui,
                                                           updates, state.volatile.mol_manip.mode, );
             }

@@ -115,6 +115,12 @@ pub(in crate::ui) fn parquet_db(
         };
 
         if !db_valid {
+            if !matches!(db_sel, DbSel::Loaded(_))
+                && state.volatile.thread_receivers.builtin_mol_dbs.is_some()
+            {
+                return;
+            }
+
             handle_err(
                 &mut state.ui,
                 String::from("Error: Invalid Parquet DB active index"),

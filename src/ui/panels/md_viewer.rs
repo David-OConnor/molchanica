@@ -85,15 +85,7 @@ pub(in crate::ui) fn dynamics_viewer(
                 .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
                 .clicked()
         {
-            state
-                .volatile
-                .md_local
-                .clear_snaps(&mut scene.entities, redraw);
-
-            // todo: Make this call part of clear_snaps?
-            for traj in &mut state.trajectories {
-                traj.frames_open = None;
-            }
+            state.clear_md_frames(scene, redraw, updates);
         }
 
         if !ready {
@@ -930,7 +922,7 @@ pub(in crate::ui) fn viewer_mol_set(
 
                 viewer::draw_mols(state, scene, updates);
             } else {
-                scene.entities.clear();
+                state.volatile.md_local.clear_snaps(&mut scene.entities, redraw);
                 updates.entities = EntityUpdate::All;
             }
         }

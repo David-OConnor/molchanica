@@ -8,6 +8,7 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use bio_files::{
@@ -48,7 +49,7 @@ impl TrajFormat {
 #[derive(Clone, Debug)]
 pub enum TrajectorySource {
     File(PathBuf),
-    Memory(Vec<Snapshot>),
+    Memory(Vec<Arc<Snapshot>>),
 }
 
 /// Represents a MD trajectory — either a file on disk or a set of snapshots held
@@ -157,7 +158,7 @@ impl Trajectory {
     /// Create an in-memory trajectory from a set of snapshots, e.g. from a
     /// completed Dynamics-engine run.  All frames are immediately available;
     /// no file I/O is required.
-    pub fn new_in_memory(snapshots: Vec<Snapshot>, display_name: String, sim_dt: f32) -> Self {
+    pub fn new_in_memory(snapshots: Vec<Arc<Snapshot>>, display_name: String, sim_dt: f32) -> Self {
         let num_frames = snapshots.len();
         let first = snapshots.first();
         let last = snapshots.last();
@@ -205,7 +206,7 @@ impl Trajectory {
 
     /// Load frames, applying a `FrameSlice` filter.  For file-backed trajectories
     /// this reads from disk; for in-memory trajectories it filters the stored snapshots.
-    pub fn load_snaps(&mut self, slice: FrameSlice) -> io::Result<Vec<Snapshot>> {
+    pub fn load_snaps(&mut self, slice: FrameSlice) -> io::Result<Vec<Arc<Snapshot>>> {
         self.frames_open = Some(slice);
 
         self.ui_active = true;
@@ -248,6 +249,7 @@ impl Trajectory {
                 Ok(read_trr(&path, slice)?
                     .into_iter()
                     .map(Snapshot::from)
+                    .map(Arc::new)
                     .collect())
             }
 
@@ -261,6 +263,7 @@ impl Trajectory {
                 Ok(read_xtc(&path, slice)?
                     .into_iter()
                     .map(Snapshot::from)
+                    .map(Arc::new)
                     .collect())
             }
 
@@ -274,13 +277,20 @@ impl Trajectory {
                 Ok(read_dcd(&path, slice)?
                     .into_iter()
                     .map(Snapshot::from)
+                    .map(Arc::new)
                     .collect())
             }
         }
     }
 }
 
-pub fn close_traj(state: &mut State, i: usize) {
+pub fn close_traj(
+    state: &mut State,
+    i: usize,
+    scene: &mut graphics::Scene,
+    redraw: &mut crate::util::RedrawFlags,
+    updates: &mut graphics::EngineUpdates,
+) {
     if i >= state.trajectories.len() {
         eprintln!("Error: Trying to close a trajectory that's out of bounds");
         return;
@@ -296,5 +306,20 @@ pub fn close_traj(state: &mut State, i: usize) {
         }
     }
 
-    state.trajectories.remove(i);
+    let trajectory = state.trajectories.remove(i);
+    let showing_frames = match &trajectory.source {
+        TrajectorySource::Memory(frames) => frames
+            .first()
+            .zip(state.volatile.md_local.viewer.snapshots.first())
+            .is_some_and(|(a, b)| Arc::ptr_eq(a, b)),
+        TrajectorySource::File(_) => false,
+    };
+    if trajectory.ui_active || showing_frames {
+        let md = &mut state.volatile.md_local;
+        md.clear_snaps(&mut scene.entities, redraw);
+        if !md.running {
+            md.mol_dynamics = None;
+        }
+        updates.entities = graphics::EntityUpdate::All;
+    }
 }

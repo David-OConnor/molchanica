@@ -955,7 +955,7 @@ pub fn save(state: &State, scene: &Scene, path: &Path) -> io::Result<()> {
         camera: CamSnapshot::from_cam(&scene.camera, "Current view".into()),
         appearance: SceneState::capture(state, scene),
         scenes: state.cam_snapshots.clone(),
-        frames: viewer.snapshots.iter().map(Frame::capture).collect(),
+        frames: viewer.snapshots.iter().map(|s| Frame::capture(s)).collect(),
         mol_sets: viewer
             .mol_sets
             .iter()
@@ -1051,7 +1051,7 @@ pub fn load(
     let frames = project
         .frames
         .into_iter()
-        .map(Frame::restore)
+        .map(|frame| frame.restore().map(std::sync::Arc::new))
         .collect::<io::Result<Vec<_>>>()?;
     let mut sets = Vec::new();
     for set in project.mol_sets {
@@ -1123,6 +1123,7 @@ pub fn load(
                 "Project trajectory".into(),
                 0.,
             ));
+        state.trajectories.last_mut().unwrap().ui_active = true;
     }
     state.volatile.thread_receivers = Default::default();
     state.volatile.session_restore_started = true;

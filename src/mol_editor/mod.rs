@@ -1341,7 +1341,7 @@ pub fn sync_md(state: &mut State) {
     if state.mol_editor.md.running {
         // todo: Ideally don't rebuild the whole dynamics, for performance reasons.
         let build_result = build_dynamics(
-            &state.dev,
+            &state.computation_device(),
             &mut state.mol_editor,
             &state.ff_param_set,
             &state.to_save.md.config,

@@ -230,6 +230,26 @@ impl Drop for Publication {
 }
 
 impl Publication {
+    fn release_render(&mut self) {
+        if self.render_rx.is_none()
+            && self.figure.is_none()
+            && self.preview.is_none()
+            && self.pending_save.is_none()
+        {
+            return;
+        }
+
+        if let Some(cancel) = self.render_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.render_rx = None;
+        self.render_started = None;
+        self.figure = None;
+        self.preview = None;
+        self.pending_save = None;
+        self.dialog = egui_file_dialog::FileDialog::new();
+    }
+
     fn persist(&mut self, dir: &Path) {
         let result = (|| -> Result<(), String> {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -365,6 +385,9 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
     };
     let prefs_dir = &state.volatile.prefs_dir;
     let p = &mut state.publication;
+    if !p.open {
+        p.release_render();
+    }
     p.poll(ctx);
     p.dialog.update(ctx);
     if let Some(path) = p.dialog.take_picked()
@@ -648,4 +671,7 @@ pub fn show(state: &mut State, scene: &Scene, ctx: &Context) {
             }
         });
     p.open = open;
+    if !open {
+        p.release_render();
+    }
 }

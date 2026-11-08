@@ -279,7 +279,7 @@ fn run_md(
     let mols_md = vec![(FfMolType::SmallOrganic, &mol_q_md, 1)];
 
     let (mut md, _) = build_dynamics(
-        &state.dev,
+        &state.computation_device(),
         &mols_md,
         &state.ff_param_set,
         &state.mol_specific_params,
@@ -343,7 +343,7 @@ fn run_md(
         }
 
         // Step using bonded and intra-atom nonbonded forces.
-        md.step(&state.dev, DT, Some(forces_by_atom_q));
+        md.step(&state.computation_device(), DT, Some(forces_by_atom_q));
 
         // Update our atom positions from the MD run; required for the next synthetic force compuatation.
         for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
@@ -353,7 +353,7 @@ fn run_md(
     }
 
     // Experiment with this, and rm obviously if youre whole process is to relax.
-    md.minimize_energy(&state.dev, RELAX_ITERS_FINAL, None);
+    md.minimize_energy(&state.computation_device(), RELAX_ITERS_FINAL, None);
 
     for (i, atom_q) in mol_q_md.atoms.iter_mut().enumerate() {
         atom_q.posit = md.atoms[i].posit.into();

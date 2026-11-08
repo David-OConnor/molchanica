@@ -48,12 +48,15 @@ pub fn md_setup(
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("MD setup:").color(Color32::WHITE));
 
-            match &state.dev {
-                ComputationDevice::Cpu => {
+            match state.computation.get().map(|r| &r.device) {
+                None => {
+                    ui.label("Auto");
+                }
+                Some(ComputationDevice::Cpu) => {
                     ui.label(RichText::new("CPU"));
                 }
                 #[cfg(feature = "cuda")]
-                ComputationDevice::Gpu(_) => {
+                Some(ComputationDevice::Gpu(_)) => {
                     ui.label(RichText::new("GPU").color(Color32::LIGHT_GREEN));
                 }
             }

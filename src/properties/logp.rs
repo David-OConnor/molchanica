@@ -136,7 +136,7 @@ fn run_alchemical_window(
     let cfg = build_cfg(phase);
     let mut pep_atom_set = HashSet::new();
 
-    let dev = &state.dev;
+    let dev = &state.computation_device();
     let (mut md, _) = build_dynamics(
         &dev,
         &mols,

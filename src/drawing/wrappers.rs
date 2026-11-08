@@ -57,7 +57,13 @@ fn helper_b(
     updates: &mut EngineUpdates,
 ) {
     let end = ent_i_start + initial_ent_count;
-    if entities.len() == initial_ent_count && end <= scene.entities.len() {
+    if entities.len() == initial_ent_count
+        && end <= scene.entities.len()
+        && scene.entities[ent_i_start..end]
+            .iter()
+            .zip(&entities)
+            .all(|(old, new)| old.mesh == new.mesh)
+    {
         for (i, ent) in scene.entities[ent_i_start..end].iter_mut().enumerate() {
             // This must include all fields which have changed.
             ent.position = entities[i].position;
@@ -84,6 +90,7 @@ fn helper_b(
         updates.entities = EntityUpdate::All;
     }
 }
+
 
 // // todo: A helper which would be nice, but I'm unable to get working.
 // fn draw_all_mol_of_type(state: &mut State, scene: &mut Scene, mol_type: MolType) {
@@ -360,7 +367,17 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, updates: &mut Engi
     let standalone_count = state.pockets.len();
 
     let mut entities = Vec::new();
-    for mol in &mut state.pockets {
+    for (i, mol) in state.pockets.iter_mut().enumerate() {
+        if mol.mesh_i_rel != i {
+            mol.mesh_i_rel = i;
+            let mesh_i = MESH_POCKET_START + i;
+            scene
+                .meshes
+                .resize_with(scene.meshes.len().max(mesh_i + 1), Default::default);
+            scene.meshes[mesh_i] = mol.surface_mesh.clone();
+            updates.meshes = true;
+        }
+
         if state
             .to_save
             .hidden_default_objects
@@ -399,6 +416,7 @@ pub fn draw_all_pockets(state: &mut State, scene: &mut Scene, updates: &mut Engi
                 scene.meshes.push(Default::default());
             }
             scene.meshes[mesh_i] = pocket.surface_mesh.clone();
+            updates.meshes = true;
         }
 
         if let Some(pocket) = &state.ligands[lig_i].pharmacophore.pocket {

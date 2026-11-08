@@ -5,6 +5,7 @@ use std::{
     fmt,
     fmt::{Display, Formatter},
     path::Path,
+    sync::Arc,
     time::Instant,
 };
 
@@ -77,7 +78,7 @@ pub struct MdStateLocal {
 
 impl MdStateLocal {
     /// todo: WIP, regarding how we pass in atoms and molecules.
-    pub fn replace_snaps(&mut self, snaps: Vec<Snapshot>) {
+    pub fn replace_snaps(&mut self, snaps: Vec<Arc<Snapshot>>) {
         self.draw_md_mols = true;
 
         self.viewer.snapshots = snaps;
@@ -95,9 +96,12 @@ impl MdStateLocal {
         self.viewer.snapshots = Vec::new();
         self.viewer.current_snapshot = None;
         self.viewer.mol_set_active = None;
+        self.viewer.playing = false;
+        self.viewer.playback_accum = 0.;
+        self.viewer.slider_posit_ui = 0;
         self.draw_md_mols = false;
 
-        ents.clear();
+        *ents = Vec::new();
         redraw.set_all();
     }
 }
@@ -124,8 +128,10 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
 
     md_state.flush_snapshot_queues();
 
-    // Copy snapshots from MD state to the viewer.
-    let snaps = md_state.snapshots.clone();
+    let snaps: Vec<_> = std::mem::take(&mut md_state.snapshots)
+        .into_iter()
+        .map(Arc::new)
+        .collect();
     md.viewer.snapshots = snaps.clone();
 
     for traj in &mut state.trajectories {
@@ -145,6 +151,7 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         format!("In-memory run {}", run_n + 1),
         state.to_save.md.dt,
     ));
+    state.trajectories.last_mut().unwrap().ui_active = true;
 
     // Auto-save the mol set as a GRO file alongside the trajectory files.
     let run_index = md_state.run_index.unwrap_or(0);
@@ -772,12 +779,38 @@ pub fn run_dynamics_blocking(
 }
 
 impl State {
+    pub fn clear_md_frames(
+        &mut self,
+        scene: &mut Scene,
+        redraw: &mut RedrawFlags,
+        updates: &mut EngineUpdates,
+    ) {
+        let md = &mut self.volatile.md_local;
+        md.clear_snaps(&mut scene.entities, redraw);
+        if md.running {
+            if let Some(sim) = &mut md.mol_dynamics {
+                sim.snapshots = Vec::new();
+            }
+        } else {
+            md.mol_dynamics = None;
+        }
+        self.trajectories
+            .retain(|traj| matches!(traj.source, trajectory::TrajectorySource::File(_)));
+        for traj in &mut self.trajectories {
+            traj.frames_open = None;
+            traj.ui_active = false;
+        }
+        updates.entities = graphics::EntityUpdate::All;
+    }
+
     /// Run MD for a single step if ready, and update atom positions immediately after. Blocks for
     /// a fixed number of steps only; intended to be run each frame until complete.
     pub fn md_step(&mut self, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
         if !self.volatile.md_local.running {
             return;
         }
+
+        let dev = self.computation_device();
         let Some(md) = &mut self.volatile.md_local.mol_dynamics else {
             return;
         };
@@ -798,7 +831,7 @@ impl State {
                 post_run_cleanup(self, scene, engine_updates);
                 break;
             }
-            md.step(&self.dev, self.to_save.md.dt, None);
+            md.step(&dev, self.to_save.md.dt, None);
             if let Err(error) = md.check_force_error() {
                 self.volatile.md_local.running = false;
                 handle_err(&mut self.ui, format!("MD stopped: {error}"));
@@ -870,7 +903,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
     let peptide_residues = peptide_residue_map(state);
 
     match build_dynamics_with_residues(
-        &state.dev,
+        &state.computation_device(),
         &mols,
         selected_params,
         &state.mol_specific_params,
@@ -1023,7 +1056,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
 
             if let Some(lambda) = alchemical {
                 // Decouple the first molecule, matching the water_sol.rs convention.
-                if let Err(e) = md.configure_alchemical_window(&state.dev, 0, lambda) {
+                if let Err(e) = md.configure_alchemical_window(&state.computation_device(), 0, lambda) {
                     handle_err(
                         &mut state.ui,
                         format!("Unable to configure alchemical window: {e}"),
@@ -1122,7 +1155,7 @@ pub fn launch_md_energy_computation(state: &State) -> Result<Snapshot, ParamErro
 
     // state.volatile.md_local.pep_atom_set = pep_atom_set;
 
-    compute_energy_snapshot(&state.dev, &mols, selected_params)
+    compute_energy_snapshot(&state.computation_device(), &mols, selected_params)
 }
 
 /// A helper to reduce repetition. Loads references to mols in state that are selected for MD.

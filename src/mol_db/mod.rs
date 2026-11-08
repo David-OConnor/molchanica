@@ -426,6 +426,10 @@ pub struct ParquetMolDb {
 }
 
 impl ParquetMolDb {
+    pub fn release_table_cache(&mut self) {
+        self.idents_cache = None;
+    }
+
     /// Create / open a DB at a parquet file path.
     ///
     /// Eagerly loads only the lightweight metadata columns (smiles, pubchem_cid, pubchem_title,
@@ -1393,6 +1397,29 @@ impl State {
             DbSel::Hmdb => self.hmdb_mol_db.as_ref(),
             DbSel::Chebi => self.chebi_mol_db.as_ref(),
             DbSel::Loaded(i) => self.volatile.parquet_dbs.get(i),
+        }
+    }
+
+    pub fn release_mol_db_caches(&mut self) {
+        if self.ui.popup.parquet_db {
+            return;
+        }
+
+        self.ui.popup.parquet_db_view = Default::default();
+        for db in self
+            .volatile
+            .parquet_dbs
+            .iter_mut()
+            .chain(self.hmdb_mol_db.iter_mut())
+            .chain(self.chebi_mol_db.iter_mut())
+        {
+            db.release_table_cache();
+        }
+        if !self.ui.popup.pharmacophore_screening && !self.ui.popup.alignment_screening {
+            self.hmdb_mol_db = None;
+            self.chebi_mol_db = None;
+            self.volatile.thread_receivers.builtin_mol_dbs = None;
+            self.volatile.builtin_mol_db_load_started = false;
         }
     }
 }

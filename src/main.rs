@@ -155,14 +155,6 @@ fn main() {
     // per-user data directory instead of beside the executable.
     external_tools::migrate_legacy_data();
 
-    #[cfg(not(feature = "cuda"))]
-    let dev = dynamics::ComputationDevice::Cpu;
-
-    #[cfg(feature = "cuda")]
-    let (dev, kernel_reflections) = util::get_computation_device();
-
-    // let dev = dynamics::ComputationDevice::Cpu;
-
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512f") {
@@ -174,17 +166,7 @@ fn main() {
         }
     }
 
-    println!("Using computing device: {:?}\n", dev);
-
-    let mut state = State {
-        dev,
-        ..Default::default()
-    };
-
-    #[cfg(feature = "cuda")]
-    if let Some(k) = kernel_reflections {
-        state.kernel_reflections = Some(k);
-    }
+    let mut state = State::default();
 
     // todo: Consider if you want this here. Currently required when adding H to a molecule.
     // In release mode, takes 20ms on a fast CPU. (todo: Test on a slow CPU.)

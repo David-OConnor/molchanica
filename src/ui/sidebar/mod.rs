@@ -933,7 +933,7 @@ fn traj_items(
     ui.separator();
 
     if let Some(i) = close {
-        close_traj(state, i);
+        close_traj(state, i, scene, redraw, updates);
     }
 
     // We have this as the function calls in this branch which call state have a borrow
@@ -997,10 +997,14 @@ fn md_property_runners(
         match crystal::run_crystal_sim(
             &mol,
             state.to_save.md.backend,
-            &state.dev,
+            &state.computation_device(),
             &state.ff_param_set,
         ) {
             Ok((data, snaps)) => {
+                let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
+                for traj in &mut state.trajectories {
+                    traj.ui_active = false;
+                }
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps,
                     "Crystal sim".to_string(),
@@ -1032,7 +1036,7 @@ fn md_property_runners(
         match water_sol::run_sol_sim(
             &mol,
             state.to_save.md.backend, // todo: for testing, let the UI control this.
-            &state.dev,
+            &state.computation_device(),
             &state.ff_param_set,
         ) {
             Ok((data, snaps)) => {
@@ -1045,6 +1049,10 @@ fn md_property_runners(
                         .unwrap_or_default()
                 };
 
+                let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
+                for traj in &mut state.trajectories {
+                    traj.ui_active = false;
+                }
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps.clone(),
                     "Water sol sim".to_string(),
@@ -1070,6 +1078,7 @@ fn md_property_runners(
                 }
                 state.volatile.md_local.viewer.mol_set_active = Some(set_i);
                 state.volatile.md_local.replace_snaps(snaps);
+                state.trajectories.last_mut().unwrap().ui_active = true;
                 viewer::draw_mols(state, scene, updates);
                 redraw.set_all();
 
@@ -1103,7 +1112,7 @@ fn md_property_runners(
         match water_sol_mix::run_boundary_layer_sol_sim(
             &mol,
             state.to_save.md.backend,
-            &state.dev,
+            &state.computation_device(),
             &state.ff_param_set,
         ) {
             Ok((data, snaps)) => {
@@ -1112,6 +1121,10 @@ fn md_property_runners(
                     .map(|snap| snap.water_o_posits.len())
                     .unwrap_or_default();
 
+                let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
+                for traj in &mut state.trajectories {
+                    traj.ui_active = false;
+                }
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps.clone(),
                     "Water/solute layer sim".to_string(),
@@ -1138,6 +1151,7 @@ fn md_property_runners(
                 }
                 state.volatile.md_local.viewer.mol_set_active = Some(set_i);
                 state.volatile.md_local.replace_snaps(snaps);
+                state.trajectories.last_mut().unwrap().ui_active = true;
                 viewer::draw_mols(state, scene, updates);
                 redraw.set_all();
 
@@ -1166,14 +1180,14 @@ fn md_property_runners(
     }
 
     if run_shrinking_box {
-        // sol_shrinking_box::runner::run_on_select_mols(&state.dev, &state.ff_param_set);
+        // sol_shrinking_box::runner::run_on_select_mols(&state.computation_device(), &state.ff_param_set);
 
         match sol_shrinking_box::run_shrinking_box_sim(
             &mol,
             // sol_shrinking_box::ShrinkingBoxMode::HomogeneousMix,
             sol_shrinking_box::ShrinkingBoxMode::WaterSoluteLayers,
             state.to_save.md.backend,
-            &state.dev,
+            &state.computation_device(),
             &state.ff_param_set,
         ) {
             Ok((data, snaps, playback_mols)) => {
@@ -1182,6 +1196,10 @@ fn md_property_runners(
                     .map(|snap| snap.water_o_posits.len())
                     .unwrap_or(data.water_molecule_count);
 
+                let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
+                for traj in &mut state.trajectories {
+                    traj.ui_active = false;
+                }
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps.clone(),
                     "Shrinking box sim".to_string(),
@@ -1213,6 +1231,7 @@ fn md_property_runners(
 
                 state.volatile.md_local.viewer.mol_set_active = Some(set_i);
                 state.volatile.md_local.replace_snaps(snaps);
+                state.trajectories.last_mut().unwrap().ui_active = true;
 
                 viewer::draw_mols(state, scene, updates);
                 redraw.set_all();
