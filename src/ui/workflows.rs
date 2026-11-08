@@ -76,58 +76,51 @@ pub fn label_controls(state: &mut State, ui: &mut Ui) {
     });
 }
 
-pub fn slab_controls(
-    state: &mut State,
-    scene: &mut Scene,
-    updates: &mut EngineUpdates,
-    ui: &mut Ui,
-) {
-    ui.menu_button("Slab", |ui| {
-        let before = state.to_save.inspection.slab.clone();
-        if ui.button("10 Å slice around selection").clicked() {
-            state.ui.workflows.message = center_slab(state, "sele", 10.).err().unwrap_or_default();
+pub fn slab_controls(state: &mut State, ui: &mut Ui) -> bool {
+    let before = state.to_save.inspection.slab.clone();
+    if ui.button("10 Å slice around selection").clicked() {
+        state.ui.workflows.message = center_slab(state, "sele", 10.).err().unwrap_or_default();
+    }
+
+    if let Some(slab) = &mut state.to_save.inspection.slab {
+        ui.label("Thickness:");
+        ui.add(
+            egui::DragValue::new(&mut slab.thickness)
+                .range(0.1..=10000.)
+                .speed(0.1)
+                .suffix(" Å"),
+        );
+
+        ui.spacing_mut().slider_width = 60.;
+        ui.add(
+            egui::Slider::new(&mut slab.offset, -100.0..=100.0)
+                .clamping(egui::SliderClamping::Never)
+                .text("Slide (Å)"),
+        )
+        .on_hover_text("Positive offset moves away from you.");
+
+        ui.label("Center offset:");
+        ui.add(
+            egui::DragValue::new(&mut slab.offset)
+                .speed(0.1)
+                .suffix(" Å"),
+        );
+
+        let thickness = slab.thickness;
+        if ui.button("Recenter on selection").clicked() {
+            state.ui.workflows.message = center_slab(state, "sele", thickness)
+                .err()
+                .unwrap_or_default();
         }
-        if let Some(slab) = &mut state.to_save.inspection.slab {
-            ui.checkbox(&mut slab.enabled, "Enable clipping slab");
-            ui.horizontal(|ui| {
-                ui.label("Thickness:");
-                ui.add(
-                    egui::DragValue::new(&mut slab.thickness)
-                        .range(0.1..=10000.)
-                        .speed(0.1)
-                        .suffix(" Å"),
-                );
-            });
-            ui.add(
-                egui::Slider::new(&mut slab.offset, -100.0..=100.0)
-                    .clamping(egui::SliderClamping::Never)
-                    .text("Slide (Å)"),
-            );
-            ui.horizontal(|ui| {
-                ui.label("Center offset:");
-                ui.add(
-                    egui::DragValue::new(&mut slab.offset)
-                        .speed(0.1)
-                        .suffix(" Å"),
-                );
-            });
-            let thickness = slab.thickness;
-            if ui.button("Recenter on selection").clicked() {
-                state.ui.workflows.message = center_slab(state, "sele", thickness)
-                    .err()
-                    .unwrap_or_default();
-            }
-        }
-        ui.small("The slab follows the viewing direction. Positive offset moves away from you.");
-        if before != state.to_save.inspection.slab {
-            state.to_save.save_flag = true;
-            crate::cam::set_fog(state, &mut scene.camera);
-            updates.camera = true;
-        }
-        if !state.ui.workflows.message.is_empty() {
-            ui.label(&state.ui.workflows.message);
-        }
-    });
+    }
+
+    let changed = before != state.to_save.inspection.slab;
+    state.to_save.save_flag |= changed;
+    if !state.ui.workflows.message.is_empty() {
+        ui.label(&state.ui.workflows.message);
+    }
+
+    changed
 }
 
 pub fn command_window(

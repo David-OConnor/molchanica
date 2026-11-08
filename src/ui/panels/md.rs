@@ -176,6 +176,9 @@ pub fn md_setup(
                 md::start_md(state, scene, updates)
             }
 
+            ui.add_space(COL_SPACING / 2.);
+            force_field_cfg(state, ui);
+
             let gromacs_available = external_tools::is_installed(Tool::Gromacs);
             let orca_available = external_tools::is_installed(Tool::Orca);
             let gfnff = state.force_fields.family == ForceFieldFamily::Gfnn;
@@ -296,8 +299,6 @@ pub fn md_setup(
         long-range reciprical forces at this distance. For LJ, may represent a hard-cutoff. See the appropriate docs for \
         the backend used, details vary.";
         ui.horizontal_wrapped(|ui| {
-            force_field_cfg(state, ui);
-            ui.add_space(COL_SPACING / 2.);
             integrator_cfg(state, ui);
 
             if state.force_fields.family != ForceFieldFamily::Gfnn {

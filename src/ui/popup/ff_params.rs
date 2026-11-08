@@ -354,6 +354,7 @@ pub struct FfParamsUi {
     /// The result of the last load, save, or restore: (message, is error).
     pub status: Option<(String, bool)>,
     pub gfnff_executable: Option<String>,
+    pub gfnff_library: Option<String>,
     pub gfnff_molecule: usize,
     pub gfnff_report: Option<dynamics::params::potential::PotentialEvaluation>,
     pub gfnff_job: Option<
@@ -1641,6 +1642,36 @@ fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default()
     });
+    let library = state.ui.ff_params.gfnff_library.get_or_insert_with(|| {
+        set.library
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    ui.horizontal(|ui| {
+        use dynamics::params::gfnff::GfnffEngine;
+
+        ui.label("Dynamics forces:");
+        egui::ComboBox::from_id_salt("gfnff_engine")
+            .selected_text(match set.engine {
+                GfnffEngine::Auto => "Auto",
+                GfnffEngine::Library => "libxtb",
+                GfnffEngine::Executable => "Executable",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut set.engine, GfnffEngine::Auto, "Auto");
+                ui.selectable_value(&mut set.engine, GfnffEngine::Library, "libxtb");
+                ui.selectable_value(&mut set.engine, GfnffEngine::Executable, "Executable");
+            });
+    });
+    ui.horizontal(|ui| {
+        ui.label("libxtb file or directory:");
+        if ui.text_edit_singleline(library).lost_focus() {
+            set.library =
+                (!library.trim().is_empty()).then(|| std::path::PathBuf::from(library.trim()));
+        }
+    });
+    ui.small("Auto prefers libxtb, then the executable. Blank library path uses XTB_LIBRARY or automatic discovery.");
     ui.horizontal(|ui| {
         ui.label("xTB executable:");
         if ui.text_edit_singleline(path).lost_focus() {
@@ -1653,7 +1684,7 @@ fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
         }
     });
     ui.small(
-        "Leave blank to use XTB_EXECUTABLE, the xTB installed from Third-party tools, or xtb on          PATH. Each step runs xTB with the cached topology.",
+        "Inspection uses the executable for charges and energy terms. Leave blank for the installed xTB or XTB_EXECUTABLE/PATH.",
     );
     let mut override_charge = set.total_charge.is_some();
     if ui
@@ -1673,6 +1704,7 @@ fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
     if ui.button("Reload xTB and reassign").clicked() {
         state.force_fields.invalidate();
         state.ui.ff_params.gfnff_executable = None;
+        state.ui.ff_params.gfnff_library = None;
         state.ui.ff_params.gfnff_report = None;
         state.ui.ff_params.gfnff_job = None;
     }

@@ -6,7 +6,7 @@ use std::{
     fmt::{Display, Formatter},
     path::Path,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bincode::{Decode, Encode};
@@ -816,8 +816,10 @@ impl State {
             return;
         };
 
-        let steps = if md.cfg.ff_family == ForceFieldFamily::Gfnn {
-            1
+        let gfnff = md.cfg.ff_family == ForceFieldFamily::Gfnn;
+        let frame_start = Instant::now();
+        let steps = if gfnff {
+            usize::MAX
         } else {
             MD_STEPS_PER_APPLICATION_FRAME
         };
@@ -836,6 +838,10 @@ impl State {
             if let Err(error) = md.check_force_error() {
                 self.volatile.md_local.running = false;
                 handle_err(&mut self.ui, format!("MD stopped: {error}"));
+                break;
+            }
+
+            if gfnff && frame_start.elapsed() >= Duration::from_millis(8) {
                 break;
             }
         }

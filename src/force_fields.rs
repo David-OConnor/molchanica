@@ -726,6 +726,7 @@ impl State {
         self.force_fields.params = params;
         self.force_fields.sync_xtb();
         self.ui.ff_params.gfnff_executable = None;
+        self.ui.ff_params.gfnff_library = None;
         let previous_family = self.force_fields.family;
         self.force_fields.family = family;
         if family == ForceFieldFamily::Opls {

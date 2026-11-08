@@ -1292,37 +1292,82 @@ pub(crate) fn cam_controls(
 
     ui.add_space(COL_SPACING);
     ui.label("Depth:");
-    workflows::slab_controls(state, scene, engine_updates, ui);
     let depth_mode = state.to_save.depth_mode;
     let depth_options = [
         (
-            DepthMode::Disabled,
+            Some(DepthMode::Disabled),
             "Disabled",
             "Show objects at any depth without distance fading.",
         ),
         (
-            DepthMode::Auto,
+            Some(DepthMode::Auto),
             "Auto",
             "Automatically adjust the far distance based on visible molecules.",
         ),
         (
-            DepthMode::Manual((VIEW_DEPTH_NEAR_MIN, cam::VIEW_DEPTH_DEFAULT)),
+            Some(DepthMode::Manual((
+                VIEW_DEPTH_NEAR_MIN,
+                cam::VIEW_DEPTH_DEFAULT,
+            ))),
             "Manual",
             "Set the near clip plane and far fade distance yourself.",
         ),
+        (
+            None,
+            "Slab",
+            "Clip to a slice that follows the viewing direction.",
+        ),
     ];
 
-    // A manual mode's values vary, so compare by variant rather than by full value.
-    let selected = match depth_mode {
-        DepthMode::Manual(_) => depth_options[2].0,
-        mode => mode,
+    let slab_enabled = state
+        .to_save
+        .inspection
+        .slab
+        .as_ref()
+        .is_some_and(|s| s.enabled);
+    let selected = if slab_enabled {
+        None
+    } else {
+        // Compare Manual by variant, since its distances vary.
+        match depth_mode {
+            DepthMode::Manual(_) => depth_options[2].0,
+            mode => Some(mode),
+        }
     };
     if let Some(mode) = misc::selector(ui, selected, &depth_options) {
-        state.to_save.select_depth_mode(mode);
+        let enable_slab = mode.is_none();
+        state
+            .to_save
+            .select_depth_mode(mode.unwrap_or(DepthMode::Disabled));
+
+        if enable_slab
+            && state.to_save.inspection.slab.is_none()
+            && crate::annotations::center_slab(state, "sele", 10.).is_err()
+        {
+            state.to_save.inspection.slab = Some(crate::annotations::Slab {
+                enabled: true,
+                anchor: orbit_center(state).into(),
+                offset: 0.,
+                thickness: 10.,
+            });
+        }
+        if let Some(slab) = &mut state.to_save.inspection.slab {
+            slab.enabled = enable_slab;
+        }
+
+        state.to_save.save_flag = true;
         changed = true;
     }
 
-    if let DepthMode::Manual(depth) = &mut state.to_save.depth_mode {
+    if state
+        .to_save
+        .inspection
+        .slab
+        .as_ref()
+        .is_some_and(|s| s.enabled)
+    {
+        changed |= workflows::slab_controls(state, ui);
+    } else if let DepthMode::Manual(depth) = &mut state.to_save.depth_mode {
         ui.spacing_mut().slider_width = 60.;
         let depth_prev = *depth;
 
