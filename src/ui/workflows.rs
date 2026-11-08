@@ -78,7 +78,7 @@ pub fn label_controls(state: &mut State, ui: &mut Ui) {
 
 pub fn slab_controls(state: &mut State, ui: &mut Ui) -> bool {
     let before = state.to_save.inspection.slab.clone();
-    if ui.button("10 Å slice around selection").clicked() {
+    if ui.button("10 Å around sel").clicked() {
         state.ui.workflows.message = center_slab(state, "sele", 10.).err().unwrap_or_default();
     }
 
@@ -95,11 +95,11 @@ pub fn slab_controls(state: &mut State, ui: &mut Ui) -> bool {
         ui.add(
             egui::Slider::new(&mut slab.offset, -100.0..=100.0)
                 .clamping(egui::SliderClamping::Never)
-                .text("Slide (Å)"),
+                .text("Slide:"),
         )
         .on_hover_text("Positive offset moves away from you.");
 
-        ui.label("Center offset:");
+        ui.label("Offset:");
         ui.add(
             egui::DragValue::new(&mut slab.offset)
                 .speed(0.1)
