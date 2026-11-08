@@ -5,7 +5,6 @@ use graphics::Scene;
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::MolGenericRef;
 
-use crate::ui::{COL_SPACING, COLOR_ACTION};
 use crate::{
     button,
     drawing::{CHARGE_MAP_MAX, CHARGE_MAP_MIN},
@@ -15,7 +14,7 @@ use crate::{
     },
     selection::{ViewSelLevel, expression},
     state::State,
-    ui::{ROW_SPACING, misc},
+    ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING, misc},
     util::RedrawFlags,
 };
 

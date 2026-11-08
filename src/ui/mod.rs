@@ -1033,16 +1033,19 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         section_box().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 view_settings(state, scene, &mut updates, &mut redraw, ui);
-                if ui.add_enabled(state.peptides.len() >= 2, egui::Button::new("Compare proteins")).clicked() {
+                if state.peptides.len() >= 2 && button!(ui, "Compare proteins", Color32::GRAY, "Compare and align 2 proteins").clicked() {
                     state.ui.popup.protein_comparison = true;
                 }
-                if ui.button("Selections / layers").clicked() {
+
+                if ui.button("Sel / layers").clicked() {
                     state.ui.popup.selections = true;
                 }
-                if ui.button("Measurements / colors").clicked() {
+
+                if button!(ui, "Measure / colors", Color32::GRAY, "Measure distances and angles, and set color schemes based on atom or residue properties").clicked() {
                     state.ui.inspection.open = true;
                 }
-                if ui.button("Publication figure").clicked() {
+
+                if button!(ui, "Figure", Color32::GRAY, "Create a figure suitable for publication.").clicked() {
                     state.publication.open = true;
                 }
 

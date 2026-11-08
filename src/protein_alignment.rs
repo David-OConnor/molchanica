@@ -682,11 +682,18 @@ impl Comparison {
         if let Some(before) = before
             && let Some(after) = crate::mol_manip::Pose::capture(state, before.mode)
         {
-            state.volatile.history.push(crate::edit_history::Operation::Pose {
-                before,
-                after,
-                label: if undo { "Undo protein fit" } else { "Protein fit" },
-            });
+            state
+                .volatile
+                .history
+                .push(crate::edit_history::Operation::Pose {
+                    before,
+                    after,
+                    label: if undo {
+                        "Undo protein fit"
+                    } else {
+                        "Protein fit"
+                    },
+                });
         }
         state.volatile.mol_manip.mode = ManipMode::None;
         state.volatile.mol_manip.ribbon_mesh_transform = PeptideMeshTransform::default();
