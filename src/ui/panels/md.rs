@@ -214,7 +214,9 @@ pub fn md_setup(
                     "Select the MD engine. GROMACS requires an installed executable."
                 });
 
-            if !gfnff && !external_tools::is_installed(Tool::Gromacs) {
+            if state.to_save.md.backend == MdBackend::Gromacs
+                && !external_tools::is_installed(Tool::Gromacs)
+            {
                 install_btn(state, Tool::Gromacs, ui);
             }
 
