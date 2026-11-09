@@ -2,6 +2,7 @@ pub mod about;
 pub mod binding;
 pub mod external_tools;
 pub mod ff_params;
+mod flex_lists;
 pub mod mol_db;
 pub mod pharmacophore;
 pub mod protein_comparison;
@@ -314,7 +315,7 @@ pub(in crate::ui) fn load_popups(
             popup("Protein design")
                 .id(Id::new("protein_tools"))
                 .default_width(760.0)
-                .max_height(1000.0),
+                .default_height(900.0),
             ui.ctx(),
             |ui| protein_tools(state, scene, ui, redraw, updates),
         );
@@ -370,14 +371,14 @@ fn protein_tools(
                     result to ProteinMPNN to get a sequence.",
                 ),
                 (
-                    ProteinToolsTab::PredictSequence,
-                    "Predict sequence",
-                    "Predict amino-acid sequences for a protein backbone using ProteinMPNN.",
-                ),
-                (
                     ProteinToolsTab::PredictStructure,
                     "Predict structure",
                     "Predict a structure from an amino-acid or nucleotide sequence.",
+                ),
+                (
+                    ProteinToolsTab::PredictSequence,
+                    "Predict sequence",
+                    "Predict amino-acid sequences for a protein backbone using ProteinMPNN.",
                 ),
                 (
                     ProteinToolsTab::Binding,
@@ -411,10 +412,9 @@ fn protein_tools(
         }
         ProteinToolsTab::Binding => {
             // The tall one. Scrolled here, not by the window, to keep the tabs in view.
-            ScrollArea::vertical()
-                .id_salt("protein_tools_binding")
-                .auto_shrink(false)
-                .show(ui, |ui| binding::editor(state, scene, ui, redraw, updates));
+            flex_lists::page(ui, "protein_tools_binding", |ui, lists| {
+                binding::editor(state, scene, lists, ui, redraw, updates);
+            });
         }
     }
 }

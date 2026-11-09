@@ -6,11 +6,11 @@ use std::{
     time::Duration,
 };
 
-use egui::{Color32, ComboBox, DragValue, ScrollArea, TextEdit, Ui};
+use egui::{Color32, ComboBox, DragValue, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::MolType;
 
-use super::tool_runner::ToolWindow;
+use super::{flex_lists::PageLists, tool_runner::ToolWindow};
 use crate::{
     drug_design::binding::{self, PoseReport, PredictionOptions, PredictionRequest},
     protein_alignment,
@@ -184,9 +184,10 @@ fn select_atoms(
     state.ui.selection = Selection::Atoms(selected);
 }
 
-pub fn editor(
+pub(super) fn editor(
     state: &mut State,
     scene: &mut Scene,
+    lists: &mut PageLists,
     ui: &mut Ui,
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
@@ -332,29 +333,26 @@ pub fn editor(
                 }
             });
             egui::CollapsingHeader::new("Contact and clash details").show(ui, |ui| {
-                ScrollArea::vertical()
-                    .id_salt("binding_pose_details")
-                    .max_height(180.)
-                    .show(ui, |ui| {
-                        for contact in &report.contacts {
-                            ui.label(format!(
-                                "{}: {:.2} Å closest, {} atom pairs",
-                                contact.label, contact.closest_distance_a, contact.atom_pairs
-                            ));
-                        }
-                        for clash in &report.clashes {
-                            ui.label(format!(
-                                "Protein atom {} / ligand atom {}: {:.2} Å, overlap {:.2} Å",
-                                clash.protein_atom_sn,
-                                clash.ligand_atom_sn,
-                                clash.distance_a,
-                                clash.overlap_a
-                            ));
-                        }
-                        for outlier in &report.bond_length_outliers {
-                            ui.colored_label(Color32::ORANGE, outlier);
-                        }
-                    });
+                lists.show(ui, "binding_pose_details", 180., |ui| {
+                    for contact in &report.contacts {
+                        ui.label(format!(
+                            "{}: {:.2} Å closest, {} atom pairs",
+                            contact.label, contact.closest_distance_a, contact.atom_pairs
+                        ));
+                    }
+                    for clash in &report.clashes {
+                        ui.label(format!(
+                            "Protein atom {} / ligand atom {}: {:.2} Å, overlap {:.2} Å",
+                            clash.protein_atom_sn,
+                            clash.ligand_atom_sn,
+                            clash.distance_a,
+                            clash.overlap_a
+                        ));
+                    }
+                    for outlier in &report.bond_length_outliers {
+                        ui.colored_label(Color32::ORANGE, outlier);
+                    }
+                });
             });
             ui.small("A geometric screen only: heavy-atom bond lengths outside 0.7–2.5 Å are flagged. Protonation, stereochemistry, intraligand strain, and directional interactions are not validated. Passing does not establish binding.");
         }
@@ -386,7 +384,7 @@ pub fn editor(
                     }
                 }).collect();
                 ui.add(TextEdit::multiline(&mut sequence.as_str()).desired_rows(3).desired_width(f32::INFINITY));
-                ScrollArea::vertical().id_salt("binding_residue_mapping").max_height(120.).show(ui, |ui| {
+                lists.show(ui, "binding_residue_mapping", 120., |ui| {
                     for (position, &r) in residues.iter().enumerate() {
                         ui.label(format!("{} → A:{}", binding::residue_label(protein, r), position + 1));
                     }
@@ -421,7 +419,7 @@ pub fn editor(
                 });
                 ui.add(TextEdit::singleline(&mut editor.residue_filter).hint_text("Filter residue name or number"));
                 let filter = editor.residue_filter.to_ascii_lowercase();
-                ScrollArea::vertical().id_salt("binding_residues").max_height(150.).show(ui, |ui| {
+                lists.show(ui, "binding_residues", 150., |ui| {
                     for r in binding::chain_residues(protein, editor.chain) {
                         let label = binding::residue_label(protein, r);
                         if !label.to_ascii_lowercase().contains(&filter) {
@@ -446,7 +444,7 @@ pub fn editor(
         );
         load = editor
             .runner
-            .binding_controls(&state.volatile.ongoing_computations, ui, || {
+            .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
                 if stale_site {
                     return Err(
                         "Refresh or clear the stale binding-site guidance before predicting."
@@ -488,7 +486,7 @@ pub fn editor(
         // Saved results remain accessible even after input objects have been closed.
         load = editor
             .runner
-            .binding_controls(&state.volatile.ongoing_computations, ui, || {
+            .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
                 Err("Choose an open protein and ligand before predicting.".into())
             });
     }

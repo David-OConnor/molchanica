@@ -18,6 +18,7 @@ use std::{
 use bio_tools::tool_definitions::catalog::DataCategory;
 use egui::{
     Button, CollapsingHeader, Color32, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui,
+    UiBuilder,
 };
 use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{EngineUpdates, Scene};
@@ -25,6 +26,7 @@ use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::{SeqType, Sequence};
 use serde_json::{Map, Value, json};
 
+use super::flex_lists::{self, PageLists};
 use crate::{
     external_tools::{
         self, RunControl, Tool,
@@ -783,6 +785,8 @@ pub(crate) struct ToolWindow {
     /// `None` shows the job setup form.
     results_heading: Option<&'static str>,
     boltz_outputs: HashMap<PathBuf, Vec<(String, Result<Value, String>)>>,
+    /// Height of the controls under the form, as of last frame.
+    footer_height: f32,
 }
 
 impl ToolWindow {
@@ -811,6 +815,7 @@ impl ToolWindow {
             pending_sequence: None,
             results_heading: None,
             boltz_outputs: HashMap::new(),
+            footer_height: 0.,
         }
     }
 
@@ -859,9 +864,10 @@ impl ToolWindow {
 
     /// Reuse installation, cancellation, retained run history, and structure import for a
     /// workflow that builds scientific inputs from loaded molecules instead of raw fields.
-    pub(crate) fn binding_controls(
+    pub(super) fn binding_controls(
         &mut self,
         computations: &Computations,
+        lists: &mut PageLists,
         ui: &mut Ui,
         make_request: impl FnOnce() -> Result<crate::drug_design::binding::PredictionRequest, String>,
     ) -> Option<PathBuf> {
@@ -931,7 +937,7 @@ impl ToolWindow {
         if !self.results.is_empty() {
             ui.small("Results below belong to their saved inputs, which may differ from the current controls.");
         }
-        self.results_ui(ui)
+        self.results_ui(lists, ui)
     }
 
     /// Start a job on a worker thread, reporting through [`Self::poll`]. `computation` is released
@@ -1098,6 +1104,7 @@ impl ToolWindow {
                 &mut pick,
                 &mut pick_sequence,
                 &mut use_sequence,
+                self.footer_height,
                 ui,
             );
         });
@@ -1125,11 +1132,15 @@ impl ToolWindow {
             self.error = None;
         }
 
+        // Not allocated in `ui`, as a frame of overflow would grow the window for good. Its space
+        // is reserved below, from last frame's height.
+        let mut footer = ui.new_child(UiBuilder::new().max_rect(ui.available_rect_before_wrap()));
+
         let mut install = false;
         let mut run = false;
         let installed = external_tools::is_installed(self.tool);
 
-        ui.horizontal(|ui| {
+        footer.horizontal(|ui| {
             if installed {
                 run = ui
                     .add_enabled(
@@ -1193,11 +1204,11 @@ impl ToolWindow {
             }
         }
 
-        self.status_ui(ui);
+        self.status_ui(&mut footer);
 
         if !self.results.is_empty() && !busy {
-            ui.add_space(ROW_SPACING);
-            if ui
+            footer.add_space(ROW_SPACING);
+            if footer
                 .button("View results ▶")
                 .on_hover_text("Show the results of this window's previous runs.")
                 .clicked()
@@ -1206,6 +1217,15 @@ impl ToolWindow {
                 self.message = None;
                 self.results_heading = Some("Previous results");
             }
+        }
+
+        ui.add_space(self.footer_height);
+
+        // Whole pixels, so `add_space`'s rounding can't creep the window taller.
+        let footer_height = footer.min_rect().height().ceil();
+        if footer_height != self.footer_height {
+            self.footer_height = footer_height;
+            ui.ctx().request_repaint();
         }
 
         None
@@ -1243,7 +1263,9 @@ impl ToolWindow {
         self.status_ui(ui);
         ui.add_space(ROW_SPACING);
 
-        self.results_ui(ui)
+        flex_lists::page(ui, "tool_results_page", |ui, lists| {
+            self.results_ui(lists, ui)
+        })
     }
 
     /// Route a file the dialog returned: into a form field, or as the destination of an export.
@@ -1375,7 +1397,7 @@ impl ToolWindow {
     }
 
     /// Past runs: their files, a preview, and the adapter's diagnostics.
-    fn results_ui(&mut self, ui: &mut Ui) -> Option<PathBuf> {
+    fn results_ui(&mut self, lists: &mut PageLists, ui: &mut Ui) -> Option<PathBuf> {
         if self.results.is_empty() {
             return None;
         }
@@ -1444,26 +1466,23 @@ impl ToolWindow {
             .collect();
         if !structures.is_empty() {
             ui.label(RichText::new("Structures").strong());
-            ScrollArea::vertical()
-                .id_salt("tool_result_structures")
-                .max_height(160.0)
-                .show(ui, |ui| {
-                    for path in structures {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(RichText::new("Load structure").color(COLOR_ACTION))
-                                .clicked()
-                            {
-                                match structure_for_loading(path, &result.directory) {
-                                    Ok(path) => load = Some(path),
-                                    Err(error) => self.error = Some(error.to_string()),
-                                }
+            lists.show(ui, "tool_result_structures", 160.0, |ui| {
+                for path in structures {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(RichText::new("Load structure").color(COLOR_ACTION))
+                            .clicked()
+                        {
+                            match structure_for_loading(path, &result.directory) {
+                                Ok(path) => load = Some(path),
+                                Err(error) => self.error = Some(error.to_string()),
                             }
-                            ui.label(output_label(result, path))
-                                .on_hover_text(path.display().to_string());
-                        });
-                    }
-                });
+                        }
+                        ui.label(output_label(result, path))
+                            .on_hover_text(path.display().to_string());
+                    });
+                }
+            });
             ui.add_space(4.0);
         }
 
@@ -1484,38 +1503,35 @@ impl ToolWindow {
             }
         });
 
-        ScrollArea::vertical()
-            .id_salt("tool_result_files")
-            .max_height(180.0)
-            .show(ui, |ui| {
-                for path in &result.files {
-                    ui.horizontal(|ui| {
-                        if output_category(path) == Some(DataCategory::Structure)
-                            && ui
-                                .button(RichText::new("Load structure").color(COLOR_ACTION))
-                                .clicked()
-                        {
-                            match structure_for_loading(path, &result.directory) {
-                                Ok(path) => load = Some(path),
-                                Err(error) => self.error = Some(error.to_string()),
-                            }
-                        }
-                        if ui.button("Save…").clicked() {
-                            export = Some(path.clone());
-                        }
-
-                        let label = output_label(result, path);
-                        if ui
-                            .selectable_label(self.selected_file.as_ref() == Some(path), label)
-                            .on_hover_text(path.display().to_string())
+        lists.show(ui, "tool_result_files", 180.0, |ui| {
+            for path in &result.files {
+                ui.horizontal(|ui| {
+                    if output_category(path) == Some(DataCategory::Structure)
+                        && ui
+                            .button(RichText::new("Load structure").color(COLOR_ACTION))
                             .clicked()
-                        {
-                            self.selected_file = Some(path.clone());
-                            self.preview = Some(preview_text(path));
+                    {
+                        match structure_for_loading(path, &result.directory) {
+                            Ok(path) => load = Some(path),
+                            Err(error) => self.error = Some(error.to_string()),
                         }
-                    });
-                }
-            });
+                    }
+                    if ui.button("Save…").clicked() {
+                        export = Some(path.clone());
+                    }
+
+                    let label = output_label(result, path);
+                    if ui
+                        .selectable_label(self.selected_file.as_ref() == Some(path), label)
+                        .on_hover_text(path.display().to_string())
+                        .clicked()
+                    {
+                        self.selected_file = Some(path.clone());
+                        self.preview = Some(preview_text(path));
+                    }
+                });
+            }
+        });
 
         if let Some(text) = &self.preview {
             if self
@@ -1523,7 +1539,7 @@ impl ToolWindow {
                 .as_ref()
                 .is_some_and(|path| output_category(path) == Some(DataCategory::Sequence))
             {
-                sequence_results_ui(text, ui);
+                sequence_results_ui(text, lists, ui);
             }
             ui.horizontal(|ui| {
                 ui.label("Selected output");
@@ -1531,16 +1547,13 @@ impl ToolWindow {
                     ui.ctx().copy_text(text.clone());
                 }
             });
-            ScrollArea::vertical()
-                .id_salt("tool_output_preview")
-                .max_height(220.0)
-                .show(ui, |ui| {
-                    ui.add(
-                        TextEdit::multiline(&mut text.as_str())
-                            .font(egui::TextStyle::Monospace)
-                            .desired_width(f32::INFINITY),
-                    );
-                });
+            lists.show(ui, "tool_output_preview", 220.0, |ui| {
+                ui.add(
+                    TextEdit::multiline(&mut text.as_str())
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY),
+                );
+            });
         }
 
         CollapsingHeader::new("Run details and diagnostics").show(ui, |ui| {
@@ -1548,7 +1561,7 @@ impl ToolWindow {
             if ui.button("Copy details").clicked() {
                 ui.ctx().copy_text(text.clone());
             }
-            ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+            lists.show(ui, "tool_run_details", 180.0, |ui| {
                 ui.label(RichText::new(text).monospace());
             });
         });
@@ -1767,7 +1780,7 @@ fn structure_for_loading(path: &Path, directory: &Path) -> io::Result<PathBuf> {
     Ok(destination)
 }
 
-fn sequence_results_ui(fasta: &str, ui: &mut Ui) {
+fn sequence_results_ui(fasta: &str, lists: &mut PageLists, ui: &mut Ui) {
     let mut records: Vec<(String, String)> = Vec::new();
     for line in fasta.lines() {
         if let Some(header) = line.strip_prefix('>') {
@@ -1780,31 +1793,28 @@ fn sequence_results_ui(fasta: &str, ui: &mut Ui) {
         return;
     }
     ui.label(RichText::new(format!("{} sequence records", records.len())).strong());
-    ScrollArea::vertical()
-        .id_salt("designed_sequences")
-        .max_height(240.0)
-        .show(ui, |ui| {
-            for (index, (header, sequence)) in records.iter().take(500).enumerate() {
-                ui.push_id(index, |ui| {
-                    ui.group(|ui| {
-                        ui.label(header);
-                        ui.horizontal(|ui| {
-                            ui.label(format!(
-                                "{} residues",
-                                sequence.chars().filter(char::is_ascii_alphabetic).count()
-                            ));
-                            if ui.button("Copy sequence").clicked() {
-                                ui.ctx().copy_text(sequence.clone());
-                            }
-                            if ui.button("Copy FASTA").clicked() {
-                                ui.ctx().copy_text(format!(">{header}\n{sequence}\n"));
-                            }
-                        });
-                        ui.label(RichText::new(sequence).monospace());
-                    })
-                });
-            }
-        });
+    lists.show(ui, "designed_sequences", 240.0, |ui| {
+        for (index, (header, sequence)) in records.iter().take(500).enumerate() {
+            ui.push_id(index, |ui| {
+                ui.group(|ui| {
+                    ui.label(header);
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{} residues",
+                            sequence.chars().filter(char::is_ascii_alphabetic).count()
+                        ));
+                        if ui.button("Copy sequence").clicked() {
+                            ui.ctx().copy_text(sequence.clone());
+                        }
+                        if ui.button("Copy FASTA").clicked() {
+                            ui.ctx().copy_text(format!(">{header}\n{sequence}\n"));
+                        }
+                    });
+                    ui.label(RichText::new(sequence).monospace());
+                })
+            });
+        }
+    });
     if records.len() > 500 {
         ui.label("Showing the first 500 records. Save the FASTA file for every sequence.");
     }
@@ -1916,6 +1926,7 @@ fn fields_ui(
     pick: &mut Option<String>,
     pick_sequence: &mut Option<SequenceTarget>,
     use_sequence: &mut Option<(SequenceTarget, usize)>,
+    footer_height: f32,
     ui: &mut Ui,
 ) {
     let before = form.values.clone();
@@ -1925,9 +1936,13 @@ fn fields_ui(
         .structure_field(&form.mode)
         .map(|field| field.name.as_str());
 
+    // Fill the window, less the footer. An egui window can't be dragged taller than its contents.
+    let height = ui.available_height() - footer_height - ui.spacing().item_spacing.y;
+
     ScrollArea::vertical()
         .id_salt("tool_form_scroll")
-        .max_height(480.0)
+        .max_height(height)
+        .auto_shrink([true, false])
         .show(ui, |ui| {
             let groups = form.contract.groups_in_mode(&form.mode);
             for (index, (label, group, fields)) in groups.into_iter().enumerate() {
