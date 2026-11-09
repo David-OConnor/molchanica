@@ -289,6 +289,7 @@ fn residue_text_overlay_entities(
                 .and_then(|c| mol.chains.get(c))
                 .is_some_and(|c| !c.visible)
                 || (atom.hetero && ui.visibility.hide_hetero)
+                || mol.atom_hidden(i)
             {
                 continue;
             }
@@ -749,7 +750,7 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             continue;
         }
 
-        if filtered_out_by_dist[i_atom] {
+        if filtered_out_by_dist[i_atom] || mol.atom_hidden(i_atom) {
             continue;
         }
 
@@ -970,7 +971,10 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
         let atom_0_posit = mol.common.atom_posits[bond.atom_0];
         let atom_1_posit = mol.common.atom_posits[bond.atom_1];
 
-        if filtered_out_by_dist[bond.atom_0] {
+        if filtered_out_by_dist[bond.atom_0]
+            || mol.atom_hidden(bond.atom_0)
+            || mol.atom_hidden(bond.atom_1)
+        {
             continue;
         }
 
@@ -1241,7 +1245,10 @@ fn draw_peptide_one(state: &mut State, scene: &mut Scene, mol_i: usize) {
             // todo: Should we pre-filter these atoms-to-disp by index? Would be faster, but
             // todo I don't wish to expend the effort on that here.
 
-            if filtered_out_by_dist.get(bond.donor) == Some(&true) {
+            if filtered_out_by_dist.get(bond.donor) == Some(&true)
+                || mol.atom_hidden(bond.donor)
+                || mol.atom_hidden(bond.acceptor)
+            {
                 continue;
             }
 

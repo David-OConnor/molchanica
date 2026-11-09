@@ -711,6 +711,7 @@ pub fn build_ribbon_mesh(
     atom_posits: &[Vec3F64],
     residues: &[Residue],
     chains: &[Chain],
+    hidden_residues: &HashSet<usize>,
     res_coloring: ResColoring,
     view_sel_level: ViewSelLevel,
     selection: &Selection,
@@ -742,6 +743,7 @@ pub fn build_ribbon_mesh(
     for (atom_i, atom) in atoms.iter().enumerate() {
         if atom.role == Some(AtomRole::C_Alpha)
             && let Some(r) = atom.residue
+            && !hidden_residues.contains(&r)
         {
             all_ca
                 .entry(r)
@@ -770,6 +772,11 @@ pub fn build_ribbon_mesh(
         if !chain_visible {
             continue;
         }
+
+        let frames: Vec<_> = frames
+            .into_iter()
+            .filter(|f| !hidden_residues.contains(&f.res_idx))
+            .collect();
 
         // A selection may remove residues from the middle of a secondary-structure
         // segment. Never bridge that hole, another chain, or a structural gap.

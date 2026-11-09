@@ -246,10 +246,11 @@ fn materialize_defaults(
                 continue;
             }
             if let MolGenericRef::Peptide(p) = &mol
-                && atom
+                && (atom
                     .chain
                     .and_then(|c| p.chains.get(c))
                     .is_some_and(|c| !c.visible)
+                    || p.atom_hidden(i))
             {
                 continue;
             }
@@ -573,6 +574,8 @@ fn draw_layer(
                 &common.atom_posits,
                 &pep.residues,
                 &chains,
+                // As with chain visibility, a layer draws what it selects.
+                &std::collections::HashSet::new(),
                 ResColoring::Chain,
                 ViewSelLevel::Residue,
                 &Selection::None,

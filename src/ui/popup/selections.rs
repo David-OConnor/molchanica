@@ -580,7 +580,16 @@ pub fn editor(state: &mut State, ui: &mut Ui, redraw: &mut RedrawFlags) {
             }
         }
         if let Some(i) = remove {
-            state.to_save.representations.remove(i);
+            let layer = &state.to_save.representations[i];
+            match crate::protein_alignment::comparison_layer_key(&layer.name).map(str::to_owned) {
+                Some(key) => {
+                    crate::protein_alignment::clear_comparison_view_of(state, &key);
+                    redraw.set_all();
+                }
+                None => {
+                    state.to_save.representations.remove(i);
+                }
+            }
             edit.layer = None;
         }
     });

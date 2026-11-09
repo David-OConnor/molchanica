@@ -531,7 +531,11 @@ pub fn close_peptide(
     }
 
     let path = state.peptides[i].common.path.clone();
+    let mol = mol_defs::molecules::MolGenericRef::Peptide(&state.peptides[i]);
+    let key = crate::selection::expression::object_key(&mol);
+
     state.peptides.remove(i);
+    crate::protein_alignment::clear_comparison_view_of(state, &key);
     clear_peptide_meshes(state, scene, engine_updates);
     state
         .volatile
@@ -882,6 +886,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 &mol.common.atom_posits,
                 &mol.residues,
                 &mol.chains,
+                &mol.hidden_residues,
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &state.ui.selection,
@@ -913,6 +918,7 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
                 &mol.common.atom_posits,
                 &mol.residues,
                 &mol.chains,
+                &mol.hidden_residues,
                 state.ui.res_coloring,
                 state.ui.view_sel_level,
                 &Selection::None,

@@ -971,6 +971,15 @@ pub struct MolDbTableView {
     pub keys: Vec<String>,
 }
 
+/// Which residues the residue management popup lists.
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub enum ResMgmtFilter {
+    #[default]
+    Hetero,
+    AminoAcid,
+    Both,
+}
+
 /// Defines which UI popups are displayed.
 #[derive(Default, Debug)]
 pub struct PopupState {
@@ -999,6 +1008,9 @@ pub struct PopupState {
     pub lig_pocket_creation: bool,
     /// Include smaller disconnected components when creating or detaching a ligand.
     pub lig_include_disconnected: bool,
+    pub res_mgmt_filter: ResMgmtFilter,
+    /// Matches residue name, serial number, or chain.
+    pub res_mgmt_search: String,
     /// Adding a ligand to a protein. `Some` while that popup is open.
     pub lig_attach: Option<LigAttachUi>,
     pub parquet_db: bool,

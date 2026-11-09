@@ -263,7 +263,7 @@ pub(in crate::ui) fn load_popups(
     }
 
     if state.ui.popup.lig_pocket_creation {
-        let open = show_popup(popup("Ligands & pockets from residues"), ui.ctx(), |ui| {
+        let open = show_popup(popup("Residue Management"), ui.ctx(), |ui| {
             protein_res_management::lig_pocket_from_het_res(state, scene, ui, updates);
         });
         state.ui.popup.lig_pocket_creation &= open;

@@ -633,6 +633,47 @@ pub fn compare(
     })
 }
 
+/// The object key of a layer made by `Comparison::comparison_view`.
+pub fn comparison_layer_key(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix("Comparison ")?;
+
+    rest.strip_prefix("Reference: ")
+        .or_else(|| rest.strip_prefix("Mobile: "))
+}
+
+/// Removes an object's comparison layers, and restores the default view they replaced.
+pub fn clear_comparison_view_of(state: &mut State, key: &str) {
+    let to_save = &mut state.to_save;
+
+    let count = to_save.representations.len();
+    to_save
+        .representations
+        .retain(|l| comparison_layer_key(&l.name) != Some(key));
+
+    if to_save.representations.len() == count {
+        return;
+    }
+
+    to_save.hidden_default_objects.retain(|k| k != key);
+    to_save.save_flag = true;
+
+    state.volatile.flags.update_ss_mesh = true;
+}
+
+/// As `clear_comparison_view_of`, for every object.
+pub fn clear_comparison_view(state: &mut State) {
+    let keys: Vec<String> = state
+        .to_save
+        .representations
+        .iter()
+        .filter_map(|l| comparison_layer_key(&l.name).map(str::to_owned))
+        .collect();
+
+    for key in keys {
+        clear_comparison_view_of(state, &key);
+    }
+}
+
 impl Comparison {
     pub fn validate(&self, state: &State) -> Result<(usize, usize), String> {
         let (r, m) = (

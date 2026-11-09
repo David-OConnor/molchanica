@@ -903,6 +903,7 @@ pub fn pick_atom(state: &mut State, scene: &Scene, cursor: (f32, f32)) {
                     .chain
                     .and_then(|i| p.chains.get(i))
                     .is_some_and(|c| !c.visible)
+                    || p.atom_hidden(a)
                 {
                     continue;
                 }

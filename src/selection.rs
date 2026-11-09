@@ -828,11 +828,11 @@ pub(crate) fn handle_selection_attempt(
 
         let atoms_along_ray_pep: Vec<_> = atoms_along_ray_pep
             .into_iter()
-            .filter(|(i, _)| {
+            .filter(|(i, atom_i)| {
                 state.get_mol(MolType::Peptide, *i).is_some_and(|m| {
                     m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
-                })
+                }) && !state.peptides[*i].atom_hidden(*atom_i)
             })
             .collect();
         let atoms_along_ray_lig: Vec<_> = atoms_along_ray_lig
@@ -934,11 +934,19 @@ pub(crate) fn handle_selection_attempt(
 
         let atoms_along_ray_pep: Vec<_> = atoms_along_ray_pep
             .into_iter()
-            .filter(|(i, _)| {
-                state.get_mol(MolType::Peptide, *i).is_some_and(|m| {
+            .filter(|(i, bond_i)| {
+                let visible = state.get_mol(MolType::Peptide, *i).is_some_and(|m| {
                     m.common().visible()
                         && crate::drawing::representations::default_visible(state, &m)
-                })
+                });
+                if !visible {
+                    return false;
+                }
+
+                let pep = &state.peptides[*i];
+                let bond = &pep.common.bonds[*bond_i];
+
+                !pep.atom_hidden(bond.atom_0) && !pep.atom_hidden(bond.atom_1)
             })
             .collect();
         let atoms_along_ray_lig: Vec<_> = atoms_along_ray_lig

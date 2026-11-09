@@ -734,6 +734,9 @@ impl State {
             Ok(mut p) => {
                 p.save_flag = false;
                 self.to_save = p;
+
+                // Comparisons don't outlive the session.
+                crate::protein_alignment::clear_comparison_view(self);
             }
             Err(e) => {
                 eprintln!("Unable to load save file; possibly the first time running: {e:?}.")

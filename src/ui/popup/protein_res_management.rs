@@ -1,22 +1,62 @@
 use bio_files::ResidueType;
-use egui::{Color32, ComboBox, RichText, ScrollArea, TextEdit, Ui};
+use egui::{Button, Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
-    MolType,
+    MolType, Residue,
+    peptide::MoleculePeptide,
     pocket::{POCKET_DIST_THRESH_DEFAULT, Pocket},
 };
 
 use crate::{
     button,
-    drawing::wrappers::draw_all_pockets,
+    drawing::{peptide::draw_peptide, wrappers::draw_all_pockets},
     label,
     peptide_ligands::{attach_lig, detach_het_res, remove_het_res},
     render::MESH_POCKET_START,
-    state::State,
-    ui::{COL_SPACING, COLOR_ACTION, ROW_SPACING},
+    state::{ResMgmtFilter, State},
+    ui::{
+        COL_SPACING, COLOR_ACTION, ROW_SPACING,
+        misc::{active_color, selector},
+    },
     util::make_lig_from_res,
 };
+
+/// Fits "Unhide", so columns don't shift when a row toggles.
+const HIDE_BTN_WIDTH: f32 = 54.;
+
+/// The residue's chain ID, from its first atom.
+fn res_chain_id<'a>(mol: &'a MoleculePeptide, res: &Residue) -> &'a str {
+    res.atoms
+        .first()
+        .and_then(|&i| mol.common.atoms[i].chain)
+        .and_then(|c| mol.chains.get(c))
+        .map(|c| c.id.as_str())
+        .unwrap_or("?")
+}
+
+/// Each whitespace-separated term must match the name, serial number, or chain ID. "chain" limits
+/// the next term to the chain ID. `query` must be lowercase.
+fn res_matches_search(query: &str, res: &Residue, chain: &str) -> bool {
+    let name = res.res_type.to_string().to_lowercase();
+    let serial_number = res.serial_number.to_string();
+    let chain = chain.to_lowercase();
+
+    let mut terms = query.split_whitespace();
+    while let Some(term) = terms.next() {
+        let matched = if term == "chain" {
+            terms.next().is_none_or(|id| id == chain)
+        } else {
+            name.contains(term) || serial_number.contains(term) || term == chain
+        };
+
+        if !matched {
+            return false;
+        }
+    }
+
+    true
+}
 
 /// Create ligands from hetero residues and pockets around protein residues.
 // todo: Move A/R
@@ -39,6 +79,39 @@ pub(in crate::ui::popup) fn lig_pocket_from_het_res(
     ui.separator();
     ui.add_space(ROW_SPACING);
 
+    ui.horizontal(|ui| {
+        let filter_opts = [
+            (
+                ResMgmtFilter::Hetero,
+                "Hetero",
+                "List ligands, ions, cofactors, and other hetero groups.",
+            ),
+            (
+                ResMgmtFilter::AminoAcid,
+                "Amino acid",
+                "List amino acid residues.",
+            ),
+            (
+                ResMgmtFilter::Both,
+                "Both",
+                "List all residues except water.",
+            ),
+        ];
+
+        if let Some(filter) = selector(ui, state.ui.popup.res_mgmt_filter, &filter_opts) {
+            state.ui.popup.res_mgmt_filter = filter;
+        }
+
+        ui.add_space(COL_SPACING / 2.);
+
+        ui.add(
+            TextEdit::singleline(&mut state.ui.popup.res_mgmt_search)
+                .hint_text("Search name, number, chain")
+                .desired_width(200.),
+        );
+    });
+    ui.add_space(ROW_SPACING / 2.);
+
     ui.checkbox(
         &mut state.ui.popup.lig_include_disconnected,
         "Include disconnected fragments",
@@ -54,14 +127,30 @@ pub(in crate::ui::popup) fn lig_pocket_from_het_res(
     let mut create_lig_from_res = None;
     let mut pocket_to_add = None;
     let mut res_to_detach = None;
+    let mut res_to_toggle_hidden = None;
     let mut res_to_remove = None;
     let mut close = false;
+
+    let filter = state.ui.popup.res_mgmt_filter;
+    let search = state.ui.popup.res_mgmt_search.to_lowercase();
 
     let mut residues: Vec<_> = mol
         .residues
         .iter()
         .enumerate()
-        .filter(|(_, res)| !res.atoms.is_empty() && res.res_type != ResidueType::Water)
+        .filter(|(i, res)| {
+            if res.atoms.is_empty() || res.res_type == ResidueType::Water {
+                return false;
+            }
+
+            let in_filter = match filter {
+                ResMgmtFilter::Hetero => mol.is_ligand_res(*i),
+                ResMgmtFilter::AminoAcid => !mol.is_ligand_res(*i),
+                ResMgmtFilter::Both => true,
+            };
+
+            in_filter && res_matches_search(&search, res, res_chain_id(mol, res))
+        })
         .map(|(i, _)| i)
         .collect();
     residues.sort_by_key(|&i| !mol.is_ligand_res(i));
@@ -70,110 +159,138 @@ pub(in crate::ui::popup) fn lig_pocket_from_het_res(
     }
 
     ScrollArea::vertical().max_height(400.).show(ui, |ui| {
-        for res_i in residues {
-            let res = &mol.residues[res_i];
-            // Match the detach API's definition: a hetero group, excluding amino acids/water.
-            let is_ligand = mol.is_ligand_res(res_i);
-            let name = res.res_type.to_string();
-            let chain = res
-                .atoms
-                .first()
-                .and_then(|&i| mol.common.atoms[i].chain)
-                .and_then(|c| mol.chains.get(c))
-                .map(|c| c.id.as_str())
-                .unwrap_or("?");
+        Grid::new("res_mgmt_grid")
+            .num_columns(8)
+            .spacing([ROW_SPACING, ROW_SPACING / 2.])
+            .striped(true)
+            .show(ui, |ui| {
+                for res_i in residues {
+                    let res = &mol.residues[res_i];
+                    // Match the detach API's definition: a hetero group, excluding amino acids/water.
+                    let is_ligand = mol.is_ligand_res(res_i);
+                    let name = res.res_type.to_string();
+                    let hidden = mol.hidden_residues.contains(&res_i);
 
-            ui.horizontal(|ui| {
-                label!(ui, name.clone(), Color32::WHITE);
-                ui.label(format!(
-                    "{}, chain {chain}, {} atoms",
-                    res.serial_number,
-                    res.atoms.len()
-                ));
-                ui.add_space(COL_SPACING / 2.);
+                    label!(ui, name.clone(), Color32::WHITE);
+                    ui.label(res.serial_number.to_string());
+                    ui.label(format!("chain {}", res_chain_id(mol, res)));
+                    ui.label(format!("{} atoms", res.atoms.len()));
 
-                if is_ligand && ui
-                    .button(RichText::new("Make lig").color(COLOR_ACTION))
-                    .on_hover_text(
-                        "Create a ligand using molecules from this residue. It stays part of the \
-                        protein too.",
-                    )
-                    .clicked()
-                {
-                    let mut selected = res.clone();
-                    if !include_disconnected {
-                        selected.atoms = mol.common.largest_connected_component(&res.atoms);
-                    }
-                    create_lig_from_res = Some(selected);
-                    close = true;
-                }
-
-                if !is_ligand
-                    && ui
-                        .button(RichText::new("Make pocket").color(COLOR_ACTION))
-                        .on_hover_text("Create a pocket around this protein residue.")
-                        .clicked()
-                {
-                    let lig_ctr = {
-                        let mut ctr = Vec3::new_zero();
-                        for atom_i in &res.atoms {
-                            // Using local coordinates; this should be independent of the user positioning the protein.
-                            if *atom_i >= mol.common.atoms.len() {
-                                eprintln!(
-                                    "Error: Atom index out of bounds: {} > {}",
-                                    atom_i,
-                                    mol.common.atoms.len()
-                                );
-                                continue;
-                            }
-
-                            ctr += mol.common.atoms[*atom_i].posit;
+                    if is_ligand
+                        && ui
+                            .button(RichText::new("Make lig").color(COLOR_ACTION))
+                            .on_hover_text(
+                                "Create a ligand using molecules from this residue. It stays part \
+                                of the protein too.",
+                            )
+                            .clicked()
+                    {
+                        let mut selected = res.clone();
+                        if !include_disconnected {
+                            selected.atoms = mol.common.largest_connected_component(&res.atoms);
                         }
-                        ctr / res.atoms.len() as f64
-                    };
+                        create_lig_from_res = Some(selected);
+                        close = true;
+                    }
 
-                    let ident = format!("Pocket_{name}");
-                    pocket_to_add = Some(Pocket::new(
-                        mol,
-                        lig_ctr,
-                        POCKET_DIST_THRESH_DEFAULT,
-                        &ident,
-                    ));
+                    if !is_ligand
+                        && ui
+                            .button(RichText::new("Make pocket").color(COLOR_ACTION))
+                            .on_hover_text("Create a pocket around this protein residue.")
+                            .clicked()
+                    {
+                        let lig_ctr = {
+                            let mut ctr = Vec3::new_zero();
+                            for atom_i in &res.atoms {
+                                // Using local coordinates; this should be independent of the user positioning the protein.
+                                if *atom_i >= mol.common.atoms.len() {
+                                    eprintln!(
+                                        "Error: Atom index out of bounds: {} > {}",
+                                        atom_i,
+                                        mol.common.atoms.len()
+                                    );
+                                    continue;
+                                }
 
-                    close = true;
-                }
+                                ctr += mol.common.atoms[*atom_i].posit;
+                            }
+                            ctr / res.atoms.len() as f64
+                        };
 
-                if is_ligand && button!(
-                    ui,
-                    "Detach",
-                    COLOR_ACTION,
-                    "Remove this residue from the protein, and its mmCIF data, and open it as a \
-                    standalone ligand in its current position. You can then move it, and add it \
-                    back to the protein with \"Add to protein\"; this restores the retained atoms' mmCIF records."
-                )
-                .clicked()
-                {
-                    res_to_detach = Some(res_i);
-                }
+                        let ident = format!("Pocket_{name}");
+                        pocket_to_add = Some(Pocket::new(
+                            mol,
+                            lig_ctr,
+                            POCKET_DIST_THRESH_DEFAULT,
+                            &ident,
+                        ));
 
-                if is_ligand && button!(
-                    ui,
-                    "Remove",
-                    Color32::LIGHT_RED,
-                    "Remove this residue from the protein, along with the records describing it \
-                    in its mmCIF data."
-                )
-                .clicked()
-                {
-                    res_to_remove = Some(res_i);
+                        close = true;
+                    }
+
+                    // Empty cells keep the columns aligned on rows without these buttons.
+                    if is_ligand {
+                        if button!(
+                            ui,
+                            "Detach",
+                            COLOR_ACTION,
+                            "Remove this residue from the protein, and its mmCIF data, and open it as a \
+                            standalone ligand in its current position. You can then move it, and add it \
+                            back to the protein with \"Add to protein\"; this restores the retained atoms' mmCIF records."
+                        )
+                        .clicked()
+                        {
+                            res_to_detach = Some(res_i);
+                        }
+                    } else {
+                        ui.label("");
+                    }
+
+                    let hide_text = if hidden { "Unhide" } else { "Hide" };
+                    if ui
+                        .add(
+                            Button::new(RichText::new(hide_text).color(active_color(!hidden)))
+                                .min_size(vec2(HIDE_BTN_WIDTH, 0.)),
+                        )
+                        .on_hover_text("Toggle drawing this residue. Doesn't change the molecule.")
+                        .clicked()
+                    {
+                        res_to_toggle_hidden = Some(res_i);
+                    }
+
+                    if is_ligand {
+                        if button!(
+                            ui,
+                            "Remove",
+                            Color32::LIGHT_RED,
+                            "Remove this residue from the protein, along with the records describing it \
+                            in its mmCIF data."
+                        )
+                        .clicked()
+                        {
+                            res_to_remove = Some(res_i);
+                        }
+                    } else {
+                        ui.label("");
+                    }
+
+                    ui.end_row();
                 }
             });
-            ui.add_space(ROW_SPACING / 2.);
-        }
     });
 
     if close {
         state.ui.popup.lig_pocket_creation = false;
+    }
+
+    if let Some(res_i) = res_to_toggle_hidden {
+        let hidden_residues = &mut state.peptides[peptide_i].hidden_residues;
+        if !hidden_residues.remove(&res_i) {
+            hidden_residues.insert(res_i);
+        }
+
+        state.volatile.flags.ss_mesh_dirty = true;
+        draw_peptide(state, scene, updates);
     }
 
     if let Some(mut pocket) = pocket_to_add {

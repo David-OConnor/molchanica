@@ -822,7 +822,7 @@ fn display_peptide_actions(
 
         if button!(
             ui,
-            "Make ligs/pockets",
+            "Res mgmt",
             COLOR_ACTION,
             "Create ligands from hetero groups or pockets around protein residues. \
                 This may be used in pharmacophore creation, screening, etc. Hetero residues included in mmCIF \

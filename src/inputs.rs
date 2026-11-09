@@ -567,6 +567,7 @@ fn cycle_primary_view(state: &mut State, redraw: &mut RedrawFlags, forward: bool
         } else {
             state.ui.mol_view_peptide.prev()
         };
+        crate::protein_alignment::clear_comparison_view(state);
         redraw.peptide = true;
     } else {
         state.ui.mol_view = if forward {

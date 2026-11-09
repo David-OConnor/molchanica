@@ -5,11 +5,12 @@ use std::{
     time::Duration,
 };
 
-use egui::{Color32, ComboBox, DragValue, ScrollArea, TextEdit, Ui};
+use egui::{Color32, ComboBox, DragValue, RichText, ScrollArea, TextEdit, Ui};
 use egui_plot::{Line, Plot, PlotPoints};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolType};
 
+use crate::ui::COLOR_ACTION;
 use crate::{
     cam,
     protein_alignment::{self, Comparison, Correspondence, Source},
@@ -17,6 +18,7 @@ use crate::{
     state::State,
     util::RedrawFlags,
 };
+
 #[derive(Default)]
 pub struct SourceChoice {
     key: String,
@@ -291,8 +293,12 @@ pub fn editor(
             ));
         });
         ui.horizontal(|ui| {
-            let apply = ui.button("Superpose").clicked();
-            let measure = ui.button("Compare without moving").clicked();
+            let apply = ui
+                .button(RichText::new("Superpose").color(COLOR_ACTION))
+                .clicked();
+            let measure = ui
+                .button(RichText::new("Compare without moving").color(COLOR_ACTION))
+                .clicked();
 
             if apply || measure {
                 let request = protein_alignment::source(

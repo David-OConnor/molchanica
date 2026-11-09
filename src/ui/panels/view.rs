@@ -79,6 +79,7 @@ pub fn view_settings(
             &MoleculeView::PEPTIDE_OPTIONS,
             peptide_help,
         ) {
+            crate::protein_alignment::clear_comparison_view(state);
             redraw.peptide = true;
         }
     }

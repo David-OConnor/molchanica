@@ -349,6 +349,7 @@ pub(crate) fn finish(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFl
             };
             let visibility = &state.ui.visibility;
             if filtered[i]
+                || peptide.atom_hidden(i)
                 || atom
                     .chain
                     .and_then(|c| peptide.chains.get(c))
