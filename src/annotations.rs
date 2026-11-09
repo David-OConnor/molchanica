@@ -20,9 +20,9 @@ pub enum LabelFormat {
 impl LabelFormat {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Residue => "ASP 123",
-            Self::ChainResidue => "A:ASP123",
-            Self::AtomName => "Atom names",
+            Self::Residue => "Residue",
+            Self::ChainResidue => "Chain + residue",
+            Self::AtomName => "Atom name",
         }
     }
 

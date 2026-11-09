@@ -1,5 +1,6 @@
 pub mod about;
 pub mod binding;
+pub mod command_files;
 pub mod external_tools;
 pub mod ff_params;
 mod flex_lists;
@@ -21,15 +22,13 @@ use std::{
 };
 
 use bio_apis::{amber_geostd, rcsb};
-use bio_files::ResidueType;
 use egui::{Color32, Context, Id, Pos2, RichText, ScrollArea, TextEdit, Ui, Window};
-use graphics::{ControlScheme, EngineUpdates, Scene};
+use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
     MolGenericRef, MolType,
     common::{MolVisibility, MoleculeCommon},
 };
-use na_seq::AaIdent;
 use tool_runner::{ToolWindowKind, tool_window};
 
 use crate::{
@@ -39,11 +38,10 @@ use crate::{
     label,
     mol_alignment::run_alignment,
     screening::screen_by_alignment,
-    selection::{Selection, ViewSelLevel},
     state::{MetadataTarget, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        load_all_idents_button,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, COLOR_REMOVE,
+        ROW_SPACING, load_all_idents_button,
         misc::selector,
         panels::{
             md_viewer,
@@ -51,7 +49,7 @@ use crate::{
         },
         util::{Idents, edit_mol_name, list_idents},
     },
-    util::{RedrawFlags, handle_err, orbit_center},
+    util::{RedrawFlags, handle_err},
 };
 
 /// Where popups start, unless they override it.
@@ -201,18 +199,6 @@ pub(in crate::ui) fn load_popups(
         state.ui.popup.show_settings &= open;
     }
 
-    if state.ui.popup.residue_selector {
-        // todo: Show hide based on AaCategory? i.e. residue.amino_acid.category(). Hydrophilic, acidic etc.
-        let open = show_popup(popup("Residue selector"), ui.ctx(), |ui| {
-            residue_selector(state, scene, ui, &mut redraw.peptide);
-        });
-        if !open {
-            state.ui.popup.residue_selector = false;
-            // The chain whose residues were being picked is no longer being picked from.
-            state.ui.chain_to_pick_res = None;
-        }
-    }
-
     if state.ui.popup.recent_files {
         // The number of rows per page flexes to fill the window's height.
         let window = popup("Recent files").default_height(480.);
@@ -265,7 +251,13 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.lig_pocket_creation {
         let open = show_popup(popup("Residue Management"), ui.ctx(), |ui| {
-            protein_res_management::lig_pocket_from_het_res(state, scene, ui, updates);
+            protein_res_management::lig_pocket_from_het_res(
+                state,
+                scene,
+                ui,
+                updates,
+                &mut redraw.peptide,
+            );
         });
         state.ui.popup.lig_pocket_creation &= open;
     }
@@ -791,7 +783,7 @@ fn metadata_editor(
                 changed = true;
             }
 
-            if button!(ui, "❌", Color32::LIGHT_RED, "Delete this field.").clicked() {
+            if button!(ui, "❌", COLOR_REMOVE, "Delete this field.").clicked() {
                 to_remove = Some(i);
             }
         });
@@ -928,80 +920,6 @@ fn alignment(
             engine_updates,
         );
         cam::set_fog(state, &mut scene.camera);
-    }
-}
-
-fn residue_selector(state: &mut State, scene: &mut Scene, ui: &mut Ui, redraw: &mut bool) {
-    // This is a bit fuzzy, as the size varies by residue name (Not always 1 for non-AAs), and index digits.
-
-    let mut update_arc_center = false;
-
-    if let Some(mol) = state
-        .peptide_for_tools_i()
-        .and_then(|i| state.peptides.get(i))
-        && let Some(chain_i) = state.ui.chain_to_pick_res
-    {
-        if chain_i >= mol.chains.len() {
-            return;
-        }
-        let chain = &mol.chains[chain_i];
-
-        ui.add_space(ROW_SPACING);
-
-        // todo: Wrap not working in popup?
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-
-            for (i, res) in mol.residues.iter().enumerate() {
-                if i > 800 {
-                    break; // todo: Temp workaround to display blocking
-                }
-                // For now, peptide residues only.
-                if let ResidueType::Water = res.res_type {
-                    continue;
-                }
-
-                // Only let the user select residue from the selected chain. This should keep
-                // it more organized, and keep UI space used down.
-                if !chain.residues.contains(&i) {
-                    continue;
-                }
-
-                let name = match &res.res_type {
-                    ResidueType::AminoAcid(aa) => aa.to_str(AaIdent::OneLetter),
-                    ResidueType::Water => "Water".to_owned(),
-                    ResidueType::Other(name) => name.clone(),
-                };
-
-                let mut color = Color32::GRAY;
-                if let Selection::Residue(sel_i) = state.ui.selection
-                    && sel_i == i
-                {
-                    color = COLOR_ACTIVE;
-                }
-                if ui
-                    .button(
-                        RichText::new(format!("{} {name}", res.serial_number))
-                            .size(10.)
-                            .color(color),
-                    )
-                    .clicked()
-                {
-                    state.ui.view_sel_level = ViewSelLevel::Residue;
-                    state.ui.selection = Selection::Residue(i);
-
-                    update_arc_center = true; // Avoids borrow error.
-
-                    *redraw = true;
-                }
-            }
-        });
-    }
-
-    if update_arc_center
-        && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
-    {
-        *center = orbit_center(state);
     }
 }
 

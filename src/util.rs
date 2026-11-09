@@ -635,16 +635,12 @@ pub fn release_unused_scene_memory(
     }
 
     let mut occupied = vec![false; scene.meshes.len()];
-    for pocket in state
-        .pockets
-        .iter()
-        .chain(
-            state
-                .ligands
-                .iter()
-                .filter_map(|lig| lig.pharmacophore.pocket.as_ref()),
-        )
-    {
+    for pocket in state.pockets.iter().chain(
+        state
+            .ligands
+            .iter()
+            .filter_map(|lig| lig.pharmacophore.pocket.as_ref()),
+    ) {
         if let Some(slot) = occupied.get_mut(crate::render::MESH_POCKET_START + pocket.mesh_i_rel) {
             *slot = true;
         }
@@ -660,9 +656,7 @@ pub fn release_unused_scene_memory(
         .enumerate()
         .skip(crate::render::MESH_POCKET_START)
     {
-        if !occupied[slot]
-            && (mesh.vertices.capacity() != 0 || mesh.indices.capacity() != 0)
-        {
+        if !occupied[slot] && (mesh.vertices.capacity() != 0 || mesh.indices.capacity() != 0) {
             *mesh = graphics::Mesh::default();
             updates.meshes = true;
         }

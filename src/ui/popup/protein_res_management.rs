@@ -10,13 +10,13 @@ use mol_defs::molecules::{
 
 use crate::{
     button,
-    drawing::{peptide::draw_peptide, wrappers::draw_all_pockets},
+    drawing::{MoleculeView, peptide::draw_peptide, wrappers::draw_all_pockets},
     label,
     peptide_ligands::{attach_lig, detach_het_res, remove_het_res},
     render::MESH_POCKET_START,
     state::{ResMgmtFilter, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, ROW_SPACING,
+        COL_SPACING, COLOR_ACTION, COLOR_REMOVE, ROW_SPACING,
         misc::{active_color, selector},
     },
     util::make_lig_from_res,
@@ -58,6 +58,28 @@ fn res_matches_search(query: &str, res: &Residue, chain: &str) -> bool {
     true
 }
 
+/// A visibility toggle per chain. Returns the index of the chain clicked.
+fn chain_vis_row(mol: &MoleculePeptide, ui: &mut Ui) -> Option<usize> {
+    let mut clicked = None;
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Chain vis:");
+
+        for (i, chain) in mol.chains.iter().enumerate() {
+            let color = active_color(chain.visible);
+
+            if ui
+                .button(RichText::new(chain.id.clone()).color(color))
+                .clicked()
+            {
+                clicked = Some(i);
+            }
+        }
+    });
+
+    clicked
+}
+
 /// Create ligands from hetero residues and pockets around protein residues.
 // todo: Move A/R
 pub(in crate::ui::popup) fn lig_pocket_from_het_res(
@@ -65,6 +87,7 @@ pub(in crate::ui::popup) fn lig_pocket_from_het_res(
     scene: &mut Scene,
     ui: &mut Ui,
     updates: &mut EngineUpdates,
+    redraw: &mut bool,
 ) {
     let Some(peptide_i) = state.peptide_for_tools_i() else {
         return;
@@ -73,9 +96,10 @@ pub(in crate::ui::popup) fn lig_pocket_from_het_res(
 
     label!(
         ui,
-        "Ligands and pockets from protein residues",
+        format!("Residues and chains from {}", mol.common.ident),
         Color32::WHITE
     );
+    let chain_to_toggle = chain_vis_row(mol, ui);
     ui.separator();
     ui.add_space(ROW_SPACING);
 
@@ -262,7 +286,7 @@ pub(in crate::ui::popup) fn lig_pocket_from_het_res(
                         if button!(
                             ui,
                             "Remove",
-                            Color32::LIGHT_RED,
+                            COLOR_REMOVE,
                             "Remove this residue from the protein, along with the records describing it \
                             in its mmCIF data."
                         )
@@ -281,6 +305,18 @@ pub(in crate::ui::popup) fn lig_pocket_from_het_res(
 
     if close {
         state.ui.popup.lig_pocket_creation = false;
+    }
+
+    if let Some(chain_i) = chain_to_toggle {
+        let chain = &mut state.peptides[peptide_i].chains[chain_i];
+        chain.visible = !chain.visible;
+
+        if state.ui.mol_view_peptide == MoleculeView::Ribbon {
+            state.volatile.flags.update_ss_mesh = true;
+        } else {
+            state.volatile.flags.ss_mesh_dirty = true;
+        }
+        *redraw = true;
     }
 
     if let Some(res_i) = res_to_toggle_hidden {

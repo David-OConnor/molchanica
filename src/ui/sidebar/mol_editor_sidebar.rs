@@ -12,7 +12,7 @@ use crate::{
     selection::Selection,
     state::State,
     ui::{
-        COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
+        COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, COLOR_REMOVE, ROW_SPACING,
         misc::{selector_box, selector_option},
         popup::pharmacophore,
     },
@@ -312,7 +312,7 @@ pub(in crate::ui) fn component_list(state: &mut State, ui: &mut Ui, redraw: &mut
             if button!(
                 ui,
                 "❌",
-                Color32::LIGHT_RED,
+                COLOR_REMOVE,
                 "Delete this component and all atoms in it"
             )
             .clicked()

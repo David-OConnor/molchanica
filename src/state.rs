@@ -187,7 +187,6 @@ impl State {
         self.ui.selection = Selection::None;
         self.cam_snapshots = Vec::new();
         self.ui.cam_snapshot = None;
-        self.ui.chain_to_pick_res = None;
     }
 
     // todo: Re-implement with v2 A/R
@@ -664,7 +663,9 @@ impl Default for AaSelection {
 /// Ui text fields and similar.
 #[derive(Default)]
 pub struct StateUi {
-    pub workflows: crate::ui::workflows::WorkflowUi,
+    pub command_files: crate::ui::popup::command_files::CommandFiles,
+    /// Last error from centering the slab.
+    pub slab_error: String,
     pub inspection: crate::ui::measurements::InspectionUi,
     pub binding: crate::ui::popup::binding::BindingUi,
     pub protein_comparison: crate::ui::popup::protein_comparison::ProteinComparison,
@@ -691,8 +692,6 @@ pub struct StateUi {
     pub nearby_dist_thresh: u16,
     pub cam_snapshot: Option<usize>,
     pub dt_render: f32, // Seconds
-    // For selecting residues from the GUI.
-    pub chain_to_pick_res: Option<usize>,
     /// Workaround for a bug or limitation in EGUI's `is_pointer_button_down_on`.
     pub visibility: Visibility,
     pub selection: Selection,
@@ -985,13 +984,13 @@ pub enum ResMgmtFilter {
 pub struct PopupState {
     pub protein_comparison: bool,
     pub selections: bool,
+    pub measurement: bool,
     pub reactions: bool,
     pub synthesis_reactions: bool,
     pub show_get_geostd: bool,
     pub show_associated_structures: bool,
     pub show_settings: bool,
     pub get_geostd_items: Vec<GeostdItem>,
-    pub residue_selector: bool,
     pub rama_plot: bool,
     pub recent_files: bool,
     /// Current page in the recent-files popup.

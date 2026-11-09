@@ -442,29 +442,30 @@ pub(super) fn editor(
             "Boltz-2 input and output definitions",
             "https://github.com/jwohlwend/boltz/blob/main/docs/prediction.md",
         );
-        load = editor
-            .runner
-            .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
-                if stale_site {
-                    return Err(
-                        "Refresh or clear the stale binding-site guidance before predicting."
-                            .into(),
-                    );
-                }
-                let mut request = PredictionRequest::new(
-                    protein,
-                    &ligand.common,
-                    editor.chain,
-                    &editor.smiles,
-                    &editor.pocket,
-                    &editor.options,
-                )?;
-                if report_current {
-                    request.provenance["pose_report"] =
-                        serde_json::to_value(&editor.report).map_err(|e| e.to_string())?;
-                }
-                Ok(request)
-            });
+        load =
+            editor
+                .runner
+                .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
+                    if stale_site {
+                        return Err(
+                            "Refresh or clear the stale binding-site guidance before predicting."
+                                .into(),
+                        );
+                    }
+                    let mut request = PredictionRequest::new(
+                        protein,
+                        &ligand.common,
+                        editor.chain,
+                        &editor.smiles,
+                        &editor.pocket,
+                        &editor.options,
+                    )?;
+                    if report_current {
+                        request.provenance["pose_report"] =
+                            serde_json::to_value(&editor.report).map_err(|e| e.to_string())?;
+                    }
+                    Ok(request)
+                });
 
         if let Some(report) = &editor.report {
             if let Some(residues) = select_residues {
@@ -484,11 +485,12 @@ pub(super) fn editor(
     } else {
         ui.label("Open a protein and a small molecule to start a binding workflow.");
         // Saved results remain accessible even after input objects have been closed.
-        load = editor
-            .runner
-            .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
-                Err("Choose an open protein and ligand before predicting.".into())
-            });
+        load =
+            editor
+                .runner
+                .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
+                    Err("Choose an open protein and ligand before predicting.".into())
+                });
     }
     if !editor.message.is_empty() {
         ui.colored_label(Color32::ORANGE, &editor.message);

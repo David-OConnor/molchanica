@@ -19,7 +19,7 @@ use crate::{
     selection::Selection,
     state::{ComputationType, PopupState, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, ROW_SPACING,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, COLOR_REMOVE, ROW_SPACING,
         popup::mol_db::db_selector, util::color_egui_from_f32,
     },
     util::{RedrawFlags, handle_err, make_egui_color},
@@ -142,10 +142,7 @@ fn boolean_list(feats: &[PharmacophoreFeature], relations: &mut Vec<FeatureRelat
                     label!(ui, &format!("{}: {}", i + 1, feats[i].feature_type), color);
                 }
 
-                if ui
-                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                    .clicked()
-                {
+                if ui.button(RichText::new("❌").color(COLOR_REMOVE)).clicked() {
                     println!("{rel:?}");
                     rel_removed = Some(i_rel);
                 }
@@ -202,10 +199,7 @@ pub(in crate::ui) fn pharmacophore_list(
             label!(ui, descrip, color);
 
             ui.add_space(COL_SPACING);
-            if ui
-                .button(RichText::new("❌").color(Color32::LIGHT_RED))
-                .clicked()
-            {
+            if ui.button(RichText::new("❌").color(COLOR_REMOVE)).clicked() {
                 remove = Some(i);
             }
         });
@@ -393,7 +387,7 @@ pub(in crate::ui) fn pharmacophore_edit_tools(
             }
 
             if ui
-                .button(RichText::new("Delete pocket").color(Color32::LIGHT_RED))
+                .button(RichText::new("Delete pocket").color(COLOR_REMOVE))
                 .on_hover_text("Delete this pocket from the pharmacophore")
                 .clicked()
             {

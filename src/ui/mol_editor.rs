@@ -28,7 +28,7 @@ use crate::{
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{State, StateUi},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, misc,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, COLOR_REMOVE, misc,
         misc::{active_color, section_box},
         panels::{
             md_viewer::energy_disp, mol_data::selected_data_mol_editor,
@@ -324,7 +324,7 @@ pub(in crate::ui) fn editor(
             redraw = true;
         }
 
-        if ui.button(RichText::new("Clear all").color(Color32::LIGHT_RED))
+        if ui.button(RichText::new("Clear all").color(COLOR_REMOVE))
             .on_hover_text("Delete all atoms; start fresh")
             .clicked() {
 
@@ -1106,7 +1106,7 @@ fn edit_tools(
             }
 
             if let Selection::AtomLig((_, i)) = state.ui.selection && ui
-                .button(RichText::new("Del atom").color(Color32::LIGHT_RED))
+                .button(RichText::new("Del atom").color(COLOR_REMOVE))
                 .on_hover_text("(Hotkey: Delete) Delete the selected atom")
                 .clicked()
             {

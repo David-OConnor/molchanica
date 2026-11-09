@@ -398,7 +398,6 @@ pub enum DepthMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PerMolToSave {
     chain_vis: Vec<bool>,
-    chain_to_pick_res: Option<usize>,
     pub docking_site: DockingSite,
     show_docking_tools: bool,
     res_coloring: ResColoring,
@@ -439,7 +438,6 @@ impl PerMolToSave {
 
         Self {
             chain_vis,
-            chain_to_pick_res: state.ui.chain_to_pick_res,
             // metadata,
             docking_site,
             show_docking_tools: state.ui.show_docking_tools,
@@ -465,13 +463,8 @@ impl PerMolToSave {
             out.push(*v as u8);
         }
 
-        match self.chain_to_pick_res {
-            Some(x) => {
-                out.push(1);
-                out.extend_from_slice(&(x as u64).to_le_bytes());
-            }
-            None => out.push(0),
-        }
+        // Removed field; slot kept so existing files parse.
+        out.push(0);
 
         let ds = self.docking_site.to_bytes();
         out.extend_from_slice(&(ds.len() as u32).to_le_bytes());
@@ -525,15 +518,11 @@ impl PerMolToSave {
             i += 1;
         }
 
-        let has = data[i] != 0;
-        i += 1;
-        let chain_to_pick_res = if has {
-            let x = parse_le!(data, u64, i..i + 8) as usize;
+        // Removed field: A flag, then a u64 if set.
+        if data[i] != 0 {
             i += 8;
-            Some(x)
-        } else {
-            None
-        };
+        }
+        i += 1;
 
         let len = parse_le!(data, u32, i..i + 4) as usize;
         i += 4;
@@ -592,7 +581,6 @@ impl PerMolToSave {
 
         Ok(Self {
             chain_vis,
-            chain_to_pick_res,
             docking_site,
             show_docking_tools,
             res_coloring,
@@ -699,7 +687,6 @@ impl State {
                 continue;
             };
 
-            self.ui.chain_to_pick_res = data.chain_to_pick_res;
             self.ui.show_docking_tools = data.show_docking_tools;
             self.ui.res_coloring = data.res_coloring;
             self.ui.atom_color_by_charge = data.aatom_color_by_charge;

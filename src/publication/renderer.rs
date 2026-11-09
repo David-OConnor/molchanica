@@ -624,7 +624,7 @@ fn draw_labels(
             if settings.labels {
                 for label in labels {
                     if let Some(anchor) = project(label.position) {
-                        crate::ui::workflows::paint_label(
+                        crate::ui::measurements::paint_label(
                             painter,
                             anchor,
                             &label.text,

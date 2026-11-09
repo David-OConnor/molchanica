@@ -33,6 +33,11 @@ fn main() {
         "molchanica",
     );
 
+    // Windows reserves 1 MiB for the main thread, which runs the UI. Match Linux and macOS.
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins=/STACK:8388608");
+    }
+
     if env::var_os("CARGO_CFG_WINDOWS").is_some() {
         WindowsResource::new()
             // This path can be absolute, or relative to your crate root.

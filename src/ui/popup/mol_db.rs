@@ -19,7 +19,10 @@ use crate::{
     prefs::OpenType,
     state::{DbSel, PopupState, State},
     threads::start_builtin_mol_db_load,
-    ui::{COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, COLOR_REMOVE,
+        ROW_SPACING,
+    },
     util::{handle_err, handle_success, truncate_str},
 };
 
@@ -325,7 +328,7 @@ fn del_confirmation(state: &mut State, active: DbSel, ui: &mut Ui) {
         if button!(
             ui,
             "Delete",
-            Color32::LIGHT_RED,
+            COLOR_REMOVE,
             "Remove this molecule from the database. This rewrites the database file."
         )
         .clicked()
@@ -470,7 +473,7 @@ pub(in crate::ui) fn db_selector(state: &mut State, ui: &mut Ui) {
                 select = Some(DbSel::Loaded(i));
             }
 
-            if button!(ui, "Close", Color32::LIGHT_RED, "Close this database").clicked() {
+            if button!(ui, "Close", COLOR_REMOVE, "Close this database").clicked() {
                 close_db = Some(i);
 
                 // Make sure this doesn't cause a jump in the selected DB.
@@ -720,7 +723,7 @@ fn db_summary_table(
                                 button!(
                                     ui,
                                     "X",
-                                    Color32::LIGHT_RED,
+                                    COLOR_REMOVE,
                                     "Delete this molecule from the database. Asks for confirmation \
                                      first."
                                 )

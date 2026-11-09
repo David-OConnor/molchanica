@@ -819,19 +819,6 @@ fn display_peptide_actions(
             let ident = format!("{} atom {sel_i}", mol.common.ident);
             pocket_to_add = Some(Pocket::new(mol, posit, POCKET_DIST_THRESH_DEFAULT, &ident));
         }
-
-        if button!(
-            ui,
-            "Res mgmt",
-            COLOR_ACTION,
-            "Create ligands from hetero groups or pockets around protein residues. \
-                This may be used in pharmacophore creation, screening, etc. Hetero residues included in mmCIF \
-                files may represent bound ligands."
-        )
-            .clicked()
-        {
-            state.ui.popup.lig_pocket_creation = !state.ui.popup.lig_pocket_creation;
-        }
     }
 
     if let Some(mut pocket) = pocket_to_add {

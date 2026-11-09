@@ -1,4 +1,4 @@
-use egui::{Color32, ComboBox, RichText, Ui};
+use egui::{ComboBox, RichText, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use mol_defs::molecules::lipid::{LipidShape, make_bacterial_lipids};
 
@@ -6,7 +6,7 @@ use crate::{
     drawing::{EntityClass, wrappers::draw_all_lipids},
     state::State,
     ui,
-    ui::misc::section_box,
+    ui::{COLOR_REMOVE, misc::section_box},
     util::clear_mol_entity_indices,
 };
 
@@ -90,7 +90,7 @@ pub(in crate::ui) fn lipid_section(
 
             if !state.lipids.is_empty()
                 && ui
-                    .button(RichText::new("Close all lipids").color(Color32::LIGHT_RED))
+                    .button(RichText::new("Close all lipids").color(COLOR_REMOVE))
                     .clicked()
             {
                 state.lipids = Vec::new();

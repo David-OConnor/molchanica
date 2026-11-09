@@ -11,7 +11,8 @@ use crate::{
     md::{viewer, viewer::ViewerMolecule},
     state::State,
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, ROW_SPACING, highlighted_box,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_REMOVE, ROW_SPACING,
+        highlighted_box,
         misc::{selector_box, selector_option},
         num_field,
     },
@@ -434,7 +435,7 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
                     num_field(&mut mol.range.0, "Start:", 54, ui);
                     num_field(&mut mol.range.1, "End:", 54, ui);
                     if ui
-                        .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                        .button(RichText::new("❌").color(COLOR_REMOVE))
                         .on_hover_text("Remove from set")
                         .clicked()
                     {
@@ -457,7 +458,7 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
                     if button!(
                         ui,
                         "Clear water",
-                        Color32::LIGHT_RED,
+                        COLOR_REMOVE,
                         "Remove all water molecules from this set."
                     )
                     .clicked()
@@ -826,7 +827,7 @@ pub(in crate::ui) fn viewer_mol_set(
                 }
 
                 if ui
-                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                    .button(RichText::new("❌").color(COLOR_REMOVE))
                     .on_hover_text("Close this molecule set.")
                     .clicked()
                 {

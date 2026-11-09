@@ -1,7 +1,5 @@
 use std::time::{Duration, Instant};
 
-pub mod workflows;
-
 use bio_apis::{pdbe, rcsb};
 use chrono::Local;
 use egui::{
@@ -42,10 +40,7 @@ use crate::{
         mol_type_tools::mol_type_toolbars,
         panels::aa_seq,
         sidebar::sidebar,
-        util::{
-            QUERY_ENTER_LEN_MIN, chain_selector, handle_redraw, load_mol_from_query,
-            update_file_dialogs,
-        },
+        util::{QUERY_ENTER_LEN_MIN, handle_redraw, load_mol_from_query, update_file_dialogs},
     },
     util::{
         RedrawFlags, check_prefs_save, close_mol, handle_err, handle_scene_flags, orbit_center,
@@ -82,6 +77,7 @@ pub(in crate::ui) const _COLOR_ATTENTION: Color32 = Color32::ORANGE;
 
 // Creation, simulation runs etc.
 pub(in crate::ui) const COLOR_ACTION: Color32 = Color32::GOLD;
+pub(in crate::ui) const COLOR_REMOVE: Color32 = Color32::LIGHT_RED;
 
 pub(in crate::ui) const COLOR_AMBER: Color32 = Color32::from_rgb(255, 176, 0);
 
@@ -377,7 +373,7 @@ fn draw_cli(
 
         ui.add_space(COL_SPACING);
         if ui.button("Command files / macros").clicked() {
-            state.ui.workflows.commands_open = true;
+            state.ui.command_files.open = true;
         }
         search_in_mol(state, scene, redraw, ui);
     });
@@ -793,7 +789,7 @@ fn top_controls(
 
             if button!(
                     ui,
-                    "Protein design",
+                    "Prot design",
                     COLOR_HIGHLIGHT,
                     "Generate backbones with RFdiffusion3, predict sequences and structures, and \
                     inspect or predict protein–ligand binding."
@@ -802,6 +798,36 @@ fn top_controls(
             {
                 state.ui.popup.protein_tools = !state.ui.popup.protein_tools;
             }
+
+            if state.peptides.len() >= 2 && button!(ui, "Compare proteins", COLOR_HIGHLIGHT, "Compare and align 2 proteins").clicked() {
+                state.ui.popup.protein_comparison = true;
+            }
+
+            if button!(ui, "Sel / layers", COLOR_HIGHLIGHT, "View and update fine-tuned selection, and visual layers").clicked() {
+                state.ui.popup.selections = true;
+            }
+
+            if button!(ui, "Meas / colors", COLOR_HIGHLIGHT, "Measure distances and angles, and set color schemes based on atom or residue properties").clicked() {
+                state.ui.popup.measurement = true;
+            }
+
+            if button!(
+            ui,
+            "Res mgmt",
+            COLOR_HIGHLIGHT,
+            "Create ligands from hetero groups or pockets around protein residues. \
+                This may be used in pharmacophore creation, screening, etc. Hetero residues included in mmCIF \
+                files may represent bound ligands."
+        )
+                .clicked()
+            {
+                state.ui.popup.lig_pocket_creation = !state.ui.popup.lig_pocket_creation;
+            }
+
+            if button!(ui, "Figure", COLOR_HIGHLIGHT, "Create a figure suitable for publication.").clicked() {
+                state.publication.open = true;
+            }
+
 
             // todo: Sort out the intent behind this "Design" button. If we don't end up
             // todo using it in something like it's current form, remove the underlying
@@ -1009,21 +1035,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         section_box().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 view_settings(state, scene, &mut updates, &mut redraw, ui);
-                if state.peptides.len() >= 2 && button!(ui, "Compare proteins", Color32::GRAY, "Compare and align 2 proteins").clicked() {
-                    state.ui.popup.protein_comparison = true;
-                }
-
-                if ui.button("Sel / layers").clicked() {
-                    state.ui.popup.selections = true;
-                }
-
-                if button!(ui, "Measure / colors", Color32::GRAY, "Measure distances and angles, and set color schemes based on atom or residue properties").clicked() {
-                    state.ui.inspection.open = true;
-                }
-
-                if button!(ui, "Figure", Color32::GRAY, "Create a figure suitable for publication.").clicked() {
-                    state.publication.open = true;
-                }
 
                 ui.add_space(COL_SPACING / 2.);
                 ui.separator();
@@ -1032,8 +1043,6 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 ui_section_vis(state, ui);
             });
         });
-
-        chain_selector(state, &mut redraw.peptide, ui);
 
         if state.ui.ui_vis.aa_selection {
             panels::aa_selection::aa_selection(state, &mut redraw.peptide, ui);
@@ -1114,7 +1123,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     }
 
     measurements::show(state, ui.ctx(), &mut redraw);
-    workflows::command_window(state, scene, &mut updates, &mut redraw, ui.ctx());
+    popup::command_files::command_window(state, scene, &mut updates, &mut redraw, ui.ctx());
     let scene_restored = std::mem::take(&mut state.volatile.flags.scene_restored);
     if scene_restored {
         redraw.set_all();
@@ -1149,7 +1158,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     state.release_mol_db_caches();
     updates.camera |= cam::apply_slab(state, &mut scene.camera);
     measurements::paint(state, scene, ui.ctx(), updates.ui_reserved_px);
-    workflows::paint_labels(state, scene, ui.ctx(), updates.ui_reserved_px);
+    measurements::paint_labels(state, scene, ui.ctx(), updates.ui_reserved_px);
 
     // Capture after pending geometry updates, so the figure reflects this frame's scene.
     crate::publication::show(state, scene, ui.ctx());
@@ -1335,7 +1344,7 @@ pub(crate) fn cam_controls(
         .as_ref()
         .is_some_and(|s| s.enabled)
     {
-        changed |= workflows::slab_controls(state, ui);
+        changed |= slab_controls(state, ui);
     } else if let DepthMode::Manual(depth) = &mut state.to_save.depth_mode {
         ui.spacing_mut().slider_width = 60.;
         let depth_prev = *depth;
@@ -1367,6 +1376,57 @@ pub(crate) fn cam_controls(
 
         state.ui.cam_snapshot = None;
     }
+}
+
+fn slab_controls(state: &mut State, ui: &mut Ui) -> bool {
+    let before = state.to_save.inspection.slab.clone();
+
+    if ui.button("10 Å around sel").clicked() {
+        state.ui.slab_error = crate::annotations::center_slab(state, "sele", 10.)
+            .err()
+            .unwrap_or_default();
+    }
+
+    if let Some(slab) = &mut state.to_save.inspection.slab {
+        ui.label("Thickness:");
+        ui.add(
+            egui::DragValue::new(&mut slab.thickness)
+                .range(0.1..=10000.)
+                .speed(0.1)
+                .suffix(" Å"),
+        );
+
+        ui.spacing_mut().slider_width = 60.;
+        ui.add(
+            Slider::new(&mut slab.offset, -100.0..=100.0)
+                .clamping(egui::SliderClamping::Never)
+                .text("Slide:"),
+        )
+        .on_hover_text("Positive offset moves away from you.");
+
+        ui.label("Offset:");
+        ui.add(
+            egui::DragValue::new(&mut slab.offset)
+                .speed(0.1)
+                .suffix(" Å"),
+        );
+
+        let thickness = slab.thickness;
+        if ui.button("Recenter on selection").clicked() {
+            state.ui.slab_error = crate::annotations::center_slab(state, "sele", thickness)
+                .err()
+                .unwrap_or_default();
+        }
+    }
+
+    let changed = before != state.to_save.inspection.slab;
+    state.to_save.save_flag |= changed;
+
+    if !state.ui.slab_error.is_empty() {
+        ui.label(&state.ui.slab_error);
+    }
+
+    changed
 }
 
 pub(crate) fn cam_snapshots(

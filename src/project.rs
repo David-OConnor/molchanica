@@ -393,6 +393,17 @@ impl Density {
     }
 }
 
+/// Molecules held until the whole project validates. Not a `State`: building one on the UI thread
+/// overflows the stack in debug builds.
+#[derive(Default)]
+struct RestoredMols {
+    peptides: Vec<MoleculePeptide>,
+    ligands: Vec<MoleculeSmall>,
+    nucleic_acids: Vec<MoleculeNucleicAcid>,
+    lipids: Vec<MoleculeLipid>,
+    pockets: Vec<Pocket>,
+}
+
 #[derive(Encode, Decode)]
 struct Molecule {
     pharmacophore: Option<SavedPharmacophore>,
@@ -486,7 +497,7 @@ impl Molecule {
         })
     }
 
-    fn restore(self, state: &mut State) -> io::Result<()> {
+    fn restore(self, mols: &mut RestoredMols) -> io::Result<()> {
         let common = self.common.restore()?;
         let residues = self
             .residues
@@ -574,7 +585,7 @@ impl Molecule {
                 if let Some(density) = self.density {
                     density.restore(&mut p)?;
                 }
-                state.peptides.push(p);
+                mols.peptides.push(p);
             }
             MolType::Ligand => {
                 let pharmacophore = self
@@ -582,7 +593,7 @@ impl Molecule {
                     .map(|p| p.restore(common.atoms.len()))
                     .transpose()?
                     .unwrap_or_default();
-                state.ligands.push(MoleculeSmall {
+                mols.ligands.push(MoleculeSmall {
                     common,
                     idents: self.small_ids,
                     pharmacophore,
@@ -595,7 +606,7 @@ impl Molecule {
                 let (na_type, seq, features) = self
                     .nucleic
                     .ok_or_else(|| invalid("Missing nucleic acid data"))?;
-                state.nucleic_acids.push(MoleculeNucleicAcid {
+                mols.nucleic_acids.push(MoleculeNucleicAcid {
                     common,
                     residues,
                     na_type,
@@ -606,7 +617,7 @@ impl Molecule {
             MolType::Lipid => {
                 let (lmsd_id, hmdb_id, kegg_id, common_name) =
                     self.lipid.ok_or_else(|| invalid("Missing lipid data"))?;
-                state.lipids.push(MoleculeLipid {
+                mols.lipids.push(MoleculeLipid {
                     common,
                     residues,
                     lmsd_id,
@@ -617,8 +628,8 @@ impl Molecule {
             }
             MolType::Pocket => {
                 let mut p = Pocket::from(common);
-                p.mesh_i_rel = state.pockets.len();
-                state.pockets.push(p);
+                p.mesh_i_rel = mols.pockets.len();
+                mols.pockets.push(p);
             }
             MolType::Water => return Err(invalid("Standalone water object")),
         }
@@ -1032,7 +1043,7 @@ pub fn load(
             appearance.validate().map_err(invalid)?;
         }
     }
-    let mut restored = State::default();
+    let mut restored = RestoredMols::default();
     for molecule in project.molecules {
         molecule.restore(&mut restored)?;
     }

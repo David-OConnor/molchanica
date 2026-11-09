@@ -24,8 +24,8 @@ use crate::{
     state::{MetadataTarget, OperatingMode, State},
     threads::start_safety_data_lookup,
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        highlighted_box, load_all_idents_button,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, COLOR_REMOVE,
+        ROW_SPACING, highlighted_box, load_all_idents_button,
         misc::section_box,
         num_field,
         panels::md_viewer,
@@ -881,7 +881,7 @@ fn traj_items(
                 }
 
                 if ui
-                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                    .button(RichText::new("❌").color(COLOR_REMOVE))
                     .on_hover_text("Close this trajectory.")
                     .clicked()
                 {

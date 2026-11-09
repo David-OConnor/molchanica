@@ -1,16 +1,18 @@
 //! Shared editor for persistent selection expressions and additive display layers.
 
 use egui::{
-    ComboBox, Key, KeyboardShortcut, Modifiers, RichText, ScrollArea, Slider, TextEdit, Ui,
+    Color32, ComboBox, Grid, Key, KeyboardShortcut, Modifiers, RichText, ScrollArea, Slider,
+    TextEdit, Ui,
 };
 use mol_defs::molecules::aa_color;
 use na_seq::{AaIdent, AminoAcid};
 
 use crate::{
+    annotations::{LabelFormat, label_selection},
     drawing::{MoleculeView, representations},
     selection::{Selection, expression},
     state::State,
-    ui::COLOR_ACTION,
+    ui::{COLOR_ACTION, COLOR_REMOVE, ROW_SPACING},
     util::{RedrawFlags, make_egui_color},
 };
 
@@ -23,6 +25,8 @@ pub struct SelectionEditor {
     layer: Option<usize>,
     layer_expression: String,
     builder: SelectionBuilder,
+    label_format: LabelFormat,
+    label_message: String,
 }
 
 #[derive(Default)]
@@ -165,7 +169,7 @@ fn selection_builder(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder)
 fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
-        ui.label("Types:");
+        ui.label(RichText::new("Types:").color(Color32::WHITE));
         for (value, label) in [
             ("protein", "Protein"),
             ("nucleic", "DNA / RNA"),
@@ -178,7 +182,7 @@ fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) 
         }
     });
     ui.horizontal_wrapped(|ui| {
-        ui.label("Objects:");
+        ui.label(RichText::new("Objects:").color(Color32::WHITE));
         for (_, _, mol) in expression::objects(state) {
             changed |= toggle(
                 ui,
@@ -197,7 +201,7 @@ fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) 
     chains.dedup();
     if !chains.is_empty() {
         ui.horizontal_wrapped(|ui| {
-            ui.label("Chains:");
+            ui.label(RichText::new("Chains:").color(Color32::WHITE));
             for chain in chains {
                 let label = if chain.is_empty() { "(blank)" } else { &chain };
                 changed |= toggle(ui, &mut builder.chains, &chain, label);
@@ -205,7 +209,7 @@ fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) 
         });
     }
     ui.horizontal_wrapped(|ui| {
-        ui.label("Residue types:");
+        ui.label(RichText::new("Residue types:").color(Color32::WHITE));
         for aa in [
             AminoAcid::Ala,
             AminoAcid::Arg,
@@ -248,7 +252,7 @@ fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) 
         }
     });
     ui.horizontal_wrapped(|ui| {
-        ui.label("Elements:");
+        ui.label(RichText::new("Elements:").color(Color32::WHITE));
         for element in [
             "C", "N", "O", "S", "P", "H", "F", "Cl", "Br", "I", "Na", "Mg", "Ca", "Fe", "Zn",
         ] {
@@ -256,7 +260,7 @@ fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) 
         }
     });
     ui.horizontal_wrapped(|ui| {
-        ui.label("Residue numbers:");
+        ui.label(RichText::new("Residue numbers:").color(Color32::WHITE));
         changed |= ui
             .add(
                 TextEdit::singleline(&mut builder.residues)
@@ -264,7 +268,8 @@ fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) 
                     .hint_text("e.g. 100-120+150"),
             )
             .changed();
-        ui.label("Atom names:");
+
+        ui.label(RichText::new("Atom names:").color(Color32::WHITE));
         changed |= ui
             .add(
                 TextEdit::singleline(&mut builder.atom_names)
@@ -273,6 +278,7 @@ fn builder_controls(state: &State, ui: &mut Ui, builder: &mut SelectionBuilder) 
             )
             .changed();
     });
+
     ui.horizontal_wrapped(|ui| {
         let options = [
             "All atoms",
@@ -365,24 +371,94 @@ fn view_picker(ui: &mut Ui, id: &str, view: &mut MoleculeView) {
         });
 }
 
+fn label_controls(state: &mut State, ui: &mut Ui, edit: &mut SelectionEditor) {
+    ui.collapsing("Labels on selection", |ui| {
+        ui.label("These display overlaid on their associated atoms or residues, on the 3D model.");
+        ui.small("Drag labels in the viewport. Lines follow their atoms.");
+
+        let mut remove = None;
+
+        Grid::new("selection_labels")
+            .num_columns(3)
+            .spacing([ROW_SPACING, ROW_SPACING / 2.])
+            .show(ui, |ui| {
+                ComboBox::from_id_salt("selection_label_format")
+                    .width(130.)
+                    .selected_text(edit.label_format.title())
+                    .show_ui(ui, |ui| {
+                        for format in [
+                            LabelFormat::Residue,
+                            LabelFormat::ChainResidue,
+                            LabelFormat::AtomName,
+                        ] {
+                            ui.selectable_value(&mut edit.label_format, format, format.title());
+                        }
+                    });
+
+                if ui.button("Label this selection").clicked() {
+                    edit.label_message = label_selection(state, "sele", Some(edit.label_format))
+                        .map(|count| format!("Added {count} labels"))
+                        .unwrap_or_else(|e| e);
+                }
+
+                if ui.button("Clear selection labels").clicked() {
+                    edit.label_message = label_selection(state, "sele", None)
+                        .err()
+                        .unwrap_or_default();
+                }
+
+                ui.end_row();
+
+                for (i, label) in state.to_save.inspection.labels.iter_mut().enumerate() {
+                    let mut changed = ui.checkbox(&mut label.visible, &label.text).changed();
+
+                    if ui.small_button("Reset position").clicked() {
+                        label.offset = [16., -16.];
+                        changed = true;
+                    }
+
+                    if ui
+                        .small_button(RichText::new("Remove").color(COLOR_REMOVE))
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+
+                    state.to_save.save_flag |= changed;
+                    ui.end_row();
+                }
+            });
+
+        if let Some(i) = remove {
+            state.to_save.inspection.labels.remove(i);
+            state.to_save.save_flag = true;
+        }
+
+        if !edit.label_message.is_empty() {
+            ui.label(&edit.label_message);
+        }
+    });
+}
+
 pub fn editor(state: &mut State, ui: &mut Ui, redraw: &mut RedrawFlags) {
-    crate::ui::workflows::label_controls(state, ui);
     let mut edit = std::mem::take(&mut state.ui.selection_editor);
 
+    label_controls(state, ui, &mut edit);
+
+    ui.add_space(ROW_SPACING);
     ui.horizontal_wrapped(|ui| {
-        ui.label("PyMOL-style selections. Enter previews; Shift+Enter adds a line.");
         ui.hyperlink_to(
             "Syntax / examples",
             "https://www.athanorlab.com/docs/view_select.html#selection-expressions",
         );
     });
-    ui.label("Use select name, expression to save a name, e.g. select alpha_carbons, protein and name CA.");
 
     let builder_changed = selection_builder(state, ui, &mut edit.builder);
     if builder_changed {
         edit.expression = edit.builder.expression();
     }
 
+    ui.add_space(ROW_SPACING);
     ui.horizontal(|ui| {
         if ui.button("Use picked selection").clicked() {
             edit.expression = expression::current_expression(state);
@@ -475,6 +551,8 @@ pub fn editor(state: &mut State, ui: &mut Ui, redraw: &mut RedrawFlags) {
         ui.label(&edit.message);
     }
     ui.separator();
+    ui.add_space(ROW_SPACING);
+
     ui.collapsing("Named selections", |ui| {
         for saved in state.to_save.named_selections.clone() {
             ui.horizontal(|ui| {

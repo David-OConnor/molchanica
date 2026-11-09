@@ -15,8 +15,8 @@ use crate::{
     label,
     state::{MolPickerState, MolSort, State},
     ui::{
-        COL_SPACING, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, highlighted_box,
-        popup::pharmacophore, sidebar,
+        COL_SPACING, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, COLOR_REMOVE,
+        highlighted_box, popup::pharmacophore, sidebar,
     },
     util::{RedrawFlags, close_mol, orbit_center},
 };
@@ -180,7 +180,7 @@ fn mol_picker_one(
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(COL_SPACING / 2.);
                 if ui
-                    .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                    .button(RichText::new("❌").color(COLOR_REMOVE))
                     .on_hover_text("(Hotkey: Delete) Close this molecule.")
                     .clicked()
                 {
@@ -803,7 +803,7 @@ pub fn seq_picker(state: &mut State, ui: &mut Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(COL_SPACING / 2.);
                     if ui
-                        .button(RichText::new("❌").color(Color32::LIGHT_RED))
+                        .button(RichText::new("❌").color(COLOR_REMOVE))
                         .on_hover_text("Close this sequence.")
                         .clicked()
                     {

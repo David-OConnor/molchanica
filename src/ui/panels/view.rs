@@ -352,9 +352,11 @@ pub fn view_settings(
 
         if redraw_dens_surface {
             if state.ui.visibility.hide_density_surface {
-                let _ = &mut scene
+                scene
                     .entities
                     .retain(|ent| ent.class != EntityClass::DensitySurface as u32);
+                clear_mol_entity_indices(state, None);
+                updates.entities = EntityUpdate::All;
             } else {
                 draw_density_surface(&mut scene.entities, state, updates);
             }

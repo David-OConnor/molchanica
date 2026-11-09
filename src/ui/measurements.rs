@@ -51,7 +51,6 @@ pub struct InspectionUi {
     pub solid_colors: std::collections::BTreeMap<String, std::collections::BTreeMap<u32, [f32; 3]>>,
     pub colors: Vec<ScalarColor>,
     pub charge_palette: Palette,
-    pub open: bool,
     pub kind: MeasureKind,
     pub pending: Vec<AtomRef>,
     pub picking: bool,
@@ -144,7 +143,7 @@ pub(crate) fn paint_measurement_text(
 }
 
 pub fn show(state: &mut State, ctx: &egui::Context, redraw: &mut RedrawFlags) {
-    if !state.ui.inspection.open {
+    if !state.ui.popup.measurement {
         return;
     }
 
@@ -159,7 +158,7 @@ pub fn show(state: &mut State, ctx: &egui::Context, redraw: &mut RedrawFlags) {
         .vscroll(true)
         .show(ctx, |ui| controls(state, ui, ctx));
 
-    state.ui.inspection.open = open;
+    state.ui.popup.measurement = open;
     if before != state.to_save.inspection || previous_charge != state.ui.atom_color_by_charge {
         if let Err(error) = state.to_save.inspection.validate() {
             state.ui.inspection.message = error;
@@ -655,5 +654,105 @@ pub fn paint(state: &State, scene: &Scene, ctx: &egui::Context, reserved: (f32, 
             FontId::proportional(17.),
             Color32::from_rgb(255, 220, 80),
         );
+    }
+}
+
+pub fn paint_label(
+    painter: &egui::Painter,
+    anchor: Pos2,
+    text: &str,
+    offset: [f32; 2],
+    scale: f32,
+    color: Color32,
+) -> egui::Rect {
+    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(16. * scale), color);
+    let position = anchor + egui::vec2(offset[0], offset[1]) * scale;
+    let rect = egui::Rect::from_min_size(position, galley.size()).expand(3. * scale);
+
+    let end = rect.clamp(anchor);
+    if anchor.distance(end) > 3. * scale {
+        painter.line_segment([anchor, end], Stroke::new(1. * scale, color));
+    }
+
+    let background = if color.r() as u16 + color.g() as u16 + color.b() as u16 > 384 {
+        Color32::from_black_alpha(160)
+    } else {
+        Color32::from_white_alpha(200)
+    };
+
+    painter.rect_filled(rect, 3., background);
+    painter.galley(position, galley, color);
+
+    rect
+}
+
+pub fn paint_labels(state: &mut State, scene: &Scene, ctx: &egui::Context, reserved: (f32, f32)) {
+    let (camera, viewport) = measurement_viewport(scene, reserved, ctx.pixels_per_point());
+
+    let positions: Vec<_> = state
+        .to_save
+        .inspection
+        .labels
+        .iter()
+        .map(|l| {
+            let p = l.position(state)?;
+            let (visible, ndc) = camera.in_view(p.into());
+
+            (l.visible && visible).then_some(Pos2::new(
+                viewport.left() + (ndc.0 + 1.) * viewport.width() / 2.,
+                viewport.top() + (1. - ndc.1) * viewport.height() / 2.,
+            ))
+        })
+        .collect();
+
+    let painter = ctx
+        .layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("selection_label_lines"),
+        ))
+        .with_clip_rect(viewport);
+
+    for (i, anchor) in positions.into_iter().enumerate() {
+        let Some(anchor) = anchor else { continue };
+
+        let label = &mut state.to_save.inspection.labels[i];
+        let position = anchor + egui::vec2(label.offset[0], label.offset[1]);
+        let position = viewport.shrink(8.).clamp(position);
+
+        egui::Area::new(egui::Id::new(("selection_label", i)))
+            .order(egui::Order::Middle)
+            .movable(false)
+            .fixed_pos(position)
+            .show(ctx, |ui| {
+                ui.set_clip_rect(viewport);
+
+                let response = ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&label.text)
+                            .color(Color32::WHITE)
+                            .background_color(Color32::from_black_alpha(160))
+                            .size(16.),
+                    )
+                    .sense(egui::Sense::click_and_drag()),
+                );
+
+                if response.dragged() {
+                    let delta = response.drag_delta();
+                    label.offset[0] += delta.x;
+                    label.offset[1] += delta.y;
+                    state.to_save.save_flag = true;
+                }
+
+                if response.double_clicked() {
+                    label.offset = [16., -16.];
+                    state.to_save.save_flag = true;
+                }
+
+                painter.line_segment(
+                    [anchor, response.rect.clamp(anchor)],
+                    Stroke::new(1., Color32::LIGHT_GRAY),
+                );
+                response.on_hover_text("Drag to move; double-click to reset");
+            });
     }
 }

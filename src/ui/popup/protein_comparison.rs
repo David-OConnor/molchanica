@@ -10,12 +10,12 @@ use egui_plot::{Line, Plot, PlotPoints};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolType};
 
-use crate::ui::COLOR_ACTION;
 use crate::{
     cam,
     protein_alignment::{self, Comparison, Correspondence, Source},
     selection::expression,
     state::State,
+    ui::COLOR_ACTION,
     util::RedrawFlags,
 };
 

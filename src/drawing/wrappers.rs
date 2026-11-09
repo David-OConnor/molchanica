@@ -91,7 +91,6 @@ fn helper_b(
     }
 }
 
-
 // // todo: A helper which would be nice, but I'm unable to get working.
 // fn draw_all_mol_of_type(state: &mut State, scene: &mut Scene, mol_type: MolType) {
 //     let class = mol_type.entity_type() as u32;

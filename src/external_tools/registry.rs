@@ -627,8 +627,10 @@ pub static REGISTRY: &[ToolSpec] = &[
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
-        version_args: &["-version"],
-        version_marker: "GROMACS version",
+        // Not `-version`: about 10% of runs exit 0 with no output (2026.2, Windows).
+        version_args: &["-h"],
+        // From the banner, which goes to stderr.
+        version_marker: "GROMACS - gmx",
         // Loads hundreds of MB of CUDA libraries, which a virus scan can hold up for seconds.
         slow_probe: true,
     },

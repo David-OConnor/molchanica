@@ -270,7 +270,7 @@ fn probe(executable: &Path, args: &[&str], timeout: Duration) -> io::Result<Stri
     }
 }
 
-/// The line a probe matched on, which xTB, GROMACS, and ORCA print after a banner.
+/// The line a probe matched on, which xTB, GROMACS, and ORCA print after other output.
 fn version_line<'a>(output: &'a str, marker: &str) -> &'a str {
     let marker = marker.to_lowercase();
 
