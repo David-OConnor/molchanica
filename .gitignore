@@ -52,6 +52,7 @@ Cargo.lock
 # A build run from the checkout keeps its data here; see `external_tools::data_root`.
 /process_executables
 /datasets
+/molecule_diagrams/
 
 ## New below; old above
 *.cfa
@@ -71,4 +72,7 @@ Cargo.lock
 *.water_init_template
 
 /.claude
-/molecule_diagrams/
+AGENTS.md
+
+# Code signing config, read by win_exe_signing.ps1
+/signing_metadata.json

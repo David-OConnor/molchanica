@@ -6,14 +6,18 @@
 [Documentation](https://www.athanorlab.com/docs)
 [Video demos](https://www.youtube.com/@AthanorLab)
 
+### Launch or open a GROMACS run. Inspect it in 3D. Share a view your lab can reopen.
+
+### Design protein backbones, run structure and sequence prediction with an integrated, visual-first pipeline.
+
 [Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. It integrates with machine-learning tools for protein engineering, including RFDiffusion3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
 
-Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on pharmacophores, machine-learning from empirical binding data and more. It automatically estimates ADME and toxicity parameters using a neural network trained on [Therapeutic data commons (TDC)](https://tdcommons.ai/) data.
+Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on pharmacophores, machine-learning from empirical binding data and more. It estimates ADME and toxicity parameters using a neural network trained on [Therapeutic data commons (TDC)](https://tdcommons.ai/) data.
 
-We hope that Molchanica is intuitive enough that formal documentation isn't required; installing, running, opening, and viewing molecules should be easy for someone to figure out by downloading, launching, and clicking around the GUI. That said, see [the documentation](https://www.athanorlab.com/docs) for details.
+Molchanica is intuitive enough that formal documentation isn't required to get started. As a reference, see [the documentation](https://www.athanorlab.com/docs).
 
-We draw UI inspiration from [PyMol](https://pymol.org/) and [Blender](https://www.blender.org/), and include a breadth of original idiosyncracies.
 
+![Structure prediction example](screenshots/molchanica_structure_pred_ex_nov_26.png)
 
 ## Installation
 
@@ -21,30 +25,39 @@ We draw UI inspiration from [PyMol](https://pymol.org/) and [Blender](https://ww
 
 [Download, unzip, and run](https://github.com/David-OConnor/molchanica/releases).
 
-Setup scripts are included; these are optional. The application can be launched directly, but these
-useful for setting up shortcuts in your OS.
+The application can be launched directly, but these are useful for setting up shortcuts in your OS.
 
 - **Linux**: Run `setup_molchanica.sh`, included in the zip. (Do not run this with `sudo`.)
-- **Windows**: Run `setup_molchanica.ps1`. The first time you run the program, you may get the message
-  *"  Microsoft Defender prevented an unrecognized app from starting"*. To bypass this, click *More
-  info*, then *Run Anyway*. A similar obstacle may be encountered on Windows: If it refuses to launch, with an error about "Smart App Control", you may disable "Smart App Control" in *Windows Settings*.
+- **Windows**: Run `setup_molchanica.ps1`, or double-click `setup_molchanica.bat`.
 
-![Ligand dynamics](screenshots/docked_2.png)
+![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 
-### Mac, and linux distros we don't provide a binary for
+### Mac, and Linux distros we don't provide a binary for
 
-Compile from source by [downloading and installing Rust](https://www.rust-lang.org/tools/install), then running `cargo build --release` from a CLI in the project directory. See notes in the *compiling* section below about setting up Amber parameter files, and either installing the CUDA toolkit, or disabling CUDA.
+Compile from source by [downloading and installing Rust](https://www.rust-lang.org/tools/install), then running `cargo build --release` from a CLI in the project directory.
 
-### Installing and using integrated third-party tools
-
-Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, Gemmi, and ML-based protein design tools. See [the documentation](https://www.athanorlab.com/docs/third_party_tools.html) for details.
+## Integrations
+Allows one-click installation of external tools. Click the **Tools button** in the UI to get started. See [the docs page for details, and a full list of tools](https://www.athanorlab.com/docs/third_party_tools.html)
 
 
-### Protein design
+### Molecular dynamics tools
+
+- GROMACS
+- xTB
+- ORCA
+
+### Protein design tools
 
 - **Backbone design** using RFDiffusion3
 - **Structure prediction** using OpenDDE, Boltz-2, Chai-1, and EsmFold2
 - **Sequence prediction** using ProteinMPNN and LigandMPNN
+
+### Others:
+
+- RDKit
+
+
+![External tools window](screenshots/third_party_tools.png)
 
 
 ## Functionality
@@ -55,7 +68,6 @@ Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, 
 - Molecular dynamics, using Amber, OPLS, or GFN-FF force fields, and the OPC water model
 - Visualize ligand docking
 - Edit small molecules in 3D with integrated dynamics
-- Visualize electron density from crystallography and Cryo-Em data
 - Run [GROMACS](https://www.gromacs.org/) MD, and view trajectories using the same GUI as our native MD.
 - Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed).
 - Run [OpenDDE](https://github.com/aurekaresearch/OpenDDE) structure prediction (Proteins, ligands, nucleic acids, ions, complexes)
@@ -68,25 +80,10 @@ Supports, and manages the installation of third-party tool. E.g. GROMACS, ORCA, 
 - Read a local [PDBbind](https://www.pdbbind-plus.org.cn/) release: look up a complex's measured binding affinity and open its protein, pocket, and ligand files
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
   and more.
+- Visualize electron density from crystallography and Cryo-Em data
 - Screen molecules based on binding affinity and desired properties
 - Pharmacophore based modeling and screening
 
-
-## Molecule types supported for viewing and dynamics
-
-- Proteins
-- Small organic molecules (e.g. ligands)
-- DNA and RNA; double and single stranded
-- Lipids
-
-
-## Getting started
-
-Launch the program. Either open a molecule using the "Open" or "Open Lig" buttons, drag the file into the program
-window, enter a protein identifier in the *Query databases* field, or click *I'm feeling lucky*, to load a recently-uploaded
-protein from the [RCSB PDB](https://www.rcsb.org/).
-
-**Most UI items provide tooltip descriptions, when you hover the mouse over them.**
 
 ## Goals
 
@@ -99,30 +96,11 @@ protein from the [RCSB PDB](https://www.rcsb.org/).
 ## File formats
 See [Bio Files](https://github.com/David-OConnor/bio_files) for details; we use it as a dependency, and keep it in sync.
 
-- **Proteins**: mmCIF (aka PDBx)
-- **Small molecules**: SDF, Mol2, GRO, XYZ, and PDBQT
+- **Proteins**: mmCIF
+- **Small molecules**: SDF, Mol2, Mol, GRO, XYZ, and PDBQT
 - **Electron density**: 2fo-fc mmCIF, Map, and MTZ
 - **Force field parameters**: dat, lib, frcmod, prmtop (Amber), and top (GROMACS)
 - **MD**: GRO, MDP, DCD, TRR, XTC
-
-
-## Third-party tool integrations
-
-Molchanica integrates with a number of third-party tools, acting on the molecules Molchanica has open, or creating them. See [the docs page for details, and a full list of tools](https://www.athanorlab.com/docs/third_party_tools.html). These can be accessed directly from the computer if you have them installed, or installed within the application's UI.
-
-
-### Example tools supported:
-
-- GROMACS
-- ORCA
-- RDKit
-- RfDiffusion3
-- Chai-1
-- OpenDDE
-- xTB
-- rdkit
-- Boltz-2
-- MPNN (Protein, ligand etc)
 
 
 ## A note on internet connectivity
@@ -176,6 +154,8 @@ Overview of MD components:
 - AM1-BCC partial charges, if using Amber parameters (MBIS if you have ORCA installed; OPLS and GFN have their own charge systems)
 - For GNF-FF, it uses repulsion, dispersion, and hydrogen bond terms, and does not use Lennard Jone potentials
 
+The *GFN-FF* force fields can be used with either the *Dynamics* or *xTB* backends. In either case, we parameterize by calling the *xTB* executable. If using the *xTB* backend, we launch that executable at the run start, and collect + display results once complete. If using the *Dynamics* backend, we call *xTB* as a library to compute forces each run, and use *Dynamics*'s integrator, thermostat, and other functionality. 
+
 
 ## Editing molecules
 
@@ -207,8 +187,7 @@ Similar to traditional molecular viewing software. The camera arcs (or orbits) a
 
 If *orbit sel* is set in the GUI, the orbit center will be the selected atom or residue, vice the molecule center.
 
-![Surface example](screenshots/surface_a.png)
-
+![RFDiffusion3 example window](screenshots/rfd3_example.png)
 ### Hotkeys
 
 Most of this functionality is also available in the GUI, and you can find hotkeys from the GUI's tooltips. We recommend
@@ -397,13 +376,5 @@ the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed.
 similar in the path, e.g.:
 `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64`
 
-### Errata
-
-- Opening electron density files in general can be slow. This can lead to the program starting slowly if it was
-- Minimizing may pause molecular dynamics computations.
-- On some displays (Ones with pixel scaling), dragging the MD time slider may also move the camera. To workaround, click
-  the slider instead of dragging.
 
 ![Electron densities and small molecules](screenshots/density_example_nov_2025.png)
-
-[//]: # (Wub from LabRats didn't dissaprove of the project name!)

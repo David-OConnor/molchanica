@@ -1,5 +1,13 @@
+param(
+    # Skip Authenticode signing. Unsigned builds are blocked by Smart App Control, and warned on by
+    # SmartScreen, so only use this for local test packages.
+    [switch]$Unsigned
+)
+
 $ErrorActionPreference = "Stop"
 $appName = "molchanica"
+
+. (Join-Path $PSScriptRoot "win_exe_signing.ps1")
 
 # The version is defined in one place only: Cargo.toml's `[package] version`. Read it from there,
 # so a release never ships under a version that disagrees with the one the app reports.
@@ -50,6 +58,12 @@ if ($dumpbin) {
 } else {
     Write-Warning "dumpbin was not found, so the release was not checked for load-time CUDA or VC++ runtime imports."
 }
+
+# Sign everything we ship that can carry a signature. Gemmi and the setup script are staged into the
+# build dir first, since signing modifies them. cuFFT is already signed by Nvidia.
+$gemmi = Copy-ForSigning $gemmi $outDir
+$setup = Copy-ForSigning $setup $outDir
+Invoke-Sign -Paths $exe, $setup, $gemmi -Unsigned:$Unsigned
 
 $zip1 = "${appName}_${version}_win.zip"
 if (Test-Path $zip1) { Remove-Item $zip1 -Force }
