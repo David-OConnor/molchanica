@@ -4,6 +4,7 @@
 
 [Home page](https://www.athanorlab.com/molchanica)
 [Documentation](https://www.athanorlab.com/docs)
+[Video demos](https://www.youtube.com/@AthanorLab)
 
 [Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. It integrates with machine-learning tools for protein engineering, including RFDiffusion3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
 

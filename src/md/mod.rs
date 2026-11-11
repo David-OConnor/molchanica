@@ -1244,8 +1244,12 @@ pub(crate) fn setup_mols_dyn_with_residues(
     peptide_residues: Option<&HashMap<String, Vec<ResidueGeneric>>>,
     ff_family: ForceFieldFamily,
 ) -> Result<(Vec<MolDynamics>, HashSet<(usize, usize)>), ParamError> {
-    let mut res = Vec::new();
+    let gfnff = ff_family == ForceFieldFamily::Gfnn;
+    if gfnff {
+        validate_gfnff_positions(mols)?;
+    }
 
+    let mut res = Vec::new();
     let mut pep_atom_set = HashSet::new();
     let mut peptide_i = 0;
     for (ff_mol_type, mol, copies) in mols {
@@ -1253,14 +1257,24 @@ pub(crate) fn setup_mols_dyn_with_residues(
             continue;
         }
         let copies = (*copies).max(1);
+        let is_peptide = *ff_mol_type == FfMolType::Peptide;
 
         // In the case of Peptides, we perform optional filtering, e.g. for only atoms near a ligand.
         // If so, we must rebuild bonds, as the indices they refer to will have changed, and some bonds
         // are no longer present.
-        if *ff_mol_type == FfMolType::Peptide {
-            // We assume hetero atoms are ligands, water etc, and are not part of the protein.
-            // let atoms = filter_peptide_atoms(pep_atom_set, p, ligs, peptide_only_near_lig);
-            let (atoms, pep_set) = filter_peptide_atoms(mol, mols, near_lig_thresh);
+        let dynamics_mol = if is_peptide {
+            let (mut atoms, pep_set) = filter_peptide_atoms(mol, mols, near_lig_thresh);
+            if gfnff {
+                let positions = mol
+                    .atom_posits
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, posit)| pep_set.contains(&(0, i)).then_some(posit));
+                for (atom, &posit) in atoms.iter_mut().zip(positions) {
+                    atom.posit = posit;
+                }
+            }
+
             println!(
                 "Peptide atom count: {}. Set count: {}",
                 atoms.len(),
@@ -1271,7 +1285,7 @@ pub(crate) fn setup_mols_dyn_with_residues(
 
             let bonds = create_bonds(&atoms);
 
-            let mol = MolDynamics {
+            MolDynamics {
                 ff_mol_type: FfMolType::Peptide,
                 atoms,
                 atom_posits: None,
@@ -1283,45 +1297,94 @@ pub(crate) fn setup_mols_dyn_with_residues(
                 mol_specific_params: None,
                 explicit_params: None,
                 residues: peptide_residues.and_then(|m| m.get(&mol.ident).cloned()),
-            };
-            add_copies(&mut res, &mol, copies, box_dims);
-            continue;
-        }
+            }
+        } else {
+            let atoms = mol.atoms.iter().map(|a| a.to_generic()).collect();
+            let bonds = mol.bonds.iter().map(|b| b.to_generic()).collect();
+            let msp = mol_specific_params.get(&mol.ident).cloned();
+            if msp.is_none()
+                && *ff_mol_type == FfMolType::SmallOrganic
+                && ff_family == ForceFieldFamily::Amber
+            {
+                return Err(ParamError::new(&format!(
+                    "Missing molecule-specific parameters for  {}",
+                    mol.ident
+                )));
+            }
 
-        let atoms_gen: Vec<_> = mol.atoms.iter().map(|a| a.to_generic()).collect();
-        let bonds_gen: Vec<_> = mol.bonds.iter().map(|b| b.to_generic()).collect();
-
-        let msp = match mol_specific_params.get(&mol.ident) {
-            Some(v) => Some(v.clone()),
-            None => {
-                if *ff_mol_type == FfMolType::SmallOrganic && ff_family == ForceFieldFamily::Amber {
-                    return Err(ParamError::new(&format!(
-                        "Missing molecule-specific parameters for  {}",
-                        mol.ident
-                    )));
-                }
-                None
+            MolDynamics {
+                ff_mol_type: *ff_mol_type,
+                atoms,
+                atom_posits: Some(mol.atom_posits.clone()),
+                atom_init_velocities: None,
+                bonds,
+                adjacency_list: Some(mol.adjacency_list.clone()),
+                static_: false,
+                bonded_only: false,
+                mol_specific_params: msp,
+                explicit_params: None,
+                residues: None,
             }
         };
 
-        let mol = MolDynamics {
-            ff_mol_type: *ff_mol_type,
-            atoms: atoms_gen,
-            atom_posits: Some(mol.atom_posits.clone()),
-            atom_init_velocities: None,
-            bonds: bonds_gen,
-            adjacency_list: Some(mol.adjacency_list.clone()),
-            static_: false,
-            bonded_only: false,
-            mol_specific_params: msp,
-            explicit_params: None,
-            residues: None,
-        };
+        if gfnff {
+            if dynamics_mol.atoms.is_empty() {
+                return Err(ParamError::new(&format!(
+                    "{} has no atoms selected for GFN-FF MD.",
+                    mol.ident
+                )));
+            }
 
-        add_copies(&mut res, &mol, copies, box_dims);
+            if let Some(atom) = dynamics_mol
+                .atoms
+                .iter()
+                .find(|atom| !(1..=86).contains(&atom.element.atomic_number()))
+            {
+                return Err(ParamError::new(&format!(
+                    "{} atom {} has an unsupported element ({}) for GFN-FF.",
+                    mol.ident, atom.serial_number, atom.element
+                )));
+            }
+        }
+
+        add_copies(&mut res, &dynamics_mol, copies, box_dims);
     }
 
     Ok((res, pep_atom_set))
+}
+
+fn validate_gfnff_positions(
+    mols: &[(FfMolType, &MoleculeCommon, usize)],
+) -> Result<(), ParamError> {
+    for (kind, mol, _) in mols {
+        if mol.selected_for_md.is_none() {
+            continue;
+        }
+
+        if mol.atoms.len() != mol.atom_posits.len() {
+            return Err(ParamError::new(&format!(
+                "{} has mismatched atom and coordinate counts.",
+                mol.ident
+            )));
+        }
+
+        let invalid = mol
+            .atoms
+            .iter()
+            .zip(&mol.atom_posits)
+            .find(|(atom, posit)| {
+                (*kind != FfMolType::Peptide || !atom.hetero)
+                    && posit.to_arr().iter().any(|v| !v.is_finite())
+            });
+        if let Some((atom, _)) = invalid {
+            return Err(ParamError::new(&format!(
+                "{} atom {} has non-finite coordinates.",
+                mol.ident, atom.serial_number
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Default, Encode, Decode)]

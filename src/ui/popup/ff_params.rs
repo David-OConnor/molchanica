@@ -1696,9 +1696,7 @@ fn gfnff_parameters(state: &mut State, ui: &mut Ui) {
     if let Some(charge) = &mut set.total_charge {
         ui.add(egui::DragValue::new(charge).speed(1.).max_decimals(0));
     } else {
-        ui.small(
-            "Infer total charge from complete input charges; uncharged input defaults to neutral.",
-        );
+        ui.small("Default total charge: 0. xTB calculates atomic partial charges.");
     }
     let backend = set.clone();
     if ui.button("Reload xTB and reassign").clicked() {

@@ -47,6 +47,7 @@ pub struct ForceFields {
     assignments: HashMap<(u8, usize), Assignment>,
     amber: HashMap<(u8, u64), Vec<Annotation>>,
     dirty: bool,
+    recalculate_charges: bool,
     opls_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
     opls_results: HashMap<u64, Result<MolDynamics, String>>,
     gfnff_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
@@ -186,6 +187,7 @@ fn amber_annotations(
     residues: &[ResidueGeneric],
     set: &FfParamSet,
     specific: &mut HashMap<String, bio_files::md_params::ForceFieldParams>,
+    recompute: bool,
 ) -> Result<Vec<Annotation>, String> {
     let input = MolDynamics {
         ff_mol_type: kind,
@@ -198,7 +200,15 @@ fn amber_annotations(
     let prepared = set
         .parameterize_with_options(
             &input,
-            &dynamics::params::ParameterizationOptions::local_only(),
+            &dynamics::params::ParameterizationOptions {
+                reassign_atom_types: recompute,
+                charge_policy: if recompute {
+                    dynamics::params::ChargePolicy::Recompute
+                } else {
+                    dynamics::params::ChargePolicy::BackendDefault
+                },
+                ..dynamics::params::ParameterizationOptions::local_only()
+            },
         )
         .map_err(|e| e.to_string())?;
     if let Some(parameters) = prepared.mol_specific_params {
@@ -299,11 +309,7 @@ impl ForceFields {
                 a.force_field_type = name.clone();
                 a.partial_charge = *q;
             }
-        } else if copy.atoms.iter().any(|a| {
-            a.force_field_type
-                .as_deref()
-                .is_some_and(|t| t.starts_with("opls_"))
-        }) {
+        } else if self.family != ForceFieldFamily::Amber {
             // Allow the Amber preparer to type a new, uncached copy.
             for a in &mut copy.atoms {
                 a.force_field_type = None;
@@ -324,6 +330,7 @@ impl ForceFields {
         residues: Vec<ResidueGeneric>,
         amber_data: &FfParamSet,
         specific: &mut HashMap<String, bio_files::md_params::ForceFieldParams>,
+        recalculate_charges: bool,
     ) -> bool {
         let topology = topology_hash(mol, &residues);
         let current = annotation_hash(mol);
@@ -331,7 +338,9 @@ impl ForceFields {
             .assignments
             .get(&key)
             .filter(|a| a.topology == topology);
-        if previous.is_some_and(|a| a.family == self.family && a.annotations == current) {
+        if !recalculate_charges
+            && previous.is_some_and(|a| a.family == self.family && a.annotations == current)
+        {
             return false;
         }
 
@@ -358,21 +367,27 @@ impl ForceFields {
                 })
             });
 
-        // Keep the original Amber annotations, including supplied ligand
-        // charges. Copies and reordered picker entries can share this source.
-        let amber = if imported_foreign_types {
-            amber_annotations(mol, kind, &residues, amber_data, specific)
-                .unwrap_or_else(|_| vec![(None, None); mol.atoms.len()])
+        // Keep Amber annotations for Amber-only analysis copies.
+        let amber = if self.family == ForceFieldFamily::Amber
+            && (imported_foreign_types
+                || (recalculate_charges
+                    && matches!(kind, FfMolType::SmallOrganic | FfMolType::Peptide)))
+        {
+            amber_annotations(
+                mol,
+                kind,
+                &residues,
+                amber_data,
+                specific,
+                recalculate_charges,
+            )
+            .unwrap_or_else(|_| vec![(None, None); mol.atoms.len()])
         } else if let Some(source) = self.amber.get(&(key.0, topology)) {
             source.clone()
         } else if self.family == ForceFieldFamily::Amber {
             annotations(mol)
         } else {
-            // A graph edited while OPLS/CHARMM was active may still carry its
-            // old family labels. Rebuild its Amber preparation source rather
-            // than caching those labels as Amber for a future switch back.
-            amber_annotations(mol, kind, &residues, amber_data, specific)
-                .unwrap_or_else(|_| vec![(None, None); mol.atoms.len()])
+            vec![(None, None); mol.atoms.len()]
         };
 
         let mut explicit = None;
@@ -380,9 +395,8 @@ impl ForceFields {
         let mut error = None;
         let mut pending = false;
         if self.family == ForceFieldFamily::Amber {
-            // An Amber-side load or parameter edit already supplied new data.
-            // Otherwise restore the annotations saved before switching family.
-            if restoring_amber || imported_foreign_types {
+            // Apply only Amber assignments.
+            if recalculate_charges || restoring_amber || imported_foreign_types {
                 for (a, (name, q)) in mol.atoms.iter_mut().zip(&amber) {
                     a.force_field_type = name.clone();
                     a.partial_charge = *q;
@@ -407,7 +421,13 @@ impl ForceFields {
                     .atoms
                     .iter()
                     .filter(|a| kind != FfMolType::Peptide || !a.hetero)
-                    .map(|a| a.to_generic())
+                    .map(|a| {
+                        let mut atom = a.to_generic();
+                        atom.force_field_type = None;
+                        atom.partial_charge = None;
+
+                        atom
+                    })
                     .collect(),
                 bonds: mol.bonds.iter().map(|b| b.to_generic()).collect(),
                 residues: (!residues.is_empty()).then_some(residues),
@@ -485,13 +505,10 @@ impl ForceFields {
                         .map_err(|e| e.descrip),
                 )
             };
-            // A failed family assignment must not leave Amber names/charges
-            // attached to a molecule presented as CHARMM or OPLS.
+            // Pending and failed assignments must not display another model's charges.
             for a in &mut mol.atoms {
                 a.force_field_type = None;
-                if self.family != ForceFieldFamily::Gfnn {
-                    a.partial_charge = None;
-                }
+                a.partial_charge = None;
             }
             match result {
                 Some(Ok(prepared)) => {
@@ -518,7 +535,7 @@ impl ForceFields {
         } else {
             amber
         };
-        self.amber.insert((key.0, topology), amber.clone());
+        self.amber.insert((key.0, topology), amber);
         self.assignments.insert(
             key,
             Assignment {
@@ -531,6 +548,7 @@ impl ForceFields {
                 pending,
             },
         );
+
         true
     }
 
@@ -731,9 +749,11 @@ impl State {
         self.ui.ff_params.gfnff_library = None;
         let previous_family = self.force_fields.family;
         self.force_fields.family = family;
-        if family == ForceFieldFamily::Opls {
-            self.force_fields.retry_opls();
-        }
+        self.force_fields.recalculate_charges = true;
+        self.force_fields.opls_jobs.clear();
+        self.force_fields.opls_results.clear();
+        self.force_fields.invalidate();
+
         let preset = MdConfig::for_family(family);
         let cfg = &mut self.to_save.md.config;
         cfg.ff_family = family;
@@ -768,6 +788,7 @@ impl State {
         }
         self.refresh_force_fields();
         self.force_fields.dirty = true;
+
         Ok(())
     }
 
@@ -776,6 +797,7 @@ impl State {
     pub fn refresh_force_fields(&mut self) -> bool {
         self.force_fields.poll_opls();
         self.force_fields.poll_gfnff();
+        let recalculate_charges = std::mem::take(&mut self.force_fields.recalculate_charges);
         let mut changed = std::mem::take(&mut self.force_fields.dirty);
         for (i, mol) in self.peptides.iter_mut().enumerate() {
             changed |= self.force_fields.assign(
@@ -785,6 +807,7 @@ impl State {
                 mol.residues.iter().map(|r| r.to_generic()).collect(),
                 &self.ff_param_set,
                 &mut self.mol_specific_params,
+                recalculate_charges,
             );
         }
         for (i, mol) in self.ligands.iter_mut().enumerate() {
@@ -795,6 +818,7 @@ impl State {
                 Vec::new(),
                 &self.ff_param_set,
                 &mut self.mol_specific_params,
+                recalculate_charges,
             ) {
                 mol.conformer = None;
                 mol.ff_params_loaded = mol
@@ -817,6 +841,7 @@ impl State {
                 mol.residues.iter().map(|r| r.to_generic()).collect(),
                 &self.ff_param_set,
                 &mut self.mol_specific_params,
+                recalculate_charges,
             );
         }
         for (i, mol) in self.nucleic_acids.iter_mut().enumerate() {
@@ -831,6 +856,7 @@ impl State {
                 mol.residues.iter().map(|r| r.to_generic()).collect(),
                 &self.ff_param_set,
                 &mut self.mol_specific_params,
+                recalculate_charges,
             );
         }
         self.force_fields.assignments.retain(|&(kind, i), _| {
@@ -851,6 +877,7 @@ impl State {
                 .iter()
                 .any(|(&(kind, _), a)| kind == category && a.topology == topology)
         });
+
         changed
     }
 }

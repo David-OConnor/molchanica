@@ -340,7 +340,12 @@ fn force_field_cfg(state: &mut State, ui: &mut Ui) {
 fn selected_mols_summary(state: &State, ui: &mut Ui) {
     let mols = md::get_mols_sel_for_md(state);
     if mols.is_empty() {
-        ui.label("No mols selected; solvent only");
+        ui.label(if state.to_save.md.backend == MdBackend::xTb {
+            "Select a molecule for xTB MD"
+        } else {
+            "No mols selected; solvent only"
+        });
+
         return;
     }
 

@@ -84,6 +84,10 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
     }
 
     let selected = md::get_mols_sel_for_md(state);
+    if selected.is_empty() {
+        return Err(io::Error::other("Select at least one molecule for xTB MD."));
+    }
+
     if state.ui.md.peptide_static
         && selected
             .iter()
@@ -93,14 +97,23 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
     }
 
     let box_dims = match cfg.sim_box {
-        SimBoxInit::Fixed((lo, hi)) => Some((hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)),
+        SimBoxInit::Fixed((lo, hi)) => {
+            let extent = hi - lo;
+            if extent.to_arr().iter().any(|v| !v.is_finite() || *v <= 0.) {
+                return Err(io::Error::other(
+                    "The fixed box for xTB molecule placement needs finite, positive dimensions.",
+                ));
+            }
+
+            Some((extent.x, extent.y, extent.z))
+        }
         SimBoxInit::Pad(_) => None,
     };
-    let near_lig = state
-        .ui
-        .md
-        .peptide_only_near_ligs
-        .then_some(STATIC_ATOM_DIST_THRESH);
+    let ligand_selected = selected
+        .iter()
+        .any(|(kind, _, _)| *kind == FfMolType::SmallOrganic);
+    let near_lig =
+        (state.ui.md.peptide_only_near_ligs && ligand_selected).then_some(STATIC_ATOM_DIST_THRESH);
     let (molecules, peptide_atoms) = md::setup_mols_dyn_with_residues(
         &selected,
         &state.mol_specific_params,
@@ -123,10 +136,18 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
         .flat_map(|(_, m, copies)| std::iter::repeat_n(m.ident.clone(), (*copies).max(1)));
 
     for molecule in molecules {
+        let name = names.next().unwrap_or_else(|| "GFN-FF".into());
         let mut molecule_atoms = molecule.atoms.clone();
+        for atom in &mut molecule_atoms {
+            atom.force_field_type = None;
+            atom.partial_charge = None;
+        }
+
         if let Some(positions) = &molecule.atom_posits {
             if positions.len() != molecule_atoms.len() {
-                return Err(io::Error::other("Mismatched xTB input coordinates"));
+                return Err(io::Error::other(format!(
+                    "{name} has mismatched atom and coordinate counts after xTB placement."
+                )));
             }
 
             for (atom, position) in molecule_atoms.iter_mut().zip(positions) {
@@ -134,8 +155,14 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
             }
         }
 
-        if molecule_atoms.is_empty() {
-            return Err(io::Error::other("An xTB molecule has no selected atoms"));
+        if let Some(atom) = molecule_atoms
+            .iter()
+            .find(|atom| atom.posit.to_arr().iter().any(|v| !v.is_finite()))
+        {
+            return Err(io::Error::other(format!(
+                "{name} atom {} has non-finite coordinates after xTB placement.",
+                atom.serial_number
+            )));
         }
 
         let viewer_atoms: Vec<_> = molecule_atoms.iter().map(Into::into).collect();
@@ -147,21 +174,13 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
             .map_err(|_| io::Error::other("Invalid xTB input bonds"))?;
         mols.push((
             molecule.ff_mol_type,
-            MoleculeCommon::new(
-                names.next().unwrap_or_else(|| "GFN-FF".into()),
-                viewer_atoms,
-                bonds,
-                Default::default(),
-                None,
-            ),
+            MoleculeCommon::new(name, viewer_atoms, bonds, Default::default(), None),
             1,
         ));
         atoms.extend(molecule_atoms);
     }
 
-    let charge = set
-        .charge(atoms.iter().map(|a| a.partial_charge.map(f64::from)))
-        .map_err(|e| io::Error::other(e.to_string()))?;
+    let charge = set.charge().map_err(|e| io::Error::other(e.to_string()))?;
     let thermostat = match cfg.integrator {
         Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
             thermostat.is_some()

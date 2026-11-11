@@ -30,7 +30,7 @@ use crate::{
         num_field,
         panels::md_viewer,
         safety,
-        util::{Idents, list_idents},
+        util::{Idents, list_idents, open_dir},
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -777,9 +777,28 @@ fn traj_items(
     if state.trajectories.is_empty() {
         return;
     }
+
     ui.add_space(ROW_SPACING);
 
-    ui.label("MD Trajectories");
+    ui.horizontal(|ui| {
+        ui.label("MD Trajectories");
+
+        if ui.button("Open MD out folder").clicked() {
+            let result = std::env::current_dir().and_then(|dir| {
+                let folder = dir.join("md_out");
+                std::fs::create_dir_all(&folder)?;
+
+                open_dir(&folder)
+            });
+
+            if let Err(error) = result {
+                handle_err(
+                    &mut state.ui,
+                    format!("Error opening MD out folder: {error}"),
+                );
+            }
+        }
+    });
     ui.separator();
 
     let mut close = None;

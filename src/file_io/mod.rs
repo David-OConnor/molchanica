@@ -1136,7 +1136,9 @@ impl State {
                 }
 
                 if let Some(p) = &self.ff_param_set.amber().unwrap().small_mol {
-                    mol.update_ff_related(&mut self.mol_specific_params, p, false);
+                    if self.force_fields.family == dynamics::ForceFieldFamily::Amber {
+                        mol.update_ff_related(&mut self.mol_specific_params, p, false);
+                    }
 
                     mol.update_aux(
                         &self.to_save.pubchem_properties_map,
