@@ -767,7 +767,7 @@ impl State {
             cfg.hydrogen_constraint = preset.hydrogen_constraint;
             cfg.overrides.skip_counterion_insertion = true;
             self.to_save.md.dt = self.to_save.md.dt.min(0.0005);
-            self.to_save.md.backend = crate::md::MdBackend::Dynamics;
+            self.to_save.md.backend = MdBackend::xTb;
         } else if previous_family == ForceFieldFamily::Gfnn {
             cfg.overrides.skip_counterion_insertion = false;
             if self.to_save.md.backend == crate::md::MdBackend::xTb {
