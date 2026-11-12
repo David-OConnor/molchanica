@@ -24,18 +24,18 @@ egui_plot = "0.37.0"  # For Rama plots
 # My own libraries here, many of which were designed specilfically for use
 # with Molchanica.
 lin_alg = { version = "1.4.3", features = ["encode"] }
-na_seq = "0.3.15"
+na_seq = "0.3.16"
 bio_apis = { version = "0.3.0", features = ["encode"] }
-bio_files = { version = "0.5.3", features = ["encode"] }
+bio_files = { version = "0.5.4", features = ["encode"] }
 bio_tools = { path = "../bio_tools" }
 mcubes = "0.1.7"
-dynamics = { version = "0.2.2", features = ["encode"] }
-mol_defs = { version = "0.1.0", features = ["render"] }
+dynamics = { version = "0.2.4", features = ["encode"] }
+mol_defs = { version = "0.1.1", features = ["render"] }
 adme = { path = "../adme" }
 synthesis = { path = "../synthesis" }
 
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
-ewald = { version = "0.1.15" }
+ewald = { version = "0.1.16" }
 
 # For loading and saving config
 bincode = "2.0.1"
@@ -75,7 +75,7 @@ bytes = "1.12.1"
 # `ldconfig -p | grep libcuda` reports on the affected machine before reaching for linking again.)
 cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
 
-rodio = { version = "0.23.0", optional = true }  # For sonification of bonds etc.
+rodio = { version = "0.23", optional = true }  # For sonification of bonds etc.
 webbrowser = "1.2.6"  # For opening links, e.g. from the remote DBs
 
 # Checking for, downloading, and installing new releases, from the About popup. Without its
@@ -85,21 +85,21 @@ software_manager = { path = "../../software_manager", default-features = false }
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
-graphics = { path = "../../graphics" }
+#graphics = { path = "../../graphics" }
 #lin_alg = { path = "../../lin_alg" }
-na_seq = { path = "../na_seq" }
-bio_apis = { path = "../bio_apis" }
+#na_seq = { path = "../na_seq" }
+#bio_apis = { path = "../bio_apis" }
 #mcubes = { path = "../mcubes" }
-bio_files = { path = "../bio_files" }
-dynamics = { path = "../dynamics" }
-mol_defs = { path = "../mol_defs" }
-ewald = { path = "../ewald" }
+#bio_files = { path = "../bio_files" }
+#dynamics = { path = "../dynamics" }
+#mol_defs = { path = "../mol_defs" }
+#ewald = { path = "../ewald" }
 
 
 [build-dependencies]
 cuda_setup = { version = "0.1.10", optional = true }
 # This is for embedding an application icon, on Windows.
-winresource = "0.1.31"
+winresource = "0.1"
 
 # We feature-gate the CUDA dependency, so this program can be run on computers that don't have a
 # suitable graphics chip.
