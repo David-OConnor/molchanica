@@ -1,7 +1,6 @@
 use bio_files::md_params::ForceFieldParams;
 use egui::{Color32, ComboBox, Id, Response, RichText, Sense, Stroke, TextEdit, Ui, vec2};
 use graphics::{ControlScheme, EngineUpdates, Scene};
-use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
     MolGenericRef, MolType,
     common::{MolVisibility, MoleculeCommon},
@@ -11,7 +10,7 @@ use na_seq::SeqType;
 
 use crate::{
     button,
-    cam::{MolCameraTarget, VIEW_DIR_FRONT, move_cam_to_mol, set_fog},
+    cam::move_cam_to_mol_front,
     label,
     state::{MolPickerState, MolSort, State},
     ui::{
@@ -108,7 +107,7 @@ fn picker_name(name: &str, help: &str) -> (String, String) {
 struct PickerActions {
     recenter_orbit: bool,
     close: Option<(MolType, usize)>,
-    reset_fog: bool,
+    cam_to: Option<(MolType, usize)>,
     #[cfg(feature = "sonification")]
     audio_action: Option<AudioAction>,
 }
@@ -138,9 +137,7 @@ fn drag_handle(ui: &mut Ui, mol_type: MolType, i_mol: usize) {
 /// open molecules. Returns the row's response, for dropping dragged rows onto.
 fn mol_picker_one(
     state: &mut State,
-    scene: &mut Scene,
     ui: &mut Ui,
-    updates: &mut EngineUpdates,
     redraw: &mut RedrawFlags,
     mol_type: MolType,
     i_mol: usize,
@@ -235,19 +232,7 @@ fn mol_picker_one(
                     .on_hover_text("Move camera near near this molecule, looking at it.")
                     .clicked()
                 {
-                    let molecule_center: Vec3 = mol.centroid().into();
-                    let forward: Vec3 = VIEW_DIR_FRONT.into();
-                    let alignment = molecule_center + forward;
-
-                    move_cam_to_mol(
-                        MolCameraTarget::new(mol, (mol_type, i_mol)),
-                        &mut state.ui.cam_snapshot,
-                        scene,
-                        &mut state.volatile.orbit_center,
-                        alignment,
-                        updates,
-                    );
-                    actions.reset_fog = true;
+                    actions.cam_to = Some((mol_type, i_mol));
                 }
 
                 {
@@ -691,7 +676,7 @@ pub fn mol_picker(
     let mut dropped = None;
 
     for &(mol_type, i) in &ids {
-        let row = mol_picker_one(state, scene, ui, updates, redraw, mol_type, i, &mut actions);
+        let row = mol_picker_one(state, ui, redraw, mol_type, i, &mut actions);
 
         // Mark where a dragged row will go, and move it there on release.
         if let Some(row) = row
@@ -762,6 +747,11 @@ pub fn mol_picker(
         sidebar::toggle_audio(state, mol_type, i_mol);
     }
 
+    // Before closing, so the index is still valid.
+    if let Some(molecule) = actions.cam_to {
+        move_cam_to_mol_front(state, scene, molecule, updates);
+    }
+
     if let Some((mol_type, i_mol)) = actions.close {
         close_mol(mol_type, i_mol, state, scene, redraw, updates);
     }
@@ -770,10 +760,6 @@ pub fn mol_picker(
         && let ControlScheme::Arc { center } = &mut scene.input_settings.control_scheme
     {
         *center = orbit_center(state);
-    }
-
-    if actions.reset_fog {
-        set_fog(state, &mut scene.camera);
     }
 }
 

@@ -244,8 +244,6 @@ See below for a reference.
 
 Note: The molecule editor has a different set of hot keys; see its tooltips for details.
 
-![Protein B](screenshots/protein_b.png)
-
 
 ## Reflections and electron density
 
@@ -345,6 +343,8 @@ Molchanica can play back molecular dynamics trajectories run from other programs
 ### Adding nucleic acids and lipids
 
 You can add DNA, RNA, and lipids in various configurations without loading files; this program can create them procedurally using the GUI. It can create DNA and RNA from a given nucleic acid or amino acid sequence. It can create lipids arranged freely, as membrances, or as lipid nanoparticles (LNPs).
+
+![MD on DNA, with GFN-FF and xTB](/screenshots/md_on_dna_gfnff.png)
 
 ### The preferences file, and where Molchanica keeps its data
 

@@ -1,12 +1,16 @@
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
-use mol_defs::molecules::nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands};
+use mol_defs::molecules::{
+    MolType,
+    nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
+};
 use na_seq::{
     Nucleotide::{self, *},
     seq_from_str,
 };
 
 use crate::{
+    cam::move_cam_to_mol_front,
     drawing::wrappers::draw_all_nucleic_acids,
     state::State,
     ui::{COLOR_ACTION, misc::section_box, panels::aa_creation::SEQ_INPUT_WIDTH},
@@ -124,6 +128,9 @@ pub(in crate::ui) fn na_section(
                     state.nucleic_acids.push(mol);
 
                     draw_all_nucleic_acids(state, scene, updates);
+
+                    let i_mol = state.nucleic_acids.len() - 1;
+                    move_cam_to_mol_front(state, scene, (MolType::NucleicAcid, i_mol), updates);
                 }
             });
         });

@@ -279,6 +279,32 @@ pub fn move_cam_to_active_mol(
     set_fog(state, &mut scene.camera);
 }
 
+/// Look at a molecule from the front, and orbit around it.
+pub fn move_cam_to_mol_front(
+    state: &mut State,
+    scene: &mut Scene,
+    molecule: (MolType, usize),
+    engine_updates: &mut EngineUpdates,
+) {
+    let Some(mol) = state.get_mol(molecule.0, molecule.1) else {
+        return;
+    };
+
+    let target = MolCameraTarget::new(mol.common(), molecule);
+    let forward: lin_alg::f64::Vec3 = VIEW_DIR_FRONT.into();
+    let alignment = mol.common().centroid() + forward;
+
+    move_cam_to_mol(
+        target,
+        &mut state.ui.cam_snapshot,
+        scene,
+        &mut state.volatile.orbit_center,
+        alignment,
+        engine_updates,
+    );
+    set_fog(state, &mut scene.camera);
+}
+
 const MOVE_TO_TARGET_DIST: f32 = 15.;
 pub const MOVE_TO_CAM_DIST: f32 = 20.;
 
