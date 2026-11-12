@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use bio_apis::{pdbe, rcsb};
 use chrono::Local;
+use cudarc::driver::HostSlice;
 use egui::{
     Color32, ComboBox, CornerRadius, Event, FocusDirection, Frame, Key, Margin, Panel, RichText,
     Sense, Slider, Stroke, TextEdit, Ui,
@@ -1573,7 +1574,12 @@ fn query_input(
     }
     state.ui.db_input_trimmed = input_trimmed;
     state.ui.db_input_lowercase = input_lowercase;
-    if state.peptides.is_empty() && state.active_mol().is_none() {
+    if state.peptides.is_empty()
+        && state.ligands.is_empty()
+        && state.nucleic_acids.is_empty()
+        && state.lipids.is_empty()
+        && state.active_mol().is_none()
+    {
         ui.add_space(COL_SPACING / 2.);
         if ui
             .button(RichText::new("I'm feeling lucky 🍀").color(color_open_tools))

@@ -487,6 +487,18 @@ impl SnapshotViewer {
     /// This replaces all molecules in the viewer.
     /// todo: Support more generally as a molecule format A/R, and possibly move this if so.
     pub fn load_gro(&mut self, path: &Path) -> io::Result<()> {
+        self.load_gro_with_solute(path, &[])
+    }
+
+    /// Like `load_gro`, but takes elements, bonds, and atom metadata for the leading GRO molecules
+    /// from `solute`, in order. GRO files only carry 5-char atom names, so elements and bonds
+    /// inferred from them are unreliable. Molecules past `solute`, or with mismatched atom
+    /// counts, fall back to inference.
+    pub fn load_gro_with_solute(
+        &mut self,
+        path: &Path,
+        solute: &[(FfMolType, MoleculeCommon)],
+    ) -> io::Result<()> {
         let gro = Gro::load(path)?;
 
         // Group atoms by (mol_id, mol_name), preserving first-seen order.
@@ -507,30 +519,56 @@ impl SnapshotViewer {
         let mut mols = Vec::new();
         let mut snap_atom_i = 0;
 
-        for (mol_id, mol_name) in &mol_order {
+        for (mol_i, (mol_id, mol_name)) in mol_order.iter().enumerate() {
             let indices = &mol_atom_groups[&(*mol_id, mol_name.clone())];
-            let mut atoms = Vec::new();
-            let mut atom_posits = Vec::new();
+            let count = indices.len();
 
-            for &idx in indices {
-                let a = &gro.atoms[idx];
-                // GRO coords are in nm; convert to Å.
-                let posit = Vec3 {
-                    x: a.posit.x * 10.0,
-                    y: a.posit.y * 10.0,
-                    z: a.posit.z * 10.0,
-                };
+            // GRO coords are in nm; convert to Å.
+            let atom_posits: Vec<_> = indices
+                .iter()
+                .map(|&idx| gro.atoms[idx].posit * 10.0)
+                .collect();
 
-                atoms.push(Atom {
-                    serial_number: a.serial_number,
-                    posit,
-                    element: a.element,
-                    type_in_res_general: Some(a.atom_type.clone()),
-                    hetero: true,
-                    ..Default::default()
-                });
-                atom_posits.push(posit);
+            if let Some((ff_mol_type, template)) = solute.get(mol_i) {
+                if template.atoms.len() == count {
+                    let mut mol = template.clone();
+                    for (atom, posit) in mol.atoms.iter_mut().zip(&atom_posits) {
+                        atom.posit = *posit;
+                    }
+                    mol.atom_posits = atom_posits;
+
+                    mols.push(ViewerMolecule {
+                        mol_type: MolType::from(*ff_mol_type),
+                        mol,
+                        range: (snap_atom_i, snap_atom_i + count),
+                    });
+
+                    snap_atom_i += count;
+                    continue;
+                }
+
+                eprintln!(
+                    "GRO molecule {mol_name} has {count} atoms; expected {} from {}. Inferring elements and bonds.",
+                    template.atoms.len(),
+                    template.ident
+                );
             }
+
+            let atoms: Vec<_> = indices
+                .iter()
+                .zip(&atom_posits)
+                .map(|(&idx, posit)| {
+                    let a = &gro.atoms[idx];
+                    Atom {
+                        serial_number: a.serial_number,
+                        posit: *posit,
+                        element: a.element,
+                        type_in_res_general: Some(a.atom_type.clone()),
+                        hetero: true,
+                        ..Default::default()
+                    }
+                })
+                .collect();
 
             // Infer covalent bonds from atom distances.
             let atom_generics: Vec<AtomGeneric> = atoms
@@ -550,7 +588,6 @@ impl SnapshotViewer {
                 .filter_map(|bg| Bond::from_generic(bg, &atoms).ok())
                 .collect();
 
-            let count = atoms.len();
             let mut mol = MoleculeCommon {
                 ident: mol_name.clone(),
                 atoms,

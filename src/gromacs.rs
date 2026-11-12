@@ -38,7 +38,7 @@ use dynamics::{
     params::FfParamSet,
 };
 use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3 as Vec3F64};
-use mol_defs::molecules::common::MoleculeCommon;
+use mol_defs::molecules::{Atom, Bond, common::MoleculeCommon};
 use na_seq::Element;
 
 use crate::{
@@ -227,10 +227,10 @@ fn molecule_input_from_template(name: &str, mol: &MolDynamics) -> MoleculeInput 
     }
 }
 
+/// Returns the input, and the solute molecules in GRO order, for playback.
 pub fn gromacs_input_from_state(
     state: &State,
-    // ) -> io::Result<(GromacsInput, Vec<(FfMolType, MoleculeCommon, usize)>)> {
-) -> io::Result<GromacsInput> {
+) -> io::Result<(GromacsInput, Vec<(FfMolType, MoleculeCommon)>)> {
     state.check_md_force_fields().map_err(io::Error::other)?;
     if state
         .selected_force_field()
@@ -271,7 +271,12 @@ pub fn gromacs_input_from_state(
     let residues = crate::md::peptide_residue_map(state);
 
     // Build molecule entries for GROMACS input.
-    let (mols_input, _md_pep_sel, resolved_mols) = match build_molecule_inputs(
+    let MoleculeInputs {
+        inputs: mols_input,
+        resolved_mols,
+        viewer_mols,
+        ..
+    } = match build_molecule_inputs(
         &mols,
         &state.mol_specific_params,
         state.ui.md.peptide_static,
@@ -331,7 +336,16 @@ pub fn gromacs_input_from_state(
             .map_err(io::Error::other)?,
         );
     }
-    Ok(input)
+
+    Ok((input, viewer_mols))
+}
+
+pub struct MoleculeInputs {
+    pub inputs: Vec<MoleculeInput>,
+    pub pep_atom_set: HashSet<(usize, usize)>,
+    pub resolved_mols: Vec<(String, MolDynamics, usize)>,
+    /// One per GRO molecule, in GRO order.
+    pub viewer_mols: Vec<(FfMolType, MoleculeCommon)>,
 }
 
 /// Convert Molchanica molecule data into `Vec<MoleculeInput>` for GROMACS.
@@ -343,17 +357,11 @@ pub fn build_molecule_inputs(
     sim_box_init: &SimBoxInit,
     param_set: &FfParamSet,
     peptide_residues: &HashMap<String, Vec<bio_files::ResidueGeneric>>,
-) -> Result<
-    (
-        Vec<MoleculeInput>,
-        HashSet<(usize, usize)>,
-        Vec<(String, MolDynamics, usize)>,
-    ),
-    String,
-> {
+) -> Result<MoleculeInputs, String> {
     let mut result = Vec::new();
     let mut placed_mols = Vec::new();
     let mut resolved_mols = Vec::new();
+    let mut viewer_mols = Vec::new();
 
     let mut pep_atom_set = HashSet::new();
     let mut peptide_i = 0;
@@ -425,6 +433,7 @@ pub fn build_molecule_inputs(
         let first_name = copy_mol_name(&name, 0, count);
         resolved_mols.push((first_name.clone(), dyn_mol.clone(), 1));
         result.push(molecule_input_from_dyn(first_name, &dyn_mol));
+        viewer_mols.push(viewer_mol(&mol.ident, &dyn_mol)?);
         placed_mols.push(dyn_mol.clone());
 
         if count > 1 {
@@ -449,6 +458,7 @@ pub fn build_molecule_inputs(
                     copy_mol_name(&name, copy_i + 1, count),
                     placed_mol,
                 ));
+                viewer_mols.push(viewer_mol(&mol.ident, placed_mol)?);
             }
         }
 
@@ -464,7 +474,35 @@ pub fn build_molecule_inputs(
         let _ = static_peptide; // used via peptide MolDynamics construction
     }
 
-    Ok((result, pep_atom_set, resolved_mols))
+    Ok(MoleculeInputs {
+        inputs: result,
+        pep_atom_set,
+        resolved_mols,
+        viewer_mols,
+    })
+}
+
+/// Viewer molecule with the elements, bonds, and atom metadata GROMACS receives. Positions are
+/// replaced from the GRO on playback.
+fn viewer_mol(ident: &str, mol: &MolDynamics) -> Result<(FfMolType, MoleculeCommon), String> {
+    let mut atoms: Vec<Atom> = mol.atoms.iter().map(Into::into).collect();
+    if let Some(posits) = &mol.atom_posits {
+        for (atom, posit) in atoms.iter_mut().zip(posits) {
+            atom.posit = *posit;
+        }
+    }
+
+    let bonds = mol
+        .bonds
+        .iter()
+        .map(|b| Bond::from_generic(b, &atoms))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| format!("Invalid bonds in {ident} for GROMACS playback"))?;
+
+    Ok((
+        mol.ff_mol_type,
+        MoleculeCommon::new(ident.to_owned(), atoms, bonds, Default::default(), None),
+    ))
 }
 
 fn copy_mol_name(base: &str, copy_i: usize, copy_count: usize) -> String {
@@ -627,7 +665,7 @@ pub fn sim_box_nm(mols: &[MoleculeInput], box_type: &SimBoxInit) -> Option<(f64,
 /// delivered via [`crate::threads::ThreadReceivers::gromacs_md_avail`] and
 /// processed by [`on_gromacs_md_complete`].
 pub fn launch_md(state: &mut State) {
-    let input = match gromacs_input_from_state(state) {
+    let (input, viewer_mols) = match gromacs_input_from_state(state) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("Error creating GROMACS input: {e}");
@@ -651,8 +689,7 @@ pub fn launch_md(state: &mut State) {
         match result {
             Ok(out) => {
                 let elapsed = start.elapsed().as_millis();
-                // let _ = tx.send((out, mol_start_indices, elapsed));
-                let _ = tx.send((out, elapsed));
+                let _ = tx.send((out, viewer_mols, elapsed));
             }
             Err(e) => {
                 let elapsed = start.elapsed().as_millis();
@@ -668,8 +705,7 @@ pub fn launch_md(state: &mut State) {
                     ..Default::default()
                 };
 
-                // let _ = tx.send((out, mol_start_indices, elapsed));
-                let _ = tx.send((out, elapsed));
+                let _ = tx.send((out, viewer_mols, elapsed));
             }
         }
     });
@@ -705,7 +741,7 @@ fn extract_gromacs_fatal_error(log_text: &str) -> Option<String> {
 pub fn on_gromacs_md_complete(
     state: &mut State,
     out: &GromacsOutput,
-    // _mol_start_indices: Vec<usize>,
+    viewer_mols: &[(FfMolType, MoleculeCommon)],
     elapsed_ms: u128,
 ) {
     if out.log_text.contains("Fatal error") {
@@ -729,10 +765,13 @@ pub fn on_gromacs_md_complete(
         return;
     }
 
-    // Load the solvated input GRO as the mol set for trajectory playback.
+    // Load the solvated input GRO as the mol set for trajectory playback. Solute elements and
+    // bonds come from our input molecules; the GRO only has atom names.
     if let Some(gro_path) = &out.gro_path {
-        if let Err(e) = state.volatile.md_local.viewer.load_gro(gro_path) {
-            eprintln!("Error loading GRO after GROMACS run: {e}");
+        let viewer = &mut state.volatile.md_local.viewer;
+        match viewer.load_gro_with_solute(gro_path, viewer_mols) {
+            Ok(()) => viewer.mol_set_active = Some(viewer.mol_sets.len() - 1),
+            Err(e) => eprintln!("Error loading GRO after GROMACS run: {e}"),
         }
     }
 
@@ -769,6 +808,6 @@ pub fn on_gromacs_md_complete(
 
 /// Save .gro, .mdp, and .top files to disk, from our MD state, molecules etc.
 pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
-    let inp = gromacs_input_from_state(state)?;
+    let (inp, _) = gromacs_input_from_state(state)?;
     inp.save(path)
 }

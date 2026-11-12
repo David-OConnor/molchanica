@@ -17,9 +17,10 @@ use bio_apis::{
 };
 use bio_files::gromacs::GromacsOutput;
 use chrono::Utc;
+use dynamics::FfMolType;
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
-    molecules::{MolIdent, MolType, small::MoleculeSmall},
+    molecules::{MolIdent, MolType, common::MoleculeCommon, small::MoleculeSmall},
     screening::pharmacophore::PhScreeningScore,
     sfc_mesh::MeshColors,
 };
@@ -83,8 +84,8 @@ pub struct ThreadReceivers {
     // pub ph_screening_outer: Option<Receiver<Vec<PhScreeningScore>>>,
     pub ph_screening: Option<Receiver<Vec<PhScreeningScore>>>,
     /// GROMACS MD run. Carries `(out, mol_start_indices, elapsed_ms)`.
-    // pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<usize>, u128)>>,
-    pub gromacs_md_avail: Option<Receiver<(GromacsOutput, u128)>>,
+    /// Output, solute viewer molecules in GRO order, and elapsed ms.
+    pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Vec<(FfMolType, MoleculeCommon)>, u128)>>,
     pub xtb_md: Option<crate::xtb::XtbRun>,
     /// An ORCA run, e.g. geometry optimization or charges; see `orca::launch`.
     pub orca_run: Option<OrcaRun>,
@@ -1121,12 +1122,10 @@ pub fn handle_thread_rx(
         .as_ref()
         .and_then(|rx| rx.try_recv().ok());
 
-    // if let Some((out, mol_start_indices, elapsed_ms)) = gromacs_result {
-    if let Some((out, elapsed_ms)) = gromacs_result {
+    if let Some((out, viewer_mols, elapsed_ms)) = gromacs_result {
         state.volatile.thread_receivers.gromacs_md_avail = None;
 
-        // crate::gromacs::on_gromacs_md_complete(state, &out, mol_start_indices, elapsed_ms);
-        on_gromacs_md_complete(state, &out, elapsed_ms);
+        on_gromacs_md_complete(state, &out, &viewer_mols, elapsed_ms);
         state.volatile.md_local.gromacs_output = Some(out);
     }
 
