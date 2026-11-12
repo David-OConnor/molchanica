@@ -34,9 +34,10 @@ dynamics = { version = "0.2.5", features = ["encode"] }
 ewald = { version = "0.1.16" }
 mol_defs = { version = "0.1.1", features = ["render"] }
 
-# ADME and synthesis are non-publish dependencies, feature-gated.
-adme = { path = "../adme", optional = true }
-synthesis = { path = "../synthesis", optional = true }
+# ADME and synthesis are private, unpublished crates. Cargo requires path deps to exist even when
+# optional, so these stay commented out. Uncomment locally to build with `--features adme,synthesis`.
+#adme = { path = "../adme", optional = true }
+#synthesis = { path = "../synthesis", optional = true }
 
 # Checking for, downloading, and installing new releases, from the About popup. Without its
 # default `gui` feature, which is the Software Manager application itself.
@@ -113,9 +114,13 @@ default = ["cuda"]
 #cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/vkfft", "ewald/vkfft"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
-adme = ["dep:adme"]
-synthesis = ["dep:synthesis"]
+# `adme` and `synthesis` features are implicit, from their optional deps above. We still feature-gate
+# code out based on them, but can't include them here as they're not published.
 sonification = ["rodio"]
+
+[lints.rust]
+# Declares the `adme` and `synthesis` features while their deps are commented out.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("adme", "synthesis"))'] }
 
 [profile.release]
 strip = true  # Strip symbols from binary. Size reduction on Linux/Mac.
