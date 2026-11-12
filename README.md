@@ -345,6 +345,7 @@ Molchanica can play back molecular dynamics trajectories run from other programs
 You can add DNA, RNA, and lipids in various configurations without loading files; this program can create them procedurally using the GUI. It can create DNA and RNA from a given nucleic acid or amino acid sequence. It can create lipids arranged freely, as membrances, or as lipid nanoparticles (LNPs).
 
 ![MD on DNA, with GFN-FF and xTB](/screenshots/md_on_dna_gfnff.png)
+![MD on DNA, with Amber and GROMACS](/screenshots/md_with_dna_gromacs.png)
 
 ### The preferences file, and where Molchanica keeps its data
 

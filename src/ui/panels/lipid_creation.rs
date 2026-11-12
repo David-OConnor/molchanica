@@ -1,8 +1,12 @@
 use egui::{ComboBox, RichText, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
-use mol_defs::molecules::lipid::{LipidShape, make_bacterial_lipids};
+use mol_defs::molecules::{
+    MolType,
+    lipid::{LipidShape, make_bacterial_lipids},
+};
 
 use crate::{
+    cam::move_cam_to_mol_front,
     drawing::{EntityClass, wrappers::draw_all_lipids},
     state::State,
     ui,
@@ -71,6 +75,7 @@ pub(in crate::ui) fn lipid_section(
                 let center = scene.camera.position
                     + scene.camera.orientation.rotate_vec(FWD_VEC) * crate::cam::MOVE_TO_CAM_DIST;
 
+                let count_prev = state.lipids.len();
                 state.lipids.extend(make_bacterial_lipids(
                     state.to_save.lipid.mol_count as usize,
                     center.into(),
@@ -85,7 +90,19 @@ pub(in crate::ui) fn lipid_section(
                 //
                 // state.lipids.push(mol);
 
+                // The last one added.
+                let molecule = (state.lipids.len() > count_prev)
+                    .then(|| (MolType::Lipid, state.lipids.len() - 1));
+
+                if molecule.is_some() {
+                    state.volatile.active_mol = molecule;
+                }
+
                 draw_all_lipids(state, scene, updates);
+
+                if let Some(molecule) = molecule {
+                    move_cam_to_mol_front(state, scene, molecule, updates);
+                }
             }
 
             if !state.lipids.is_empty()

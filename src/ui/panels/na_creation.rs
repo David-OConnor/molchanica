@@ -127,10 +127,11 @@ pub(in crate::ui) fn na_section(
 
                     state.nucleic_acids.push(mol);
 
-                    draw_all_nucleic_acids(state, scene, updates);
+                    let molecule = (MolType::NucleicAcid, state.nucleic_acids.len() - 1);
+                    state.volatile.active_mol = Some(molecule);
 
-                    let i_mol = state.nucleic_acids.len() - 1;
-                    move_cam_to_mol_front(state, scene, (MolType::NucleicAcid, i_mol), updates);
+                    draw_all_nucleic_acids(state, scene, updates);
+                    move_cam_to_mol_front(state, scene, molecule, updates);
                 }
             });
         });

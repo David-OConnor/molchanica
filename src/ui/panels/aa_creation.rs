@@ -3,11 +3,11 @@
 use chrono::Local;
 use egui::{Button, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
-use mol_defs::molecules::{MoleculeGeneric, aa_color};
+use mol_defs::molecules::{MolType, MoleculeGeneric, aa_color};
 use na_seq::{AaIdent, AminoAcid, SeqType, Sequence, SequenceData};
 
 use crate::{
-    cam::move_mol_to_cam,
+    cam::{move_cam_to_mol_front, move_mol_to_cam},
     drawing::aa_highlight::AMINO_ACIDS,
     peptide_creation::{PeptideGeometry, build_peptide},
     state::State,
@@ -145,7 +145,11 @@ pub(in crate::ui) fn create_peptide(
     ) {
         Ok(mut mol) => {
             move_mol_to_cam(&mut mol.common, &scene.camera);
+            // Makes it the active molecule.
             state.load_mol_to_state(MoleculeGeneric::Peptide(mol), scene, updates, None);
+
+            let molecule = (MolType::Peptide, state.peptides.len() - 1);
+            move_cam_to_mol_front(state, scene, molecule, updates);
         }
         Err(e) => handle_err(&mut state.ui, format!("Problem making a peptide: {e}")),
     }
