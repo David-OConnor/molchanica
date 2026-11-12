@@ -9,11 +9,14 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "adme")]
 use adme::{DatasetTdc, infer::Infer};
+
 use bincode::{Decode, Encode};
 use bio_apis::amber_geostd::GeostdItem;
 use bio_files::{ResidueType, md_params::ForceFieldParams, mol_templates::TemplateData};
 use chrono::{DateTime, Utc};
+
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaFunction;
 use dynamics::{
@@ -560,6 +563,7 @@ pub struct StateVolatile {
     pub md_local: MdStateLocal,
     pub orbit_center: Option<(MolType, usize)>,
     pub alignment: StateAlignment,
+    #[cfg(feature = "adme")]
     /// Key: target name, corresponding to TDC CSVs.
     pub inference_models: HashMap<DatasetTdc, Infer>,
     pub parquet_dbs: Vec<ParquetMolDb>,
@@ -671,7 +675,8 @@ pub struct StateUi {
     pub protein_comparison: crate::ui::popup::protein_comparison::ProteinComparison,
     pub selection_editor: crate::ui::popup::selections::SelectionEditor,
     pub reactions: crate::reactions::ReactionsState,
-    pub synthesis_reactions: crate::reactions::SynthesisReactionsState,
+    #[cfg(feature = "synthesis")]
+    pub synthesis_reactions: crate::reactions_synthesis::SynthesisReactionsState,
     /// View mode for proteins/peptides.
     pub mol_view_peptide: MoleculeView,
     /// View mode for everything other than proteins/peptides.
@@ -986,6 +991,7 @@ pub struct PopupState {
     pub selections: bool,
     pub measurement: bool,
     pub reactions: bool,
+    #[cfg(feature = "synthesis")]
     pub synthesis_reactions: bool,
     pub show_get_geostd: bool,
     pub show_associated_structures: bool,

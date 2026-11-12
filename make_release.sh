@@ -31,7 +31,7 @@ chmod +x "$setup"
 # whoever installs the release. Strip them here so the archive is right regardless.
 sed -i 's/\r$//' "$setup"
 
-cargo build --release
+cargo build --release --features adme,synthesis
 
 # The CUDA build is also what people without an Nvidia GPU download, so it must not name any CUDA
 # library as a load-time dependency: the dynamic loader would refuse to start it there, before the
@@ -50,6 +50,6 @@ zip -j -r "${app_name}_${version}_linux.zip" "$exe" "$readme" "$setup" "$icon" \
 
 # We don't use a second binary for non-CUDA; the Cuda-compiled binary should work
 # on non-CUDA-available setups. The only difference in the packages is inclusion of hte cuFFT library.
-#cargo build --release --no-default-features
+#cargo build --release --no-default-features --features adme,synthesis
 zip -j -r "${app_name}_${version}_linux_nocuda.zip" "$exe" "$readme" "$setup" "$icon" \
     "$mpnn_convert"

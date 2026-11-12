@@ -1,18 +1,20 @@
+#[cfg(feature = "adme")]
 use std::{
     collections::HashMap,
+    sync::mpsc::{self, Receiver},
+    thread,
+};
+use std::{
     env, fs,
     fs::File,
     io,
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
-    sync::{
-        OnceLock,
-        mpsc::{self, Receiver},
-    },
-    thread,
+    sync::OnceLock,
     time::Instant,
 };
 
+#[cfg(feature = "adme")]
 use adme::{DatasetTdc, TherapeuticProperties, infer::Infer, infer_therapeutic_props};
 use bio_files::{
     DensityMap, MmCif, Mol2, Pdbqt, SdfFormat, Xyz,
@@ -60,6 +62,7 @@ pub mod ff_params;
 pub(crate) mod managed_mols;
 pub mod sequence;
 
+#[cfg(feature = "adme")]
 /// Prepare one molecule once before running the bundled ADME models. The ADME crate repairs
 /// missing or untrusted 3D geometry with RDKit; doing that here makes the backend choice visible
 /// and prevents every model from repeating the same preparation.
@@ -1151,6 +1154,7 @@ impl State {
                             .unwrap(),
                     );
 
+                    #[cfg(feature = "adme")]
                     spawn_therapeutic_inference(
                         &mol,
                         &mut self.volatile.inference_models,

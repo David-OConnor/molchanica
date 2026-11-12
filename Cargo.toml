@@ -25,44 +25,50 @@ egui_plot = "0.37.0"  # For Rama plots
 # with Molchanica.
 lin_alg = { version = "1.4.3", features = ["encode"] }
 na_seq = "0.3.16"
-bio_apis = { version = "0.3.0", features = ["encode"] }
+bio_apis = { version = "0.3.1", features = ["encode"] }
 bio_files = { version = "0.5.4", features = ["encode"] }
-bio_tools = { path = "../bio_tools" }
+bio_tools = "0.1.4"
 mcubes = "0.1.7"
-dynamics = { version = "0.2.4", features = ["encode"] }
-mol_defs = { version = "0.1.1", features = ["render"] }
-adme = { path = "../adme" }
-synthesis = { path = "../synthesis" }
-
+dynamics = { version = "0.2.5", features = ["encode"] }
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
 ewald = { version = "0.1.16" }
+mol_defs = { version = "0.1.1", features = ["render"] }
+
+# ADME and synthesis are non-publish dependencies, feature-gated.
+adme = { path = "../adme", optional = true }
+synthesis = { path = "../synthesis", optional = true }
+
+# Checking for, downloading, and installing new releases, from the About popup. Without its
+# default `gui` feature, which is the Software Manager application itself.
+software_manager = "0.1.1"
+
 
 # For loading and saving config
 bincode = "2.0.1"
 rayon = "1.12.0"
 
 # For electron density reflections
-rustfft = "6.4.1"
+rustfft = "6.4"
 
-rand = "0.10.2"
-regex = "1.13.1"
-chrono = "0.4.45"
-serde = { version = "1.0.229", features = ["derive"] }
+rand = "0.10"
+regex = "1.13"
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
 
 # For structure prediction (Boltz-2, Chai-1, ESMFold 2, OpenDDE, Protenix-v2)
 # and external tools (ProteinMPNN),
 # which exchange JSON with the processes they drive.
-serde_json = "1.0.151"
+serde_json = "1.0"
 serde_yaml = "0.9"
 flate2 = "1.1" # Preview and load compressed model outputs while preserving raw files.
 
 # We use Parquet for molecule databases, e.g. for screening, and a built-in convenience set.
 # Parquet is the on-disk format; Arrow is its in-memory format.
-parquet = { version = "60.1.0", features = ["arrow"] }
-arrow = "60.1.0"
+parquet = { version = "60.1", features = ["arrow"] }
+arrow = "60.1"
 # Parquet reads from anything implementing `ChunkReader`; `Bytes` is how we point one at the
 # database embedded in the binary, rather than a file on disk.
-bytes = "1.12.1"
+bytes = "1.12"
 
 # `dynamic-loading` rather than `dynamic-linking`: the CUDA driver library is resolved with
 # `dlopen`/`LoadLibrary` on first use instead of being a load-time dependency of the executable.
@@ -76,11 +82,7 @@ bytes = "1.12.1"
 cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
 
 rodio = { version = "0.23", optional = true }  # For sonification of bonds etc.
-webbrowser = "1.2.6"  # For opening links, e.g. from the remote DBs
-
-# Checking for, downloading, and installing new releases, from the About popup. Without its
-# default `gui` feature, which is the Software Manager application itself.
-software_manager = { path = "../../software_manager", default-features = false }
+webbrowser = "1.2"  # For opening links, e.g. from the remote DBs
 
 
 # We use these when developing locally to reduce friction.
@@ -89,11 +91,13 @@ software_manager = { path = "../../software_manager", default-features = false }
 #lin_alg = { path = "../../lin_alg" }
 #na_seq = { path = "../na_seq" }
 #bio_apis = { path = "../bio_apis" }
+#bio_tools = { path = "../bio_tools" }
 #mcubes = { path = "../mcubes" }
 #bio_files = { path = "../bio_files" }
 #dynamics = { path = "../dynamics" }
 #mol_defs = { path = "../mol_defs" }
 #ewald = { path = "../ewald" }
+#software_manager = { path = "../../software_manager" }
 
 
 [build-dependencies]
@@ -109,6 +113,8 @@ default = ["cuda"]
 #cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/vkfft", "ewald/vkfft"]
 cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
+adme = ["dep:adme"]
+synthesis = ["dep:synthesis"]
 sonification = ["rodio"]
 
 [profile.release]

@@ -21,6 +21,7 @@ pub(super) fn safety_summary(data: Option<&SafetyData>) -> String {
     }
 }
 
+#[cfg(feature = "synthesis")]
 pub(super) fn safety_badges(data: Option<&SafetyData>, ui: &mut Ui) {
     let Some(data) = data else {
         ui.weak("GHS unavailable")

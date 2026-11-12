@@ -11,6 +11,8 @@ pub mod protein_design;
 mod protein_res_management;
 pub(in crate::ui) mod rama_plot;
 pub mod reactions;
+#[cfg(feature = "synthesis")]
+mod reactions_synthesis;
 pub mod recent_files;
 pub mod selections;
 mod settings;
@@ -145,6 +147,7 @@ pub(in crate::ui) fn load_popups(
         state.ui.popup.reactions &= open;
     }
 
+    #[cfg(feature = "synthesis")]
     if state.ui.popup.synthesis_reactions {
         let open = show_popup(
             popup("Synthesis reaction library")
@@ -154,7 +157,7 @@ pub(in crate::ui) fn load_popups(
                 .max_height(1_600.0),
             ui.ctx(),
             |ui| {
-                reactions::synthesis_reactions_window(
+                reactions_synthesis::synthesis_reactions_window(
                     &mut state.ui.synthesis_reactions,
                     &mut state.to_save,
                     ui,

@@ -2,7 +2,6 @@ use std::time::{Duration, Instant};
 
 use bio_apis::{pdbe, rcsb};
 use chrono::Local;
-use cudarc::driver::HostSlice;
 use egui::{
     Color32, ComboBox, CornerRadius, Event, FocusDirection, Frame, Key, Margin, Panel, RichText,
     Sense, Slider, Stroke, TextEdit, Ui,
@@ -26,7 +25,7 @@ use crate::{
     },
     cli,
     cli::autocomplete_cli,
-    drawing::{MoleculeView, peptide::SFC_DIST_SCALE},
+    drawing::peptide::SFC_DIST_SCALE,
     file_io::download_mols::load_atom_coords_rcsb,
     inputs::add_atom_with_tab,
     label,
@@ -84,6 +83,23 @@ pub(in crate::ui) const COLOR_AMBER: Color32 = Color32::from_rgb(255, 176, 0);
 
 /// The status light, and text, while background computations are running. Amber.
 const COLOR_COMPUTING: Color32 = COLOR_AMBER;
+
+/// Restores egui 0.36's widget sizing and rounding. egui 0.37 doubled the button padding,
+/// made interactive widgets taller, and rounded their corners more.
+fn use_compact_style(ctx: &egui::Context) {
+    ctx.all_styles_mut(|style| {
+        style.spacing.button_padding = egui::vec2(4., 1.);
+        style.spacing.interact_size.y = 18.;
+
+        let widgets = &mut style.visuals.widgets;
+
+        widgets.noninteractive.corner_radius = CornerRadius::same(2);
+        widgets.inactive.corner_radius = CornerRadius::same(2);
+        widgets.hovered.corner_radius = CornerRadius::same(3);
+        widgets.active.corner_radius = CornerRadius::same(2);
+        widgets.open.corner_radius = CornerRadius::same(2);
+    });
+}
 
 /// Shared trigger for the small-molecule identifier lookup. The lookup itself and its receiver
 /// are shared in `threads`; this keeps its two UI entry points consistent as well.
@@ -773,6 +789,7 @@ fn top_controls(
                 state.ui.popup.parquet_db = !state.ui.popup.parquet_db;
             }
 
+            #[cfg(feature = "synthesis")]
             if button!(
                     ui,
                     "Reaction lib",

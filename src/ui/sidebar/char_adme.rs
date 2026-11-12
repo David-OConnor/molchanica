@@ -1,4 +1,6 @@
+#[cfg(feature = "adme")]
 use adme::{Adme, Toxicity};
+
 use egui::{Color32, ScrollArea, Ui};
 use lin_alg::f64::Vec3;
 use mol_defs::{
@@ -320,6 +322,7 @@ fn char_basics(
     );
 }
 
+#[cfg(feature = "adme")]
 fn adme_disp(adme: &Adme, ui: &mut Ui) {
     // label!(ui, "ADME:", Color32::GRAY);
 
@@ -519,6 +522,7 @@ pub(in crate::ui) fn mol_char_disp(
             ui.separator();
             ui.add_space(ROW_SPACING);
 
+            #[cfg(feature = "adme")]
             if let Some(ther) = &mol.therapeutic_props {
                 ui.add_space(ROW_SPACING);
                 ui.separator();
@@ -532,6 +536,7 @@ pub(in crate::ui) fn mol_char_disp(
         });
 }
 
+#[cfg(feature = "adme")]
 fn tox_disp(tox: &Toxicity, ui: &mut Ui) {
     label!(ui, "Toxicity:", Color32::GRAY).on_hover_text("Of our cittyyyyyyy");
 

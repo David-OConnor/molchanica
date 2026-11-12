@@ -6,7 +6,6 @@ use std::{
     thread,
 };
 
-use adme::TherapeuticProperties;
 use bio_apis::{
     ReqError,
     amber_geostd::GeostdData,
@@ -21,6 +20,7 @@ use dynamics::FfMolType;
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
     molecules::{MolIdent, MolType, common::MoleculeCommon, small::MoleculeSmall},
+    properties::therapeutic::TherapeuticProperties,
     screening::pharmacophore::PhScreeningScore,
     sfc_mesh::MeshColors,
 };

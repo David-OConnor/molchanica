@@ -26,7 +26,7 @@ $cufft = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin\x64\cufft
 $mpnnConvert = "scripts/convert_mpnn_weights.py"
 $gemmi  = "C:\Program Files\gemmi"
 
-cargo build --release
+cargo build --release --features adme,synthesis
 
 # The CUDA build is also what people without an Nvidia GPU download, so it must not name any CUDA
 # DLL in its import table: Windows would refuse to start it there, before the program ever gets a
@@ -71,7 +71,7 @@ Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mp
 
 # We don't use a second binary for non-CUDA; the Cuda-compiled binary should work
 # on non-CUDA-available setups. The only difference in the packages is inclusion of hte cuFFT library.
-# cargo build --release --no-default-features
+# cargo build --release --no-default-features --features adme,synthesis
 $zip2 = "${appName}_${version}_win_nocuda.zip"
 if (Test-Path $zip2) { Remove-Item $zip2 -Force }
 Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mpnnConvert -DestinationPath $zip2 -Force

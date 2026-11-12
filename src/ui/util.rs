@@ -280,6 +280,7 @@ pub fn update_file_dialogs(
         crate::project::load(state, scene, engine_updates, &path)?;
         handle_success(&mut state.ui, format!("Opened project: {}", path.display()));
     }
+    #[cfg(feature = "synthesis")]
     state.ui.synthesis_reactions.protocol_export.update(ctx);
 
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {

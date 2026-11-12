@@ -59,6 +59,8 @@ mod peptide_ligands;
 mod properties;
 mod protein_alignment;
 mod reactions;
+#[cfg(feature = "synthesis")]
+mod reactions_synthesis;
 mod screening;
 mod selection;
 #[cfg(feature = "sonification")]
