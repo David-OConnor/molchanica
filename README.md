@@ -27,7 +27,7 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 
 - **Windows**: Run the `*_setup.exe` installer.
 - **Linux**: Unzip, and run `setup_molchanica.sh` (Without `sudo`).
-- **Mac**: Run `setup_molchanica.dmg`
+- **Mac**: Unzip and run `molchanica`. (Standalone executable)
 
 ![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 
