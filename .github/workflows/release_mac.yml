@@ -60,8 +60,12 @@ jobs:
             echo "::warning::No build-data release with hmdb.parquet and ChEBI.parquet; building without the built-in molecule databases."
           fi
 
-      # No CUDA on macOS. No ADME or synthesis either: they're private, and their deps are commented
-      # out in the committed Cargo.toml.
+      # ADME and synthesis are private path deps that aren't on the runner. Cargo fails to load the
+      # manifest if they're declared, even as optional.
+      - name: Remove private deps
+        run: sed -i '' -E '/^(adme|synthesis)[[:space:]]*=.*path/d' Cargo.toml
+
+      # No CUDA on macOS.
       - name: Build
         run: cargo build --release --no-default-features --target ${{ matrix.target }}
 
