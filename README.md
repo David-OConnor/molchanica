@@ -26,20 +26,21 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 [Download from the releases page](https://github.com/David-OConnor/molchanica/releases).
 
 - **Windows**: Run the `*_setup.exe` installer.
-- **Linux**: Run `setup_molchanica.sh` (Without `sudo`).
+- **Linux**: Unzip, and run `setup_molchanica.sh` (Without `sudo`).
 - **Mac**: Run `setup_molchanica.dmg`
 
 ![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 
-### Mac, and Linux distros we don't provide a binary for
+### Linux distros we don't provide a binary for
 
 Compile from source by [downloading and installing Rust](https://www.rust-lang.org/tools/install), then running `cargo build --release` from a CLI in the project directory.
+
 
 ## Integrations
 Allows one-click installation of external tools. Click the **Tools button** in the UI to get started. See [the docs page for details, and a full list of tools](https://www.athanorlab.com/docs/third_party_tools.html)
 
 
-### Molecular dynamics tools
+### Molecular dynamics engines
 
 - GROMACS
 - xTB
@@ -54,6 +55,7 @@ Allows one-click installation of external tools. Click the **Tools button** in t
 ### Others:
 
 - RDKit
+- Gemmi
 
 
 ![External tools window](screenshots/third_party_tools.png)
@@ -82,14 +84,6 @@ Allows one-click installation of external tools. Click the **Tools button** in t
 - Visualize electron density from crystallography and Cryo-Em data
 - Screen molecules based on binding affinity and desired properties
 - Pharmacophore based modeling and screening
-
-
-## Goals
-
-- Fast
-- Easy-to-use
-- Practical workflow
-- Updates responsive to user feedback
 
 
 ## File formats
@@ -136,6 +130,12 @@ It supports running MD directly on the following molecule types:
 - Carbohydrates
 
 It can also perform quantum molecular dynamics using [ORCA](https://www.faccts.de/orca/). This is much slower. See [this documentation page for details](https://www.athanorlab.com/docs/orca.html).
+
+### MD playback
+
+Molchanica can play back molecular dynamics trajectories run from other programs, including GROMACS, OpenMM, and NAMD.
+
+![MD playback/viewer, minimal example](/screenshots/md_viewer_march_2026.png)
 
 
 ## Editing molecules
@@ -303,22 +303,8 @@ It also supports building selection commands via the GUI.
 
 ### Selection modes
 
-Using a dropdown in the UI, you can change selection mode between *Atom*, (covalent) *Bond*, and
-*Residue*. These are
-mostly self-explanatory.
-When selecting a component using *right
-click*, or toggling using the UI buttons or arrow keys, this changes
-what is selected, and the nature of information displayed. For example, in
-*Bond* mode, you can see bond length,
-elements of the atoms connected, and the expected oscillation frequency of the bond. In
-*Atom* mode, you can see
-dihedral angles, the atom name as part of its residue, the atom's force field name, and its partial charge.
+Using a dropdown in the UI, you can change selection mode between *Atom*, (covalent) *Bond*, and *Residue*. These are mostly self-explanatory. When selecting a component using *right click*, or toggling using the UI buttons or arrow keys, this changes what is selected, and the nature of information displayed. For example, in *Bond* mode, you can see bond length, elements of the atoms connected, and the expected oscillation frequency of the bond. In *Atom* mode, you can see dihedral angles, the atom name as part of its residue, the atom's force field name, and its partial charge.
 
-### MD playback
-
-Molchanica can play back molecular dynamics trajectories run from other programs, including GROMACS, OpenMM, and NAMD.
-
-![MD playback/viewer, minimal example](/screenshots/md_viewer_march_2026.png)
 
 ### Adding nucleic acids and lipids
 
@@ -339,8 +325,7 @@ Molchanica keeps its data in one folder: the one its executable is in.
 
 ## Compiling
 
-This application is written in rust, so it compiles normally using `cargo build --release`, which produces a
-standalone executable.
+This application is written in rust, so it compiles normally using `cargo build --release`, which produces a standalone executable.
 
 If you're not compiling on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the
 `--no-default-features` to the build command. This will disable GPU support on the executable produced.
@@ -349,13 +334,7 @@ The bundled molecule databases are optional. `hmdb.parquet` and `ChEBI.parquet` 
 
 #### Compiling with GPU support
 
-If compiling with GPU support, your compiling PC must have
-the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed. You must set the environment var
-`LD_LIBARARY_PATH` (Linux) or `Path` (Windows) to your CUDA bin directory, e.g.
-`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`. You may also need the build tools containing
-`cl.exe` or
-similar in the path, e.g.:
-`C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64`
+If compiling with GPU support, your compiling PC must have the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed. You must set the environment var `LD_LIBARARY_PATH` (Linux) or `Path` (Windows) to your CUDA bin directory, e.g. `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`. You may also need the build tools containing `cl.exe` or similar in the path, e.g.: `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64`
 
 
 ![Electron densities and small molecules](screenshots/density_example_nov_2025.png)
