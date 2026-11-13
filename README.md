@@ -25,8 +25,9 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 
 [Download from the releases page](https://github.com/David-OConnor/molchanica/releases).
 
-- **Windows**: Run the `_setup.exe` installer. It installs for the current user, and adds a Start menu entry.
-- **Linux**: Unzip, and run. `setup_molchanica.sh`, included in the zip, is useful for setting up shortcuts. (Do not run this with `sudo`.)
+- **Windows**: Run the `*_setup.exe` installer.
+- **Linux**: Run `setup_molchanica.sh` (Without `sudo`).
+- **Mac**: Run `setup_molchanica.dmg`
 
 ![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 
