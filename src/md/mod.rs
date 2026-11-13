@@ -69,6 +69,7 @@ pub struct MdStateLocal {
     /// If true, render the molecules from this struct, instead of primary state molecules.
     pub draw_md_mols: bool,
     pub gromacs_output: Option<GromacsOutput>,
+    pub gromacs_setup: gromacs::Setup,
     pub opened_inputs: Option<runs::RunInputs>,
     pub viewer: SnapshotViewer,
     // todo: putting back for now
@@ -1493,7 +1494,10 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
     }
 
     let prefs = &state.to_save.md;
-    if prefs.num_steps == 0 || !prefs.dt.is_finite() || prefs.dt <= 0. {
+    let gromacs = prefs.backend == MdBackend::Gromacs;
+    let gromacs_files = gromacs && state.volatile.md_local.gromacs_setup.uses_files();
+    let native_mdp = gromacs && state.volatile.md_local.gromacs_setup.mdp.is_some();
+    if !native_mdp && (prefs.num_steps == 0 || !prefs.dt.is_finite() || prefs.dt <= 0.) {
         handle_err(
             &mut state.ui,
             "Set a positive MD step count and time step.".into(),
@@ -1502,13 +1506,17 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
         return;
     }
 
-    if let Err(error) = state.sync_gfnff_md_config() {
+    if !gromacs_files
+        && !native_mdp
+        && let Err(error) = state.sync_gfnff_md_config()
+    {
         handle_err(&mut state.ui, error);
 
         return;
     }
 
-    if (state.force_fields.family == ForceFieldFamily::Gfnn
+    if (!gromacs_files
+        && state.force_fields.family == ForceFieldFamily::Gfnn
         && !matches!(
             state.to_save.md.backend,
             MdBackend::Dynamics | MdBackend::xTb
@@ -1530,7 +1538,7 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
         .opened_inputs
         .as_ref()
         .is_some_and(|inputs| inputs.backend() == state.to_save.md.backend);
-    if !uses_saved_inputs && !ready_to_run_helper(state) {
+    if !gromacs_files && !uses_saved_inputs && !ready_to_run_helper(state) {
         return;
     }
 

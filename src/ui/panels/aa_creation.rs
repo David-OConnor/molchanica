@@ -1,20 +1,25 @@
 //! Create peptides and amino acid sequences from single-letter amino acid codes.
 
+use std::fs;
+
 use chrono::Local;
 use egui::{Button, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
-use mol_defs::molecules::{MolType, MoleculeGeneric, aa_color};
+use mol_defs::molecules::{MolGenericRef, MolType, MoleculeGeneric, aa_color};
 use na_seq::{AaIdent, AminoAcid, SeqType, Sequence, SequenceData};
 
 use crate::{
     cam::{move_cam_to_mol_front, move_mol_to_cam},
     drawing::aa_highlight::AMINO_ACIDS,
+    file_io::managed_mols,
     peptide_creation::{PeptideGeometry, build_peptide},
+    prefs::OpenType,
     state::State,
     ui::{
         COLOR_ACTION, COLOR_HIGHLIGHT,
         misc::{section_box, selector},
         popup::ProteinToolsTab,
+        util::report_cache_result,
     },
     util::{handle_err, handle_success, make_egui_color},
 };
@@ -119,11 +124,21 @@ pub(in crate::ui) fn create_seq_btn() -> Button<'static> {
 pub(in crate::ui) fn create_sequence(text: &str, name: Option<&str>, state: &mut State) {
     match parse_seq(text) {
         Ok(seq) => {
-            let sequence = make_sequence(seq, name);
+            let mut sequence = make_sequence(seq, name);
             let msg = format!("Added sequence {}", sequence.display_name());
+
+            // Kept in a managed file, so it reopens next session.
+            let result = managed_mols::store_created_seq(&state.volatile.prefs_dir, &sequence);
+            sequence.path = report_cache_result(state, result);
+
+            if let Some(path) = sequence.path.clone() {
+                let ident = Some(sequence.display_name().to_owned());
+                state.update_history(&path, OpenType::Sequence, ident);
+            }
 
             state.sequences.push(sequence);
             state.select_sequence(Some(state.sequences.len() - 1));
+            state.update_save_prefs();
 
             handle_success(&mut state.ui, msg);
         }
@@ -145,8 +160,28 @@ pub(in crate::ui) fn create_peptide(
     ) {
         Ok(mut mol) => {
             move_mol_to_cam(&mut mol.common, &scene.camera);
+
+            // Kept in a managed file, so it reopens next session; as for a downloaded protein.
+            let result = managed_mols::store_created(
+                &state.volatile.prefs_dir,
+                MolGenericRef::Peptide(&mol),
+                &SequenceData::AminoAcid(seq.to_vec()).to_letters(),
+            );
+            let path = report_cache_result(state, result);
+
+            if let Some(path) = &path
+                && let Err(e) = fs::read_to_string(path).and_then(|text| mol.set_source_cif(text))
+            {
+                eprintln!("Problem reading back the created peptide's mmCIF: {e}");
+            }
+
             // Makes it the active molecule.
-            state.load_mol_to_state(MoleculeGeneric::Peptide(mol), scene, updates, None);
+            state.load_mol_to_state(
+                MoleculeGeneric::Peptide(mol),
+                scene,
+                updates,
+                path.as_deref(),
+            );
 
             let molecule = (MolType::Peptide, state.peptides.len() - 1);
             move_cam_to_mol_front(state, scene, molecule, updates);

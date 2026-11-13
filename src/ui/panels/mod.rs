@@ -7,6 +7,7 @@ pub(super) mod aa_selection;
 pub(super) mod aa_seq;
 pub(super) mod lipid_creation;
 pub mod md;
+mod md_gromacs;
 pub mod md_viewer;
 pub mod mol_data;
 pub(super) mod na_creation;

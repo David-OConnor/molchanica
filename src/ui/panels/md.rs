@@ -1,7 +1,7 @@
 use dynamics::{
-    ComputationDevice, ForceFieldFamily, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT,
-    LINCS_ITER_DEFAULT, LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent,
-    TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
+    ForceFieldFamily, HydrogenConstraint, Integrator, LANGEVIN_GAMMA_DEFAULT, LINCS_ITER_DEFAULT,
+    LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent, TAU_TEMP_DEFAULT,
+    snapshot::SnapshotHandlers,
 };
 use egui::{
     Button, Color32, ComboBox, RichText, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
@@ -33,8 +33,11 @@ pub fn md_setup(
     ui: &mut Ui,
     redraw: &mut RedrawFlags,
 ) {
-    if let Err(error) = state.sync_gfnff_md_config() {
-        crate::util::handle_err(&mut state.ui, error);
+    if !using_gromacs_files(state)
+        && !using_native_mdp(state)
+        && let Err(error) = state.sync_gfnff_md_config()
+    {
+        handle_err(&mut state.ui, error);
     }
 
     // This sequencing code is above the UI code below, so it's deferred a frame after any actions.
@@ -52,19 +55,6 @@ pub fn md_setup(
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("MD setup:").color(Color32::WHITE));
 
-            match state.computation.get().map(|r| &r.device) {
-                None => {
-                    ui.label("Auto");
-                }
-                Some(ComputationDevice::Cpu) => {
-                    ui.label(RichText::new("CPU"));
-                }
-                #[cfg(feature = "cuda")]
-                Some(ComputationDevice::Gpu(_)) => {
-                    ui.label(RichText::new("GPU").color(Color32::LIGHT_GREEN));
-                }
-            }
-
             ui.add_space(COL_SPACING / 2.0);
 
             selected_mols_summary(state, ui);
@@ -80,12 +70,12 @@ pub fn md_setup(
                 .iter()
                 .filter(|lig| lig.common.selected_for_md.is_some())
                 .count();
-            if peptide_selected && num_ligs > 0 {
+            if !using_gromacs_files(state) && peptide_selected && num_ligs > 0 {
                 flag_btn(&mut state.ui.md.peptide_only_near_ligs, "Pep only near lig", "Only model the subset of peptide atoms near a small molecule", ui);
                 flag_btn(&mut state.ui.md.peptide_static, "Pep static", "Let peptide (protein) atoms affect other molecules, but they don't move themselves", ui);
             }
 
-            if !state.lipids.is_empty() {
+            if !using_gromacs_files(state) && !state.lipids.is_empty() {
                 let all_selected = state
                     .lipids
                     .iter()
@@ -109,7 +99,8 @@ pub fn md_setup(
             //     flag_btn(&mut mol.common.selected_for_md, &mol.common.ident, "Toggle if we use this molecule for MD.", ui);
             // }
 
-            for mol in &mut state.nucleic_acids {
+            let using_files = using_gromacs_files(state);
+            for mol in state.nucleic_acids.iter_mut().filter(|_| !using_files) {
                 let mut selected = mol.common.selected_for_md.is_some();
                 flag_btn(
                     &mut selected,
@@ -127,6 +118,8 @@ pub fn md_setup(
             if ui.button("Save Cfg")
                 .on_hover_text(if state.to_save.md.backend == MdBackend::xTb {
                     "Save xTB geometry, MD settings, and command"
+                } else if using_gromacs_files(state) {
+                    "Run grompp and save the processed GROMACS inputs"
                 } else {
                     "Save GROMACS .gro, .mdp, and .top files"
                 })
@@ -149,6 +142,7 @@ pub fn md_setup(
 
                 state.to_save.md.dt = to_save_default.md.dt;
                 state.to_save.md.num_steps = to_save_default.md.num_steps;
+                state.volatile.md_local.gromacs_setup = Default::default();
 
                 if state.force_fields.family == ForceFieldFamily::Gfnn {
                     state.to_save.md.dt = state.to_save.md.dt.min(0.0005);
@@ -174,14 +168,16 @@ pub fn md_setup(
                 ui,
                 "Run",
                 COLOR_ACTION,
-                "Run a molecular dynamics simulation on all molecules selected, using the selected dynamics package."
+                "Run the current MD setup."
             )
                 .clicked() {
                 md::start_md(state, scene, updates)
             }
 
             ui.add_space(COL_SPACING / 2.);
-            force_field_cfg(state, ui);
+            if !using_gromacs_files(state) {
+                force_field_cfg(state, ui);
+            }
 
             let gfnff = state.force_fields.family == ForceFieldFamily::Gfnn;
 
@@ -192,7 +188,8 @@ pub fn md_setup(
             let mut backends = vec![MdBackend::Dynamics];
             if gfnff {
                 backends.push(MdBackend::xTb);
-            } else {
+            }
+            if !gfnff || using_gromacs_files(state) || using_native_mdp(state) {
                 backends.push(MdBackend::Gromacs);
             }
 
@@ -224,7 +221,7 @@ pub fn md_setup(
             }
 
 
-            if button!(
+            if !using_gromacs_files(state) && button!(
                 ui,
                 "Compute E",
                 COLOR_ACTION,
@@ -262,6 +259,13 @@ pub fn md_setup(
                     run.cancel();
                 }
             }
+            if state.volatile.thread_receivers.gromacs_md_avail.is_some() {
+                ui.label("GROMACS running");
+            }
+
+            if using_gromacs_files(state) || using_native_mdp(state) {
+                return;
+            }
 
             // if let Some(md) = &state.volatile.md_local.mol_dynamics && !md.snapshots.is_empty() && button!(
             //         ui,
@@ -275,7 +279,7 @@ pub fn md_setup(
             // }
 
             let num_steps_prev = state.to_save.md.num_steps;
-            num_field(&mut state.to_save.md.num_steps, "Steps:", 50, ui);
+            num_field(&mut state.to_save.md.num_steps, "Steps:", 70, ui);
 
             ui.add_space(COL_SPACING / 2.);
 
@@ -301,26 +305,36 @@ pub fn md_setup(
             ui.label(format!("Runtime: {:.1} ps", state.volatile.md_local.run_time));
         });
 
-        ui.add_space(ROW_SPACING / 2.);
+        if !using_gromacs_files(state) && !using_native_mdp(state) {
+            ui.add_space(ROW_SPACING / 2.);
 
-        let help = "Cutoff distances for non-bonded forces, in Å. For Coulomb, transitions between short-range, and \
+            let help = "Cutoff distances for non-bonded forces, in Å. For Coulomb, transitions between short-range, and \
         long-range reciprical forces at this distance. For LJ, may represent a hard-cutoff. See the appropriate docs for \
         the backend used, details vary.";
-        ui.horizontal_wrapped(|ui| {
-            integrator_cfg(state, ui);
+            ui.horizontal_wrapped(|ui| {
+                integrator_cfg(state, ui);
 
-            if state.force_fields.family != ForceFieldFamily::Gfnn {
-                ui.add_space(COL_SPACING / 2.);
-                ui.label("Cutoffs (Å).").on_hover_text(help);
-                num_field(&mut state.to_save.md.config.coulomb_cutoff, "Coulomb:", 34, ui);
-                num_field(&mut state.to_save.md.config.lj_cutoff, "LJ:", 34, ui);
-            }
-        });
+                if state.force_fields.family != ForceFieldFamily::Gfnn {
+                    ui.add_space(COL_SPACING / 2.);
+                    ui.label("Cutoffs (Å).").on_hover_text(help);
+                    num_field(&mut state.to_save.md.config.coulomb_cutoff, "Coulomb:", 34, ui);
+                    num_field(&mut state.to_save.md.config.lj_cutoff, "LJ:", 34, ui);
+                }
+            });
 
-        ui.add_space(ROW_SPACING / 2.);
-        ui.horizontal_wrapped(|ui| {
-            temp_pressure(state, ui);
-        });
+            ui.add_space(ROW_SPACING / 2.);
+            ui.horizontal_wrapped(|ui| {
+                temp_pressure(state, ui);
+            });
+        } else if !using_gromacs_files(state) {
+            ui.horizontal_wrapped(|ui| {
+                preparation_cfg(state, ui);
+                sim_box(state, ui);
+            });
+        }
+        if state.to_save.md.backend == MdBackend::Gromacs {
+            super::md_gromacs::setup(state, ui);
+        }
 
         if let Some(ss) = state.volatile.md_local.viewer.get_active_snap() {
             ui.add_space(ROW_SPACING / 2.);
@@ -341,6 +355,11 @@ fn force_field_cfg(state: &mut State, ui: &mut Ui) {
 
 /// Counts molecule copies using the same selection as the simulation.
 fn selected_mols_summary(state: &State, ui: &mut Ui) {
+    if using_gromacs_files(state) {
+        ui.label("GROMACS file inputs");
+
+        return;
+    }
     if using_saved_inputs(state) {
         ui.label("Using saved run inputs");
         return;
@@ -400,6 +419,16 @@ fn selected_mols_summary(state: &State, ui: &mut Ui) {
     ui.label(label);
 }
 
+fn using_gromacs_files(state: &State) -> bool {
+    state.to_save.md.backend == MdBackend::Gromacs
+        && state.volatile.md_local.gromacs_setup.uses_files()
+}
+
+fn using_native_mdp(state: &State) -> bool {
+    state.to_save.md.backend == MdBackend::Gromacs
+        && state.volatile.md_local.gromacs_setup.mdp.is_some()
+}
+
 fn using_saved_inputs(state: &State) -> bool {
     state
         .volatile
@@ -457,6 +486,13 @@ fn run_picker(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates,
             .clicked()
         {
             state.volatile.dialogs.open_md_run.pick_directory();
+        }
+        if ui
+            .add_enabled(!running, Button::new("Load GROMACS files"))
+            .on_hover_text("Select an MDP, GRO, and TOP together or choose each file separately. GROMACS resolves the TOP's ITP includes.")
+            .clicked()
+        {
+            super::md_gromacs::pick(state, crate::gromacs::InputFile::Bundle);
         }
         if state.volatile.md_local.opened_inputs.is_some()
             && ui.button("Use selected molecules").clicked()
@@ -579,6 +615,12 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
             .response
             .on_hover_text(help_text);
     }
+
+    preparation_cfg(state, ui);
+}
+
+fn preparation_cfg(state: &mut State, ui: &mut Ui) {
+    let gfnff = state.force_fields.family == ForceFieldFamily::Gfnn;
 
     if gfnff {
         crate::force_fields::gfnff_solvent_selector(state, ui, "md_gfnff_solvent");
@@ -1004,9 +1046,9 @@ fn output_control(state: &mut State, ui: &mut Ui) {
         return;
     }
 
-    ui.label("Out.").on_hover_text("These settings control which formats, and how often \
-    to save the output trajectory to. 'Mem' only affects the Dynamics backend. TRR positions are required to display \
-    GROMACS trajectories in the UI automatically");
+    ui.label("Out.").on_hover_text(
+        "Trajectory formats and save intervals. GROMACS playback supports TRR coordinates and XTC.",
+    );
 
     let mut sync_ui = false;
     const W: u16 = 44;

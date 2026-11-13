@@ -82,6 +82,8 @@ bytes = "1.12"
 # the driver actually installs -- is in cudarc's candidate list, so if that recurs, check what
 # `ldconfig -p | grep libcuda` reports on the affected machine before reaching for linking again.)
 cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-13000"], optional = true }
+# GPU name, driver and CUDA versions for the sidebar, without creating a CUDA context. Loaded at runtime.
+nvml-wrapper = { version = "0.13", optional = true }
 
 rodio = { version = "0.23", optional = true }  # For sonification of bonds etc.
 webbrowser = "1.2"  # For opening links, e.g. from the remote DBs
@@ -89,16 +91,16 @@ webbrowser = "1.2"  # For opening links, e.g. from the remote DBs
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
-#graphics = { path = "../../graphics" }
-#lin_alg = { path = "../../lin_alg" }
+graphics = { path = "../../graphics" }
+lin_alg = { path = "../../lin_alg" }
 #na_seq = { path = "../na_seq" }
 #bio_apis = { path = "../bio_apis" }
-#bio_tools = { path = "../bio_tools" }
+bio_tools = { path = "../bio_tools" }
 #mcubes = { path = "../mcubes" }
-#bio_files = { path = "../bio_files" }
-#dynamics = { path = "../dynamics" }
-#mol_defs = { path = "../mol_defs" }
-#ewald = { path = "../ewald" }
+bio_files = { path = "../bio_files" }
+dynamics = { path = "../dynamics" }
+mol_defs = { path = "../mol_defs" }
+ewald = { path = "../ewald" }
 #software_manager = { path = "../../software_manager" }
 
 
@@ -113,7 +115,7 @@ winresource = "0.1"
 default = ["cuda"]
 
 #cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/vkfft", "ewald/vkfft"]
-cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
+cuda = ["cuda_setup", "cudarc", "nvml-wrapper", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]
 
 # `adme` and `synthesis` features are implicit, from their optional deps above. We still feature-gate
 # code out based on them, but can't include them here as they're not published.

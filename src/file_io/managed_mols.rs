@@ -10,9 +10,10 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use bio_files::{Sdf, SdfFormat};
+use bio_files::{MmCif, Sdf, SdfFormat, fasta::Fasta};
 use chrono::Utc;
-use mol_defs::molecules::{MolIdent, small::MoleculeSmall};
+use mol_defs::molecules::{MolGenericRef, MolIdent, MolType, small::MoleculeSmall};
+use na_seq::Sequence;
 use serde::{Deserialize, Serialize};
 
 const MANAGED_MOLS_DIR: &str = "managed_molecules";
@@ -31,6 +32,11 @@ pub(crate) enum ManagedMolProvider {
     BuiltIn,
     /// Made or changed in the molecule editor.
     Editor,
+    /// Made in the creation panels (AA, NA, Lipid).
+    Peptide,
+    NucleicAcid,
+    Lipid,
+    Sequence,
 }
 
 impl ManagedMolProvider {
@@ -46,6 +52,10 @@ impl ManagedMolProvider {
             Self::Smiles => "smiles",
             Self::BuiltIn => "built-in",
             Self::Editor => "editor",
+            Self::Peptide => "peptide",
+            Self::NucleicAcid => "nucleic-acid",
+            Self::Lipid => "lipid",
+            Self::Sequence => "sequence",
         }
     }
 }
@@ -63,6 +73,20 @@ pub(crate) struct ManagedMolManifest {
     /// from the editor. Applied to the molecule on load.
     #[serde(default)]
     pub name: Option<String>,
+}
+
+impl ManagedMolManifest {
+    /// For entries whose file would otherwise load as a small molecule: Mol2s of nucleic acids and
+    /// lipids from the creation panels.
+    pub(crate) fn created_mol_type(&self) -> Option<MolType> {
+        if self.provider == ManagedMolProvider::NucleicAcid.as_str() {
+            Some(MolType::NucleicAcid)
+        } else if self.provider == ManagedMolProvider::Lipid.as_str() {
+            Some(MolType::Lipid)
+        } else {
+            None
+        }
+    }
 }
 
 pub(crate) fn managed_mols_dir(prefs_dir: &Path) -> PathBuf {
@@ -110,6 +134,21 @@ fn entry_paths(
     let main_file = format!("{stem}.{extension}");
     let main_path = entry_dir.join(&main_file);
     (entry_dir, main_path, main_file)
+}
+
+/// A key for a new entry with no natural one, e.g. from the editor: when it was stored.
+fn new_entry_key(prefs_dir: &Path, provider: ManagedMolProvider) -> String {
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
+
+    let mut key = stamp.clone();
+    let mut i = 1;
+    // The entry dir doesn't depend on the extension.
+    while entry_paths(prefs_dir, provider, &key, "").0.exists() {
+        key = format!("{stamp}-{i}");
+        i += 1;
+    }
+
+    key
 }
 
 fn managed_entry_dir(prefs_dir: &Path, path: &Path) -> Option<PathBuf> {
@@ -303,21 +342,10 @@ pub(crate) fn store_edited(
             Some((entry_dir, path.to_owned(), main_file))
         });
 
-    let (entry_dir, main_path, main_file) = match prev_entry {
-        Some(entry) => entry,
-        None => {
-            let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
-
-            let mut key = stamp.clone();
-            let mut i = 1;
-            while entry_paths(prefs_dir, provider, &key, "sdf").0.exists() {
-                key = format!("{stamp}-{i}");
-                i += 1;
-            }
-
-            entry_paths(prefs_dir, provider, &key, "sdf")
-        }
-    };
+    let (entry_dir, main_path, main_file) = prev_entry.unwrap_or_else(|| {
+        let key = new_entry_key(prefs_dir, provider);
+        entry_paths(prefs_dir, provider, &key, "sdf")
+    });
 
     // There's no query that produced this molecule; its structure is the closest equivalent.
     let query = mol
@@ -345,6 +373,89 @@ pub(crate) fn store_edited(
     )?;
 
     Ok(main_path)
+}
+
+/// Store a molecule made in a creation panel, so it reopens next session, and is in the
+/// recent-files list, without the user saving it. Peptides are stored as mmCIF; nucleic acids and
+/// lipids as Mol2, which keeps their atom names, FF types, and charges. Like editor molecules,
+/// each gets its own entry. `query` is what it was made from, e.g. its sequence.
+pub(crate) fn store_created(
+    prefs_dir: &Path,
+    mol: MolGenericRef,
+    query: &str,
+) -> io::Result<PathBuf> {
+    let (provider, extension) = match mol {
+        MolGenericRef::Peptide(_) => (ManagedMolProvider::Peptide, "cif"),
+        MolGenericRef::NucleicAcid(_) => (ManagedMolProvider::NucleicAcid, "mol2"),
+        MolGenericRef::Lipid(_) => (ManagedMolProvider::Lipid, "mol2"),
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Only peptides, nucleic acids, and lipids are made in the creation panels",
+            ));
+        }
+    };
+
+    let key = new_entry_key(prefs_dir, provider);
+    let (entry_dir, main_path, main_file) = entry_paths(prefs_dir, provider, &key, extension);
+
+    match mol {
+        MolGenericRef::Peptide(m) => {
+            let cif = MmCif {
+                ident: m.common.ident.clone(),
+                atoms: m.common.atoms.iter().map(|a| a.to_generic()).collect(),
+                residues: m.residues.iter().map(|r| r.to_generic()).collect(),
+                chains: m.chains.iter().map(|c| c.to_generic()).collect(),
+                ..Default::default()
+            };
+            write_atomically(&main_path, |path| cif.save(path))?;
+        }
+        _ => {
+            // As `MolGenericRef::to_mol2` does for pockets.
+            let mol2 = MoleculeSmall {
+                common: mol.common().clone(),
+                ..Default::default()
+            }
+            .to_mol2();
+            write_atomically(&main_path, |path| mol2.save(path))?;
+        }
+    }
+
+    write_manifest(
+        &entry_dir,
+        &ManagedMolManifest {
+            provider: provider.as_str().to_owned(),
+            query: query.to_owned(),
+            main_file,
+            pubchem_cid: None,
+            frcmod_file: None,
+            lib_file: None,
+            name: None,
+        },
+    )?;
+
+    Ok(main_path)
+}
+
+/// As `store_created`, for an amino acid sequence from the AA panel. Stored as `faa`, protein
+/// FASTA, so one of only A, C, G, and T isn't read back as DNA.
+pub(crate) fn store_created_seq(prefs_dir: &Path, seq: &Sequence) -> io::Result<PathBuf> {
+    let provider = ManagedMolProvider::Sequence;
+
+    let text = Fasta {
+        records: vec![seq.clone()],
+        ..Default::default()
+    }
+    .to_text();
+
+    store_text(
+        prefs_dir,
+        provider,
+        &new_entry_key(prefs_dir, provider),
+        &seq.data.to_letters(),
+        "faa",
+        &text,
+    )
 }
 
 /// Rewrite a managed molecule's source file from the molecule we hold in memory, so data gained

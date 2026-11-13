@@ -39,13 +39,7 @@ pub struct RecentRun {
 
 #[derive(Clone)]
 pub enum RunInputs {
-    Gromacs {
-        coordinates: PathBuf,
-        topology: PathBuf,
-        mdp: MdpParams,
-        mdp_text: String,
-        index: Option<PathBuf>,
-    },
+    Gromacs(Box<crate::gromacs::Setup>),
     Xtb {
         geometry: Vec<AtomGeneric>,
         mols: Vec<(dynamics::FfMolType, MoleculeCommon, usize)>,
@@ -55,7 +49,7 @@ pub enum RunInputs {
 impl RunInputs {
     pub fn backend(&self) -> MdBackend {
         match self {
-            Self::Gromacs { .. } => MdBackend::Gromacs,
+            Self::Gromacs(_) => MdBackend::Gromacs,
             Self::Xtb { .. } => MdBackend::xTb,
         }
     }
@@ -130,7 +124,9 @@ fn trajectory_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn run_entry(dir: PathBuf) -> Option<RecentRun> {
-    let path = named(&dir, &["xtb.trj"]).or_else(|| trajectory_files(&dir).into_iter().next())?;
+    let path = named(&dir, &["xtb.trj"])
+        .or_else(|| trajectory_files(&dir).into_iter().next())
+        .or_else(|| named(&dir, &["confout.gro"]))?;
     let modified = path.metadata().ok()?.modified().ok()?;
     let name = dir.file_name()?.to_string_lossy().into_owned();
 
@@ -329,6 +325,12 @@ fn load(dir: &Path, legacy: Option<&str>) -> io::Result<LoadedRun> {
             Err(e) => error = e,
         }
     }
+    if backend == MdBackend::Gromacs
+        && legacy.is_none()
+        && let Some(path) = named(dir, &["confout.gro"])
+    {
+        return load_gromacs_structure(dir, &path);
+    }
 
     Err(error)
 }
@@ -461,39 +463,29 @@ fn load_binary_run(
                 })
         })
         .flatten();
-    let mdp = mdp_path
+    let mdp_text = mdp_path
         .as_deref()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|text| MdpParams::from_mdp_str(&text).ok().map(|mdp| (mdp, text)));
-    let config = mdp.as_ref().and_then(|(mdp, _)| {
-        let dt = mdp.dt;
-        let steps = u32::try_from(mdp.nsteps).ok()?;
-        if !dt.is_finite() || dt <= 0. {
-            return None;
-        }
-        let cfg = if let Some(saved) = native_inputs.as_ref() {
-            saved.config.clone()
-        } else {
-            gromacs_config(mdp)
-        };
+        .and_then(|path| fs::read_to_string(path).ok());
+    let config = (backend != MdBackend::Gromacs)
+        .then_some(mdp_text.as_deref())
+        .flatten()
+        .and_then(|text| MdpParams::from_mdp_str(text).ok())
+        .and_then(|mdp| {
+            let dt = mdp.dt;
+            let steps = u32::try_from(mdp.nsteps).ok()?;
+            if !dt.is_finite() || dt <= 0. {
+                return None;
+            }
+            let cfg = native_inputs
+                .as_ref()
+                .map(|saved| saved.config.clone())
+                .unwrap_or_else(|| gromacs_config(&mdp));
 
-        Some((cfg, steps, dt))
-    });
-    let inputs = match (backend, coordinates, topology, mdp, &config) {
-        (MdBackend::Gromacs, Some((path, _)), Some(topology), Some((mdp, mdp_text)), Some(_)) => {
-            let named_index = dir.join(format!("{stem}.ndx"));
-            let index = named_index
-                .is_file()
-                .then_some(named_index)
-                .or_else(|| named(dir, &["index.ndx"]))
-                .or_else(|| files(dir).into_iter().find(|p| extension(p, "ndx")));
-            Some(RunInputs::Gromacs {
-                coordinates: path.to_owned(),
-                topology,
-                mdp,
-                mdp_text,
-                index,
-            })
+            Some((cfg, steps, dt))
+        });
+    let inputs = match (backend, coordinates, topology, mdp_text) {
+        (MdBackend::Gromacs, Some((path, _)), Some(topology), Some(mdp)) => {
+            Some(gromacs_inputs(dir, stem, path, topology, mdp_path, mdp))
         }
         _ => None,
     };
@@ -506,6 +498,111 @@ fn load_binary_run(
         config,
         inputs,
         native_inputs,
+        xtb_options: None,
+    })
+}
+
+fn gromacs_inputs(
+    dir: &Path,
+    stem: &str,
+    coordinates: &Path,
+    topology: PathBuf,
+    mdp_path: Option<PathBuf>,
+    mdp: String,
+) -> RunInputs {
+    let index = named(dir, &[&format!("{stem}.ndx"), "index.ndx"])
+        .or_else(|| files(dir).into_iter().find(|path| extension(path, "ndx")));
+    let mut restart_files = files(&dir.join("continuation"))
+        .into_iter()
+        .filter(|path| path.is_file());
+    let continuation = restart_files
+        .next()
+        .filter(|_| restart_files.next().is_none());
+    let replay = dir.join("replay.mdp");
+    let (mdp_path, mdp) = match fs::read_to_string(&replay) {
+        Ok(text) => (Some(replay), text),
+        Err(_) => (mdp_path, mdp),
+    };
+
+    RunInputs::Gromacs(Box::new(crate::gromacs::Setup {
+        coordinates: Some(coordinates.to_owned()),
+        topology: Some(topology),
+        mdp: Some(mdp),
+        mdp_path,
+        index,
+        reference: named(dir, &["restraint.gro"]),
+        continuation,
+        ..Default::default()
+    }))
+}
+
+fn load_gromacs_structure(dir: &Path, path: &Path) -> io::Result<LoadedRun> {
+    let mut gro = Gro::load(path)?;
+    let top_path = named(dir, &["topo.top", "topol.top"]);
+    let topology = top_path
+        .as_deref()
+        .and_then(|path| GromacsTopology::load(path).ok());
+    if let Some(topology) = &topology {
+        group_gromacs_atoms(&mut gro, topology);
+    }
+    let snapshot = Snapshot {
+        atom_posits: gro
+            .atoms
+            .iter()
+            .map(|atom| (atom.posit * 10.).into())
+            .collect(),
+        ..Default::default()
+    };
+    let mut mol_set =
+        match crate::project::load_md_mol_set(&dir.join(crate::project::MD_MOLECULE_SET_FILE))
+            .ok()
+            .filter(|set| set.atom_count == gro.atoms.len())
+        {
+            Some(set) => set,
+            None => {
+                let mut viewer = SnapshotViewer::default();
+                viewer.load_gro_data(path, gro, &[])?;
+                let mut set = viewer.mol_sets.pop().unwrap();
+                if let Some(topology) = &topology {
+                    apply_topology_bonds(&mut set, topology);
+                }
+
+                set
+            }
+        };
+    let name = run_name(dir, path, false);
+    mol_set.name = name.clone();
+    mol_set.path = Some(path.to_owned());
+    let snapshots = vec![Arc::new(snapshot)];
+    let mut trajectory = Trajectory::new_in_memory(snapshots.clone(), name, 0.);
+    trajectory.ui_active = true;
+
+    let inputs = top_path.and_then(|top| {
+        let mdp = named(dir, &["md.mdp"])?;
+        let text = fs::read_to_string(&mdp).ok()?;
+        let coordinates = named(
+            dir,
+            &["em.gro", "ionized.gro", "mols_in_solvated.gro", "conf.gro"],
+        )?;
+
+        Some(gromacs_inputs(
+            dir,
+            "confout",
+            &coordinates,
+            top,
+            Some(mdp),
+            text,
+        ))
+    });
+
+    Ok(LoadedRun {
+        backend: MdBackend::Gromacs,
+        trajectory,
+        snapshots,
+        mol_set,
+        config: None,
+        inputs,
+        native_inputs: None,
         xtb_options: None,
     })
 }
@@ -804,9 +901,12 @@ impl LoadedRun {
         let n_shown = self.snapshots.len();
         let total = self.trajectory.num_frames;
         let has_setup = self.inputs.is_some() || self.native_inputs.is_some();
-        let has_settings = self.config.is_some();
+        let has_settings =
+            self.config.is_some() || matches!(&self.inputs, Some(RunInputs::Gromacs(_)));
 
-        if let Some((cfg, steps, dt)) = self.config {
+        if let Some((cfg, steps, dt)) = self.config
+            && !matches!(&self.inputs, Some(RunInputs::Gromacs(_)))
+        {
             state
                 .select_force_field(cfg.ff_family)
                 .map_err(io::Error::other)?;
@@ -839,7 +939,15 @@ impl LoadedRun {
             state.force_fields.invalidate();
         }
         let md = &mut state.volatile.md_local;
-        md.opened_inputs = self.inputs;
+        md.opened_inputs = match self.inputs {
+            Some(RunInputs::Gromacs(setup)) => {
+                state.to_save.md.backend = MdBackend::Gromacs;
+                md.gromacs_setup = *setup;
+
+                None
+            }
+            inputs => inputs,
+        };
         md.gromacs_output = None;
         md.pep_atom_set.clear();
         md.mol_dynamics = None;
@@ -919,12 +1027,24 @@ pub(crate) fn show_gromacs_output(
     updates: &mut EngineUpdates,
     output: &bio_files::gromacs::GromacsOutput,
 ) -> io::Result<()> {
-    let Some(path) = output.trr_path.as_ref().or(output.xtc_path.as_ref()) else {
+    let Some(path) = output.gro_path.as_ref() else {
         return Ok(());
     };
     let dir =
         gromacs_run_dir(path).ok_or_else(|| io::Error::other("Missing GROMACS run folder"))?;
-    let run = load(&dir, None)?;
+    let structures = [path.clone()];
+    let run = output
+        .trr_path
+        .iter()
+        .chain(&output.xtc_path)
+        .find_map(|traj| load_binary_run(&dir, traj, &structures, MdBackend::Gromacs, false).ok())
+        .map(Ok)
+        .unwrap_or_else(|| load(&dir, None));
+    let run = match run {
+        Ok(run) => run,
+        Err(_) if output.trr_path.is_none() && output.xtc_path.is_none() => return Ok(()),
+        Err(error) => return Err(error),
+    };
     show_playback(
         state,
         scene,
@@ -937,16 +1057,9 @@ pub(crate) fn show_gromacs_output(
     Ok(())
 }
 
+/// GROMACS output files live directly in their run folder.
 pub(crate) fn gromacs_run_dir(path: &Path) -> Option<PathBuf> {
-    let stem = path.file_stem()?.to_str()?;
-    let index = stem
-        .strip_prefix("traj_")
-        .or_else(|| stem.strip_prefix("mols_in_"))?;
-
-    path.parent()?
-        .join(format!("gromacs_{index}"))
-        .canonicalize()
-        .ok()
+    path.parent()?.canonicalize().ok()
 }
 
 pub(super) fn save_memory_trajectory(

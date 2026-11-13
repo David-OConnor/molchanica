@@ -3,14 +3,14 @@
 use std::{
     collections::HashSet,
     io,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, TryRecvError},
     },
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use bio_files::{
@@ -256,14 +256,6 @@ pub fn launch_md(state: &mut State) {
             return;
         }
     };
-    let directory = PathBuf::from("md_out").join(format!(
-        "xtb_{}_{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
     let (tx, receiver) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = cancel.clone();
@@ -281,7 +273,7 @@ pub fn launch_md(state: &mut State) {
         let start = Instant::now();
         let result = prepared
             .input
-            .run_with_cancel(&directory, &worker_cancel)
+            .run_with_cancel(&worker_cancel)
             .map(|output| {
                 let mols: Vec<_> = prepared
                     .mols

@@ -615,36 +615,22 @@ impl State {
         println!("Saving state to prefs file");
 
         // Sync molecule positions.
-        // todo: Consider the same for proteins, and other mol types.
-        for mol in &self.ligands {
-            for oh in &mut self.to_save.open_history {
-                if let Some(p) = &mol.common.path
-                    && &oh.path == p
-                {
-                    oh.position = Some(mol.common.centroid());
-                    oh.orientation = mol_orientation(&mol.common);
-                }
-            }
-        }
+        let mols = self
+            .ligands
+            .iter()
+            .map(|m| &m.common)
+            .chain(self.peptides.iter().map(|m| &m.common))
+            .chain(self.pockets.iter().map(|m| &m.common))
+            .chain(self.nucleic_acids.iter().map(|m| &m.common))
+            .chain(self.lipids.iter().map(|m| &m.common));
 
-        for mol in &self.peptides {
+        for mol in mols {
             for oh in &mut self.to_save.open_history {
-                if let Some(p) = &mol.common.path
+                if let Some(p) = &mol.path
                     && &oh.path == p
                 {
-                    oh.position = Some(mol.common.centroid());
-                    oh.orientation = mol_orientation(&mol.common);
-                }
-            }
-        }
-
-        for mol in &self.pockets {
-            for oh in &mut self.to_save.open_history {
-                if let Some(p) = &mol.common.path
-                    && &oh.path == p
-                {
-                    oh.position = Some(mol.common.centroid());
-                    oh.orientation = mol_orientation(&mol.common);
+                    oh.position = Some(mol.centroid());
+                    oh.orientation = mol_orientation(mol);
                 }
             }
         }

@@ -16,6 +16,7 @@
 //! [S3 Geostd link](https://daedalus-mols.s3.us-east-1.amazonaws.com/amber_geostd)
 
 mod annotations;
+mod compute_caps;
 mod docking;
 mod drawing;
 mod edit_history;
@@ -162,16 +163,7 @@ fn main() {
         external_tools::find_executable(external_tools::Tool::Gromacs).ok()
     });
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx512f") {
-            println!("AVX-512 is available");
-        } else if is_x86_feature_detected!("avx") {
-            println!("AVX (256-bit) is available");
-        } else {
-            println!("AVX is not available.");
-        }
-    }
+    compute_caps::detect_in_background();
 
     let mut state = State::default();
 

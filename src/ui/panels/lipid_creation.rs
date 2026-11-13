@@ -1,16 +1,18 @@
 use egui::{ComboBox, RichText, Ui};
 use graphics::{EngineUpdates, EntityUpdate, FWD_VEC, Scene};
 use mol_defs::molecules::{
-    MolType,
+    MolGenericRef, MolType,
     lipid::{LipidShape, make_bacterial_lipids},
 };
 
 use crate::{
     cam::move_cam_to_mol_front,
     drawing::{EntityClass, wrappers::draw_all_lipids},
+    file_io::managed_mols,
+    prefs::OpenType,
     state::State,
     ui,
-    ui::{COLOR_REMOVE, misc::section_box},
+    ui::{COLOR_REMOVE, misc::section_box, util::report_cache_result},
     util::clear_mol_entity_indices,
 };
 
@@ -90,6 +92,31 @@ pub(in crate::ui) fn lipid_section(
                 //
                 // state.lipids.push(mol);
 
+                // Each is kept in a managed file, so it reopens next session; as for a download.
+                // Not loaded through `load_mol_to_state`, which would move each in front of the
+                // camera, out of its pattern.
+                for i in count_prev..state.lipids.len() {
+                    let lipid = &state.lipids[i];
+                    let result = managed_mols::store_created(
+                        &state.volatile.prefs_dir,
+                        MolGenericRef::Lipid(lipid),
+                        &lipid.common.ident,
+                    );
+
+                    let Some(path) = report_cache_result(state, result) else {
+                        break;
+                    };
+
+                    let lipid = &mut state.lipids[i];
+                    lipid.common.update_path(&path);
+
+                    let ident = Some(lipid.common.ident.clone());
+                    state.update_history(&path, OpenType::Lipid, ident);
+                }
+
+                // Also records their positions.
+                state.update_save_prefs();
+
                 // The last one added.
                 let molecule = (state.lipids.len() > count_prev)
                     .then(|| (MolType::Lipid, state.lipids.len() - 1));
@@ -110,6 +137,19 @@ pub(in crate::ui) fn lipid_section(
                     .button(RichText::new("Close all lipids").color(COLOR_REMOVE))
                     .clicked()
             {
+                // Don't reopen them next session.
+                let paths: Vec<_> = state
+                    .lipids
+                    .iter()
+                    .filter_map(|l| l.common.path.clone())
+                    .collect();
+                for history in &mut state.to_save.open_history {
+                    if history.type_ == OpenType::Lipid && paths.contains(&history.path) {
+                        history.last_session = false;
+                    }
+                }
+                state.update_save_prefs();
+
                 state.lipids = Vec::new();
                 scene
                     .entities

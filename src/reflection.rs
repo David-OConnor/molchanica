@@ -18,9 +18,7 @@ use ewald::fft3d_c2r;
 use graphics::{EngineUpdates, Mesh, Scene, Vertex};
 #[cfg(feature = "cuda")]
 use lin_alg::f32::Vec3 as Vec3F32;
-#[cfg(feature = "cuda")]
-use lin_alg::f32::{vec3s_from_dev, vec3s_to_dev};
-use lin_alg::f64::Vec3;
+use lin_alg::f64::{Vec3, Vec3x4, pack_vec3x4};
 use mcubes::{MarchingCubes, MeshSide};
 use mol_defs::reflection::{DensityPt, DensityRect};
 use rayon::prelude::*;
@@ -29,8 +27,6 @@ use rustfft::{FftPlanner, num_complex::Complex};
 use crate::{
     drawing::peptide::draw_density_surface, render::MESH_DENSITY_SURFACE, state::State, util,
 };
-
-const DIST_TO_ATOMS_SAMPLE_RATIO: usize = 5;
 
 /// The parts of density-map construction that need a compute device (and, on the GPU path, our CUDA
 /// kernel). `DensityRect` itself is defined in `mol_defs`, which has no reason to know about either,
@@ -84,43 +80,33 @@ impl DensityRectExt for DensityRect {
             }
         }
 
-        // Convert to f64, and don't use every atom. The latter reduces computation time, roughly
-        // by a factor of `SAMPLE_RATIO`.
-        let atom_posits_sample: Vec<Vec3> = atom_posits
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| i.is_multiple_of(DIST_TO_ATOMS_SAMPLE_RATIO))
-            .map(|(_, a)| *a)
-            .collect();
-
         // Note: We get a big speedup from both Rayon, and then GPU on top of that. e.g.:
         // CPU without rayon: 20,000ms
         // CPU, with rayon (No SIMD): 780ms
         // GPU: 54ms
-        let out = match &dev {
-            ComputationDevice::Cpu => make_densities_inner(
-                self,
-                triplets,
-                &atom_posits_sample,
-                step_vecs,
-                dist_thresh,
-                nx,
-                ny,
-            ),
-            #[cfg(feature = "cuda")]
-            ComputationDevice::Gpu(stream) => make_densities_inner_gpu(
+        #[cfg(feature = "cuda")]
+        if let ComputationDevice::Gpu(stream) = dev
+            && let Some(kernel) = kernel
+            && !triplets.is_empty()
+            && !atom_posits.is_empty()
+        {
+            match make_densities_inner_gpu(
                 self,
                 stream,
-                // Assume Some if on Device::Gpu.
-                kernel.as_ref().unwrap(),
-                triplets,
-                &atom_posits_sample,
+                kernel,
+                &triplets,
+                atom_posits,
                 step_vecs,
                 dist_thresh.powi(2),
                 nx,
                 ny,
-            ),
-        };
+            ) {
+                Ok(out) => return out,
+                Err(e) => eprintln!("Density GPU computation failed; using CPU: {e}"),
+            }
+        }
+
+        let out = make_densities_inner(self, triplets, atom_posits, step_vecs, dist_thresh, nx, ny);
 
         let elapsed = start.elapsed().as_millis();
         println!("Complete, in {elapsed} ms");
@@ -135,36 +121,35 @@ fn make_densities_inner_gpu(
     rect: &DensityRect,
     stream: &Arc<CudaStream>,
     kernel: &CudaFunction,
-    triplets: Vec<(usize, usize, usize)>,
+    triplets: &[(usize, usize, usize)],
     atom_posits: &[Vec3],
     step_vecs: (Vec3, Vec3, Vec3),
     dist_thresh: f64,
     nx: usize,
     ny: usize,
-) -> Vec<DensityPt> {
+) -> Result<Vec<DensityPt>, cudarc::driver::DriverError> {
     let n = triplets.len();
     let n_atom_posits = atom_posits.len();
 
-    let mut coords_gpu = {
-        let v = vec![Vec3F32::new_zero(); n];
-        vec3s_to_dev(stream, &v)
-    };
-
-    let mut densities_gpu = stream.clone_htod(&vec![0.0f32; n]).unwrap();
+    let mut coords_gpu = stream.alloc_zeros::<f32>(n * 3)?;
+    let mut densities_gpu = stream.alloc_zeros::<f32>(n)?;
 
     let triplets_gpu = {
         let mut trip_flat = Vec::with_capacity(n * 3);
-        for (x, y, z) in triplets {
+        for &(x, y, z) in triplets {
             trip_flat.push(x as u32);
             trip_flat.push(y as u32);
             trip_flat.push(z as u32);
         }
-        stream.clone_htod(&trip_flat).unwrap()
+        stream.clone_htod(&trip_flat)?
     };
 
     let atom_posits_gpu = {
-        let p_f32: Vec<Vec3F32> = atom_posits.iter().map(|a| (*a).into()).collect();
-        vec3s_to_dev(stream, &p_f32)
+        let p_f32: Vec<f32> = atom_posits
+            .iter()
+            .flat_map(|a| [a.x as f32, a.y as f32, a.z as f32])
+            .collect();
+        stream.clone_htod(&p_f32)?
     };
 
     // Convert vec3s to f32.
@@ -173,7 +158,7 @@ fn make_densities_inner_gpu(
     let step_vecs_2: Vec3F32 = step_vecs.2.into();
     let origin_f32: Vec3F32 = rect.origin_cart.into();
 
-    let data_gpu = stream.clone_htod(&rect.data).unwrap();
+    let data_gpu = stream.clone_htod(&rect.data)?;
 
     let dist_thresh = dist_thresh as f32;
 
@@ -199,21 +184,25 @@ fn make_densities_inner_gpu(
     launch_args.arg(&n);
     launch_args.arg(&n_atom_posits);
 
-    unsafe { launch_args.launch(cfg) }.unwrap();
+    unsafe { launch_args.launch(cfg) }?;
 
     // todo: Consider dtoh; passing to an existing vec instead of re-allocating?
-    let coords = vec3s_from_dev(stream, &coords_gpu);
-    let densities = stream.clone_dtoh(&densities_gpu).unwrap();
+    let coords = stream.clone_dtoh(&coords_gpu)?;
+    let densities = stream.clone_dtoh(&densities_gpu)?;
 
     let mut result = Vec::with_capacity(n);
     for i in 0..n {
         result.push(DensityPt {
-            coords: coords[i].into(),
+            coords: Vec3::new(
+                coords[3 * i] as f64,
+                coords[3 * i + 1] as f64,
+                coords[3 * i + 2] as f64,
+            ),
             density: densities[i] as f64,
         })
     }
 
-    result
+    Ok(result)
 }
 
 /// Separate helper, to isolate from the GPU version.
@@ -227,6 +216,7 @@ fn make_densities_inner(
     ny: usize,
 ) -> Vec<DensityPt> {
     let dist_thresh_sq = dist_thresh * dist_thresh;
+    let (packed_atoms, last_lanes) = pack_vec3x4(atom_posits);
 
     // Note: We get a big speedup from using rayon here. For example, 200ms vs 5s, or 2.5s vs 70s
     // for a larger file. (9950x CPU)
@@ -243,17 +233,18 @@ fn make_densities_inner(
                 + step_vecs.1 * ky as f64
                 + step_vecs.2 * kz as f64;
 
-            // todo: Too slow, but can work for now.
-            // We don't want to set up density points not near the atom coordinates.
-            let mut nearest_dist_sq = f64::MAX;
-            for p in atom_posits {
-                let dist_sq = (*p - coords).magnitude_squared();
-                if dist_sq < nearest_dist_sq {
-                    nearest_dist_sq = dist_sq;
-                }
-            }
+            let near_atom = packed_atoms.iter().enumerate().any(|(i, p)| {
+                let lanes = if i + 1 == packed_atoms.len() {
+                    last_lanes
+                } else {
+                    4
+                };
+                let dist_sq = (*p - Vec3x4::splat(coords)).magnitude_squared().to_array();
 
-            if nearest_dist_sq > dist_thresh_sq {
+                dist_sq[..lanes].iter().any(|&d| d <= dist_thresh_sq)
+            });
+
+            if !near_atom {
                 // We set density to 0, vice removing the coordinates; our marching cubes
                 // algorithm requires a regular grid, with no absent values.
                 density = 0.;
@@ -282,7 +273,7 @@ pub fn make_density_mesh(state: &mut State, scene: &mut Scene, updates: &mut Eng
         return;
     };
 
-    // Our marching cubes function requires Z to be the fast axis; convert to that instead of X fastest.
+    // DensityRect and marching cubes both use X-fast storage.
     let dims = (rect.dims[0], rect.dims[1], rect.dims[2]); // (nx, ny, nz)
     let step = [rect.step[0], rect.step[1], rect.step[2]]; // (nx, ny, nz)
 
@@ -371,138 +362,106 @@ fn idx_file(i_f: usize, j_f: usize, k_f: usize, nx: usize, ny: usize) -> usize {
     i_f + nx * (j_f + ny * k_f)
 }
 
-/// Load electron density from Structure Factors (reflections) data, using a FFT. This is currently broken; we use
-/// Gemmi instead.
-// todo: This currently isn't working.
-// todo: Use cuFFT if in GPU mode.
+/// P1 structure factors to a full-cell map. Other space groups require Gemmi expansion.
 pub fn density_map_from_sf(
     sf: &CifStructureFactors,
     planner: &mut FftPlanner<f32>,
 ) -> io::Result<DensityMap> {
-    println!("Computing electron density from mmCIF 2fo-fc data...");
-    let start = Instant::now();
+    let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
+    if sf.header.ispg != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Use Gemmi to expand space-group symmetry",
+        ));
+    }
+    let dimensions = [sf.header.mx, sf.header.my, sf.header.mz];
+    if dimensions.iter().any(|&n| n <= 0) {
+        return Err(invalid("Invalid reflection grid dimensions"));
+    }
+    let [nx, ny, nz] = dimensions.map(|n| n as usize);
+    let nvox = nx
+        .checked_mul(ny)
+        .and_then(|n| n.checked_mul(nz))
+        .ok_or_else(|| invalid("Reflection grid too large"))?;
+    let axes = [sf.header.mapc, sf.header.mapr, sf.header.maps];
+    let mut sorted_axes = axes;
+    sorted_axes.sort();
+    if sorted_axes != [1, 2, 3] {
+        return Err(invalid("Invalid map axis permutation"));
+    }
+    let perm = axes.map(|a| (a - 1) as usize);
+    let volume = sf.header.cell.ortho.determinant().abs();
+    if !volume.is_finite() || volume <= 0. {
+        return Err(invalid("Invalid unit-cell volume"));
+    }
 
-    let (nx, ny, nz) = (
-        sf.header.mx as usize,
-        sf.header.my as usize,
-        sf.header.mz as usize,
-    );
-
-    let perm_f2c = [
-        (sf.header.mapc - 1) as usize,
-        (sf.header.mapr - 1) as usize,
-        (sf.header.maps - 1) as usize,
-    ];
-
-    // Reciprocal grid in CRYSTAL order with X-fast layout ---
-    let mut data_k = vec![Complex::<f32>::new(0.0, 0.0); nx * ny * nz];
-
+    // Ewald expects a Z-fast half spectrum; crystallographic phases have the opposite sign.
+    let nzc = nz / 2 + 1;
+    let mut data_k = vec![Complex::<f32>::new(0., 0.); nx * ny * nzc];
     for r in &sf.miller_indices {
-        let c = if let (Some(re), Some(im)) = (r.re, r.im) {
-            Complex::new(re, im)
-        } else {
-            let Some(amp) = r.amp else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Miller index out of bounds",
-                ));
-            };
-            let Some(phase) = r.phase else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Miller index out of bounds",
-                ));
-            };
-            Complex::from_polar(amp, phase)
+        if [r.h, r.k, r.l]
+            .into_iter()
+            .zip([nx, ny, nz])
+            .any(|(h, n)| h.unsigned_abs() as usize > n / 2)
+        {
+            return Err(invalid("Reflection lies outside the Fourier grid"));
+        }
+        let c = match (r.re, r.im, r.amp, r.phase) {
+            (Some(re), Some(im), _, _) => Complex::new(re, im),
+            (_, _, Some(amp), Some(phase)) => Complex::from_polar(amp, phase),
+            _ => return Err(invalid("Missing reflection amplitude or phase")),
         };
-
-        // Crystal grid indices
-        let u = wrap_idx(r.h, nx);
-        let v = wrap_idx(r.k, ny);
-        let w = wrap_idx(r.l, nz);
-
-        // place at (u,v,w) and its conjugate at (-u,-v,-w) in X-fast layout
-        let i0 = idx_xfast(u, v, w, nx, ny, nz);
-        data_k[i0] = c;
-
-        let u2 = wrap_idx(-r.h, nx);
-        let v2 = wrap_idx(-r.k, ny);
-        let w2 = wrap_idx(-r.l, nz);
-
-        let i1 = idx_xfast(u2, v2, w2, nx, ny, nz);
-
-        if i1 != i0 && data_k[i1] == Complex::new(0.0, 0.0) {
-            data_k[i1] = c.conj();
+        if !c.re.is_finite() || !c.im.is_finite() {
+            return Err(invalid("Non-finite reflection coefficient"));
+        }
+        let (x, y, z) = (wrap_idx(r.h, nx), wrap_idx(r.k, ny), wrap_idx(r.l, nz));
+        let (mx, my, mz) = ((nx - x) % nx, (ny - y) % ny, (nz - z) % nz);
+        if z < nzc {
+            data_k[(x * ny + y) * nzc + z] = c.conj();
+        }
+        if mz < nzc {
+            data_k[(mx * ny + my) * nzc + mz] = c;
         }
     }
-
-    // --- inverse FFT on X-fast layout; dims are crystal (mx,my,mz) ---
-    let mut rho_crystal = fft3d_c2r(&mut data_k, (nx, ny, nz), planner);
-
-    // If your FFT is unscaled, divide by N
-    let nvox = (nx * ny * nz) as f32;
-    for v in &mut rho_crystal {
-        *v /= nvox;
-    }
-
-    // --- remap to FILE order buffer if you want DensityMap.data in file order ---
-    // let mut rho_file = vec![0.; mx * my * mz];
-    let mut density_data = vec![0.; nz * ny * nx];
-
-    // file indices → crystal indices → pull from rho_crystal (Z-fast) → store in file buffer
-    // todo: Experiment with order here too
-
-    for i_f in 0..nx {
-        for j_f in 0..ny {
-            for k_f in 0..nz {
-                let mut ic = [0usize; 3];
-                ic[perm_f2c[0]] = i_f; // crystal X index
-                ic[perm_f2c[1]] = j_f; // crystal Y index
-                ic[perm_f2c[2]] = k_f; // crystal Z index
-
-                let src_idx = idx_xfast(ic[0], ic[1], ic[2], nx, ny, nz);
-                let dst_idx = idx_file(i_f, j_f, k_f, nx, ny);
-
-                density_data[dst_idx] = rho_crystal[src_idx];
+    let rho = fft3d_c2r(&mut data_k, (nx, ny, nz), planner);
+    let crystal_dims = [nx, ny, nz];
+    let file_dims = perm.map(|a| crystal_dims[a]);
+    let density_data: Vec<f32> = (0..nvox)
+        .into_par_iter()
+        .map(|i| {
+            let file = [
+                i % file_dims[0],
+                (i / file_dims[0]) % file_dims[1],
+                i / (file_dims[0] * file_dims[1]),
+            ];
+            let mut crystal = [0; 3];
+            for axis in 0..3 {
+                crystal[perm[axis]] = file[axis];
             }
-        }
-    }
 
-    // stats on rho_file
-    let mut sum = 0.0f64;
-    let mut sum2 = 0.0f64;
-    let mut min_v = f32::INFINITY;
-    let mut max_v = f32::NEG_INFINITY;
-
-    for &x in &density_data {
-        let xd = x as f64;
-        sum += xd;
-        sum2 += xd * xd;
-        if x < min_v {
-            min_v = x;
-        }
-        if x > max_v {
-            max_v = x;
-        }
-    }
-    let mean = (sum / (nvox as f64)) as f32;
-
+            (rho[(crystal[0] * ny + crystal[1]) * nz + crystal[2]] as f64 / volume) as f32
+        })
+        .collect();
+    let mut inner = sf.header.clone();
+    inner.nxstart = 0;
+    inner.nystart = 0;
+    inner.nzstart = 0;
+    inner.xorigin = None;
+    inner.yorigin = None;
+    inner.zorigin = None;
     let hdr = MapHeader {
-        inner: sf.header.clone(),
-        nx: nx as i32,
-        ny: ny as i32,
-        nz: nz as i32,
-        mode: 2, // f32
-
-        dmin: min_v,
-        dmax: max_v,
-        dmean: mean,
+        inner,
+        nx: file_dims[0] as i32,
+        ny: file_dims[1] as i32,
+        nz: file_dims[2] as i32,
+        mode: 2,
+        dmin: density_data.iter().copied().fold(f32::INFINITY, f32::min),
+        dmax: density_data
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max),
+        dmean: (density_data.iter().map(|&x| x as f64).sum::<f64>() / nvox as f64) as f32,
     };
-
-    let elapsed = start.elapsed().as_millis();
-    println!("Complete in {elapsed} ms");
-
-    // let density_data = xfast_to_zfast(&density_data, nx, ny, nz);
 
     DensityMap::new(hdr, density_data)
 }

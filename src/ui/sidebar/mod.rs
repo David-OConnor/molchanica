@@ -1,7 +1,7 @@
 use bio_apis::pubchem;
 use bio_files::{FrameSlice, md_params::ForceFieldParams};
 use dynamics::{FfMolType, merge_params};
-use egui::{CollapsingHeader, Color32, RichText, TextEdit, Ui};
+use egui::{CollapsingHeader, Color32, Label, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
@@ -11,6 +11,7 @@ use mol_defs::molecules::{
 use crate::{
     button,
     cam::{VIEW_DIR_FRONT, move_mol_to_cam, reset_camera},
+    compute_caps,
     file_io::{save_mol, sequence::save_seq_dialog},
     label,
     md::{
@@ -150,6 +151,26 @@ fn open_tools(state: &mut State, ui: &mut Ui) {
     {
         state.ui.popup.recent_files = !state.ui.popup.recent_files;
     }
+}
+
+/// Truncated to the row's remaining width, so it never widens the sidebar. Details on hover.
+fn compute_caps_label(ui: &mut Ui) {
+    let Some(caps) = compute_caps::get() else {
+        return;
+    };
+
+    let color = if caps.gpus.is_empty() {
+        Color32::GRAY
+    } else {
+        Color32::LIGHT_GREEN
+    };
+
+    ui.add(
+        Label::new(RichText::new(caps.summary()).color(color))
+            .truncate()
+            .show_tooltip_when_elided(false),
+    )
+    .on_hover_text(caps.details());
 }
 
 fn manip_toolbar(
@@ -455,6 +476,7 @@ pub(in crate::ui) fn sidebar(
                     .volatile
                     .active_seq
                     .filter(|&i| i < state.sequences.len());
+
                 if (state.active_mol().is_some() || active_seq.is_some())
                     && ui
                         .button(RichText::new("Save"))
@@ -475,6 +497,8 @@ pub(in crate::ui) fn sidebar(
                     }
                 }
             });
+
+            compute_caps_label(ui);
 
             ui.add_space(ROW_SPACING / 2.);
 

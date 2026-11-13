@@ -27,7 +27,7 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 
 - **Windows**: Run the `*_setup.exe` installer.
 - **Linux**: Unzip, and run `setup_molchanica.sh` (Without `sudo`).
-- **Mac**: Unzip and run `molchanica`. (Standalone executable). Warning! Mac support is experimental, and untested. And, ARM macs do not have the Nvidia cards we require for certain functionality. (MD, protein-design ML etc).
+- **Mac**: Unzip and run `molchanica`. (Standalone executable). Warning! Mac support is experimental, and untested.
 
 ![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 
@@ -111,12 +111,13 @@ Most functionality works without internet connectivity. If you have internet, it
 ![UI image showing mol properties and a protien](/screenshots/molchanica_ui_apr_2026.png)
 
 ## Parallel computing
-If an Nvidia GPU of at least RTX 3 series is available, molecular dynamics, docking, and electron density calculations will be performed using the GPU (via CUDA kernels). If not, the CPU will be used, leveraging thread pools and SIMD instructions. It uses all cores available, and either 512-bit, or 256-bit, SIMD instructions, depending on CPU capability.
+Use of GPU vs CPU as the computation device depends on which functionality is used. External tools like GROMACS, xTB, RFdiffusion3, ProteinMPNN, and OpenDDE each have their own requirements regarding which GPU vendors (Nvidia, AMD, Apple) are supported. Some programs like ORCA run primarily on CPU.
 
-GPU functionality requires Nvidia driver version 580 or higher.
+## Native GPU-accelerated computations.
+If an Nvidia GPU of at least RTX 3 series is available, molecular dynamics via the *Dynamics* backend, and electron density calculations will be performed using the GPU via CUDA kernels. 
 
-The standard Windows and Linux downloads are built with CUDA support, but do not require it: CUDA's libraries are looked up when the program starts rather than being linked into the executable. On a machine with no Nvidia GPU, no driver, or a driver too old for the CUDA version we build against, the program starts normally and reports `Cpu` as its computing device. The separate `nocuda` downloads are smaller, and are otherwise equivalent on such machines.
-
+## CPU 
+For CPU computations, we split execution across CPU cores using thread pools, and use SIMD instructions. It uses all cores available, and either 512-bit, or 256-bit SIMD instructions, depending on CPU capability. External tools written in C++ tend to use an *MP* library (e.g. *OpenMP*) to perform this thread pooling.
 
 ## Molecular dynamics
 This application integrates classical molecular dynamics setup and playback into the GUI. For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), [GROMACS](https://manual.gromacs.org/), or [xTB](https://github.com/grimme-lab/xtb), and can automatically install those backends. It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization. The [Dynamics readme](https://github.com/David-OConnor/dynamics/blob/main/README.md) is a good reference for that backend, and MD in general.
@@ -331,6 +332,8 @@ If you're not compiling on a machine with an Nvidia GPU or without the CUDA tool
 `--no-default-features` to the build command. This will disable GPU support on the executable produced.
 
 The bundled molecule databases are optional. `hmdb.parquet` and `ChEBI.parquet` in the project root are embedded when present; missing files are reported in the molecule database popup. Add either file and rebuild to bundle it, or use **Load DB** to open a database at runtime.
+
+Note: At any given point, `Cargo.toml` will likely point to path dependency patch overrides, making it difficult to compile. This is due to me updating underlying libraries, in between their publish cycles. My intent is that you use Molchanica by downloading a binary on the releases page, with the source code as a reference. Or, use the underlying libraries (bio_files, bio_tools, na_seq, bio_apis, dynamics etc) as dependencies in your projects.
 
 #### Compiling with GPU support
 

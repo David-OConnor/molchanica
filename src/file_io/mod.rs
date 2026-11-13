@@ -22,14 +22,17 @@ use bio_files::{
     sdf::Sdf,
 };
 use chrono::Utc;
-use dynamics::{MdConfig, params::amber::ProtFfChargeMapSet};
+use dynamics::params::amber::ProtFfChargeMapSet;
 use egui_file_dialog::{FileDialog, FileDialogConfig};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::{
     molecules::{
-        MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY,
+        Atom, Bond, MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
+        POCKET_METADATA_KEY,
         common::{MoleculeCommon, bonds_avail},
+        lipid::MoleculeLipid,
+        nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
         peptide::MoleculePeptide,
         small::MoleculeSmall,
     },
@@ -142,6 +145,59 @@ pub(crate) struct SessionRestoreItem {
     pub payload: SessionRestorePayload,
 }
 
+/// A nucleic acid or lipid from the Mol2 of a creation panel's managed entry; see
+/// `managed_mols::store_created`. Mol2 has no residues, so these are empty.
+fn created_mol_from_mol2(
+    mol2: Mol2,
+    mol_type: MolType,
+    path: &Path,
+) -> io::Result<MoleculeGeneric> {
+    let mut atoms: Vec<Atom> = mol2.atoms.iter().map(|a| a.into()).collect();
+    // Their templates name atoms here; Mol2 loads names as `type_in_res`.
+    for atom in &mut atoms {
+        atom.type_in_res_general = atom.type_in_res.take().map(|t| t.to_string());
+    }
+
+    let bonds = mol2
+        .bonds
+        .iter()
+        .map(|b| Bond::from_generic(b, &atoms))
+        .collect::<Result<_, _>>()?;
+
+    let common = MoleculeCommon::new(
+        mol2.ident,
+        atoms,
+        bonds,
+        mol2.metadata,
+        Some(path.to_owned()),
+    );
+
+    Ok(match mol_type {
+        MolType::NucleicAcid => {
+            // Set by `MoleculeNucleicAcid::from_seq`.
+            let na_type = match common.metadata.get("nucleic_acid_type").map(String::as_str) {
+                Some("rna") => NucleicAcidType::Rna,
+                _ => NucleicAcidType::Dna,
+            };
+
+            MoleculeGeneric::NucleicAcid(MoleculeNucleicAcid {
+                na_type,
+                common,
+                ..Default::default()
+            })
+        }
+        _ => {
+            let mut mol = MoleculeLipid {
+                common,
+                ..Default::default()
+            };
+            mol.populate_db_ids();
+
+            MoleculeGeneric::Lipid(mol)
+        }
+    })
+}
+
 /// Parse one previous-session item without borrowing `State` or touching the scene. This function
 /// is intentionally self-contained so `threads.rs` can run it on its startup worker.
 pub(crate) fn parse_session_history(
@@ -191,12 +247,18 @@ pub(crate) fn parse_session_history(
                     }
                 }
                 "mol2" => {
-                    let mut molecule: MoleculeSmall = Mol2::load(path)?.try_into()?;
-                    molecule.common.update_path(path);
-                    if molecule.common.metadata.contains_key(POCKET_METADATA_KEY) {
-                        MoleculeGeneric::Pocket(molecule.common.into())
+                    let mol2 = Mol2::load(path)?;
+
+                    if let Some(mol_type) = manifest.as_ref().and_then(|m| m.created_mol_type()) {
+                        created_mol_from_mol2(mol2, mol_type, path)?
                     } else {
-                        MoleculeGeneric::Small(molecule)
+                        let mut molecule: MoleculeSmall = mol2.try_into()?;
+                        molecule.common.update_path(path);
+                        if molecule.common.metadata.contains_key(POCKET_METADATA_KEY) {
+                            MoleculeGeneric::Pocket(molecule.common.into())
+                        } else {
+                            MoleculeGeneric::Small(molecule)
+                        }
                     }
                 }
                 "xyz" => MoleculeGeneric::Small(MoleculeSmall::from_xyz(Xyz::load(path)?, path)?),
@@ -461,13 +523,20 @@ impl State {
                 }
             }
             "mol2" => {
-                let mut m: MoleculeSmall = Mol2::load(path)?.try_into()?;
-                m.common.update_path(path);
+                let mol2 = Mol2::load(path)?;
 
-                if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
-                    Ok(MoleculeGeneric::Pocket(m.common.into()))
+                if let Some(mol_type) = managed_manifest.as_ref().and_then(|m| m.created_mol_type())
+                {
+                    created_mol_from_mol2(mol2, mol_type, path)
                 } else {
-                    Ok(MoleculeGeneric::Small(m))
+                    let mut m: MoleculeSmall = mol2.try_into()?;
+                    m.common.update_path(path);
+
+                    if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
+                        Ok(MoleculeGeneric::Pocket(m.common.into()))
+                    } else {
+                        Ok(MoleculeGeneric::Small(m))
+                    }
                 }
             }
             "xyz" => {
@@ -755,15 +824,9 @@ impl State {
 
     /// Open a GROMACS MD params file. This configures MD run params.
     pub fn open_mdp(&mut self, path: &Path) -> io::Result<()> {
-        self.to_save.md.config = MdConfig::load_from_mdp(path)?;
-
-        self.ui.md.sync(&self.to_save.md.config, self.to_save.md.dt);
-
-        // todo temp
-        println!(
-            "\nLoaded MdConfig from MDP: {:?}\n\n",
-            self.to_save.md.config
-        );
+        self.volatile.md_local.gromacs_setup.load_mdp(path)?;
+        self.to_save.md.backend = crate::md::MdBackend::Gromacs;
+        self.ui.ui_vis.dynamics = true;
 
         self.update_history(path, OpenType::MdParams, None);
         self.update_save_prefs();
@@ -803,6 +866,19 @@ impl State {
         let extension = binding.to_str().unwrap_or_default();
 
         let open_type = match extension {
+            "mdp" => {
+                let setup = &self.volatile.md_local.gromacs_setup;
+                let mdp = setup.mdp.clone().unwrap_or_else(|| {
+                    if setup.uses_files() {
+                        String::new()
+                    } else {
+                        crate::gromacs::generated_mdp(&self.to_save.md)
+                    }
+                });
+                fs::write(path, mdp)?;
+
+                return Ok(());
+            }
             "pdb" | "cif" => {
                 // todo: Eval how you want to handle this. For now, the raw CIF or PDB.
                 // if let Some(pdb) = &mut self.pdb {
@@ -1448,6 +1524,8 @@ pub struct FileDialogs {
     /// E.g. GROMACS files ready to be run in a sim. (.top, .mdp, .gro); choose a folder to save these in.
     pub save_md: FileDialog,
     pub open_md_run: FileDialog,
+    pub open_gromacs: FileDialog,
+    pub gromacs_file: Option<crate::gromacs::InputFile>,
     /// Save an MD mol set as a GRO file.
     pub save_gro: FileDialog,
     /// Index of the mol set queued for GRO export.
@@ -1586,6 +1664,17 @@ impl Default for FileDialogs {
                     .unwrap_or_else(|| FileDialogConfig::default().initial_directory),
                 ..Default::default()
             }),
+            open_gromacs: FileDialog::new()
+                .add_file_filter_extensions(
+                    "GROMACS inputs",
+                    vec!["mdp", "gro", "top", "itp", "ndx", "cpt", "trr", "tng"],
+                )
+                .add_file_filter_extensions("MDP", vec!["mdp"])
+                .add_file_filter_extensions("GRO", vec!["gro"])
+                .add_file_filter_extensions("TOP", vec!["top"])
+                .add_file_filter_extensions("NDX", vec!["ndx"])
+                .add_file_filter_extensions("CPT / TRR / TNG", vec!["cpt", "trr", "tng"]),
+            gromacs_file: None,
             save_gro,
             save_gro_mol_set_i: None,
             save_seq,

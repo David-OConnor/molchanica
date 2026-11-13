@@ -1,19 +1,22 @@
 use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{
-    MolType,
+    MolGenericRef, MolType, MoleculeGeneric,
     nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
 };
 use na_seq::{
     Nucleotide::{self, *},
-    seq_from_str,
+    seq_from_str, seq_to_str_upper,
 };
 
 use crate::{
     cam::move_cam_to_mol_front,
-    drawing::wrappers::draw_all_nucleic_acids,
+    file_io::managed_mols,
     state::State,
-    ui::{COLOR_ACTION, misc::section_box, panels::aa_creation::SEQ_INPUT_WIDTH},
+    ui::{
+        COLOR_ACTION, misc::section_box, panels::aa_creation::SEQ_INPUT_WIDTH,
+        util::report_cache_result,
+    },
     util::handle_err,
 };
 
@@ -125,12 +128,23 @@ pub(in crate::ui) fn na_section(
                         }
                     };
 
-                    state.nucleic_acids.push(mol);
+                    // Kept in a managed file, so it reopens next session; as for a download.
+                    let result = managed_mols::store_created(
+                        &state.volatile.prefs_dir,
+                        MolGenericRef::NucleicAcid(&mol),
+                        &seq_to_str_upper(&seq),
+                    );
+                    let path = report_cache_result(state, result);
+
+                    // Makes it the active molecule.
+                    state.load_mol_to_state(
+                        MoleculeGeneric::NucleicAcid(mol),
+                        scene,
+                        updates,
+                        path.as_deref(),
+                    );
 
                     let molecule = (MolType::NucleicAcid, state.nucleic_acids.len() - 1);
-                    state.volatile.active_mol = Some(molecule);
-
-                    draw_all_nucleic_acids(state, scene, updates);
                     move_cam_to_mol_front(state, scene, molecule, updates);
                 }
             });

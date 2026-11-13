@@ -17,9 +17,9 @@
 //! same pre-processing for the built-in `dynamics` pipeline.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     fs, io,
-    path::{Path, PathBuf},
+    path::Path,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -46,6 +46,9 @@ use crate::{
     state::{ComputationType, State},
     util::{format_elapsed, handle_err, handle_success},
 };
+
+mod setup;
+pub use setup::{InputFile, Setup, generated_mdp, mdp_field_value, mdp_value, set_mdp_value};
 
 const ANGSTROM_TO_NM: f64 = 0.10;
 
@@ -657,199 +660,73 @@ pub fn sim_box_nm(mols: &[MoleculeInput], box_type: &SimBoxInit) -> Option<(f64,
     Some((v.x, v.y, v.z))
 }
 
-/// Similar to `md/launch_md`. Prepares GROMACS input on the calling thread, then
-/// spawns a background thread for the blocking `gmx` execution. Results are
-/// delivered via [`crate::threads::ThreadReceivers::gromacs_md_avail`] and
-/// processed by [`on_gromacs_md_complete`].
-struct PreparedRun {
-    input: GromacsInput,
-    mdp_text: String,
-    index: Option<PathBuf>,
-    viewer_mols: Vec<(FfMolType, MoleculeCommon)>,
-}
+fn prepare_generated_run(
+    state: &State,
+) -> io::Result<(GromacsInput, String, Vec<(FfMolType, MoleculeCommon)>)> {
+    let (mut input, viewer_mols) = gromacs_input_from_state(state)?;
+    let setup = &state.volatile.md_local.gromacs_setup;
+    if state.to_save.md.backend != crate::md::MdBackend::Gromacs {
+        let mdp = input.make_mdp();
 
-fn prepare_run(state: &State) -> io::Result<PreparedRun> {
-    let Some(crate::md::runs::RunInputs::Gromacs {
-        coordinates,
-        topology,
-        mdp,
-        mdp_text,
-        index,
-    }) = &state.volatile.md_local.opened_inputs
-    else {
-        let (input, viewer_mols) = gromacs_input_from_state(state)?;
-        let mdp_text = input.make_mdp();
-
-        return Ok(PreparedRun {
-            input,
-            mdp_text,
-            index: None,
-            viewer_mols,
-        });
-    };
-    let prefs = &state.to_save.md;
-    let cfg = &prefs.config;
-    let updated = cfg.to_gromacs(prefs.num_steps as usize, prefs.dt);
-    let original = crate::md::runs::gromacs_config(mdp);
-    let original_mdp = mdp.clone();
-    let mut mdp = mdp.clone();
-    mdp.nsteps = updated.nsteps;
-    mdp.dt = updated.dt;
-    mdp.output_control = updated.output_control;
-    if cfg.integrator != original.integrator {
-        mdp.integrator = updated.integrator;
-        mdp.thermostat = match cfg.integrator {
-            dynamics::Integrator::Leapfrog { thermostat: None }
-            | dynamics::Integrator::VerletVelocity { thermostat: None } => {
-                gromacs::mdp::Thermostat::No
-            }
-            _ => updated.thermostat,
-        };
-        mdp.tau_t = updated.tau_t;
+        return Ok((input, mdp, viewer_mols));
     }
-    if cfg.temp_target != original.temp_target {
-        mdp.ref_t.fill(cfg.temp_target);
-        if mdp.ref_t.is_empty() {
-            mdp.ref_t.push(cfg.temp_target);
-        }
-        mdp.gen_temp = cfg.temp_target;
-    }
-    if cfg.barostat_cfg != original.barostat_cfg {
-        mdp.pcoupl = updated.pcoupl;
-    }
-    if cfg.hydrogen_constraint != original.hydrogen_constraint {
-        mdp.constraints = updated.constraints;
-    }
-    if cfg.coulomb_cutoff != original.coulomb_cutoff {
-        mdp.rcoulomb = updated.rcoulomb;
-    }
-    if cfg.lj_cutoff != original.lj_cutoff {
-        mdp.rvdw = updated.rvdw;
-    }
-    let mdp_text = update_mdp_text(mdp_text, &original_mdp, &mdp);
-    let input = GromacsInput {
-        mdp,
-        initial_gro: Some(fs::read_to_string(coordinates)?),
-        topology_override: Some(read_topology(topology)?),
-        minimize_energy: cfg.max_init_relaxation_iters.is_some(),
-        skip_counterion_insertion: true,
-        ..Default::default()
-    };
-
-    Ok(PreparedRun {
-        input,
-        mdp_text,
-        index: index.clone(),
-        viewer_mols: Vec::new(),
-    })
-}
-
-fn update_mdp_text(text: &str, original: &MdpParams, updated: &MdpParams) -> String {
-    fn assignment(line: &str) -> Option<(String, &str)> {
-        let (key, value) = line.split(';').next()?.split_once('=')?;
-
-        Some((
-            key.trim().to_ascii_lowercase().replace('_', "-"),
-            value.trim(),
-        ))
-    }
-
-    let original = original.to_mdp_str();
-    let updated = updated.to_mdp_str();
-    let before: BTreeMap<_, _> = original.lines().filter_map(assignment).collect();
-    let after: BTreeMap<_, _> = updated.lines().filter_map(assignment).collect();
-    let mut changes: BTreeMap<_, _> = before
-        .keys()
-        .chain(after.keys())
-        .filter_map(|key| {
-            let new = after.get(key).copied();
-            (before.get(key).copied() != new).then_some((key.clone(), new))
+    let mdp = setup
+        .mdp
+        .clone()
+        .unwrap_or_else(|| generated_mdp(&state.to_save.md));
+    if mdp_value(&mdp, "continuation").is_some_and(|v| v.eq_ignore_ascii_case("yes"))
+        || mdp_value(&mdp, "integrator").is_some_and(|v| {
+            ["steep", "cg", "l-bfgs", "nm", "tpi", "tpic"]
+                .iter()
+                .any(|name| v.eq_ignore_ascii_case(name))
         })
-        .collect();
-
-    let mut result = String::new();
-    let mut written = HashSet::new();
-    for line in text.lines() {
-        if let Some((key, _)) = assignment(line)
-            && let Some(value) = changes.get(&key)
-        {
-            if written.insert(key.clone())
-                && let Some(value) = value
-            {
-                result.push_str(&format!("{key} = {value}\n"));
-            }
-        } else {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-    changes.retain(|key, _| !written.contains(key));
-    for (key, value) in changes {
-        if let Some(value) = value {
-            result.push_str(&format!("{key} = {value}\n"));
-        }
+    {
+        input.minimize_energy = false;
     }
 
-    result
-}
-
-fn read_topology(path: &Path) -> io::Result<String> {
-    fn read(path: &Path, root: &Path, stack: &mut Vec<std::path::PathBuf>) -> io::Result<String> {
-        if stack.len() >= 32 || stack.iter().any(|p| p == path) {
-            return Err(io::Error::other("Recursive GROMACS topology include"));
-        }
-        stack.push(path.to_owned());
-        let mut result = String::new();
-        for line in fs::read_to_string(path)?.lines() {
-            if let Some(include) = line
-                .trim()
-                .strip_prefix("#include")
-                .and_then(|line| line.trim().strip_prefix('"'))
-                .and_then(|line| line.split_once('"').map(|(file, _)| file))
-                && let Ok(include) = path.with_file_name(include).canonicalize()
-                && include.starts_with(root)
-                && include.is_file()
-            {
-                result.push_str(&read(&include, root, stack)?);
-            } else {
-                result.push_str(line);
-                result.push('\n');
-            }
-        }
-        stack.pop();
-
-        Ok(result)
-    }
-
-    let path = path.canonicalize()?;
-    read(&path, path.parent().unwrap(), &mut Vec::new())
+    Ok((input, mdp, viewer_mols))
 }
 
 pub fn launch_md(state: &mut State) {
-    let PreparedRun {
-        input,
-        mdp_text,
-        index,
-        viewer_mols,
-    } = match prepare_run(state) {
-        Ok(v) => v,
-        Err(e) => {
-            handle_err(&mut state.ui, format!("Error creating GROMACS input: {e}"));
+    let setup = state.volatile.md_local.gromacs_setup.clone();
+    let generated = if setup.uses_files() {
+        if let Err(error) = setup.validate() {
+            handle_err(&mut state.ui, error.to_string());
+
             return;
+        }
+
+        None
+    } else {
+        match prepare_generated_run(state) {
+            Ok(run) => Some(run),
+            Err(error) => {
+                handle_err(
+                    &mut state.ui,
+                    format!("Error creating GROMACS input: {error}"),
+                );
+
+                return;
+            }
         }
     };
 
     let (tx, rx) = mpsc::channel();
-
     let computation = state.volatile.ongoing_computations.start(
         ComputationType::MolecularDynamics,
         "GROMACS",
-        Some(format!("{} steps", state.to_save.md.num_steps)),
+        None,
     );
 
     thread::spawn(move || {
         let start = Instant::now();
-        let result = input.run_with_mdp(&mdp_text, index.as_deref());
+        let (result, viewer_mols) = match generated {
+            Some((input, mdp, viewer_mols)) => (
+                input.run_with_mdp(&mdp, setup.index.as_deref()),
+                viewer_mols,
+            ),
+            None => (setup.run(), Vec::new()),
+        };
         drop(computation);
         let elapsed = start.elapsed();
 
@@ -875,11 +752,7 @@ pub fn launch_md(state: &mut State) {
                 let _ = tx.send((out, elapsed));
             }
             Err(e) => {
-                // handle_err(&mut state.ui, "Error setting up GROMACS.".to_string());
-
-                eprintln!("\nError setting up GROMACS: \n{e:?}");
-
-                // Create an output with the error text, so we can display details in the UI.
+                eprintln!("GROMACS failed: {e}");
                 let out = GromacsOutput {
                     log_text: e.to_string(),
                     setup_failure: true,
@@ -927,9 +800,14 @@ pub fn on_gromacs_md_complete(
     elapsed: Duration,
 ) {
     if out.log_text.contains("Fatal error") {
+        let details = out.log_text.lines().next().unwrap_or_default();
         let msg = extract_gromacs_fatal_error(&out.log_text)
             .map(|err| {
-                format!("Problem running GROMACS: {err}. Check the logs or terminal for details.")
+                if out.setup_failure {
+                    format!("GROMACS failed. {err}\n{details}")
+                } else {
+                    format!("GROMACS failed. {err}")
+                }
             })
             .unwrap_or_else(|| {
                 "Problem running GROMACS; check the logs or terminal for details.".to_string()
@@ -962,15 +840,30 @@ pub fn on_gromacs_md_complete(
         return;
     }
 
+    let folder = out.gro_path.as_deref().and_then(Path::parent);
     handle_success(
         &mut state.ui,
-        format!("GROMACS run complete in {}", format_elapsed(elapsed)),
+        format!(
+            "GROMACS finished in {}{}",
+            format_elapsed(elapsed),
+            folder
+                .map(|dir| format!(" · {}", dir.display()))
+                .unwrap_or_default()
+        ),
     );
 }
 
 /// Save .gro, .mdp, and .top files to disk, from our MD state, molecules etc.
 pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
-    let run = prepare_run(state)?;
-    run.input
-        .save_with_mdp(path, &run.mdp_text, run.index.as_deref())
+    let setup = &state.volatile.md_local.gromacs_setup;
+    if state.to_save.md.backend == crate::md::MdBackend::Gromacs && setup.uses_files() {
+        return setup.save(path);
+    }
+    let (input, mdp, _) = prepare_generated_run(state)?;
+    let index = if state.to_save.md.backend == crate::md::MdBackend::Gromacs {
+        setup.index.as_deref()
+    } else {
+        None
+    };
+    input.save_with_mdp(path, &mdp, index)
 }

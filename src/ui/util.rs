@@ -268,6 +268,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.parquet_mol_file.update(ctx);
     state.volatile.dialogs.save_md.update(ctx);
     state.volatile.dialogs.open_md_run.update(ctx);
+    state.volatile.dialogs.open_gromacs.update(ctx);
     state.volatile.dialogs.save_gro.update(ctx);
     state.volatile.dialogs.save_seq.update(ctx);
     state.volatile.dialogs.ff_params.update(ctx);
@@ -401,6 +402,31 @@ pub fn update_file_dialogs(
 
     if let Some(path) = state.volatile.dialogs.open_md_run.take_picked() {
         crate::md::runs::open(state, scene, engine_updates, &path, None);
+    }
+
+    let dialogs = &mut state.volatile.dialogs;
+    if let Some(file) = dialogs.gromacs_file {
+        let setup = &mut state.volatile.md_local.gromacs_setup;
+        let result = match file {
+            gromacs::InputFile::Bundle => dialogs
+                .open_gromacs
+                .take_picked_multiple()
+                .map(|paths| setup.load_files(paths)),
+            _ => dialogs
+                .open_gromacs
+                .take_picked()
+                .map(|path| file.select(setup, path)),
+        };
+        if let Some(result) = result {
+            dialogs.gromacs_file = None;
+            match result {
+                Ok(()) => state.to_save.md.backend = crate::md::MdBackend::Gromacs,
+                Err(error) => handle_err(
+                    &mut state.ui,
+                    format!("Could not load GROMACS input: {error}"),
+                ),
+            }
+        }
     }
 
     if let Some(path) = &state.volatile.dialogs.save_md.take_picked() {
@@ -537,7 +563,10 @@ pub fn open_lig_from_input(
     state.ui.db_input = String::new();
 }
 
-fn report_cache_result(state: &mut State, result: io::Result<PathBuf>) -> Option<PathBuf> {
+pub(in crate::ui) fn report_cache_result(
+    state: &mut State,
+    result: io::Result<PathBuf>,
+) -> Option<PathBuf> {
     match result {
         Ok(path) => Some(path),
         Err(error) => {
