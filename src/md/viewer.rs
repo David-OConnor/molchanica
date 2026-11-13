@@ -4,7 +4,6 @@
 use std::{
     collections::HashMap,
     io,
-    io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -299,184 +298,44 @@ impl SnapshotViewer {
 
     /// Update each molecule's atom positions to that in the chosen snapshot.
     pub fn change_snapshot(&mut self, snap_i: usize) -> io::Result<()> {
-        // Determine whether water positions come inline from the snapshot (in-memory dynamics)
-        // or need to be reconstructed from Water-typed mol entries (file-based / GRO path).
-        let has_inline_water = self
-            .get_snap(snap_i)
-            .map_or(false, |s| !s.water_o_posits.is_empty());
-
-        // Build mol_start_indices for unflatten.  For in-memory dynamics we exclude Water
-        // mols because their positions live in the snapshot's water_* arrays, not atom_posits.
-        let mol_start_indices = {
-            let Some(set) = self.get_active_mol_set() else {
-                return Err(io::Error::new(
-                    ErrorKind::NotFound,
-                    "No active mol set when changing snap.",
-                ));
-            };
-
-            set.mols
-                .iter()
-                .filter(|m| !has_inline_water || m.mol_type != MolType::Water)
-                .map(|m| m.range.0)
-                .collect::<Vec<_>>()
-        };
-
-        // GRO / file-based path: reconstruct water positions from Water mol entries and
-        // push them into the snapshot so subsequent steps can use them.
-        let reconstructed_water: Vec<(Vec3, Vec3, Vec3)> = if !has_inline_water {
-            if let Some(set) = self.get_active_mol_set() {
-                set.mols
-                    .iter()
-                    .filter(|mol| mol.mol_type == MolType::Water)
-                    .filter_map(|mol| {
-                        let mut ow = None;
-                        let mut hw1 = None;
-                        let mut hw2 = None;
-
-                        for (i, atom) in mol.mol.atoms.iter().enumerate() {
-                            match atom.type_in_res_general.as_deref() {
-                                Some("OW") => ow = Some(mol.mol.atom_posits[i]),
-                                Some("HW1") => hw1 = Some(mol.mol.atom_posits[i]),
-                                Some("HW2") => hw2 = Some(mol.mol.atom_posits[i]),
-                                _ => {}
-                            }
-                        }
-
-                        match (ow, hw1, hw2) {
-                            (Some(o), Some(h0), Some(h1)) => Some((o, h0, h1)),
-                            _ => {
-                                eprintln!(
-                                    "Water mol missing atom(s): OW={}, HW1={}, HW2={}",
-                                    ow.is_some(),
-                                    hw1.is_some(),
-                                    hw2.is_some()
-                                );
-                                None
-                            }
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        if !reconstructed_water.is_empty() {
-            if snap_i < self.snapshots.len() {
-                let snap = Arc::make_mut(&mut self.snapshots[snap_i]);
-                for (o, h0, h1) in reconstructed_water {
-                    snap.water_o_posits.push(o.into());
-                    snap.water_h0_posits.push(h0.into());
-                    snap.water_h1_posits.push(h1.into());
-                }
-            }
-        }
-
-        // Collect inline water positions before taking the mutable borrow.
-        // Each element: (O, H0, H1) in f32 coords (snapshot units, Å).
-        let inline_water: Vec<(lin_alg::f32::Vec3, lin_alg::f32::Vec3, lin_alg::f32::Vec3)> =
-            if has_inline_water {
-                if let Some(snap) = self.get_snap(snap_i) {
-                    snap.water_o_posits
-                        .iter()
-                        .zip(snap.water_h0_posits.iter())
-                        .zip(snap.water_h1_posits.iter())
-                        .map(|((o, h0), h1)| (*o, *h0, *h1))
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            };
-
-        let posits_by_mol = {
-            let Some(snap) = self.get_snap(snap_i) else {
-                return Err(io::Error::new(
-                    ErrorKind::NotFound,
-                    "Snapshot not found when changing",
-                ));
-            };
-
-            snap.unflatten(&mol_start_indices)?
-        };
-
-        let Some(mols) = self.get_active_mol_set_mut() else {
-            return Err(io::Error::new(
-                ErrorKind::NotFound,
-                "No active mol set when changing snap.",
-            ));
-        };
-
-        let pbm_len = posits_by_mol.len();
-        let mut non_water_i = 0;
-        let mut water_i = 0;
-
-        for mol in mols.mols.iter_mut() {
-            if mol.mol_type == MolType::Water && has_inline_water {
-                // Update from the snapshot's inline water arrays.
-                if let Some((o, h0, h1)) = inline_water.get(water_i) {
-                    for (i, p) in mol.mol.atom_posits.iter_mut().enumerate() {
-                        let name = mol
-                            .mol
-                            .atoms
-                            .get(i)
-                            .and_then(|a| a.type_in_res_general.as_deref());
-                        match name {
-                            Some("OW") => {
-                                *p = Vec3 {
-                                    x: o.x as f64,
-                                    y: o.y as f64,
-                                    z: o.z as f64,
-                                }
-                            }
-                            Some("HW1") => {
-                                *p = Vec3 {
-                                    x: h0.x as f64,
-                                    y: h0.y as f64,
-                                    z: h0.z as f64,
-                                }
-                            }
-                            Some("HW2") => {
-                                *p = Vec3 {
-                                    x: h1.x as f64,
-                                    y: h1.y as f64,
-                                    z: h1.z as f64,
-                                }
-                            }
-                            _ => {}
-                        }
+        let snap = self
+            .snapshots
+            .get(snap_i)
+            .ok_or_else(|| io::Error::other("No active MD snapshot"))?;
+        let set = self
+            .mol_set_active
+            .and_then(|i| self.mol_sets.get_mut(i))
+            .ok_or_else(|| io::Error::other("No active MD molecule set"))?;
+        let inline_water =
+            snap.atom_posits.len() != set.atom_count && !snap.water_o_posits.is_empty();
+        let mut water = snap
+            .water_o_posits
+            .iter()
+            .zip(&snap.water_h0_posits)
+            .zip(&snap.water_h1_posits);
+        for mol in &mut set.mols {
+            if inline_water && mol.mol_type == MolType::Water {
+                let ((o, h0), h1) = water
+                    .next()
+                    .ok_or_else(|| io::Error::other("Missing water coordinates"))?;
+                for (atom, p) in mol.mol.atoms.iter().zip(&mut mol.mol.atom_posits) {
+                    match atom.type_in_res_general.as_deref() {
+                        Some("OW") => *p = (*o).into(),
+                        Some("HW1") => *p = (*h0).into(),
+                        Some("HW2") => *p = (*h1).into(),
+                        _ => (),
                     }
                 }
-                water_i += 1;
-            } else {
-                // Update from unflatten (handles all mols for file-based, non-water for in-memory).
-                if non_water_i < pbm_len {
-                    for (i_p, p) in mol.mol.atom_posits.iter_mut().enumerate() {
-                        if non_water_i >= pbm_len {
-                            eprintln!(
-                                "Error: posit {non_water_i} out of bounds for posits-by-mol len {pbm_len}"
-                            );
-                        } else {
-                            if i_p >= posits_by_mol[non_water_i].len() {
-                                eprintln!(
-                                    "Error: posit {i_p} out of bounds for posits-by-mol for this non-water index len {}",
-                                    posits_by_mol[non_water_i].len()
-                                );
-                            } else {
-                                *p = posits_by_mol[non_water_i][i_p].0.into();
-                            }
-                        }
-                    }
-                } else {
-                    eprintln!(
-                        "Error: Posits by mol in viewer out of bounds. i: {non_water_i} Posits by mol len: {pbm_len}"
-                    );
-                }
-                non_water_i += 1;
+                continue;
+            }
+
+            let positions = snap
+                .atom_posits
+                .get(mol.range.0..mol.range.1)
+                .filter(|positions| positions.len() == mol.mol.atom_posits.len())
+                .ok_or_else(|| io::Error::other("MD snapshot and molecule atom ranges differ"))?;
+            for (p, &new) in mol.mol.atom_posits.iter_mut().zip(positions) {
+                *p = new.into();
             }
         }
 
@@ -499,35 +358,27 @@ impl SnapshotViewer {
         path: &Path,
         solute: &[(FfMolType, MoleculeCommon)],
     ) -> io::Result<()> {
-        let gro = Gro::load(path)?;
+        self.load_gro_data(path, Gro::load(path)?, solute)
+    }
 
-        // Group atoms by (mol_id, mol_name), preserving first-seen order.
-        // mol_id (the GRO resid) is unique per molecule instance, so e.g. each SOL water
-        // gets its own entry rather than all being merged into one giant "SOL".
-        let mut mol_order: Vec<(u32, String)> = Vec::new();
-        let mut mol_atom_groups: HashMap<(u32, String), Vec<usize>> = HashMap::new();
-
-        for (i, atom) in gro.atoms.iter().enumerate() {
-            let key = (atom.mol_id, atom.mol_name.clone());
-            if !mol_atom_groups.contains_key(&key) {
-                mol_order.push(key.clone());
-                mol_atom_groups.insert(key.clone(), Vec::new());
-            }
-            mol_atom_groups.get_mut(&key).unwrap().push(i);
-        }
-
+    pub(super) fn load_gro_data(
+        &mut self,
+        path: &Path,
+        gro: Gro,
+        solute: &[(FfMolType, MoleculeCommon)],
+    ) -> io::Result<()> {
+        let groups = gro
+            .atoms
+            .chunk_by(|a, b| a.mol_id == b.mol_id && a.mol_name == b.mol_name);
         let mut mols = Vec::new();
         let mut snap_atom_i = 0;
 
-        for (mol_i, (mol_id, mol_name)) in mol_order.iter().enumerate() {
-            let indices = &mol_atom_groups[&(*mol_id, mol_name.clone())];
-            let count = indices.len();
+        for (mol_i, group) in groups.enumerate() {
+            let mol_name = &group[0].mol_name;
+            let count = group.len();
 
             // GRO coords are in nm; convert to Å.
-            let atom_posits: Vec<_> = indices
-                .iter()
-                .map(|&idx| gro.atoms[idx].posit * 10.0)
-                .collect();
+            let atom_posits: Vec<_> = group.iter().map(|atom| atom.posit * 10.0).collect();
 
             if let Some((ff_mol_type, template)) = solute.get(mol_i) {
                 if template.atoms.len() == count {
@@ -554,19 +405,17 @@ impl SnapshotViewer {
                 );
             }
 
-            let atoms: Vec<_> = indices
+            let atoms: Vec<_> = group
                 .iter()
                 .zip(&atom_posits)
-                .map(|(&idx, posit)| {
-                    let a = &gro.atoms[idx];
-                    Atom {
-                        serial_number: a.serial_number,
-                        posit: *posit,
-                        element: a.element,
-                        type_in_res_general: Some(a.atom_type.clone()),
-                        hetero: true,
-                        ..Default::default()
-                    }
+                .enumerate()
+                .map(|(i, (a, posit))| Atom {
+                    serial_number: (snap_atom_i + i + 1) as u32,
+                    posit: *posit,
+                    element: a.element,
+                    type_in_res_general: Some(a.atom_type.clone()),
+                    hetero: true,
+                    ..Default::default()
                 })
                 .collect();
 
@@ -849,6 +698,12 @@ impl SnapshotViewer {
             .sum();
 
         n == non_water_count
+            && snap.water_o_posits.len()
+                == set
+                    .mols
+                    .iter()
+                    .filter(|m| m.mol_type == MolType::Water)
+                    .count()
     }
 
     pub fn close_mol_set(&mut self, history: &mut Vec<OpenHistory>, i: usize) {
@@ -1194,7 +1049,11 @@ pub fn draw_mols(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdat
 }
 
 pub fn is_water(mol: &MoleculeCommon) -> bool {
-    if mol.ident.to_lowercase().contains("sol") {
+    if mol.atoms.len() <= 5
+        && ["SOL", "WAT", "HOH"]
+            .iter()
+            .any(|name| mol.ident.eq_ignore_ascii_case(name))
+    {
         return true;
     }
 

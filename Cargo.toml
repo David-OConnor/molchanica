@@ -7,13 +7,14 @@ edition = "2024"
 
 
 [dependencies]
-graphics = { version = "0.6.8", features = ["app_utils"] }
+graphics = { version = "0.6.9", features = ["app_utils"] }
 egui = "0.36.2"
 # Offscreen publication rendering, using the same GPU stack as the interactive engine.
 wgpu = "30.0.1"
 egui-wgpu = "0.36.2"
-pollster = "1.0.1"
-png = "0.18.1"
+
+pollster = "1.0"
+png = "0.18"
 # ChEBI supplies molecular diagrams as SVG, with atom labels already outlined.
 egui_extras = { version = "0.36.2", default-features = false, features = ["svg"] }
 
@@ -26,18 +27,18 @@ egui_plot = "0.37.0"  # For Rama plots
 lin_alg = { version = "1.4.3", features = ["encode"] }
 na_seq = "0.3.16"
 bio_apis = { version = "0.3.1", features = ["encode"] }
-bio_files = { version = "0.5.4", features = ["encode"] }
-bio_tools = "0.1.4"
+bio_files = { version = "0.5.5", features = ["encode"] }
+bio_tools = "0.1.6"
 mcubes = "0.1.7"
-dynamics = { version = "0.2.5", features = ["encode"] }
+dynamics = { version = "0.2.7", features = ["encode"] }
 # todo: A/R. For reflections. Remove if you split out the 3D FFT code.
-ewald = { version = "0.1.16" }
+ewald = { version = "0.2.0" }
 mol_defs = { version = "0.1.1", features = ["render"] }
 
 # ADME and synthesis are private, unpublished crates. Cargo requires path deps to exist even when
 # optional, so these stay commented out. Uncomment locally to build with `--features adme,synthesis`.
-#adme = { path = "../adme", optional = true }
-#synthesis = { path = "../synthesis", optional = true }
+adme = { path = "../adme", optional = true }
+synthesis = { path = "../synthesis", optional = true }
 
 # Checking for, downloading, and installing new releases, from the About popup. Without its
 # default `gui` feature, which is the Software Manager application itself.
@@ -46,7 +47,7 @@ software_manager = "0.1.1"
 
 # For loading and saving config
 bincode = "2.0.1"
-rayon = "1.12.0"
+rayon = "1.12"
 
 # For electron density reflections
 rustfft = "6.4"

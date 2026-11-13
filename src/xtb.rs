@@ -10,12 +10,12 @@ use std::{
         mpsc::{self, Receiver, TryRecvError},
     },
     thread,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use bio_files::{
     gromacs::OutputEnergy,
-    xtb::{XtbInput, XtbOutput},
+    xtb::{XtbFrame, XtbInput, XtbOutput},
 };
 use dynamics::{
     FfMolType, ForceFieldFamily, Integrator, SimBoxInit, params::potential::SystemPotentialBackend,
@@ -29,7 +29,7 @@ use crate::{
     file_io::save_mol_set_as_gro,
     md::{self, STATIC_ATOM_DIST_THRESH, trajectory::Trajectory},
     state::{ComputationType, State},
-    util::{handle_err, handle_success},
+    util::{format_elapsed, handle_err, handle_success},
 };
 
 type ViewerMols = Vec<(FfMolType, MoleculeCommon, usize)>;
@@ -45,7 +45,7 @@ struct RunResult {
     mols: ViewerMols,
     peptide_atoms: HashSet<(usize, usize)>,
     dt: f32,
-    elapsed_ms: u128,
+    elapsed: Duration,
 }
 
 pub struct XtbRun {
@@ -71,18 +71,6 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
     }
 
     let cfg = &state.to_save.md.config;
-    let set = state
-        .selected_force_field()
-        .gfnff()
-        .ok_or_else(|| io::Error::other("GFN-FF parameters are not loaded"))?;
-    set.validate_config(cfg)
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    if state.ui.md.alchemical_enabled {
-        return Err(io::Error::other(
-            "Native xTB does not support alchemical windows.",
-        ));
-    }
-
     let selected = md::get_mols_sel_for_md(state);
     if selected.is_empty() {
         return Err(io::Error::other("Select at least one molecule for xTB MD."));
@@ -180,6 +168,29 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
         atoms.extend(molecule_atoms);
     }
 
+    let input = native_input(state, atoms)?;
+
+    Ok(PreparedInput {
+        input,
+        mols,
+        peptide_atoms,
+    })
+}
+
+fn native_input(state: &State, atoms: Vec<bio_files::AtomGeneric>) -> io::Result<XtbInput> {
+    let set = state
+        .selected_force_field()
+        .gfnff()
+        .ok_or_else(|| io::Error::other("GFN-FF parameters are not loaded"))?;
+    let cfg = &state.to_save.md.config;
+    set.validate_config(cfg)
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    if state.ui.md.alchemical_enabled {
+        return Err(io::Error::other(
+            "Native xTB does not support alchemical windows.",
+        ));
+    }
+
     let charge = set.charge().map_err(|e| io::Error::other(e.to_string()))?;
     let thermostat = match cfg.integrator {
         Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
@@ -207,15 +218,27 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
     };
     input.validate()?;
 
-    Ok(PreparedInput {
-        input,
-        mols,
-        peptide_atoms,
-    })
+    Ok(input)
+}
+
+fn prepare_run(state: &State) -> io::Result<PreparedInput> {
+    if let Some(md::runs::RunInputs::Xtb { geometry, mols }) =
+        &state.volatile.md_local.opened_inputs
+    {
+        let input = native_input(state, geometry.clone())?;
+
+        return Ok(PreparedInput {
+            input,
+            mols: mols.clone(),
+            peptide_atoms: HashSet::new(),
+        });
+    }
+
+    prepare_input(state)
 }
 
 pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
-    prepare_input(state)?.input.save(path)
+    prepare_run(state)?.input.save(path)
 }
 
 pub fn launch_md(state: &mut State) {
@@ -225,7 +248,7 @@ pub fn launch_md(state: &mut State) {
         return;
     }
 
-    let prepared = match prepare_input(state) {
+    let prepared = match prepare_run(state) {
         Ok(input) => input,
         Err(error) => {
             handle_err(&mut state.ui, error.to_string());
@@ -259,12 +282,30 @@ pub fn launch_md(state: &mut State) {
         let result = prepared
             .input
             .run_with_cancel(&directory, &worker_cancel)
-            .map(|output| RunResult {
-                output,
-                mols: prepared.mols,
-                peptide_atoms: prepared.peptide_atoms,
-                dt: prepared.input.dt as f32,
-                elapsed_ms: start.elapsed().as_millis(),
+            .map(|output| {
+                let mols: Vec<_> = prepared
+                    .mols
+                    .iter()
+                    .map(|(kind, mol, count)| ((*kind).into(), mol.clone(), *count))
+                    .collect();
+                let set = md::viewer::ViewerMolSet::from_mols("xTB MD".into(), &mols);
+                let set_path = output.directory.join(crate::project::MD_MOLECULE_SET_FILE);
+                if let Err(error) = crate::project::save_md_mol_set(&set_path, &set) {
+                    eprintln!("Error saving xTB molecule set: {error}");
+                }
+                if let Err(error) =
+                    save_mol_set_as_gro(&set, &output.directory.join("molecules.gro"))
+                {
+                    eprintln!("Error saving xTB viewer molecules: {error}");
+                }
+
+                RunResult {
+                    output,
+                    mols: prepared.mols,
+                    peptide_atoms: prepared.peptide_atoms,
+                    dt: prepared.input.dt as f32,
+                    elapsed: start.elapsed(),
+                }
             })
             .map_err(|error| error.to_string());
         drop(computation);
@@ -274,31 +315,8 @@ pub fn launch_md(state: &mut State) {
     handle_success(&mut state.ui, "Running native xTB MD...".into());
 }
 
-pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    let result = match state
-        .volatile
-        .thread_receivers
-        .xtb_md
-        .as_ref()
-        .map(|run| run.receiver.try_recv())
-    {
-        Some(Ok(result)) => result,
-        Some(Err(TryRecvError::Disconnected)) => Err("xTB MD worker disconnected".into()),
-        _ => return,
-    };
-    state.volatile.thread_receivers.xtb_md = None;
-    let result = match result {
-        Ok(result) => result,
-        Err(error) => {
-            handle_err(&mut state.ui, error);
-
-            return;
-        }
-    };
-
-    let snaps: Vec<_> = result
-        .output
-        .frames
+pub(super) fn trajectory_snapshots(frames: Vec<XtbFrame>) -> Vec<Arc<Snapshot>> {
+    frames
         .into_iter()
         .map(|frame| {
             Arc::new(Snapshot {
@@ -324,7 +342,32 @@ pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates
                 ..Default::default()
             })
         })
-        .collect();
+        .collect()
+}
+
+pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    let result = match state
+        .volatile
+        .thread_receivers
+        .xtb_md
+        .as_ref()
+        .map(|run| run.receiver.try_recv())
+    {
+        Some(Ok(result)) => result,
+        Some(Err(TryRecvError::Disconnected)) => Err("xTB MD worker disconnected".into()),
+        _ => return,
+    };
+    state.volatile.thread_receivers.xtb_md = None;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            handle_err(&mut state.ui, error);
+
+            return;
+        }
+    };
+
+    let snaps = trajectory_snapshots(result.output.frames);
     let mol_refs: Vec<_> = result
         .mols
         .iter()
@@ -333,15 +376,12 @@ pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates
     state.volatile.md_local.viewer.add_mol_set(&mol_refs, 0);
     state.volatile.md_local.viewer.mol_set_active =
         Some(state.volatile.md_local.viewer.mol_sets.len() - 1);
+    let run_path = result.output.directory.join("xtb.trj");
     if let Some(set) = state.volatile.md_local.viewer.mol_sets.last_mut() {
         set.name = "xTB MD".into();
+        set.path = Some(run_path.clone());
     }
     state.volatile.md_local.pep_atom_set = result.peptide_atoms;
-    if let Some(set) = state.volatile.md_local.viewer.mol_sets.last()
-        && let Err(error) = save_mol_set_as_gro(set, &result.output.directory.join("molecules.gro"))
-    {
-        eprintln!("Error saving xTB viewer molecules: {error}");
-    }
 
     for trajectory in &mut state.trajectories {
         trajectory.ui_active = false;
@@ -352,16 +392,19 @@ pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates
         format!("xTB run {}", state.trajectories.len() + 1),
         result.dt,
     );
+
     trajectory.ui_active = true;
+    trajectory.run_mol_set_path = Some(run_path);
     state.trajectories.push(trajectory);
     state.volatile.md_local.replace_snaps(snaps);
     reset_camera(state, scene, updates, VIEW_DIR_FRONT);
     md::viewer::draw_mols(state, scene, updates);
+
     handle_success(
         &mut state.ui,
         format!(
-            "xTB MD complete in {} ms. Files: {}",
-            result.elapsed_ms,
+            "xTB MD complete in {}. Files: {}",
+            format_elapsed(result.elapsed),
             result.output.directory.display()
         ),
     );

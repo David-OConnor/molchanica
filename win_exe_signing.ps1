@@ -1,5 +1,6 @@
 # Authenticode signing for Windows release packages. Dot-source from make_release.ps1:
 # `. (Join-Path $PSScriptRoot "win_exe_signing.ps1")`, then call `Copy-ForSigning` and `Invoke-Sign`.
+# Or run it with file paths to sign them; Inno Setup uses this as its sign tool.
 #
 # Smart App Control blocks any unsigned executable, DLL, or script that came from the internet;
 # SmartScreen warns on them.
@@ -8,6 +9,8 @@
 # metadata format: `{"Endpoint": ..., "CodeSigningAccountName": ..., "CertificateProfileName": ...}`.
 # Authenticate first with `az login`. OV certificate on a hardware token instead: set
 # WIN_SIGN_CERT_SHA1 to the certificate's thumbprint. WIN_SIGN_DLIB overrides the dlib search.
+
+param([string[]]$SignPaths)
 
 $signingMetadata = Join-Path $PSScriptRoot "signing_metadata.json"
 
@@ -92,4 +95,9 @@ function Invoke-Sign {
 
     & $signtool verify /pa @toSign
     if ($LASTEXITCODE -ne 0) { throw "signtool verify failed with exit code $LASTEXITCODE." }
+}
+
+if ($SignPaths) {
+    $ErrorActionPreference = "Stop"
+    Invoke-Sign -Paths $SignPaths
 }

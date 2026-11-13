@@ -426,7 +426,7 @@ struct Molecule {
 }
 
 impl Molecule {
-    fn capture(mol: &MolGenericRef<'_>) -> io::Result<Self> {
+    fn capture(mol: &MolGenericRef<'_>, full: bool) -> io::Result<Self> {
         let (residues, chains) = match mol {
             MolGenericRef::Peptide(p) => (&p.residues[..], &p.chains[..]),
             MolGenericRef::NucleicAcid(p) => (&p.residues[..], &[][..]),
@@ -436,7 +436,9 @@ impl Molecule {
 
         Ok(Self {
             pharmacophore: match mol {
-                MolGenericRef::Small(p) => Some(SavedPharmacophore::capture(&p.pharmacophore)),
+                MolGenericRef::Small(p) if full => {
+                    Some(SavedPharmacophore::capture(&p.pharmacophore))
+                }
                 _ => None,
             },
             parameterized: match mol {
@@ -464,11 +466,11 @@ impl Molecule {
                 _ => Vec::new(),
             },
             cif: match mol {
-                MolGenericRef::Peptide(p) => p.source_cif.clone(),
+                MolGenericRef::Peptide(p) if full => p.source_cif.clone(),
                 _ => None,
             },
             density: match mol {
-                MolGenericRef::Peptide(p) => Some(Density::capture(p)?),
+                MolGenericRef::Peptide(p) if full => Some(Density::capture(p)?),
                 _ => None,
             },
             peptide_ids: match mol {
@@ -830,6 +832,248 @@ struct MolSet {
     visibility: Vec<bool>,
 }
 
+impl MolSet {
+    fn capture(set: &ViewerMolSet) -> Self {
+        Self {
+            name: set.name.clone(),
+            mols: set
+                .mols
+                .iter()
+                .map(|m| (kind_byte(m.mol_type), Common::capture(&m.mol), m.range))
+                .collect(),
+            visibility: set.groups.iter().map(|g| g.visible).collect(),
+        }
+    }
+
+    fn restore(self) -> io::Result<ViewerMolSet> {
+        let mols = self
+            .mols
+            .into_iter()
+            .map(|(kind, common, range)| {
+                let mol = common.restore()?;
+                if range.1.checked_sub(range.0) != Some(mol.atoms.len()) {
+                    return Err(invalid("Invalid trajectory atom range"));
+                }
+
+                Ok(ViewerMolecule {
+                    mol_type: kind_from(kind)?,
+                    mol,
+                    range,
+                })
+            })
+            .collect::<io::Result<_>>()?;
+        let mut result = ViewerMolSet::new(None, self.name, mols);
+        if result.range_overlaps {
+            return Err(invalid("Overlapping trajectory atom ranges"));
+        }
+        for (g, visible) in result.groups.iter_mut().zip(self.visibility) {
+            g.visible = visible;
+        }
+
+        Ok(result)
+    }
+}
+
+pub(crate) const MD_MOLECULE_SET_FILE: &str = "molecules.mcmd";
+const MD_MOL_SET_MAGIC: &[u8] = b"MCMS1";
+
+pub(crate) fn save_md_mol_set(path: &Path, set: &ViewerMolSet) -> io::Result<()> {
+    let bytes = bincode::encode_to_vec(MolSet::capture(set), bincode::config::standard())
+        .map_err(invalid)?;
+    let mut file = fs::File::create(path)?;
+    file.write_all(MD_MOL_SET_MAGIC)?;
+    file.write_all(&bytes)
+}
+
+pub(crate) fn load_md_mol_set(path: &Path) -> io::Result<ViewerMolSet> {
+    let bytes = fs::read(path)?;
+    let payload = bytes
+        .strip_prefix(MD_MOL_SET_MAGIC)
+        .ok_or_else(|| invalid("Invalid MD molecule set"))?;
+    let (set, consumed): (MolSet, usize) = bincode::decode_from_slice(
+        payload,
+        bincode::config::standard().with_limit::<{ 256 << 20 }>(),
+    )
+    .map_err(invalid)?;
+    if consumed != payload.len() {
+        return Err(invalid("Unexpected data in MD molecule set"));
+    }
+
+    set.restore()
+}
+
+pub(crate) const MD_INPUTS_FILE: &str = "molchanica-md.bin";
+const MD_INPUTS_MAGIC: &[u8] = b"MCMD1";
+
+#[derive(Encode, Decode)]
+struct SavedMdInputs {
+    config: dynamics::MdConfig,
+    molecules: Vec<Molecule>,
+    viewer: MolSet,
+    parameters: Vec<(String, String)>,
+    peptide_only_near_ligs: bool,
+    peptide_static: bool,
+    alchemical: Option<f64>,
+    gfnff: Option<(Option<f64>, Option<String>)>,
+}
+
+pub(crate) struct MdInputs {
+    pub config: dynamics::MdConfig,
+    pub viewer: ViewerMolSet,
+    mols: RestoredMols,
+    parameters: HashMap<String, bio_files::md_params::ForceFieldParams>,
+    peptide_only_near_ligs: bool,
+    peptide_static: bool,
+    alchemical: Option<f64>,
+    gfnff: Option<(Option<f64>, Option<String>)>,
+}
+
+pub(crate) fn save_md_inputs(
+    state: &State,
+    set: &ViewerMolSet,
+    config: &dynamics::MdConfig,
+    dir: &Path,
+) -> io::Result<()> {
+    let mut molecules = Vec::new();
+    let mut parameters = Vec::new();
+    for (_, _, mol) in expression::objects(state) {
+        let common = mol.common();
+        if common.selected_for_md.is_none() || mol.mol_type() == MolType::Pocket {
+            continue;
+        }
+        if let Some(params) = state.mol_specific_params.get(&common.ident) {
+            let file = Temporary::new("dat");
+            params.save_dat(&file.0, "Molchanica MD parameters")?;
+            parameters.push((common.ident.clone(), fs::read_to_string(&file.0)?));
+        }
+        molecules.push(Molecule::capture(&mol, false)?);
+    }
+
+    let gfnff = state.selected_force_field().gfnff();
+    if let Some(path) = gfnff.and_then(|set| set.parameter_file.as_ref()) {
+        fs::copy(path, dir.join(".param_gfnff.xtb"))?;
+    }
+    let saved = SavedMdInputs {
+        config: config.clone(),
+        molecules,
+        viewer: MolSet::capture(set),
+        parameters,
+        peptide_only_near_ligs: state.ui.md.peptide_only_near_ligs,
+        peptide_static: state.ui.md.peptide_static,
+        alchemical: state
+            .ui
+            .md
+            .alchemical_enabled
+            .then_some(state.ui.md.alchemical_lambda),
+        gfnff: gfnff.map(|set| (set.total_charge, set.alpb_solvent.clone())),
+    };
+    let bytes = bincode::encode_to_vec(&saved, bincode::config::standard()).map_err(invalid)?;
+    let mut file = fs::File::create(dir.join(MD_INPUTS_FILE))?;
+    file.write_all(MD_INPUTS_MAGIC)?;
+    file.write_all(&bytes)
+}
+
+impl MdInputs {
+    pub(crate) fn load(path: &Path) -> io::Result<Self> {
+        let bytes = fs::read(path)?;
+        let bytes = bytes
+            .strip_prefix(MD_INPUTS_MAGIC)
+            .ok_or_else(|| invalid("Unsupported Molchanica MD input file"))?;
+        let (saved, used): (SavedMdInputs, usize) = bincode::decode_from_slice(
+            bytes,
+            bincode::config::standard().with_limit::<{ 256 << 20 }>(),
+        )
+        .map_err(invalid)?;
+        if used != bytes.len() {
+            return Err(invalid("Unexpected data in Molchanica MD inputs"));
+        }
+
+        let mut mols = RestoredMols::default();
+        for molecule in saved.molecules {
+            molecule.restore(&mut mols)?;
+        }
+        let parameters = saved
+            .parameters
+            .into_iter()
+            .map(|(name, text)| {
+                bio_files::md_params::ForceFieldParams::from_dat(&text).map(|params| (name, params))
+            })
+            .collect::<io::Result<_>>()?;
+
+        Ok(Self {
+            config: saved.config,
+            viewer: saved.viewer.restore()?,
+            mols,
+            parameters,
+            peptide_only_near_ligs: saved.peptide_only_near_ligs,
+            peptide_static: saved.peptide_static,
+            alchemical: saved.alchemical,
+            gfnff: saved.gfnff,
+        })
+    }
+
+    pub(crate) fn apply(self, state: &mut State, dir: &Path) {
+        fn select<T>(
+            current: &mut Vec<T>,
+            saved: Vec<T>,
+            common: impl Fn(&mut T) -> &mut MoleculeCommon,
+        ) {
+            for mol in current.iter_mut() {
+                common(mol).selected_for_md = None;
+            }
+            for mut mol in saved {
+                let reference = common(&mut mol);
+                let existing = current.iter_mut().map(&common).find(|existing| {
+                    existing.selected_for_md.is_none()
+                        && existing.ident == reference.ident
+                        && existing.atom_posits == reference.atom_posits
+                        && existing
+                            .atoms
+                            .iter()
+                            .map(|a| a.element)
+                            .eq(reference.atoms.iter().map(|a| a.element))
+                });
+                if let Some(existing) = existing {
+                    existing.selected_for_md = reference.selected_for_md;
+                } else {
+                    current.push(mol);
+                }
+            }
+        }
+
+        select(&mut state.peptides, self.mols.peptides, |mol| {
+            &mut mol.common
+        });
+        select(&mut state.ligands, self.mols.ligands, |mol| &mut mol.common);
+        select(&mut state.lipids, self.mols.lipids, |mol| &mut mol.common);
+        select(&mut state.nucleic_acids, self.mols.nucleic_acids, |mol| {
+            &mut mol.common
+        });
+        state.mol_specific_params.extend(self.parameters);
+        state.ui.md.peptide_only_near_ligs = self.peptide_only_near_ligs;
+        state.ui.md.peptide_static = self.peptide_static;
+        state.ui.md.alchemical_enabled = self.alchemical.is_some();
+        if let Some(lambda) = self.alchemical {
+            state.ui.md.alchemical_lambda = lambda;
+            state.ui.md.alchemical_lambda_input = lambda.to_string();
+        }
+        if let Some((charge, solvent)) = self.gfnff
+            && let Some(set) = state
+                .force_fields
+                .params
+                .as_mut()
+                .and_then(|p| p.gfnff_mut())
+        {
+            set.total_charge = charge;
+            set.alpb_solvent = solvent;
+            let path = dir.join(".param_gfnff.xtb");
+            set.parameter_file = path.is_file().then_some(path);
+        }
+        state.force_fields.invalidate();
+        state.refresh_force_fields();
+    }
+}
+
 #[derive(Encode, Decode)]
 enum SequenceResidues {
     Protein(Vec<na_seq::AminoAcid>),
@@ -961,25 +1205,13 @@ pub fn save(state: &State, scene: &Scene, path: &Path) -> io::Result<()> {
         parameters,
         molecules: expression::objects(state)
             .iter()
-            .map(|(_, _, m)| Molecule::capture(m))
+            .map(|(_, _, m)| Molecule::capture(m, true))
             .collect::<io::Result<_>>()?,
         camera: CamSnapshot::from_cam(&scene.camera, "Current view".into()),
         appearance: SceneState::capture(state, scene),
         scenes: state.cam_snapshots.clone(),
         frames: viewer.snapshots.iter().map(|s| Frame::capture(s)).collect(),
-        mol_sets: viewer
-            .mol_sets
-            .iter()
-            .map(|set| MolSet {
-                name: set.name.clone(),
-                mols: set
-                    .mols
-                    .iter()
-                    .map(|m| (kind_byte(m.mol_type), Common::capture(&m.mol), m.range))
-                    .collect(),
-                visibility: set.groups.iter().map(|g| g.visible).collect(),
-            })
-            .collect(),
+        mol_sets: viewer.mol_sets.iter().map(MolSet::capture).collect(),
         active: state.volatile.active_mol.map(|(k, i)| (kind_byte(k), i)),
     };
     let bytes = bincode::encode_to_vec(project, bincode::config::standard()).map_err(invalid)?;
@@ -1064,33 +1296,11 @@ pub fn load(
         .into_iter()
         .map(|frame| frame.restore().map(std::sync::Arc::new))
         .collect::<io::Result<Vec<_>>>()?;
-    let mut sets = Vec::new();
-    for set in project.mol_sets {
-        let mols = set
-            .mols
-            .into_iter()
-            .map(|(kind, common, range)| {
-                let mol = common.restore()?;
-                if range.1 < range.0 || range.1 - range.0 != mol.atoms.len() {
-                    return Err(invalid("Invalid trajectory atom range"));
-                }
-
-                Ok(ViewerMolecule {
-                    mol_type: kind_from(kind)?,
-                    mol,
-                    range,
-                })
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        let mut mol_set = ViewerMolSet::new(None, set.name, mols);
-        if mol_set.range_overlaps {
-            return Err(invalid("Overlapping trajectory atom ranges"));
-        }
-        for (g, visible) in mol_set.groups.iter_mut().zip(set.visibility) {
-            g.visible = visible;
-        }
-        sets.push(mol_set);
-    }
+    let sets = project
+        .mol_sets
+        .into_iter()
+        .map(MolSet::restore)
+        .collect::<io::Result<_>>()?;
     if !finite(project.camera.position.into())
         || !project.camera.far.is_finite()
         || project.camera.far <= project.appearance.near

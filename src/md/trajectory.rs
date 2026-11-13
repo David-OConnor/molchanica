@@ -14,7 +14,10 @@ use std::{
 use bio_files::{
     FrameSlice,
     dcd::{DcdMetadata, read_dcd},
-    gromacs::trr::{TrrMetadata, read_trr},
+    gromacs::{
+        OutputEnergy,
+        trr::{TrrMetadata, read_trr},
+    },
     xtc::{XtcMetadata, read_xtc},
 };
 use dynamics::snapshot::Snapshot;
@@ -68,6 +71,8 @@ pub struct Trajectory {
     pub source: TrajectorySource,
     /// e.g. derived from filename, or "In-memory run N".
     pub display_name: String,
+    pub run_mol_set_path: Option<PathBuf>,
+    pub energies: Vec<OutputEnergy>,
     pub num_atoms: usize,           // In DCD header. Each TRR and XTC frame.
     pub num_frames: usize,          // in DCD header.
     pub start_step: f32,            // In DCD header. Each TRR and XTC frame.
@@ -105,6 +110,8 @@ impl Trajectory {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            run_mol_set_path: None,
+            energies: Vec::new(),
             num_atoms: 0,
             num_frames: 0,
             start_step: 0.,
@@ -152,6 +159,8 @@ impl Trajectory {
             TrajFormat::InMemory => unreachable!(),
         }
 
+        result.ui_end_i = result.num_frames.saturating_sub(1);
+
         Ok(result)
     }
 
@@ -185,6 +194,8 @@ impl Trajectory {
             format: TrajFormat::InMemory,
             source: TrajectorySource::Memory(snapshots),
             display_name,
+            run_mol_set_path: None,
+            energies: Vec::new(),
             num_atoms,
             num_frames,
             start_step,
@@ -207,11 +218,7 @@ impl Trajectory {
     /// Load frames, applying a `FrameSlice` filter.  For file-backed trajectories
     /// this reads from disk; for in-memory trajectories it filters the stored snapshots.
     pub fn load_snaps(&mut self, slice: FrameSlice) -> io::Result<Vec<Arc<Snapshot>>> {
-        self.frames_open = Some(slice);
-
-        self.ui_active = true;
-
-        match self.format {
+        let result: io::Result<Vec<Arc<Snapshot>>> = match self.format {
             TrajFormat::InMemory => {
                 let TrajectorySource::Memory(snaps) = &self.source else {
                     return Err(io::Error::other(
@@ -280,7 +287,28 @@ impl Trajectory {
                     .map(Arc::new)
                     .collect())
             }
+        };
+        let mut snaps = result?;
+        if self.run_mol_set_path.is_some() || !self.energies.is_empty() {
+            snaps.retain(|snap| !snap.atom_posits.is_empty());
         }
+        for snap in &mut snaps {
+            let index = self
+                .energies
+                .partition_point(|en| en.time < snap.time - 1e-5);
+            if let Some(en) = self
+                .energies
+                .get(index)
+                .filter(|en| (en.time - snap.time).abs() < 1e-5)
+            {
+                Arc::make_mut(snap).energy_data = Some(en.clone().into());
+            }
+        }
+
+        self.frames_open = Some(slice);
+        self.ui_active = true;
+
+        Ok(snaps)
     }
 }
 

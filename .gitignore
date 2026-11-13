@@ -76,3 +76,4 @@ AGENTS.md
 
 # Code signing config, read by win_exe_signing.ps1
 /signing_metadata.json
+az_login_notes.txt

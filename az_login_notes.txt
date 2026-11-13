@@ -1,0 +1,3 @@
+path: `C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin`
+
+`az login --tenant c69e0583-8469-424b-9b4b-f052c3b826f2`

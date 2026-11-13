@@ -46,7 +46,7 @@
 //!
 //! ```text
 //! <data root>/                     e.g. %LOCALAPPDATA%\Programs\Molchanica, or ~/molchanica
-//!     molchanica[.exe]             the program, put here by the setup scripts
+//!     molchanica[.exe]             the program, put here by the installer or setup script
 //!     molchanica_prefs.mca         the preferences file
 //!     managed_molecules/           downloaded and generated molecules
 //!     molecule_diagrams/           bounded cache of remote ChEBI SVG fallbacks

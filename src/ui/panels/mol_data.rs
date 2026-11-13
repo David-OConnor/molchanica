@@ -25,7 +25,7 @@ use crate::{
     drawing::{
         CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, wrappers::draw_all_pockets,
     },
-    file_io::gemmi_path,
+    file_io::gemmi_dir,
     label,
     peptide_ligands::{LigAttachUi, detach_het_res, remove_het_res},
     render::MESH_POCKET_START,
@@ -703,7 +703,9 @@ fn display_peptide_actions(
             )
             .clicked()
         {
-            match density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, gemmi_path()) {
+            match gemmi_dir()
+                .and_then(|dir| density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, Some(&dir)))
+            {
                 Ok(density) => {
                     density_to_load = Some(density);
                     handle_success(&mut state.ui, "Loaded density data from RCSB".to_owned());

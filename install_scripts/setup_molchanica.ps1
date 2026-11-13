@@ -22,7 +22,6 @@ $ErrorActionPreference = "Stop"
 $NAME_UPPER = "Molchanica"
 $NAME = "molchanica"
 $EXE = "$NAME.exe"
-$GEMMI_DIR = "gemmi"
 $CUFFT_LIB = "cufft64_12.dll"
 $MPNN_CONVERTER = "convert_mpnn_weights.py"
 $DESCRIPTION = "Molecule and protein viewer"
@@ -61,18 +60,11 @@ function Copy-Payload {
         Write-Warning "$MPNN_CONVERTER was not found; native ProteinMPNN ΔΔG conversion will be skipped."
     }
 
-    # The application looks for Gemmi in a folder colocated with the executable, before falling
-    # back to the system path. (See `file_io::gemmi_path`.)
-    $gemmiSource = Join-Path $Source $GEMMI_DIR
-    if (Test-Path -LiteralPath $gemmiSource -PathType Container) {
-        $gemmiDest = Join-Path $Destination $GEMMI_DIR
-        if (Test-Path -LiteralPath $gemmiDest) {
-            Remove-Item -LiteralPath $gemmiDest -Recurse -Force
-        }
-        Copy-Item -LiteralPath $gemmiSource -Destination $gemmiDest -Recurse -Force
-        Write-Host "Copied the $GEMMI_DIR folder to $Destination."
-    } else {
-        Write-Warning "No $GEMMI_DIR folder was found in $Source; opening MTZ and 2fo-fc files will require Gemmi on the system path."
+    # Earlier releases shipped Gemmi here. It's now installed from the Tools panel.
+    $legacyGemmi = Join-Path $Destination "gemmi"
+    if (Test-Path -LiteralPath $legacyGemmi -PathType Container) {
+        Remove-Item -LiteralPath $legacyGemmi -Recurse -Force
+        Write-Host "Removed the bundled gemmi folder from an earlier release; install Gemmi from the Tools panel."
     }
 
     # If the cuda FFT lib is packaged with the download, keep it next to the executable, so Windows

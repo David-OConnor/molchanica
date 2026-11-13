@@ -13,18 +13,25 @@ $appName = "molchanica"
 # so a release never ships under a version that disagrees with the one the app reports.
 $versionMatch = Select-String -Path "Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
 if (-not $versionMatch) { throw "Could not read the version from Cargo.toml" }
+$appVersion = $versionMatch.Matches[0].Groups[1].Value
 # Archive names use underscores, e.g. 0.3.7 -> 0_3_7.
-$version = $versionMatch.Matches[0].Groups[1].Value -replace '\.', '_'
+$version = $appVersion -replace '\.', '_'
 $outDir = "target\release"
 $exe    = Join-Path $outDir "${appName}.exe"
-$readme = "README.md"
-$setup = "install_scripts/setup_${appName}.ps1"
-$setupLauncher = "install_scripts/setup_${appName}.bat"
 $cufft = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin\x64\cufft64_12.dll"
-# Needed by the bio_tools ProteinMPNN recipe for native ddG scanning. Its absence is handled (the
-# conversion is skipped), but shipping it means one less reason to need the repository.
-$mpnnConvert = "scripts/convert_mpnn_weights.py"
-$gemmi  = "C:\Program Files\gemmi"
+# The installer's files are listed in this script, not here.
+$iss = Join-Path $PSScriptRoot "install_scripts\${appName}.iss"
+
+function Find-Iscc {
+    $found = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup *\ISCC.exe", "$env:ProgramFiles\Inno Setup *\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue |
+        Sort-Object { $_.Directory.Name } -Descending |
+        Select-Object -First 1
+    if (-not $found) {
+        throw "ISCC.exe was not found. Install Inno Setup: winget install -e --id JRSoftware.InnoSetup"
+    }
+
+    $found.FullName
+}
 
 cargo build --release --features adme,synthesis
 
@@ -59,22 +66,28 @@ if ($dumpbin) {
     Write-Warning "dumpbin was not found, so the release was not checked for load-time CUDA or VC++ runtime imports."
 }
 
-# Sign everything we ship that can carry a signature. Gemmi and the setup script are staged into the
-# build dir first, since signing modifies them. cuFFT is already signed by Nvidia.
-$gemmi = Copy-ForSigning $gemmi $outDir
-$setup = Copy-ForSigning $setup $outDir
-Invoke-Sign -Paths $exe, $setup, $gemmi -Unsigned:$Unsigned
+# Windows ships as a signed installer rather than a zip: batch files can't be signed, so the old
+# setup_molchanica.bat always drew a security warning. cuFFT is already signed by Nvidia.
+Invoke-Sign -Paths $exe -Unsigned:$Unsigned
 
-$zip1 = "${appName}_${version}_win.zip"
-if (Test-Path $zip1) { Remove-Item $zip1 -Force }
-Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mpnnConvert, $cufft -DestinationPath $zip1 -Force
+$iscc = Find-Iscc
+$isccArgs = "/Q", "/DAppVersion=$appVersion", "/O$PSScriptRoot"
+if (-not $Unsigned) {
+    # Inno signs the setup and its uninstaller through this. $q and $f are its quote and quoted-file
+    # tokens.
+    $powershell = (Get-Process -Id $PID).Path
+    $signScript = Join-Path $PSScriptRoot "win_exe_signing.ps1"
+    $isccArgs += "/DSign", "/Smolsign=`$q$powershell`$q -NoProfile -ExecutionPolicy Bypass -File `$q$signScript`$q `$f"
+}
+
+& $iscc @isccArgs "/F${appName}_${version}_win_setup" "/DCufft=$cufft" $iss
+if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
 
 # We don't use a second binary for non-CUDA; the Cuda-compiled binary should work
 # on non-CUDA-available setups. The only difference in the packages is inclusion of hte cuFFT library.
 # cargo build --release --no-default-features --features adme,synthesis
-$zip2 = "${appName}_${version}_win_nocuda.zip"
-if (Test-Path $zip2) { Remove-Item $zip2 -Force }
-Compress-Archive -LiteralPath $exe, $gemmi, $readme, $setup, $setupLauncher, $mpnnConvert -DestinationPath $zip2 -Force
+& $iscc @isccArgs "/F${appName}_${version}_win_nocuda_setup" $iss
+if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
 
 # Build and package the Linux release too, in the Ubuntu 22.04 WSL instance. 22.04 specifically,
 # since it sets the glibc version the Linux binary requires; building on a newer Ubuntu would

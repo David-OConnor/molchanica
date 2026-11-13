@@ -29,9 +29,9 @@
 #    runtime -- `nvcuda`, `cufft`, and the graphics drivers -- exchange only opaque handles and plain
 #    buffers, never CRT objects.
 #
-# Note that this does nothing for the bundled Gemmi: `gemmi.exe`, `gemmi_cpp.dll` and `zlib.dll` are
-# separately-built C++ binaries that import `MSVCP140.dll` and `VCRUNTIME140_1.dll` as well, so
-# loading MTZ and 2fo-fc files (see `file_io::gemmi_path`) still wants the redistributable present.
+# Note that this does nothing for Gemmi, installed from the Tools window: `gemmi.exe` is a
+# separately-built C++ binary that imports `MSVCP140.dll` and `VCRUNTIME140_1.dll`, so loading MTZ
+# and 2fo-fc files (see `file_io::gemmi_dir`) still wants the redistributable present.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 

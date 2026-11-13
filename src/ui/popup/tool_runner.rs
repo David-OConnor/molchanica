@@ -26,7 +26,10 @@ use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::{SeqType, Sequence};
 use serde_json::{Map, Value, json};
 
-use super::flex_lists::{self, PageLists};
+use super::{
+    external_tools::tool_links,
+    flex_lists::{self, PageLists},
+};
 use crate::{
     external_tools::{
         self, RunControl, Tool,
@@ -1007,11 +1010,7 @@ impl ToolWindow {
             });
 
             ui.add_space(COL_SPACING);
-
-            for (label, url) in spec.links() {
-                ui.hyperlink_to(label, url);
-                ui.add_space(COL_SPACING / 2.);
-            }
+            tool_links(self.tool, ui);
         });
 
         if !spec.is_supported() {

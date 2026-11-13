@@ -13,7 +13,6 @@
 
 // todo: Consider APBS: https://github.com/Electrostatics/apbs (For a type of surface visulaization?)P
 
-//! [S3 Gemmi link](https://daedalus-mols.s3.us-east-1.amazonaws.com/gemmi.exe)
 //! [S3 Geostd link](https://daedalus-mols.s3.us-east-1.amazonaws.com/amber_geostd)
 
 mod annotations;

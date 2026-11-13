@@ -22,7 +22,10 @@ use crate::{
     button,
     external_tools::{self, CheckResult, Tool, ToolCheckUpdate, ToolStatus},
     state::{ComputationType, Computations},
-    ui::{COLOR_ACTION, COLOR_AMBER, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING, util::open_dir},
+    ui::{
+        COL_SPACING, COLOR_ACTION, COLOR_AMBER, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
+        util::open_dir,
+    },
 };
 
 type DiskUsage = Result<Option<u64>, String>;
@@ -389,6 +392,14 @@ fn queue_place_ui(ui: &mut Ui, queue: &JobQueue, place: &QueuePlace, tool: Tool)
     }
 }
 
+/// A tool's official links (docs, examples, home page etc), laid out in the current row.
+pub(in crate::ui) fn tool_links(tool: Tool, ui: &mut Ui) {
+    for (label, url) in tool.spec().links() {
+        ui.hyperlink_to(label, url);
+        ui.add_space(COL_SPACING / 2.);
+    }
+}
+
 fn result_color(result: CheckResult) -> Color32 {
     match result {
         CheckResult::Pass => Color32::LIGHT_GREEN,
@@ -638,6 +649,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                         ui.spinner();
                     });
                     ui.indent(spec.slug(), |ui| {
+                        ui.horizontal_wrapped(|ui| tool_links(tool, ui));
                         ui.label(RichText::new(spec.summary()).color(COLOR_INACTIVE));
                     });
                     ui.add_space(6.0);
@@ -760,6 +772,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                 });
 
                 ui.indent(spec.slug(), |ui| {
+                    ui.horizontal_wrapped(|ui| tool_links(tool, ui));
                     ui.label(RichText::new(spec.summary()).color(COLOR_INACTIVE));
 
                     match status.result {

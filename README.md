@@ -23,12 +23,10 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 
 ### Windows and Linux
 
-[Download, unzip, and run](https://github.com/David-OConnor/molchanica/releases).
+[Download from the releases page](https://github.com/David-OConnor/molchanica/releases).
 
-The application can be launched directly, but these are useful for setting up shortcuts in your OS.
-
-- **Linux**: Run `setup_molchanica.sh`, included in the zip. (Do not run this with `sudo`.)
-- **Windows**: Run `setup_molchanica.ps1`, or double-click `setup_molchanica.bat`.
+- **Windows**: Run the `_setup.exe` installer. It installs for the current user, and adds a Start menu entry.
+- **Linux**: Unzip, and run. `setup_molchanica.sh`, included in the zip, is useful for setting up shortcuts. (Do not run this with `sudo`.)
 
 ![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 
@@ -118,47 +116,28 @@ Most functionality works without internet connectivity. If you have internet, it
 ![UI image showing mol properties and a protien](/screenshots/molchanica_ui_apr_2026.png)
 
 ## Parallel computing
-
 If an Nvidia GPU of at least RTX 3 series is available, molecular dynamics, docking, and electron density calculations will be performed using the GPU (via CUDA kernels). If not, the CPU will be used, leveraging thread pools and SIMD instructions. It uses all cores available, and either 512-bit, or 256-bit, SIMD instructions, depending on CPU capability.
 
 GPU functionality requires Nvidia driver version 580 or higher.
 
-The standard Windows and Linux downloads are built with CUDA support, but do not require it: CUDA's
-libraries are looked up when the program starts rather than being linked into the executable. On a
-machine with no Nvidia GPU, no driver, or a driver too old for the CUDA version we build against,
-the program starts normally and reports `Cpu` as its computing device. The separate `nocuda`
-downloads are smaller, and are otherwise equivalent on such machines.
+The standard Windows and Linux downloads are built with CUDA support, but do not require it: CUDA's libraries are looked up when the program starts rather than being linked into the executable. On a machine with no Nvidia GPU, no driver, or a driver too old for the CUDA version we build against, the program starts normally and reports `Cpu` as its computing device. The separate `nocuda` downloads are smaller, and are otherwise equivalent on such machines.
 
 
 ## Molecular dynamics
+This application integrates classical molecular dynamics setup and playback into the GUI. For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), [GROMACS](https://manual.gromacs.org/), or [xTB](https://github.com/grimme-lab/xtb), and can automatically install those backends. It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization. The [Dynamics readme](https://github.com/David-OConnor/dynamics/blob/main/README.md) is a good reference for that backend, and MD in general.
 
-This application integrates classical molecular dynamics setup and playback into the GUI. For details, see [the documentation](https://www.athanorlab.com/docs/md.html). It can use its [native backend]([Dynamics rust library](https://github.com/david-oconnor/dynamics)), GROMACS, or xTB, and can automatically install those backends. It uses AMBER, CHARMM, OPLS, or GFN-FF force fields, with automatic parameterization. The *Dynamics* readme is also a good reference for this.
+It supports running MD directly on the following molecule types:
 
-It supports running MD directly on the following molecule types, without loading any other data:
-
-- Proteins/amino acids
+- Proteins and peptides
 - Small organic molecules
 - DNA and RNA
 - Lipids
 - Carbohydrates
 
-
-Overview of MD components:
-
-- [Amber, CHARMM, OPLS, or GFN-FF parameters](https://ambermd.org/AmberModels.php)
-- Velocity Verlet integrator
-- [CSVR](https://arxiv.org/pdf/0803.4060) or Langevin Middle thermostats
-- Explicit OPC water model
-- SPME Coulomb forces
-- Lennard Jones potentials
-- AM1-BCC partial charges, if using Amber parameters (MBIS if you have ORCA installed; OPLS and GFN have their own charge systems)
-- For GNF-FF, it uses repulsion, dispersion, and hydrogen bond terms, and does not use Lennard Jone potentials
-
-The *GFN-FF* force fields can be used with either the *Dynamics* or *xTB* backends. In either case, we parameterize by calling the *xTB* executable. If using the *xTB* backend, we launch that executable at the run start, and collect + display results once complete. If using the *Dynamics* backend, we call *xTB* as a library to compute forces each run, and use *Dynamics*'s integrator, thermostat, and other functionality. 
+It can also perform quantum molecular dynamics using [ORCA](https://www.faccts.de/orca/). This is much slower. See [this documentation page for details](https://www.athanorlab.com/docs/orca.html).
 
 
 ## Editing molecules
-
 We provide an editor for small organic molecules. This is fully-3D, and has integrated dynamics, which can be run continuously while you edit. It ensures the molecules you create are realistic, and take the appropriate shape. See the documentation for details on how the editor works.
 
 
@@ -250,7 +229,7 @@ Note: The molecule editor has a different set of hot keys; see its tooltips for 
 Supports volumetric and isosurface views for electron density data, e.g. from Cryo-EM and X-Ray crystallography data.
 
 It can download this data from RCSB PDB, or load files directly. To open *2fo-fc* and
-*MTZ* files, we use the [Gemmi](https://gemmi.readthedocs.io/en/latest/install.html) program. For this to work, the `gemmi` folder we include must remain co-located with the program's executable, or be on the system path. For convenience, we package it with the Windows release, and the linux install script optionally installs it with `apt`.
+*MTZ* files, we use the [Gemmi](https://gemmi.readthedocs.io/en/latest/) program. Install it from the **Tools** window, like other external tools.
 
 It can import Map files directly, and save load density to Map format.
 

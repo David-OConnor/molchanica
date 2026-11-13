@@ -3,7 +3,9 @@ use dynamics::{
     LINCS_ITER_DEFAULT, LINCS_ORDER_DEFAULT, MdConfig, SHAKE_TOL_DEFAULT, SimBoxInit, Solvent,
     TAU_TEMP_DEFAULT, snapshot::SnapshotHandlers,
 };
-use egui::{Color32, ComboBox, RichText, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob};
+use egui::{
+    Button, Color32, ComboBox, RichText, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob,
+};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 use mol_defs::molecules::MolType;
@@ -19,9 +21,9 @@ use crate::{
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
         flag_btn, misc, num_field, panels::md_viewer, popup::external_tools::install_btn,
-        sidebar::mol_picker::mol_type_color,
+        sidebar::mol_picker::mol_type_color, util::open_dir,
     },
-    util::RedrawFlags,
+    util::{RedrawFlags, handle_err},
 };
 
 pub fn md_setup(
@@ -46,6 +48,7 @@ pub fn md_setup(
     }
 
     misc::section_box().show(ui, |ui| {
+        run_picker(state, scene, updates, ui);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("MD setup:").color(Color32::WHITE));
 
@@ -246,7 +249,7 @@ pub fn md_setup(
                     ui.label(
                         RichText::new(format!(
                             "MD running. Step {} of {}",
-                            count, state.to_save.md.num_steps
+                            count, state.volatile.md_local.run_steps_and_dt.0
                         ))
                             .color(COLOR_HIGHLIGHT),
                     );
@@ -338,6 +341,11 @@ fn force_field_cfg(state: &mut State, ui: &mut Ui) {
 
 /// Counts molecule copies using the same selection as the simulation.
 fn selected_mols_summary(state: &State, ui: &mut Ui) {
+    if using_saved_inputs(state) {
+        ui.label("Using saved run inputs");
+        return;
+    }
+
     let mols = md::get_mols_sel_for_md(state);
     if mols.is_empty() {
         ui.label(if state.to_save.md.backend == MdBackend::xTb {
@@ -390,6 +398,72 @@ fn selected_mols_summary(state: &State, ui: &mut Ui) {
     }
 
     ui.label(label);
+}
+
+fn using_saved_inputs(state: &State) -> bool {
+    state
+        .volatile
+        .md_local
+        .opened_inputs
+        .as_ref()
+        .is_some_and(|inputs| inputs.backend() == state.to_save.md.backend)
+}
+
+fn run_picker(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
+    let running = md::runs::running(state);
+
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(!running, |ui| {
+            let picked = ComboBox::from_id_salt("recent_md_runs")
+                .selected_text("Recent MD runs")
+                .height(360.)
+                .show_ui(ui, |ui| {
+                    let runs = md::runs::recent(&state.to_save.recent_md_runs);
+                    if runs.is_empty() {
+                        ui.label("No saved runs");
+                    }
+
+                    runs.into_iter().find(|run| {
+                        ui.selectable_label(false, &run.name)
+                            .on_hover_text(run.directory.display().to_string())
+                            .clicked()
+                    })
+                })
+                .inner
+                .flatten();
+            if let Some(run) = picked {
+                md::runs::open(state, scene, updates, &run.directory, run.legacy.as_deref());
+            }
+        });
+
+        if ui.button("Open MD out folder").clicked() {
+            let result = std::env::current_dir().and_then(|dir| {
+                let folder = dir.join("md_out");
+                std::fs::create_dir_all(&folder)?;
+
+                open_dir(&folder)
+            });
+
+            if let Err(error) = result {
+                handle_err(
+                    &mut state.ui,
+                    format!("Error opening MD out folder: {error}"),
+                );
+            }
+        }
+
+        if ui
+            .add_enabled(!running, Button::new("Open MD run"))
+            .clicked()
+        {
+            state.volatile.dialogs.open_md_run.pick_directory();
+        }
+        if state.volatile.md_local.opened_inputs.is_some()
+            && ui.button("Use selected molecules").clicked()
+        {
+            state.volatile.md_local.opened_inputs = None;
+        }
+    });
 }
 
 /// Section for integrator config, various modelling parameters etc
@@ -508,6 +582,8 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
 
     if gfnff {
         crate::force_fields::gfnff_solvent_selector(state, ui, "md_gfnff_solvent");
+    } else if using_saved_inputs(state) {
+        ui.label("Solvent from saved structure");
     } else {
         let help_text = "Set the solvent";
         ui.label("Solvent:").on_hover_text(help_text);
@@ -715,8 +791,11 @@ fn temp_pressure(state: &mut State, ui: &mut Ui) {
         }
     }
 
-    // Sim box controls.
-    sim_box(state, ui)
+    if using_saved_inputs(state) {
+        ui.label("Box from saved GRO");
+    } else {
+        sim_box(state, ui);
+    }
 }
 
 fn sim_box(state: &mut State, ui: &mut Ui) {

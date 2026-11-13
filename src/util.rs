@@ -158,6 +158,21 @@ impl RedrawFlags {
     }
 }
 
+/// Formats an elapsed time in a suitable unit, e.g. "450ms", "12.3s", "3m 04s", or "1h 02m".
+pub fn format_elapsed(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+
+    if secs == 0 {
+        format!("{}ms", elapsed.as_millis())
+    } else if secs < 60 {
+        format!("{:.1}s", elapsed.as_secs_f32())
+    } else if secs < 3_600 {
+        format!("{}m {:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h {:02}m", secs / 3_600, (secs % 3_600) / 60)
+    }
+}
+
 /// Saves dirty preferences when their timer expires. A delay is returned only while a save is
 /// pending, so an otherwise idle application does not wake just to discover that nothing changed.
 pub fn check_prefs_save(state: &mut State) -> Option<Duration> {

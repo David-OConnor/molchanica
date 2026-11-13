@@ -110,53 +110,16 @@ pub struct RequiredAsset {
 /// Shown if a registry entry ever names a catalog slug `bio_tools` no longer has.
 const MISSING_CATALOG: &str = "(the bio_tools catalog entry for this tool is missing)";
 
-/// Where a tool's identity and human-readable description come from.
-///
-/// `bio_tools` already describes every tool worth describing — name, slug, summary, home page,
-/// licence — and `bio_web` reads that same table. Restating any of it here is how the two drifted
-/// apart, so the registry points at the shared catalog entry and holds only what is genuinely
-/// Molchanica's own: where a tool is installed, how it is launched, and how it is probed.
-#[derive(Clone, Copy, Debug)]
-pub enum ToolIdentity {
-    /// `bio_tools` catalogues the tool under this slug. Note that a catalog slug is not always the
-    /// install recipe's slug, so the recipe, where one exists, is what [`ToolSpec::slug`] and
-    /// [`ToolSpec::name`] prefer.
-    Shared(&'static str),
-    /// Molchanica-only: `bio_tools` neither installs nor catalogues it, so it is described here.
-    Local {
-        slug: &'static str,
-        name: &'static str,
-        summary: &'static str,
-        url: &'static str,
-        license: License,
-        license_details: &'static str,
-    },
-}
-
-impl ToolIdentity {
-    /// The shared catalog entry, for the tools `bio_tools` describes.
-    pub fn catalog(self) -> Option<&'static CatalogEntry> {
-        match self {
-            Self::Shared(slug) => catalog::by_slug(slug),
-            Self::Local { .. } => None,
-        }
-    }
-
-    /// The `bio_tools` install recipe backing this tool, where one exists. `None` for the tools
-    /// only ever obtained from a vendor or a system package manager.
-    pub fn recipe(self) -> Option<InstallableTool> {
-        self.catalog().and_then(|entry| entry.identity.tool())
-    }
-}
-
 /// Everything Molchanica knows about one tool.
 ///
 /// Every [`REGISTRY`] entry lists these fields in this order, so that entries can be compared at a
 /// glance.
 pub struct ToolSpec {
     pub tool: Tool,
-    /// Name, slug, summary, home page, and licence, sourced from `bio_tools` wherever it has them.
-    pub identity: ToolIdentity,
+    /// The `bio_tools` catalog entry this tool is described by: name, summary, home page, and
+    /// licence. `bio_web` reads the same table, so none of it is restated here. Not always the
+    /// install recipe's slug; see [`Self::slug`].
+    pub catalog_slug: &'static str,
     pub kind: ToolKind,
     pub adapter: ToolAdapter,
     /// Base name of the console script or binary, without any platform suffix.
@@ -170,8 +133,6 @@ pub struct ToolSpec {
     pub bundle_root_override_env: Option<&'static str>,
     /// Subdirectory of `<data root>/process_executables` holding a binary distribution or checkout.
     pub bundle_subdir: Option<&'static str>,
-    /// Also look beside the Molchanica executable. For tools we may ship in the release zip.
-    pub colocated: bool,
     /// Weights and data files, relative to the bundle directory.
     pub required_assets: &'static [RequiredAsset],
     /// Whether Molchanica can install it through `bio_tools`. False for tools with a licence gate
@@ -189,127 +150,89 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
-    /// The shared `bio_tools` catalog entry, where there is one. See [`ToolIdentity`].
+    /// The shared `bio_tools` catalog entry.
     pub fn catalog(&self) -> Option<&'static CatalogEntry> {
-        self.identity.catalog()
+        catalog::by_slug(self.catalog_slug)
     }
 
-    /// The `bio_tools` install recipe backing this tool, where one exists.
+    /// The `bio_tools` install recipe backing this tool, where one exists. `None` for the tools
+    /// only ever obtained from a vendor.
     pub fn recipe(&self) -> Option<InstallableTool> {
-        self.identity.recipe()
+        self.catalog().and_then(|entry| entry.identity.tool())
     }
 
     /// The machine-readable identifier: the managed environment's directory name, and the key the
     /// `bio_tools` installer is asked for. Taken from the install recipe, so that the directory
     /// Molchanica builds and the one `bio_tools` installs into cannot disagree.
     pub fn slug(&self) -> &'static str {
-        match self.identity {
-            ToolIdentity::Shared(catalog_slug) => {
-                self.recipe().map_or(catalog_slug, InstallableTool::slug)
-            }
-            ToolIdentity::Local { slug, .. } => slug,
-        }
+        self.recipe()
+            .map_or(self.catalog_slug, InstallableTool::slug)
     }
 
     /// The key `bio_tools` publishes this tool's form contract, presets, and Python adapter under,
     /// for [`ToolAdapter::SharedAdapter`] tools. `None` for every other tool.
     pub fn adapter_slug(&self) -> Option<&'static str> {
-        match (self.adapter, self.identity) {
-            (ToolAdapter::SharedAdapter, ToolIdentity::Shared(catalog_slug)) => Some(catalog_slug),
-            _ => None,
-        }
+        (self.adapter == ToolAdapter::SharedAdapter).then_some(self.catalog_slug)
     }
 
     /// How the tool is written wherever a person reads it.
     pub fn name(&self) -> &'static str {
-        match self.identity {
-            ToolIdentity::Shared(catalog_slug) => match self.recipe() {
-                Some(recipe) => recipe.name(),
-                None => self.catalog().map_or(catalog_slug, CatalogEntry::name),
-            },
-            ToolIdentity::Local { name, .. } => name,
+        match self.recipe() {
+            Some(recipe) => recipe.name(),
+            None => self.catalog().map_or(self.catalog_slug, CatalogEntry::name),
         }
     }
 
     /// A short description, shown in the status panel.
     pub fn summary(&self) -> &'static str {
-        match self.identity {
-            ToolIdentity::Shared(_) => self
-                .catalog()
-                .map_or(MISSING_CATALOG, |entry| entry.spec.summary),
-            ToolIdentity::Local { summary, .. } => summary,
-        }
+        self.catalog()
+            .map_or(MISSING_CATALOG, |entry| entry.spec.summary)
     }
 
     /// The page to send someone to for more: the project's home, else its repository, else docs.
     pub fn url(&self) -> &'static str {
-        match self.identity {
-            ToolIdentity::Shared(_) => self
-                .catalog()
-                .and_then(|entry| {
-                    entry
-                        .spec
-                        .home_url
-                        .or(entry.spec.repo_url)
-                        .or(entry.spec.docs_url)
-                })
-                .unwrap_or(MISSING_CATALOG),
-            ToolIdentity::Local { url, .. } => url,
-        }
+        self.catalog()
+            .and_then(|entry| {
+                entry
+                    .spec
+                    .home_url
+                    .or(entry.spec.repo_url)
+                    .or(entry.spec.docs_url)
+            })
+            .unwrap_or(MISSING_CATALOG)
     }
 
     /// Official links in display order, as `(label, url)`. Only links the tool has are included.
     pub fn links(&self) -> Vec<(&'static str, &'static str)> {
-        match self.identity {
-            ToolIdentity::Shared(_) => {
-                let Some(entry) = self.catalog() else {
-                    return Vec::new();
-                };
-                let spec = &entry.spec;
+        let Some(entry) = self.catalog() else {
+            return Vec::new();
+        };
+        let spec = &entry.spec;
 
-                [
-                    ("Docs", spec.docs_url),
-                    ("Input parameters", spec.input_params_url),
-                    ("Examples", spec.examples_url),
-                    ("Paper", spec.paper_url),
-                    ("Home page", spec.home_url),
-                    ("Source", spec.repo_url),
-                    ("License", spec.license.official_url().or(spec.license_url)),
-                ]
-                .into_iter()
-                .filter_map(|(label, url)| url.map(|url| (label, url)))
-                .collect()
-            }
-            ToolIdentity::Local { url, license, .. } => {
-                let mut result = vec![("Home page", url)];
-                if let Some(license_url) = license.official_url() {
-                    result.push(("License", license_url));
-                }
-                result
-            }
-        }
+        [
+            ("Docs", spec.docs_url),
+            ("Input parameters", spec.input_params_url),
+            ("Examples", spec.examples_url),
+            ("Paper", spec.paper_url),
+            ("Home page", spec.home_url),
+            ("Source", spec.repo_url),
+            ("License", spec.license.official_url().or(spec.license_url)),
+        ]
+        .into_iter()
+        .filter_map(|(label, url)| url.map(|url| (label, url)))
+        .collect()
     }
 
     /// The licence's short label, e.g. `MIT`.
     pub fn license(&self) -> License {
-        match self.identity {
-            ToolIdentity::Shared(_) => self
-                .catalog()
-                .map_or(License::Other, |entry| entry.spec.license),
-            ToolIdentity::Local { license, .. } => license,
-        }
+        self.catalog()
+            .map_or(License::Other, |entry| entry.spec.license)
     }
 
     /// Licence terms of the whole stack a run needs, not just the upstream repository's label.
     pub fn license_details(&self) -> &'static str {
-        match self.identity {
-            ToolIdentity::Shared(_) => self
-                .catalog()
-                .map_or(MISSING_CATALOG, |entry| entry.spec.license_details),
-            ToolIdentity::Local {
-                license_details, ..
-            } => license_details,
-        }
+        self.catalog()
+            .map_or(MISSING_CATALOG, |entry| entry.spec.license_details)
     }
 
     /// `<data root>/process_executables/python_envs/<slug>`, or the override value.
@@ -339,7 +262,7 @@ impl ToolSpec {
     /// `bio_tools` already answers with [`InstallableTool::is_supported`] -- whether upstream
     /// publishes the wheels and binaries the recipe needs here -- and duplicating the answer in
     /// the table only creates somewhere for the two to disagree. A tool the user installs
-    /// themselves (ORCA, Gemmi) is never gated: `bio_tools` may well have no recipe for
+    /// themselves (ORCA) is never gated: `bio_tools` may well have no recipe for
     /// this platform while the vendor ships a perfectly good build of it.
     pub fn is_supported(&self) -> bool {
         match self.recipe() {
@@ -381,7 +304,7 @@ const MANAGED_HINT: &str = "Install from Molchanica's Tools panel.";
 pub static REGISTRY: &[ToolSpec] = &[
     ToolSpec {
         tool: Tool::RdKit,
-        identity: ToolIdentity::Shared("rdkit"),
+        catalog_slug: "rdkit",
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::External,
         executable: "python",
@@ -389,7 +312,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("MOLCHANICA_RDKIT_ROOT"),
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: "Install RDKit from Tools, or set RDKIT_PYTHON to a Python interpreter with RDKit installed.",
@@ -402,7 +324,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     // ---------------------------------------------------------------------------------------------
     ToolSpec {
         tool: Tool::OpenDde,
-        identity: ToolIdentity::Shared("opendde"),
+        catalog_slug: "opendde",
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "opendde",
@@ -412,7 +334,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("OPENDDE_VENV_DIR"),
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
@@ -422,7 +343,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Boltz2,
-        identity: ToolIdentity::Shared("boltz2"),
+        catalog_slug: "boltz2",
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "boltz",
@@ -430,7 +351,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("MOLCHANICA_BOLTZ_VENV_DIR"),
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
@@ -441,7 +361,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Chai1,
-        identity: ToolIdentity::Shared("chai1"),
+        catalog_slug: "chai1",
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "chai-lab",
@@ -449,7 +369,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
@@ -459,7 +378,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Protenix,
-        identity: ToolIdentity::Shared("protenix"),
+        catalog_slug: "protenix",
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "protenix",
@@ -467,7 +386,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("MOLCHANICA_PROTENIX_VENV_DIR"),
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
@@ -477,7 +395,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::EsmFold2,
-        identity: ToolIdentity::Shared("esmfold2"),
+        catalog_slug: "esmfold2",
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "esm-fold",
@@ -485,7 +403,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
@@ -499,7 +416,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     // take their MSAs from the ColabFold server, so the genetic databases are not required.
     ToolSpec {
         tool: Tool::AlphaFold3,
-        identity: ToolIdentity::Shared("alphafold3"),
+        catalog_slug: "alphafold3",
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
@@ -507,7 +424,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("MOLCHANICA_ALPHAFOLD3_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_ALPHAFOLD3_ROOT"),
         bundle_subdir: Some("alphafold3"),
-        colocated: false,
         required_assets: &[
             RequiredAsset {
                 relative_path: "source/run_alphafold.py",
@@ -529,7 +445,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     // ---------------------------------------------------------------------------------------------
     ToolSpec {
         tool: Tool::LigandMpnn,
-        identity: ToolIdentity::Shared("ligandmpnn"),
+        catalog_slug: "ligandmpnn",
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
@@ -537,7 +453,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("MOLCHANICA_LIGANDMPNN_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_LIGANDMPNN_ROOT"),
         bundle_subdir: Some("LigandMPNN"),
-        colocated: false,
         required_assets: &[
             RequiredAsset {
                 relative_path: "run.py",
@@ -557,7 +472,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     // Also run natively, by the Protein design window's AbMPNN tab; see `mpnn`.
     ToolSpec {
         tool: Tool::ProteinMpnn,
-        identity: ToolIdentity::Shared("proteinmpnn"),
+        catalog_slug: "proteinmpnn",
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
@@ -565,7 +480,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("MOLCHANICA_PROTEINMPNN_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_PROTEINMPNN_ROOT"),
         bundle_subdir: Some("ProteinMPNN"),
-        colocated: false,
         required_assets: &[
             RequiredAsset {
                 relative_path: "protein_mpnn_run.py",
@@ -591,7 +505,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     // see the notes on its catalog entry, `tool_definitions/rfdiffusion3.rs`.
     ToolSpec {
         tool: Tool::RfDiffusion3,
-        identity: ToolIdentity::Shared("rfd3"),
+        catalog_slug: "rfd3",
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "rfd3",
@@ -599,7 +513,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: Some("MOLCHANICA_RFD3_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_RFD3_ROOT"),
         bundle_subdir: Some("rfd3"),
-        colocated: false,
         required_assets: &[RequiredAsset {
             relative_path: "checkpoints/rfd3_latest.ckpt",
             description: "the RFdiffusion3 checkpoint",
@@ -615,7 +528,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     // ---------------------------------------------------------------------------------------------
     ToolSpec {
         tool: Tool::Gromacs,
-        identity: ToolIdentity::Shared("gromacs"),
+        catalog_slug: "gromacs",
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "gmx",
@@ -623,7 +536,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: Some("gromacs"),
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
@@ -636,7 +548,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     },
     ToolSpec {
         tool: Tool::Orca,
-        identity: ToolIdentity::Shared("orca"),
+        catalog_slug: "orca",
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "orca",
@@ -644,7 +556,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: false,
         required_assets: &[],
         molchanica_managed: false,
         install_hint: "Register at https://www.faccts.de/orca/ and put `orca` on PATH, \
@@ -658,7 +569,7 @@ pub static REGISTRY: &[ToolSpec] = &[
     // Runs GFN-FF; see `force_fields`.
     ToolSpec {
         tool: Tool::Xtb,
-        identity: ToolIdentity::Shared("xtb"),
+        catalog_slug: "xtb",
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "xtb",
@@ -666,7 +577,6 @@ pub static REGISTRY: &[ToolSpec] = &[
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: Some("xtb"),
-        colocated: false,
         required_assets: &[],
         molchanica_managed: true,
         install_hint: MANAGED_HINT,
@@ -674,30 +584,20 @@ pub static REGISTRY: &[ToolSpec] = &[
         version_marker: "xtb version",
         slow_probe: false,
     },
+    // Opens MTZ and structure-factor mmCIF files; see `file_io`.
     ToolSpec {
         tool: Tool::Gemmi,
-        // The one tool `bio_tools` neither installs nor catalogues: a file-format converter
-        // Molchanica reaches for on its own, not a step in a prediction or design pipeline.
-        identity: ToolIdentity::Local {
-            slug: "gemmi",
-            name: "Gemmi",
-            summary: "Converts MTZ and unprocessed electron-density files.",
-            url: "https://gemmi.readthedocs.io/",
-            license: License::Other,
-            license_details: "MPL 2.0. Commercial use permitted.",
-        },
-        kind: ToolKind::Executable,
+        catalog_slug: "gemmi",
+        kind: ToolKind::VenvScript,
         adapter: ToolAdapter::External,
         executable: "gemmi",
         exe_override_env: "MOLCHANICA_GEMMI_EXECUTABLE",
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
-        colocated: true,
         required_assets: &[],
-        molchanica_managed: false,
-        install_hint: "Install gemmi (`apt install gemmi`, `pip install gemmi`), \
-                       or set MOLCHANICA_GEMMI_EXECUTABLE.",
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
         version_args: &["--help"],
         version_marker: "GEMMI library",
         slow_probe: false,
@@ -734,9 +634,10 @@ mod tests {
     /// recipe for them: ORCA ships vendor builds for every platform Molchanica runs on.
     #[test]
     fn user_supplied_tools_are_never_gated() {
-        for tool in [Tool::Orca, Tool::Gemmi] {
-            assert!(tool.spec().is_supported(), "{tool} should never be gated");
-        }
+        assert!(
+            Tool::Orca.spec().is_supported(),
+            "ORCA should never be gated"
+        );
     }
 
     #[test]

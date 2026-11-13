@@ -5,12 +5,11 @@ use std::{
     thread,
 };
 use std::{
-    env, fs,
+    fs,
     fs::File,
     io,
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
-    sync::OnceLock,
     time::Instant,
 };
 
@@ -47,6 +46,7 @@ use crate::{
         peptide::draw_peptide,
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
+    external_tools::{Tool, find_executable},
     md::{trajectory::Trajectory, viewer::SnapshotViewer},
     mol_db::ParquetMolDb,
     pocket_render::PocketRender,
@@ -258,7 +258,7 @@ pub(crate) fn parse_session_history(
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             let density = if matches!(extension.as_str(), "mtz" | "cif") {
-                DensityMap::load_sf_or_mtz(path, gemmi_path())?
+                DensityMap::load_sf_or_mtz(path, Some(&gemmi_dir()?))?
             } else {
                 DensityMap::load(path)?
             };
@@ -490,7 +490,7 @@ impl State {
                     // so we handle here. We handle map and MTZ files elsewhere, even though they use a
                     // similar pipeline.
                     if name.contains("2fo") && name.contains("fc") {
-                        let dm = DensityMap::load_sf_or_mtz(path, gemmi_path())?;
+                        let dm = DensityMap::load_sf_or_mtz(path, Some(&gemmi_dir()?))?;
 
                         // let mut fft_planner = FftPlanner::new();
                         // let data = CifStructureFactors::new_from_path(path)?;
@@ -635,7 +635,7 @@ impl State {
 
     /// An electron density MTZ file. We use Gemmi's sf2map functionality, as we do for 2fo-fc files.
     pub fn open_mtz(&mut self, path: &Path) -> io::Result<()> {
-        let dm = DensityMap::load_sf_or_mtz(path, gemmi_path())?;
+        let dm = DensityMap::load_sf_or_mtz(path, Some(&gemmi_dir()?))?;
         self.load_density(dm);
 
         self.update_history(path, OpenType::Map, None);
@@ -892,7 +892,7 @@ impl State {
                 };
                 match extension {
                     "map" => dm.save(path)?,
-                    "mtz" => dm.save_sf_or_mtz(path, gemmi_path())?,
+                    "mtz" => dm.save_sf_or_mtz(path, Some(&gemmi_dir()?))?,
                     _ => unreachable!(),
                 }
                 OpenType::Map
@@ -1325,28 +1325,17 @@ impl State {
     }
 }
 
-/// The `gemmi` folder the setup scripts install beside the executable, if it's there.
-///
-/// Gemmi is what opens mmCIF structure factors and MTZ files.
-///
-/// `None` means fall back to the system `Path`. Anchored on the executable's own directory rather
-/// than the working directory, so launching from elsewhere doesn't lose the colocated copy; the
-/// working directory is still checked, which is where a source checkout keeps it.
-pub fn gemmi_path() -> Option<&'static Path> {
-    static GEMMI_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+/// The directory holding the `gemmi` executable, which opens structure-factor mmCIF and MTZ files.
+/// Installed from the Tools panel, like other external tools.
+pub fn gemmi_dir() -> io::Result<PathBuf> {
+    let exe = find_executable(Tool::Gemmi)?;
 
-    GEMMI_DIR
-        .get_or_init(|| {
-            let beside_exe = env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(|dir| dir.join("gemmi")));
-
-            beside_exe
-                .into_iter()
-                .chain([PathBuf::from("./gemmi")])
-                .find(|dir| dir.exists())
-        })
-        .as_deref()
+    exe.parent().map(Path::to_path_buf).ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::NotFound,
+            format!("{} has no parent directory", exe.display()),
+        )
+    })
 }
 
 /// Save a molecule to disk, prompting for a location.
@@ -1381,6 +1370,13 @@ pub fn save_mol_set_as_gro(
     mol_set: &crate::md::viewer::ViewerMolSet,
     path: &Path,
 ) -> io::Result<()> {
+    fn gro_name(name: &str) -> String {
+        name.chars()
+            .take(5)
+            .map(|c| if c.is_ascii() { c } else { '_' })
+            .collect()
+    }
+
     const ANGSTROM_TO_NM: f64 = 0.1;
 
     let mut atoms: Vec<AtomGro> = Vec::new();
@@ -1399,9 +1395,9 @@ pub fn save_mol_set_as_gro(
 
             atoms.push(AtomGro {
                 mol_id,
-                mol_name: mol.mol.ident.clone(),
+                mol_name: gro_name(&mol.mol.ident),
                 element: atom.element,
-                atom_type,
+                atom_type: gro_name(&atom_type),
                 serial_number: serial,
                 posit: posit * ANGSTROM_TO_NM,
                 velocity: None,
@@ -1451,6 +1447,7 @@ pub struct FileDialogs {
     pub parquet_mol_file: FileDialog,
     /// E.g. GROMACS files ready to be run in a sim. (.top, .mdp, .gro); choose a folder to save these in.
     pub save_md: FileDialog,
+    pub open_md_run: FileDialog,
     /// Save an MD mol set as a GRO file.
     pub save_gro: FileDialog,
     /// Index of the mol set queued for GRO export.
@@ -1580,6 +1577,15 @@ impl Default for FileDialogs {
             parquet_mols_dir,
             parquet_mol_file,
             save_md,
+            open_md_run: FileDialog::with_config(FileDialogConfig {
+                title: Some("Open MD run".into()),
+                initial_directory: std::env::current_dir()
+                    .ok()
+                    .map(|dir| dir.join(crate::md::runs::OUTPUT_DIR))
+                    .filter(|dir| dir.is_dir())
+                    .unwrap_or_else(|| FileDialogConfig::default().initial_directory),
+                ..Default::default()
+            }),
             save_gro,
             save_gro_mol_set_i: None,
             save_seq,

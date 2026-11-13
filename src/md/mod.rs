@@ -4,7 +4,6 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fmt::{Display, Formatter},
-    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -26,14 +25,14 @@ use viewer::SnapshotViewer;
 
 use crate::{
     cam::{VIEW_DIR_FRONT, move_cam_to_active_mol, reset_camera},
-    file_io::save_mol_set_as_gro,
     gromacs,
-    md::trajectory::{TrajFormat, Trajectory},
+    md::trajectory::Trajectory,
     state::{ComputationGuard, ComputationType, State},
-    util::{RedrawFlags, clear_cli_out, handle_err, handle_success},
+    util::{RedrawFlags, clear_cli_out, format_elapsed, handle_err, handle_success},
     xtb,
 };
 
+pub mod runs;
 pub mod trajectory;
 pub mod viewer;
 
@@ -62,12 +61,15 @@ pub struct MdStateLocal {
     /// frame on the UI thread, instead of on a worker thread that could hold it.
     pub computation: Option<ComputationGuard>,
     pub start: Option<Instant>,
+    pub run_steps_and_dt: (u32, f32),
+    pub run_output_dir: Option<std::path::PathBuf>,
     /// Cached so we don't compute each UI paint. Picoseconds.
     pub run_time: f32,
     // todo: Consider if you want a dedicated MD playback operating mode. For now, this flag
     /// If true, render the molecules from this struct, instead of primary state molecules.
     pub draw_md_mols: bool,
     pub gromacs_output: Option<GromacsOutput>,
+    pub opened_inputs: Option<runs::RunInputs>,
     pub viewer: SnapshotViewer,
     // todo: putting back for now
     /// We maintain a set of atom indices of peptides that are used in MD. This for example, might
@@ -83,9 +85,10 @@ impl MdStateLocal {
         self.draw_md_mols = true;
 
         self.viewer.snapshots = snaps;
+        self.viewer.slider_posit_ui = 0;
+        self.viewer.current_snapshot = (!self.viewer.snapshots.is_empty()).then_some(0);
 
-        if !self.viewer.snapshots.is_empty() {
-            self.viewer.current_snapshot = Some(0);
+        if self.viewer.current_snapshot.is_some() {
             if let Err(e) = self.viewer.change_snapshot(0) {
                 eprintln!("Error changing snapshots when replacing: {e:?}");
             }
@@ -127,60 +130,55 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     md.start = None;
     md.draw_md_mols = true;
 
-    md_state.flush_snapshot_queues();
+    let mut save_error = md_state.finish_run_output().err();
+    let output = md.run_output_dir.take();
+    if let Some(dir) = &output {
+        let playback_error =
+            runs::save_memory_trajectory(dir, md_state, md.run_steps_and_dt.1).err();
+        save_error = save_error.or(playback_error);
+    }
 
     let snaps: Vec<_> = std::mem::take(&mut md_state.snapshots)
         .into_iter()
         .map(Arc::new)
         .collect();
-    md.viewer.snapshots = snaps.clone();
+    if let Some(set) = md.viewer.mol_sets.last_mut() {
+        let name = output.as_ref().and_then(|dir| dir.file_name()).map_or_else(
+            || "Dynamics".into(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let path = output
+            .as_ref()
+            .and_then(|dir| dir.canonicalize().ok())
+            .map(|dir| dir.join("conf.gro"));
+        set.name.clone_from(&name);
+        set.path.clone_from(&path);
+        md.viewer.mol_set_active = Some(md.viewer.mol_sets.len() - 1);
 
-    for traj in &mut state.trajectories {
-        traj.ui_active = false;
-    }
-
-    // Register an in-memory Trajectory so the run appears in the trajectory
-    // sidebar and water molecules are visible in the mol-set list.
-    let run_n = state
-        .trajectories
-        .iter()
-        .filter(|t| t.format != TrajFormat::InMemory)
-        .count();
-
-    state.trajectories.push(Trajectory::new_in_memory(
-        snaps,
-        format!("In-memory run {}", run_n + 1),
-        state.to_save.md.dt,
-    ));
-    state.trajectories.last_mut().unwrap().ui_active = true;
-
-    // Auto-save the mol set as a GRO file alongside the trajectory files.
-    let run_index = md_state.run_index.unwrap_or(0);
-
-    let gro_path = Path::new("./md_out").join(format!("traj_{run_index}.gro"));
-
-    // The mol set we just added is the last one in the viewer.
-    if let Some(mol_set) = md.viewer.mol_sets.last() {
-        if let Err(e) = save_mol_set_as_gro(mol_set, &gro_path) {
-            eprintln!("Error auto-saving GRO: {e:?}");
+        for traj in &mut state.trajectories {
+            traj.ui_active = false;
+        }
+        if !snaps.is_empty() {
+            let mut trajectory =
+                Trajectory::new_in_memory(snaps.clone(), name, md.run_steps_and_dt.1);
+            trajectory.ui_active = true;
+            trajectory.run_mol_set_path = path;
+            state.trajectories.push(trajectory);
         }
     }
-
-    if md.viewer.change_snapshot(0).is_err() {
-        handle_err(
-            &mut state.ui,
-            String::from("Error changing snapshot at MD completion."),
-        );
-        return;
-    }
-
-    if !md.viewer.mol_sets.is_empty() {
-        md.viewer.mol_set_active = Some(md.viewer.mol_sets.len() - 1);
-    }
+    md.viewer.playing = false;
+    md.replace_snaps(snaps);
 
     reset_camera(state, scene, updates, VIEW_DIR_FRONT);
     viewer::draw_mols(state, scene, updates);
-    handle_success(&mut state.ui, "MD complete".to_string());
+    if let Some(error) = save_error {
+        handle_err(
+            &mut state.ui,
+            format!("MD complete. Error saving output: {error}"),
+        );
+    } else {
+        handle_success(&mut state.ui, "MD complete".into());
+    }
 }
 
 /// Filter out hetero atoms, and if necessary, atoms not close to a ligand.
@@ -772,11 +770,7 @@ pub fn run_dynamics_blocking(
         }
     }
 
-    let elapsed = start.elapsed();
-    println!(
-        "MD complete in {:.1} s",
-        elapsed.as_millis() as f32 / 1_000.
-    );
+    println!("MD complete in {}", format_elapsed(start.elapsed()));
 }
 
 impl State {
@@ -816,6 +810,7 @@ impl State {
             return;
         };
 
+        let (num_steps, dt) = self.volatile.md_local.run_steps_and_dt;
         let gfnff = md.cfg.ff_family == ForceFieldFamily::Gfnn;
         let frame_start = Instant::now();
         let steps = if gfnff {
@@ -824,7 +819,7 @@ impl State {
             MD_STEPS_PER_APPLICATION_FRAME
         };
         for _ in 0..steps {
-            if md.step_count >= self.to_save.md.num_steps as usize {
+            if md.step_count >= num_steps as usize {
                 println!(
                     "\nMD computation time: {} \n Total run time: {} ms",
                     md.computation_time().unwrap(),
@@ -834,9 +829,9 @@ impl State {
                 post_run_cleanup(self, scene, engine_updates);
                 break;
             }
-            md.step(&dev, self.to_save.md.dt, None);
+            md.step(&dev, dt, None);
             if let Err(error) = md.check_force_error() {
-                self.volatile.md_local.running = false;
+                post_run_cleanup(self, scene, engine_updates);
                 handle_err(&mut self.ui, format!("MD stopped: {error}"));
                 break;
             }
@@ -923,39 +918,42 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         Ok((mut md, custom_solvent)) => {
             let num_water = md.water.len();
 
-            // Build viewer mols from the actual MD atoms (post hetero-filter, post H-addition)
-            // rather than from the original `mols`. The original mol for a protein includes
-            // hetero atoms (crystal waters, ligands) that are stripped by filter_peptide_atoms,
-            // and may gain or lose H during prepare_peptide. Using the original atom count
-            // causes the viewer's atom_posits to mismatch the trajectory snapshot length,
-            // producing out-of-bounds errors in change_snapshot.
-            // Number of solute molecules as they appear in `mol_start_indices`. `add_copies`
-            // expands each selected molecule into `count` separate MolDynamics molecules, each
-            // with its own mol_start_indices entry. Using `mols.len()` here would ignore copies
-            // and mislocate the ion region below.
-            let n_solute_mols: usize = mols.iter().map(|(_, _, count)| (*count).max(1)).sum();
-            let mut viewer_mol_data: Vec<(FfMolType, MoleculeCommon, usize)> = mols
-                .iter()
-                .enumerate()
-                .map(|(i, (ff, m, count))| {
-                    // Non-peptide mols (small organics, lipids, etc.) are not filtered or
-                    // H-augmented by build_dynamics, so their atom count and bond set are
-                    // unchanged. Cloning the original mol preserves bonds for rendering.
-                    if *ff != FfMolType::Peptide {
-                        return (*ff, (*m).clone(), *count);
-                    }
-
-                    // Peptide: build from the actual post-filter, post-H-addition MD atoms
-                    // so that atom_posits.len() matches what the trajectory snapshots store.
-                    let start = md.mol_start_indices.get(i).copied().unwrap_or(0);
-                    // mol_start_indices[i+1] is the start of the next mol or first ion.
+            let n_solute_mols: usize = mols.iter().map(|(_, _, count)| *count).sum();
+            let mut copy_i = 0;
+            let mut viewer_mol_data = Vec::with_capacity(n_solute_mols);
+            for &(kind, template, copies) in &mols {
+                for _ in 0..copies {
+                    let Some(&start) = md.mol_start_indices.get(copy_i) else {
+                        break;
+                    };
+                    copy_i += 1;
                     let end = md
                         .mol_start_indices
-                        .get(i + 1)
+                        .get(copy_i)
                         .copied()
                         .unwrap_or(md.atoms.len());
+                    let atoms = &md.atoms[start..end];
+                    if template.atoms.len() == atoms.len()
+                        && template
+                            .atoms
+                            .iter()
+                            .map(|a| a.element)
+                            .eq(atoms.iter().map(|a| a.element))
+                    {
+                        let mut mol = template.clone();
+                        for ((a, p), simulated) in
+                            mol.atoms.iter_mut().zip(&mut mol.atom_posits).zip(atoms)
+                        {
+                            *p = simulated.posit.into();
+                            a.posit = *p;
+                        }
+                        viewer_mol_data.push((kind, mol, 1));
 
-                    let actual_atoms: Vec<Atom> = md.atoms[start..end]
+                        continue;
+                    }
+
+                    // Use the simulated atom order after peptide filtering and hydrogen addition.
+                    let actual_atoms: Vec<Atom> = atoms
                         .iter()
                         .map(|a| Atom {
                             serial_number: a.serial_number,
@@ -986,17 +984,17 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
 
                     let atom_posits = actual_atoms.iter().map(|a| a.posit).collect();
                     let mut mol_common = MoleculeCommon {
-                        ident: m.ident.clone(),
+                        ident: template.ident.clone(),
                         atoms: actual_atoms,
                         bonds,
                         atom_posits,
-                        selected_for_md: m.selected_for_md,
+                        selected_for_md: template.selected_for_md,
                         ..Default::default()
                     };
                     mol_common.build_adjacency_list();
-                    (*ff, mol_common, *count)
-                })
-                .collect();
+                    viewer_mol_data.push((kind, mol_common, 1));
+                }
+            }
 
             // Add a single-atom viewer mol for each counter-ion appended by MdState::new.
             // These live at md.atoms[ion_start..] and each has its own mol_start_indices entry,
@@ -1013,32 +1011,35 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                 .get(n_solute_mols + custom_solvent.len())
                 .copied()
                 .unwrap_or(md.atoms.len());
-            for a in &md.atoms[ion_start..] {
-                let posit = Vec3 {
-                    x: a.posit.x as f64,
-                    y: a.posit.y as f64,
-                    z: a.posit.z as f64,
-                };
+            let ions = md.atoms[ion_start..]
+                .iter()
+                .map(|a| {
+                    let posit = Vec3 {
+                        x: a.posit.x as f64,
+                        y: a.posit.y as f64,
+                        z: a.posit.z as f64,
+                    };
 
-                let ion_atom = Atom {
-                    serial_number: a.serial_number,
-                    element: a.element,
-                    posit,
-                    ..Default::default()
-                };
-
-                viewer_mol_data.push((
-                    FfMolType::SmallOrganic,
-                    MoleculeCommon {
-                        ident: a.force_field_type.clone(),
-                        atoms: vec![ion_atom],
-                        atom_posits: vec![posit],
-                        selected_for_md: Some(1),
+                    let ion_atom = Atom {
+                        serial_number: a.serial_number,
+                        element: a.element,
+                        posit,
                         ..Default::default()
-                    },
-                    1,
-                ));
-            }
+                    };
+
+                    (
+                        FfMolType::SmallOrganic,
+                        MoleculeCommon {
+                            ident: a.force_field_type.clone(),
+                            atoms: vec![ion_atom],
+                            atom_posits: vec![posit],
+                            selected_for_md: Some(1),
+                            ..Default::default()
+                        },
+                        1,
+                    )
+                })
+                .collect::<Vec<_>>();
             let mut viewer_mol_refs: Vec<(FfMolType, &MoleculeCommon, usize)> = viewer_mol_data
                 .iter()
                 .map(|(ff, m, c)| (*ff, m, *c))
@@ -1055,6 +1056,21 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                 viewer_mol_refs.push((FfMolType::SmallOrganic, mol_common, 1));
             }
 
+            viewer_mol_refs.extend(ions.iter().map(|(kind, mol, count)| (*kind, mol, *count)));
+
+            if viewer_mol_refs
+                .iter()
+                .map(|(_, mol, count)| mol.atoms.len() * count)
+                .sum::<usize>()
+                != md.atoms.len()
+            {
+                handle_err(
+                    &mut state.ui,
+                    "Dynamics molecule set does not match simulated atom order.".into(),
+                );
+
+                return;
+            }
             state
                 .volatile
                 .md_local
@@ -1074,9 +1090,36 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                 }
             }
 
-            state.volatile.md_local.mol_dynamics = Some(md);
-
             if run {
+                let settings = (state.to_save.md.num_steps, state.to_save.md.dt);
+                let saved = md
+                    .start_run_output(settings.0 as usize, settings.1)
+                    .map(std::path::Path::to_owned)
+                    .and_then(|dir| {
+                        crate::project::save_md_inputs(
+                            state,
+                            state.volatile.md_local.viewer.mol_sets.last().unwrap(),
+                            &md.cfg,
+                            &dir,
+                        )?;
+                        Ok(dir)
+                    });
+                match saved {
+                    Ok(dir) => state.volatile.md_local.run_output_dir = Some(dir),
+                    Err(error) => {
+                        handle_err(
+                            &mut state.ui,
+                            format!("Could not save Dynamics run inputs: {error}"),
+                        );
+                        let viewer = &mut state.volatile.md_local.viewer;
+                        viewer.mol_sets.pop();
+                        viewer.mol_set_active =
+                            viewer.mol_set_active.filter(|&i| i < viewer.mol_sets.len());
+
+                        return;
+                    }
+                }
+                state.volatile.md_local.run_steps_and_dt = settings;
                 state.volatile.md_local.start = Some(Instant::now());
                 state.volatile.md_local.running = true;
 
@@ -1087,6 +1130,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                         Some(format!("{} steps", state.to_save.md.num_steps)),
                     ));
             }
+            state.volatile.md_local.mol_dynamics = Some(md);
         }
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }
@@ -1442,8 +1486,18 @@ fn ready_to_run_helper(state: &mut State) -> bool {
 }
 /// Launched from the UI; initiates MD.
 pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    if state.volatile.thread_receivers.xtb_md.is_some() {
-        handle_err(&mut state.ui, "An xTB MD run is already active.".into());
+    if runs::running(state) {
+        handle_err(&mut state.ui, "An MD run is already active.".into());
+
+        return;
+    }
+
+    let prefs = &state.to_save.md;
+    if prefs.num_steps == 0 || !prefs.dt.is_finite() || prefs.dt <= 0. {
+        handle_err(
+            &mut state.ui,
+            "Set a positive MD step count and time step.".into(),
+        );
 
         return;
     }
@@ -1470,7 +1524,13 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
         return;
     }
 
-    if !ready_to_run_helper(state) {
+    let uses_saved_inputs = state
+        .volatile
+        .md_local
+        .opened_inputs
+        .as_ref()
+        .is_some_and(|inputs| inputs.backend() == state.to_save.md.backend);
+    if !uses_saved_inputs && !ready_to_run_helper(state) {
         return;
     }
 

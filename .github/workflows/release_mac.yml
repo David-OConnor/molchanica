@@ -1,0 +1,105 @@
+# Builds the macOS packages and attaches them to the release. Windows and Linux are built locally,
+# by `make_release.ps1`.
+name: macOS release
+
+on:
+  release:
+    types: [published]
+  # For past releases, whose tags predate this file, and for test builds.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload to. Empty: build the selected branch, and keep the zips as workflow artifacts only."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # `build-data` holds the molecule databases; it isn't a release of the app.
+    if: github.event.release.tag_name != 'build-data'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          # Cross-compiled from Apple Silicon; GitHub's Intel Mac runners are being phased out.
+          - target: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: macos-26
+    env:
+      # The oldest macOS the binaries run on. 11 is the first with Apple Silicon.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Empty for release events, which check out the release's tag.
+          ref: ${{ inputs.tag }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # These are gitignored; build.rs embeds them only if present. They're kept as assets of the
+      # `build-data` pre-release.
+      - name: Fetch molecule databases
+        run: |
+          if ! gh release download build-data --repo "$GITHUB_REPOSITORY" \
+              --pattern hmdb.parquet --pattern ChEBI.parquet; then
+            echo "::warning::No build-data release with hmdb.parquet and ChEBI.parquet; building without the built-in molecule databases."
+          fi
+
+      # No CUDA on macOS. No ADME or synthesis either: they're private, and their deps are commented
+      # out in the committed Cargo.toml.
+      - name: Build
+        run: cargo build --release --no-default-features --target ${{ matrix.target }}
+
+      - name: Package
+        id: package
+        run: |
+          # Archive names use underscores, e.g. 0.3.7 -> 0_3_7.
+          version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Cargo.toml | head -n 1 | tr '.' '_')
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not read the version from Cargo.toml"
+            exit 1
+          fi
+
+          exe="target/${{ matrix.target }}/release/molchanica"
+
+          lipo "$exe" -verify_arch ${{ matrix.arch }}
+
+          # Anything outside the OS, e.g. a Homebrew library a build script found, won't be on
+          # users' Macs.
+          if otool -L "$exe" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/System/Library/|/usr/lib/)'; then
+            echo "::error::$exe links the libraries above, which aren't part of macOS."
+            exit 1
+          fi
+
+          # Ad-hoc signature. Apple Silicon won't run unsigned code, and stripping can invalidate
+          # the linker's signature.
+          codesign --force --sign - "$exe"
+
+          zip="molchanica_${version}_mac_${{ matrix.arch }}.zip"
+          zip -j "$zip" "$exe" README.md scripts/convert_mpnn_weights.py
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.zip }}
+          path: ${{ steps.package.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: env.TAG != ''
+        run: gh release upload "$TAG" "${{ steps.package.outputs.zip }}" --clobber --repo "$GITHUB_REPOSITORY"

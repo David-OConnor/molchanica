@@ -267,6 +267,7 @@ pub fn update_file_dialogs(
     state.volatile.dialogs.parquet_mols_dir.update(ctx);
     state.volatile.dialogs.parquet_mol_file.update(ctx);
     state.volatile.dialogs.save_md.update(ctx);
+    state.volatile.dialogs.open_md_run.update(ctx);
     state.volatile.dialogs.save_gro.update(ctx);
     state.volatile.dialogs.save_seq.update(ctx);
     state.volatile.dialogs.ff_params.update(ctx);
@@ -396,6 +397,10 @@ pub fn update_file_dialogs(
                 "Error: Missing the DB index to add a mol to".to_string(),
             );
         }
+    }
+
+    if let Some(path) = state.volatile.dialogs.open_md_run.take_picked() {
+        crate::md::runs::open(state, scene, engine_updates, &path, None);
     }
 
     if let Some(path) = &state.volatile.dialogs.save_md.take_picked() {

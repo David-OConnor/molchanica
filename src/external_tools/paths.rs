@@ -51,8 +51,9 @@ pub fn find_rdkit_python() -> io::Result<PathBuf> {
 /// The preferences file, `managed_molecules/`, `gpu_cache/`, `process_executables/`, and
 /// `datasets/` all live here, beside the executable itself, so an install is one folder that can
 /// be found, backed up, or deleted in one place instead of data scattered across several per-user
-/// OS locations. Both setup scripts install to somewhere the user can write for exactly this
-/// reason: `%LOCALAPPDATA%\Programs\Molchanica` on Windows, `~/molchanica` on Linux.
+/// OS locations. The Windows installer and Linux setup script install somewhere the user can write
+/// for exactly this reason: `%LOCALAPPDATA%\Programs\Molchanica` on Windows, `~/molchanica` on
+/// Linux. `install_scripts/molchanica.iss` lists these items for uninstall; keep it in sync.
 ///
 /// Resolution order:
 ///
@@ -301,13 +302,8 @@ pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
     })
 }
 
-/// Beside Molchanica (for tools we ship), then in the bundle directory, then on `PATH`.
+/// In the bundle directory, then on `PATH`.
 fn find_native_executable(spec: &ToolSpec) -> Option<PathBuf> {
-    if spec.colocated
-        && let Some(found) = colocated_executable(spec.executable)
-    {
-        return Some(found);
-    }
     if let Some(root) = spec.bundle_root() {
         for directory in [root.clone(), root.join("bin")] {
             if let Some(found) = executable_in(&directory, spec.executable) {
@@ -342,11 +338,6 @@ fn venv_bin(root: &Path) -> PathBuf {
     } else {
         root.join("bin")
     }
-}
-
-fn colocated_executable(name: &str) -> Option<PathBuf> {
-    let directory = env::current_exe().ok()?.parent()?.to_path_buf();
-    executable_in(&directory, name)
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {

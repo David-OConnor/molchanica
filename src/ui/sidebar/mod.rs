@@ -30,7 +30,7 @@ use crate::{
         num_field,
         panels::md_viewer,
         safety,
-        util::{Idents, list_idents, open_dir},
+        util::{Idents, list_idents},
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -780,31 +780,14 @@ fn traj_items(
 
     ui.add_space(ROW_SPACING);
 
-    ui.horizontal(|ui| {
-        ui.label("MD Trajectories");
-
-        if ui.button("Open MD out folder").clicked() {
-            let result = std::env::current_dir().and_then(|dir| {
-                let folder = dir.join("md_out");
-                std::fs::create_dir_all(&folder)?;
-
-                open_dir(&folder)
-            });
-
-            if let Err(error) = result {
-                handle_err(
-                    &mut state.ui,
-                    format!("Error opening MD out folder: {error}"),
-                );
-            }
-        }
-    });
+    ui.label("MD Trajectories");
     ui.separator();
 
     let mut close = None;
     let mut snaps_loaded = false;
     let mut traj_active = None;
 
+    let md = &mut state.volatile.md_local;
     for (i, traj) in state.trajectories.iter_mut().enumerate() {
         highlighted_box(traj.ui_active, Color32::from_rgb(40, 55, 40)).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -826,7 +809,14 @@ fn traj_items(
                         end: None,
                     }) {
                         Ok(snaps) => {
-                            state.volatile.md_local.replace_snaps(snaps);
+                            if let Some(path) = &traj.run_mol_set_path {
+                                md.viewer.mol_set_active = md
+                                    .viewer
+                                    .mol_sets
+                                    .iter()
+                                    .position(|set| set.path.as_ref() == Some(path));
+                            }
+                            md.replace_snaps(snaps);
                             snaps_loaded = true;
                             traj_active = Some(i);
                         }
@@ -850,7 +840,14 @@ fn traj_items(
                     )
                     .clicked()
                 {
-                    state.volatile.md_local.replace_snaps(snaps.clone());
+                    if let Some(path) = &traj.run_mol_set_path {
+                        md.viewer.mol_set_active = md
+                            .viewer
+                            .mol_sets
+                            .iter()
+                            .position(|set| set.path.as_ref() == Some(path));
+                    }
+                    md.replace_snaps(snaps.clone());
                     snaps_loaded = true;
                     traj_active = Some(i);
                 }
@@ -886,7 +883,14 @@ fn traj_items(
 
                     match traj.load_snaps(FrameSlice::Index { start, end }) {
                         Ok(snaps) => {
-                            state.volatile.md_local.replace_snaps(snaps);
+                            if let Some(path) = &traj.run_mol_set_path {
+                                md.viewer.mol_set_active = md
+                                    .viewer
+                                    .mol_sets
+                                    .iter()
+                                    .position(|set| set.path.as_ref() == Some(path));
+                            }
+                            md.replace_snaps(snaps);
                             snaps_loaded = true;
                             traj_active = Some(i);
                         }
@@ -923,7 +927,7 @@ fn traj_items(
                 label!(ui, format!("Open: {slice}"), COLOR_ACTIVE);
             }
 
-            match state.volatile.md_local.viewer.get_active_mol_set() {
+            match md.viewer.get_active_mol_set() {
                 Some(set) => {
                     if set.atom_count == traj.num_atoms {
                         label!(

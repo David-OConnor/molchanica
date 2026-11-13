@@ -97,6 +97,7 @@ enum PacketType {
     SelectionsAndRepresentations = 11,
     Inspection = 12,
     CommandMacros = 13,
+    RecentMdRuns = 14,
 }
 
 impl PacketType {
@@ -116,6 +117,7 @@ impl PacketType {
             11 => Self::SelectionsAndRepresentations,
             12 => Self::Inspection,
             13 => Self::CommandMacros,
+            14 => Self::RecentMdRuns,
             _ => return None,
         })
     }
@@ -1395,6 +1397,13 @@ impl ToSave {
             self.control_settings.to_bytes(),
         ));
         packets.push((PacketType::Md, self.md.to_bytes()));
+        if !self.recent_md_runs.is_empty() {
+            packets.push((
+                PacketType::RecentMdRuns,
+                bincode::encode_to_vec(&self.recent_md_runs, bincode::config::standard())
+                    .map_err(io::Error::other)?,
+            ));
+        }
         packets.push((PacketType::UiPrefs, self.ui_prefs.to_bytes()));
 
         // PubchemProps: u32 count, then (u32 key len, key, u32 val len, val-bincode) per entry.
@@ -1575,6 +1584,14 @@ impl ToSave {
                 }
                 PacketType::Md => {
                     to_save.md = MdPrefs::from_bytes(payload)?;
+                }
+                PacketType::RecentMdRuns => {
+                    to_save.recent_md_runs = bincode::decode_from_slice(
+                        payload,
+                        bincode::config::standard().with_limit::<{ 1 << 20 }>(),
+                    )
+                    .map_err(io::Error::other)?
+                    .0;
                 }
                 PacketType::UiPrefs => {
                     to_save.ui_prefs = UiPrefs::from_bytes(payload)?;
