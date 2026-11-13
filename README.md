@@ -27,7 +27,7 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 
 - **Windows**: Run the `*_setup.exe` installer.
 - **Linux**: Unzip, and run `setup_molchanica.sh` (Without `sudo`).
-- **Mac**: Unzip and run `molchanica`. (Standalone executable)
+- **Mac**: Unzip and run `molchanica`. (Standalone executable). Warning! Mac support is experimental, and untested. And, ARM macs do not have the Nvidia cards we require for certain functionality. (MD, protein-design ML etc).
 
 ![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 
