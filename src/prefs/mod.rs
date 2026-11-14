@@ -247,6 +247,8 @@ pub struct MdPrefs {
     pub num_steps: u32,
     pub dt: f32,
     pub backend: MdBackend,
+    /// GB. Trajectories larger than this load with a frame step after runs, and when opening them.
+    pub max_traj_auto_load_gb: f32,
 }
 
 impl Default for MdPrefs {
@@ -256,6 +258,7 @@ impl Default for MdPrefs {
             num_steps: 100,
             dt: 0.002,
             backend: Default::default(),
+            max_traj_auto_load_gb: crate::md::trajectory::MAX_AUTO_LOAD_GB_DEFAULT,
         }
     }
 }

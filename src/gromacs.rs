@@ -834,23 +834,29 @@ pub fn on_gromacs_md_complete(
         return;
     }
 
-    if let Err(error) = crate::md::runs::show_gromacs_output(state, scene, updates, out) {
-        handle_err(
-            &mut state.ui,
-            format!("GROMACS finished. Could not open output: {error}"),
-        );
+    let load_info = match crate::md::runs::show_gromacs_output(state, scene, updates, out) {
+        Ok(info) => info,
+        Err(error) => {
+            handle_err(
+                &mut state.ui,
+                format!("GROMACS finished. Could not open output: {error}"),
+            );
 
-        return;
-    }
+            return;
+        }
+    };
 
     let folder = out.gro_path.as_deref().and_then(Path::parent);
     handle_success(
         &mut state.ui,
         format!(
-            "GROMACS finished in {}{}",
+            "GROMACS finished in {}{}{}",
             format_elapsed(elapsed),
             folder
                 .map(|dir| format!(" · {}", dir.display()))
+                .unwrap_or_default(),
+            load_info
+                .map(|info| format!(". {info}"))
                 .unwrap_or_default()
         ),
     );

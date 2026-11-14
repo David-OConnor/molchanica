@@ -16,7 +16,8 @@ use crate::{
     label,
     md::{
         trajectory::{
-            MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj, unload_traj,
+            MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj, format_bytes,
+            load_summary, unload_traj,
         },
         viewer,
         viewer::ViewerMolSet,
@@ -792,36 +793,26 @@ pub(in crate::ui) fn sidebar(
     updates.ui_reserved_px.0 = out.response.rect.width();
 }
 
-/// Estimated memory for loading `n_frames` frames of positions. Colored by size.
-fn traj_load_size(n_frames: usize, num_atoms: usize, ui: &mut Ui) {
+/// Estimated memory for loading `n_frames` frames. Colored by size.
+fn traj_load_size(n_frames: usize, frame_bytes: usize, ui: &mut Ui) {
     const GB: f64 = 1e9;
 
-    let coords = n_frames * num_atoms;
-    let bytes = (coords * size_of::<lin_alg::f32::Vec3>()) as f64;
+    let bytes = (n_frames * frame_bytes) as f64;
 
-    let (txt, color) = if bytes >= GB {
-        let color = if bytes >= 8. * GB {
-            Color32::LIGHT_RED
-        } else {
-            Color32::YELLOW
-        };
-        (format!("{:.1} GB", bytes / GB), color)
+    let color = if bytes >= 8. * GB {
+        Color32::LIGHT_RED
+    } else if bytes >= GB {
+        Color32::YELLOW
     } else {
-        let mb = bytes / 1e6;
-        let txt = if mb < 10. {
-            format!("{mb:.1} MB")
-        } else {
-            format!("{mb:.0} MB")
-        };
-        (txt, Color32::GRAY)
+        Color32::GRAY
     };
 
     let hover = format!(
-        "Estimated memory for positions: {n_frames} frames × {num_atoms} atoms. \
-        TRR velocities and forces, if present, add more."
+        "Estimated memory: {n_frames} frames × {} per frame.",
+        format_bytes(frame_bytes as f64)
     );
 
-    ui.label(RichText::new(txt).color(color))
+    ui.label(RichText::new(format_bytes(bytes)).color(color))
         .on_hover_text(hover);
 }
 
@@ -845,6 +836,8 @@ fn traj_items(
     let mut close = None;
     let mut unload = None;
     let mut snaps_loaded = false;
+    // Set when loading from disk.
+    let mut load_msg = None;
     let mut traj_active = None;
 
     let md = &mut state.volatile.md_local;
@@ -885,7 +878,7 @@ fn traj_items(
                 let n_load = traj.ui_frames_selected();
 
                 if matches!(traj.source, TrajectorySource::File(_)) {
-                    traj_load_size(n_load, traj.num_atoms, ui);
+                    traj_load_size(n_load, traj.frame_bytes, ui);
                 }
 
                 // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
@@ -916,6 +909,12 @@ fn traj_items(
                                     .iter()
                                     .position(|set| set.path.as_ref() == Some(path));
                             }
+                            load_msg = Some(load_summary(
+                                &snaps,
+                                Some(traj.num_frames),
+                                traj.ui_step.max(1),
+                                None,
+                            ));
                             md.replace_snaps(snaps);
                             snaps_loaded = true;
                             traj_active = Some(i);
@@ -1010,13 +1009,13 @@ fn traj_items(
 
         redraw.set_all();
 
-        handle_success(
-            &mut state.ui,
+        let msg = load_msg.unwrap_or_else(|| {
             format!(
                 "Loaded {} frames into the viewer",
                 state.volatile.md_local.viewer.snapshots.len()
-            ),
-        );
+            )
+        });
+        handle_success(&mut state.ui, msg);
     }
 
     if let Some(i) = traj_active {

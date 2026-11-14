@@ -46,7 +46,15 @@ pub fn md_setup(
         launch_md(state, true, false);
     } else if state.volatile.md_local.running {
         // This is spammed each frame, so don't print, which handle_success does.
-        state.ui.cmd_line_output = "MD Running...".to_string();
+        let auto = state.volatile.md_local.run_auto_load;
+        state.ui.cmd_line_output = match auto.limit {
+            Some(limit) => format!(
+                "MD Running... Memory snapshot step {}, {}.",
+                auto.step,
+                limit.describe()
+            ),
+            None => "MD Running...".to_string(),
+        };
         state.ui.cmd_line_out_is_err = false;
     }
 

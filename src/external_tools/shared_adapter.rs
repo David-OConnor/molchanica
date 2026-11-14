@@ -171,7 +171,7 @@ pub fn run_prepared(
     let response = directory.join("result.json");
     fs::write(&request, serde_json::to_vec_pretty(&payload)?)?;
 
-    let mut command = coordinator_command()?;
+    let mut command = coordinator_command(tool)?;
     command
         .arg(slug(tool))
         .arg(&request)
@@ -257,23 +257,28 @@ impl AdapterResult {
 ///
 /// uv caches this small, separate coordinator environment. Model packages stay in their own
 /// `bio_tools`-managed environments, which often have incompatible pins.
-fn coordinator_command() -> io::Result<Command> {
+fn coordinator_command(tool: Tool) -> io::Result<Command> {
     let package = bio_tools::adapters::package_path()?;
     let uv = env::var_os("MOLCHANICA_UV")
         .or_else(|| env::var_os("BIO_TOOLS_UV"))
         .unwrap_or_else(|| "uv".into());
 
     let mut command = Command::new(uv);
+    command.args(["run", "--no-project"]);
+    let bootstrap = if matches!(tool, Tool::OpenFold3 | Tool::AlphaFold3) {
+        command.env("BIO_TOOLS_ADAPTER_HOST", env::current_exe()?);
+        "import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); \
+         import bio_tools_desktop; bio_tools_desktop.install(); \
+         runpy.run_module('bio_tool_adapters.desktop',run_name='__main__')"
+    } else {
+        command.args(["--with", &python_bindings_requirement(), "--with", "pyyaml"]);
+        "import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); \
+         runpy.run_module('bio_tool_adapters.desktop',run_name='__main__')"
+    };
     command
-        .args(["run", "--no-project"])
-        .args(["--with", &python_bindings_requirement()])
-        .args(["--with", "pyyaml"])
         .args(["--python", "3.12"])
         .args(["python", "-c"])
-        .arg(
-            "import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); \
-             runpy.run_module('bio_tool_adapters.desktop',run_name='__main__')",
-        )
+        .arg(bootstrap)
         .arg(package);
     Ok(command)
 }

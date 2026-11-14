@@ -87,6 +87,8 @@ nvml-wrapper = { version = "0.13", optional = true }
 
 rodio = { version = "0.23", optional = true }  # For sonification of bonds etc.
 webbrowser = "1.2"  # For opening links, e.g. from the remote DBs
+# Available system memory, for sizing MD trajectory loads. Already a dep of egui-file-dialog.
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 
 # We use these when developing locally to reduce friction.

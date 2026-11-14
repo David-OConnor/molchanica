@@ -1202,6 +1202,7 @@ impl MdPrefs {
         out.extend_from_slice(&self.num_steps.to_le_bytes());
         out.extend_from_slice(&self.dt.to_le_bytes());
         out.push(self.backend.to_u8());
+        out.extend_from_slice(&self.max_traj_auto_load_gb.to_le_bytes());
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1224,11 +1225,23 @@ impl MdPrefs {
         let dt = parse_le!(data, f32, i..i + 4);
         i += 4;
         let backend = MdBackend::from_u8(data[i]);
+        i += 1;
+
+        // Older files end before this; keep the default.
+        let mut max_traj_auto_load_gb = crate::md::trajectory::MAX_AUTO_LOAD_GB_DEFAULT;
+        if data.len() >= i + 4 {
+            let v = parse_le!(data, f32, i..i + 4);
+            if v.is_finite() && v > 0. {
+                max_traj_auto_load_gb = v;
+            }
+        }
+
         Ok(Self {
             config,
             num_steps,
             dt,
             backend,
+            max_traj_auto_load_gb,
         })
     }
 }

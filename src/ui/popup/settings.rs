@@ -1,10 +1,11 @@
 use std::ops::RangeInclusive;
 
-use egui::{Color32, ComboBox, Grid, Response, RichText, Slider, Ui};
+use egui::{Color32, ComboBox, DragValue, Grid, Response, RichText, Slider, Ui};
 use graphics::{AmbientOcclusion, EngineUpdates, Scene};
 
 use crate::{
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
+    md::trajectory::MAX_AUTO_LOAD_GB_DEFAULT,
     prefs::Graphics,
     state::{LabelSizes, MsaaSetting, OperatingMode, State},
     ui::{COL_SPACING, ROW_SPACING, misc::section_box},
@@ -28,6 +29,8 @@ const HALO_RANGE: RangeInclusive<f32> = 0.0..=0.1;
 const MOVEMENT_SPEED_RANGE: RangeInclusive<u8> = 1..=100;
 const ROTATION_SENS_RANGE: RangeInclusive<u8> = 1..=200;
 const MOL_MOVE_SENS_RANGE: RangeInclusive<u8> = 1..=200;
+/// GB.
+const MAX_TRAJ_AUTO_LOAD_RANGE: RangeInclusive<f32> = 0.1..=1_024.;
 
 pub(in crate::ui) fn settings(
     state: &mut State,
@@ -53,6 +56,12 @@ pub(in crate::ui) fn settings(
 
     section(ui, "Label font sizes", |ui| {
         label_sizes(state, ui, redraw);
+    });
+
+    ui.add_space(ROW_SPACING);
+
+    section(ui, "Molecular dynamics", |ui| {
+        md_settings(state, ui);
     });
 }
 
@@ -287,6 +296,48 @@ fn sensitivities(state: &mut State, scene: &mut Scene, ui: &mut Ui) {
 
         cs.mol_move_sens = (SENS_MOL_MOVE_SCROLL * 1_000.) as u8;
 
+        save = true;
+    }
+
+    if changed {
+        // A backstop for changes that never finish an interaction; see `graphics_settings`.
+        state.to_save.save_flag = true;
+    }
+
+    if save {
+        state.update_save_prefs();
+    }
+}
+
+fn md_settings(state: &mut State, ui: &mut Ui) {
+    let mut changed = false;
+    let mut save = false;
+
+    let md = &mut state.to_save.md;
+
+    settings_grid("md").show(ui, |ui| {
+        let help = "After an MD run, or when opening one, load every nth frame so the trajectory \
+            fits under this size, and in available memory.";
+
+        ui.label("Max trajectory auto load size:")
+            .on_hover_text(help);
+        let resp = ui
+            .add(
+                DragValue::new(&mut md.max_traj_auto_load_gb)
+                    .range(MAX_TRAJ_AUTO_LOAD_RANGE)
+                    .speed(0.1)
+                    .fixed_decimals(1)
+                    .suffix(" GB"),
+            )
+            .on_hover_text(help);
+        ui.end_row();
+
+        changed |= resp.changed();
+        save |= interaction_finished(&resp);
+    });
+
+    if reset_button(ui, "Reset MD") {
+        md.max_traj_auto_load_gb = MAX_AUTO_LOAD_GB_DEFAULT;
         save = true;
     }
 

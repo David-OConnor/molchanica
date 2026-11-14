@@ -10,7 +10,9 @@ use std::{
 };
 
 use super::{
-    manage::managed_disk_usage, paths::find_executable, process::prepare_python_environment,
+    manage::managed_disk_usage,
+    paths::{find_executable, process_executables_dir},
+    process::prepare_python_environment,
     registry::Tool,
 };
 
@@ -132,6 +134,33 @@ pub fn check(tool: Tool) -> ToolStatus {
         detail,
         path: Some(executable.clone()),
     };
+
+    if matches!(tool, Tool::OpenFold3 | Tool::AlphaFold3)
+        && std::env::var_os(spec.exe_override_env).is_none()
+        && spec.root_override_env.and_then(std::env::var_os).is_none()
+        && spec.bundle_root_override_env.and_then(std::env::var_os).is_none()
+        && let Some(recipe) = spec.recipe()
+    {
+        let installer = process_executables_dir().and_then(|root| {
+            bio_tools::install::Installer::for_process_executables(root).map_err(io::Error::other)
+        });
+        let status = match installer {
+            Ok(installer) => installer.status_full(recipe),
+            Err(error) => return failed(error.to_string()),
+        };
+        let result = match status.result {
+            bio_tools::install::StatusKind::Pass => CheckResult::Pass,
+            bio_tools::install::StatusKind::NotFound => CheckResult::CantFind,
+            bio_tools::install::StatusKind::Error => CheckResult::Error,
+        };
+
+        return ToolStatus {
+            tool,
+            result,
+            detail: status.detail,
+            path: Some(executable),
+        };
+    }
 
     // Weights and data directories are checked before the probe: a checkout whose model
     // parameters never downloaded passes a `python --version` probe and then fails on first use,

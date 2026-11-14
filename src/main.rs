@@ -99,6 +99,22 @@ fn handle_cli_flags() -> Option<i32> {
     match flag.as_str() {
         // Internal worker: exit before initializing application state, CUDA, or the viewport.
         "--render-figure" => Some(publication::worker_main()),
+        "--bio-tools-adapter-rpc" => {
+            let paths: Vec<_> = std::env::args_os().skip(2).collect();
+            let [request, response] = paths.as_slice() else {
+                return Some(2);
+            };
+            match bio_tools::adapters::rpc::serve(
+                std::path::Path::new(request),
+                std::path::Path::new(response),
+            ) {
+                Ok(()) => Some(0),
+                Err(error) => {
+                    eprintln!("bio_tools adapter: {error}");
+                    Some(1)
+                }
+            }
+        }
         // Checks the native ProteinMPNN port in src/therapeutic_misc/ddg against the reference forward
         // pass scripts/convert_mpnn_weights.py recorded from upstream. See that module's docs.
         "--verify-mpnn" => {

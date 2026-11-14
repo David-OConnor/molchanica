@@ -22,12 +22,16 @@ use dynamics::{
     snapshot::Snapshot,
 };
 use graphics::{EngineUpdates, Scene};
+use lin_alg::f32::Vec3;
 use mol_defs::molecules::common::MoleculeCommon;
 
 use crate::{
     cam::{VIEW_DIR_FRONT, reset_camera},
     file_io::save_mol_set_as_gro,
-    md::{self, STATIC_ATOM_DIST_THRESH, trajectory::Trajectory},
+    md::{
+        self, STATIC_ATOM_DIST_THRESH,
+        trajectory::{AutoLoad, LoadKind, Trajectory, posits_frame_bytes, xtb_frame_bytes},
+    },
     state::{ComputationType, State},
     util::{format_elapsed, handle_err, handle_success},
 };
@@ -48,6 +52,10 @@ struct RunResult {
     peptide_atoms: HashSet<(usize, usize)>,
     dt: f32,
     elapsed: Duration,
+    /// The frame step the worker read with.
+    auto_load: AutoLoad,
+    /// Frames in `xtb.trj`.
+    total_frames: usize,
 }
 
 pub struct XtbRun {
@@ -197,6 +205,8 @@ fn native_input(state: &State, atoms: Vec<bio_files::AtomGeneric>) -> io::Result
     set.validate_config(cfg)
         .map_err(|e| io::Error::other(e.to_string()))?;
     let charge = set.charge().map_err(|e| io::Error::other(e.to_string()))?;
+    let (elements, positions) = topology_system(&atoms);
+    let topology = set.cached_topology(&elements, &positions).ok().flatten();
     let input = XtbInput {
         atoms,
         dt: state.to_save.md.dt as f64,
@@ -217,10 +227,20 @@ fn native_input(state: &State, atoms: Vec<bio_files::AtomGeneric>) -> io::Result
         parameter_file: set.parameter_file.clone(),
         executable: set.executable.clone(),
         timeout: None,
+        topology,
+        frame_step: 1,
     };
     input.validate_with_options(&state.volatile.md_local.xtb_options)?;
 
     Ok(input)
+}
+
+/// Elements and positions for GFN-FF topology cache keys.
+fn topology_system(atoms: &[bio_files::AtomGeneric]) -> (Vec<na_seq::Element>, Vec<Vec3>) {
+    atoms
+        .iter()
+        .map(|a| (a.element, Vec3::from(a.posit)))
+        .unzip()
 }
 
 fn prepare_run(state: &State) -> io::Result<PreparedInput> {
@@ -252,7 +272,7 @@ pub fn launch_md(state: &mut State) {
         return;
     }
 
-    let prepared = match prepare_run(state) {
+    let mut prepared = match prepare_run(state) {
         Ok(input) => input,
         Err(error) => {
             handle_err(&mut state.ui, error.to_string());
@@ -260,7 +280,21 @@ pub fn launch_md(state: &mut State) {
             return;
         }
     };
+
+    // Read only every nth frame once the run is done, so they fit the auto load limits.
+    let total_frames = prepared.input.num_frames();
+    let n_atoms = prepared.input.atoms.len();
+    let auto_load = AutoLoad::new(
+        total_frames,
+        posits_frame_bytes(n_atoms),
+        xtb_frame_bytes(n_atoms),
+        state.to_save.md.max_traj_auto_load_gb,
+        LoadKind::Pending,
+    );
+    prepared.input.frame_step = auto_load.step;
+
     let options = state.volatile.md_local.xtb_options.clone();
+    let gfnff = state.selected_force_field().gfnff().cloned();
     let (tx, receiver) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = cancel.clone();
@@ -280,6 +314,14 @@ pub fn launch_md(state: &mut State) {
             .input
             .run_with_options(&options, &worker_cancel)
             .map(|output| {
+                if let Some(set) = &gfnff {
+                    let (elements, positions) = topology_system(&prepared.input.atoms);
+                    let topology = output.directory.join("gfnff_topo");
+                    if let Err(error) = set.cache_topology(&elements, &positions, &topology) {
+                        eprintln!("Error caching the GFN-FF topology: {}", error.descrip);
+                    }
+                }
+
                 let mols: Vec<_> = prepared
                     .mols
                     .iter()
@@ -302,6 +344,8 @@ pub fn launch_md(state: &mut State) {
                     peptide_atoms: prepared.peptide_atoms,
                     dt: prepared.input.dt as f32,
                     elapsed: start.elapsed(),
+                    auto_load,
+                    total_frames,
                 }
             })
             .map_err(|error| error.to_string());
@@ -309,10 +353,21 @@ pub fn launch_md(state: &mut State) {
         let _ = tx.send(result);
     });
     state.volatile.thread_receivers.xtb_md = Some(XtbRun { receiver, cancel });
-    handle_success(&mut state.ui, "Running native xTB MD...".into());
+
+    let mut msg = String::from("Running native xTB MD...");
+    if let Some(limit) = auto_load.limit {
+        msg += &format!(
+            " Frame step {} on load, {}.",
+            auto_load.step,
+            limit.describe()
+        );
+    }
+    handle_success(&mut state.ui, msg);
 }
 
-pub(super) fn trajectory_snapshots(frames: Vec<XtbFrame>) -> Vec<Arc<Snapshot>> {
+pub(super) fn trajectory_snapshots(
+    frames: impl IntoIterator<Item = XtbFrame>,
+) -> Vec<Arc<Snapshot>> {
     frames
         .into_iter()
         .map(|frame| {
@@ -364,7 +419,22 @@ pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates
         }
     };
 
-    let snaps = trajectory_snapshots(result.output.frames);
+    // The worker read with a step chosen at launch. Step further if the estimate fell short.
+    let frames = result.output.frames;
+    let frame_bytes = posits_frame_bytes(frames.first().map_or(0, |f| f.geometry.atoms.len()));
+    let post = AutoLoad::new(
+        frames.len(),
+        frame_bytes,
+        frame_bytes,
+        state.to_save.md.max_traj_auto_load_gb,
+        LoadKind::InMemory,
+    );
+    let snaps = trajectory_snapshots(frames.into_iter().step_by(post.step));
+    let load_info = result
+        .auto_load
+        .then(post)
+        .summary(&snaps, result.total_frames);
+
     let mol_refs: Vec<_> = result
         .mols
         .iter()
@@ -400,7 +470,7 @@ pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates
     handle_success(
         &mut state.ui,
         format!(
-            "xTB MD complete in {}. Files: {}",
+            "xTB MD complete in {}. Files: {}. {load_info}",
             format_elapsed(result.elapsed),
             result.output.directory.display()
         ),

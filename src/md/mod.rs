@@ -26,7 +26,7 @@ use viewer::SnapshotViewer;
 use crate::{
     cam::{VIEW_DIR_FRONT, move_cam_to_active_mol, reset_camera},
     gromacs,
-    md::trajectory::Trajectory,
+    md::trajectory::{AutoLoad, LoadKind, Trajectory, load_summary, snapshot_bytes},
     state::{ComputationGuard, ComputationType, State},
     util::{RedrawFlags, clear_cli_out, format_elapsed, handle_err, handle_success},
     xtb,
@@ -62,6 +62,8 @@ pub struct MdStateLocal {
     pub computation: Option<ComputationGuard>,
     pub start: Option<Instant>,
     pub run_steps_and_dt: (u32, f32),
+    /// Step on the configured memory snapshot interval, chosen at launch to fit the auto load limits.
+    pub run_auto_load: AutoLoad,
     pub run_output_dir: Option<std::path::PathBuf>,
     // todo: Consider if you want a dedicated MD playback operating mode. For now, this flag
     /// If true, render the molecules from this struct, instead of primary state molecules.
@@ -112,6 +114,7 @@ impl MdStateLocal {
 
 /// For our non-blocking workflow. Run this once an MD run using the `Dynamics` engine is complete.
 pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    let max_gb = state.to_save.md.max_traj_auto_load_gb;
     let md = &mut state.volatile.md_local;
 
     let Some(md_state) = &mut md.mol_dynamics else {
@@ -138,10 +141,37 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         save_error = save_error.or(playback_error);
     }
 
+    // Launch spaced the snapshots to fit the limits. Step further if the estimate fell short.
+    let n_frames = md_state.snapshots.len();
+    let frame_bytes = if n_frames > 0 {
+        md_state.snapshots.iter().map(snapshot_bytes).sum::<usize>() / n_frames
+    } else {
+        0
+    };
+    let post = AutoLoad::new(
+        n_frames,
+        frame_bytes,
+        frame_bytes,
+        max_gb,
+        LoadKind::InMemory,
+    );
+    let auto = std::mem::take(&mut md.run_auto_load).then(post);
+    let interval = md_state.cfg.snapshot_handlers.memory.unwrap_or(1) * post.step;
+
     let snaps: Vec<_> = std::mem::take(&mut md_state.snapshots)
         .into_iter()
+        .step_by(post.step)
         .map(Arc::new)
         .collect();
+    let load_info = if snaps.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {} One frame per {interval} MD steps.",
+            load_summary(&snaps, None, auto.step, auto.limit)
+        )
+    };
+
     if let Some(set) = md.viewer.mol_sets.last_mut() {
         let name = output.as_ref().and_then(|dir| dir.file_name()).map_or_else(
             || "Dynamics".into(),
@@ -174,10 +204,10 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
     if let Some(error) = save_error {
         handle_err(
             &mut state.ui,
-            format!("MD complete. Error saving output: {error}"),
+            format!("MD complete. Error saving output: {error}.{load_info}"),
         );
     } else {
-        handle_success(&mut state.ui, "MD complete".into());
+        handle_success(&mut state.ui, format!("MD complete.{load_info}"));
     }
 }
 
@@ -1119,6 +1149,13 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                         return;
                     }
                 }
+                // After saving the inputs, so they keep the configured interval.
+                state.volatile.md_local.run_auto_load = space_mem_snapshots(
+                    &mut md,
+                    settings.0,
+                    state.to_save.md.max_traj_auto_load_gb,
+                );
+
                 state.volatile.md_local.run_steps_and_dt = settings;
                 state.volatile.md_local.start = Some(Instant::now());
                 state.volatile.md_local.running = true;
@@ -1135,6 +1172,27 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }
     state.volatile.md_local.pep_atom_set = md_pep_sel;
+}
+
+/// Raises the memory snapshot interval so a run's snapshots fit the auto load limits. Returns
+/// the step applied to the configured interval.
+fn space_mem_snapshots(md: &mut MdState, num_steps: u32, max_gb: f32) -> AutoLoad {
+    let Some(interval) = md.cfg.snapshot_handlers.memory.filter(|&r| r > 0) else {
+        return AutoLoad::default();
+    };
+
+    // A snapshot as `MdState::handle_snapshots` stores it, including H bonds.
+    let mut probe = Snapshot::new(md);
+    probe.update_with_energy(md, 0., 0.);
+    probe.force = Some(md.atoms.iter().map(|a| a.force).collect());
+
+    let bytes = snapshot_bytes(&probe);
+    let n_frames = num_steps as usize / interval + 1;
+    let auto = AutoLoad::new(n_frames, bytes, bytes, max_gb, LoadKind::Pending);
+
+    md.cfg.snapshot_handlers.memory = Some(interval * auto.step);
+
+    auto
 }
 
 /// Converts the `custom_solvent` vec returned by `MdState::new` into owned `MoleculeCommon`

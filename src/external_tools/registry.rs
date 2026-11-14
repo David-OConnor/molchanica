@@ -26,6 +26,7 @@ pub enum Tool {
     Protenix,
     EsmFold2,
     AlphaFold3,
+    OpenFold3,
     ProteinMpnn,
     LigandMpnn,
     RfDiffusion3,
@@ -38,10 +39,11 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::OpenDde,
         Self::Boltz2,
         Self::Chai1,
+        Self::OpenFold3,
         Self::Protenix,
         Self::EsmFold2,
         Self::AlphaFold3,
@@ -390,6 +392,23 @@ pub static REGISTRY: &[ToolSpec] = &[
         slow_probe: true,
     },
     ToolSpec {
+        tool: Tool::OpenFold3,
+        catalog_slug: "openfold3",
+        kind: ToolKind::VenvScript,
+        adapter: ToolAdapter::SharedAdapter,
+        executable: "run_openfold",
+        exe_override_env: "MOLCHANICA_OPENFOLD3_EXECUTABLE",
+        root_override_env: None,
+        bundle_root_override_env: None,
+        bundle_subdir: None,
+        required_assets: &[],
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
+        version_args: &["predict", "--help"],
+        version_marker: "run_openfold",
+        slow_probe: true,
+    },
+    ToolSpec {
         tool: Tool::Protenix,
         catalog_slug: "protenix",
         kind: ToolKind::VenvScript,
@@ -639,9 +658,9 @@ mod tests {
     fn only_the_linux_only_recipes_are_gated() {
         // Chai-1 also runs on Apple Silicon, on the CPU.
         let expected: &[&str] = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            &["Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+            &["OpenFold3", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
         } else {
-            &["Chai-1", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+            &["Chai-1", "OpenFold3", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
         };
         assert_eq!(gated(), expected);
     }

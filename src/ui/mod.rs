@@ -898,7 +898,7 @@ fn top_controls(
                     ui,
                     "Tools",
                     COLOR_HIGHLIGHT,
-                    "Show which optional third-party tools (OpenDDE, Boltz-2, LigandMPNN, \
+                    "Show which optional third-party tools (OpenFold, RFdiffusion3, OpenDDE, Boltz-2, LigandMPNN, \
                     GROMACS, ORCA, ...) are installed and working, and how to install the ones that \
                     are not."
                 )

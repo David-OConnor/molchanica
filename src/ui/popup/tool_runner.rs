@@ -87,6 +87,7 @@ impl ToolWindowKind {
                 Tool::OpenDde,
                 Tool::Boltz2,
                 Tool::Chai1,
+                Tool::OpenFold3,
                 Tool::Protenix,
                 Tool::EsmFold2,
                 Tool::AlphaFold3,
@@ -377,7 +378,15 @@ fn replace_sequence_input(
         SequenceTarget::Document { field, job, entity } if field == "input_json" => {
             let mut document: Value = serde_json::from_str(current)
                 .map_err(|error| format!("JSON input is invalid: {error}"))?;
-            let entries = if matches!(tool, Tool::OpenDde | Tool::Protenix) {
+            let entries = if tool == Tool::OpenFold3 {
+                let job_index = job.ok_or("Query is missing")?;
+                document
+                    .get_mut("queries")
+                    .and_then(Value::as_object_mut)
+                    .and_then(|queries| queries.values_mut().nth(job_index))
+                    .and_then(|query| query.get_mut("chains"))
+                    .and_then(Value::as_array_mut)
+            } else if matches!(tool, Tool::OpenDde | Tool::Protenix) {
                 let job_index = job.ok_or("Job is missing")?;
                 document
                     .as_array_mut()
@@ -387,13 +396,19 @@ fn replace_sequence_input(
             } else {
                 document.get_mut("sequences").and_then(Value::as_array_mut)
             }
-            .ok_or_else(|| "The JSON has no sequences list".to_owned())?;
+            .ok_or_else(|| "The JSON has no chain list".to_owned())?;
             let item = entries
                 .get_mut(*entity)
                 .and_then(Value::as_object_mut)
                 .ok_or_else(|| format!("Molecule {} is missing in the JSON", entity + 1))?;
 
-            if matches!(tool, Tool::OpenDde | Tool::Protenix) {
+            if tool == Tool::OpenFold3 {
+                let ids = item.remove("chain_ids").ok_or("Chain IDs are missing")?;
+                item.clear();
+                item.insert("chain_ids".into(), ids);
+                item.insert("molecule_type".into(), json!(kind));
+                item.insert("sequence".into(), json!(letters));
+            } else if matches!(tool, Tool::OpenDde | Tool::Protenix) {
                 let chain_key = match kind {
                     "protein" => "proteinChain",
                     "dna" => "dnaSequence",
@@ -538,7 +553,7 @@ fn document_sequence_targets(
     } else if field == "input_json"
         && matches!(
             tool,
-            Tool::OpenDde | Tool::Protenix | Tool::EsmFold2 | Tool::AlphaFold3
+            Tool::OpenDde | Tool::Protenix | Tool::EsmFold2 | Tool::AlphaFold3 | Tool::OpenFold3
         )
     {
         serde_json::from_str(current).map_err(|error| format!("Invalid JSON: {error}"))?
@@ -547,7 +562,23 @@ fn document_sequence_targets(
     };
 
     let mut targets = Vec::new();
-    if matches!(tool, Tool::OpenDde | Tool::Protenix) {
+    if tool == Tool::OpenFold3 {
+        let queries = document
+            .get("queries")
+            .and_then(Value::as_object)
+            .ok_or("Expected a queries object")?;
+        for (job_index, (name, query)) in queries.iter().enumerate() {
+            let Some(chains) = query.get("chains").and_then(Value::as_array) else {
+                continue;
+            };
+            for entity in 0..chains.len() {
+                targets.push((
+                    format!("{name} · Chain {}", entity + 1),
+                    target(Some(job_index), entity),
+                ));
+            }
+        }
+    } else if matches!(tool, Tool::OpenDde | Tool::Protenix) {
         let jobs = document
             .as_array()
             .ok_or("Expected a list of prediction jobs")?;

@@ -6,7 +6,11 @@ use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     path::PathBuf,
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+    },
     thread,
 };
 
@@ -39,6 +43,18 @@ struct Assignment {
     pending: bool,
 }
 
+/// Dropping this stops its xTB process.
+struct GfnffJob {
+    receiver: Receiver<Result<MolDynamics, String>>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Drop for GfnffJob {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
 #[derive(Default)]
 pub struct ForceFields {
     pub family: ForceFieldFamily,
@@ -50,7 +66,7 @@ pub struct ForceFields {
     recalculate_charges: bool,
     opls_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
     opls_results: HashMap<u64, Result<MolDynamics, String>>,
-    gfnff_jobs: HashMap<u64, Receiver<Result<MolDynamics, String>>>,
+    gfnff_jobs: HashMap<u64, GfnffJob>,
     gfnff_results: HashMap<u64, Result<MolDynamics, String>>,
     /// The xTB last found by [`Self::sync_xtb`], to tell it from a path the user typed.
     resolved_xtb: Option<PathBuf>,
@@ -251,8 +267,8 @@ impl ForceFields {
 
     fn poll_gfnff(&mut self) {
         let mut completed = Vec::new();
-        for (&topology, rx) in &self.gfnff_jobs {
-            match rx.try_recv() {
+        for (&topology, job) in &self.gfnff_jobs {
+            match job.receiver.try_recv() {
                 Ok(result) => completed.push((topology, result)),
                 Err(TryRecvError::Disconnected) => {
                     completed.push((topology, Err("GFN-FF worker stopped".into())))
@@ -453,8 +469,11 @@ impl ForceFields {
                     let mut backend = self.params.as_ref().unwrap().gfnff().unwrap().clone();
                     // The override is for the combined simulation, not each displayed molecule.
                     backend.total_charge = None;
-                    let (tx, rx) = mpsc::channel();
-                    self.gfnff_jobs.insert(topology, rx);
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    backend.cancel = Some(cancel.clone());
+                    let (tx, receiver) = mpsc::channel();
+                    self.gfnff_jobs
+                        .insert(topology, GfnffJob { receiver, cancel });
                     thread::spawn(move || {
                         use dynamics::params::potential::SystemPotentialBackend;
 

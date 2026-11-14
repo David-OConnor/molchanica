@@ -1,5 +1,6 @@
 use std::{
-    fs, io,
+    fs,
+    io::{self, BufRead},
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
@@ -8,7 +9,7 @@ use std::{
 use bio_files::{
     AtomGeneric, FrameSlice,
     gromacs::{GromacsTopology, MdpParams, OutputEnergy, gro::Gro},
-    xtb::{MD_RESTART_INPUT, XtbMdOptions, XtbOptimizer, read_trajectory_with_velocities},
+    xtb::{MD_RESTART_INPUT, XtbMdOptions, XtbOptimizer, read_trajectory_stepped},
     xyz::Xyz,
 };
 use dynamics::{ForceFieldFamily, Integrator, MdConfig, snapshot::Snapshot};
@@ -17,7 +18,9 @@ use mol_defs::molecules::{Atom, Bond, MolType, common::MoleculeCommon};
 
 use super::{
     MdBackend,
-    trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory},
+    trajectory::{
+        AutoLoad, LoadKind, Trajectory, load_summary, posits_frame_bytes, xtb_frame_bytes,
+    },
     viewer::{self, SnapshotViewer, ViewerMolSet},
 };
 use crate::{
@@ -29,7 +32,6 @@ use crate::{
 
 pub const OUTPUT_DIR: &str = "md_out";
 const TRAJECTORIES: &[&str] = &["trr", "xtc", "dcd"];
-const FRAME_LIMIT_ATOMS: usize = 5_000_000;
 
 pub struct RecentRun {
     pub directory: PathBuf,
@@ -211,6 +213,8 @@ struct LoadedRun {
     inputs: Option<RunInputs>,
     native_inputs: Option<MdInputs>,
     xtb_options: Option<XtbSettings>,
+    /// What was loaded into memory, for the Out section.
+    load_info: String,
 }
 
 struct XtbSettings {
@@ -235,9 +239,10 @@ pub fn open(
         return;
     }
 
+    let max_gb = state.to_save.md.max_traj_auto_load_gb;
     let result = dir
         .canonicalize()
-        .and_then(|dir| load(&dir, legacy)?.install(state, scene, updates, &dir));
+        .and_then(|dir| load(&dir, legacy, max_gb)?.install(state, scene, updates, &dir));
     match result {
         Ok(message) => {
             if legacy.is_none()
@@ -258,14 +263,15 @@ pub fn open(
     }
 }
 
-fn load(dir: &Path, legacy: Option<&str>) -> io::Result<LoadedRun> {
+/// `max_gb`: The max trajectory auto load size.
+fn load(dir: &Path, legacy: Option<&str>, max_gb: f32) -> io::Result<LoadedRun> {
     if legacy.is_none() && dir == Path::new(OUTPUT_DIR).canonicalize().unwrap_or_default() {
         return Err(io::Error::other(
             "Choose an individual run folder or pick a run from Recent MD runs.",
         ));
     }
     if legacy.is_none() && dir.join("xtb.trj").is_file() {
-        return load_xtb(dir);
+        return load_xtb(dir, max_gb);
     }
 
     let (paths, structures, backend) = if let Some(index) = legacy {
@@ -327,7 +333,7 @@ fn load(dir: &Path, legacy: Option<&str>) -> io::Result<LoadedRun> {
 
     let mut error = io::Error::other("No MD trajectory found. Select an individual run folder.");
     for path in paths {
-        match load_binary_run(dir, &path, &structures, backend, legacy.is_some()) {
+        match load_binary_run(dir, &path, &structures, backend, legacy.is_some(), max_gb) {
             Ok(run) => return Ok(run),
             Err(e) => error = e,
         }
@@ -348,6 +354,7 @@ fn load_binary_run(
     structures: &[PathBuf],
     backend: MdBackend,
     legacy: bool,
+    max_gb: f32,
 ) -> io::Result<LoadedRun> {
     let mut trajectory = Trajectory::new(path)?;
     if trajectory.num_atoms == 0 || trajectory.num_frames == 0 {
@@ -355,12 +362,13 @@ fn load_binary_run(
             "The trajectory contains no coordinate frames.",
         ));
     }
-    let n_frames =
-        (FRAME_LIMIT_ATOMS / trajectory.num_atoms).clamp(1, MAX_FRAMES_TO_ATTEMPT_LOADING);
+
+    let auto = trajectory.auto_load(max_gb);
+    trajectory.ui_step = auto.step;
     let slice = FrameSlice::Index {
         start: None,
-        end: (trajectory.num_frames > n_frames).then_some(n_frames - 1),
-        step: 1,
+        end: None,
+        step: auto.step,
     };
     if !legacy
         && let Some(path) = named(dir, &["energy_out.xvg", "energy.xvg"])
@@ -381,6 +389,7 @@ fn load_binary_run(
             "The trajectory has missing or inconsistent coordinates.",
         ));
     }
+    let load_info = auto.summary(&snapshots, trajectory.num_frames);
 
     let stem = path
         .file_stem()
@@ -507,6 +516,7 @@ fn load_binary_run(
         inputs,
         native_inputs,
         xtb_options: None,
+        load_info,
     })
 }
 
@@ -582,6 +592,7 @@ fn load_gromacs_structure(dir: &Path, path: &Path) -> io::Result<LoadedRun> {
     mol_set.name = name.clone();
     mol_set.path = Some(path.to_owned());
     let snapshots = vec![Arc::new(snapshot)];
+    let load_info = load_summary(&snapshots, Some(1), 1, None);
     let mut trajectory = Trajectory::new_in_memory(snapshots.clone(), name, 0.);
     trajectory.ui_active = true;
 
@@ -612,6 +623,7 @@ fn load_gromacs_structure(dir: &Path, path: &Path) -> io::Result<LoadedRun> {
         inputs,
         native_inputs: None,
         xtb_options: None,
+        load_info,
     })
 }
 
@@ -720,12 +732,53 @@ pub(crate) fn gromacs_config(mdp: &MdpParams) -> MdConfig {
     cfg
 }
 
-fn load_xtb(dir: &Path) -> io::Result<LoadedRun> {
+/// Estimated frame count, from the file size and first frame, and atom count of an xTB trajectory.
+fn xtb_traj_dims(path: &Path, velocities: bool) -> io::Result<(usize, usize)> {
+    let len = fs::metadata(path)?.len() as usize;
+    let mut lines = io::BufReader::new(fs::File::open(path)?).lines();
+
+    // Counts newlines; CRLF files undercount, which overestimates frames.
+    let mut bytes = 0;
+    let header = loop {
+        let line = lines
+            .next()
+            .transpose()?
+            .ok_or_else(|| io::Error::other("The xTB trajectory is empty."))?;
+        bytes += line.len() + 1;
+
+        if !line.trim().is_empty() {
+            break line;
+        }
+    };
+
+    let n_atoms: usize = header
+        .trim()
+        .parse()
+        .map_err(|_| io::Error::other("Invalid xTB atom count"))?;
+    let n_lines = 1 + n_atoms * if velocities { 2 } else { 1 };
+    for line in lines.take(n_lines) {
+        bytes += line?.len() + 1;
+    }
+
+    Ok((len.div_ceil(bytes), n_atoms))
+}
+
+fn load_xtb(dir: &Path, max_gb: f32) -> io::Result<LoadedRun> {
     let (cfg, steps, dt, settings) = xtb_config(dir)?;
     let interval = cfg.snapshot_handlers.memory.unwrap_or(1) as f64 * f64::from(dt);
     let path = dir.join("xtb.trj");
     let velocities = settings.as_ref().is_some_and(|set| set.options.velocities);
-    let frames = read_trajectory_with_velocities(&path, interval, velocities)?;
+
+    let (n_est, n_atoms) = xtb_traj_dims(&path, velocities)?;
+    let auto = AutoLoad::new(
+        n_est,
+        posits_frame_bytes(n_atoms),
+        xtb_frame_bytes(n_atoms),
+        max_gb,
+        LoadKind::Disk,
+    );
+    let (frames, total) = read_trajectory_stepped(&path, interval, velocities, auto.step)?;
+
     let first = frames
         .first()
         .ok_or_else(|| io::Error::other("The xTB trajectory is empty."))?;
@@ -800,6 +853,8 @@ fn load_xtb(dir: &Path) -> io::Result<LoadedRun> {
     mol_set.path = Some(path);
 
     let snapshots = crate::xtb::trajectory_snapshots(frames);
+    let load_info = auto.summary(&snapshots, total);
+
     let mut trajectory = Trajectory::new_in_memory(snapshots.clone(), name, dt);
     trajectory.ui_active = true;
     let inputs = geometry
@@ -830,6 +885,7 @@ fn load_xtb(dir: &Path) -> io::Result<LoadedRun> {
         inputs,
         native_inputs: None,
         xtb_options: settings,
+        load_info,
     })
 }
 
@@ -963,8 +1019,6 @@ impl LoadedRun {
         dir: &Path,
     ) -> io::Result<String> {
         let name = self.trajectory.display_name.clone();
-        let n_shown = self.snapshots.len();
-        let total = self.trajectory.num_frames;
         let has_setup = self.inputs.is_some() || self.native_inputs.is_some();
         let has_settings =
             self.config.is_some() || matches!(&self.inputs, Some(RunInputs::Gromacs(_)));
@@ -1025,7 +1079,7 @@ impl LoadedRun {
             self.mol_set,
         );
 
-        let mut message = format!("Opened {name} ({n_shown}/{total} frames).");
+        let mut message = format!("Opened {name}. {}", self.load_info);
         if !has_settings {
             message.push_str(" Saved MD settings are unavailable.");
         } else if !has_setup {
@@ -1086,15 +1140,18 @@ fn show_playback(
     viewer::draw_mols(state, scene, updates);
 }
 
+/// Returns what was loaded into memory, if anything.
 pub(crate) fn show_gromacs_output(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
     output: &bio_files::gromacs::GromacsOutput,
-) -> io::Result<()> {
+) -> io::Result<Option<String>> {
     let Some(path) = output.gro_path.as_ref() else {
-        return Ok(());
+        return Ok(None);
     };
+
+    let max_gb = state.to_save.md.max_traj_auto_load_gb;
     let dir =
         gromacs_run_dir(path).ok_or_else(|| io::Error::other("Missing GROMACS run folder"))?;
     let structures = [path.clone()];
@@ -1102,14 +1159,17 @@ pub(crate) fn show_gromacs_output(
         .trr_path
         .iter()
         .chain(&output.xtc_path)
-        .find_map(|traj| load_binary_run(&dir, traj, &structures, MdBackend::Gromacs, false).ok())
+        .find_map(|traj| {
+            load_binary_run(&dir, traj, &structures, MdBackend::Gromacs, false, max_gb).ok()
+        })
         .map(Ok)
-        .unwrap_or_else(|| load(&dir, None));
+        .unwrap_or_else(|| load(&dir, None, max_gb));
     let run = match run {
         Ok(run) => run,
-        Err(_) if output.trr_path.is_none() && output.xtc_path.is_none() => return Ok(()),
+        Err(_) if output.trr_path.is_none() && output.xtc_path.is_none() => return Ok(None),
         Err(error) => return Err(error),
     };
+
     show_playback(
         state,
         scene,
@@ -1119,7 +1179,7 @@ pub(crate) fn show_gromacs_output(
         run.mol_set,
     );
 
-    Ok(())
+    Ok(Some(run.load_info))
 }
 
 /// GROMACS output files live directly in their run folder.

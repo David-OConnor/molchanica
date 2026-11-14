@@ -10,7 +10,7 @@
 
 ### Design protein backbones, run structure and sequence prediction with an integrated, visual-first pipeline.
 
-[Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. It integrates with machine-learning tools for protein engineering, including RFDiffusion3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
+[Molchanica](https://www.athanorlab.com/molchanica) is a molecule visualization, editing, and computation tool. It combines functionality found in [PyMol](https://www.pymol.org/), [Chimera](https://www.cgl.ucsf.edu/chimera/), [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/), [VMD](https://www.ks.uiuc.edu/Research/vmd/), [GROMACS](https://www.gromacs.org/), and [Avogadro](https://avogadro.cc/), and operates with the focus on visualizing molecules over time and space. Any molecule you open or build can move using molecular dynamics. It integrates with machine-learning tools for protein engineering, including RFDiffusion3, OpenFold3, Boltz-2, OpenDDE, ProteinMPNN, and Chai-1.
 
 Molchanica includes Computer Aided Drug Design (CADD) tools. For example, molecule screening and generation based on pharmacophores, machine-learning from empirical binding data and more. It estimates ADME and toxicity parameters using a neural network trained on [Therapeutic data commons (TDC)](https://tdcommons.ai/) data.
 
@@ -49,7 +49,7 @@ Allows one-click installation of external tools. Click the **Tools button** in t
 ### Protein design tools
 
 - **Backbone design** using RFDiffusion3
-- **Structure prediction** using OpenDDE, Boltz-2, Chai-1, and EsmFold2
+- **Structure prediction** using OpenFold3, OpenDDE, Boltz-2, Chai-1, Protenix, and EsmFold2
 - **Sequence prediction** using ProteinMPNN and LigandMPNN
 
 ### Others:
@@ -67,20 +67,16 @@ Allows one-click installation of external tools. Click the **Tools button** in t
 - Create figures for publication
 - Pymol-like selection syntax
 - Molecular dynamics, using Amber, OPLS, or GFN-FF force fields, and the OPC water model
-- Visualize ligand docking
-- Edit small molecules in 3D with integrated dynamics
-- Run [GROMACS](https://www.gromacs.org/) MD, and view trajectories using the same GUI as our native MD.
-- Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed).
-- Run [OpenDDE](https://github.com/aurekaresearch/OpenDDE) structure prediction (Proteins, ligands, nucleic acids, ions, complexes)
-- Run [Boltz-2](https://github.com/jwohlwend/boltz) co-folding, including binding-affinity prediction for a ligand in the folded complex
-- Design sequences for a backbone with [LigandMPNN](https://github.com/dauparas/LigandMPNN) and
-  [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), conditioned on ligands and nucleic acids where present
+- Run [GROMACS](https://www.gromacs.org/) MD, and view trajectories using the same GUI as our native MD
+- Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed)
+- Run structure prediction with [OpenFold3](https://github.com/aqlaboratory/openfold-3), [OpenDDE](https://github.com/aurekaresearch/OpenDDE), [Boltz-2](https://github.com/jwohlwend/boltz), and [Chai-1](https://github.com/chaidiscovery/chai-lab)
+- Run sequence prediction with [ProteinMPNN](https://github.com/dauparas/ProteinMPNN) and [LigandMPNN](https://github.com/dauparas/LigandMPNN)
 - Scan every point mutation at every position for stability (ΔΔG), in a single pass, natively — no Python needed at run time
 - Assess protein-ligand binding (affinity, pose validation, binding spot identification etc)
 - Antibody workflows: CDR selection, paratope contacts, and developability triage
 - Read a local [PDBbind](https://www.pdbbind-plus.org.cn/) release: look up a complex's measured binding affinity and open its protein, pocket, and ligand files
 - Assess pharmacokinetics, screen small molecules for binding to pockets, pharmacophore features, molecule alignment,
-  and more.
+  and more
 - Visualize electron density from crystallography and Cryo-Em data
 - Screen molecules based on binding affinity and desired properties
 - Pharmacophore based modeling and screening
@@ -326,18 +322,17 @@ Molchanica keeps its data in one folder: the one its executable is in.
 
 ## Compiling
 
-This application is written in rust, so it compiles normally using `cargo build --release`, which produces a standalone executable.
+This application is written in rust; it compiles normally using `cargo build --release`, which produces a standalone executable.
 
-If you're not compiling on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the
-`--no-default-features` to the build command. This will disable GPU support on the executable produced.
+If you're not compiling on a machine with an Nvidia GPU or without the CUDA toolkit installed, append the `--no-default-features` to the build command. This will disable native-functionality GPU support on the executable produced. (e.g. MD with the *Dynamics* backend; does not effect external tools)
 
-The bundled molecule databases are optional. `hmdb.parquet` and `ChEBI.parquet` in the project root are embedded when present; missing files are reported in the molecule database popup. Add either file and rebuild to bundle it, or use **Load DB** to open a database at runtime.
+The bundled molecule databases are optional. If `hmdb.parquet` and `ChEBI.parquet` are present in the project root, they're embedded in the executable.
 
-Note: At any given point, `Cargo.toml` will likely point to path dependency patch overrides, making it difficult to compile. This is due to me updating underlying libraries, in between their publish cycles. My intent is that you use Molchanica by downloading a binary on the releases page, with the source code as a reference. Or, use the underlying libraries (bio_files, bio_tools, na_seq, bio_apis, dynamics etc) as dependencies in your projects.
+At any given point, `Cargo.toml` will likely point to path dependency patch overrides, making it difficult to compile. This is due to me updating underlying libraries, in between their publish cycles. My intent is that you use Molchanica by downloading a binary on the releases page, with the source code as a reference. Or, use the underlying libraries (bio_files, bio_tools, na_seq, bio_apis, dynamics etc) as dependencies in your projects.
 
 #### Compiling with GPU support
 
-If compiling with GPU support, your compiling PC must have the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed. You must set the environment var `LD_LIBARARY_PATH` (Linux) or `Path` (Windows) to your CUDA bin directory, e.g. `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`. You may also need the build tools containing `cl.exe` or similar in the path, e.g.: `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64`
+If compiling with GPU support, your compiling PC must have the [CUDA Toolkit, v13+](https://developer.nvidia.com/cuda-downloads) installed. You must set the environment var `LD_LIBARARY_PATH` (Linux) or `Path` (Windows) to your CUDA bin directory, e.g. `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`. You may also need the build tools containing `cl.exe` or similar in the path, e.g.: `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64` for Windows, or `apt install build-essential` for linux.
 
 
 ![Electron densities and small molecules](screenshots/density_example_nov_2025.png)
