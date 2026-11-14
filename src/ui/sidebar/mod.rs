@@ -790,6 +790,39 @@ pub(in crate::ui) fn sidebar(
     updates.ui_reserved_px.0 = out.response.rect.width();
 }
 
+/// Estimated memory for loading `n_frames` frames of positions. Colored by size.
+fn traj_load_size(n_frames: usize, num_atoms: usize, ui: &mut Ui) {
+    const GB: f64 = 1e9;
+
+    let coords = n_frames * num_atoms;
+    let bytes = (coords * size_of::<lin_alg::f32::Vec3>()) as f64;
+
+    let (txt, color) = if bytes >= GB {
+        let color = if bytes >= 8. * GB {
+            Color32::LIGHT_RED
+        } else {
+            Color32::YELLOW
+        };
+        (format!("{:.1} GB", bytes / GB), color)
+    } else {
+        let mb = bytes / 1e6;
+        let txt = if mb < 10. {
+            format!("{mb:.1} MB")
+        } else {
+            format!("{mb:.0} MB")
+        };
+        (txt, Color32::GRAY)
+    };
+
+    let hover = format!(
+        "Estimated memory for positions: {n_frames} frames × {num_atoms} atoms. \
+        TRR velocities and forces, if present, add more."
+    );
+
+    ui.label(RichText::new(txt).color(color))
+        .on_hover_text(hover);
+}
+
 /// Let the user view open trajectories, and possibly change frames etc from them.
 fn traj_items(
     state: &mut State,
@@ -816,42 +849,6 @@ fn traj_items(
         highlighted_box(traj.ui_active, Color32::from_rgb(40, 55, 40)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&traj.display_name).color(Color32::WHITE));
-
-                if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
-                    && matches!(traj.source, TrajectorySource::File(_))
-                    && traj.num_frames != 0
-                    && button!(
-                        ui,
-                        "Load all frames",
-                        COLOR_ACTION,
-                        "Load all frames/snapshots from the trajectory into memory"
-                    )
-                    .clicked()
-                {
-                    match traj.load_snaps(FrameSlice::Index {
-                        start: None,
-                        end: None,
-                    }) {
-                        Ok(snaps) => {
-                            if let Some(path) = &traj.run_mol_set_path {
-                                md.viewer.mol_set_active = md
-                                    .viewer
-                                    .mol_sets
-                                    .iter()
-                                    .position(|set| set.path.as_ref() == Some(path));
-                            }
-                            md.replace_snaps(snaps);
-                            snaps_loaded = true;
-                            traj_active = Some(i);
-                        }
-                        Err(e) => {
-                            handle_err(
-                                &mut state.ui,
-                                format!("Error loading snapshots from trajectory: {:?}", e),
-                            );
-                        }
-                    }
-                }
 
                 // Load memory-only trajectories by replacing viewer snaps with theirs, but without
                 // loading anything from disk.
@@ -880,32 +877,34 @@ fn traj_items(
                 num_field(&mut traj.ui_start_i, "", 44, ui);
                 ui.label("-");
                 num_field(&mut traj.ui_end_i, "", 44, ui);
+                num_field(&mut traj.ui_step, "step", 28, ui);
+
+                let n_load = traj.ui_frames_selected();
+
+                if matches!(traj.source, TrajectorySource::File(_)) {
+                    traj_load_size(n_load, traj.num_atoms, ui);
+                }
 
                 // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
-                if traj.num_frames <= MAX_FRAMES_TO_ATTEMPT_LOADING
+                if n_load > 0
+                    && n_load <= MAX_FRAMES_TO_ATTEMPT_LOADING
                     && matches!(traj.source, TrajectorySource::File(_))
-                    && traj.ui_end_i < traj.num_frames
-                    && traj.ui_start_i < traj.ui_end_i
                     && button!(
                         ui,
-                        "Load rng",
+                        "Load",
                         COLOR_ACTION,
                         "Load frames/snapshots from the selected indices into memory"
                     )
                     .clicked()
                 {
-                    let start = if traj.ui_start_i == 0 {
-                        None
-                    } else {
-                        Some(traj.ui_start_i)
-                    };
-                    let end = if traj.ui_end_i == 0 {
-                        None
-                    } else {
-                        Some(traj.ui_end_i)
-                    };
+                    let start = (traj.ui_start_i > 0).then_some(traj.ui_start_i);
+                    let end = (traj.ui_end_i + 1 < traj.num_frames).then_some(traj.ui_end_i);
 
-                    match traj.load_snaps(FrameSlice::Index { start, end }) {
+                    match traj.load_snaps(FrameSlice::Index {
+                        start,
+                        end,
+                        step: traj.ui_step,
+                    }) {
                         Ok(snaps) => {
                             if let Some(path) = &traj.run_mol_set_path {
                                 md.viewer.mol_set_active = md

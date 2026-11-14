@@ -353,6 +353,7 @@ fn load_binary_run(
     let slice = FrameSlice::Index {
         start: None,
         end: (trajectory.num_frames > n_frames).then_some(n_frames - 1),
+        step: 1,
     };
     if !legacy
         && let Some(path) = named(dir, &["energy_out.xvg", "energy.xvg"])

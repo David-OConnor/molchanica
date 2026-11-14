@@ -84,6 +84,8 @@ pub struct Trajectory {
     /// Integers are OK directly, but we need an intermediate String for floats.
     pub ui_start_i: usize,
     pub ui_end_i: usize,
+    /// Load every nth frame.
+    pub ui_step: usize,
     pub ui_start_time: String,
     pub ui_end_time: String,
     // E.g. loaded frames from this trajectory most recently; used
@@ -121,6 +123,7 @@ impl Trajectory {
             frames_open: None,
             ui_start_i: 0,
             ui_end_i: 0,
+            ui_step: 1,
             ui_start_time: String::new(),
             ui_end_time: String::new(),
             ui_active: false,
@@ -209,10 +212,20 @@ impl Trajectory {
             frames_open: None,
             ui_start_i: 0,
             ui_end_i: num_frames.saturating_sub(1),
+            ui_step: 1,
             ui_start_time: String::new(),
             ui_end_time: String::new(),
             ui_active: false,
         }
+    }
+
+    /// Number of frames the UI range and step select.
+    pub fn ui_frames_selected(&self) -> usize {
+        if self.ui_start_i > self.ui_end_i || self.ui_end_i >= self.num_frames {
+            return 0;
+        }
+
+        (self.ui_end_i - self.ui_start_i) / self.ui_step.max(1) + 1
     }
 
     /// Load frames, applying a `FrameSlice` filter.  For file-backed trajectories
@@ -226,24 +239,12 @@ impl Trajectory {
                     ));
                 };
 
-                let filtered = match slice {
-                    FrameSlice::Index { start, end } => {
-                        let s = start.unwrap_or(0);
-                        let e = end.unwrap_or(snaps.len().saturating_sub(1));
-                        snaps
-                            .get(s..=e.min(snaps.len().saturating_sub(1)))
-                            .unwrap_or(&[])
-                            .to_vec()
-                    }
-                    FrameSlice::Time { start, end } => snaps
-                        .iter()
-                        .filter(|s| {
-                            start.map_or(true, |t| s.time >= t) && end.map_or(true, |t| s.time <= t)
-                        })
-                        .cloned()
-                        .collect(),
-                };
-                Ok(filtered)
+                Ok(snaps
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, snap)| slice.contains(*i, snap.time))
+                    .map(|(_, snap)| snap.clone())
+                    .collect())
             }
 
             TrajFormat::Trr => {
