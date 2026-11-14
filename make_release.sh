@@ -31,6 +31,13 @@ chmod +x "$setup"
 # whoever installs the release. Strip them here so the archive is right regardless.
 sed -i 's/\r$//' "$setup"
 
+# adme and synthesis are private path deps, so Cargo.toml keeps them commented out for public
+# clones. Uncomment them for this build only.
+manifest_orig=$(mktemp)
+cp Cargo.toml "$manifest_orig"
+trap 'cp "$manifest_orig" Cargo.toml && rm -f "$manifest_orig"' EXIT
+sed -i -E 's/^#((adme|synthesis) = )/\1/' Cargo.toml
+
 cargo build --release --features adme,synthesis
 
 # The CUDA build is also what people without an Nvidia GPU download, so it must not name any CUDA

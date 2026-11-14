@@ -21,13 +21,13 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 
 ## Installation
 
-### Windows and Linux
-
 [Download from the releases page](https://github.com/David-OConnor/molchanica/releases).
 
 - **Windows**: Run the `*_setup.exe` installer.
 - **Linux**: Unzip, and run `setup_molchanica.sh` (Without `sudo`).
 - **Mac**: Unzip and run `molchanica`. (Standalone executable). Warning! Mac support is experimental, and untested.
+
+The "nocuda" downloads leave out the *cuFFT* library, only relevant for the *Dynamics* MD backend. The normal versions will work even if you don't have CUDA or an Nvidia GPU.
 
 ![Ribbon view with SIFTS coloring](screenshots/ribbon_sifts_res_color.png)
 

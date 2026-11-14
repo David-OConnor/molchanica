@@ -33,7 +33,18 @@ function Find-Iscc {
     $found.FullName
 }
 
-cargo build --release --features adme,synthesis
+# adme and synthesis are private path deps, so Cargo.toml keeps them commented out for public
+# clones. Uncomment them for this build only.
+$manifest = Join-Path $PSScriptRoot "Cargo.toml"
+$manifestOrig = [IO.File]::ReadAllBytes($manifest)
+$manifestText = [IO.File]::ReadAllText($manifest)
+[IO.File]::WriteAllText($manifest, ($manifestText -replace '(?m)^#((adme|synthesis) = )', '$1'))
+try {
+    cargo build --release --features adme,synthesis
+} finally {
+    [IO.File]::WriteAllBytes($manifest, $manifestOrig)
+}
+if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE." }
 
 # The CUDA build is also what people without an Nvidia GPU download, so it must not name any CUDA
 # DLL in its import table: Windows would refuse to start it there, before the program ever gets a
